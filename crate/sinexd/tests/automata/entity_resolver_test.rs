@@ -22,7 +22,7 @@ fn make_context() -> AutomatonContext {
         source: EntityExtractedPayload::SOURCE,
         event_type: EntityExtractedPayload::EVENT_TYPE,
         ts_orig: Some(Timestamp::now()),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

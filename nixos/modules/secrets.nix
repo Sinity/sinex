@@ -38,6 +38,7 @@ let
 
   conventionalEtcEntries = {
     sinex-api-admin-token = "sinex/api-admin-token";
+    sinex-api-readonly-token = "sinex/api-readonly-token";
     sinex-local-db = "sinex/db-password";
     sinex-remote-db = "sinex/remote-db-password";
     sinex-grafana-secret-key = "sinex/grafana-secret-key";
@@ -89,6 +90,7 @@ let
   nonExport = [
     "sinex-local-db"
     "sinex-api-admin-token"  # sinexd::api reads via SINEX_API_ADMIN_TOKEN_FILE (file path, not raw content)
+    "sinex-api-readonly-token"
     "sinex-grafana-secret-key"
     "sinex-nats-ca"
     "sinex-nats-client-ca"

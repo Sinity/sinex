@@ -189,7 +189,7 @@ async fn replay_execute_fails_when_live_scope_disappears_after_approval(
     let inserted = ctx.pool.events().insert(event).await?;
     let target_event_id = inserted.id.expect("inserted replay target must have id");
     let target_id = target_event_id.to_uuid();
-    let target_ts = target_event_id.timestamp();
+    let target_ts = target_event_id.timestamp().expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let client =
@@ -285,8 +285,8 @@ async fn replay_execute_fails_when_live_scope_drifts_after_approval(
     let second_event_id = inserted_second
         .id
         .expect("second replay target must have id");
-    let first_ts = first_event_id.timestamp();
-    let second_ts = second_event_id.timestamp();
+    let first_ts = first_event_id.timestamp().expect("test ID must be UUIDv7");
+    let second_ts = second_event_id.timestamp().expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let client =
@@ -541,7 +541,8 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -704,7 +705,8 @@ async fn replay_execution_cancel_midflight_stops_emission_and_restores_cascade(
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();

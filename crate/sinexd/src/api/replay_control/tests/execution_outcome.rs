@@ -26,7 +26,9 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
 
     let replay_target_event_id = inserted.id.expect("inserted replay target must have id");
     let replay_target_id = replay_target_event_id.to_uuid();
-    let target_window_end = replay_target_event_id.timestamp();
+    let target_window_end = replay_target_event_id
+        .timestamp()
+        .expect("test ID must be UUIDv7");
     let target_window_start = target_window_end - time::Duration::milliseconds(1);
 
     let product_class = DerivedProductClass::CanonicalDerivedEvent;
@@ -316,7 +318,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         .id
         .expect("reexecution derived must have id")
         .to_uuid();
-    let reexecution_root_ts = root_event_id.timestamp();
+    let reexecution_root_ts = root_event_id.timestamp().expect("test ID must be UUIDv7");
     let reexecution_scope = ReplayScope {
         source_name: "reexecution-test".to_string(),
         time_window: Some((
@@ -430,8 +432,8 @@ async fn replay_dispatch_uses_material_runtime_identity(ctx: TestContext) -> Res
     let inserted = ctx.pool.events().insert(event).await?;
     let event_id = inserted.id.expect("inserted replay target must have an id");
     let execution_window = (
-        event_id.timestamp() - time::Duration::milliseconds(1),
-        event_id.timestamp() + time::Duration::milliseconds(1),
+        event_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        event_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
@@ -516,8 +518,8 @@ async fn replay_replacement_recording_follows_material_occurrence(ctx: TestConte
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -606,8 +608,8 @@ async fn replay_replacement_recording_rejects_cross_material_matches(
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -685,8 +687,8 @@ async fn replay_anchor_payload_hash_mismatch_does_not_block_replacement(
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -764,8 +766,8 @@ async fn replay_anchor_payload_hash_null_does_not_false_mismatch(ctx: TestContex
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -841,8 +843,8 @@ async fn replay_anchor_payload_hash_match_is_silent(ctx: TestContext) -> Result<
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -924,7 +926,9 @@ async fn projection_registry_replay_invalidation(ctx: TestContext) -> Result<()>
     event.scope_key = Some(scope_key.clone());
     let inserted = ctx.pool.events().insert(event).await?;
     let replay_target_event_id = inserted.id.expect("inserted replay target must have id");
-    let target_window_end = replay_target_event_id.timestamp();
+    let target_window_end = replay_target_event_id
+        .timestamp()
+        .expect("test ID must be UUIDv7");
     let target_window_start = target_window_end - time::Duration::milliseconds(1);
 
     let projection_kind = "test.projection_registry_replay_invalidation";

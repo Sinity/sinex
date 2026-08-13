@@ -65,7 +65,8 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
         .from_parents(vec![root_id])?
         .build()?;
     derived.scope_key = Some("scope:replay-preview".to_string());
-    derived.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    derived.product_class =
+        Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
     derived.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
     derived.derivation_declaration_id = Some("replay-preview-test-decl".to_string());
     ctx.pool().events().insert(derived).await?;
@@ -136,8 +137,8 @@ async fn replay_preview_maps_watcher_source_ids_to_emitted_event_sources(
         .generate_preview_summary(&ReplayScope {
             source_name: "filesystem-watcher".to_string(),
             time_window: Some((
-                root_id.timestamp() - time::Duration::minutes(1),
-                root_id.timestamp() + time::Duration::minutes(1),
+                root_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::minutes(1),
+                root_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::minutes(1),
             )),
             material_filter: None,
             filters: HashMap::new(),

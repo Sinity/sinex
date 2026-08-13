@@ -23,7 +23,8 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -118,7 +119,8 @@ async fn replay_execution_fails_when_source_runtime_never_reports_completion(
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -225,7 +227,8 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -328,7 +331,8 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -468,7 +472,8 @@ async fn replay_execution_restores_archived_cascade_when_dispatch_fails_before_a
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -565,7 +570,8 @@ async fn replay_execution_fails_before_archive_when_scope_metadata_collection_fa
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let mut scope = sample_scope();
@@ -657,7 +663,8 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let mut scope = sample_scope();

@@ -294,6 +294,13 @@ in
             otherwise no services can connect.
           '';
         }
+        {
+          assertion = db.localAuth != "trust" || cfg.nats.environment == "dev";
+          message = ''
+            PostgreSQL localAuth = "trust" is permitted only for the explicit "dev"
+            environment. Production and staging deployments must use password authentication.
+          '';
+        }
       ];
     })
 

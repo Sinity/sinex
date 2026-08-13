@@ -18,7 +18,7 @@ fn make_context_with_optional_ts(ts_orig: Option<Timestamp>) -> AutomatonContext
         source: "test".into(),
         event_type: "health.status".into(),
         ts_orig,
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

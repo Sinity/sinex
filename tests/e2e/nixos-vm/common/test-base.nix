@@ -24,6 +24,10 @@ let
       name = lib.mkDefault databaseName;
       extraDatabases = lib.mkDefault [ "sinex" ];
       user = lib.mkDefault "sinex";
+      # VM databases are disposable and intentionally use the development
+      # trust profile; production-shaped deployments must provide a password
+      # source and retain the module's SCRAM default.
+      localAuth = lib.mkDefault "trust";
     };
 
     lifecycle.preflight.enable = lib.mkDefault false;

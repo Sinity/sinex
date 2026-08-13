@@ -211,7 +211,7 @@ where
                 source: invalidation.event_source.clone(),
                 event_type: invalidation.event_type.clone(),
                 ts_orig: None,
-                ts_coided: trigger_event_id.timestamp(),
+                ts_coided: AutomatonContext::require_ts_coided(trigger_event_id)?,
                 processing_mode: sinex_primitives::domain::ProcessingMode::Replay,
                 trigger_kind: sinex_primitives::domain::TriggerKind::ScopeInvalidation,
                 created_by_operation_id: operation_id,

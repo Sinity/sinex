@@ -191,6 +191,12 @@ const ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration =
 ///   "private_mode_fail_closed": true
 /// }
 /// ```
+///
+/// When `private_mode_state_dir` is omitted, the source resolves the shared
+/// daemon state root from `SINEX_STATE_DIR` (the production NixOS service
+/// supplies this for every hosted binding). An explicit path is useful for
+/// isolated runtimes and tests, but is not required for adapter-backed
+/// sources to participate in private-mode suppression.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AdapterSourceConfig {
     /// Adapter-specific config fields. Flattened so they live at the top
@@ -227,7 +233,8 @@ pub struct AdapterSourceConfig {
     pub private_mode_source_class: Option<String>,
 
     /// Whether unreadable or malformed private-mode state should suppress
-    /// acquisition. Defaults to fail-closed when `private_mode_state_dir` is set.
+    /// acquisition. Defaults to fail-closed for the resolved state directory,
+    /// including the shared `SINEX_STATE_DIR` fallback.
     ///
     /// Lower-sensitivity source contracts may set this to `false` deliberately, but
     /// the unavailable-state caveat still reaches binding-aware parsers through

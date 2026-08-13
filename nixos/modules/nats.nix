@@ -627,6 +627,8 @@ in
   };
 
   config = mkIf (cfg.enable || cfg.autoSetup) {
+    services.sinex.nats.authorization.sharedClient.enable = mkDefault (cfg.environment != "dev");
+
     # Ship the canonical topology with every field at mkDefault priority so
     # downstream flakes override individual streams field-by-field (attrsOf
     # submodule per-field merge) and inherit the rest — see
@@ -662,6 +664,14 @@ in
       {
         assertion = !(cfg.tls.verifyClients && cfg.tls.verifyAndMap);
         message = "Choose either services.sinex.nats.tls.verifyClients or verifyAndMap, not both.";
+      }
+      {
+        assertion = cfg.environment == "dev" || serverAuthorizationEnabled;
+        message = ''
+          Managed NATS deployments outside the "dev" environment require server-side
+          authorization. Configure the shared Sinex client NKey and seed, or provide
+          an equivalent authenticated server configuration.
+        '';
       }
       {
         assertion = (!cfg.authorization.sharedClient.enable) || cfg.authorization.sharedClient.nkey != null;

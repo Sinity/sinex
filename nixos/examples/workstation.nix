@@ -23,10 +23,12 @@
       port = 5432;
       name = "sinex_prod";
       user = "sinex";
+      passwordFile = "/etc/sinex/db-password";
     };
 
     nats = {
       environment = "prod"; # REQUIRED for production; use "dev" for local testing only
+      authorization.sharedClient.nkey = "UCEXAMPLESHAREDCLIENTNKEY";
       # Workstations prefer a fast, terminal-style shutdown over the JetStream
       # graceful drain that hosted deployments rely on.
       killPolicy = {
@@ -48,6 +50,9 @@
 
     runtime = {
       enable = true;
+      # This example is structurally complete; replace this synthetic value
+      # with a real secret-managed credential before deploying.
+      nats.auth.nkeySeedFile = "/etc/sinex/nats-client.nk";
       target = {
         attachToMultiUser = false;
         manualStartOnly = true;
@@ -106,4 +111,6 @@
   };
 
   environment.etc."sinex/api-admin-token".text = "workstation-admin:admin";
+  environment.etc."sinex/db-password".text = "replace-with-secret-managed-db-password";
+  environment.etc."sinex/nats-client.nk".text = "SUEXAMPLECLIENTNKEYSEED";
 }

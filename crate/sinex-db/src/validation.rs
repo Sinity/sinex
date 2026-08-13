@@ -432,12 +432,13 @@ impl EventValidator {
     }
     fn validate_id_timestamp(&self, event: &Event<JsonValue>) -> ValidationResult {
         if let (Some(id), Some(ts_orig)) = (&event.id, event.ts_orig) {
-            let id_ts = id.timestamp().unix_timestamp();
-            let drift = (id_ts - ts_orig.unix_timestamp()).abs();
-            if drift > MAX_ID_DRIFT_SECS {
-                return Err(ValidationError::SecurityValidation(format!(
-                    "ID timestamp drift {drift}s exceeds allowed threshold of {MAX_ID_DRIFT_SECS}s"
-                )));
+            if let Some(id_ts) = id.timestamp() {
+                let drift = (id_ts.unix_timestamp() - ts_orig.unix_timestamp()).abs();
+                if drift > MAX_ID_DRIFT_SECS {
+                    return Err(ValidationError::SecurityValidation(format!(
+                        "ID timestamp drift {drift}s exceeds allowed threshold of {MAX_ID_DRIFT_SECS}s"
+                    )));
+                }
             }
         }
         Ok(())

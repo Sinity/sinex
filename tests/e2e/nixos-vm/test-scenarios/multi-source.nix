@@ -7,7 +7,7 @@
 }:
 
 let
-  sinexPackage = if sinex != null then sinex else sinexd;
+  sinexPackage = sinex;
   sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
   # Enhanced query tool with metrics support
   sinex-query = pkgs.writeScriptBin "sinex" ''

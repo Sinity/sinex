@@ -27,8 +27,8 @@ async fn attention_stream_consumes_activity_windows_only() -> xtask::sandbox::Te
 }
 
 #[sinex_test]
-async fn attention_stream_maps_activity_window_to_attention_span(
-) -> xtask::sandbox::TestResult<()> {
+async fn attention_stream_maps_activity_window_to_attention_span() -> xtask::sandbox::TestResult<()>
+{
     let start_time = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let end_time = Timestamp::from_unix_timestamp(1_700_000_120)
@@ -71,7 +71,10 @@ async fn attention_stream_maps_activity_window_to_attention_span(
     assert_eq!(output.payload.duration_secs, 120);
     assert_eq!(output.payload.event_count, 5);
     assert_eq!(output.payload.source_count, 2);
-    assert_eq!(output.payload.sources, vec!["wm.hyprland", "terminal.kitty"]);
+    assert_eq!(
+        output.payload.sources,
+        vec!["wm.hyprland", "terminal.kitty"]
+    );
     assert_eq!(output.payload.activity_source_counts, counts);
     assert_eq!(output.payload.primary_source, ActivitySourceKind::Window);
     assert_eq!(output.payload.source_window_id, "activity-window-42");
@@ -89,7 +92,9 @@ fn activity_window_context(ts_orig: Timestamp) -> AutomatonContext {
         source: EventSource::from_static("derived.activity-window"),
         event_type: EventType::from_static("activity.window.summary"),
         ts_orig: Some(ts_orig),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

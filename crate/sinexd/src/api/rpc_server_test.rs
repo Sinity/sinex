@@ -25,7 +25,27 @@ fn clear_auth_env() {
         std::env::remove_var("SINEX_API_TOKEN");
         std::env::remove_var("SINEX_API_TOKEN_FILE");
         std::env::remove_var("SINEX_API_ADMIN_TOKEN_FILE");
+        std::env::remove_var("SINEX_API_READONLY_TOKEN_FILE");
     }
+}
+
+#[sinex_test]
+async fn gateway_auth_accepts_distinct_admin_and_readonly_tokens() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let admin = dir.path().join("admin-token");
+    let readonly = dir.path().join("readonly-token");
+    std::fs::write(&admin, "admin-secret:admin\n")?;
+    std::fs::write(&readonly, "read-secret:readonly\n")?;
+
+    let mut config = GatewayConfig::default();
+    config.admin_token_file = Some(admin.display().to_string());
+    config.readonly_token_file = Some(readonly.display().to_string());
+    let auth = GatewayAuth::from_config(&config)?;
+
+    assert!(auth.verify(&bearer_headers("admin-secret:admin")).is_ok());
+    assert!(auth.verify(&bearer_headers("read-secret:readonly")).is_ok());
+    assert!(auth.verify(&bearer_headers("admin-secret:readonly")).is_err());
+    Ok(())
 }
 
 fn bearer_headers(token: &str) -> HeaderMap {

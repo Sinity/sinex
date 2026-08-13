@@ -20,7 +20,9 @@ pub(super) fn send_token_watcher_ready(
 #[derive(Clone)]
 pub(crate) struct GatewayAuth {
     pub(super) token: Arc<RwLock<Option<String>>>,
+    readonly_token: Arc<RwLock<Option<String>>>,
     token_path: Option<PathBuf>,
+    readonly_token_path: Option<PathBuf>,
 }
 
 impl GatewayAuth {
@@ -53,25 +55,36 @@ impl GatewayAuth {
     }
 
     pub(super) fn from_config(config: &GatewayConfig) -> SinexResult<Self> {
-        let (token, token_path) = config
-            .auth_token_from_config()
+        let configured = config
+            .auth_tokens_from_config()
             .map_err(|err| SinexError::configuration(err.to_string()))?;
-
-        if let Some(ref t) = token {
-            if t.trim().is_empty() {
-                return Err(SinexError::configuration(
-                    "SINEX_API_TOKEN (or token file) is set but empty; refusing to start without a token",
-                ));
-            }
-        } else {
+        if configured.is_empty() {
             return Err(SinexError::configuration(
                 "SINEX_API_TOKEN is not set. Export a token (or SINEX_API_ADMIN_TOKEN_FILE / SINEX_API_TOKEN_FILE) so the gateway can authenticate RPC clients.",
             ));
         }
 
+        let mut configured = configured.into_iter();
+        let primary = configured.next().expect("checked non-empty");
+        let readonly = configured.next();
+        for item in [&primary, readonly.as_ref().unwrap_or(&primary)] {
+            if item.value.trim().is_empty() {
+                return Err(SinexError::configuration("configured API token file is empty; refusing to start without a token"));
+            }
+            let (_, role) = crate::api::auth::Role::from_token(&item.value)
+                .map_err(|err| SinexError::configuration(err.to_string()))?;
+            if let Some(required) = item.required_role
+                && role != required
+            {
+                return Err(SinexError::configuration("configured API token has the wrong role suffix"));
+            }
+        }
+
         Ok(Self {
-            token: Arc::new(RwLock::new(token)),
-            token_path,
+            token: Arc::new(RwLock::new(Some(primary.value))),
+            readonly_token: Arc::new(RwLock::new(readonly.as_ref().map(|item| item.value.clone()))),
+            token_path: primary.path,
+            readonly_token_path: readonly.and_then(|item| item.path),
         })
     }
 
@@ -81,7 +94,10 @@ impl GatewayAuth {
     ) -> SinexResult<Self> {
         if let Some(ref path) = self.token_path {
             let token_clone = Arc::clone(&self.token);
+            let readonly_token_clone = Arc::clone(&self.readonly_token);
             let path_clone = path.clone();
+            let readonly_path = self.readonly_token_path.clone();
+            let readonly_path_for_closure = readonly_path.clone();
             let path_for_closure = path.clone();
 
             // Bridge the async shutdown watch into a sync channel so the OS-thread
@@ -116,10 +132,14 @@ impl GatewayAuth {
                             Ok(event) => {
                                 match event.kind {
                                     EventKind::Modify(_) | EventKind::Create(_) => {
-                                        Self::reload_token_from_path(
-                                            &token_clone,
-                                            &path_for_closure,
-                                        );
+                                    if event.paths.iter().any(|p| p == &path_for_closure) {
+                                        Self::reload_token_from_path(&token_clone, &path_for_closure);
+                                    }
+                                    if let Some(readonly_path) = &readonly_path_for_closure
+                                        && event.paths.iter().any(|p| p == readonly_path)
+                                    {
+                                        Self::reload_token_from_path(&readonly_token_clone, readonly_path);
+                                    }
                                     }
                                     EventKind::Remove(_) => {
                                         // File was deleted — keep last valid token (fail-closed).
@@ -186,6 +206,18 @@ impl GatewayAuth {
                     );
                     return;
                 }
+                if let Some(readonly_path) = &readonly_path
+                    && let Err(e) = watcher.watch(readonly_path, RecursiveMode::NonRecursive)
+                {
+                    send_token_watcher_ready(
+                        &mut ready_tx,
+                        Err(SinexError::configuration("Failed to watch read-only token file")
+                            .with_context("path", readonly_path.display().to_string())
+                            .with_std_error(&e)),
+                        "watch-readonly",
+                    );
+                    return;
+                }
 
                 send_token_watcher_ready(&mut ready_tx, Ok(()), "ready");
                 info!("Watching token file {:?} for changes", path_clone);
@@ -226,15 +258,14 @@ impl GatewayAuth {
         let provided = extract_token(headers).ok_or(AuthError::Missing)?;
 
         let token_guard = self.token.read();
-        if let Some(expected) = token_guard.as_ref() {
-            if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
-                Ok(provided)
-            } else {
-                Err(AuthError::Invalid)
-            }
+        let readonly_guard = self.readonly_token.read();
+        if token_guard.as_ref().is_some_and(|expected| constant_time_eq(provided.as_bytes(), expected.as_bytes()))
+            || readonly_guard.as_ref().is_some_and(|expected| constant_time_eq(provided.as_bytes(), expected.as_bytes()))
+        {
+            Ok(provided)
         } else {
             warn!("No token configured - rejecting request");
-            Err(AuthError::Missing)
+            Err(AuthError::Invalid)
         }
     }
 
@@ -242,7 +273,9 @@ impl GatewayAuth {
     pub(super) fn with_test_token(token: &str) -> Self {
         Self {
             token: Arc::new(RwLock::new(Some(token.to_string()))),
+            readonly_token: Arc::new(RwLock::new(None)),
             token_path: None,
+            readonly_token_path: None,
         }
     }
 }

@@ -69,7 +69,9 @@ async fn spawn_fake_parse_source_runtime(
         let mut event_count = 0usize;
         if let Some((source, event_type, path)) = insert_output {
             let material_id = command.source_material_id.ok_or_else(|| {
-                test_error("fake parse source runtime requires a source_material_id to insert output")
+                test_error(
+                    "fake parse source runtime requires a source_material_id to insert output",
+                )
             })?;
             let mut event = DynamicPayload::new(source, event_type, json!({ "path": path }))
                 .from_material(Id::from_uuid(material_id))
@@ -127,7 +129,8 @@ async fn staged_replay_reaches_completed_without_deadlock(ctx: TestContext) -> R
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -197,7 +200,9 @@ async fn staged_replay_reaches_completed_without_deadlock(ctx: TestContext) -> R
     let dispatched = tokio::time::timeout(Duration::from_secs(5), parse_handle)
         .await
         .map_err(|_| test_error("fake parse source runtime task did not finish"))?
-        .map_err(|error| test_error(format!("fake parse source runtime task panicked: {error}")))??;
+        .map_err(|error| {
+            test_error(format!("fake parse source runtime task panicked: {error}"))
+        })??;
     assert_eq!(dispatched.operation_id, planned.operation_id);
     assert_eq!(dispatched.source_id, source_id);
 
@@ -231,7 +236,8 @@ async fn staged_replay_cancel_reaches_cancelled_and_restores_cascade(
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -296,7 +302,9 @@ async fn staged_replay_cancel_reaches_cancelled_and_restores_cascade(
     // xixl) once it verifies the operation genuinely started before being
     // cancelled -- this hands the caller the full ReplayOperation (state,
     // checkpoint, preview) instead of an opaque error that discards it.
-    let cancelled = outcome.expect("cancelled staged-source replay must still return Ok with a confirmed Cancelled operation");
+    let cancelled = outcome.expect(
+        "cancelled staged-source replay must still return Ok with a confirmed Cancelled operation",
+    );
     assert_eq!(
         cancelled.state,
         ReplayState::Cancelled,
@@ -342,7 +350,8 @@ async fn staged_replay_timeout_restores_cascade(ctx: TestContext) -> Result<()> 
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -381,7 +390,9 @@ async fn staged_replay_timeout_restores_cascade(ctx: TestContext) -> Result<()> 
     )
     .await
     .map_err(|_| {
-        test_error("staged-source replay execute() did not return within 10s of its own 300ms timeout")
+        test_error(
+            "staged-source replay execute() did not return within 10s of its own 300ms timeout",
+        )
     })?
     .expect_err("staged-source replay with no visible output must fail");
     assert!(

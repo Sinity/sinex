@@ -46,11 +46,23 @@ consume the state; they do not decide policy by themselves.
 
 ## Capture Behavior
 
-Live producers check private mode:
+Hosted adapter-backed producers check private mode:
 
 1. before source acquisition;
 2. before durable source-material transport;
 3. before event-intent publication.
+
+The shared `sinexd` service passes `SINEX_STATE_DIR` to its hosted source
+bindings. `AdapterBackedSource` uses that directory when a binding does not
+provide an explicit `private_mode_state_dir`, so clipboard, browser-history,
+and terminal-history adapters participate in the same suppression state. The
+acquisition gate runs before the adapter opens and before raw source material
+is created; raw material remains the authority for captures that were already
+accepted before the toggle.
+
+Direct media capture drivers use their own session gate. Source drivers that
+do not run through either of those owned paths are outside this adapter-lane
+contract and must not be inferred to be suppressed by this document.
 
 When private mode covers a source class:
 

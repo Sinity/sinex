@@ -13,7 +13,7 @@ let
   # TLS fixtures directory
   tlsFixtures = ./tls-fixtures;
 
-  sinexPackage = if sinex != null then sinex else sinexd;
+  sinexPackage = sinex;
   sinexCliPackage = sinexCli;
 in
 pkgs.testers.nixosTest {

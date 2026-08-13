@@ -4,6 +4,40 @@ use sinex_primitives::prelude::*;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
+async fn event_validator_preserves_unknown_id_clock_without_fabrication()
+-> xtask::sandbox::TestResult<()> {
+    let validator = EventValidator::with_validation_enabled(false);
+    let event = Event {
+        id: Some(Id::from_uuid(Uuid::new_v4())),
+        source: EventSource::from_static("test.source"),
+        event_type: EventType::from_static("test.event"),
+        payload: json!({ "ok": true }),
+        ts_orig: Some(Timestamp::now()),
+        ts_quality: None,
+        host: HostName::from_static("validator"),
+        module_run_id: None,
+        payload_schema_id: None,
+        provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        automaton_model: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
+    };
+
+    validator.validate(&event)?;
+    Ok(())
+}
+
+#[sinex_test]
 async fn event_validator_rejects_future_ts_orig() -> xtask::sandbox::TestResult<()> {
     let validator = EventValidator::with_validation_enabled(false);
     let event = Event {

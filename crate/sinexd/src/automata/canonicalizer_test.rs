@@ -14,7 +14,9 @@ fn kitty_context() -> AutomatonContext {
         source: EventSource::from_static("shell.kitty"),
         event_type: EventType::from_static("command.executed"),
         ts_orig: Some(Timestamp::now()),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

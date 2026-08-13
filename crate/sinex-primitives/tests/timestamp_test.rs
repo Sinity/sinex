@@ -69,7 +69,12 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
             event.ts_orig.is_some(),
             "Original timestamp should be preserved"
         );
-        let ingest_ts = event.id.as_ref().expect("event should have id").timestamp();
+        let ingest_ts = event
+            .id
+            .as_ref()
+            .expect("event should have id")
+            .timestamp()
+            .expect("test ID must be UUIDv7");
         assert!(
             ingest_ts > Timestamp::from_unix_timestamp(0).unwrap(),
             "Ingestion (UUIDv7) timestamp should be set"

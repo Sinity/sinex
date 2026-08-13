@@ -17,7 +17,10 @@ async fn document_parser_filters_to_document_and_canonical_command_events() -> T
             CanonicalCommandPayload::EVENT_TYPE.as_static_str(),
         ]
     );
-    assert_eq!(automaton.input_provenance_filter(), InputProvenanceFilter::Any);
+    assert_eq!(
+        automaton.input_provenance_filter(),
+        InputProvenanceFilter::Any
+    );
     Ok(())
 }
 
@@ -40,7 +43,7 @@ async fn oversized_dendron_document_returns_recoverable_input_failure() -> TestR
         source: "dendron".into(),
         event_type: "document.ingested".into(),
         ts_orig: Some(Timestamp::UNIX_EPOCH),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -81,7 +84,7 @@ async fn oversized_terminal_output_returns_recoverable_input_failure() -> TestRe
         source: "terminal".into(),
         event_type: "command.canonical".into(),
         ts_orig: Some(Timestamp::UNIX_EPOCH),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -232,7 +235,10 @@ async fn test_paragraph_spans_round_trip_with_irregular_separators() -> TestResu
 
     // Spans must be strictly increasing and reflect the real gaps consumed
     // by separators — not a tight running sum of chunk lengths.
-    assert!(chunks[0].end < chunks[1].start, "separator bytes must be skipped, not summed away");
+    assert!(
+        chunks[0].end < chunks[1].start,
+        "separator bytes must be skipped, not summed away"
+    );
     assert!(chunks[1].end < chunks[2].start);
     assert!(chunks[2].end < chunks[3].start);
     Ok(())
@@ -251,7 +257,10 @@ async fn test_overlong_chunk_split_respects_utf8_char_boundaries() -> TestResult
     text.push_str(&"a".repeat(65534));
     text.push('😀'); // 4-byte UTF-8 char occupying bytes [65534, 65538)
     text.push_str(&"a".repeat(200));
-    assert!(text.len() > MAX_CHUNK_BYTES, "fixture must exceed the cap to exercise the split");
+    assert!(
+        text.len() > MAX_CHUNK_BYTES,
+        "fixture must exceed the cap to exercise the split"
+    );
 
     let chunks = paragraph_chunks(&text);
 
@@ -301,7 +310,7 @@ async fn document_chunked_offsets_round_trip_against_source_bytes() -> TestResul
         source: "dendron".into(),
         event_type: "document.ingested".into(),
         ts_orig: Some(Timestamp::UNIX_EPOCH),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -359,7 +368,7 @@ async fn terminal_chunks_are_not_parser_redacted() -> TestResult<()> {
         source: "terminal".into(),
         event_type: "command.canonical".into(),
         ts_orig: Some(Timestamp::UNIX_EPOCH),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -408,7 +417,7 @@ async fn document_parser_terminal_outputs_stamp_equivalence_key_and_semantics_ve
         source: "terminal".into(),
         event_type: "command.canonical".into(),
         ts_orig: Some(Timestamp::UNIX_EPOCH),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

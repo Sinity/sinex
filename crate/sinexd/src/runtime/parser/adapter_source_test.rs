@@ -64,6 +64,48 @@ impl InputShapeAdapter for TestAdapter {
 
 impl InputShapeAdapterExt for TestAdapter {}
 
+/// Probe adapter for the private-mode acquisition gate. Its stream contains a
+/// record that would create source material if `drain_adapter` reached the
+/// adapter, so the open count and material assertion verify suppression at the
+/// raw acquisition boundary rather than only checking a binding flag.
+static PRIVATE_MODE_PROBE_OPENS: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Default)]
+struct PrivateModeProbeAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for PrivateModeProbeAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+    async fn open(
+        &self,
+        material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        PRIVATE_MODE_PROBE_OPENS.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::pin(stream::once(async move {
+            Ok(SourceRecord {
+                material_id,
+                anchor: MaterialAnchor::ByteRange { start: 0, len: 18 },
+                bytes: b"private probe record".to_vec(),
+                logical_path: None,
+                source_ts_hint: None,
+                metadata: JsonValue::Null,
+            })
+        })))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(1)
+    }
+}
+
+impl InputShapeAdapterExt for PrivateModeProbeAdapter {}
+
 /// Counts adapter opens so the replay guard test can prove that a scoped
 /// replay never falls through to a fresh-cursor whole-source scan.
 static REPLAY_GUARD_OPENS: AtomicUsize = AtomicUsize::new(0);
@@ -1021,6 +1063,57 @@ async fn adapter_backed_source_refreshes_private_mode_binding() -> xtask::sandbo
 
     source.refresh_binding_config()?;
     assert!(source.binding_config.is_truthy("private_mode_active"));
+    Ok(())
+}
+
+#[sinex_serial_test]
+async fn adapter_backed_sources_suppress_acquisition_from_shared_state_dir(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let state_dir = tempfile::tempdir()?;
+    save_private_mode_state(
+        state_dir.path(),
+        &RuntimePrivateModeState::enabled_by(
+            "test-operator",
+            Vec::new(),
+            Timestamp::UNIX_EPOCH,
+        ),
+    )?;
+
+    let mut env = EnvGuard::new();
+    env.set("SINEX_STATE_DIR", state_dir.path().display().to_string());
+    PRIVATE_MODE_PROBE_OPENS.store(0, Ordering::SeqCst);
+
+    let (runtime, _events) = make_adapter_runtime(&ctx).await?;
+    for source_id in [
+        "desktop.clipboard",
+        "browser.history",
+        "terminal.bash-history",
+    ] {
+        let mut source =
+            AdapterBackedSource::<PrivateModeProbeAdapter, TestParser>::new(source_id);
+        let mut state = AdapterModuleState::default();
+
+        source
+            .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+            .await?;
+        let emitted = source.drain_adapter(None, &mut state, None, None).await?;
+
+        assert_eq!(emitted, 0, "private mode must suppress {source_id}");
+        assert_eq!(state.cursor, None, "suppressed {source_id} must not advance");
+        assert_eq!(
+            source.current_material_id(),
+            None,
+            "suppressed {source_id} must not create raw source material"
+        );
+    }
+
+    assert_eq!(
+        PRIVATE_MODE_PROBE_OPENS.load(Ordering::SeqCst),
+        0,
+        "private mode must stop adapter-backed acquisition before adapter open"
+    );
     Ok(())
 }
 

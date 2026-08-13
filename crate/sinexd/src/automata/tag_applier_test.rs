@@ -1,6 +1,6 @@
-use serde_json::json;
 use crate::runtime::automaton::AutomatonContext;
 use crate::runtime::{InputProvenanceFilter, Transducer};
+use serde_json::json;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::{EventSource, EventType, Id, JsonValue, Timestamp};
@@ -13,7 +13,9 @@ fn browser_source_context() -> AutomatonContext {
         source: EventSource::from_static("browser.history"),
         event_type: EventType::from_static("page.visited"),
         ts_orig: Some(Timestamp::now()),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

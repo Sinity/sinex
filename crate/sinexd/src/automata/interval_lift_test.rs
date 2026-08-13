@@ -1497,7 +1497,9 @@ fn focus_context(ts_orig: Timestamp) -> AutomatonContext {
         source: EventSource::from_static("wm.hyprland"),
         event_type: EventType::from_static("window.focused"),
         ts_orig: Some(ts_orig),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -1513,7 +1515,9 @@ fn activitywatch_context(ts_orig: Timestamp) -> AutomatonContext {
         source: EventSource::from_static("activitywatch"),
         event_type: EventType::from_static("window.active"),
         ts_orig: Some(ts_orig),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -1529,7 +1533,9 @@ fn workspace_context(ts_orig: Timestamp) -> AutomatonContext {
         source: EventSource::from_static("wm.hyprland"),
         event_type: EventType::from_static("workspace.switched"),
         ts_orig: Some(ts_orig),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -1545,7 +1551,9 @@ fn activitywatch_afk_context(ts_orig: Timestamp) -> AutomatonContext {
         source: EventSource::from_static("activitywatch"),
         event_type: EventType::from_static("afk.changed"),
         ts_orig: Some(ts_orig),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -1561,7 +1569,9 @@ fn systemd_context(event_type: &'static str, ts_orig: Timestamp) -> AutomatonCon
         source: EventSource::from_static("systemd"),
         event_type: EventType::from_static(event_type),
         ts_orig: Some(ts_orig),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
