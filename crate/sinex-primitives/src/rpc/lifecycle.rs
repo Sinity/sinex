@@ -406,6 +406,11 @@ pub struct TombstoneOperation {
     /// Number of events actually tombstoned
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tombstoned_count: Option<u64>,
+    /// Number of manifest-backed replay roots explicitly purged by this
+    /// reviewed operation. `None` is retained for operations created before
+    /// this authority boundary existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_replay_roots_purged: Option<u64>,
     /// Durable receipt written atomically with the irreversible deletion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion_committed_at: Option<String>,
@@ -481,6 +486,14 @@ pub struct TombstoneApproveRequest {
     /// Explicit acknowledgment required
     #[serde(default)]
     pub yes_i_understand_data_is_gone: bool,
+    /// Request the explicit purge of orphaned manifest-backed replay roots
+    /// discovered by this tombstone operation.
+    #[serde(default)]
+    pub purge_manifest_replay_roots: bool,
+    /// Separate acknowledgement that the manifest and exact CAS replay
+    /// authority will be irrecoverably removed.
+    #[serde(default)]
+    pub yes_i_understand_manifest_replay_authority_is_gone: bool,
 }
 
 /// Response: lifecycle.tombstone.approve

@@ -891,6 +891,7 @@ pub async fn handle_tombstone_create(
         started_at: None,
         finished_at: None,
         tombstoned_count: None,
+        manifest_replay_roots_purged: None,
         deletion_committed_at: None,
         invalidation_report: None,
         error_details: None,
@@ -997,6 +998,20 @@ pub async fn handle_tombstone_approve(
     if !request.yes_i_understand_data_is_gone {
         return Err(SinexError::validation(
             "You must set yes_i_understand_data_is_gone=true to confirm permanent deletion",
+        ));
+    }
+    if request.purge_manifest_replay_roots
+        && !request.yes_i_understand_manifest_replay_authority_is_gone
+    {
+        return Err(SinexError::validation(
+            "Manifest replay-root purge requires yes_i_understand_manifest_replay_authority_is_gone=true",
+        ));
+    }
+    if request.yes_i_understand_manifest_replay_authority_is_gone
+        && !request.purge_manifest_replay_roots
+    {
+        return Err(SinexError::validation(
+            "Manifest replay-root acknowledgement requires purge_manifest_replay_roots=true",
         ));
     }
 
@@ -1238,11 +1253,12 @@ pub async fn handle_tombstone_approve(
         }
     };
 
+    let mut manifest_replay_roots_purged = 0_usize;
+    let mut rows_deleted = 0_usize;
     if !orphan_material_ids.is_empty() {
         let mut blobs_dropped = 0_usize;
         let mut blobs_shared = 0_usize;
         let mut blob_rows_deleted = 0_usize;
-        let mut rows_deleted = 0_usize;
         let mut rows_survived = 0_usize;
         for material_id in &orphan_material_ids {
             // Delete the registry row FIRST, re-verifying orphan status atomically
@@ -1264,9 +1280,34 @@ pub async fn handle_tombstone_approve(
                     rows_deleted += 1;
                     blob_uuid
                 }
+                Ok(None) if request.purge_manifest_replay_roots => match materials_repo
+                    .purge_manifest_material_if_orphan(sinex_primitives::Id::from_uuid(
+                        *material_id,
+                    ))
+                    .await
+                {
+                    Ok(Some(blob_uuid)) => {
+                        rows_deleted += 1;
+                        manifest_replay_roots_purged += 1;
+                        blob_uuid
+                    }
+                    Ok(None) => {
+                        rows_survived += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!(
+                            material_id = %material_id,
+                            error = %e,
+                            "Failed to purge manifest-backed orphan material registry row; retaining replay authority"
+                        );
+                        continue;
+                    }
+                },
                 Ok(None) => {
-                    // Either already gone, or a live event now references it --
-                    // either way its content (if any) must survive untouched.
+                    // Either already gone, a live event now references it, or it
+                    // is a manifest-backed replay root without explicit purge
+                    // authorization. In every case its content must survive.
                     rows_survived += 1;
                     continue;
                 }
@@ -1384,6 +1425,7 @@ pub async fn handle_tombstone_approve(
             orphans_found = orphan_material_ids.len(),
             rows_deleted = rows_deleted,
             rows_survived = rows_survived,
+            manifest_replay_roots_purged = manifest_replay_roots_purged,
             blobs_dropped = blobs_dropped,
             blobs_shared = blobs_shared,
             blob_rows_deleted = blob_rows_deleted,
@@ -1392,6 +1434,7 @@ pub async fn handle_tombstone_approve(
     }
 
     operation.tombstoned_count = Some(tombstoned_count);
+    operation.manifest_replay_roots_purged = Some(manifest_replay_roots_purged as u64);
 
     let projection_stale = pool
         .projection_registry()
@@ -1430,17 +1473,19 @@ pub async fn handle_tombstone_approve(
             purged_surface("sinex_schemas.dlq_events", tombstoned_count),
             PrivacyInvalidationSurface {
                 surface: "raw.source_material_registry".to_string(),
-                status: if orphan_material_ids.len() == candidate_material_ids.len() {
+                status: if rows_deleted == candidate_material_ids.len() {
                     PrivacyInvalidationStatus::Purged
                 } else {
                     PrivacyInvalidationStatus::RetainedByDesign
                 },
                 before_count: candidate_material_ids.len() as u64,
-                after_count: candidate_material_ids.len().saturating_sub(orphan_material_ids.len())
+                after_count: candidate_material_ids.len().saturating_sub(rows_deleted)
                     as u64,
-                affected_count: orphan_material_ids.len() as u64,
+                affected_count: rows_deleted as u64,
                 residual_horizon: Some("shared-material references are retained".to_string()),
-                detail: Some("orphan-only material deletion route applied".to_string()),
+                detail: Some(format!(
+                    "orphan-only material deletion route applied; {manifest_replay_roots_purged} manifest replay roots explicitly purged"
+                )),
             },
             PrivacyInvalidationSurface {
                 surface: "derivation.projection_registry".to_string(),

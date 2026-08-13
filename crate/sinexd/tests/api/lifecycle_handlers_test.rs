@@ -525,6 +525,174 @@ async fn tombstone_approve_deletes_orphan_source_material(ctx: TestContext) -> T
     Ok(())
 }
 
+#[sinex_test]
+async fn tombstone_approve_retains_manifest_replay_root_without_explicit_purge(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.manifest-retained";
+    let material_id = ctx.create_source_material(Some(source)).await?;
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET metadata = jsonb_build_object('material_manifest', jsonb_build_object('content_key', 'local-cas-s1--aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) WHERE id = $1",
+    )
+    .bind(material_id.to_uuid())
+    .execute(ctx.pool())
+    .await?;
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.manifest", json!({ "kind": "fixture" }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event must have id").to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id.clone()],
+                "dry_run": false,
+                "reason": "manifest retention test: archive before tombstone",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({ "source": source, "limit": 1, "reason": "manifest retention test" }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": create.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approve.operation.tombstoned_count, Some(1));
+    assert_eq!(approve.operation.manifest_replay_roots_purged, Some(0));
+    assert!(
+        ctx.pool()
+            .source_materials()
+            .get_by_id(sinex_primitives::Id::from_uuid(material_id.to_uuid()))
+            .await?
+            .is_some(),
+        "ordinary tombstone cleanup must retain the manifest-backed replay root"
+    );
+    assert_eq!(tombstone_count(&ctx, &event_id).await?, 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn tombstone_approve_purges_manifest_root_only_after_specific_acknowledgement(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.manifest-reviewed-purge";
+    let material_id = ctx.create_source_material(Some(source)).await?;
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET metadata = jsonb_build_object('material_manifest', jsonb_build_object('content_key', 'local-cas-s1--aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) WHERE id = $1",
+    )
+    .bind(material_id.to_uuid())
+    .execute(ctx.pool())
+    .await?;
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.manifest", json!({ "kind": "fixture" }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event must have id").to_string();
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id.clone()],
+                "dry_run": false,
+                "reason": "manifest purge test: archive before tombstone",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({ "source": source, "limit": 1, "reason": "manifest purge test" }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let missing_ack = handle_tombstone_approve(
+        json!({
+            "operation_id": create.operation.operation_id,
+            "yes_i_understand_data_is_gone": true,
+            "purge_manifest_replay_roots": true,
+        }),
+        &services,
+        &auth,
+    )
+    .await;
+    assert!(
+        missing_ack.is_err(),
+        "requesting replay-root purge without its distinct acknowledgement must fail closed"
+    );
+    assert!(
+        ctx.pool()
+            .source_materials()
+            .get_by_id(sinex_primitives::Id::from_uuid(material_id.to_uuid()))
+            .await?
+            .is_some(),
+        "a rejected purge request must not remove the manifest replay authority"
+    );
+
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": create.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+                "purge_manifest_replay_roots": true,
+                "yes_i_understand_manifest_replay_authority_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approve.operation.tombstoned_count, Some(1));
+    assert_eq!(approve.operation.manifest_replay_roots_purged, Some(1));
+    assert!(
+        ctx.pool()
+            .source_materials()
+            .get_by_id(sinex_primitives::Id::from_uuid(material_id.to_uuid()))
+            .await?
+            .is_none(),
+        "the reviewed, specifically acknowledged purge must remove the manifest replay root"
+    );
+    assert_eq!(tombstone_count(&ctx, &event_id).await?, 1);
+    Ok(())
+}
+
 /// Companion test: when an event references material that is ALSO referenced
 /// by a separate live event, tombstoning the first event must NOT delete
 /// the material — the second event still depends on it.

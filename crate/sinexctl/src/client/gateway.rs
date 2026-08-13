@@ -1779,10 +1779,15 @@ impl GatewayClient {
         &self,
         operation_id: String,
         confirm: bool,
+        purge_manifest_replay_roots: bool,
+        confirm_manifest_replay_authority_purge: bool,
     ) -> Result<TombstoneApproveResponse> {
         let req = TombstoneApproveRequest {
             operation_id,
             yes_i_understand_data_is_gone: confirm,
+            purge_manifest_replay_roots,
+            yes_i_understand_manifest_replay_authority_is_gone:
+                confirm_manifest_replay_authority_purge,
         };
         self.call_typed(LIFECYCLE_TOMBSTONE_APPROVE_METHOD, &req)
             .await

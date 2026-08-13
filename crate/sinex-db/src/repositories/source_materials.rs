@@ -1827,6 +1827,42 @@ impl SourceMaterialRepository<'_> {
         Ok(deleted.map(|row| row.optional_blob_id))
     }
 
+    /// Atomically purge a manifest-backed replay root only after the caller
+    /// has completed the reviewed operator authorization flow. This is not a
+    /// cleanup primitive: ordinary cleanup must use
+    /// [`Self::delete_material_if_orphan`], which retains manifest authority.
+    ///
+    /// As with ordinary deletion, the orphan recheck is part of the DELETE so
+    /// a concurrently admitted live or archived event keeps the material and
+    /// its exact CAS authority available.
+    pub async fn purge_manifest_material_if_orphan(
+        &self,
+        id: Id<SourceMaterialRecord>,
+    ) -> DbResult<Option<Option<uuid::Uuid>>> {
+        let id_uuid = id.to_uuid();
+        let deleted = sqlx::query!(
+            r#"
+            DELETE FROM raw.source_material_registry sm
+            WHERE sm.id = $1
+              AND sm.metadata ? 'material_manifest'
+              AND NOT EXISTS (
+                SELECT 1 FROM core.events e
+                WHERE e.source_material_id = sm.id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM audit.archived_events ae
+                WHERE ae.source_material_id = sm.id
+              )
+            RETURNING optional_blob_id as "optional_blob_id: uuid::Uuid"
+            "#,
+            id_uuid
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "purge manifest material if orphan"))?;
+        Ok(deleted.map(|row| row.optional_blob_id))
+    }
+
     /// Delete a bounded batch of registry rows that have outlived the material
     /// recovery window, remain in a disposable lifecycle state, and have never
     /// gained a live or archived event reference.
