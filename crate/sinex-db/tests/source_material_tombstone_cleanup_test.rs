@@ -147,3 +147,28 @@ async fn delete_material_preserves_referenced_registry_row(ctx: TestContext) -> 
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn delete_material_preserves_manifest_replay_root(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("manifest-retention-test"))
+        .await?
+        .to_uuid();
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET metadata = jsonb_build_object('material_manifest', jsonb_build_object('content_key', 'local-cas-s1--aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) WHERE id = $1",
+    )
+    .bind(material_id)
+    .execute(ctx.pool())
+    .await?;
+
+    let repo = ctx.pool.source_materials();
+    assert!(
+        !repo.delete_material(Id::from_uuid(material_id)).await?,
+        "ordinary orphan cleanup must not remove a manifest-backed replay root"
+    );
+    assert!(
+        repo.get_by_id(Id::from_uuid(material_id)).await?.is_some(),
+        "manifest-backed material must remain discoverable after cleanup"
+    );
+    Ok(())
+}

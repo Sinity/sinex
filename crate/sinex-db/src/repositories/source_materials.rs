@@ -1672,7 +1672,9 @@ impl SourceMaterialRepository<'_> {
 
     /// Atomically delete a source material registry row, but ONLY if it is
     /// still orphaned (no live `core.events` or `audit.archived_events` row
-    /// references it) at the moment of the delete.
+    /// references it) at the moment of the delete. Manifest-backed materials
+    /// are replay roots and are never removed by this ordinary cleanup path;
+    /// an explicit reviewed purge must own that authority transition.
     ///
     /// This closes the delete-on-tombstone TOCTOU race (sinex-audit-tombstonerace):
     /// `find_orphan_materials` followed later by an unconditional registry delete
@@ -1697,6 +1699,7 @@ impl SourceMaterialRepository<'_> {
             r#"
             DELETE FROM raw.source_material_registry sm
             WHERE sm.id = $1
+              AND NOT (sm.metadata ? 'material_manifest')
               AND NOT EXISTS (
                 SELECT 1 FROM core.events e
                 WHERE e.source_material_id = sm.id
