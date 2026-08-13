@@ -47,6 +47,7 @@ use sinex_primitives::temporal::Timestamp;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::Journal,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::JOURNAL_CURSOR,
     // sinex-sn6s: unit lifecycle transitions are observed live from the
     // journal, which is a capped rolling export; no other durable store.
     criticality = SourceCriticality::NotReconstructable,

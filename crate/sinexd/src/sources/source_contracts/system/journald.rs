@@ -82,6 +82,7 @@ fn is_sinexd_journal_entry(json: &serde_json::Value) -> bool {
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::Journal,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::JOURNAL_CURSOR,
     // sinex-sn6s: the external journal export is itself a capped rolling
     // window (journald retention), not a full-history canonical copy —
     // Sinex's own row is the only durable record beyond that window.

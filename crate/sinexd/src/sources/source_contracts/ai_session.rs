@@ -148,6 +148,8 @@ pub struct ClaudeSessionParserConfig;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
 )]
 pub struct ClaudeSessionParser;
 
@@ -367,6 +369,7 @@ pub struct ChatGptSessionParserConfig;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
 )]
 pub struct ChatGptSessionParser;
 

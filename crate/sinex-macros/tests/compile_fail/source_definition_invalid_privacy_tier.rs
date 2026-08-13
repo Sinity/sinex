@@ -13,6 +13,7 @@ use sinex_macros::SourceDefinition;
     event_type = "test.event",
     input_shape = "json",
     adapter = "AppendOnlyFileAdapter",
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     occurrence_identity = "anchor",
     privacy_tier = "SuperSensitive"
 )]

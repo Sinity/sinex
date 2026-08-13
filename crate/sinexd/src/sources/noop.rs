@@ -54,6 +54,10 @@ register_source_runtime_binding! {
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation(
+        "noop source has no recoverable observation history",
+        "sinex-r6d.8",
+    ))
     .build()
 }
 

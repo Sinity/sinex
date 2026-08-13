@@ -192,6 +192,7 @@ pub struct BrowserHistoryParserConfig {}
         occurrence_anchor: "visit_id",
     },
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::MUTABLE_SNAPSHOT,
     factory_adapter = BrowserHistoryAdapter,
     // sinex-sn6s: qutebrowser/Chrome own their own history SQLite stores;
     // Sinex is a downstream reader, never the sole copy.
@@ -231,6 +232,7 @@ pub struct TakeoutChromeHistoryConfig;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     criticality = SourceCriticality::Reconstructable,
 )]
 pub struct TakeoutChromeHistoryParser;

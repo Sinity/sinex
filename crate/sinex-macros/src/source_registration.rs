@@ -84,6 +84,8 @@ pub(crate) struct RegistrationAttrs {
     /// Typed enum-expression token (`TransportSemantics::JETSTREAM_DURABLE`),
     /// emitted verbatim. `None` => generator supplies the default path.
     pub transport_semantics: Option<TokenStream>,
+    /// Typed `SourceRecoveryPolicy` expression. Required for every binding.
+    pub recovery_policy: Option<TokenStream>,
     /// Typed enum path token (`SourceCriticality::Reconstructable` or
     /// `SourceCriticality::NotReconstructable`), emitted verbatim. `None` =>
     /// left undeclared on the binding; startup validation requires every
@@ -141,6 +143,7 @@ pub(crate) struct RuntimeBindingAttrs {
     pub runtime_shape: Option<TokenStream>,
     pub material_lifecycle: Option<TokenStream>,
     pub transport_semantics: Option<TokenStream>,
+    pub recovery_policy: Option<TokenStream>,
     pub criticality: Option<TokenStream>,
     pub capabilities: Vec<String>,
     pub proposed: Option<bool>,
@@ -316,6 +319,20 @@ fn generate_one_source_runtime_binding(
                 #runtime_shape,
             ))
         });
+    let recovery_policy = match binding {
+        Some(binding) => binding.recovery_policy.clone().ok_or_else(|| {
+            Error::new(
+                Span::call_site(),
+                "recovery_policy is required for every nested source_meta binding",
+            )
+        })?,
+        None => attrs.recovery_policy.clone().ok_or_else(|| {
+            Error::new(
+                Span::call_site(),
+                "recovery_policy is required for every SourceRuntimeBinding",
+            )
+        })?,
+    };
 
     let capabilities = binding
         .filter(|binding| !binding.capabilities.is_empty())
@@ -352,6 +369,7 @@ fn generate_one_source_runtime_binding(
             .runner_pack(#runner_pack)
             .material_lifecycle(#material_lifecycle)
             .transport_semantics(#transport_semantics)
+            .recovery_policy(#recovery_policy)
             #capabilities_call
             .checkpoint_family(#checkpoint_family)
             .runtime_shape(#runtime_shape)

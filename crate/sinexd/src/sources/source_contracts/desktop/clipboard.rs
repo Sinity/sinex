@@ -84,6 +84,7 @@ impl Default for ClipboardParserConfig {
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("live source has no recoverable history", "sinex-r6d.8"),
 )]
 pub struct ClipboardParser;
 

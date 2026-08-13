@@ -84,6 +84,7 @@ pub struct AsciinemaParserConfig;
     resource_profile = ResourceProfile::DirectoryScan,
     checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "directory", occurrence_anchor: "file_path_fingerprint" },
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::MUTABLE_SNAPSHOT,
 )]
 pub struct AsciinemaParser;
 

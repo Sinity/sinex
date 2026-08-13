@@ -191,6 +191,12 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
             ));
         }
         for runtime_binding in deployed_runtime_bindings {
+            if let Err(reason) = runtime_binding.recovery_policy.validate() {
+                errors.push(format!(
+                    "{}: runtime binding '{}' has invalid SourceRecoveryPolicy: {reason}",
+                    binding.source_id, runtime_binding.id
+                ));
+            }
             if runtime_binding.criticality.is_none() {
                 errors.push(format!(
                     "{}: runtime binding `{}` has no declared SourceCriticality \

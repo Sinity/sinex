@@ -85,6 +85,7 @@ use sinex_primitives::source_contracts::{
     runner_pack = RunnerPack::External,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::EXTERNAL_PRODUCER,
     factory = "none"
 )]
 pub struct PolylogueExternalProducer;

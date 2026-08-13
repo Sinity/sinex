@@ -1,7 +1,8 @@
 use super::*;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
-    CheckpointFamily, ResourceProfile, RuntimeShape, SourceBuildImpact, SubjectRef,
+    CheckpointFamily, ResourceProfile, RuntimeShape, SourceBuildImpact, SourceRecoveryPolicy,
+    SubjectRef,
 };
 use xtask::sandbox::prelude::sinex_test;
 
@@ -76,6 +77,7 @@ async fn capability_report_refs_are_filtered_through_typed_parser()
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build();
 
     assert_eq!(

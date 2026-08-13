@@ -48,6 +48,7 @@ use std::collections::HashMap;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("live source has no recoverable history", "sinex-r6d.8"),
     // sinex-sn6s: kernel uevents are pure live observation; nothing external
     // retains device-connect history.
     criticality = SourceCriticality::NotReconstructable,

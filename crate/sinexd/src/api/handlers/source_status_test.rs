@@ -9,8 +9,8 @@ use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::rpc::{method_catalog, methods};
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SubjectRef, all_source_contracts,
-    source_runtime_bindings,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceRecoveryPolicy,
+    SubjectRef, all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, SourceCoverageListView,
@@ -161,9 +161,10 @@ static BINDING: SourceRuntimeBinding = SourceRuntimeBinding::builder(
 .source_id("fixture.source")
 .runner_pack(RunnerPack::SinexdSource)
 .checkpoint_family(CheckpointFamily::AppendStream)
-.runtime_shape(RuntimeShape::OnDemand)
-.build_impact(SourceBuildImpact::ZERO)
-.build();
+    .runtime_shape(RuntimeShape::OnDemand)
+    .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
+    .build();
 
 fn assert_action_rpc_methods_are_cataloged(
     source_id: &str,
@@ -758,6 +759,10 @@ async fn runtime_bridge_coverage_surfaces_unobserved_bridge_and_declared_actions
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::live_observation(
+        "test bridge has no recoverable source history",
+        "sinex-r6d.8",
+    ))
     .build();
 
     let view = source_coverage_view(
@@ -2170,6 +2175,10 @@ fn terminal_bridge_binding() -> SourceRuntimeBinding {
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::live_observation(
+        "test bridge has no recoverable source history",
+        "sinex-r6d.8",
+    ))
     .build()
 }
 
@@ -2199,6 +2208,7 @@ fn fs_binding() -> SourceRuntimeBinding {
         .checkpoint_family(CheckpointFamily::AppendStream)
         .runtime_shape(RuntimeShape::Continuous)
         .build_impact(SourceBuildImpact::ZERO)
+        .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
         .build()
 }
 

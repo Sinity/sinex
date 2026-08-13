@@ -77,7 +77,7 @@ async fn source_runtime_binding_builder_accepts_all_required_fields() -> TestRes
     );
     assert_eq!(
         descriptor.recovery_policy,
-        Some(SourceRecoveryPolicy::APPEND_STREAM)
+        SourceRecoveryPolicy::APPEND_STREAM
     );
     Ok(())
 }
@@ -274,27 +274,6 @@ async fn source_runtime_binding_exposes_typed_capability_refs() -> TestResult<()
     .build()
 }
 
-// This fixture deliberately omits a policy so the inventory diagnostic is
-// proven against the real link-time registration surface.
-::inventory::submit! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:primitives.recovery-policy-missing"),
-        "primitives.recovery-policy-missing",
-        "test",
-    )
-    .implementation("sinex-primitives::test")
-    .adapter("test_adapter")
-    .output_event_type("test.output")
-    .privacy_context(ProcessingContext::Metadata)
-    .resource_profile(ResourceProfile::EmbeddedEmitter)
-    .source_id("primitives.recovery-policy-missing")
-    .runner_pack(RunnerPack::InProcess)
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
 #[sinex_test]
 async fn source_runtime_binding_inventory_collects_submissions() -> TestResult<()> {
     let bindings = source_runtime_bindings()
@@ -302,19 +281,5 @@ async fn source_runtime_binding_inventory_collects_submissions() -> TestResult<(
         .collect::<Vec<_>>();
 
     assert!(bindings.contains(&"source:primitives.inventory-sentinel"));
-    Ok(())
-}
-
-#[sinex_test]
-async fn source_recovery_policy_inventory_diagnostics_are_explicit() -> TestResult<()> {
-    let diagnostics = source_runtime_binding_recovery_policy_diagnostics().collect::<Vec<_>>();
-
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.binding_id == "primitives.recovery-policy-missing"
-            && diagnostic.reason == "missing SourceRecoveryPolicy"
-    }));
-    assert!(!diagnostics.iter().any(|diagnostic| {
-        diagnostic.binding_id == "primitives.inventory-sentinel"
-    }));
     Ok(())
 }

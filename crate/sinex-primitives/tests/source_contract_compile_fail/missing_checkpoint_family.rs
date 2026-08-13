@@ -1,5 +1,5 @@
 use sinex_primitives::{
-    source_contracts::{RuntimeShape, SourceRuntimeBinding, SourceBuildImpact},
+    source_contracts::{RuntimeShape, SourceRecoveryPolicy, SourceRuntimeBinding, SourceBuildImpact},
     subject_ref,
 };
 use sinex_primitives::privacy::ProcessingContext;
@@ -15,5 +15,6 @@ fn main() {
     .privacy_context(ProcessingContext::Command)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build();
 }

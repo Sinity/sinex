@@ -3,7 +3,7 @@ use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
     RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
-    SourceRuntimeBinding, SubjectRef,
+    SourceCriticality, SourceRecoveryPolicy, SourceRuntimeBinding, SubjectRef,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +27,7 @@ const TEST_KEY: &str = "SINEX_BINDINGS_TEST_DISPLAY_RACE";
 // the `criticality: Option<SourceCriticality>` field/enforcement itself)
 // makes `enabling_binding_without_criticality_fails_loudly` below fail.
 const CRITICALITY_FIXTURE_SOURCE_ID: &str = "sinex.fixture.criticality-undeclared";
+const INVALID_RECOVERY_FIXTURE_SOURCE_ID: &str = "sinex.fixture.recovery-policy-invalid";
 
 sinex_primitives::register_source_contract! {
     SourceContract {
@@ -58,8 +59,44 @@ sinex_primitives::register_source_runtime_binding! {
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     // Deliberately no `.criticality(..)` call — this is the missing
     // declaration the test asserts startup rejects.
+    .build()
+}
+
+sinex_primitives::register_source_contract! {
+    SourceContract {
+        id: INVALID_RECOVERY_FIXTURE_SOURCE_ID,
+        namespace: "test",
+        event_types: &[("sinex.fixture", "recovery-policy.invalid")],
+        source_role: sinex_primitives::sources::SourceRole::Reflection,
+        privacy_tier: PrivacyTier::Public,
+        horizons: &[Horizon::Continuous],
+        retention: RetentionPolicy::Forever,
+        occurrence_identity: OccurrenceIdentity::Natural,
+        access_scope: AccessScope::Internal,
+    }
+}
+
+sinex_primitives::register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:sinex.fixture.recovery-policy-invalid"),
+        INVALID_RECOVERY_FIXTURE_SOURCE_ID,
+        "test",
+    )
+    .implementation("sinexd::test-fixture")
+    .adapter("test_adapter")
+    .output_event_type("recovery-policy.invalid")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
+    .source_id(INVALID_RECOVERY_FIXTURE_SOURCE_ID)
+    .runner_pack(RunnerPack::InProcess)
+    .checkpoint_family(CheckpointFamily::AppendStream)
+    .runtime_shape(RuntimeShape::OnDemand)
+    .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::live_observation("", "sinex-r6d.8"))
+    .criticality(SourceCriticality::Reconstructable)
     .build()
 }
 
@@ -88,6 +125,28 @@ async fn enabling_binding_without_criticality_fails_loudly() -> xtask::sandbox::
     assert!(
         message.to_lowercase().contains("criticality"),
         "error must explain the missing SourceCriticality declaration, got: {message}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn enabling_binding_with_invalid_recovery_policy_fails_loudly(
+) -> xtask::sandbox::TestResult<()> {
+    let manifest_binding = SourceBinding {
+        source_id: INVALID_RECOVERY_FIXTURE_SOURCE_ID.to_string(),
+        instance_idx: 1,
+        service_name: None,
+        runtime_config: None,
+        extra_args: Vec::new(),
+        extra_env: HashMap::new(),
+    };
+
+    let error = validate_bindings(std::slice::from_ref(&manifest_binding)).expect_err(
+        "validate_bindings must reject an enabled binding with an invalid SourceRecoveryPolicy",
+    );
+    assert!(
+        error.to_string().contains("invalid SourceRecoveryPolicy"),
+        "error must identify the invalid policy, got: {error}"
     );
     Ok(())
 }

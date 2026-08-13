@@ -97,6 +97,7 @@ pub struct RaindropParserConfig;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     // sinex-sn6s: raindrop.io is the authoritative store; Sinex's copy is a
     // cache.
     criticality = SourceCriticality::Reconstructable,

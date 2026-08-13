@@ -1,0 +1,17 @@
+error[E0599]: no method named `build` found for struct `SourceRuntimeBindingBuilder<HasOutput, HasPrivacy, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact, MissingRecoveryPolicy>` in the current scope
+  --> tests/source_contract_compile_fail/missing_recovery_policy.rs:18:6
+   |
+ 8 |       let _ = SourceRuntimeBinding::builder(
+   |  _____________-
+ 9 | |         subject_ref!("runtime_unit:test.missing_recovery_policy"),
+10 | |         "test.missing_recovery_policy",
+11 | |         "test",
+...  |
+17 | |     .build_impact(SourceBuildImpact::ZERO)
+18 | |     .build();
+   | |     -^^^^^ method not found in `SourceRuntimeBindingBuilder<HasOutput, HasPrivacy, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact, MissingRecoveryPolicy>`
+   | |_____|
+   |
+   |
+   = note: the method was found for
+           `SourceRuntimeBindingBuilder<HasOutput, HasPrivacy, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact, HasRecoveryPolicy>`

@@ -87,7 +87,7 @@ use crate::source_contracts::{
     AccessScope, CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier, ResourceProfile,
     RetentionPolicy as SuRetentionPolicy, RunnerPack, RuntimeShape as SuRuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRecoveryPolicy, SourceRuntimeBinding, SubjectRef,
 };
 use crate::{register_source_contract, register_source_runtime_binding};
 
@@ -141,6 +141,10 @@ register_source_runtime_binding! {
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::live_observation(
+        "in-process lifecycle telemetry has no recoverable source history",
+        "sinex-r6d.8",
+    ))
     .build()
 }
 
@@ -161,6 +165,10 @@ register_source_runtime_binding! {
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::live_observation(
+        "in-process automaton errors have no recoverable source history",
+        "sinex-r6d.8",
+    ))
     .build()
 }
 

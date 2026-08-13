@@ -62,10 +62,12 @@ pub struct EmailMailboxParserConfig;
     runner_pack = RunnerPack::Staged,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Scheduled,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
     transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
     binding(
         subject = "source:email.mailbox.maildir-staged",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
         event_type = "email.message.received",
         implementation = "staged-maildir-parser",
         adapter = "FileContentDropAdapter",
@@ -79,6 +81,7 @@ pub struct EmailMailboxParserConfig;
     ),
     binding(
         subject = "source:email.mailbox.mbox-staged",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
         event_type = "email.message.received",
         implementation = "staged-mbox-parser",
         adapter = "EmailMboxFileAdapter",
@@ -92,11 +95,13 @@ pub struct EmailMailboxParserConfig;
     ),
     binding(
         subject = "source:email.mailbox.sent",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
         event_type = "email.message.sent",
         proposed = true
     ),
     binding(
         subject = "source:email.mailbox.gmail-api-scheduled-sync",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::JOURNAL_CURSOR,
         event_type = "email.sync_cursor.observed",
         implementation = "gmail-api-scheduled-sync",
         adapter = "GmailApiCursorAdapter",
@@ -110,6 +115,7 @@ pub struct EmailMailboxParserConfig;
     ),
     binding(
         subject = "source:email.mailbox.imap-scheduled-sync",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::MUTABLE_SNAPSHOT,
         event_type = "email.sync_cursor.observed",
         implementation = "imap-scheduled-sync",
         adapter = "ImapSyncAdapter",
@@ -123,6 +129,7 @@ pub struct EmailMailboxParserConfig;
     ),
     binding(
         subject = "source:email.mailbox.imap-idle-live",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("IMAP IDLE observations have no recoverable source history", "sinex-r6d.8"),
         event_type = "email.capture_runtime.observed",
         implementation = "imap-idle-live",
         adapter = "ImapSyncAdapter",

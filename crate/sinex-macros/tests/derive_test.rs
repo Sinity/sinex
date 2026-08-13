@@ -332,6 +332,7 @@ async fn test_source_meta_primary_subject_override() -> TestResult<()> {
         runner_pack = RunnerPack::Staged,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::Scheduled,
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
         material_lifecycle = MaterialLifecyclePolicy::ExternalReferenceOnly,
         transport_semantics = TransportSemantics::JETSTREAM_DURABLE,
         factory = "none"
@@ -360,6 +361,10 @@ async fn test_source_meta_primary_subject_override() -> TestResult<()> {
     );
     assert!(binding.transport_semantics.replayable);
     assert!(binding.transport_semantics.dlq);
+    assert_eq!(
+        binding.recovery_policy,
+        sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM
+    );
 
     Ok(())
 }

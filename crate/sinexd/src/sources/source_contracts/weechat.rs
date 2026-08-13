@@ -51,6 +51,8 @@ use sinex_primitives::source_contracts::{
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     factory_parser = WeeChatLogParser
 )]
 pub struct WeeChatSourceMeta;
@@ -96,6 +98,7 @@ pub struct WeeChatSourceMeta;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     factory = "parser"
 )]
 pub struct WeeChatMessageRecord {

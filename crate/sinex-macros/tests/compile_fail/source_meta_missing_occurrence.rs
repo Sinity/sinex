@@ -8,7 +8,8 @@ use sinex_macros::SourceMeta;
     namespace = "test",
     event_source = "test.src",
     event_type = "test.event",
-    adapter = "AppendOnlyFileAdapter"
+    adapter = "AppendOnlyFileAdapter",
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM
 )]
 pub struct MissingOccurrence;
 

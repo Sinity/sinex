@@ -78,7 +78,7 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
         .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(
         out,
-        "use sinex_primitives::source_contracts::{{AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile, RetentionPolicy, RunnerPack, RuntimeShape, SourceContract, SourceRuntimeBinding}};"
+        "use sinex_primitives::source_contracts::{{AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile, RetentionPolicy, RunnerPack, RuntimeShape, SourceContract, SourceRecoveryPolicy, SourceRuntimeBinding}};"
     )
     .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
@@ -149,6 +149,10 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
         || "RuntimeShape::OnDemand".to_string(),
         |binding| runtime_shape_expr(&binding.runtime_shape),
     );
+    let recovery_policy = primary_binding.map_or_else(
+        || "SourceRecoveryPolicy::APPEND_STREAM".to_string(),
+        |binding| recovery_policy_expr(&binding.checkpoint_family),
+    );
     let capabilities = primary_binding
         .map(|binding| binding.capabilities.as_slice())
         .unwrap_or(&mode.coverage_debt_refs);
@@ -195,6 +199,8 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     writeln!(out, "        checkpoint_family = {checkpoint_family},")
         .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "        runtime_shape = {runtime_shape},")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        recovery_policy = {recovery_policy},")
         .map_err(|_| SourceSkeletonError::Render)?;
     if !capabilities.is_empty() {
         writeln!(
@@ -453,6 +459,20 @@ fn checkpoint_family_expr(value: &serde_json::Value) -> String {
         Some("polling") => "CheckpointFamily::Polling".to_string(),
         Some("live_observation") => "CheckpointFamily::LiveObservation".to_string(),
         _ => "CheckpointFamily::AppendStream".to_string(),
+    }
+}
+
+fn recovery_policy_expr(value: &serde_json::Value) -> String {
+    match string_field(value, "kind") {
+        Some("append_stream") => "SourceRecoveryPolicy::APPEND_STREAM".to_string(),
+        Some("mutable_snapshot") | Some("polling") => {
+            "SourceRecoveryPolicy::MUTABLE_SNAPSHOT".to_string()
+        }
+        Some("journal") => "SourceRecoveryPolicy::JOURNAL_CURSOR".to_string(),
+        Some("live_observation") => {
+            "SourceRecoveryPolicy::live_observation(\"replace-with-source-specific loss rationale\", \"sinex-r6d.8\")".to_string()
+        }
+        _ => "SourceRecoveryPolicy::APPEND_STREAM".to_string(),
     }
 }
 

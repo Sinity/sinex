@@ -51,10 +51,12 @@ use sinex_primitives::source_contracts::{
     runner_pack = RunnerPack::Staged,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Scheduled,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
     transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
     binding(
         subject = "source:media.audio-transcript.audio-bundle-staged",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
         event_type = "media.audio.recording_observed",
         implementation = "staged-audio-bundle",
         adapter = "FileContentDropAdapter",
@@ -69,6 +71,7 @@ use sinex_primitives::source_contracts::{
     ),
     binding(
         subject = "source:media.audio-transcript.local-model-batch",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::DERIVED_INTERNAL,
         event_type = "media.audio.transcription_run_observed",
         implementation = "local-transcription-worker",
         adapter = "MediaWorkerCommandExecutor",
@@ -83,6 +86,7 @@ use sinex_primitives::source_contracts::{
     ),
     binding(
         subject = "source:media.audio-transcript.on-demand-session",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("on-demand audio capture has no recoverable source history", "sinex-r6d.8"),
         event_type = "media.audio.capture_session_started",
         implementation = "live-capture",
         adapter = "AudioSessionCaptureAdapter",
@@ -97,6 +101,7 @@ use sinex_primitives::source_contracts::{
     ),
     binding(
         subject = "source:media.audio-transcript.live-session",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("live audio capture has no recoverable source history", "sinex-r6d.8"),
         event_type = "media.audio.capture_session_ended",
         implementation = "live-capture",
         adapter = "AudioSessionCaptureAdapter",
@@ -125,6 +130,7 @@ pub struct MediaAudioTranscriptParser;
     horizons(Horizon::Historical),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Uuid5From("(material_id, segment_index, bbox)"),
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     access_scope = AccessScope::StagedExport,
     capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.check, operation:media.screen-ocr.import-ocr, operation:media.screen-ocr.inspect, operation:media.screen-ocr.replay, operation:media.screen-ocr.export",
     privacy_context = ProcessingContext::Document,
@@ -132,10 +138,12 @@ pub struct MediaAudioTranscriptParser;
     runner_pack = RunnerPack::Staged,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Scheduled,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
     transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
     binding(
         subject = "source:media.screen-ocr.screenshot-ocr-staged",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
         event_type = "media.screen.screenshot_observed",
         implementation = "staged-screenshot-bundle",
         adapter = "FileContentDropAdapter",
@@ -150,6 +158,7 @@ pub struct MediaAudioTranscriptParser;
     ),
     binding(
         subject = "source:media.screen-ocr.video-staged",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
         event_type = "media.screen.video_segment_observed",
         implementation = "staged-screen-video-bundle",
         adapter = "FileContentDropAdapter",
@@ -164,6 +173,7 @@ pub struct MediaAudioTranscriptParser;
     ),
     binding(
         subject = "source:media.screen-ocr.local-model-batch",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::DERIVED_INTERNAL,
         event_type = "media.screen.ocr_run_observed",
         implementation = "local-ocr-worker",
         adapter = "MediaWorkerCommandExecutor",
@@ -178,6 +188,7 @@ pub struct MediaAudioTranscriptParser;
     ),
     binding(
         subject = "source:media.screen-ocr.on-demand-region",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("on-demand screen capture has no recoverable source history", "sinex-r6d.8"),
         event_type = "media.screen.screenshot_observed",
         implementation = "live-capture",
         adapter = "ScreenRegionCaptureAdapter",
@@ -192,6 +203,7 @@ pub struct MediaAudioTranscriptParser;
     ),
     binding(
         subject = "source:media.screen-ocr.on-demand-video",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("on-demand video capture has no recoverable source history", "sinex-r6d.8"),
         event_type = "media.screen.video_segment_observed",
         implementation = "live-capture",
         adapter = "ScreenVideoCaptureAdapter",
@@ -206,6 +218,7 @@ pub struct MediaAudioTranscriptParser;
     ),
     binding(
         subject = "source:media.screen-ocr.live-session",
+        recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("live screen capture has no recoverable source history", "sinex-r6d.8"),
         event_type = "media.screen.ocr_segment_observed",
         implementation = "live-capture",
         adapter = "ScreenRegionCaptureAdapter",

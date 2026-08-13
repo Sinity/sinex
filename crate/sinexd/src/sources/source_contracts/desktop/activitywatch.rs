@@ -168,6 +168,7 @@ fn occurrence_timestamp_key(timestamp: Option<Timestamp>, anchor: &MaterialAncho
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "sqlite", occurrence_anchor: "bucket_event_timestamp" },
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::MUTABLE_SNAPSHOT,
     // sinex-sn6s: ActivityWatch owns its own SQLite store; Sinex is a
     // downstream reader, never the sole copy.
     criticality = SourceCriticality::Reconstructable,

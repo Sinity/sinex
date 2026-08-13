@@ -123,6 +123,10 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                     out.transport_semantics = Some(parse_enum_expr_attr(&meta)?);
                     return Ok(());
                 }
+                "recovery_policy" => {
+                    out.recovery_policy = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
                 "criticality" => {
                     out.criticality = Some(parse_enum_path_attr(&meta)?);
                     return Ok(());
@@ -290,6 +294,10 @@ fn parse_runtime_binding_attr(
             }
             "transport_semantics" => {
                 out.transport_semantics = Some(parse_enum_expr_attr(&nested)?);
+                return Ok(());
+            }
+            "recovery_policy" => {
+                out.recovery_policy = Some(parse_enum_expr_attr(&nested)?);
                 return Ok(());
             }
             "criticality" => {
