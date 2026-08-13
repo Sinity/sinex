@@ -362,7 +362,7 @@ async fn dlq_route_marks_redacted_and_parse_failure_entries_non_requeueable(
         .await
         .expect_err("preview-only entries must remain retained instead of being retried");
     assert!(error.to_string().contains("operator preview"));
-    let retained = dlq_stream.info().await?.state;
+    let retained = dlq_stream.info().await?.state.clone();
     assert_eq!(retained.messages, 2);
     assert!(
         tokio::time::timeout(Duration::from_millis(250), messages.next())
