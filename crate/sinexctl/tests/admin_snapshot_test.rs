@@ -15,7 +15,7 @@ use xtask::sandbox::prelude::*;
 
 use sinex_primitives::source_contracts;
 use sinexctl::admin::exec;
-use sinexctl::admin::manifest::ComponentExtras;
+use sinexctl::admin::manifest::{ComponentExtras, QuiesceReceipt};
 use sinexctl::admin::snapshot::{
     AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
     format_snapshot_restore_plan_result,
@@ -114,6 +114,7 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "state".to_string(),
@@ -162,6 +163,7 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "postgres".to_string(),
@@ -208,6 +210,7 @@ fn make_nats_snapshot_archive_with_summary() -> TestResult<(TempDir, PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "nats".to_string(),
@@ -252,6 +255,7 @@ fn make_unsupported_component_snapshot_archive() -> TestResult<(TempDir, PathBuf
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "legacy-index".to_string(),
@@ -741,6 +745,7 @@ async fn snapshot_inspect_reports_missing_component_paths_before_hash_failure()
         git_sha: None,
         host: "fixture".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: Vec::new(),
         components: vec![ComponentRecord {
             name: "state".to_string(),
@@ -781,6 +786,7 @@ async fn snapshot_inspect_rejects_empty_required_nats_component() -> xtask::sand
         git_sha: None,
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "nats".to_string(),
@@ -1293,14 +1299,31 @@ async fn quiesced_snapshot_auto_stop_targets_real_writer_units() -> xtask::sandb
     let output_path = output_dir.path().join("auto-stop.sinex.tar.zst");
     let tools = tempfile::tempdir()?;
     let active_marker = tools.path().join("active-writers");
+    let timer_marker = tools.path().join("active-timer");
+    let postgres_marker = tools.path().join("active-postgres");
+    let inventory = tools.path().join("runtime-inventory.json");
     fs::write(&active_marker, b"running")?;
+    fs::write(&timer_marker, b"scheduled")?;
+    fs::write(&postgres_marker, b"running")?;
+    fs::write(
+        &inventory,
+        r#"{
+  "surfaces": {
+    "sinexd": {"unit": "sinexd.service", "resourceClass": "capture-runtime"},
+    "nats": {"unit": "nats.service", "resourceClass": "capture-substrate"},
+    "sinex-postgres-dump-timer": {"unit": "sinex-postgres-dump.timer", "resourceClass": "backup-maintenance"}
+  }
+}"#,
+    )?;
     let stop_log = tools.path().join("stop.log");
     let _systemctl = make_executable_script(
         &tools,
         "systemctl",
         &format!(
-            "#!/bin/sh\ncase \"$1\" in\n  list-units) if [ -e '{}' ]; then printf '%s\\n' 'sinexd.service loaded active running' 'nats.service loaded active running' 'postgresql.service loaded active running'; fi ;;\n  stop) printf '%s\\n' \"$*\" >> '{}'; rm -f '{}' ;;\n  *) exit 0 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n  list-units) if [ -e '{}' ]; then printf '%s\\n' 'sinexd.service loaded active running' 'nats.service loaded active running'; fi; if [ -e '{}' ]; then printf '%s\\n' 'sinex-postgres-dump.timer loaded active waiting'; fi; if [ -e '{}' ]; then printf '%s\\n' 'postgresql.service loaded active running'; fi ;;\n  stop) printf '%s\\n' \"$*\" >> '{}'; rm -f '{}' ;;\n  *) exit 0 ;;\nesac\n",
             active_marker.display(),
+            timer_marker.display(),
+            postgres_marker.display(),
             stop_log.display(),
             active_marker.display(),
         ),
@@ -1313,6 +1336,7 @@ async fn quiesced_snapshot_auto_stop_targets_real_writer_units() -> xtask::sandb
 
     let output = sinexctl_bin()
         .env("PATH", path)
+        .env("SINEX_RUNTIME_INVENTORY", &inventory)
         .args([
             "ops",
             "state",
@@ -1341,13 +1365,30 @@ async fn quiesced_snapshot_auto_stop_targets_real_writer_units() -> xtask::sandb
     }
     .execute()?;
     assert_eq!(manifest.mode, "quiesce");
+    assert_eq!(
+        manifest.manifest.quiesce_receipt,
+        Some(QuiesceReceipt {
+            active_writer_units_before: vec!["sinexd.service".to_string(), "nats.service".to_string()],
+            stopped_writer_units: vec!["sinexd.service".to_string(), "nats.service".to_string()],
+            active_writer_units_after: Vec::new(),
+        }),
+        "the archived receipt must preserve the exact stop targets and successful post-stop verification"
+    );
+    let rendered = format_snapshot_inspect_result(&manifest);
+    assert!(
+        rendered.contains("active after: none"),
+        "the default inspect surface must expose the quiescence verdict\n{rendered}"
+    );
     let stop_log = fs::read_to_string(stop_log)?;
     assert!(stop_log.contains("stop sinexd.service nats.service"));
     assert!(!stop_log.contains("postgresql.service"));
+    assert!(!stop_log.contains("sinex-postgres-dump.timer"));
     assert!(
         !active_marker.exists(),
         "auto-stop must leave writer units inactive"
     );
+    assert!(timer_marker.exists(), "a timer is not a writer stop target");
+    assert!(postgres_marker.exists(), "PostgreSQL must remain available for pg_dump");
     Ok(())
 }
 
@@ -1832,6 +1873,7 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: vec![
             "desktop.clipboard".to_string(),
             "terminal.atuin-history".to_string(),

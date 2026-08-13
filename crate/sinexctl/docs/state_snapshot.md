@@ -16,6 +16,8 @@ active; it records `mode: live` in `manifest.json` and should be treated as a
 weaker-consistency artifact. Operator runbooks use the
 `sinexctl ops state ...` surface.
 
+A newly created quiesced archive also records `quiesce_receipt` in its manifest. The receipt names writer services active before capture, the exact services `--auto-stop` stopped, and the active-writer set observed after the stop completed. A successful quiesced archive records an empty post-stop set. Only `.service` units are writer targets. Timers schedule work, but stopping a timer neither stops an in-flight service nor proves that service quiescent. Archives created before this receipt was added remain readable, but their `mode: quiesce` label is not self-proving evidence.
+
 ## Quick start
 
 ```bash
@@ -252,6 +254,8 @@ cat "$RESTORE_DIR/manifest.json" | jq .
 
 Check `snapshot_id`, `created_at`, and that all expected components appear with
 non-zero `bytes`.
+
+For a quiesced archive, also inspect `quiesce_receipt`. Its `active_writer_units_after` array must be empty. When `--auto-stop` was used, `stopped_writer_units` must name the writer services that had been active; PostgreSQL must not appear in that list because the logical dump still needs it.
 
 ### 4. Restore Postgres
 

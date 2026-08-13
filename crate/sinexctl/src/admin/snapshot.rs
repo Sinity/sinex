@@ -15,8 +15,8 @@ use walkdir::{DirEntry, WalkDir};
 
 use crate::admin::exec;
 use crate::admin::manifest::{
-    CasExtras, ComponentExtras, ComponentRecord, NatsExtras, PostgresExtras, SnapshotManifest,
-    StateExtras, Totals,
+    CasExtras, ComponentExtras, ComponentRecord, NatsExtras, PostgresExtras, QuiesceReceipt,
+    SnapshotManifest, StateExtras, Totals,
 };
 use crate::admin::staging::StagingDir;
 
@@ -350,26 +350,34 @@ impl AdminSnapshotCommand {
         let created_at = current_rfc3339();
 
         // 2. Verify/stop services.
-        if !self.dry_run && mode.requires_quiescence() {
+        let quiesce_receipt = if !self.dry_run && mode.requires_quiescence() {
             let active = &topology.active_writer_units;
-            if !active.is_empty() {
-                if self.auto_stop {
-                    eprintln!("Stopping {} active sinex service(s)…", active.len());
-                    exec::stop_sinex_services_for(active)
-                        .context("auto-stop sinex services before snapshot")?;
-                } else {
-                    bail!(
-                        "sinex services are running ({}). \
-                         Stop them before snapshotting, or pass --auto-stop.\n\
-                         Active units:\n  {}",
-                        active.len(),
-                        active.join("\n  ")
-                    );
-                }
+            if active.is_empty() {
+                Some(QuiesceReceipt {
+                    active_writer_units_before: Vec::new(),
+                    stopped_writer_units: Vec::new(),
+                    active_writer_units_after: Vec::new(),
+                })
+            } else if self.auto_stop {
+                eprintln!("Stopping {} active sinex service(s)…", active.len());
+                exec::stop_sinex_services_for(active)
+                    .context("auto-stop sinex services before snapshot")
+                    .map(Some)?
+            } else {
+                bail!(
+                    "sinex services are running ({}). \
+                     Stop them before snapshotting, or pass --auto-stop.\n\
+                     Active units:\n  {}",
+                    active.len(),
+                    active.join("\n  ")
+                );
             }
         } else if !self.dry_run && self.auto_stop && !mode.requires_quiescence() {
             eprintln!("Ignoring --auto-stop for live snapshot mode; services remain active.");
-        }
+            None
+        } else {
+            None
+        };
 
         // 3. Probe disk free.
         let output_parent = self
@@ -410,6 +418,7 @@ impl AdminSnapshotCommand {
             &content_store_dir,
             &topology,
             database_url.as_deref(),
+            quiesce_receipt.as_ref(),
             &mut staging,
         );
 
@@ -431,6 +440,7 @@ impl AdminSnapshotCommand {
         content_store_dir: &Path,
         topology: &exec::SnapshotTopology,
         database_url: Option<&str>,
+        quiesce_receipt: Option<&QuiesceReceipt>,
         staging: &mut StagingDir,
     ) -> Result<SnapshotResult> {
         let mut component_records: Vec<ComponentRecord> = Vec::new();
@@ -545,6 +555,7 @@ impl AdminSnapshotCommand {
             git_sha: git_sha(),
             host: hostname(),
             mode: mode.as_str().to_string(),
+            quiesce_receipt: quiesce_receipt.cloned(),
             source_ids: source_ids.clone(),
             components: component_records.clone(),
             totals: Totals {
@@ -1910,6 +1921,27 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
             }
         ));
     }
+    match &result.manifest.quiesce_receipt {
+        Some(receipt) => {
+            out.push_str("  Quiesce receipt:\n");
+            out.push_str(&format!(
+                "    active before: {}\n",
+                format_unit_list(&receipt.active_writer_units_before)
+            ));
+            out.push_str(&format!(
+                "    stopped: {}\n",
+                format_unit_list(&receipt.stopped_writer_units)
+            ));
+            out.push_str(&format!(
+                "    active after: {}\n",
+                format_unit_list(&receipt.active_writer_units_after)
+            ));
+        }
+        None if result.mode == "quiesce" => {
+            out.push_str("  Quiesce receipt: absent (legacy archive; mode is not self-proving)\n");
+        }
+        None => {}
+    }
     out.push_str("\n  Components:\n");
     for component in &result.components {
         out.push_str(&format!(
@@ -1928,6 +1960,14 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
         }
     }
     out
+}
+
+fn format_unit_list(units: &[String]) -> String {
+    if units.is_empty() {
+        "none".to_string()
+    } else {
+        units.join(", ")
+    }
 }
 
 /// Render a snapshot restore plan or isolated drill result as a human-readable table string.

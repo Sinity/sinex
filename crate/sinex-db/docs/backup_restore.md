@@ -59,6 +59,8 @@ The external backup policy must include `.beads/dolt/` and retain the tracked
 `.beads/issues.jsonl` export as a separate backup item. This repository does
 not claim that the Sinex snapshot backs up Beads state.
 
+For a quiesced `sinexctl ops state snapshot`, retain `manifest.json` with the archive and inspect its `quiesce_receipt` during a restore drill. The receipt records the actual writer services stopped and an empty post-stop active set. It is evidence for the archive's consistency boundary, not evidence that an external backup policy included Beads or copied the archive off-host.
+
 ### Inspecting backup state
 
 ```bash

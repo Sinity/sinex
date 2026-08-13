@@ -10,6 +10,7 @@ fn manifest_with_postgres_row_counts(
         git_sha: None,
         host: "test-host".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: Vec::new(),
         components: vec![ComponentRecord {
             name: "postgres".to_string(),

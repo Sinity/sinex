@@ -12,6 +12,8 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::admin::manifest::QuiesceReceipt;
+
 const DEFAULT_RUNTIME_INVENTORY: &str = "/etc/sinnix/runtime-inventory.json";
 
 #[derive(Debug, Deserialize)]
@@ -62,7 +64,10 @@ fn inventory_snapshot_writer_units(inventory: &RuntimeInventory) -> Vec<String> 
                 || *name == "nats"
                 || name.starts_with("sinex-")
                 || name.contains("sinex");
-            let unit_kind = surface.unit.ends_with(".service") || surface.unit.ends_with(".timer");
+            // A timer schedules work but is not itself a writer. Stopping an
+            // active timer would leave its schedule disabled after the
+            // snapshot without proving that its paired service was quiescent.
+            let unit_kind = surface.unit.ends_with(".service");
             let excluded_surface = matches!(
                 name.as_str(),
                 "sinex-runtime"
@@ -656,13 +661,18 @@ fn active_sinex_services_with_inventory(
 /// Stop the active writer services without stopping PostgreSQL via a target.
 pub fn stop_sinex_services() -> Result<()> {
     let topology = SnapshotTopology::discover(None, None, false, true)?;
-    stop_sinex_services_for(&topology.active_writer_units)
+    stop_sinex_services_for(&topology.active_writer_units)?;
+    Ok(())
 }
 
 /// Stop the writer units already observed by [`SnapshotTopology`].
-pub fn stop_sinex_services_for(active: &[String]) -> Result<()> {
+pub fn stop_sinex_services_for(active: &[String]) -> Result<QuiesceReceipt> {
     if active.is_empty() {
-        return Ok(());
+        return Ok(QuiesceReceipt {
+            active_writer_units_before: Vec::new(),
+            stopped_writer_units: Vec::new(),
+            active_writer_units_after: Vec::new(),
+        });
     }
     let output = Command::new("systemctl")
         .arg("stop")
@@ -688,7 +698,11 @@ pub fn stop_sinex_services_for(active: &[String]) -> Result<()> {
             remaining.join(", ")
         );
     }
-    Ok(())
+    Ok(QuiesceReceipt {
+        active_writer_units_before: active.to_vec(),
+        stopped_writer_units: active.to_vec(),
+        active_writer_units_after: remaining,
+    })
 }
 
 /// Read a path-valued environment variable from the deployed Sinex daemon.
@@ -1096,6 +1110,13 @@ mod tests {
                 resource_class: "capture-substrate".to_string(),
             },
         );
+        inventory.surfaces.insert(
+            "sinex-postgres-dump-timer".to_string(),
+            RuntimeSurface {
+                unit: "sinex-postgres-dump.timer".to_string(),
+                resource_class: "backup-maintenance".to_string(),
+            },
+        );
         let mut writers = inventory_snapshot_writer_units(&inventory);
         writers.sort();
         assert_eq!(
@@ -1103,7 +1124,8 @@ mod tests {
             vec![
                 "capture-daemon.service".to_string(),
                 "message-broker.service".to_string(),
-            ]
+            ],
+            "active timers do not write; their paired services must be separately discovered"
         );
     }
 
