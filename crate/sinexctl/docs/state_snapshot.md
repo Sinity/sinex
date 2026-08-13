@@ -6,9 +6,11 @@ and source runtime state — into a single zstd-compressed tar archive.
 
 The default is a **quiesce-mode** backup: services must be stopped before the
 snapshot runs, or `--auto-stop` can stop the active snapshot-writer units for
-the command. The deployed NixOS shape uses `sinexd.service` and
-`nats.service`; generated `sinex-*.service`/`.timer` writers are discovered
-from systemd rather than assumed by a fixed glob.
+the command. On NixOS, `/etc/sinnix/runtime-inventory.json` supplies the
+logical Sinex/NATS surfaces and their generated unit names. The command
+intersects those names with the active systemd inventory; it does not assume a
+unit-name glob. Installations without that inventory use executable-identity
+discovery as a fail-closed fallback.
 `--mode live` is available for urgent forensic capture while services remain
 active; it records `mode: live` in `manifest.json` and should be treated as a
 weaker-consistency artifact. Operator runbooks use the
@@ -17,9 +19,8 @@ weaker-consistency artifact. Operator runbooks use the
 ## Quick start
 
 ```bash
-# Stop the deployed writers (or let snapshot discover and stop them with
-# --auto-stop). Include any additional writer units reported by the command.
-sudo systemctl stop sinexd.service nats.service
+# Let snapshot discover and stop active writers from the deployed inventory.
+sinexctl ops state snapshot --auto-stop --output /var/backup/sinex/check.tar.zst --dry-run
 
 # Create a snapshot (defaults: zstd level 3, all components)
 sinexctl ops state snapshot --output /var/backup/sinex/$(date +%Y-%m-%d).sinex.tar.zst
@@ -59,19 +60,21 @@ sinexctl ops state restore --archive <path> --target-dir <empty-dir>
 | Component  | What is captured                                    |
 |------------|-----------------------------------------------------|
 | `postgres` | Full custom-format `pg_dump` of `DATABASE_URL`      |
-| `nats`     | The `jetstream.store_dir` from the deployed `nats.service` config |
+| `nats`     | The `jetstream.store_dir` from the discovered NATS service config |
 | `cas`      | `$STATE_DIR/blob-repository/` directory tree        |
 | `state`    | Everything else under `$STATE_DIR` (spool, WALs, …) |
 
-These paths are deployment-specific. The command derives `SINEX_STATE_DIR`,
-`SINEX_CONTENT_STORE_PATH`, and `SINEX_NATS_JETSTREAM_STORE_DIR` from the
-configured `sinexd.service` environment. For compatibility with older
-deployments, NATS discovery can strictly read `jetstream.store_dir` from the
-deployed `nats.service` configuration. On the current NixOS deployment they resolve to
-`/var/lib/sinex/state`, `/var/lib/sinex/state/blob-repository`, and
-`/var/lib/nats/jetstream`, respectively. If systemd cannot expose these
-values, or the explicit override is not supplied for an alternate topology,
-capture fails instead of recording an empty component.
+These paths are deployment-specific. The command resolves the Sinex daemon and
+NATS unit names from the runtime inventory, then derives `SINEX_STATE_DIR` and
+`SINEX_CONTENT_STORE_PATH` from the daemon environment and
+`jetstream.store_dir` from the NATS config. On the current NixOS deployment
+they resolve to `/var/lib/sinex/state`,
+`/var/lib/sinex/state/blob-repository`, and `/var/lib/nats/jetstream`,
+respectively. `--state-dir` and `--nats-store-dir` are explicit alternate-
+topology overrides; a live NATS capture without a discovered or explicit store
+root fails instead of recording an empty component. Dry-run estimates may use
+the explicit state fixture's `nats/jetstream` child because no live bytes are
+read or archived.
 
 ## Archive layout
 
@@ -211,7 +214,8 @@ empty drill database.
 ### 1. Stop services (if running)
 
 ```bash
-sudo systemctl stop sinexd.service nats.service
+sinexctl ops state snapshot --output /var/backup/sinex/check.tar.zst --dry-run
+# Review the active writer list, then stop those exact units with systemctl.
 ```
 
 ### 2. Extract the archive
@@ -302,7 +306,8 @@ sinex-schema apply "$DATABASE_URL"
 ### 9. Start services
 
 ```bash
-sudo systemctl start sinexd.service nats.service
+# Start the discovered writer units from the runtime inventory.
+sudo systemctl start <sinex-daemon-unit> <nats-unit>
 ```
 
 ### 10. Verify

@@ -124,7 +124,7 @@ pub struct AdminSnapshotCommand {
     /// NATS JetStream store directory for an alternate deployment.
     ///
     /// The deployed default is discovered from `SINEX_NATS_JETSTREAM_STORE_DIR`
-    /// on `sinexd.service`; this override keeps a separate NATS root explicit
+    /// on the deployed Sinex daemon; this override keeps a separate NATS root explicit
     /// when `--state-dir` points at a fixture or alternate topology.
     #[arg(long, env = "SINEX_NATS_JETSTREAM_STORE_DIR")]
     pub nats_store_dir: Option<PathBuf>,
@@ -442,13 +442,22 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("nats") {
-            let nats_src = topology.nats_store_dir.as_deref().ok_or_else(|| {
-                eyre!(
+            let dry_run_source;
+            let nats_src = if let Some(path) = topology.nats_store_dir.as_deref() {
+                path
+            } else if self.dry_run {
+                // A dry run only estimates bytes. With an explicit --state-dir
+                // fixture, use its conventional fixture child without ever
+                // treating it as the deployed live NATS topology.
+                dry_run_source = state_dir.join("nats/jetstream");
+                &dry_run_source
+            } else {
+                return Err(eyre!(
                     "NATS JetStream store directory was not discovered; refusing to use a \
                      state-directory fallback"
-                )
-            })?;
-            if !nats_src.is_dir() {
+                ));
+            };
+            if !self.dry_run && !nats_src.is_dir() {
                 bail!(
                     "NATS JetStream store directory {} is absent; refusing to record an empty backup",
                     nats_src.display()
