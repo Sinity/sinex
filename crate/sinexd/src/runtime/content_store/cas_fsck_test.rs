@@ -1,12 +1,13 @@
 use super::{
-    CasFsckOptions, CasFsckStopReason, CasStatus, LOCAL_BLAKE3_CAS_BACKEND, check_cas,
-    check_cas_with_options, check_cas_with_options_and_control,
+    CasFsckOptions, CasFsckReport, CasFsckStopReason, CasStatus, LOCAL_BLAKE3_CAS_BACKEND,
+    apply_orphan_deletions, check_cas, check_cas_with_options, check_cas_with_options_and_control,
+    reconcile_pending_deletions,
 };
 use crate::runtime::content_store::{
     CasWalkCheckpoint, ContentStoreConfig, MaterialContentStore,
     gc::{sweep_orphans, sweep_orphans_detailed},
 };
-use crate::runtime::work_control::WorkCancellation;
+use crate::runtime::work_control::{WorkBudget, WorkCancellation, WorkController, WorkIdentity};
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_db::models::Blob;
@@ -92,6 +93,145 @@ async fn pending_cas_delete_survives_failure_and_resumes(_ctx: TestContext) -> T
 }
 
 #[sinex_test]
+async fn cancelled_reconciliation_preserves_pending_cas_deletion(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("cancelled-reconciliation.txt");
+    tokio::fs::write(&source, b"pending deletion must survive cancellation").await?;
+    let key = content_store.store_file(&source).await?;
+    let pending = content_store
+        .quarantine_local_cas(&key)
+        .await?
+        .expect("fixture CAS object must be quarantined");
+    pending.created_at_unix_secs = pending.created_at_unix_secs.saturating_sub(11 * 60);
+    tokio::fs::write(&pending.record_path, serde_json::to_vec(&pending)?).await?;
+
+    let cancellation = WorkCancellation::new();
+    cancellation.cancel();
+    let mut work = WorkController::new(
+        WorkIdentity::ephemeral("cas-fsck-test", content_store.root_path().as_str()),
+        WorkBudget::default(),
+        cancellation,
+    );
+    let mut report = CasFsckReport::default();
+    let complete =
+        reconcile_pending_deletions(ctx.pool(), &content_store, true, &mut report, &mut work)
+            .await?;
+
+    assert!(!complete);
+    assert_eq!(report.stop_reason, Some(CasFsckStopReason::Cancelled));
+    assert!(pending.quarantine_path.exists());
+    assert_eq!(content_store.list_pending_deletions().await?.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn cancelled_orphan_apply_preserves_live_cas_object(ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("cancelled-orphan-apply.txt");
+    tokio::fs::write(&source, b"orphan must survive cancellation").await?;
+    let key = content_store.store_file(&source).await?;
+    let path = content_store
+        .path_if_local(&key.key)?
+        .expect("fixture must use local CAS");
+    std::fs::File::open(path.as_std_path())?.set_times(
+        std::fs::FileTimes::new().set_modified(
+            SystemTime::now()
+                .checked_sub(Duration::from_secs(11 * 60))
+                .expect("fixture timestamp must be representable"),
+        ),
+    )?;
+    let cancellation = WorkCancellation::new();
+    cancellation.cancel();
+    let mut work = WorkController::new(
+        WorkIdentity::ephemeral("cas-fsck-test", content_store.root_path().as_str()),
+        WorkBudget::default(),
+        cancellation,
+    );
+    let mut report = CasFsckReport::default();
+    let statuses = [super::CasFileStatus {
+        hash: key.digest.clone(),
+        path: path.to_string(),
+        size_bytes: key.size,
+        status: CasStatus::Orphaned,
+        blob_id: None,
+    }];
+
+    apply_orphan_deletions(
+        ctx.pool(),
+        &content_store,
+        &statuses,
+        &mut report,
+        &mut work,
+    )
+    .await?;
+
+    assert_eq!(report.stop_reason, Some(CasFsckStopReason::Cancelled));
+    assert!(
+        path.exists(),
+        "anti-vacuity: cancellation before orphan application must prevent the next quarantine mutation"
+    );
+    assert!(content_store.list_pending_deletions().await?.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn fsck_runtime_budget_stops_before_pending_deletion_reconciliation(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("runtime-budget-reconciliation.txt");
+    tokio::fs::write(&source, b"pending deletion must survive runtime exhaustion").await?;
+    let key = content_store.store_file(&source).await?;
+    let pending = content_store.quarantine_local_cas(&key).await?;
+    let mut pending = pending.expect("fixture CAS object must be quarantined");
+    pending.created_at_unix_secs = pending.created_at_unix_secs.saturating_sub(11 * 60);
+    tokio::fs::write(&pending.record_path, serde_json::to_vec(&pending)?).await?;
+
+    let result = check_cas_with_options(
+        ctx.pool(),
+        &content_store,
+        true,
+        CasFsckOptions {
+            max_runtime: Some(Duration::ZERO),
+            max_entries: None,
+            verify_bytes_per_sec: Some(1.0),
+        },
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "apply fsck must fail closed after runtime exhaustion"
+    );
+    assert!(
+        pending.quarantine_path.exists(),
+        "anti-vacuity: max_runtime must bound pending-deletion reconciliation before it unlinks quarantine bytes"
+    );
+    assert_eq!(content_store.list_pending_deletions().await?.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
 async fn live_cas_lease_survives_restart_and_protects_fsck_until_commit(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -126,10 +266,15 @@ async fn live_cas_lease_survives_restart_and_protects_fsck_until_commit(
     assert_eq!(report.leased, 1);
     assert_eq!(report.orphaned, 0);
     assert_eq!(report.quarantined, 0);
-    assert!(statuses.iter().any(|status| {
-        status.hash == key.digest && status.status == CasStatus::Leased
-    }));
-    assert!(object_path.exists(), "a live lease must protect old CAS bytes");
+    assert!(
+        statuses
+            .iter()
+            .any(|status| { status.hash == key.digest && status.status == CasStatus::Leased })
+    );
+    assert!(
+        object_path.exists(),
+        "a live lease must protect old CAS bytes"
+    );
 
     let lease = restarted_store
         .list_write_leases()
@@ -156,7 +301,10 @@ async fn live_cas_lease_survives_restart_and_protects_fsck_until_commit(
     let quarantine_report = check_cas(ctx.pool(), &restarted_store, true).await?.0;
     assert_eq!(quarantine_report.quarantined, 1);
     assert_eq!(quarantine_report.pending_deletes, 1);
-    assert!(!object_path.exists(), "commit release must make the orphan sweep eligible");
+    assert!(
+        !object_path.exists(),
+        "commit release must make the orphan sweep eligible"
+    );
 
     let mut pending = restarted_store
         .list_pending_deletions()
@@ -334,8 +482,7 @@ async fn manifest_encoded_bytes_are_reconciled_as_cas_authority(
     assert_eq!(report.missing, 0);
     assert!(statuses.iter().any(|status| {
         status.hash == payload_key.digest
-            && status.blob_id.as_deref()
-                == Some(format!("material-bytes:{material_id}").as_str())
+            && status.blob_id.as_deref() == Some(format!("material-bytes:{material_id}").as_str())
             && status.status == CasStatus::Referenced
     }));
 

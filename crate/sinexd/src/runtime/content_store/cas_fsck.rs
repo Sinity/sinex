@@ -15,8 +15,8 @@ use crate::runtime::{RuntimeResult, SinexError};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sqlx::PgPool;
 use sinex_primitives::{DecodedMaterialManifest, MaterialManifestV1};
+use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
@@ -132,7 +132,10 @@ pub enum CasFsckStopReason {
 /// An ordinary fsck is completion-oriented: it has no guessed wall-clock or
 /// verification-throughput ceiling. Operators may provide limits when the
 /// host needs admission control; an explicitly bounded incomplete apply pass
-/// remains fail-closed.
+/// remains fail-closed. `verify_bytes_per_sec` rate-limits only bytes read by
+/// cryptographic verification. `max_runtime` is checked at every fsck
+/// controller boundary, including authority loading, reconciliation, scanning,
+/// reporting, and destructive cleanup.
 #[derive(Debug, Clone, Copy)]
 pub struct CasFsckOptions {
     pub max_runtime: Option<StdDuration>,
@@ -194,10 +197,7 @@ pub async fn check_cas_with_options_and_control(
 ) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>, CasWalkCheckpoint)> {
     let initial_checkpoint = checkpoint.unwrap_or_default();
     let mut walker = content_store
-        .cas_walker_with_control(
-            Some(initial_checkpoint.clone()),
-            Some(cancellation.clone()),
-        )
+        .cas_walker_with_control(Some(initial_checkpoint.clone()), Some(cancellation.clone()))
         .await?;
     let mut file_statuses: Vec<CasFileStatus> = Vec::new();
     let mut report = CasFsckReport::default();
@@ -230,16 +230,23 @@ pub async fn check_cas_with_options_and_control(
     for (hash, authority) in load_sinexblake3_hashes(pool, content_store).await? {
         known_blake3_hashes.entry(hash).or_insert(authority);
     }
-    let (lease_references, stale_leases) = load_ingest_lease_references(content_store).await?;
-    report.stale_leases = stale_leases;
-    for (hash, authority) in lease_references {
-        known_blake3_hashes.entry(hash).or_insert(authority);
+    let mut continue_work = fsck_work_boundary(&mut work, &mut report)?;
+    if continue_work {
+        let (lease_references, stale_leases) = load_ingest_lease_references(content_store).await?;
+        report.stale_leases = stale_leases;
+        for (hash, authority) in lease_references {
+            known_blake3_hashes.entry(hash).or_insert(authority);
+        }
+        continue_work = fsck_work_boundary(&mut work, &mut report)?;
     }
     let known_hash_set: HashSet<String> = known_blake3_hashes.keys().cloned().collect();
 
-    reconcile_pending_deletions(pool, content_store, apply, &mut report).await?;
+    if continue_work {
+        continue_work =
+            reconcile_pending_deletions(pool, content_store, apply, &mut report, &mut work).await?;
+    }
 
-    'scan: loop {
+    'scan: while continue_work {
         let batch = match walker.next_batch(256).await {
             Ok(batch) => batch,
             Err(_error) if work.cancellation().is_cancelled() => {
@@ -258,13 +265,8 @@ pub async fn check_cas_with_options_and_control(
                 report.stop_reason = Some(CasFsckStopReason::EntryBudget);
                 break 'scan;
             }
-            if let Err(error) = work.check(0, 0) {
-                if let Some(reason) = fsck_stop_reason(&work) {
-                    report.incomplete = true;
-                    report.stop_reason = Some(reason);
-                    break 'scan;
-                }
-                return Err(error);
+            if !fsck_work_boundary(&mut work, &mut report)? {
+                break 'scan;
             }
             report.entries_scanned += 1;
             if hash.contains(".tmp-") {
@@ -415,6 +417,9 @@ pub async fn check_cas_with_options_and_control(
 
     // Detect missing: SINEXBLAKE3 blobs in DB but not on disk
     for (hash, blob_id) in &known_blake3_hashes {
+        if !fsck_work_boundary(&mut work, &mut report)? {
+            break;
+        }
         if !present_hashes.contains(hash) {
             report.missing += 1;
             let path = content_store
@@ -442,51 +447,17 @@ pub async fn check_cas_with_options_and_control(
     // Apply deletion only after the complete, read-only classification pass.
     // The returned statuses are also the bounded walk's classification output,
     // so no separate orphan-candidate list is retained.
-    if apply {
-        work.destructive_boundary_check()?;
-        for status in file_statuses
-            .iter()
-            .filter(|status| status.status == CasStatus::Orphaned)
-        {
-            let hash = &status.hash;
-            let path = &status.path;
-            let size = status.size_bytes;
-            let is_recent = tokio::fs::metadata(path)
-                .await
-                .ok()
-                .and_then(|metadata| metadata.modified().ok())
-                .is_some_and(|modified| {
-                    SystemTime::now()
-                        .duration_since(modified)
-                        .is_ok_and(|age| age < CAS_ORPHAN_GRACE)
-                });
-            if is_recent {
-                continue;
-            }
-            if cas_hash_is_referenced(pool, content_store, hash).await?.is_some() {
-                report.recheck_protected += 1;
-                continue;
-            }
-            let key =
-                ContentStoreKey::parse(&format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{size}--{hash}"))?;
-            match content_store.quarantine_local_cas(&key).await {
-                Ok(Some(_pending)) => {
-                    report.quarantined += 1;
-                    report.pending_deletes += 1;
-                }
-                Ok(None) => {}
-                Err(error) => tracing::warn!(
-                    error = %error,
-                    path = %path,
-                    size_bytes = size,
-                    "Failed to quarantine orphaned CAS file; retaining it for retry"
-                ),
-            }
-        }
+    if apply && !report.incomplete {
+        apply_orphan_deletions(pool, content_store, &file_statuses, &mut report, &mut work).await?;
     }
 
     // Remove empty prefix directories after cleanup
-    if apply && report.removed > 0 {
+    if apply && report.removed > 0 && !report.incomplete {
+        if !fsck_destructive_boundary(&mut work, &mut report)? {
+            return Err(SinexError::validation(
+                "refusing CAS cleanup because fsck stopped before destructive cleanup",
+            ));
+        }
         clean_empty_cas_dirs(content_store).await;
     }
 
@@ -534,10 +505,7 @@ where
 
     let initial_checkpoint = checkpoint.unwrap_or_default();
     let mut walker = content_store
-        .cas_walker_with_control(
-            Some(initial_checkpoint.clone()),
-            Some(cancellation.clone()),
-        )
+        .cas_walker_with_control(Some(initial_checkpoint.clone()), Some(cancellation.clone()))
         .await?;
     let mut report = CasFsckReport::default();
     let mut work = WorkController::new(
@@ -798,13 +766,17 @@ async fn reconcile_pending_deletions(
     content_store: &MaterialContentStore,
     apply: bool,
     report: &mut CasFsckReport,
-) -> RuntimeResult<()> {
+    work: &mut WorkController,
+) -> RuntimeResult<bool> {
     let pending = content_store.list_pending_deletions().await?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     for record in pending {
+        if !fsck_work_boundary(work, report)? {
+            return Ok(false);
+        }
         if !apply {
             report.pending_deletes += 1;
             continue;
@@ -816,6 +788,9 @@ async fn reconcile_pending_deletions(
             .await?
             .is_some()
         {
+            if !fsck_destructive_boundary(work, report)? {
+                return Ok(false);
+            }
             content_store.restore_pending_deletion(&record).await?;
             report.restored += 1;
             continue;
@@ -823,6 +798,9 @@ async fn reconcile_pending_deletions(
         if now.saturating_sub(record.created_at_unix_secs) < CAS_ORPHAN_GRACE.as_secs() {
             report.pending_deletes += 1;
             continue;
+        }
+        if !fsck_destructive_boundary(work, report)? {
+            return Ok(false);
         }
         match content_store.finalize_pending_deletion(&record).await {
             Ok(()) => report.removed += 1,
@@ -836,7 +814,100 @@ async fn reconcile_pending_deletions(
             }
         }
     }
+    Ok(true)
+}
+
+/// Apply the destructive half of a complete CAS classification pass. Every
+/// filesystem mutation has an immediately preceding cancellation/runtime
+/// boundary so cancellation cannot begin another deletion after it is observed.
+async fn apply_orphan_deletions(
+    pool: &PgPool,
+    content_store: &MaterialContentStore,
+    file_statuses: &[CasFileStatus],
+    report: &mut CasFsckReport,
+    work: &mut WorkController,
+) -> RuntimeResult<()> {
+    for status in file_statuses
+        .iter()
+        .filter(|status| status.status == CasStatus::Orphaned)
+    {
+        if !fsck_work_boundary(work, report)? {
+            return Ok(());
+        }
+        let hash = &status.hash;
+        let path = &status.path;
+        let size = status.size_bytes;
+        let is_recent = tokio::fs::metadata(path)
+            .await
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .is_some_and(|modified| {
+                SystemTime::now()
+                    .duration_since(modified)
+                    .is_ok_and(|age| age < CAS_ORPHAN_GRACE)
+            });
+        if is_recent {
+            continue;
+        }
+        if cas_hash_is_referenced(pool, content_store, hash)
+            .await?
+            .is_some()
+        {
+            report.recheck_protected += 1;
+            continue;
+        }
+        let key = ContentStoreKey::parse(&format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{size}--{hash}"))?;
+        if !fsck_destructive_boundary(work, report)? {
+            return Ok(());
+        }
+        match content_store.quarantine_local_cas(&key).await {
+            Ok(Some(_pending)) => {
+                report.quarantined += 1;
+                report.pending_deletes += 1;
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(
+                error = %error,
+                path = %path,
+                size_bytes = size,
+                "Failed to quarantine orphaned CAS file; retaining it for retry"
+            ),
+        }
+    }
     Ok(())
+}
+
+fn fsck_work_boundary(
+    work: &mut WorkController,
+    report: &mut CasFsckReport,
+) -> RuntimeResult<bool> {
+    match work.check(0, 0) {
+        Ok(()) => Ok(true),
+        Err(error) => fsck_boundary_error(work, report, error),
+    }
+}
+
+fn fsck_destructive_boundary(
+    work: &mut WorkController,
+    report: &mut CasFsckReport,
+) -> RuntimeResult<bool> {
+    match work.destructive_boundary_check() {
+        Ok(()) => Ok(true),
+        Err(error) => fsck_boundary_error(work, report, error),
+    }
+}
+
+fn fsck_boundary_error(
+    work: &WorkController,
+    report: &mut CasFsckReport,
+    error: SinexError,
+) -> RuntimeResult<bool> {
+    if let Some(reason) = fsck_stop_reason(work) {
+        report.incomplete = true;
+        report.stop_reason = Some(reason);
+        return Ok(false);
+    }
+    Err(error)
 }
 
 fn fsck_stop_reason(work: &WorkController) -> Option<CasFsckStopReason> {
@@ -904,8 +975,7 @@ async fn cas_hash_is_referenced(
         .into_iter()
         .find(|lease| {
             lease.key.digest == hash
-                && now.saturating_sub(lease.created_at_unix_secs)
-                    < CAS_INGEST_LEASE_GRACE.as_secs()
+                && now.saturating_sub(lease.created_at_unix_secs) < CAS_INGEST_LEASE_GRACE.as_secs()
         })
         .map(|lease| format!("lease:{}", lease.operation_id)))
 }
@@ -953,10 +1023,7 @@ async fn load_ingest_lease_references(
     let mut stale = 0;
     for lease in content_store.list_write_leases().await? {
         if now.saturating_sub(lease.created_at_unix_secs) < CAS_INGEST_LEASE_GRACE.as_secs() {
-            references.push((
-                lease.key.digest,
-                format!("lease:{}", lease.operation_id),
-            ));
+            references.push((lease.key.digest, format!("lease:{}", lease.operation_id)));
         } else {
             stale += 1;
         }
@@ -1000,9 +1067,8 @@ async fn load_sinexblake3_hashes(
         SinexError::database(format!("failed to load material manifest references: {e}"))
     })?;
     for (material_id, metadata) in material_rows {
-        references.extend(
-            material_manifest_authorities(content_store, &material_id, &metadata).await?,
-        );
+        references
+            .extend(material_manifest_authorities(content_store, &material_id, &metadata).await?);
     }
     Ok(references)
 }
@@ -1043,23 +1109,21 @@ async fn material_manifest_authorities(
     if !path.exists() {
         return Ok(references);
     }
-    let manifest_bytes = match MaterialContentStore::read_file_with_limit(
-        &path,
-        content_store.config.max_blob_size,
-    )
-    .await
-    {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::warn!(
-                material_id,
-                content_key,
-                error = %error,
-                "unable to read source-material manifest while reconciling CAS authorities"
-            );
-            return Ok(references);
-        }
-    };
+    let manifest_bytes =
+        match MaterialContentStore::read_file_with_limit(&path, content_store.config.max_blob_size)
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!(
+                    material_id,
+                    content_key,
+                    error = %error,
+                    "unable to read source-material manifest while reconciling CAS authorities"
+                );
+                return Ok(references);
+            }
+        };
     let Ok(DecodedMaterialManifest::V1(manifest)) = MaterialManifestV1::decode(&manifest_bytes)
     else {
         return Ok(references);
@@ -1076,10 +1140,7 @@ async fn material_manifest_authorities(
     ) else {
         return Ok(references);
     };
-    references.push((
-        encoded_key.digest,
-        format!("material-bytes:{material_id}"),
-    ));
+    references.push((encoded_key.digest, format!("material-bytes:{material_id}")));
     Ok(references)
 }
 

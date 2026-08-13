@@ -118,15 +118,8 @@ impl<'a> FinalizationTransaction<'a> {
             .await
         {
             FinalizationCommitOutcome::Landed(handle) => {
-                if let Some(lease) = request.write_lease
-                    && let Err(error) = self.assembler.content_store.release_write_lease(lease).await
-                {
-                    warn!(
-                        material_id = %request.final_state.material_id,
-                        error = %error,
-                        "Material commit was already durable but CAS write lease release will retry"
-                    );
-                }
+                self.release_landed_write_lease(request.final_state, request.write_lease)
+                    .await;
                 info!(
                     material_id = %request.final_state.material_id,
                     content_key = %request.content_key.key,
@@ -235,15 +228,8 @@ impl<'a> FinalizationTransaction<'a> {
 
         match tx.commit().await {
             Ok(()) => {
-                if let Some(lease) = request.write_lease
-                    && let Err(error) = self.assembler.content_store.release_write_lease(lease).await
-                {
-                    warn!(
-                        material_id = %request.final_state.material_id,
-                        error = %error,
-                        "Material commit was durable but CAS write lease release failed"
-                    );
-                }
+                self.release_landed_write_lease(request.final_state, request.write_lease)
+                    .await;
                 Ok(FinalizedHandle {
                     blob_id,
                     reused_existing_commit: false,
@@ -263,6 +249,8 @@ impl<'a> FinalizationTransaction<'a> {
                     .await
                 {
                     FinalizationCommitOutcome::Landed(handle) => {
+                        self.release_landed_write_lease(request.final_state, request.write_lease)
+                            .await;
                         warn!(
                             material_id = %request.final_state.material_id,
                             content_key = %request.content_key.key,
@@ -298,6 +286,29 @@ impl<'a> FinalizationTransaction<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Release the durable CAS lease after any path has confirmed the material
+    /// finalization commit landed. This deliberately covers preflight retries,
+    /// normal commits, and commit errors reconciled to a durable result.
+    async fn release_landed_write_lease(
+        &self,
+        final_state: &FinalizationState,
+        write_lease: Option<&CasWriteLease>,
+    ) {
+        if let Some(lease) = write_lease
+            && let Err(error) = self
+                .assembler
+                .content_store
+                .release_write_lease(lease)
+                .await
+        {
+            warn!(
+                material_id = %final_state.material_id,
+                error = %error,
+                "Material commit was durable but CAS write lease release will retry"
+            );
         }
     }
 
