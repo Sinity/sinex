@@ -10,7 +10,8 @@ use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use num_traits::ToPrimitive;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{ModuleKind, ModuleName, ModuleState, OperationStatus};
+use sinex_primitives::domain::{HealthStatus, ModuleKind, ModuleName, ModuleState, OperationStatus};
+use sinex_primitives::{RuntimeLivenessEvidence, RuntimeLivenessMembership};
 use sinex_primitives::error::SinexError;
 use sqlx::postgres::types::PgRange;
 use sqlx::{Executor, PgPool, Postgres};
@@ -29,7 +30,8 @@ use helpers::{
 };
 pub use types::{
     AutomataStatusRow, LiveModulePresence, ManifestRow, ModuleHealthSummary, ModuleManifest,
-    ModuleRun, Operation, OperationRecord, OperationStatistics, SourcesStatusRow,
+    ModuleRun, Operation, OperationRecord, OperationStatistics, RuntimeLivenessEvidenceRow,
+    SourcesStatusRow,
     SystemHealthReport,
 };
 
@@ -1328,6 +1330,81 @@ impl StateRepository<'_> {
             });
             modules
         })
+    }
+
+    /// List raw runtime evidence for gateway health without liveness filtering.
+    ///
+    /// Failed runs, stale telemetry, and historical output timestamps must reach
+    /// the canonical evaluator. Membership is carried separately so manifests
+    /// with no run and historical stopped runs do not become false failures.
+    pub async fn list_runtime_liveness_evidence(&self) -> DbResult<Vec<RuntimeLivenessEvidence>> {
+        let rows = sqlx::query_as!(
+            RuntimeLivenessEvidenceRow,
+            r#"
+            SELECT
+                nm.name as "module_name!: ModuleName",
+                nm.manifest_type::text as "module_kind!: ModuleKind",
+                latest_run.status as "run_status?",
+                health.status as "health_status: HealthStatus",
+                health.last_update as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
+                outputs.last_output_at as "last_output_at: sinex_primitives::temporal::Timestamp",
+                (latest_run.module_run_id IS NOT NULL) as "has_concrete_run!",
+                COALESCE(latest_run.status = 'stopped', false) as "historical_stopped!"
+            FROM core.manifests nm
+            LEFT JOIN LATERAL (
+                SELECT
+                    nr.id AS module_run_id,
+                    nr.status
+                FROM core.runs nr
+                WHERE nr.manifest_id = nm.id
+                ORDER BY nr.started_at DESC, nr.id DESC
+                LIMIT 1
+            ) latest_run ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    ch.status,
+                    ch.last_update
+                FROM sinex_telemetry.current_health ch
+                WHERE ch.source = 'sinex'
+                  AND ch.component = nm.name::text
+                ORDER BY ch.last_update DESC
+                LIMIT 1
+            ) health ON true
+            LEFT JOIN LATERAL (
+                SELECT MAX(e.ts_coided) AS last_output_at
+                FROM core.events e
+                WHERE latest_run.module_run_id IS NOT NULL
+                  AND e.module_run_id = latest_run.module_run_id
+                  AND (
+                      (nm.manifest_type = 'source' AND e.source_material_id IS NOT NULL)
+                      OR (nm.manifest_type = 'automaton' AND e.source_event_ids IS NOT NULL)
+                  )
+            ) outputs ON true
+            ORDER BY nm.name, nm.version
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list runtime liveness evidence"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| RuntimeLivenessEvidence {
+                module_name: row.module_name,
+                module_kind: row.module_kind,
+                membership: if !row.has_concrete_run {
+                    RuntimeLivenessMembership::DisabledOrProfileGated
+                } else if row.historical_stopped {
+                    RuntimeLivenessMembership::HistoricalStopped
+                } else {
+                    RuntimeLivenessMembership::Assessed
+                },
+                run_status: row.run_status,
+                health_status: row.health_status,
+                last_heartbeat_at: row.last_heartbeat_at,
+                last_output_at: row.last_output_at,
+            })
+            .collect())
     }
 
     /// Get runtime health status

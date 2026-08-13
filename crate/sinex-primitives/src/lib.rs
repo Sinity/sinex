@@ -195,8 +195,10 @@ pub use query_units::{
     parse_sinex_query, query_unit_descriptor, query_unit_descriptors,
 };
 pub use runtime_liveness::{
-    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLiveness, RuntimeLivenessSignals,
-    RuntimeLivenessPolicy, RuntimeLivenessStatus, evaluate_runtime_liveness,
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLiveness, RuntimeLivenessAggregate,
+    RuntimeLivenessAssessment, RuntimeLivenessEvidence, RuntimeLivenessMembership,
+    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus,
+    evaluate_runtime_liveness,
 };
 pub use runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 pub use runtime_target::{

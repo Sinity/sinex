@@ -6,11 +6,12 @@ use crate::api::handlers::dlq::recover_stale_dlq_requeue_operations;
 use crate::api::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
 use crate::event_engine::policy::PolicyEngine;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
-use sinex_db::create_pool_with_config;
+use sinex_db::{DbPoolExt, create_pool_with_config};
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_primitives::{
     Result as SinexResult,
+    RuntimeLivenessAggregate, RuntimeLivenessPolicy, Timestamp,
     coordination::CoordinationKvClient,
     environment as sinex_environment,
     error::SinexError,
@@ -507,49 +508,18 @@ impl ServiceContainer {
         let raw_ingest_dlq = self.probe_raw_ingest_dlq_pressure().await;
         let replay = self.replay_control_status();
         let sse_confirmation = self.sse_confirmation_status();
-        let mut degradation_reasons = Vec::new();
-
-        if !db_ok {
-            degradation_reasons.push("database unreachable".to_string());
-        }
-        if !nats.connected {
-            degradation_reasons.push("NATS unavailable".to_string());
-        }
-        if !replay.connected {
-            degradation_reasons.push(if replay.enabled {
-                "replay control disconnected".to_string()
-            } else {
-                "replay control unavailable".to_string()
-            });
-        }
-        if raw_ingest_dlq.status == GatewayHealthStatus::Degraded {
-            degradation_reasons.push(raw_ingest_dlq.detail.clone());
-        }
-        if !sse_confirmation.running {
-            degradation_reasons.push("SSE confirmation bus not running".to_string());
-        } else if sse_confirmation.degraded {
-            degradation_reasons.push("SSE confirmation fan-out degraded".to_string());
-        }
-
-        let healthy = db_ok
-            && nats.connected
-            && raw_ingest_dlq.status != GatewayHealthStatus::Degraded
-            && replay.connected
-            && !sse_confirmation.degraded;
-        // Gateway is ready to serve end-to-end RPC traffic only when both
-        // the database (query/write path) and NATS (event publishing path)
-        // are reachable. Replay control is coordination-only and does not
-        // gate serving.
-        let serving = db_ok && nats.connected;
-        let status = if !db_ok {
-            GatewayHealthStatus::Unhealthy
-        } else if healthy {
-            GatewayHealthStatus::Healthy
-        } else {
-            GatewayHealthStatus::Degraded
+        let runtime_liveness = match self.pool().state().list_runtime_liveness_evidence().await {
+            Ok(evidence) => RuntimeLivenessAggregate::evaluate(
+                evidence,
+                RuntimeLivenessPolicy::default(),
+                Timestamp::now(),
+            ),
+            Err(error) => RuntimeLivenessAggregate::unavailable(format!(
+                "runtime liveness query failed: {error}"
+            )),
         };
-        GatewayHealthReport {
-            status,
+
+        aggregate_gateway_health_report(
             db_ok,
             db_latency_ms,
             db_detail,
@@ -557,10 +527,89 @@ impl ServiceContainer {
             raw_ingest_dlq,
             replay,
             sse_confirmation,
-            healthy,
-            serving,
-            degradation_reasons,
-        }
+            runtime_liveness,
+        )
+    }
+}
+
+pub(crate) fn aggregate_gateway_health_report(
+    db_ok: bool,
+    db_latency_ms: Option<u64>,
+    db_detail: String,
+    nats: NatsHealthProbe,
+    raw_ingest_dlq: RawIngestDlqHealth,
+    replay: ReplayControlStatus,
+    sse_confirmation: SseConfirmationStatus,
+    runtime_liveness: RuntimeLivenessAggregate,
+) -> GatewayHealthReport {
+    let mut degradation_reasons = Vec::new();
+
+    if !db_ok {
+        degradation_reasons.push("database unreachable".to_string());
+    }
+    if !nats.connected {
+        degradation_reasons.push("NATS unavailable".to_string());
+    }
+    if !replay.connected {
+        degradation_reasons.push(if replay.enabled {
+            "replay control disconnected".to_string()
+        } else {
+            "replay control unavailable".to_string()
+        });
+    }
+    if raw_ingest_dlq.status == GatewayHealthStatus::Degraded {
+        degradation_reasons.push(raw_ingest_dlq.detail.clone());
+    }
+    if !sse_confirmation.running {
+        degradation_reasons.push("SSE confirmation bus not running".to_string());
+    } else if sse_confirmation.degraded {
+        degradation_reasons.push("SSE confirmation fan-out degraded".to_string());
+    }
+    if !runtime_liveness.healthy {
+        degradation_reasons.push(
+            runtime_liveness.observation_error.clone().unwrap_or_else(|| {
+                format!(
+                    "runtime liveness: {} unhealthy, {} stale, {} degraded, {} unknown",
+                    runtime_liveness.unhealthy_count,
+                    runtime_liveness.stale_count,
+                    runtime_liveness.degraded_count,
+                    runtime_liveness.unknown_count,
+                )
+            }),
+        );
+    }
+
+    let healthy = db_ok
+        && nats.connected
+        && raw_ingest_dlq.status != GatewayHealthStatus::Degraded
+        && replay.connected
+        && !sse_confirmation.degraded
+        && runtime_liveness.healthy;
+    // Gateway is ready to serve end-to-end RPC traffic only when both
+    // the database (query/write path) and NATS (event publishing path)
+    // are reachable. Replay control is coordination-only and does not
+    // gate serving.
+    let serving = db_ok && nats.connected;
+    let status = if !db_ok || runtime_liveness.status == GatewayHealthStatus::Unhealthy {
+        GatewayHealthStatus::Unhealthy
+    } else if healthy {
+        GatewayHealthStatus::Healthy
+    } else {
+        GatewayHealthStatus::Degraded
+    };
+    GatewayHealthReport {
+        status,
+        db_ok,
+        db_latency_ms,
+        db_detail,
+        nats,
+        raw_ingest_dlq,
+        replay,
+        sse_confirmation,
+        runtime_liveness,
+        healthy,
+        serving,
+        degradation_reasons,
     }
 }
 
@@ -594,6 +643,9 @@ pub struct GatewayHealthReport {
     pub replay: ReplayControlStatus,
     /// SSE confirmation fan-out status
     pub sse_confirmation: SseConfirmationStatus,
+    /// Canonically evaluated runtime evidence. This affects overall health but
+    /// not infrastructure-only readiness.
+    pub runtime_liveness: RuntimeLivenessAggregate,
     /// True only when the gateway and its coordination dependencies are fully healthy.
     pub healthy: bool,
     /// Whether the gateway is ready to serve end-to-end RPC traffic.

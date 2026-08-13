@@ -40,6 +40,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
         raw_ingest_dlq,
         replay,
         sse_confirmation,
+        runtime_liveness,
         healthy,
         serving,
         degradation_reasons,
@@ -97,6 +98,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                 detail: Some(sse_confirmation.detail),
                 attributes: BTreeMap::new(),
             },
+            runtime_liveness,
         },
     }
 }

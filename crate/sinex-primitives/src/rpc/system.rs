@@ -1,6 +1,7 @@
 //! System types
 
 use crate::domain::HealthStatus;
+use crate::RuntimeLivenessAggregate;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +83,7 @@ pub struct ComponentsHealth {
     pub raw_ingest_dlq: ComponentHealthReport,
     pub replay_control: ReplayControlHealth,
     pub sse_confirmation: ComponentHealthReport,
+    pub runtime_liveness: RuntimeLivenessAggregate,
 }
 
 /// Response: system.health

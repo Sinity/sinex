@@ -96,6 +96,19 @@ pub struct LiveModulePresence {
     pub heartbeat_source: String,
 }
 
+/// Unfiltered runtime evidence for gateway system health.
+#[derive(Debug, sqlx::FromRow)]
+pub struct RuntimeLivenessEvidenceRow {
+    pub module_name: ModuleName,
+    pub module_kind: ModuleKind,
+    pub run_status: Option<String>,
+    pub health_status: Option<HealthStatus>,
+    pub last_heartbeat_at: Option<Timestamp>,
+    pub last_output_at: Option<Timestamp>,
+    pub has_concrete_run: bool,
+    pub historical_stopped: bool,
+}
+
 /// Runtime module health summary
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ModuleHealthSummary {

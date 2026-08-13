@@ -6,7 +6,10 @@ use crate::commands::runtime_presence::{EnrichedRuntimeInfo, runtime_modules_env
 use std::collections::BTreeMap;
 
 use crate::fmt::render_finite_envelope;
-use sinex_primitives::RuntimeLivenessStatus;
+use sinex_primitives::{
+    RuntimeLivenessAggregate, RuntimeLivenessEvidence, RuntimeLivenessMembership,
+    RuntimeLivenessPolicy, RuntimeLivenessStatus,
+};
 use sinex_primitives::domain::{HealthStatus, InstanceId, ModuleKind, ModuleName};
 use sinex_primitives::rpc::coordination::{ErrorInfo, InstanceInfo};
 use sinex_primitives::rpc::runtime::RuntimeHeartbeatSource;
@@ -88,6 +91,11 @@ fn fixture_system_health() -> SystemHealthResponse {
                 last_error: None,
             },
             sse_confirmation: healthy_component(),
+            runtime_liveness: RuntimeLivenessAggregate::evaluate(
+                Vec::new(),
+                RuntimeLivenessPolicy::default(),
+                Timestamp::now(),
+            ),
         },
     }
 }
@@ -352,6 +360,48 @@ async fn runtime_health_caveats_name_absent_and_partial_components() -> xtask::T
             == Some("sinexctl runtime health")),
         "component caveats must preserve a command hint"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_health_renders_failed_and_stale_runtime_evidence() -> xtask::TestResult<()> {
+    let now = Timestamp::now();
+    let mut health = fixture_system_health();
+    health.status = HealthStatus::Unhealthy;
+    health.healthy = false;
+    health.components.runtime_liveness = RuntimeLivenessAggregate::evaluate(
+        [
+            RuntimeLivenessEvidence {
+                module_name: ModuleName::new("failed-source"),
+                module_kind: ModuleKind::Source,
+                membership: RuntimeLivenessMembership::Assessed,
+                run_status: Some("failed".to_string()),
+                health_status: Some(HealthStatus::Healthy),
+                last_heartbeat_at: Some(now),
+                last_output_at: None,
+            },
+            RuntimeLivenessEvidence {
+                module_name: ModuleName::new("stale-automaton"),
+                module_kind: ModuleKind::Automaton,
+                membership: RuntimeLivenessMembership::Assessed,
+                run_status: Some("running".to_string()),
+                health_status: Some(HealthStatus::Healthy),
+                last_heartbeat_at: Some(now - time::Duration::seconds(301)),
+                last_output_at: None,
+            },
+        ],
+        RuntimeLivenessPolicy::default(),
+        now,
+    );
+
+    let envelope = runtime_health_envelope(health.clone());
+    assert!(envelope.caveats.iter().any(|caveat| caveat.message.contains("failed-source")));
+    assert!(envelope.caveats.iter().any(|caveat| caveat.message.contains("stale-automaton")));
+
+    let table = format_health_table(&health);
+    assert!(table.contains("Runtime Liveness: unhealthy"));
+    assert!(table.contains("failed-source (source): unhealthy"));
+    assert!(table.contains("stale-automaton (automaton): stale"));
     Ok(())
 }
 

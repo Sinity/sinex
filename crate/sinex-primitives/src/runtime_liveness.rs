@@ -6,7 +6,7 @@
 //! cannot silently grow different definitions of "live".
 
 use crate::Timestamp;
-use crate::domain::HealthStatus;
+use crate::domain::{HealthStatus, ModuleKind, ModuleName};
 
 /// Shared default used by runtime, source, and automaton status requests.
 pub const DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS: u64 = 300;
@@ -50,6 +50,20 @@ pub enum RuntimeLivenessStatus {
     Unknown,
 }
 
+impl std::fmt::Display for RuntimeLivenessStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Healthy => "healthy",
+            Self::Degraded => "degraded",
+            Self::Unhealthy => "unhealthy",
+            Self::Stale => "stale",
+            Self::Stopped => "stopped",
+            Self::Unknown => "unknown",
+        };
+        formatter.write_str(value)
+    }
+}
+
 impl RuntimeLivenessStatus {
     #[must_use]
     pub const fn is_live(self) -> bool {
@@ -78,6 +92,183 @@ pub struct RuntimeLivenessSignals<'a> {
     pub health_status: Option<HealthStatus>,
     pub last_heartbeat_at: Option<Timestamp>,
     pub last_output_at: Option<Timestamp>,
+}
+
+/// Whether a persisted runtime row participates in system health.
+///
+/// A manifest without a concrete run is excluded because runtime state cannot
+/// distinguish disabled, profile-gated, and never-started modules. A latest
+/// stopped run is historical evidence and is excluded. Every other concrete
+/// run is assessed, including failed and stale evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeLivenessMembership {
+    Assessed,
+    DisabledOrProfileGated,
+    HistoricalStopped,
+}
+
+impl RuntimeLivenessMembership {
+    #[must_use]
+    pub const fn is_assessed(self) -> bool {
+        matches!(self, Self::Assessed)
+    }
+}
+
+/// Raw persisted evidence for one runtime module.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeLivenessEvidence {
+    pub module_name: ModuleName,
+    pub module_kind: ModuleKind,
+    pub membership: RuntimeLivenessMembership,
+    pub run_status: Option<String>,
+    pub health_status: Option<HealthStatus>,
+    pub last_heartbeat_at: Option<Timestamp>,
+    pub last_output_at: Option<Timestamp>,
+}
+
+/// Canonical liveness verdict for one persisted runtime module.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeLivenessAssessment {
+    pub module_name: ModuleName,
+    pub module_kind: ModuleKind,
+    pub membership: RuntimeLivenessMembership,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<RuntimeLiveness>,
+}
+
+/// Aggregate runtime liveness used by system health surfaces.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeLivenessAggregate {
+    pub status: HealthStatus,
+    pub healthy: bool,
+    pub assessed_count: usize,
+    pub healthy_count: usize,
+    pub degraded_count: usize,
+    pub unhealthy_count: usize,
+    pub stale_count: usize,
+    pub unknown_count: usize,
+    pub excluded_disabled_or_profile_gated_count: usize,
+    pub excluded_historical_stopped_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_error: Option<String>,
+    pub runtimes: Vec<RuntimeLivenessAssessment>,
+}
+
+impl RuntimeLivenessAggregate {
+    #[must_use]
+    pub fn evaluate(
+        evidence: impl IntoIterator<Item = RuntimeLivenessEvidence>,
+        policy: RuntimeLivenessPolicy,
+        now: Timestamp,
+    ) -> Self {
+        let mut aggregate = Self {
+            status: HealthStatus::Healthy,
+            healthy: true,
+            assessed_count: 0,
+            healthy_count: 0,
+            degraded_count: 0,
+            unhealthy_count: 0,
+            stale_count: 0,
+            unknown_count: 0,
+            excluded_disabled_or_profile_gated_count: 0,
+            excluded_historical_stopped_count: 0,
+            observation_error: None,
+            runtimes: Vec::new(),
+        };
+
+        for evidence in evidence {
+            let liveness = evidence.membership.is_assessed().then(|| {
+                evaluate_runtime_liveness(
+                    RuntimeLivenessSignals {
+                        run_status: evidence.run_status.as_deref(),
+                        health_status: evidence.health_status,
+                        last_heartbeat_at: evidence.last_heartbeat_at,
+                        last_output_at: evidence.last_output_at,
+                    },
+                    policy,
+                    now,
+                )
+            });
+
+            match liveness.as_ref().map(|value| value.status) {
+                Some(RuntimeLivenessStatus::Healthy) => {
+                    aggregate.assessed_count += 1;
+                    aggregate.healthy_count += 1;
+                }
+                Some(RuntimeLivenessStatus::Degraded) => {
+                    aggregate.assessed_count += 1;
+                    aggregate.degraded_count += 1;
+                }
+                Some(RuntimeLivenessStatus::Unhealthy) => {
+                    aggregate.assessed_count += 1;
+                    aggregate.unhealthy_count += 1;
+                }
+                Some(RuntimeLivenessStatus::Stale) => {
+                    aggregate.assessed_count += 1;
+                    aggregate.stale_count += 1;
+                }
+                Some(RuntimeLivenessStatus::Unknown) => {
+                    aggregate.assessed_count += 1;
+                    aggregate.unknown_count += 1;
+                }
+                Some(RuntimeLivenessStatus::Stopped) => {
+                    aggregate.assessed_count += 1;
+                    aggregate.unhealthy_count += 1;
+                }
+                None => match evidence.membership {
+                    RuntimeLivenessMembership::DisabledOrProfileGated => {
+                        aggregate.excluded_disabled_or_profile_gated_count += 1;
+                    }
+                    RuntimeLivenessMembership::HistoricalStopped => {
+                        aggregate.excluded_historical_stopped_count += 1;
+                    }
+                    RuntimeLivenessMembership::Assessed => unreachable!("assessed evidence has a verdict"),
+                },
+            }
+
+            aggregate.runtimes.push(RuntimeLivenessAssessment {
+                module_name: evidence.module_name,
+                module_kind: evidence.module_kind,
+                membership: evidence.membership,
+                liveness,
+            });
+        }
+
+        aggregate.runtimes.sort_by(|left, right| {
+            left.module_name
+                .as_ref()
+                .cmp(right.module_name.as_ref())
+                .then_with(|| left.module_kind.to_string().cmp(&right.module_kind.to_string()))
+        });
+        aggregate.status = if aggregate.unhealthy_count > 0 || aggregate.stale_count > 0 {
+            HealthStatus::Unhealthy
+        } else if aggregate.degraded_count > 0 || aggregate.unknown_count > 0 {
+            HealthStatus::Degraded
+        } else {
+            HealthStatus::Healthy
+        };
+        aggregate.healthy = aggregate.status == HealthStatus::Healthy;
+        aggregate
+    }
+
+    #[must_use]
+    pub fn unavailable(error: impl Into<String>) -> Self {
+        Self {
+            status: HealthStatus::Unhealthy,
+            healthy: false,
+            assessed_count: 0,
+            healthy_count: 0,
+            degraded_count: 0,
+            unhealthy_count: 0,
+            stale_count: 0,
+            unknown_count: 0,
+            excluded_disabled_or_profile_gated_count: 0,
+            excluded_historical_stopped_count: 0,
+            observation_error: Some(error.into()),
+            runtimes: Vec::new(),
+        }
+    }
 }
 
 #[must_use]
@@ -294,5 +485,74 @@ mod tests {
         assert!(!policy.considers_stale(29));
         assert!(policy.considers_stale(30));
         assert_eq!(RuntimeLivenessPolicy::default().stale_after_secs, 300);
+    }
+
+    #[test]
+    fn aggregate_keeps_failed_and_stale_evidence_out_of_all_clear() {
+        let aggregate = RuntimeLivenessAggregate::evaluate(
+            [
+                RuntimeLivenessEvidence {
+                    module_name: ModuleName::new("failed-source"),
+                    module_kind: ModuleKind::Source,
+                    membership: RuntimeLivenessMembership::Assessed,
+                    run_status: Some("failed".to_string()),
+                    health_status: Some(HealthStatus::Healthy),
+                    last_heartbeat_at: Some((datetime!(2026-08-12 11:59 UTC)).into()),
+                    last_output_at: None,
+                },
+                RuntimeLivenessEvidence {
+                    module_name: ModuleName::new("stale-automaton"),
+                    module_kind: ModuleKind::Automaton,
+                    membership: RuntimeLivenessMembership::Assessed,
+                    run_status: Some("running".to_string()),
+                    health_status: Some(HealthStatus::Healthy),
+                    last_heartbeat_at: Some((datetime!(2026-08-12 11:54 UTC)).into()),
+                    last_output_at: None,
+                },
+            ],
+            RuntimeLivenessPolicy::new(300),
+            now(),
+        );
+
+        assert_eq!(aggregate.status, HealthStatus::Unhealthy);
+        assert!(!aggregate.healthy);
+        assert_eq!(aggregate.unhealthy_count, 1);
+        assert_eq!(aggregate.stale_count, 1);
+        assert_eq!(aggregate.assessed_count, 2);
+    }
+
+    #[test]
+    fn aggregate_excludes_disabled_profile_gated_and_historical_stopped_members() {
+        let aggregate = RuntimeLivenessAggregate::evaluate(
+            [
+                RuntimeLivenessEvidence {
+                    module_name: ModuleName::new("profile-gated-source"),
+                    module_kind: ModuleKind::Source,
+                    membership: RuntimeLivenessMembership::DisabledOrProfileGated,
+                    run_status: None,
+                    health_status: None,
+                    last_heartbeat_at: None,
+                    last_output_at: None,
+                },
+                RuntimeLivenessEvidence {
+                    module_name: ModuleName::new("old-stopped-automaton"),
+                    module_kind: ModuleKind::Automaton,
+                    membership: RuntimeLivenessMembership::HistoricalStopped,
+                    run_status: Some("stopped".to_string()),
+                    health_status: Some(HealthStatus::Healthy),
+                    last_heartbeat_at: Some((datetime!(2026-08-12 11:00 UTC)).into()),
+                    last_output_at: None,
+                },
+            ],
+            RuntimeLivenessPolicy::default(),
+            now(),
+        );
+
+        assert_eq!(aggregate.status, HealthStatus::Healthy);
+        assert!(aggregate.healthy);
+        assert_eq!(aggregate.assessed_count, 0);
+        assert_eq!(aggregate.excluded_disabled_or_profile_gated_count, 1);
+        assert_eq!(aggregate.excluded_historical_stopped_count, 1);
+        assert!(aggregate.runtimes.iter().all(|runtime| runtime.liveness.is_none()));
     }
 }
