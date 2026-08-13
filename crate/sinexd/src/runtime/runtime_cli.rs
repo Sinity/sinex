@@ -631,11 +631,8 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             )
             .await?;
 
-        // Single-daemon: exactly one instance per source exists, so the outer
-        // leader/standby coordination wrapper (per-tick NATS-KV acquire_leadership
-        // CAS for an impossible handoff) is a multi-daemon relic (sinex-9h32).
-        // Run the service directly. (Automata never used the wrapper; they had
-        // their own internal leader/standby path — tracked separately.)
+        // Single-daemon: exactly one runtime instance exists per deployment, so
+        // the old leader/standby wrapper is a multi-daemon relic. Run directly.
         runner.run_service().await?;
         Ok(())
     }

@@ -7,7 +7,7 @@
 use super::{
     Arc, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, ErasedInitContext, Event,
     EventBatcherConfig, EventEmitter, EventTransport, HashMap, JsonValue, ModuleKind, ModuleState,
-    PgPool, ProcessingModel, RunnerLifecycle, RuntimeHandles, RuntimeResult, RuntimeRunner,
+    PgPool, RunnerLifecycle, RuntimeHandles, RuntimeResult, RuntimeRunner,
     ServiceInfo, SinexError, Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener,
     mpsc, spawn_event_batcher, watch,
 };
@@ -147,11 +147,6 @@ impl RuntimeRunner {
 
         // NATS is the only transport
         let transport_type = "NATS";
-
-        // Sinex runs one daemon instance per deployment. Automata therefore
-        // process directly; the old internal leader/standby election created
-        // needless NATS-KV traffic for a handoff that cannot occur.
-        self.processing_model = ProcessingModel::StatelessWorker;
 
         #[cfg(feature = "db")]
         let module_run_id = if let Some(pool) = db_pool.as_ref() {

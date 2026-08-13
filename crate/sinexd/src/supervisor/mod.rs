@@ -568,12 +568,7 @@ fn spawn_automaton(
         if !startup_delay.is_zero() {
             tokio::time::sleep(startup_delay).await;
         }
-        let mut backoff = Duration::from_secs(1);
-        const MAX_BACKOFF: Duration = Duration::from_secs(30);
-        // Reset backoff to 1 s if the automaton ran for at least this long
-        // before failing — indicates a stable start followed by a transient
-        // runtime error rather than a crash-loop.
-        const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
+        let mut retry_schedule = RuntimeRetrySchedule::default();
 
         loop {
             if *shutdown_rx.borrow() {
@@ -592,10 +587,8 @@ fn spawn_automaton(
                     break;
                 }
                 Err(error) => {
-                    if started.elapsed() >= STABLE_THRESHOLD {
-                        backoff = Duration::from_secs(1);
-                    }
-                    let retry_delay = jittered_runtime_backoff(backoff, random_jitter_entropy());
+                    let retry_delay =
+                        retry_schedule.next_delay(started.elapsed(), random_jitter_entropy());
                     warn!(
                         automaton = %spec.name,
                         backoff_ms = retry_delay.as_millis(),
@@ -610,7 +603,6 @@ fn spawn_automaton(
                             async move { let _ = rx.wait_for(|&v| v).await; }
                         } => { break; }
                     }
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
             }
         }
@@ -630,8 +622,37 @@ fn runtime_startup_delay(entropy: u64) -> Duration {
 fn jittered_runtime_backoff(base: Duration, entropy: u64) -> Duration {
     let base_ms = base.as_millis() as u64;
     let jitter_ms = (base_ms / 2).max(1);
-    let jitter = entropy % (jitter_ms + 1);
-    (base + Duration::from_millis(jitter)).min(Duration::from_secs(30))
+    let lower_ms = base_ms.saturating_sub(jitter_ms).max(1);
+    let upper_ms = base_ms.saturating_add(jitter_ms);
+    let span_ms = upper_ms.saturating_sub(lower_ms).saturating_add(1);
+    Duration::from_millis(lower_ms + entropy % span_ms)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimeRetrySchedule {
+    delay: Duration,
+}
+
+impl Default for RuntimeRetrySchedule {
+    fn default() -> Self {
+        Self {
+            delay: Duration::from_secs(1),
+        }
+    }
+}
+
+impl RuntimeRetrySchedule {
+    const MAX_DELAY: Duration = Duration::from_secs(30);
+    const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
+
+    fn next_delay(&mut self, run_duration: Duration, entropy: u64) -> Duration {
+        if run_duration >= Self::STABLE_THRESHOLD {
+            self.delay = Duration::from_secs(1);
+        }
+        let delay = jittered_runtime_backoff(self.delay, entropy).min(Self::MAX_DELAY);
+        self.delay = (self.delay * 2).min(Self::MAX_DELAY);
+        delay
+    }
 }
 
 /// Load `SINEX_SOURCE_BINDINGS_PATH` and spawn one supervisor task per
@@ -677,9 +698,7 @@ fn spawn_source_binding(
         if !startup_delay.is_zero() {
             tokio::time::sleep(startup_delay).await;
         }
-        let mut backoff = Duration::from_secs(1);
-        const MAX_BACKOFF: Duration = Duration::from_secs(30);
-        const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
+        let mut retry_schedule = RuntimeRetrySchedule::default();
 
         loop {
             if *shutdown_rx.borrow() {
@@ -701,10 +720,8 @@ fn spawn_source_binding(
                     break;
                 }
                 Err(error) => {
-                    if started.elapsed() >= STABLE_THRESHOLD {
-                        backoff = Duration::from_secs(1);
-                    }
-                    let retry_delay = jittered_runtime_backoff(backoff, random_jitter_entropy());
+                    let retry_delay =
+                        retry_schedule.next_delay(started.elapsed(), random_jitter_entropy());
                     warn!(
                         source_binding = %label,
                         backoff_ms = retry_delay.as_millis(),
@@ -718,7 +735,6 @@ fn spawn_source_binding(
                             async move { let _ = rx.wait_for(|&v| v).await; }
                         } => { break; }
                     }
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
             }
         }

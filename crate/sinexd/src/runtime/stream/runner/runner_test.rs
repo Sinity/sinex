@@ -42,6 +42,8 @@ struct StartupSequenceTestModule {
     scans: std::sync::Arc<tokio::sync::Mutex<Vec<RecordedScan>>>,
     snapshot_checkpoint: Checkpoint,
     capabilities: RuntimeCapabilities,
+    snapshot_started: Option<Arc<Notify>>,
+    snapshot_release: Option<Arc<Notify>>,
 }
 
 #[cfg(feature = "messaging")]
@@ -90,7 +92,18 @@ impl StartupSequenceTestModule {
                 supports_snapshot: true,
                 ..RuntimeCapabilities::default()
             },
+            snapshot_started: None,
+            snapshot_release: None,
         }
+    }
+
+    fn with_snapshot_gate() -> (Self, Arc<Notify>, Arc<Notify>) {
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let mut module = Self::new(Checkpoint::None, Checkpoint::None);
+        module.snapshot_started = Some(started.clone());
+        module.snapshot_release = Some(release.clone());
+        (module, started, release)
     }
 }
 
@@ -562,6 +575,12 @@ impl RuntimeModule for StartupSequenceTestModule {
     ) -> RuntimeResult<ScanReport> {
         let phase = match until {
             TimeHorizon::Snapshot => {
+                if let Some(started) = &self.snapshot_started {
+                    started.notify_one();
+                }
+                if let Some(release) = &self.snapshot_release {
+                    release.notified().await;
+                }
                 *self.checkpoint.lock().await = self.snapshot_checkpoint.clone();
                 "snapshot"
             }

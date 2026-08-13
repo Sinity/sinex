@@ -5,6 +5,7 @@
 use super::*;
 use crate::runtime::stream::control_protocol::encode_control_message;
 use crate::runtime::stream::{ProcessingStats, RuntimeInitContext};
+use tokio::net::UnixDatagram;
 
 #[cfg(feature = "messaging")]
 mod lk67_invalidation_reachability {
@@ -408,6 +409,111 @@ async fn confirmed_event_handler_forwards_full_event_to_bridge() -> TestResult<(
     assert_eq!(received.id, expected_id);
     assert_eq!(received.event_type.as_str(), "runtime.test");
     assert_eq!(received.payload, serde_json::json!({"ok": true}));
+    Ok(())
+}
+
+/// sinex-f11x: the production automaton service route must not wait for an
+/// impossible second-process leader. A pre-seeded coordination lease makes the
+/// old `LeaderStandby` path block; the real `run_service` route must still enter
+/// its historical catch-up scan immediately.
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn automaton_service_route_does_not_wait_for_coordination_leader(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    ensure_default_bridge_streams(&client).await?;
+
+    let service_name = format!("automaton-no-election-{}", Uuid::now_v7());
+    let coordination = sinex_primitives::coordination::CoordinationKvClient::new(
+        async_nats::jetstream::new(client.clone()),
+        service_name.clone(),
+    );
+    assert!(coordination.acquire_leadership("other-process").await?);
+
+    let mut runner = RuntimeRunner::new(HistoricalCatchupTestAutomaton::new(true));
+    let work_dir = tempdir()?;
+    runner
+        .initialize_with_transport(
+            service_name,
+            HashMap::new(),
+            None,
+            EventTransport::Nats(Arc::new(NatsPublisher::new(client))),
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await?;
+
+    let run_handle = tokio::spawn(async move { runner.run_service().await });
+    let run_result = tokio::time::timeout(Duration::from_secs(3), run_handle)
+        .await
+        .map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "automaton service route waited for a coordination leader instead of entering catch-up"
+            )
+        })??;
+    let error = run_result.expect_err("historical catch-up fixture must stop the route");
+    assert!(
+        error.to_string().contains("intentional historical catch-up stop"),
+        "the production route must reach the historical scan: {error:#}"
+    );
+    Ok(())
+}
+
+/// sinex-srn8: source readiness is a post-snapshot signal on the production
+/// `run_service` route. The gated snapshot proves no READY=1 is emitted while
+/// the source is still warming, then proves the signal is sent after release.
+#[sinex_test]
+async fn source_service_route_defers_ready_until_snapshot_finishes(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (module, snapshot_started, snapshot_release) =
+        StartupSequenceTestModule::with_snapshot_gate();
+    let mut runner = RuntimeRunner::new(module);
+    let work_dir = tempdir()?;
+
+    let socket_path = work_dir.path().join("systemd-notify.sock");
+    let listener = UnixDatagram::bind(&socket_path)?;
+    let mut env_guard = EnvGuard::with_keys(&["NOTIFY_SOCKET", "SINEX_SD_NOTIFY_HOSTED"]);
+    env_guard.set("NOTIFY_SOCKET", &socket_path);
+    env_guard.clear("SINEX_SD_NOTIFY_HOSTED");
+
+    runner
+        .initialize_with_transport(
+            "source-readiness-after-snapshot".to_string(),
+            HashMap::new(),
+            None,
+            EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await?;
+
+    let run_handle = tokio::spawn(async move { runner.run_service().await });
+    tokio::time::timeout(Duration::from_secs(3), snapshot_started.notified())
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("source snapshot did not start"))?;
+
+    let mut buf = [0_u8; 128];
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), listener.recv(&mut buf))
+            .await
+            .is_err(),
+        "source service advertised ready before its snapshot phase finished"
+    );
+
+    snapshot_release.notify_one();
+    let ready_len = tokio::time::timeout(Duration::from_secs(3), listener.recv(&mut buf))
+        .await??;
+    let ready_message = std::str::from_utf8(&buf[..ready_len])?;
+    assert!(ready_message.contains("READY=1"));
+
+    let run_result = tokio::time::timeout(Duration::from_secs(3), run_handle)
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("source service route did not finish"))??;
+    run_result?;
     Ok(())
 }
 

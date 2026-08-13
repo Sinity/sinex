@@ -21,7 +21,6 @@ use super::{
 use crate::runtime::{
     RuntimeResult, SinexError,
     checkpoint::CheckpointManager,
-    confirmation_handler::ProcessingModel,
     event_transport::{EventBatcherConfig, EventTransport, spawn_event_batcher},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     systemd_notify,
@@ -77,7 +76,6 @@ pub struct RuntimeRunner {
     /// source modules; aborted on shutdown. No shutdown channel: the listener
     /// holds a NATS subscription and is aborted directly (like `consumer_handle`).
     parse_listener_handle: Option<tokio::task::JoinHandle<()>>,
-    processing_model: ProcessingModel,
     /// sinex-li78 test/harness-only hook, paired with `confirmed_consumer_ready_tx`
     /// below: exposed to callers (via `take_confirmed_consumer_ready`) so a
     /// test can deterministically wait for the automaton bridge's

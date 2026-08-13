@@ -1,4 +1,4 @@
-use super::{automata_enabled_arg, jittered_runtime_backoff, runtime_startup_delay};
+use super::{RuntimeRetrySchedule, automata_enabled_arg, jittered_runtime_backoff, runtime_startup_delay};
 use std::time::Duration;
 use xtask::sandbox::prelude::sinex_test;
 
@@ -30,8 +30,8 @@ async fn runtime_retry_backoff_has_bounded_jitter() -> xtask::sandbox::TestResul
     let base = Duration::from_secs(8);
     let first = jittered_runtime_backoff(base, 1);
     let second = jittered_runtime_backoff(base, u64::MAX);
-    assert!(first >= base);
-    assert!(second >= base);
+    assert!(first >= Duration::from_secs(4));
+    assert!(second >= Duration::from_secs(4));
     assert!(first <= Duration::from_secs(12));
     assert!(second <= Duration::from_secs(12));
     assert_ne!(first, second);
@@ -41,13 +41,35 @@ async fn runtime_retry_backoff_has_bounded_jitter() -> xtask::sandbox::TestResul
 #[sinex_test]
 async fn runtime_retry_backoff_stays_capped_at_the_ladder_max()
 -> xtask::sandbox::TestResult<()> {
+    let first = jittered_runtime_backoff(Duration::from_secs(30), 0);
+    let second = jittered_runtime_backoff(Duration::from_secs(30), u64::MAX);
+    assert!(first >= Duration::from_secs(15));
+    assert!(second <= Duration::from_secs(45));
+    assert_ne!(first, second);
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_retry_schedule_jitters_capped_retries_and_resets_after_stability()
+-> xtask::sandbox::TestResult<()> {
+    let mut schedule = RuntimeRetrySchedule::default();
+    assert_eq!(
+        schedule.next_delay(Duration::ZERO, 0),
+        Duration::from_millis(500)
+    );
+    assert_eq!(
+        schedule.next_delay(Duration::ZERO, 2_000),
+        Duration::from_secs(3)
+    );
+
     for entropy in [0, 1, u64::MAX] {
-        assert_eq!(
-            jittered_runtime_backoff(Duration::from_secs(30), entropy),
-            Duration::from_secs(30),
-            "jitter must not extend a capped retry ladder"
-        );
+        let capped = schedule.next_delay(Duration::ZERO, entropy);
+        assert!(capped >= Duration::from_secs(15));
+        assert!(capped <= Duration::from_secs(30));
     }
+
+    let reset = schedule.next_delay(Duration::from_secs(60), 1);
+    assert_eq!(reset, Duration::from_millis(500));
     Ok(())
 }
 

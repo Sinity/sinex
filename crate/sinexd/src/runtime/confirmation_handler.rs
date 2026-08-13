@@ -15,20 +15,8 @@
 
 use crate::runtime::RuntimeResult;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use sinex_primitives::JsonValue;
 use sinex_primitives::events::Event;
-
-/// Processing model for automata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProcessingModel {
-    /// Leader/standby with a single active runtime module.
-    /// Uses NATS KV leases for coordination.
-    LeaderStandby,
-    /// Stateless workers processing confirmed events.
-    /// Multiple instances can run in parallel.
-    StatelessWorker,
-}
 
 /// Handler for confirmed events.
 ///
