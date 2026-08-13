@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tracing::{error, info};
 
-use super::validation::ensure_replay_gates_pass;
+use super::validation::{ensure_replay_gates_pass, ensure_replay_source_recovery_allowed};
 
 pub(super) const REPLAY_OUTPUT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -480,6 +480,7 @@ impl ReplayExecutionEngine {
             ))
         })?;
         ensure_replay_gates_pass(operation_id, preview, gate_overrides)?;
+        ensure_replay_source_recovery_allowed(operation_id, &op.scope.source_name)?;
 
         let (total_events, execution_window, preview_roots) =
             Self::execution_inputs_from_operation(operation_id, &op)?;
@@ -516,6 +517,7 @@ impl ReplayExecutionEngine {
             ))
         })?;
         ensure_replay_gates_pass(operation_id, preview, gate_overrides)?;
+        ensure_replay_source_recovery_allowed(operation_id, &pending.scope.source_name)?;
 
         let executor_module = ModuleName::new(submitter);
         let operation = self

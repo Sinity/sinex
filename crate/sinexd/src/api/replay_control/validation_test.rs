@@ -179,3 +179,18 @@ async fn replay_gates_accept_matching_overrides() -> Result<()> {
     ensure_replay_gates_pass(Uuid::now_v7(), &preview, &overrides)?;
     Ok(())
 }
+
+#[sinex_test]
+async fn replay_preflight_rejects_registered_live_observation_binding() -> Result<()> {
+    let operation_id = Uuid::now_v7();
+    let error = ensure_replay_source_recovery_allowed(operation_id, "terminal.kitty-osc-live")
+        .expect_err("live observations must not archive before a replay scan");
+
+    let rendered = format!("{error:#}");
+    assert!(rendered.contains("no authority for archive-and-scan recovery"));
+    assert!(rendered.contains("terminal.kitty-osc-live"));
+    assert!(rendered.contains("LiveObservation"));
+
+    ensure_replay_source_recovery_allowed(Uuid::now_v7(), "desktop.activitywatch")?;
+    Ok(())
+}

@@ -10,6 +10,7 @@ use serde_json::Value as JsonValue;
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayState};
 use sinex_primitives::env as shared_env;
 use sinex_primitives::rpc::replay::ReplayGateOverrides;
+use sinex_primitives::source_contracts::{SourceRuntimeBinding, source_runtime_bindings};
 use sinex_primitives::{Result, SinexError, Uuid};
 use std::collections::HashSet;
 use tracing::warn;
@@ -191,6 +192,57 @@ pub(super) fn ensure_replay_gates_pass(
                 "refresh preview or pass the explicit override flag(s)",
             ),
     )
+}
+
+/// Refuse archive-and-scan replay for a registered binding that declares no
+/// authority to re-read its source. The caller runs this before transitioning
+/// an operation into execution, so no live rows are archived for an
+/// unrecoverable source.
+pub(super) fn ensure_replay_source_recovery_allowed(
+    operation_id: Uuid,
+    source_name: &str,
+) -> Result<()> {
+    let blocked = source_runtime_bindings()
+        .filter(|binding| !binding.proposed)
+        .filter(|binding| binding_matches_replay_source(binding, source_name))
+        .filter(|binding| !binding.recovery_policy.is_replayable())
+        .map(|binding| {
+            format!(
+                "{} (binding={}, class={:?}, authority={:?}, accepted_loss={:?})",
+                binding.subject.as_str(),
+                binding.id,
+                binding.recovery_policy.replayability_class,
+                binding.recovery_policy.catch_up_authority,
+                binding.recovery_policy.accepted_loss_policy,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if blocked.is_empty() {
+        return Ok(());
+    }
+
+    Err(
+        SinexError::invalid_state("Replay source has no authority for archive-and-scan recovery")
+            .with_context("operation_id", operation_id.to_string())
+            .with_context("source_name", source_name.to_string())
+            .with_context("non_replayable_bindings", blocked.join("; "))
+            .with_context(
+                "hint",
+                "replay retained material or select a binding with declared catch-up authority",
+            ),
+    )
+}
+
+fn binding_matches_replay_source(binding: &SourceRuntimeBinding, source_name: &str) -> bool {
+    binding.id == source_name
+        || binding.source_id == source_name
+        || binding.subject.as_str() == source_name
+        || binding
+            .subject
+            .as_str()
+            .strip_prefix("source:")
+            .is_some_and(|subject| subject == source_name)
 }
 
 pub(super) fn ensure_preview_allowed(operation: &ReplayOperation) -> Result<()> {
