@@ -1693,6 +1693,11 @@ async fn component_all_covers_all_four() -> xtask::sandbox::TestResult<()> {
 #[sinex_test]
 async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()> {
     let state_dir = make_fake_state_dir()?;
+    let explicit_nats_dir = tempfile::tempdir()?;
+    let explicit_nats_file = explicit_nats_dir.path().join("explicit-stream-state");
+    fs::write(&explicit_nats_file, b"explicit-nats-fixture")?;
+    let explicit_nats_bytes = fs::metadata(&explicit_nats_file)?.len();
+    let state_nats_bytes = fs::metadata(state_dir.path().join("nats/jetstream/meta.inf"))?.len();
     let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("test.tar.zst");
 
@@ -1704,7 +1709,7 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         dry_run: true,
         database_url: None,
         state_dir: Some(state_dir.path().to_path_buf()),
-        nats_store_dir: None,
+        nats_store_dir: Some(explicit_nats_dir.path().to_path_buf()),
         auto_stop: false,
         components: vec![Component::Nats, Component::Cas, Component::State],
     };
@@ -1742,6 +1747,20 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
             "component '{expected}' must appear in dry-run result"
         );
     }
+
+    let nats = result
+        .components_captured
+        .iter()
+        .find(|component| component.name == "nats")
+        .expect("dry-run result must include the NATS component");
+    assert_eq!(
+        nats.bytes, explicit_nats_bytes,
+        "dry-run NATS estimate must use the explicit NATS store root"
+    );
+    assert_ne!(
+        nats.bytes, state_nats_bytes,
+        "dry-run NATS estimate must not silently use state_dir/nats/jetstream"
+    );
 
     Ok(())
 }

@@ -318,10 +318,15 @@ impl AdminSnapshotCommand {
         let mode = SnapshotMode::parse(&self.mode)?;
 
         let captures_nats = self.components.iter().any(|c| c == &Component::Nats);
+        // Live NATS capture always needs discovered topology. A dry-run may
+        // use the state fixture fallback, but an explicit NATS override must
+        // still flow through topology discovery so it is not discarded.
+        let require_nats_topology =
+            captures_nats && (!self.dry_run || self.nats_store_dir.is_some());
         let topology = exec::SnapshotTopology::discover(
             self.state_dir.as_deref(),
             self.nats_store_dir.as_deref(),
-            captures_nats && !self.dry_run,
+            require_nats_topology,
             !self.dry_run && mode.requires_quiescence(),
         )?;
         let state_dir = topology.state_dir.clone();
