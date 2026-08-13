@@ -474,7 +474,13 @@ async fn source_service_route_defers_ready_until_snapshot_finishes(
     let mut runner = RuntimeRunner::new(module);
     let work_dir = tempdir()?;
 
-    let socket_path = work_dir.path().join("systemd-notify.sock");
+    // Unix-domain socket paths have a small platform limit.  The checkout and
+    // xtask artifact paths can already consume most of it, so keep this test
+    // socket explicitly short while retaining per-process isolation.
+    let socket_path = std::env::temp_dir().join(format!(
+        "sx-ready-{}.sock",
+        std::process::id()
+    ));
     let listener = UnixDatagram::bind(&socket_path)?;
     let mut env_guard = EnvGuard::with_keys(&["NOTIFY_SOCKET", "SINEX_SD_NOTIFY_HOSTED"]);
     env_guard.set("NOTIFY_SOCKET", &socket_path);

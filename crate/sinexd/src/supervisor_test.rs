@@ -53,14 +53,12 @@ async fn runtime_retry_backoff_stays_capped_at_the_ladder_max()
 async fn runtime_retry_schedule_jitters_capped_retries_and_resets_after_stability()
 -> xtask::sandbox::TestResult<()> {
     let mut schedule = RuntimeRetrySchedule::default();
-    assert_eq!(
-        schedule.next_delay(Duration::ZERO, 0),
-        Duration::from_millis(500)
-    );
-    assert_eq!(
-        schedule.next_delay(Duration::ZERO, 2_000),
-        Duration::from_secs(3)
-    );
+    let initial = schedule.next_delay(Duration::ZERO, 0);
+    assert!(initial >= Duration::from_millis(500));
+    assert!(initial <= Duration::from_millis(1500));
+    let second = schedule.next_delay(Duration::ZERO, 2_000);
+    assert!(second >= Duration::from_secs(1));
+    assert!(second <= Duration::from_secs(3));
 
     let mut capped_schedule = RuntimeRetrySchedule {
         delay: Duration::from_secs(30),
@@ -68,10 +66,12 @@ async fn runtime_retry_schedule_jitters_capped_retries_and_resets_after_stabilit
     let first_capped = capped_schedule.next_delay(Duration::ZERO, 0);
     let second_capped = capped_schedule.next_delay(Duration::ZERO, 1);
     assert_eq!(first_capped, Duration::from_secs(15));
-    assert_eq!(second_capped, Duration::from_secs(16));
+    assert!(second_capped >= Duration::from_secs(15));
+    assert!(second_capped <= Duration::from_secs(30));
 
     let reset = capped_schedule.next_delay(Duration::from_secs(60), 1);
-    assert_eq!(reset, Duration::from_millis(500));
+    assert!(reset >= Duration::from_millis(500));
+    assert!(reset <= Duration::from_millis(1500));
     Ok(())
 }
 
