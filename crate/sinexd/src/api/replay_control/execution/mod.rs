@@ -14,9 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tracing::{error, info};
 
-use super::validation::{
-    ensure_replay_gates_pass, replay_scope_drift_error, stale_preview_missing_root_ids_error,
-};
+use super::validation::ensure_replay_gates_pass;
 
 pub(super) const REPLAY_OUTPUT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -365,7 +363,7 @@ impl ReplayExecutionEngine {
         executor_name: &str,
         gate_overrides: &ReplayGateOverrides,
     ) -> Result<ReplayOperation> {
-        let (initial, total_events, execution_window, preview_root_ids) = self
+        let (initial, total_events, execution_window, preview_roots) = self
             .prepare_operation(operation_id, executor_name, gate_overrides)
             .await?;
 
@@ -386,7 +384,7 @@ impl ReplayExecutionEngine {
                 &initial.scope,
                 execution_window,
                 total_events,
-                &preview_root_ids,
+                &preview_roots,
                 self.replay.pool(),
                 &mut checkpoint,
                 executor_name,
@@ -404,7 +402,7 @@ impl ReplayExecutionEngine {
         submitter: &str,
         gate_overrides: &ReplayGateOverrides,
     ) -> Result<ReplayOperation> {
-        let (initial, total_events, execution_window, preview_root_ids) = self
+        let (initial, total_events, execution_window, preview_roots) = self
             .prepare_submitted_operation(operation_id, submitter, gate_overrides)
             .await?;
 
@@ -423,7 +421,7 @@ impl ReplayExecutionEngine {
                 &initial.scope,
                 execution_window,
                 total_events,
-                &preview_root_ids,
+                &preview_roots,
                 self.replay.pool(),
                 &mut checkpoint,
                 submitter,
@@ -440,7 +438,7 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         executor_name: &str,
         gate_overrides: &ReplayGateOverrides,
-    ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), Vec<Uuid>)> {
+    ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), ReplayPreviewSummary)> {
         let op = self.replay.load_operation(operation_id).await?;
         if op.state != ReplayState::Approved {
             return Err(SinexError::invalid_state(format!(
@@ -456,7 +454,7 @@ impl ReplayExecutionEngine {
         })?;
         ensure_replay_gates_pass(operation_id, preview, gate_overrides)?;
 
-        let (total_events, execution_window, preview_root_ids) =
+        let (total_events, execution_window, preview_roots) =
             Self::execution_inputs_from_operation(operation_id, &op)?;
 
         self.replay
@@ -470,7 +468,7 @@ impl ReplayExecutionEngine {
             "Beginning event replay"
         );
 
-        Ok((op, total_events, execution_window, preview_root_ids))
+        Ok((op, total_events, execution_window, preview_roots))
     }
 
     pub(super) async fn prepare_submitted_operation(
@@ -478,7 +476,7 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         submitter: &str,
         gate_overrides: &ReplayGateOverrides,
-    ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), Vec<Uuid>)> {
+    ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), ReplayPreviewSummary)> {
         let pending = self.replay.load_operation(operation_id).await?;
         let preview = pending.preview_summary.as_ref().ok_or_else(|| {
             SinexError::invalid_state(format!(
@@ -492,7 +490,7 @@ impl ReplayExecutionEngine {
             .replay
             .submit_previewed_for_execution(operation_id, submitter.to_string(), executor_module)
             .await?;
-        let (total_events, execution_window, preview_root_ids) =
+        let (total_events, execution_window, preview_roots) =
             Self::execution_inputs_from_operation(operation_id, &operation)?;
 
         info!(
@@ -502,13 +500,13 @@ impl ReplayExecutionEngine {
             "Beginning event replay from atomic submit"
         );
 
-        Ok((operation, total_events, execution_window, preview_root_ids))
+        Ok((operation, total_events, execution_window, preview_roots))
     }
 
     pub(super) fn execution_inputs_from_operation(
         operation_id: Uuid,
         operation: &ReplayOperation,
-    ) -> Result<(u64, (Timestamp, Timestamp), Vec<Uuid>)> {
+    ) -> Result<(u64, (Timestamp, Timestamp), ReplayPreviewSummary)> {
         let preview = operation.preview_summary.clone().ok_or_else(|| {
             SinexError::invalid_state(format!(
                 "Operation {operation_id} is missing preview summary; run preview before execution"
@@ -524,21 +522,17 @@ impl ReplayExecutionEngine {
                 "Operation {operation_id} preview matches zero events; refresh preview before execution"
             )));
         }
-        let mut preview_root_ids = preview_summary.root_event_ids;
-        preview_root_ids.sort_unstable();
-        preview_root_ids.dedup();
-        if preview_root_ids.is_empty() {
-            return Err(stale_preview_missing_root_ids_error(
-                operation_id,
-                total_events,
-            ));
-        }
-        if preview_root_ids.len() as u64 != total_events {
+        if preview_summary.root_event_count != total_events {
             return Err(SinexError::invalid_state(format!(
-                "Operation {} preview summary is inconsistent: total_events={} but root_event_ids contains {} ids",
+                "Operation {} preview summary is inconsistent: total_events={} but root_event_count={}",
                 operation_id,
                 total_events,
-                preview_root_ids.len()
+                preview_summary.root_event_count
+            )));
+        }
+        if preview_summary.root_event_id_fingerprint.is_empty() {
+            return Err(SinexError::invalid_state(format!(
+                "Operation {operation_id} preview is missing replay-root fingerprint; refresh preview before execution"
             )));
         }
 
@@ -548,7 +542,7 @@ impl ReplayExecutionEngine {
                 preview_summary.time_window.start,
                 preview_summary.time_window.end,
             ),
-            preview_root_ids,
+            preview_summary,
         ))
     }
 
@@ -747,15 +741,19 @@ impl ReplayExecutionEngine {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(super) struct ReplayPreviewSummary {
     pub(super) total_events: u64,
     pub(super) time_window: ReplayPreviewTimeWindow,
     #[serde(default)]
-    pub(super) root_event_ids: Vec<Uuid>,
+    pub(super) root_event_count: u64,
+    #[serde(default)]
+    pub(super) root_event_id_sample: Vec<Uuid>,
+    #[serde(default)]
+    pub(super) root_event_id_fingerprint: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(super) struct ReplayPreviewTimeWindow {
     pub(super) start: Timestamp,
     pub(super) end: Timestamp,
@@ -773,4 +771,6 @@ pub(super) struct ExpectedReplayOutputs {
 }
 
 mod collect;
+#[cfg(test)]
+pub(crate) use collect::REPLAY_EXECUTION_ROOT_BATCH_SIZE;
 mod replay_writer;

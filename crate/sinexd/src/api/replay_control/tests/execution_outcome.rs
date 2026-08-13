@@ -1,4 +1,176 @@
 use super::*;
+
+/// Exercises the public replay execution route beyond the repository page
+/// boundary. The fake source records every received command and emits one
+/// replacement per archived occurrence, so a one-command/full-scope handoff
+/// cannot satisfy either the command cardinality or output-completeness checks.
+#[sinex_test]
+async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
+    ctx: TestContext,
+) -> Result<()> {
+    const ROOT_COUNT: i64 = 10_001;
+    let ctx = ctx.with_nats().dedicated().await?;
+    let material_id = ctx
+        .create_source_material(Some("replay-bounded-execution"))
+        .await?;
+    let now = Timestamp::now();
+
+    let roots = (0..ROOT_COUNT)
+        .map(|anchor| {
+            Ok(DynamicPayload::new(
+                "fs-test",
+                FileCreatedPayload::EVENT_TYPE.as_static_str(),
+                json!({ "path": format!("/tmp/replay-batch-{anchor}.txt") }),
+            )
+            .from_material_at(material_id, anchor)
+            .build()?)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    // The event schema rejects anchors beyond a finalized material's declared
+    // byte extent. This synthetic source has one byte position per root.
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2",
+    )
+    .bind(ROOT_COUNT)
+    .bind(material_id)
+    .execute(&ctx.pool)
+    .await?;
+    ctx.pool.events().insert_batch(roots).await?;
+
+    let nats = ctx.nats_client();
+    let env = environment();
+    let subject = env.nats_subject("sinex.control.sources.fs-test.scan");
+    let mut scan_sub = nats.subscribe(subject).await?;
+    let output_pool = ctx.pool.clone();
+    let output_nats = nats.clone();
+    let output_env = env.clone();
+    let scan_handle = tokio::spawn(async move {
+        let mut command_count = 0_usize;
+        let mut emitted_count = 0_u64;
+        while emitted_count < ROOT_COUNT as u64 {
+            let message = scan_sub.next().await.ok_or_else(|| {
+                test_error("bounded replay fake source ended before all commands")
+            })?;
+            let command: SourceScanCommand = serde_json::from_slice(&message.payload)?;
+            let replay =
+                command.args.replay.as_ref().ok_or_else(|| {
+                    test_error("bounded replay scan command omitted replay context")
+                })?;
+            assert!(
+                replay.occurrences.len() <= REPLAY_EXECUTION_ROOT_BATCH_SIZE as usize,
+                "each real source-scan command must stay bounded"
+            );
+            assert!(
+                replay.materials.len() <= REPLAY_EXECUTION_ROOT_BATCH_SIZE as usize,
+                "each real source-scan material handoff must stay bounded"
+            );
+            command_count += 1;
+
+            if let Some(reply) = message.reply {
+                output_nats
+                    .publish(
+                        reply,
+                        serde_json::to_vec(&SourceScanAck {
+                            operation_id: command.operation_id,
+                            module_name: "fs-test".to_string(),
+                            accepted: true,
+                            error: None,
+                        })?
+                        .into(),
+                    )
+                    .await?;
+            }
+
+            for occurrence in &replay.occurrences {
+                let mut replacement = DynamicPayload::new(
+                    "fs-test",
+                    FileCreatedPayload::EVENT_TYPE.as_static_str(),
+                    json!({ "path": format!("/tmp/replay-replacement-{}.txt", occurrence.anchor_byte) }),
+                )
+                .from_material_at(Id::from_uuid(occurrence.source_material_id), occurrence.anchor_byte)
+                .build()?;
+                replacement.created_by_operation_id = Some(command.operation_id);
+                output_pool.events().insert(replacement).await?;
+                emitted_count += 1;
+            }
+
+            let batch_count = u64::try_from(replay.occurrences.len())?;
+            output_nats
+                .publish(
+                    output_env.nats_subject(&format!(
+                        "sinex.control.replay.progress.{}",
+                        command.operation_id
+                    )),
+                    serde_json::to_vec(&SourceScanProgress {
+                        operation_id: command.operation_id,
+                        module_name: "fs-test".to_string(),
+                        events_processed: batch_count,
+                        events_emitted: batch_count,
+                        final_report: Some(ScanReport {
+                            events_processed: batch_count,
+                            duration: Duration::from_millis(1),
+                            final_checkpoint: Checkpoint::None,
+                            time_range: None,
+                            runtime_stats: HashMap::new(),
+                            successful_targets: vec!["fs-test".to_string()],
+                            failed_targets: Vec::new(),
+                            warnings: Vec::new(),
+                        }),
+                        error: None,
+                        cancelled: false,
+                    })?
+                    .into(),
+                )
+                .await?;
+        }
+        Ok::<(usize, u64), color_eyre::Report>((command_count, emitted_count))
+    });
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let client = spawn_replay_control(replay, nats, Duration::from_secs(30)).await?;
+    let scope = ReplayScope {
+        source_name: "fs-test".to_string(),
+        time_window: Some((
+            now - time::Duration::minutes(1),
+            Timestamp::now() + time::Duration::minutes(1),
+        )),
+        material_filter: Some(vec![*material_id.as_uuid()]),
+        filters: HashMap::from([(
+            "event_types".to_string(),
+            json!([FileCreatedPayload::EVENT_TYPE.as_static_str()]),
+        )]),
+        ..Default::default()
+    };
+    let planned = client.plan("test:replay-batch".into(), scope).await?;
+    let (previewed, preview) = client.preview(planned.operation_id).await?;
+    assert_eq!(preview["root_event_count"], json!(ROOT_COUNT));
+    assert_eq!(
+        preview["root_event_id_sample"].as_array().map(Vec::len),
+        Some(100)
+    );
+    client
+        .approve(previewed.operation_id, "admin:approver".into())
+        .await?;
+    let completed = client
+        .execute(
+            planned.operation_id,
+            "service:bounded-replay-executor".into(),
+            false,
+        )
+        .await?;
+
+    let (command_count, emitted_count) = scan_handle.await??;
+    assert_eq!(completed.state, ReplayState::Completed);
+    assert_eq!(completed.checkpoint.total_events, ROOT_COUNT as u64);
+    assert_eq!(completed.checkpoint.processed_events, ROOT_COUNT as u64);
+    assert_eq!(emitted_count, ROOT_COUNT as u64);
+    assert_eq!(
+        command_count, 11,
+        "10,001 roots must cross the 1,000-root execution page boundary"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
@@ -127,24 +299,17 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
             .and_then(serde_json::Value::as_str),
         Some("reexecute_material_roots_via_source_scan")
     );
-    // Regression: the client-facing preview must never carry the full
-    // root_event_ids array -- for a real-scale scope this is hundreds of
-    // thousands of UUIDs, producing a reply payload sinexd's own
-    // oversized-publish guard silently refuses to send (discovered live
-    // while diagnosing sinex-60r's ActivityWatch replay). Execution below
-    // still succeeding proves the FULL id list is still stored server-side
-    // (state_machine.rs's approve/execute integrity checks would fail
-    // loudly otherwise) -- only the wire reply to the client is trimmed.
+    // Preview identity is bounded even in durable operation state.
     assert!(
         preview.get("root_event_ids").is_none(),
-        "client-facing preview must not include the full root_event_ids array, got: {preview:?}"
+        "preview must not include a full root_event_ids array, got: {preview:?}"
     );
     assert_eq!(
         preview
-            .get("root_event_ids_count")
+            .get("root_event_count")
             .and_then(serde_json::Value::as_u64),
         Some(1),
-        "client-facing preview should surface the count in place of the full array"
+        "preview should surface replay-root count"
     );
 
     let approved = client

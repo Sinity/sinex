@@ -304,7 +304,7 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
                     "start": preview_start.format_rfc3339(),
                     "end": preview_end.format_rfc3339(),
                 },
-                "root_event_ids": [root_event_id],
+                "root_event_count": 1,
             }),
         )
         .await?;
@@ -358,7 +358,7 @@ async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) ->
                     "start": (Timestamp::now() - time::Duration::minutes(1)).format_rfc3339(),
                     "end": Timestamp::now().format_rfc3339(),
                 },
-                "root_event_ids": [Uuid::now_v7()],
+                "root_event_count": 1,
             }),
         )
         .await?;

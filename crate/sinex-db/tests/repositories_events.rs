@@ -100,7 +100,8 @@ async fn ensure_fs_watcher_derived_declaration(pool: &sqlx::PgPool) -> color_eyr
 fn mark_fs_watcher_derived_event<T>(
     mut event: sinex_primitives::Event<T>,
 ) -> sinex_primitives::Event<T> {
-    event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    event.product_class =
+        Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
     event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
     event.derivation_declaration_id = Some(FS_WATCHER_DERIVED_DECLARATION_ID.to_string());
     event
@@ -151,9 +152,9 @@ async fn reimport_scale_pages_use_bounded_keysets_and_quality_limits(
 
     for anchor in 0..5i64 {
         let event = DynamicPayload::new(source.clone(), "reimport.page", json!({"anchor": anchor}))
-        .from_material_at(material_id, anchor)
-        .at_time(Timestamp::now())
-        .build()?;
+            .from_material_at(material_id, anchor)
+            .at_time(Timestamp::now())
+            .build()?;
         inserted_ids.push(ctx.pool.events().insert(event).await?.id.unwrap());
     }
 
@@ -308,14 +309,15 @@ async fn reimport_scale_pages_use_bounded_keysets_and_quality_limits(
         root_page.iter().all(|id| !next_root_page.contains(id)),
         "replay root keyset pages must not repeat rows"
     );
+    let root_snapshot = ctx.pool.replay().scope_root_snapshot(&scope).await?;
     assert_eq!(
-        ctx.pool
-            .replay()
-            .collect_scope_root_ids(&scope)
-            .await?
-            .len(),
-        5,
-        "the full root collector must traverse every bounded keyset page"
+        root_snapshot.root_event_count, 5,
+        "the bounded replay-root snapshot must traverse every keyset page"
+    );
+    assert_eq!(root_snapshot.root_event_id_sample.len(), 5);
+    assert!(
+        !root_snapshot.root_event_id_fingerprint.is_empty(),
+        "the bounded replay-root snapshot must retain deterministic identity evidence"
     );
 
     let regression_source = EventSource::new("reimport-regressions")?;
@@ -880,7 +882,8 @@ async fn get_material_root_events_in_range_excludes_synthesis_rows(
     )
     .from_parents(vec![material_event_id])?
     .build()?;
-    derived_event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    derived_event.product_class =
+        Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
     derived_event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
     derived_event.derivation_declaration_id = Some("material-root-range-filter-decl".to_string());
     ctx.pool.events().insert(derived_event).await?;
@@ -1275,7 +1278,10 @@ async fn stream_batch_insert_rejects_genuinely_missing_parent_across_chunk_bound
     let stored = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::new("test.source")?, Pagination::new(Some(1), None))
+        .get_by_source(
+            &EventSource::new("test.source")?,
+            Pagination::new(Some(1), None),
+        )
         .await?;
     assert!(
         stored.is_empty(),

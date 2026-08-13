@@ -25,6 +25,25 @@ pub(crate) struct ArchivedReplayCascade {
     pub(crate) archived_count: u64,
 }
 
+/// The largest root/material context sent in one source-scan command.
+///
+/// Keep this aligned with the event repository's bounded ID hydration limit.
+/// A replay operation may contain arbitrarily many of these batches, but no
+/// command or execution handoff owns the complete root set.
+pub(crate) const REPLAY_EXECUTION_ROOT_BATCH_SIZE: i64 = 1_000;
+
+pub(crate) fn replay_archive_reason(operation_id: Uuid) -> String {
+    format!("superseded by replay re-execution (operation {operation_id})")
+}
+
+pub(crate) struct ReplayExecutionBatch {
+    pub(crate) material_roots: Vec<StoredEvent>,
+    pub(crate) replay_materials: Vec<ResolvedReplayMaterial>,
+    pub(crate) replay_occurrences: Vec<ReplayMaterialOccurrence>,
+    pub(crate) expected_outputs: ExpectedReplayOutputs,
+    pub(crate) last_root_id: Uuid,
+}
+
 impl ReplayExecutionEngine {
     /// Stale any `derivation.projection_registry` row keyed to a scope whose
     /// events were just archived (sinex-68c.4).
@@ -74,40 +93,77 @@ impl ReplayExecutionEngine {
         Ok(())
     }
 
-    pub(crate) async fn collect_scope_events(
+    /// Read one bounded replay batch from the operation's archive journal.
+    ///
+    /// The direct roots are selected from the archive after the full cascade is
+    /// committed.  This keeps scan input available while never retaining a
+    /// scope-wide root-ID or `StoredEvent` vector across archive/dispatch.
+    pub(crate) async fn collect_archived_replay_root_batch(
         &self,
-        scope: &ReplayScope,
-        _execution_window: (Timestamp, Timestamp),
         pool: &sqlx::PgPool,
-    ) -> Result<Vec<StoredEvent>> {
-        let root_ids = self
-            .replay
-            .collect_scope_root_ids(scope)
+        archive_reason: &str,
+        after_id: Option<Uuid>,
+    ) -> Result<Option<ReplayExecutionBatch>> {
+        let material_roots = pool
+            .events()
+            .get_archived_replay_material_root_page(
+                archive_reason,
+                after_id,
+                REPLAY_EXECUTION_ROOT_BATCH_SIZE,
+            )
             .await
-            .map_err(|err| {
-                SinexError::database("Failed to collect replay scope root ids").with_source(err)
+            .map_err(|error| {
+                SinexError::database("Failed to hydrate archived replay-root batch")
+                    .with_source(error)
             })?;
-        let event_ids: Vec<Id<StoredEvent>> = root_ids
+        let Some(last_root_id) = material_roots
+            .last()
+            .and_then(|event| event.id.map(|id| *id.as_uuid()))
+        else {
+            return Ok(None);
+        };
+
+        let material_ids: Vec<Uuid> = material_roots
+            .iter()
+            .filter_map(|event| match &event.provenance {
+                Provenance::Material { id, .. } => Some(*id.as_uuid()),
+                Provenance::Derived { .. } => None,
+            })
+            .collect::<HashSet<_>>()
             .into_iter()
-            .map(Id::<StoredEvent>::from_uuid)
             .collect();
+        let replay_materials = self.resolve_replay_materials(pool, &material_ids).await?;
+        let replay_occurrences = Self::replay_material_occurrences(&material_roots)?;
+        let expected_outputs = Self::with_logical_source_identifiers(
+            Self::expected_replay_outputs(&material_roots)?,
+            &replay_materials,
+        )?;
 
-        // get_by_ids enforces a 1000-ID limit; chunk here when needed.
-        const CHUNK_SIZE: usize = 1000;
-        if event_ids.len() <= CHUNK_SIZE {
-            return pool.events().get_by_ids(&event_ids).await.map_err(|err| {
-                SinexError::database("Failed to hydrate replay scope events").with_source(err)
-            });
-        }
+        Ok(Some(ReplayExecutionBatch {
+            material_roots,
+            replay_materials,
+            replay_occurrences,
+            expected_outputs,
+            last_root_id,
+        }))
+    }
 
-        let mut all_events = Vec::with_capacity(event_ids.len());
-        for chunk in event_ids.chunks(CHUNK_SIZE) {
-            let chunk_events = pool.events().get_by_ids(chunk).await.map_err(|err| {
-                SinexError::database("Failed to hydrate replay scope event chunk").with_source(err)
-            })?;
-            all_events.extend(chunk_events);
-        }
-        Ok(all_events)
+    pub(crate) fn merge_expected_replay_outputs(
+        aggregate: &mut ExpectedReplayOutputs,
+        batch: ExpectedReplayOutputs,
+    ) {
+        aggregate.minimum_visible_count += batch.minimum_visible_count;
+        aggregate.sources.extend(batch.sources);
+        aggregate.event_types.extend(batch.event_types);
+        aggregate
+            .logical_source_identifiers
+            .extend(batch.logical_source_identifiers);
+        aggregate.sources.sort_unstable();
+        aggregate.sources.dedup();
+        aggregate.event_types.sort_unstable();
+        aggregate.event_types.dedup();
+        aggregate.logical_source_identifiers.sort_unstable();
+        aggregate.logical_source_identifiers.dedup();
     }
 
     pub(super) async fn collect_operation_output_events(
@@ -435,10 +491,12 @@ impl ReplayExecutionEngine {
         &self,
         pool: &sqlx::PgPool,
         operation_id: Uuid,
-        root_ids: &[Uuid],
+        scope: &ReplayScope,
+        execution_window: (Timestamp, Timestamp),
+        expected_root_count: u64,
         archived_by: &str,
     ) -> Result<ArchivedReplayCascade> {
-        if root_ids.is_empty() {
+        if expected_root_count == 0 {
             return Ok(ArchivedReplayCascade {
                 cascade_ids: Vec::new(),
                 scope_metadata: Vec::new(),
@@ -451,7 +509,7 @@ impl ReplayExecutionEngine {
         })?;
 
         let session_id = format!("replay_{}", operation_id.simple());
-        let reason = "superseded by replay re-execution";
+        let reason = replay_archive_reason(operation_id);
         let operation_id_string = operation_id.to_string();
         let archived_by = archived_by.to_string();
 
@@ -468,10 +526,24 @@ impl ReplayExecutionEngine {
                 .prepare_cascade_session(&session_id, false)
                 .await
                 .map_err(|e| e.with_context("operation", "prepare replay cascade session"))?;
-            repo_tx
-                .populate_cascade_roots(&table_name, root_ids)
+            let direct_root_count = repo_tx
+                .populate_cascade_roots_for_replay_scope(&table_name, scope, execution_window)
                 .await
                 .map_err(|e| e.with_context("operation", "populate replay cascade roots"))?;
+            if u64::try_from(direct_root_count).unwrap_or(u64::MAX) != expected_root_count {
+                repo_tx
+                    .cleanup_cascade_session(&table_name)
+                    .await
+                    .map_err(|error| {
+                        error.with_context("operation", "cleanup stale replay cascade session")
+                    })?;
+                return Err(SinexError::invalid_state(
+                    "Replay root count changed while execution was starting; refresh preview before execution",
+                )
+                .with_context("operation_id", operation_id.to_string())
+                .with_context("expected_root_event_count", expected_root_count.to_string())
+                .with_context("actual_root_event_count", direct_root_count.to_string()));
+            }
             repo_tx
                 .expand_cascade(
                     &table_name,
@@ -558,7 +630,7 @@ impl ReplayExecutionEngine {
             let archived_count = repo_tx
                 .execute_cascade_archive(
                     &cascade_ids,
-                    reason,
+                    reason.as_str(),
                     &operation_id_string,
                     archived_by.as_str(),
                 )

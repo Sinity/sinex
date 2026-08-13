@@ -74,7 +74,7 @@ async fn replay_execute_rejects_target_canonical_gate_without_override(
             operation.operation_id,
             json!({
                 "total_events": 1,
-                "root_event_ids": [Uuid::now_v7()],
+                "root_event_count": 1,
                 "time_window": {
                     "start": now.format_rfc3339(),
                     "end": (now + time::Duration::seconds(1)).format_rfc3339(),

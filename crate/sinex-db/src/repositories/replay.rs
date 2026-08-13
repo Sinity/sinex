@@ -16,6 +16,20 @@ use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
 const SCOPE_ROOT_PAGE_SIZE: i64 = 10_000;
+pub const REPLAY_ROOT_SAMPLE_SIZE: i64 = 100;
+
+/// Bounded identity evidence for a replay scope.
+///
+/// The complete root set is deliberately never retained in an operation
+/// preview.  The fingerprint is calculated in keyset pages so execution can
+/// still reject a scope that changed after preview without persisting every
+/// UUID in `operations_log`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ReplayScopeRootSnapshot {
+    pub root_event_count: u64,
+    pub root_event_id_sample: Vec<Uuid>,
+    pub root_event_id_fingerprint: String,
+}
 
 /// Repository for replay-operation database access.
 pub struct ReplayRepository<'a> {
@@ -353,9 +367,11 @@ impl ReplayRepository<'_> {
 
     // ── Scope queries (preview) ──────────────────────────────────────────
 
-    /// Collect the root event IDs matching a replay scope.
-    pub async fn collect_scope_root_ids(&self, scope: &ReplayScope) -> Result<Vec<Uuid>> {
-        let mut root_ids = Vec::new();
+    /// Build bounded identity evidence for the roots matching a replay scope.
+    pub async fn scope_root_snapshot(&self, scope: &ReplayScope) -> Result<ReplayScopeRootSnapshot> {
+        let mut root_event_count = 0_u64;
+        let mut root_event_id_sample = Vec::with_capacity(REPLAY_ROOT_SAMPLE_SIZE as usize);
+        let mut hasher = blake3::Hasher::new();
         let mut after_id = None;
 
         loop {
@@ -366,19 +382,28 @@ impl ReplayRepository<'_> {
                 break;
             };
 
-            root_ids.extend(page);
+            for id in page {
+                if root_event_id_sample.len() < REPLAY_ROOT_SAMPLE_SIZE as usize {
+                    root_event_id_sample.push(id);
+                }
+                hasher.update(id.as_bytes());
+                root_event_count += 1;
+            }
             after_id = Some(last_id);
         }
 
-        Ok(root_ids)
+        Ok(ReplayScopeRootSnapshot {
+            root_event_count,
+            root_event_id_sample,
+            root_event_id_fingerprint: hasher.finalize().to_hex().to_string(),
+        })
     }
 
     /// Fetch one bounded keyset page of root event IDs matching a replay scope.
     ///
-    /// The public collector retains its historical `Vec` API, but every query
-    /// against the potentially large root set is bounded and seeks from the
-    /// previous UUIDv7 key rather than asking PostgreSQL to materialize the
-    /// complete result set at once.
+    /// Every query against the potentially large root set is bounded and seeks
+    /// from the previous UUIDv7 key rather than asking PostgreSQL to materialize
+    /// the complete result set at once.
     pub async fn collect_scope_root_ids_page(
         &self,
         scope: &ReplayScope,

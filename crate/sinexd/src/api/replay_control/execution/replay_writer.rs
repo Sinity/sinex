@@ -1,10 +1,11 @@
 //! Event-replacement recording and the replay scan/loop core for
 //! `ReplayExecutionEngine`. See `execution/mod.rs` for the engine type.
 
+use super::collect::{ReplayExecutionBatch, replay_archive_reason};
 use super::{
     ExpectedReplayOutputs, ExtendedMaterialOccurrenceKey, OperationOutputEvent,
-    REPLAY_OUTPUT_VISIBILITY_TIMEOUT, ReplayExecutionEngine, ScopeInvalidationBucket, StreamExt,
-    replay_scope_drift_error, stale_preview_missing_root_ids_error,
+    REPLAY_OUTPUT_VISIBILITY_TIMEOUT, ReplayExecutionEngine, ReplayPreviewSummary,
+    ScopeInvalidationBucket, StreamExt,
 };
 use crate::runtime::stream::{
     Checkpoint, MaterialReplayContext, ReplayScopeFilters as SourceReplayScopeFilters, ScanArgs,
@@ -13,9 +14,9 @@ use crate::runtime::stream::{
 use crate::sources::parse_listener::SourceParseAck;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::ControlSubject;
-use sinex_primitives::events::{Provenance, ScopeKey};
+use sinex_primitives::events::ScopeKey;
 use sinex_primitives::{Result, SinexError, Timestamp, Uuid};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 use sinex_db::replay::state_machine::{ReplayCheckpoint, ReplayScope, ReplayState};
@@ -78,7 +79,11 @@ impl ReplayExecutionEngine {
                 return;
             }
         };
-        if let Err(error) = self.nats_client.publish(subject.clone(), payload.into()).await {
+        if let Err(error) = self
+            .nats_client
+            .publish(subject.clone(), payload.into())
+            .await
+        {
             warn!(
                 operation_id = %operation_id,
                 subject = %subject,
@@ -306,81 +311,43 @@ impl ReplayExecutionEngine {
         scope: &ReplayScope,
         execution_window: (Timestamp, Timestamp),
         expected_total_events: u64,
-        preview_root_ids: &[Uuid],
+        preview_roots: &ReplayPreviewSummary,
         pool: &sqlx::PgPool,
         checkpoint: &mut ReplayCheckpoint,
         executor_name: &str,
         rate_budget: Option<sinex_primitives::pacing::RateBudget>,
     ) -> Result<u64> {
-        let material_roots = self
-            .collect_scope_events(scope, execution_window, pool)
-            .await?;
-        if material_roots.is_empty() {
+        let current_roots = self.replay.scope_root_snapshot(scope).await?;
+        if current_roots.root_event_count != preview_roots.root_event_count
+            || current_roots.root_event_id_fingerprint != preview_roots.root_event_id_fingerprint
+        {
             return Err(SinexError::invalid_state(
-                "Replay scope matched zero live events at execution time; preview is stale or the scoped rows were already replaced",
-            ));
-        }
-
-        let mut root_ids: Vec<Uuid> = material_roots
-            .iter()
-            .filter_map(|event| event.id.map(|id| *id.as_uuid()))
-            .collect();
-        if root_ids.is_empty() {
-            return Err(SinexError::invalid_state(
-                "Replay scope material roots are missing persistent event ids",
-            ));
-        }
-        root_ids.sort_unstable();
-        root_ids.dedup();
-
-        if preview_root_ids.is_empty() {
-            // Stale preview: root_event_ids not available. Require a fresh preview
-            // to enable ID-level staleness detection.
-            return Err(stale_preview_missing_root_ids_error(
-                operation_id,
-                expected_total_events,
-            ));
-        }
-        if root_ids.as_slice() != preview_root_ids {
-            return Err(replay_scope_drift_error(
-                operation_id,
-                expected_total_events,
-                preview_root_ids,
-                &root_ids,
-            ));
+                "Replay preview is stale: the matching root set changed; refresh preview before execution",
+            )
+            .with_context("operation_id", operation_id.to_string())
+            .with_context("expected_root_event_count", preview_roots.root_event_count.to_string())
+            .with_context("actual_root_event_count", current_roots.root_event_count.to_string()));
         }
 
         let normalized = scope.normalized_filters();
-        let material_ids: Vec<Uuid> = material_roots
-            .iter()
-            .filter_map(|event| match &event.provenance {
-                Provenance::Material { id, .. } => Some(*id.as_uuid()),
-                _ => None,
-            })
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        let replay_materials = self.resolve_replay_materials(pool, &material_ids).await?;
-        let replay_occurrences = Self::replay_material_occurrences(&material_roots)?;
-        let expected_replay_outputs = Self::with_logical_source_identifiers(
-            Self::expected_replay_outputs(&material_roots)?,
-            &replay_materials,
-        )?;
-        let expected_replay_outputs = ExpectedReplayOutputs {
-            minimum_visible_count: replay_occurrences.len() as u64,
-            ..expected_replay_outputs
-        };
 
         // Step 1: Archive the affected cascade
         let archived_cascade = self
-            .archive_replay_cascade_atomically(pool, operation_id, &root_ids, executor_name)
+            .archive_replay_cascade_atomically(
+                pool,
+                operation_id,
+                scope,
+                execution_window,
+                expected_total_events,
+                executor_name,
+            )
             .await?;
         let cascade_ids = archived_cascade.cascade_ids;
         let scope_metadata = archived_cascade.scope_metadata;
         let archived_count = archived_cascade.archived_count;
         info!(
             operation_id = %operation_id,
-            material_roots = material_roots.len(),
+            material_roots = expected_total_events,
             archived_count,
             "Archived replay cascade, dispatching scan to source"
         );
@@ -450,7 +417,20 @@ impl ReplayExecutionEngine {
             );
         }
 
-        checkpoint.total_events = material_roots.len() as u64;
+        checkpoint.total_events = expected_total_events;
+
+        let archive_reason = replay_archive_reason(operation_id);
+        let mut after_root_id = None;
+        let mut dispatched_root_count = 0_u64;
+        let mut scan_processed_count = 0_u64;
+        let mut batch_number = 0_u32;
+        let mut expected_replay_outputs = ExpectedReplayOutputs {
+            minimum_visible_count: 0,
+            sources: Vec::new(),
+            event_types: Vec::new(),
+            logical_source_identifiers: Vec::new(),
+        };
+        let mut control_source_name: Option<String> = None;
 
         // Step 2: Route staged-source scopes through source, not live source scan.
         // RuntimeModule scan publishes a SourceScanCommand to sinex.control.sources.{source}.scan;
@@ -458,6 +438,41 @@ impl ReplayExecutionEngine {
         // host (#1081) via a parse command. The routing decision is made here so both
         // paths share the archive + invalidation + checkpoint machinery above.
         if scope.is_staged_source_scope() {
+            while let Some(batch) = self
+                .collect_archived_replay_root_batch(pool, &archive_reason, after_root_id)
+                .await?
+            {
+                dispatched_root_count += batch.material_roots.len() as u64;
+                after_root_id = Some(batch.last_root_id);
+                Self::merge_expected_replay_outputs(
+                    &mut expected_replay_outputs,
+                    ExpectedReplayOutputs {
+                        minimum_visible_count: batch.replay_occurrences.len() as u64,
+                        ..batch.expected_outputs
+                    },
+                );
+            }
+            if dispatched_root_count != expected_total_events {
+                return self
+                    .compensate_after_archive_failure(
+                        pool,
+                        &cascade_ids,
+                        &scope_metadata,
+                        operation_id,
+                        SinexError::invalid_state(
+                            "Archived replay roots no longer match the approved preview",
+                        )
+                        .with_context(
+                            "expected_root_event_count",
+                            expected_total_events.to_string(),
+                        )
+                        .with_context(
+                            "archived_root_event_count",
+                            dispatched_root_count.to_string(),
+                        ),
+                    )
+                    .await;
+            }
             return self
                 .dispatch_staged_source_replay(
                     operation_id,
@@ -471,70 +486,170 @@ impl ReplayExecutionEngine {
                 .await;
         }
 
-        // Step 2: Build and send the scan command to the source runtime.
-        //
-        // Event source and runtime control identity are not always the same:
-        // ActivityWatch events use source `activitywatch`, but the hosted source
-        // runtime listens as `desktop.activitywatch`.  Source materials produced
-        // by the acquisition layer carry the runtime identity in
-        // `logical_source_identifier`; use that for control-plane dispatch while
-        // keeping event-source filters for output validation.
-        let control_source_name = match Self::scan_control_source_name(scope, &replay_materials) {
-            Ok(source) => source,
-            Err(error) => {
-                return self
-                    .compensate_after_archive_failure(
-                        pool,
-                        &cascade_ids,
-                        &scope_metadata,
-                        operation_id,
-                        error,
-                    )
-                    .await;
+        while let Some(batch) = self
+            .collect_archived_replay_root_batch(pool, &archive_reason, after_root_id)
+            .await?
+        {
+            dispatched_root_count += batch.material_roots.len() as u64;
+            after_root_id = Some(batch.last_root_id);
+            batch_number += 1;
+            checkpoint.batch_number = batch_number;
+
+            let batch_control_source =
+                match Self::scan_control_source_name(scope, &batch.replay_materials) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        return self
+                            .compensate_after_archive_failure(
+                                pool,
+                                &cascade_ids,
+                                &scope_metadata,
+                                operation_id,
+                                error,
+                            )
+                            .await;
+                    }
+                };
+            if let Some(expected_source) = &control_source_name
+                && expected_source != &batch_control_source
+            {
+                return self.compensate_after_archive_failure(
+                    pool,
+                    &cascade_ids,
+                    &scope_metadata,
+                    operation_id,
+                    SinexError::invalid_state("Replay scope spans multiple source runtime identities across execution batches"),
+                ).await;
             }
-        };
-        let scan_subject = self
-            .env
-            .nats_subject(&ControlSubject::source_scan(&control_source_name));
+            control_source_name.get_or_insert(batch_control_source.clone());
+            Self::merge_expected_replay_outputs(
+                &mut expected_replay_outputs,
+                ExpectedReplayOutputs {
+                    minimum_visible_count: batch.replay_occurrences.len() as u64,
+                    ..batch.expected_outputs.clone()
+                },
+            );
+
+            match self
+                .dispatch_live_replay_scan_batch(
+                    operation_id,
+                    execution_window,
+                    &normalized,
+                    batch,
+                    &batch_control_source,
+                    checkpoint,
+                    scan_processed_count,
+                    rate_budget,
+                )
+                .await
+            {
+                Ok(processed) => scan_processed_count += processed,
+                Err(error) => {
+                    return self
+                        .compensate_after_archive_failure(
+                            pool,
+                            &cascade_ids,
+                            &scope_metadata,
+                            operation_id,
+                            error,
+                        )
+                        .await;
+                }
+            }
+        }
+
+        if dispatched_root_count != expected_total_events {
+            return self
+                .compensate_after_archive_failure(
+                    pool,
+                    &cascade_ids,
+                    &scope_metadata,
+                    operation_id,
+                    SinexError::invalid_state(
+                        "Archived replay roots no longer match the approved preview",
+                    )
+                    .with_context(
+                        "expected_root_event_count",
+                        expected_total_events.to_string(),
+                    )
+                    .with_context(
+                        "archived_root_event_count",
+                        dispatched_root_count.to_string(),
+                    ),
+                )
+                .await;
+        }
+        if let Err(error) = self
+            .wait_for_replay_outputs_visible(pool, operation_id, &expected_replay_outputs)
+            .await
+        {
+            return self
+                .compensate_after_archive_failure(
+                    pool,
+                    &cascade_ids,
+                    &scope_metadata,
+                    operation_id,
+                    error,
+                )
+                .await;
+        }
+        if let Err(error) = self
+            .record_event_replacements(pool, operation_id, &cascade_ids)
+            .await
+        {
+            return self
+                .compensate_after_archive_failure(
+                    pool,
+                    &cascade_ids,
+                    &scope_metadata,
+                    operation_id,
+                    error,
+                )
+                .await;
+        }
+        Ok(scan_processed_count)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_live_replay_scan_batch(
+        &self,
+        operation_id: Uuid,
+        execution_window: (Timestamp, Timestamp),
+        normalized: &sinex_db::replay::state_machine::ReplayScopeFilters,
+        batch: ReplayExecutionBatch,
+        control_source_name: &str,
+        checkpoint: &mut ReplayCheckpoint,
+        processed_offset: u64,
+        rate_budget: Option<sinex_primitives::pacing::RateBudget>,
+    ) -> Result<u64> {
         let progress_subject = self
             .env
             .nats_subject(&ControlSubject::replay_progress(operation_id));
-
-        let mut progress_sub = match self.nats_client.subscribe(progress_subject.clone()).await {
-            Ok(subscription) => subscription,
-            Err(error) => {
-                return self
-                    .abort_before_scan_ack(
-                        pool,
-                        &cascade_ids,
-                        &scope_metadata,
-                        operation_id,
-                        SinexError::nats_subscribe("Failed to subscribe to replay progress")
-                            .with_std_error(&error),
-                    )
-                    .await;
-            }
-        };
-
-        // Build MaterialReplayContext so the source knows this is a replay scan
+        let mut progress_sub =
+            self.nats_client
+                .subscribe(progress_subject)
+                .await
+                .map_err(|error| {
+                    SinexError::nats_subscribe("Failed to subscribe to replay progress")
+                        .with_std_error(&error)
+                })?;
         let replay_context = MaterialReplayContext {
             operation_id,
-            materials: replay_materials,
-            occurrences: replay_occurrences,
+            materials: batch.replay_materials,
+            occurrences: batch.replay_occurrences,
             replay_scope: SourceReplayScopeFilters {
-                material_ids: normalized.material_ids,
-                event_types: normalized.event_types,
+                material_ids: normalized.material_ids.clone(),
+                event_types: normalized.event_types.clone(),
             },
         };
-
-        let scan_command = SourceScanCommand {
+        let command = SourceScanCommand {
             operation_id,
             from: Checkpoint::None,
             until: TimeHorizon::Historical {
                 end_time: execution_window.1,
             },
             args: ScanArgs {
-                targets: vec![control_source_name.clone()],
+                targets: vec![control_source_name.to_string()],
                 dry_run: false,
                 interactive: false,
                 max_events: 0,
@@ -544,354 +659,87 @@ impl ReplayExecutionEngine {
                 rate_budget,
             },
         };
-
-        let command_payload = match serde_json::to_vec(&scan_command) {
-            Ok(payload) => payload,
-            Err(err) => {
-                return self
-                    .compensate_after_archive_failure(
-                        pool,
-                        &cascade_ids,
-                        &scope_metadata,
-                        operation_id,
-                        SinexError::serialization("Failed to serialize SourceScanCommand")
-                            .with_std_error(&err),
-                    )
-                    .await;
-            }
-        };
-
-        // Step 3: Send via NATS request-reply and wait for acknowledgement
-        let ack_msg = match tokio::time::timeout(
+        let payload = serde_json::to_vec(&command).map_err(|error| {
+            SinexError::serialization("Failed to serialize bounded SourceScanCommand")
+                .with_std_error(&error)
+        })?;
+        let subject = self
+            .env
+            .nats_subject(&ControlSubject::source_scan(control_source_name));
+        let ack_message = tokio::time::timeout(
             self.scan_ack_timeout,
-            self.nats_client
-                .request(scan_subject.clone(), command_payload.into()),
+            self.nats_client.request(subject.clone(), payload.into()),
         )
         .await
-        {
-            Ok(Ok(message)) => message,
-            Ok(Err(error)) => {
-                return self
-                    .abort_before_scan_ack(
-                        pool,
-                        &cascade_ids,
-                        &scope_metadata,
-                        operation_id,
-                        SinexError::nats(format!("NATS request to {scan_subject} failed"))
-                            .with_std_error(&error),
-                    )
-                    .await;
-            }
-            Err(_) => {
-                return self
-                    .abort_before_scan_ack(
-                        pool,
-                        &cascade_ids,
-                        &scope_metadata,
-                        operation_id,
-                        SinexError::timeout(format!(
-                            "Timed out waiting for scan ack from source '{}' after {:?}. Is the source running?",
-                            control_source_name,
-                            self.scan_ack_timeout
-                        )),
-                    )
-                    .await;
-            }
-        };
-
-        let ack: SourceScanAck = match serde_json::from_slice(&ack_msg.payload) {
-            Ok(ack) => ack,
-            Err(error) => {
-                return self
-                    .abort_before_scan_ack(
-                        pool,
-                        &cascade_ids,
-                        &scope_metadata,
-                        operation_id,
-                        SinexError::serialization("Failed to deserialize SourceScanAck")
-                            .with_std_error(&error),
-                    )
-                    .await;
-            }
-        };
-
+        .map_err(|_| {
+            SinexError::timeout(format!(
+                "Timed out waiting for scan ack from source '{control_source_name}' after {:?}",
+                self.scan_ack_timeout
+            ))
+        })?
+        .map_err(|error| {
+            SinexError::nats(format!("NATS request to {subject} failed")).with_std_error(&error)
+        })?;
+        let ack: SourceScanAck = serde_json::from_slice(&ack_message.payload).map_err(|error| {
+            SinexError::serialization("Failed to deserialize SourceScanAck").with_std_error(&error)
+        })?;
         if !ack.accepted {
-            return self
-                .abort_before_scan_ack(
-                    pool,
-                    &cascade_ids,
-                    &scope_metadata,
-                    operation_id,
-                    SinexError::invalid_state(format!(
-                        "RuntimeModule '{}' rejected scan command: {}",
-                        ack.module_name,
-                        ack.error.unwrap_or_else(|| "unknown reason".to_string())
-                    )),
-                )
-                .await;
+            return Err(SinexError::invalid_state(format!(
+                "RuntimeModule '{}' rejected scan command: {}",
+                ack.module_name,
+                ack.error.unwrap_or_else(|| "unknown reason".to_string())
+            )));
         }
-
-        info!(
-            operation_id = %operation_id,
-            source = %ack.module_name,
-            "RuntimeModule accepted scan command, waiting for completion"
-        );
 
         let replay = self.replay.clone();
-        let mut events_processed: u64 = 0;
-        let mut events_emitted: u64 = 0;
-
-        struct ReplayScanFailure {
-            error: SinexError,
-            emitted_count: u64,
-        }
-
-        let target_source_name = ack.module_name.clone();
-        let completion = match tokio::time::timeout(self.scan_completion_timeout, async {
+        let target_source_name = ack.module_name;
+        tokio::time::timeout(self.scan_completion_timeout, async {
             loop {
                 tokio::select! {
-                    maybe_msg = progress_sub.next() => {
-                        let Some(msg) = maybe_msg else {
-                            return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                error: SinexError::nats(format!(
-                                    "Replay progress stream closed before source '{target_source_name}' reported completion"
-                                )),
-                                emitted_count: events_emitted,
-                            });
-                        };
-
-                        match serde_json::from_slice::<SourceScanProgress>(&msg.payload) {
-                            Ok(progress) => {
-                                events_processed = progress.events_processed;
-                                events_emitted = progress.events_emitted;
-                                if let Some(error) = progress.error {
-                                    // sinex-audit-replay-cancel-orphan: a cancelled
-                                    // operation never completed successfully, so the
-                                    // archived cascade is always restored regardless
-                                    // of how many replacement events the interrupted
-                                    // scan managed to emit before it stopped —
-                                    // conditioning restoration on `emitted_count == 0`
-                                    // left archived originals stranded whenever any
-                                    // partial emission happened before cancellation.
-                                    let cancelled = progress.cancelled;
-                                    let scan_error = if cancelled {
-                                        SinexError::cancelled(format!(
-                                            "RuntimeModule '{}' scan for operation {operation_id} was cancelled: {error}",
-                                            progress.module_name
-                                        ))
-                                    } else {
-                                        SinexError::processing(format!(
-                                            "RuntimeModule '{}' failed replay scan: {}",
-                                            progress.module_name,
-                                            error
-                                        ))
-                                    };
-                                    return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                        error: scan_error,
-                                        emitted_count: progress.events_emitted,
-                                    });
-                                }
-
-                                debug!(
-                                    operation_id = %operation_id,
-                                    events_processed = progress.events_processed,
-                                    events_emitted = progress.events_emitted,
-                                    "Replay progress update"
-                                );
-
-                                // Update checkpoint with progress
-                                checkpoint.processed_events = progress.events_processed;
-                                checkpoint.updated_at = sinex_primitives::temporal::now();
-                                if let Err(checkpoint_error) = self
-                                    .persist_replay_checkpoint(
-                                        operation_id,
-                                        checkpoint,
-                                        "Failed to persist replay progress checkpoint",
-                                    )
-                                    .await
-                                {
-                                    return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                        error: checkpoint_error,
-                                        emitted_count: progress.events_emitted,
-                                    });
-                                }
-
-                                // If final_report is present, the scan is complete
-                                if let Some(report) = &progress.final_report {
-                                    info!(
-                                        operation_id = %operation_id,
-                                        events_processed = report.events_processed,
-                                        "RuntimeModule scan completed"
-                                    );
-                                    return Ok::<u64, ReplayScanFailure>(report.events_processed);
-                                }
-                            }
-                            Err(err) => {
-                                warn!(error = %err, "Failed to parse replay progress message");
-                            }
-                        }
-                    }
-                    () = tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL) => {
-                        match replay.load_operation(operation_id).await {
-                            Ok(operation) if operation.state == ReplayState::Executing => {}
-                            Ok(operation)
-                                if matches!(
-                                    operation.state,
-                                    ReplayState::Cancelling | ReplayState::Cancelled
-                                ) =>
-                            {
-                                // sinex-audit-replay-cancel-orphan: propagate the
-                                // cancellation to the source runtime so it actually
-                                // stops the in-flight scan instead of letting it run
-                                // to completion in the background while we walk away
-                                // and report Cancelled locally. Best-effort: the
-                                // caller treats the operation as cancelled either way.
-                                self.publish_scan_cancel(&control_source_name, operation_id)
-                                    .await;
-                                return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                    error: SinexError::cancelled(format!(
-                                        "Replay operation {operation_id} was cancelled during execution"
-                                    )),
-                                    emitted_count: events_emitted,
-                                });
-                            }
-                            Ok(operation) => {
-                                return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                    error: SinexError::invalid_state(format!(
-                                        "Replay operation {} left Executing state unexpectedly: {:?}",
-                                        operation_id,
-                                        operation.state
-                                    )),
-                                    emitted_count: events_emitted,
-                                });
-                            }
+                    maybe_message = progress_sub.next() => {
+                        let message = maybe_message.ok_or_else(|| SinexError::nats(format!(
+                            "Replay progress stream closed before source '{target_source_name}' reported completion"
+                        )))?;
+                        let progress: SourceScanProgress = match serde_json::from_slice(&message.payload) {
+                            Ok(progress) => progress,
                             Err(error) => {
-                                return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                    error: SinexError::service(format!(
-                                        "Failed to reload replay operation {operation_id} while waiting for progress: {error}"
-                                    ))
-                                    .with_source(error),
-                                    emitted_count: events_emitted,
-                                });
+                                warn!(error = %error, "Failed to parse replay progress message");
+                                continue;
                             }
+                        };
+                        if let Some(error) = progress.error {
+                            return Err(if progress.cancelled {
+                                SinexError::cancelled(format!("RuntimeModule '{}' scan for operation {operation_id} was cancelled: {error}", progress.module_name))
+                            } else {
+                                SinexError::processing(format!("RuntimeModule '{}' failed replay scan: {error}", progress.module_name))
+                            });
+                        }
+                        checkpoint.processed_events = processed_offset.saturating_add(progress.events_processed);
+                        checkpoint.updated_at = sinex_primitives::temporal::now();
+                        self.persist_replay_checkpoint(
+                            operation_id,
+                            checkpoint,
+                            "Failed to persist replay progress checkpoint",
+                        ).await?;
+                        if let Some(report) = progress.final_report {
+                            return Ok(report.events_processed);
                         }
                     }
-                }
-            }
-        })
-        .await
-        {
-            Ok(result) => result,
-            Err(_timeout) => Err(ReplayScanFailure {
-                error: SinexError::timeout(format!(
-                    "Replay scan timed out waiting for source '{}' to report completion after {:?}",
-                    target_source_name,
-                    self.scan_completion_timeout
-                )),
-                emitted_count: events_emitted,
-            }),
-        };
-
-        match completion {
-            Ok(count) => {
-                checkpoint.processed_events = count;
-                checkpoint.updated_at = sinex_primitives::temporal::now();
-
-                if let Err(error) = self
-                    .wait_for_replay_outputs_visible(pool, operation_id, &expected_replay_outputs)
-                    .await
-                {
-                    return self
-                        .compensate_after_archive_failure(
-                            pool,
-                            &cascade_ids,
-                            &scope_metadata,
-                            operation_id,
-                            error,
-                        )
-                        .await;
-                }
-
-                // Record replacement relations between archived and newly-created events
-                if let Err(error) = self
-                    .record_event_replacements(pool, operation_id, &cascade_ids)
-                    .await
-                {
-                    return self
-                        .compensate_after_archive_failure(
-                            pool,
-                            &cascade_ids,
-                            &scope_metadata,
-                            operation_id,
-                            error,
-                        )
-                        .await;
-                }
-
-                Ok(count)
-            }
-            Err(failure) => {
-                let cancelled = matches!(failure.error, SinexError::Cancelled(_));
-                warn!(
-                    operation_id = %operation_id,
-                    error = %failure.error,
-                    events_emitted = failure.emitted_count,
-                    "Replay scan failed"
-                );
-
-                // Every failure after the archive transaction committed must
-                // run the full compensation saga, even when the source
-                // reported partial emission. `execute_cascade_restore` is
-                // occurrence-safe: rows that already have a live replacement
-                // remain archived, while every untouched original is restored.
-                // Skipping this on partial progress strands the untouched
-                // portion of the archived cascade indefinitely.
-                let link_error = if failure.emitted_count > 0 {
-                    self.record_event_replacements(pool, operation_id, &cascade_ids)
-                        .await
-                        .err()
-                } else {
-                    None
-                };
-                let restore_error = self
-                    .restore_cascade(pool, &cascade_ids, operation_id)
-                    .await
-                    .err();
-                let invalidation_error = self
-                    .publish_scope_invalidations(&scope_metadata, operation_id)
-                    .await
-                    .err();
-
-                let compensation_errors = [link_error, restore_error, invalidation_error]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>();
-                if !compensation_errors.is_empty() {
-                    let mut result = SinexError::service(format!(
-                        "Replay scan failed after archive; compensation was incomplete and operator recovery is required for operation {operation_id}"
-                    ))
-                    .with_source(failure.error);
-                    for compensation_error in compensation_errors {
-                        result = result.with_source(compensation_error);
+                    () = tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL) => match replay.load_operation(operation_id).await? {
+                        operation if operation.state == ReplayState::Executing => {}
+                        operation if matches!(operation.state, ReplayState::Cancelling | ReplayState::Cancelled) => {
+                            self.publish_scan_cancel(control_source_name, operation_id).await;
+                            return Err(SinexError::cancelled(format!("Replay operation {operation_id} was cancelled during execution")));
+                        }
+                        operation => return Err(SinexError::invalid_state(format!(
+                            "Replay operation {operation_id} left Executing state unexpectedly: {:?}", operation.state
+                        ))),
                     }
-                    return Err(result);
                 }
-
-                // `restore_cascade` only restores archived rows whose
-                // occurrence has no live replacement yet (see
-                // `core.execute_cascade_restore`'s occurrence-safety check).
-                // Any row already superseded by a replacement stays archived;
-                // the linking attempt above keeps that intentional archive
-                // reachable from the replacement event.
-                if cancelled {
-                    return Err(failure.error);
-                }
-                Err(SinexError::service(
-                    "Replay scan failed after archive; restored archived cascade and published compensating scope invalidations",
-                )
-                .with_source(failure.error))
             }
-        }
+        }).await.map_err(|_| SinexError::timeout(format!(
+            "Replay scan timed out waiting for source '{target_source_name}' to report completion after {:?}", self.scan_completion_timeout
+        )))?
     }
 
     /// Dispatches a staged-source replay through the source host.
@@ -1092,7 +940,9 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         expected: &ExpectedReplayOutputs,
     ) -> StagedReplayWait {
-        let timeout = self.scan_completion_timeout.min(REPLAY_OUTPUT_VISIBILITY_TIMEOUT);
+        let timeout = self
+            .scan_completion_timeout
+            .min(REPLAY_OUTPUT_VISIBILITY_TIMEOUT);
         let replay = self.replay.clone();
 
         let wait_result = tokio::time::timeout(timeout, async {

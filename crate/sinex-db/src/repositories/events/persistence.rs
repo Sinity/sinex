@@ -4,6 +4,7 @@ use crate::models::Event;
 use crate::postgres_copy::{
     event_copy_column_list_sql, event_copy_insert_select_sql, event_copy_staging_columns_sql,
 };
+use crate::replay::state_machine::ReplayScope;
 use crate::repositories::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
@@ -76,6 +77,54 @@ impl<'a> EventRepository<'a> {
     }
 
     // === Cascade helpers ===
+
+    /// Hydrate one bounded page of material roots archived by a replay operation.
+    ///
+    /// Replay archives the complete cascade before it asks a source runtime to
+    /// re-read material.  The archive reason is operation-unique, so it is a
+    /// stable, durable cursor source for the subsequent bounded scan batches;
+    /// do not reconstruct the scope-wide root-ID list in Rust.
+    pub async fn get_archived_replay_material_root_page(
+        &self,
+        archive_reason: &str,
+        after_id: Option<Uuid>,
+        limit: i64,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        if limit <= 0 {
+            return Err(SinexError::validation(
+                "archived replay-root page limit must be positive",
+            ));
+        }
+
+        let mut query = format!(
+            "SELECT {} FROM audit.archived_events \
+             WHERE archive_reason = $1 \
+               AND source_material_id IS NOT NULL \
+               AND source_event_ids IS NULL",
+            super::event_select_columns!(),
+        );
+        if after_id.is_some() {
+            query.push_str(" AND id < $2");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $3"
+        } else {
+            " ORDER BY id DESC LIMIT $2"
+        });
+
+        let mut request = sqlx::query_as::<_, EventRecord>(&query).bind(archive_reason);
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id);
+        }
+        request = request.bind(limit);
+        request
+            .fetch_all(self.pool)
+            .await
+            .map_err(|error| db_error(error, "get archived replay material-root page"))?
+            .into_iter()
+            .map(EventRecordExt::try_to_event)
+            .collect()
+    }
 
     pub async fn prepare_cascade_session(
         &self,
@@ -698,9 +747,10 @@ impl<'a> EventRepository<'a> {
         let content_hash = sinex_primitives::events::payload_content_hash(&event.payload);
 
         let record = match lane {
-            EventStorageLane::Activity => sqlx::query_as!(
-                EventRecord,
-                r#"
+            EventStorageLane::Activity => {
+                sqlx::query_as!(
+                    EventRecord,
+                    r#"
                 INSERT INTO core.events (
                     id, source, event_type, host, payload,
                     ts_orig, ts_orig_subnano, module_run_id, payload_schema_id, source_event_ids,
@@ -757,45 +807,47 @@ impl<'a> EventRepository<'a> {
                     adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid",
                     content_hash
                 "#,
-                id.to_uuid(),
-                event.source.as_str(),
-                event.event_type.as_str(),
-                event.host.as_str(),
-                event.payload,
-                ts_orig,
-                ts_orig_subnano,
-                event.module_run_id,
-                event.payload_schema_id,
-                source_event_uuids.as_deref(),
-                source_material_id.map(|id| id.to_uuid()),
-                offset_start,
-                offset_end,
-                offset_kind.as_deref(),
-                anchor_byte,
-                associated_blob_uuids.as_deref(),
-                temporal_policy_str,
-                event.semantics_version,
-                event.scope_key,
-                event.equivalence_key,
-                created_by_operation_id,
-                automaton_model_str,
-                anchor_payload_hash,
-                ts_quality_str,
-                // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
-                // matching comment in `insert` above.
-                product_class_str,
-                claim_support_json,
-                event.derivation_declaration_id,
-                event.derivation_epoch_id,
-                event.derivation_lane_id,
-                event.adjudication_event_id,
-                content_hash.as_slice()
-            )
-            .fetch_one(&mut **tx)
-            .await,
-            EventStorageLane::Reflection => sqlx::query_as!(
-                EventRecord,
-                r#"
+                    id.to_uuid(),
+                    event.source.as_str(),
+                    event.event_type.as_str(),
+                    event.host.as_str(),
+                    event.payload,
+                    ts_orig,
+                    ts_orig_subnano,
+                    event.module_run_id,
+                    event.payload_schema_id,
+                    source_event_uuids.as_deref(),
+                    source_material_id.map(|id| id.to_uuid()),
+                    offset_start,
+                    offset_end,
+                    offset_kind.as_deref(),
+                    anchor_byte,
+                    associated_blob_uuids.as_deref(),
+                    temporal_policy_str,
+                    event.semantics_version,
+                    event.scope_key,
+                    event.equivalence_key,
+                    created_by_operation_id,
+                    automaton_model_str,
+                    anchor_payload_hash,
+                    ts_quality_str,
+                    // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
+                    // matching comment in `insert` above.
+                    product_class_str,
+                    claim_support_json,
+                    event.derivation_declaration_id,
+                    event.derivation_epoch_id,
+                    event.derivation_lane_id,
+                    event.adjudication_event_id,
+                    content_hash.as_slice()
+                )
+                .fetch_one(&mut **tx)
+                .await
+            }
+            EventStorageLane::Reflection => {
+                sqlx::query_as!(
+                    EventRecord,
+                    r#"
                 INSERT INTO reflection.events (
                     id, source, event_type, host, payload,
                     ts_orig, ts_orig_subnano, module_run_id, payload_schema_id, source_event_ids,
@@ -852,42 +904,43 @@ impl<'a> EventRepository<'a> {
                     adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid",
                     content_hash
                 "#,
-                id.to_uuid(),
-                event.source.as_str(),
-                event.event_type.as_str(),
-                event.host.as_str(),
-                event.payload,
-                ts_orig,
-                ts_orig_subnano,
-                event.module_run_id,
-                event.payload_schema_id,
-                source_event_uuids.as_deref(),
-                source_material_id.map(|id| id.to_uuid()),
-                offset_start,
-                offset_end,
-                offset_kind.as_deref(),
-                anchor_byte,
-                associated_blob_uuids.as_deref(),
-                temporal_policy_str,
-                event.semantics_version,
-                event.scope_key,
-                event.equivalence_key,
-                created_by_operation_id,
-                automaton_model_str,
-                anchor_payload_hash,
-                ts_quality_str,
-                // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
-                // matching comment in `insert` above.
-                product_class_str,
-                claim_support_json,
-                event.derivation_declaration_id,
-                event.derivation_epoch_id,
-                event.derivation_lane_id,
-                event.adjudication_event_id,
-                content_hash.as_slice()
-            )
-            .fetch_one(&mut **tx)
-            .await,
+                    id.to_uuid(),
+                    event.source.as_str(),
+                    event.event_type.as_str(),
+                    event.host.as_str(),
+                    event.payload,
+                    ts_orig,
+                    ts_orig_subnano,
+                    event.module_run_id,
+                    event.payload_schema_id,
+                    source_event_uuids.as_deref(),
+                    source_material_id.map(|id| id.to_uuid()),
+                    offset_start,
+                    offset_end,
+                    offset_kind.as_deref(),
+                    anchor_byte,
+                    associated_blob_uuids.as_deref(),
+                    temporal_policy_str,
+                    event.semantics_version,
+                    event.scope_key,
+                    event.equivalence_key,
+                    created_by_operation_id,
+                    automaton_model_str,
+                    anchor_payload_hash,
+                    ts_quality_str,
+                    // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
+                    // matching comment in `insert` above.
+                    product_class_str,
+                    claim_support_json,
+                    event.derivation_declaration_id,
+                    event.derivation_epoch_id,
+                    event.derivation_lane_id,
+                    event.adjudication_event_id,
+                    content_hash.as_slice()
+                )
+                .fetch_one(&mut **tx)
+                .await
+            }
         }
         .map_err(|e| db_error(e, "insert event with tx"))?;
 
@@ -920,8 +973,7 @@ impl<'a> EventRepository<'a> {
         }
         ensure_batch_event_ids(&mut events);
 
-        let (activity_event_ids, reflection_event_ids) =
-            Self::batch_event_ids_by_lane(&events);
+        let (activity_event_ids, reflection_event_ids) = Self::batch_event_ids_by_lane(&events);
 
         // For small batches, use the optimized single-transaction approach
         if events.len() <= 50 {
@@ -1001,12 +1053,7 @@ impl<'a> EventRepository<'a> {
         crate::query_helpers::set_repeatable_read(&mut tx).await?;
 
         let events = self
-            .insert_batch_unnest_in_tx(
-                &mut tx,
-                events,
-                activity_event_ids,
-                reflection_event_ids,
-            )
+            .insert_batch_unnest_in_tx(&mut tx, events, activity_event_ids, reflection_event_ids)
             .await?;
 
         tx.commit().await.map_err(|e| {
@@ -1088,9 +1135,7 @@ impl<'a> EventRepository<'a> {
         Ok(result)
     }
 
-    fn batch_event_ids_by_lane(
-        events: &[Event<JsonValue>],
-    ) -> (HashSet<Uuid>, HashSet<Uuid>) {
+    fn batch_event_ids_by_lane(events: &[Event<JsonValue>]) -> (HashSet<Uuid>, HashSet<Uuid>) {
         let mut activity_event_ids = HashSet::new();
         let mut reflection_event_ids = HashSet::new();
         for event in events {
@@ -2765,6 +2810,51 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         Ok(())
     }
 
+    /// Populate a cascade session directly from a replay scope.
+    ///
+    /// This is intentionally a single SQL selection inside the archive
+    /// transaction.  Paging root IDs into Rust before the archive merely moves
+    /// the old full-scope allocation from one layer to another.
+    pub async fn populate_cascade_roots_for_replay_scope(
+        &mut self,
+        table_name: &str,
+        scope: &ReplayScope,
+        execution_window: (Timestamp, Timestamp),
+    ) -> DbResult<i64> {
+        validate_cascade_table_name(table_name)?;
+        let normalized = scope.normalized_filters();
+        let mut query = QueryBuilder::<Postgres>::new(format!(
+            "WITH inserted AS (\
+                INSERT INTO {table_name} (id, depth, parent_ids, processed) \
+                SELECT e.id, 0, COALESCE(e.source_event_ids, '{{}}'::uuid[]), FALSE \
+                FROM core.events e \
+                WHERE e.source = ANY("
+        ));
+        query.push_bind(scope.replay_event_sources());
+        query.push(") AND e.ts_coided >= ");
+        query.push_bind(execution_window.0);
+        query.push(" AND e.ts_coided <= ");
+        query.push_bind(execution_window.1);
+        query.push(" AND e.source_material_id IS NOT NULL AND e.source_event_ids IS NULL");
+        if let Some(material_ids) = normalized.material_ids {
+            query.push(" AND e.source_material_id = ANY(");
+            query.push_bind(material_ids);
+            query.push(")");
+        }
+        if let Some(event_types) = normalized.event_types {
+            query.push(" AND e.event_type = ANY(");
+            query.push_bind(event_types);
+            query.push(")");
+        }
+        query.push(" RETURNING 1) SELECT COUNT(*)::bigint FROM inserted");
+
+        query
+            .build_query_scalar::<i64>()
+            .fetch_one(&mut **self.tx)
+            .await
+            .map_err(|error| db_error(error, "populate cascade roots for replay scope"))
+    }
+
     pub async fn populate_cascade_roots_from(
         &mut self,
         table_name: &str,
@@ -3014,6 +3104,20 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         }
 
         Ok(result)
+    }
+
+    /// Read cascade member IDs with their traversal depth.
+    pub async fn get_event_ids_with_depth(
+        &mut self,
+        table_name: &str,
+    ) -> DbResult<Vec<(Uuid, i32)>> {
+        validate_cascade_table_name(table_name)?;
+        sqlx::query_as::<_, (Uuid, i32)>(&format!(
+            "SELECT id::uuid, depth FROM {table_name} ORDER BY depth DESC"
+        ))
+        .fetch_all(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "get cascade event IDs with depth"))
     }
 
     pub async fn get_cascade_ids(&mut self, table_name: &str) -> DbResult<Vec<Uuid>> {

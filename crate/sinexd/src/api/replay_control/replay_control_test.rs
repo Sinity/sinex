@@ -1,4 +1,6 @@
-use super::execution::{ExpectedReplayOutputs, ReplayExecutionEngine};
+use super::execution::{
+    ExpectedReplayOutputs, REPLAY_EXECUTION_ROOT_BATCH_SIZE, ReplayExecutionEngine,
+};
 use super::server::ReplayControlServer;
 use super::validation::run_safety_analysis;
 use super::*;
