@@ -21,7 +21,9 @@ use tracing::{debug, error, info, warn};
 
 use sinex_db::replay::state_machine::{ReplayCheckpoint, ReplayScope, ReplayState};
 
-fn material_occurrence_key(event: &OperationOutputEvent) -> Option<ExtendedMaterialOccurrenceKey> {
+pub(super) fn material_occurrence_key(
+    event: &OperationOutputEvent,
+) -> Option<ExtendedMaterialOccurrenceKey> {
     Some(ExtendedMaterialOccurrenceKey {
         source_material_id: event.source_material_id?,
         anchor_byte: event.anchor_byte?,
@@ -331,6 +333,13 @@ impl ReplayExecutionEngine {
 
         let normalized = scope.normalized_filters();
 
+        if let Err(error) = self.validate_scope_material_authority(scope).await {
+            return Err(SinexError::service(
+                "Replay source-material authority validation failed before archive",
+            )
+            .with_source(error));
+        }
+
         // Step 1: Archive the affected cascade
         let archived_cascade = self
             .archive_replay_cascade_atomically(
@@ -429,6 +438,8 @@ impl ReplayExecutionEngine {
             sources: Vec::new(),
             event_types: Vec::new(),
             logical_source_identifiers: Vec::new(),
+            expected_outputs: Vec::new(),
+            source_material_ids: Vec::new(),
         };
         let mut control_source_name: Option<String> = None;
 
@@ -446,10 +457,7 @@ impl ReplayExecutionEngine {
                 after_root_id = Some(batch.last_root_id);
                 Self::merge_expected_replay_outputs(
                     &mut expected_replay_outputs,
-                    ExpectedReplayOutputs {
-                        minimum_visible_count: batch.replay_occurrences.len() as u64,
-                        ..batch.expected_outputs
-                    },
+                    batch.expected_outputs,
                 );
             }
             if dispatched_root_count != expected_total_events {
@@ -524,10 +532,7 @@ impl ReplayExecutionEngine {
             control_source_name.get_or_insert(batch_control_source.clone());
             Self::merge_expected_replay_outputs(
                 &mut expected_replay_outputs,
-                ExpectedReplayOutputs {
-                    minimum_visible_count: batch.replay_occurrences.len() as u64,
-                    ..batch.expected_outputs.clone()
-                },
+                batch.expected_outputs.clone(),
             );
 
             match self
@@ -581,6 +586,20 @@ impl ReplayExecutionEngine {
         }
         if let Err(error) = self
             .wait_for_replay_outputs_visible(pool, operation_id, &expected_replay_outputs)
+            .await
+        {
+            return self
+                .compensate_after_archive_failure(
+                    pool,
+                    &cascade_ids,
+                    &scope_metadata,
+                    operation_id,
+                    error,
+                )
+                .await;
+        }
+        if let Err(error) = self
+            .validate_material_authority(&expected_replay_outputs.source_material_ids)
             .await
         {
             return self
@@ -871,6 +890,20 @@ impl ReplayExecutionEngine {
             .await
         {
             StagedReplayWait::Visible => {
+                if let Err(error) = self
+                    .validate_material_authority(&expected_replay_outputs.source_material_ids)
+                    .await
+                {
+                    return self
+                        .compensate_after_archive_failure(
+                            pool,
+                            cascade_ids,
+                            scope_metadata,
+                            operation_id,
+                            error,
+                        )
+                        .await;
+                }
                 if let Err(link_error) = self
                     .record_event_replacements(pool, operation_id, cascade_ids)
                     .await
@@ -947,14 +980,14 @@ impl ReplayExecutionEngine {
 
         let wait_result = tokio::time::timeout(timeout, async {
             loop {
-                let visible_count = match self
-                    .count_visible_replay_outputs(pool, operation_id, expected)
+                let validation = match self
+                    .validate_replay_outputs(pool, operation_id, expected)
                     .await
                 {
-                    Ok(count) => count,
+                    Ok(validation) => validation,
                     Err(error) => return StagedReplayWait::Error(error.to_string()),
                 };
-                if visible_count >= expected.minimum_visible_count as i64 {
+                if validation.complete() {
                     return StagedReplayWait::Visible;
                 }
 

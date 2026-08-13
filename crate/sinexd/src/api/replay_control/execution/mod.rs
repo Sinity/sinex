@@ -1,3 +1,4 @@
+use crate::runtime::content_store::ContentStoreManager;
 use async_nats::{Client, jetstream};
 use futures::StreamExt;
 use serde::Deserialize;
@@ -30,6 +31,7 @@ pub(super) const REPLAY_OUTPUT_VISIBILITY_TIMEOUT: Duration = Duration::from_sec
 pub(super) struct ReplayExecutionEngine {
     replay: Arc<ReplayStateMachine>,
     nats_client: Client,
+    material_authority: Option<Arc<ContentStoreManager>>,
     js: jetstream::Context,
     env: SinexEnvironment,
     scan_ack_timeout: Duration,
@@ -47,6 +49,8 @@ pub(super) struct ReplayExecutionEngine {
 #[derive(Debug)]
 struct OperationOutputEvent {
     id: Uuid,
+    source: String,
+    event_type: String,
     source_material_id: Option<Uuid>,
     anchor_byte: Option<i64>,
     offset_start: Option<i64>,
@@ -66,12 +70,20 @@ struct OperationOutputEvent {
 /// Use [`sinex_primitives::MaterialOccurrenceKey`] for the canonical 2-field
 /// occurrence identity outside of replay replacement matching.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ExtendedMaterialOccurrenceKey {
+pub(super) struct ExtendedMaterialOccurrenceKey {
     source_material_id: Uuid,
     anchor_byte: i64,
     offset_start: Option<i64>,
     offset_end: Option<i64>,
     offset_kind: Option<String>,
+}
+
+/// One material event that a successful replay must re-emit.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct ExpectedReplayOutput {
+    pub(super) occurrence: ExtendedMaterialOccurrenceKey,
+    pub(super) source: String,
+    pub(super) event_type: String,
 }
 
 #[derive(Debug)]
@@ -94,6 +106,7 @@ impl ReplayExecutionEngine {
         Self {
             replay,
             nats_client,
+            material_authority: None,
             js,
             env: environment(),
             scan_ack_timeout: Self::SCAN_ACK_TIMEOUT,
@@ -107,6 +120,15 @@ impl ReplayExecutionEngine {
             #[cfg(test)]
             replacement_record_failures_remaining: None,
         }
+    }
+
+    /// Attach the shared source-material authority used by production replay.
+    pub(super) fn with_material_authority(
+        mut self,
+        material_authority: Arc<ContentStoreManager>,
+    ) -> Self {
+        self.material_authority = Some(material_authority);
+        self
     }
 
     #[cfg(test)]
@@ -776,6 +798,8 @@ pub(super) struct ExpectedReplayOutputs {
     pub(super) sources: Vec<String>,
     pub(super) event_types: Vec<String>,
     pub(super) logical_source_identifiers: Vec<String>,
+    pub(super) expected_outputs: Vec<ExpectedReplayOutput>,
+    pub(super) source_material_ids: Vec<Uuid>,
 }
 
 mod collect;

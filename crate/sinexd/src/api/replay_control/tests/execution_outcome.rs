@@ -1244,6 +1244,8 @@ async fn output_validation_gate_passes_when_most_archived_events_never_return(
         sources: vec!["fs-test".to_string()],
         event_types: vec![FileCreatedPayload::EVENT_TYPE.as_static_str().to_string()],
         logical_source_identifiers: vec![logical_source.to_string()],
+        expected_outputs: Vec::new(),
+        source_material_ids: vec![*material_id.as_uuid()],
     };
     let visible = engine
         .count_visible_replay_outputs(&ctx.pool, operation_id, &expected)

@@ -3,7 +3,9 @@
 use crate::api::config::GatewayConfig;
 use crate::api::content_service::ContentService;
 use crate::api::handlers::dlq::recover_stale_dlq_requeue_operations;
-use crate::api::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
+use crate::api::replay_control::{
+    ReplayControlClient, ReplayControlError, spawn_replay_control_with_material_authority,
+};
 use crate::event_engine::policy::PolicyEngine;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_db::validation::{EventValidator, SchemaCompilationFailure};
@@ -173,6 +175,7 @@ impl ServiceContainer {
                 &nats_config,
                 replay.clone(),
                 config.replay_control_timeout(),
+                content_store.clone(),
             )
             .await?,
         );
@@ -708,6 +711,7 @@ async fn connect_replay_control_with_backoff(
     nats_config: &sinex_primitives::nats::NatsConnectionConfig,
     replay: Arc<ReplayStateMachine>,
     request_timeout: Duration,
+    material_authority: Arc<ContentStoreManager>,
 ) -> SinexResult<ReplayControlClient> {
     let mut attempt = 0usize;
     let mut backoff = REPLAY_CONTROL_CONNECT_BACKOFF_BASE;
@@ -720,7 +724,12 @@ async fn connect_replay_control_with_backoff(
                     .with_operation("gateway.connect_nats")
                     .with_source(err.to_string())
             })?;
-            spawn_replay_control(replay.clone(), nats_client, request_timeout)
+            spawn_replay_control_with_material_authority(
+                replay.clone(),
+                nats_client,
+                request_timeout,
+                material_authority.clone(),
+            )
                 .await
                 .map_err(|err| {
                     SinexError::service("Failed to initialize replay control")

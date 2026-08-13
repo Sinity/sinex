@@ -3,8 +3,9 @@
 //! engine type itself and the public-API entry points.
 
 use super::{
-    ExpectedReplayOutputs, OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT,
-    ReplayExecutionEngine, ScopeInvalidationBucket,
+    ExpectedReplayOutput, ExpectedReplayOutputs, ExtendedMaterialOccurrenceKey,
+    OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT, ReplayExecutionEngine,
+    ScopeInvalidationBucket,
 };
 use crate::runtime::automaton::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
@@ -42,6 +43,19 @@ pub(crate) struct ReplayExecutionBatch {
     pub(crate) replay_occurrences: Vec<ReplayMaterialOccurrence>,
     pub(crate) expected_outputs: ExpectedReplayOutputs,
     pub(crate) last_root_id: Uuid,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ReplayOutputValidation {
+    matching_count: u64,
+    missing_count: u64,
+    unexpected_count: u64,
+}
+
+impl ReplayOutputValidation {
+    pub(crate) fn complete(&self) -> bool {
+        self.missing_count == 0 && self.unexpected_count == 0
+    }
 }
 
 impl ReplayExecutionEngine {
@@ -164,6 +178,10 @@ impl ReplayExecutionEngine {
         aggregate.event_types.dedup();
         aggregate.logical_source_identifiers.sort_unstable();
         aggregate.logical_source_identifiers.dedup();
+        aggregate.expected_outputs.extend(batch.expected_outputs);
+        aggregate.source_material_ids.extend(batch.source_material_ids);
+        aggregate.source_material_ids.sort_unstable();
+        aggregate.source_material_ids.dedup();
     }
 
     pub(super) async fn collect_operation_output_events(
@@ -175,6 +193,8 @@ impl ReplayExecutionEngine {
             r#"
             SELECT
                 id AS "id!",
+                source AS "source!",
+                event_type AS "event_type!",
                 source_material_id,
                 anchor_byte,
                 offset_start,
@@ -197,6 +217,8 @@ impl ReplayExecutionEngine {
             .into_iter()
             .map(|row| OperationOutputEvent {
                 id: row.id,
+                source: row.source,
+                event_type: row.event_type,
                 source_material_id: row.source_material_id,
                 anchor_byte: row.anchor_byte,
                 offset_start: row.offset_start,
@@ -218,12 +240,33 @@ impl ReplayExecutionEngine {
 
         let mut sources = HashSet::new();
         let mut event_types = HashSet::new();
+        let mut expected_outputs = Vec::with_capacity(material_roots.len());
+        let mut source_material_ids = HashSet::new();
 
         for event in material_roots {
             sources.insert(event.source.as_ref().to_string());
             event_types.insert(event.event_type.as_ref().to_string());
             match &event.provenance {
-                Provenance::Material { .. } => {}
+                Provenance::Material {
+                    id,
+                    anchor_byte,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                } => {
+                    source_material_ids.insert(*id.as_uuid());
+                    expected_outputs.push(ExpectedReplayOutput {
+                        occurrence: ExtendedMaterialOccurrenceKey {
+                            source_material_id: *id.as_uuid(),
+                            anchor_byte: *anchor_byte,
+                            offset_start: *offset_start,
+                            offset_end: *offset_end,
+                            offset_kind: Some(offset_kind.as_wire_str().to_string()),
+                        },
+                        source: event.source.as_ref().to_string(),
+                        event_type: event.event_type.as_ref().to_string(),
+                    });
+                }
                 Provenance::Derived { .. } => {
                     return Err(SinexError::invalid_state(format!(
                         "Replay scope included non-material root '{}' / '{}'",
@@ -237,12 +280,16 @@ impl ReplayExecutionEngine {
         sources.sort_unstable();
         let mut event_types: Vec<_> = event_types.into_iter().collect();
         event_types.sort_unstable();
+        let mut source_material_ids: Vec<_> = source_material_ids.into_iter().collect();
+        source_material_ids.sort_unstable();
 
         Ok(ExpectedReplayOutputs {
-            minimum_visible_count: 0,
+            minimum_visible_count: expected_outputs.len() as u64,
             sources,
             event_types,
             logical_source_identifiers: Vec::new(),
+            expected_outputs,
+            source_material_ids,
         })
     }
 
@@ -325,7 +372,6 @@ impl ReplayExecutionEngine {
             ));
         }
 
-        expected.minimum_visible_count = logical_source_identifiers.len() as u64;
         expected.logical_source_identifiers = logical_source_identifiers;
         Ok(expected)
     }
@@ -364,30 +410,46 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         expected: &ExpectedReplayOutputs,
     ) -> Result<i64> {
-        sqlx::query_scalar::<_, i64>(
-            r"
-            SELECT COUNT(*)::bigint
-            FROM core.events
-            INNER JOIN raw.source_material_registry smr
-                ON smr.id = core.events.source_material_id
-            WHERE created_by_operation_id = $1::uuid
-              AND source = ANY($2::text[])
-              AND event_type = ANY($3::text[])
-              AND COALESCE(
-                    smr.metadata->>'logical_source_identifier',
-                    split_part(smr.source_identifier, '#material=', 1)
-                  ) = ANY($4::text[])
-            ",
-        )
-        .bind(operation_id)
-        .bind(&expected.sources)
-        .bind(&expected.event_types)
-        .bind(&expected.logical_source_identifiers)
-        .fetch_one(pool)
-        .await
-        .map_err(|err| {
-            SinexError::database("Failed to count visible replay outputs").with_std_error(&err)
-        })
+        Ok(self
+            .validate_replay_outputs(pool, operation_id, expected)
+            .await?
+            .matching_count as i64)
+    }
+
+    pub(crate) async fn validate_replay_outputs(
+        &self,
+        pool: &sqlx::PgPool,
+        operation_id: Uuid,
+        expected: &ExpectedReplayOutputs,
+    ) -> Result<ReplayOutputValidation> {
+        let outputs = self.collect_operation_output_events(pool, operation_id).await?;
+        let mut remaining = HashMap::<ExpectedReplayOutput, u64>::new();
+        for output in &expected.expected_outputs {
+            *remaining.entry(output.clone()).or_default() += 1;
+        }
+
+        let mut validation = ReplayOutputValidation::default();
+        for output in outputs {
+            let Some(occurrence) = super::replay_writer::material_occurrence_key(&output) else {
+                validation.unexpected_count += 1;
+                continue;
+            };
+            let key = ExpectedReplayOutput {
+                occurrence,
+                source: output.source,
+                event_type: output.event_type,
+            };
+            if let Some(count) = remaining.get_mut(&key)
+                && *count > 0
+            {
+                *count -= 1;
+                validation.matching_count += 1;
+            } else {
+                validation.unexpected_count += 1;
+            }
+        }
+        validation.missing_count = remaining.values().sum();
+        Ok(validation)
     }
 
     pub(crate) async fn wait_for_replay_outputs_visible(
@@ -402,13 +464,13 @@ impl ReplayExecutionEngine {
 
         let wait_result = tokio::time::timeout(timeout, async {
             loop {
-                let visible_count = self
-                    .count_visible_replay_outputs(pool, operation_id, expected)
+                let validation = self
+                    .validate_replay_outputs(pool, operation_id, expected)
                     .await?;
-                if visible_count >= expected.minimum_visible_count as i64 {
+                if validation.complete() {
                     debug!(
                         operation_id = %operation_id,
-                        visible_count,
+                        visible_count = validation.matching_count,
                         minimum_visible_count = expected.minimum_visible_count,
                         "Replay outputs are query-visible"
                     );
@@ -427,18 +489,14 @@ impl ReplayExecutionEngine {
                 // be collapsed into a synthetic "-1 visible" timeout message —
                 // that misclassifies a persistence/availability outage as mere
                 // visibility lag and discards the real error entirely.
-                match self
-                    .count_visible_replay_outputs(pool, operation_id, expected)
-                    .await
-                {
-                    Ok(visible_count) => Err(SinexError::timeout(format!(
-                        "Replay outputs were not query-visible after successful scan within {:?} (visible={}, minimum_visible={}, sources={}, event_types={}, logical_sources={})",
+                match self.validate_replay_outputs(pool, operation_id, expected).await {
+                    Ok(validation) => Err(SinexError::timeout(format!(
+                        "Replay outputs did not match the archived source-material occurrence scope after successful scan within {:?} (matching={}, missing={}, unexpected={}, expected={})",
                         timeout,
-                        visible_count,
+                        validation.matching_count,
+                        validation.missing_count,
+                        validation.unexpected_count,
                         expected.minimum_visible_count,
-                        expected.sources.join(","),
-                        expected.event_types.join(","),
-                        expected.logical_source_identifiers.join(","),
                     ))),
                     Err(probe_error) => Err(SinexError::database(format!(
                         "Replay outputs were not query-visible after successful scan within {timeout:?}, and the final visibility probe itself failed"
@@ -485,6 +543,63 @@ impl ReplayExecutionEngine {
         }
 
         Ok(resolved)
+    }
+
+    /// Validate every material selected by the live scope before archiving its
+    /// roots. The source scan may only run after this durable authority check.
+    pub(crate) async fn validate_scope_material_authority(&self, scope: &ReplayScope) -> Result<()> {
+        if self.material_authority.is_none() {
+            return Ok(());
+        }
+
+        let mut after_id = None;
+        let mut validated = HashSet::new();
+        loop {
+            let root_ids = self
+                .replay
+                .scope_root_ids_page(scope, after_id, REPLAY_EXECUTION_ROOT_BATCH_SIZE)
+                .await?;
+            let Some(last_id) = root_ids.last().copied() else {
+                break;
+            };
+            after_id = Some(last_id);
+            let material_ids = sqlx::query_scalar::<_, Uuid>(
+                "SELECT DISTINCT source_material_id FROM core.events WHERE id = ANY($1::uuid[]) AND source_material_id IS NOT NULL",
+            )
+            .bind(&root_ids)
+            .fetch_all(self.replay.pool())
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to collect replay source-material authority scope")
+                    .with_source(error)
+            })?;
+            let unseen = material_ids
+                .into_iter()
+                .filter(|material_id| validated.insert(*material_id))
+                .collect::<Vec<_>>();
+            self.validate_material_authority(&unseen).await?;
+        }
+        Ok(())
+    }
+
+    /// Re-check the same authority after re-emission and before success.
+    pub(crate) async fn validate_material_authority(&self, material_ids: &[Uuid]) -> Result<()> {
+        let Some(authority) = &self.material_authority else {
+            return Ok(());
+        };
+        for material_id in material_ids {
+            authority
+                .retrieve_material_replay_content(*material_id)
+                .await
+                .map_err(|error| {
+                    SinexError::validation(
+                        "Replay source material authority is unreadable or inconsistent",
+                    )
+                    .with_context("source_material_id", material_id.to_string())
+                    .with_source(error)
+                })?;
+        }
+        Ok(())
     }
 
     pub(crate) async fn archive_replay_cascade_atomically(

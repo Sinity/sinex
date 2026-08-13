@@ -20,6 +20,7 @@ pub use telemetry::ReplayTelemetrySnapshot;
 use execution::ReplayExecutionEngine;
 use telemetry::ReplayTelemetry;
 
+use crate::runtime::content_store::ContentStoreManager;
 use async_nats::Client;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,24 @@ use std::time::Duration;
 pub struct ReplayControlError {
     pub message: String,
     pub occurred_at: Timestamp,
+}
+
+/// Spawn replay control with the gateway's shared source-material authority.
+pub async fn spawn_replay_control_with_material_authority(
+    replay: Arc<ReplayStateMachine>,
+    client: Client,
+    request_timeout: Duration,
+    material_authority: Arc<ContentStoreManager>,
+) -> Result<ReplayControlClient> {
+    let env = environment().clone();
+    let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
+    let executor = ReplayExecutionEngine::new(replay.clone(), client.clone())
+        .with_material_authority(material_authority);
+    ReplayTelemetry::new(replay.clone()).spawn();
+    server::ReplayControlServer::new(&env, client.clone(), replay, executor, Arc::clone(&health))
+        .spawn()
+        .await?;
+    Ok(ReplayControlClient::new(&env, client, request_timeout, health))
 }
 
 impl ReplayControlError {

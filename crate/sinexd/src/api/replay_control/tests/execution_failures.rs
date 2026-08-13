@@ -744,3 +744,170 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
 
     Ok(())
 }
+
+/// sinex-x47r: a source material that has lost its authoritative CAS/blob
+/// backing must stop replay before the archive transaction can remove roots.
+#[sinex_test]
+async fn replay_rejects_unreadable_authority_before_archive(ctx: TestContext) -> Result<()> {
+    use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager, MaterialContentStore};
+    use camino::Utf8PathBuf;
+
+    let ctx = ctx.with_nats().dedicated().await?;
+    let temp = tempfile::tempdir()?;
+    let root = Utf8PathBuf::from_path_buf(temp.path().join("content-store"))
+        .map_err(|_| test_error("temporary content-store path must be UTF-8"))?;
+    let config = ContentStoreConfig {
+        root_path: root,
+        ..Default::default()
+    };
+    let authority = Arc::new(ContentStoreManager::new(config.clone(), ctx.pool.clone(), None)?);
+    let blob = authority
+        .ingest_from_bytes(b"authority-before-archive", "authority-before.log", "text/plain")
+        .await?;
+    let material = ctx
+        .pool
+        .source_materials()
+        .register_material(
+            sinex_db::repositories::source_materials::SourceMaterial::blob_text(
+                "authority-before.log",
+            )
+            .with_blob_id(blob.id)
+            .with_metadata(json!({
+                "content_key": blob.content_key(),
+                "content_hash": blob.content_hash,
+                "size_bytes": blob.size_bytes,
+                "storage_backend": blob.storage_backend,
+            })),
+        )
+        .await?;
+    let material_id = Id::from_uuid(material.id);
+    let backing_store = MaterialContentStore::new(config)?;
+    let path = backing_store
+        .path_if_local(&blob.content_key())?
+        .ok_or_else(|| test_error("test blob must use local CAS"))?;
+    tokio::fs::remove_file(path).await?;
+
+    let event = DynamicPayload::new(
+        "authority-before-archive",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/authority-before-archive.txt"}),
+    )
+    .from_material(material_id)
+    .build()?;
+    let inserted = ctx.pool.events().insert(event).await?;
+    let event_id = inserted.id.expect("replay target must have an ID");
+    let event_ts = event_id.timestamp().expect("test event ID is UUIDv7");
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let mut scope = sample_scope();
+    scope.source_name = "authority-before-archive".to_string();
+    scope.time_window = Some((
+        event_ts - time::Duration::milliseconds(1),
+        event_ts + time::Duration::milliseconds(1),
+    ));
+    let operation = replay
+        .create_operation(scope.clone(), "test:authority-before".into())
+        .await?;
+    replay
+        .update_preview(operation.operation_id, replay.generate_preview_summary(&scope).await?)
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".into())
+        .await?;
+
+    let error = ReplayExecutionEngine::new(replay, ctx.nats_client())
+        .with_material_authority(authority)
+        .execute(operation.operation_id, "service:executor-runtime".into())
+        .await
+        .expect_err("missing authoritative bytes must reject replay before archive");
+    assert!(
+        error.to_string().contains("authority validation failed before archive"),
+        "unexpected error: {error}"
+    );
+    let live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1")
+        .bind(event_id.to_uuid())
+        .fetch_one(&ctx.pool)
+        .await?;
+    let archived: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1")
+        .bind(event_id.to_uuid())
+        .fetch_one(&ctx.pool)
+        .await?;
+    assert_eq!(live, 1, "authority preflight must leave the live root intact");
+    assert_eq!(archived, 0, "authority preflight must prevent destructive archive");
+    Ok(())
+}
+
+/// sinex-x47r: a matching output from another material cannot satisfy the
+/// replay contract merely because it has the same source/type/anchor shape.
+#[sinex_test]
+async fn replay_rejects_output_from_outside_material_scope(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let expected_material = ctx.create_source_material(Some("scope-output-expected")).await?;
+    let unrelated_material = ctx.create_source_material(Some("scope-output-unrelated")).await?;
+    let event = DynamicPayload::new(
+        "scope-output-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/scope-output-expected.txt"}),
+    )
+    .from_material(expected_material)
+    .build()?;
+    let inserted = ctx.pool.events().insert(event).await?;
+    let event_id = inserted.id.expect("replay target must have an ID");
+    let event_ts = event_id.timestamp().expect("test event ID is UUIDv7");
+
+    let nats = ctx.nats_client();
+    let env = environment();
+    let (command_rx, scan_handle) =
+        spawn_fake_scan_source_runtime(nats.clone(), env, "scope-output-test", 1).await?;
+    let output_pool = ctx.pool.clone();
+    let output_handle = tokio::spawn(async move {
+        let command = command_rx
+            .await
+            .map_err(|_| test_error("wrong-material fake did not receive scan command"))?;
+        let mut output = DynamicPayload::new(
+            "scope-output-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({"path": "/tmp/scope-output-unrelated.txt"}),
+        )
+        .from_material(unrelated_material)
+        .build()?;
+        output.created_by_operation_id = Some(command.operation_id);
+        output_pool.events().insert(output).await?;
+        Ok::<(), SinexError>(())
+    });
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let mut scope = sample_scope();
+    scope.source_name = "scope-output-test".to_string();
+    scope.time_window = Some((
+        event_ts - time::Duration::milliseconds(1),
+        event_ts + time::Duration::milliseconds(1),
+    ));
+    let operation = replay
+        .create_operation(scope.clone(), "test:wrong-material-output".into())
+        .await?;
+    replay
+        .update_preview(operation.operation_id, replay.generate_preview_summary(&scope).await?)
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".into())
+        .await?;
+
+    let error = ReplayExecutionEngine::new(replay, nats)
+        .with_scan_completion_timeout(Duration::from_millis(100))
+        .execute(operation.operation_id, "service:executor-runtime".into())
+        .await
+        .expect_err("cross-material output must not satisfy replay validation");
+    assert!(
+        error.to_string().contains("source-material occurrence scope"),
+        "unexpected error: {error}"
+    );
+    output_handle.await??;
+    await_fake_scan_source_runtime(scan_handle, "scope-output-test").await?;
+    let live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1")
+        .bind(event_id.to_uuid())
+        .fetch_one(&ctx.pool)
+        .await?;
+    assert_eq!(live, 1, "failed output validation must restore the archived root");
+    Ok(())
+}

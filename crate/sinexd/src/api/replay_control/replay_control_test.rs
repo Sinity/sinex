@@ -702,6 +702,8 @@ async fn replay_output_expectations_deduplicate_logical_sources() -> Result<()> 
         sources: vec!["fs-test".to_string()],
         event_types: vec![FileCreatedPayload::EVENT_TYPE.as_static_str().to_string()],
         logical_source_identifiers: Vec::new(),
+        expected_outputs: Vec::new(),
+        source_material_ids: Vec::new(),
     };
     let replay_materials = vec![
         ResolvedReplayMaterial {
