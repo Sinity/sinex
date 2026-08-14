@@ -967,7 +967,7 @@ impl ReplayExecutionEngine {
             if page.is_empty() {
                 break;
             }
-            restored += pool
+            let restored_page = pool
                 .events()
                 .execute_cascade_restore(&page, &operation_id.to_string())
                 .await
@@ -977,6 +977,14 @@ impl ReplayExecutionEngine {
                     )
                     .with_source(err)
                 })?;
+            if restored_page == 0 {
+                return Err(SinexError::service(format!(
+                    "Replay cascade restoration made no progress for archive page ({} rows); conflicting archived rows remain and operator recovery is required for operation {operation_id}",
+                    page.len()
+                ))
+                .with_context("archive_reason", archive_reason.to_string()));
+            }
+            restored += restored_page;
         }
         Ok(restored)
     }

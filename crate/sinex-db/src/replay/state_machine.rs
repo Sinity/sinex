@@ -1284,7 +1284,7 @@ impl ReplayStateMachine {
                     if ids.is_empty() {
                         break;
                     }
-                    restored += self
+                    let restored_page = self
                         .pool
                         .events()
                         .execute_cascade_restore(&ids, &operation_id.to_string())
@@ -1298,6 +1298,15 @@ impl ReplayStateMachine {
                             .with_context("archive_reason", archive_reason)
                             .with_operation("recover_stale_executing")
                         })?;
+                    if restored_page == 0 {
+                        return Err(SinexError::service(format!(
+                            "Crash recovery made no progress restoring an archived replay page ({} rows); operator recovery is required",
+                            ids.len()
+                        ))
+                        .with_id("operation_id", operation_id.to_string())
+                        .with_context("archive_reason", archive_reason));
+                    }
+                    restored += restored_page;
                 }
                 if restored != invalidation.archived_count {
                     return Err(SinexError::service(format!(
