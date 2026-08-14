@@ -9,6 +9,7 @@
 use super::control_protocol::{ControlCommandKind, RuntimeDrainComplete, control_command_kind};
 use super::listener::{
     CONFIRMED_EVENT_CHANNEL_CAPACITY, LISTENER_RETRY_DELAY, RunnerConfirmedEventHandler,
+    RunnerConfirmedEvent,
     TASK_SHUTDOWN_GRACE_PERIOD, create_checkpoint_kv, maybe_start_schema_listener,
     run_resubscribing_listener,
 };

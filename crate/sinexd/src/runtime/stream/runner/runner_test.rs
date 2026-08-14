@@ -54,9 +54,16 @@ impl RecordingConfirmedEventHandler {
 #[cfg(feature = "messaging")]
 #[async_trait]
 impl ConfirmedEventHandler for RecordingConfirmedEventHandler {
-    async fn handle_confirmed(&self, event: &Event<JsonValue>) -> RuntimeResult<()> {
+    async fn handle_confirmed(
+        &self,
+        event: &Event<JsonValue>,
+        completion: oneshot::Sender<crate::runtime::ConfirmedEventCompletion>,
+    ) -> RuntimeResult<()> {
         self.events.lock().await.push(event.clone());
         self.received.notify_one();
+        completion
+            .send(crate::runtime::ConfirmedEventCompletion::Safe)
+            .map_err(|_| crate::runtime::SinexError::lifecycle("completion receiver dropped"))?;
         Ok(())
     }
 }

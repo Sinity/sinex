@@ -13,7 +13,7 @@
 //! before delivery. Failure isolation is preserved: each automaton runs an
 //! independent durable consumer, so a dead automaton never blocks others.
 
-use crate::runtime::confirmation_handler::ConfirmedEventHandler;
+use crate::runtime::confirmation_handler::{ConfirmedEventCompletion, ConfirmedEventHandler};
 use crate::runtime::confirmed_stream_liveness::{
     ConfirmedStreamLiveness, ConfirmedStreamLivenessAssessment,
     ConfirmedStreamLivenessSnapshot, ConfirmedStreamLivenessStatus,
@@ -32,7 +32,7 @@ use sinex_primitives::error::SinexErrorKind;
 use sinex_primitives::events::Event;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, oneshot};
 use tracing::{debug, error, info, warn};
 
 /// Cumulative payload-byte cap per confirmed-event fetch.
@@ -89,6 +89,35 @@ pub struct JetStreamEventConsumer {
     confirmed_handler: Arc<dyn ConfirmedEventHandler>,
     running: Arc<RwLock<bool>>,
     namespace: Option<String>,
+}
+
+struct PendingConfirmedMessage {
+    message: jetstream::Message,
+    event_id: Option<sinex_primitives::events::builder::EventId>,
+    completion: PendingConfirmedCompletion,
+}
+
+enum PendingConfirmedCompletion {
+    Immediate(ConfirmedEventCompletion),
+    Deferred(oneshot::Receiver<ConfirmedEventCompletion>),
+}
+
+impl PendingConfirmedMessage {
+    async fn completion(&mut self) -> ConfirmedEventCompletion {
+        match &mut self.completion {
+            PendingConfirmedCompletion::Immediate(outcome) => *outcome,
+            PendingConfirmedCompletion::Deferred(receiver) => match receiver.await {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    warn!(
+                        ?self.event_id,
+                        "Automaton dropped confirmed-event completion receipt; retrying delivery"
+                    );
+                    ConfirmedEventCompletion::Retry
+                }
+            },
+        }
+    }
 }
 
 impl JetStreamEventConsumer {
@@ -358,6 +387,7 @@ impl JetStreamEventConsumer {
             tokio::select! {
                 result = &mut batch_future => {
                     let messages = result?;
+                    let mut pending = Vec::with_capacity(messages.len());
                     for msg in messages {
                         // Break promptly on stop() instead of finishing the whole batch,
                         // so graceful shutdown completes well under the stop timeout.
@@ -383,12 +413,25 @@ impl JetStreamEventConsumer {
                             return Err(Self::confirmed_stream_gap_error(&assessment));
                         }
 
-                        if !Self::handle_confirmed_message(msg, &*confirmed_handler).await? {
+                        let Some(message) = Self::dispatch_confirmed_message(
+                            msg,
+                            &*confirmed_handler,
+                        ).await? else {
                             // Handler reported shutdown (channel closed). Leave the
-                            // message unsettled so it is redelivered to the next run,
-                            // and exit the loop cleanly.
+                            // current and already-dispatched messages unsettled so
+                            // they are redelivered to the next run.
                             return Ok(());
-                        }
+                        };
+                        pending.push(message);
+                    }
+                    if !Self::settle_confirmed_batch(&mut pending).await? {
+                        // Do not ACK a later safe completion across an earlier
+                        // retry hole; the suffix must be redelivered together.
+                        batch_future = Box::pin(Self::pull_confirmed_batch(
+                            consumer.clone(),
+                            batch_size,
+                        ));
+                        continue;
                     }
                     batch_future = Box::pin(Self::pull_confirmed_batch(consumer.clone(), batch_size));
                 }
@@ -496,55 +539,47 @@ impl JetStreamEventConsumer {
         .with_context("liveness_evidence", assessment.describe())
     }
 
-    /// Handle a single confirmed-event message: deserialize the full event,
-    /// dispatch it, and ack/nak. Returns `false` if processing should stop
-    /// (handler channel closed during shutdown), `true` to continue.
-    async fn handle_confirmed_message(
+    /// Deserialize and dispatch a confirmed event, retaining its completion
+    /// receipt for ordered settlement. Returns `None` only during shutdown.
+    async fn dispatch_confirmed_message(
         msg: jetstream::Message,
         confirmed_handler: &dyn ConfirmedEventHandler,
-    ) -> RuntimeResult<bool> {
+    ) -> RuntimeResult<Option<PendingConfirmedMessage>> {
         let event: Event<JsonValue> = match serde_json::from_slice(&msg.payload) {
             Ok(event) => event,
             Err(e) => {
                 // A confirmed-event message that does not deserialize as an
-                // `Event` is a genuine poison payload. Ack/drop it (tracked by
-                // the metric) rather than NAK-looping forever.
+                // `Event` is a genuine poison payload. It is terminally safe,
+                // but still settles in order behind earlier deliveries.
                 error!(
                     target: "sinex_metrics",
                     metric = "runtime.confirmed_event_parse_failures_total",
                     error = %e,
                     "Failed to parse confirmed event message"
                 );
-                msg.ack().await.map_err(|ack_err| {
-                    Self::message_settlement_error(
-                        "failed to ack bad confirmed event",
-                        &msg,
-                        None::<String>,
-                        ack_err,
-                    )
-                })?;
-                return Ok(true);
+                return Ok(Some(PendingConfirmedMessage {
+                    message: msg,
+                    event_id: None,
+                    completion: PendingConfirmedCompletion::Immediate(
+                        ConfirmedEventCompletion::Safe,
+                    ),
+                }));
             }
         };
 
         let event_id = event.id;
-        match confirmed_handler.handle_confirmed(&event).await {
-            Ok(()) => {
-                msg.ack().await.map_err(|error| {
-                    Self::message_settlement_error(
-                        "failed to ack confirmed event",
-                        &msg,
-                        event_id,
-                        error,
-                    )
-                })?;
-                Ok(true)
-            }
+        let (completion_tx, completion_rx) = oneshot::channel();
+        match confirmed_handler.handle_confirmed(&event, completion_tx).await {
+            Ok(()) => Ok(Some(PendingConfirmedMessage {
+                message: msg,
+                event_id,
+                completion: PendingConfirmedCompletion::Deferred(completion_rx),
+            })),
             Err(e) if e.kind() == SinexErrorKind::Lifecycle => {
                 // Channel closed = shutdown in progress. Do NOT ack — leave the
                 // message for redelivery to the next run.
                 debug!(?event_id, "Confirmed handler channel closed (shutdown)");
-                Ok(false)
+                Ok(None)
             }
             Err(e) => {
                 error!(
@@ -554,21 +589,56 @@ impl JetStreamEventConsumer {
                     error = %e,
                     "Confirmed handler failed"
                 );
-                msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                    Duration::from_secs(5),
-                )))
-                .await
-                .map_err(|error| {
-                    Self::message_settlement_error(
-                        "failed to NAK confirmed handler failure",
-                        &msg,
-                        event_id,
-                        error,
-                    )
-                })?;
-                Ok(true)
+                Ok(Some(PendingConfirmedMessage {
+                    message: msg,
+                    event_id,
+                    completion: PendingConfirmedCompletion::Immediate(
+                        ConfirmedEventCompletion::Retry,
+                    ),
+                }))
             }
         }
+    }
+
+    /// ACK only the contiguous safe prefix; NAK the first retry and suffix.
+    async fn settle_confirmed_batch(
+        pending: &mut [PendingConfirmedMessage],
+    ) -> RuntimeResult<bool> {
+        for index in 0..pending.len() {
+            match pending[index].completion().await {
+                ConfirmedEventCompletion::Safe => {
+                    let message = &pending[index];
+                    message.message.ack().await.map_err(|error| {
+                        Self::message_settlement_error(
+                            "failed to ack safely completed confirmed event",
+                            &message.message,
+                            message.event_id,
+                            error,
+                        )
+                    })?;
+                }
+                ConfirmedEventCompletion::Retry => {
+                    for message in &pending[index..] {
+                        message
+                            .message
+                            .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                                Duration::from_secs(5),
+                            )))
+                            .await
+                            .map_err(|error| {
+                                Self::message_settlement_error(
+                                    "failed to NAK retrying confirmed event",
+                                    &message.message,
+                                    message.event_id,
+                                    error,
+                                )
+                            })?;
+                    }
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 }
 

@@ -394,7 +394,7 @@ async fn confirmed_event_handler_forwards_full_event_to_bridge() -> TestResult<(
     // forward the event verbatim.
     use crate::runtime::ConfirmedEventHandler;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Event<JsonValue>>(8);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let handler = RunnerConfirmedEventHandler::new(tx);
 
     let event = sinex_primitives::events::DynamicPayload::new(
@@ -406,15 +406,21 @@ async fn confirmed_event_handler_forwards_full_event_to_bridge() -> TestResult<(
     .build()?;
     let expected_id = event.id;
 
-    handler.handle_confirmed(&event).await?;
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+    handler.handle_confirmed(&event, completion_tx).await?;
 
     let received = rx
         .recv()
         .await
         .expect("bridge channel must receive the confirmed event");
-    assert_eq!(received.id, expected_id);
-    assert_eq!(received.event_type.as_str(), "runtime.test");
-    assert_eq!(received.payload, serde_json::json!({"ok": true}));
+    assert_eq!(received.event.id, expected_id);
+    assert_eq!(received.event.event_type.as_str(), "runtime.test");
+    assert_eq!(received.event.payload, serde_json::json!({"ok": true}));
+    received.complete(crate::runtime::ConfirmedEventCompletion::Safe);
+    assert_eq!(
+        completion_rx.await?,
+        crate::runtime::ConfirmedEventCompletion::Safe
+    );
     Ok(())
 }
 

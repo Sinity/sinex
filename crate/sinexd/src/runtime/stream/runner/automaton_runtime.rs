@@ -118,8 +118,7 @@ impl RuntimeRunner {
             |info| info.service_name().to_string(),
         );
 
-        let (sender, mut receiver) =
-            mpsc::channel::<Event<JsonValue>>(CONFIRMED_EVENT_CHANNEL_CAPACITY);
+        let (sender, mut receiver) = mpsc::channel(CONFIRMED_EVENT_CHANNEL_CAPACITY);
         let handler = Arc::new(RunnerConfirmedEventHandler::new(sender));
 
         let env = sinex_primitives::environment::environment().clone();
@@ -310,7 +309,7 @@ impl RuntimeRunner {
             // Once drain is requested the consumer is aborted; switch to draining
             // whatever is still buffered before exiting cleanly.
             enum LoopAction {
-                Event(Option<Event<JsonValue>>),
+                Event(Option<super::RunnerConfirmedEvent>),
                 FlushTick,
                 Invalidation(Option<Vec<u8>>),
             }
@@ -356,25 +355,41 @@ impl RuntimeRunner {
                     // Confirmed events arrive as fully materialized
                     // `Event<JsonValue>` from the confirmed-events stream — no DB
                     // refetch, no provisional resolution (#2187 / #2202).
-                    let mut events = vec![first];
-                    while events.len() < BATCH_SIZE {
+                    let mut deliveries = vec![first];
+                    while deliveries.len() < BATCH_SIZE {
                         match receiver.try_recv() {
-                            Ok(e) => events.push(e),
+                            Ok(delivery) => deliveries.push(delivery),
                             Err(_) => break,
                         }
                     }
+
+                    let events = deliveries
+                        .iter()
+                        .map(|delivery| delivery.event.clone())
+                        .collect::<Vec<_>>();
 
                     let batch_last_event_id = events
                         .last()
                         .and_then(|event| event.id)
                         .map(|id| *id.as_uuid());
 
-                    let batch_count = Self::process_batch_with_dlq_fallback(
+                    let batch_result = Self::process_batch_with_dlq_fallback(
                         self.module.as_mut(),
                         &transport,
                         events,
                     )
-                    .await?;
+                    .await;
+
+                    let completion = if batch_result.is_ok() {
+                        crate::runtime::ConfirmedEventCompletion::Safe
+                    } else {
+                        crate::runtime::ConfirmedEventCompletion::Retry
+                    };
+                    for delivery in deliveries {
+                        delivery.complete(completion);
+                    }
+
+                    let batch_count = batch_result?;
 
                     processed_events += batch_count;
                     events_since_checkpoint += batch_count;

@@ -34,7 +34,11 @@ impl BlockingConfirmedHandler {
 
 #[async_trait]
 impl ConfirmedEventHandler for BlockingConfirmedHandler {
-    async fn handle_confirmed(&self, _event: &Event<JsonValue>) -> RuntimeResult<()> {
+    async fn handle_confirmed(
+        &self,
+        _event: &Event<JsonValue>,
+        completion: oneshot::Sender<crate::runtime::ConfirmedEventCompletion>,
+    ) -> RuntimeResult<()> {
         let call = {
             let mut calls = self.calls.lock().await;
             *calls += 1;
@@ -44,6 +48,9 @@ impl ConfirmedEventHandler for BlockingConfirmedHandler {
             self.first_started.notify_one();
             self.release_first.notified().await;
         }
+        completion
+            .send(crate::runtime::ConfirmedEventCompletion::Safe)
+            .map_err(|_| crate::runtime::SinexError::lifecycle("completion receiver dropped"))?;
         Ok(())
     }
 }
