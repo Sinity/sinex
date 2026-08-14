@@ -429,9 +429,9 @@ impl ContentStoreManager {
         let mime_type = Self::detect_mime_type(validated_path)
             .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
 
-        let content_key = self
+        let (content_key, write_lease) = self
             .content_store
-            .store_file(validated_path)
+            .store_file_with_lease(validated_path)
             .await
             .map_err(|e| {
                 SinexError::processing("Failed to add file to content store").with_source(e)
@@ -441,14 +441,22 @@ impl ContentStoreManager {
         self.verify_post_write(&content_key.key, &blake3_hash)
             .await?;
 
-        self.register_new_blob(
+        let blob_metadata = self.register_new_blob(
             &content_key,
             effective_filename,
             size_bytes,
             mime_type,
             blake3_hash,
         )
-        .await
+        .await?;
+        if let Err(error) = self.content_store.release_write_lease(&write_lease).await {
+            warn!(
+                content_key = %content_key.key,
+                error = %error,
+                "Blob metadata commit was durable but CAS write lease release will retry"
+            );
+        }
+        Ok(blob_metadata)
     }
 
     /// Ingest content from bytes (for in-memory content like clipboard)
@@ -496,9 +504,9 @@ impl ContentStoreManager {
         temp_file.sync_all().await.map_err(SinexError::io)?;
         drop(temp_file);
 
-        let content_key = self
+        let (content_key, write_lease) = self
             .content_store
-            .store_owned_temp_file(temp_file_path.as_path())
+            .store_owned_temp_file_with_lease(temp_file_path.as_path())
             .await
             .map_err(|e| {
                 SinexError::processing("Failed to add buffered upload to content store")
@@ -509,7 +517,7 @@ impl ContentStoreManager {
         self.verify_post_write(&content_key.key, &blake3_hash)
             .await?;
 
-        self.register_new_blob(
+        let blob_metadata = self.register_new_blob(
             &content_key,
             filename,
             i64::try_from(content.len()).map_err(|error| {
@@ -519,7 +527,15 @@ impl ContentStoreManager {
             content_type.to_string(),
             blake3_hash,
         )
-        .await
+        .await?;
+        if let Err(error) = self.content_store.release_write_lease(&write_lease).await {
+            warn!(
+                content_key = %content_key.key,
+                error = %error,
+                "Blob metadata commit was durable but CAS write lease release will retry"
+            );
+        }
+        Ok(blob_metadata)
     }
 
     /// Retrieve blob content as bytes

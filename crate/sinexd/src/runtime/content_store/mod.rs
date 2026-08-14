@@ -1228,21 +1228,6 @@ impl MaterialContentStore {
         self.store_file_local_cas(&resolved_path, file_size).await
     }
 
-    /// Store a temporary file created by an internal content-store caller.
-    ///
-    /// External source paths must use [`Self::store_file`] so root containment
-    /// and symlink checks remain mandatory. In-memory uploads use a securely
-    /// created, process-owned temporary file instead, which intentionally lives
-    /// outside the CAS root and must not be treated as an external source path.
-    pub(super) async fn store_owned_temp_file(
-        &self,
-        file_path: impl AsRef<Path>,
-    ) -> RuntimeResult<ContentStoreKey> {
-        let (key, lease) = self.store_owned_temp_file_with_lease(file_path).await?;
-        self.release_write_lease(&lease).await?;
-        Ok(key)
-    }
-
     /// Store an internal, process-owned staging file while retaining the
     /// durable lease until the caller's metadata transaction commits. Unlike
     /// `store_file`, this intentionally does not apply external source-root

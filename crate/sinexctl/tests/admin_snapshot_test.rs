@@ -560,6 +560,7 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
     let restore = AdminSnapshotRestoreCommand {
         archive: output_path,
         target_dir: target.clone(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -829,6 +830,7 @@ async fn snapshot_restore_dry_run_reports_plan_and_policy() -> xtask::sandbox::T
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path.clone(),
         target_dir: target.path().to_path_buf(),
+        state_dir: None,
         dry_run: true,
         allow_non_empty_target: false,
         confirm_restore: false,
@@ -902,6 +904,7 @@ async fn snapshot_restore_rejects_symlink_target() -> xtask::sandbox::TestResult
     let error = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: symlink_target,
+        state_dir: None,
         dry_run: true,
         allow_non_empty_target: false,
         confirm_restore: false,
@@ -928,6 +931,7 @@ async fn snapshot_restore_dry_run_refuses_non_empty_target_without_override()
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target.path().to_path_buf(),
+        state_dir: None,
         dry_run: true,
         allow_non_empty_target: false,
         confirm_restore: false,
@@ -956,6 +960,7 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path.clone(),
         target_dir: target.clone(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1045,6 +1050,7 @@ async fn snapshot_restore_execute_preserves_dry_run_plan() -> xtask::sandbox::Te
     let dry_run = AdminSnapshotRestoreCommand {
         archive: archive_path.clone(),
         target_dir: restore_target.clone(),
+        state_dir: None,
         dry_run: true,
         allow_non_empty_target: false,
         confirm_restore: false,
@@ -1058,6 +1064,7 @@ async fn snapshot_restore_execute_preserves_dry_run_plan() -> xtask::sandbox::Te
     let executed = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: restore_target,
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1129,6 +1136,7 @@ async fn real_deployed_topology_backup_restore_round_trip() -> TestResult<()> {
     let restore = AdminSnapshotRestoreCommand {
         archive,
         target_dir: target_parent.path().join("restore-target"),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1170,6 +1178,7 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target.clone(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1402,6 +1411,7 @@ async fn snapshot_restore_rejects_production_shaped_database_target()
     let command = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target.clone(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1431,6 +1441,7 @@ async fn snapshot_restore_ignores_nats_summary_in_component_hash() -> xtask::san
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target.clone(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1469,6 +1480,7 @@ async fn snapshot_restore_postgres_requires_target_database_url() -> xtask::sand
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target,
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1495,6 +1507,7 @@ async fn snapshot_restore_execute_requires_confirmation() -> xtask::sandbox::Tes
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target.path().to_path_buf(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: false,
@@ -1523,6 +1536,7 @@ async fn snapshot_restore_rejects_unsupported_archive_components() -> xtask::san
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target,
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
