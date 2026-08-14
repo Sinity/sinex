@@ -320,36 +320,50 @@ async fn reimport_scale_pages_use_bounded_keysets_and_quality_limits(
         "the bounded replay-root snapshot must retain deterministic identity evidence"
     );
 
-    let regression_source = EventSource::new("reimport-regressions")?;
-    let first = DynamicPayload::new(
-        regression_source.clone(),
-        "reimport.regression",
+    assert_eq!(inserted_ids.len(), 5);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn timestamp_regression_scan_keeps_page_predecessor(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("timestamp-regression-page-boundary"))
+        .await?;
+    let source = EventSource::new("timestamp-regression-page-boundary")?;
+    let predecessor_ts = Timestamp::now();
+    let predecessor = DynamicPayload::new(
+        source.clone(),
+        "timestamp.regression",
         json!({"position": 1}),
     )
-    .from_material_at(material_id, 100)
-    .at_time(Timestamp::now())
+    .from_material_at(material_id, 0)
+    .at_time(predecessor_ts)
     .build()?;
-    ctx.pool.events().insert(first).await?;
-    let second = DynamicPayload::new(
-        regression_source,
-        "reimport.regression",
+    let predecessor_id = ctx.pool.events().insert(predecessor).await?.id.unwrap();
+
+    let regression_ts = predecessor_ts - time::Duration::seconds(1);
+    let regression = DynamicPayload::new(
+        source,
+        "timestamp.regression",
         json!({"position": 2}),
     )
-    .from_material_at(material_id, 101)
-    .at_time(Timestamp::now() - time::Duration::seconds(1))
+    .from_material_at(material_id, 1)
+    .at_time(regression_ts)
     .build()?;
-    ctx.pool.events().insert(second).await?;
+    let regression_id = ctx.pool.events().insert(regression).await?.id.unwrap();
 
-    // The limit bounds the CTE's input before LAG runs. Use a bound large
-    // enough to include this fixture's two-row source window; a global limit
-    // of one would necessarily have no predecessor for the window function.
-    let regressions = ctx.pool.events().find_timestamp_regressions(100).await?;
+    let regressions = ctx.pool.events().find_timestamp_regressions(1).await?;
+    // The regression query returns PostgreSQL timestamptz values, which are
+    // microsecond precision even though Timestamp preserves sub-microsecond
+    // source fidelity elsewhere.
+    let predecessor_db_ts = Timestamp::new(predecessor_ts.to_postgres_parts().0);
+    let regression_db_ts = Timestamp::new(regression_ts.to_postgres_parts().0);
     assert_eq!(
-        regressions.len(),
-        1,
-        "the bounded regression scan must still return an in-window violation"
+        regressions,
+        vec![(regression_id, predecessor_id, regression_db_ts, predecessor_db_ts)],
+        "a one-row page must retain its source predecessor for LAG"
     );
-    assert_eq!(inserted_ids.len(), 5);
 
     Ok(())
 }

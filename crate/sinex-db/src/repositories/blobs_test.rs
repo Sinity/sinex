@@ -80,6 +80,51 @@ async fn associated_blob_reference_uses_indexed_containment(
         "a live event's associated blob must prevent deletion"
     );
 
+    sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
+        .bind(uuid::Uuid::now_v7().to_string())
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "DELETE FROM core.events \
+         WHERE associated_blob_ids @> ARRAY[$1]::uuid[]",
+    )
+    .bind(blob_uuid)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("ANALYZE audit.archived_events")
+        .execute(&ctx.pool)
+        .await?;
+
+    sqlx::query("SET enable_seqscan = OFF")
+        .execute(&mut *conn)
+        .await?;
+    let archive_plan = sqlx::query(
+        "EXPLAIN (FORMAT JSON) SELECT id FROM audit.archived_events \
+         WHERE associated_blob_ids IS NOT NULL \
+           AND associated_blob_ids @> ARRAY[$1]::uuid[]",
+    )
+    .bind(blob_uuid)
+    .fetch_one(&mut *conn)
+    .await?;
+    sqlx::query("RESET enable_seqscan")
+        .execute(&mut *conn)
+        .await?;
+    let archive_plan_json: serde_json::Value = sqlx::Row::try_get(&archive_plan, 0)?;
+    assert!(
+        archive_plan_json
+            .to_string()
+            .contains("ix_archived_events_associated_blob_ids"),
+        "the archive containment predicate must use the associated-blob GIN index: {archive_plan_json}"
+    );
+
+    assert!(
+        ctx.pool
+            .blobs()
+            .is_referenced_excluding_material(blob.id, uuid::Uuid::now_v7())
+            .await?,
+        "an archived event's associated blob must prevent deletion after its live reference is gone"
+    );
+
     Ok(())
 }
 

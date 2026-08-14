@@ -527,21 +527,46 @@ impl EventRepository<'_> {
                 WHERE ts_orig IS NOT NULL
                 ORDER BY id DESC
                 LIMIT $1
+            ), page_predecessors AS (
+                -- Preserve the event immediately before each source's page
+                -- boundary so LAG can compare the first in-page event.
+                SELECT predecessor.id, predecessor.source, predecessor.ts_orig
+                FROM (
+                    SELECT DISTINCT ON (source) id, source
+                    FROM bounded_events
+                    ORDER BY source, id
+                ) AS page_start
+                CROSS JOIN LATERAL (
+                    SELECT id, source, ts_orig
+                    FROM core.events
+                    WHERE source = page_start.source
+                      AND ts_orig IS NOT NULL
+                      AND id < page_start.id
+                    ORDER BY id DESC
+                    LIMIT 1
+                ) AS predecessor
             ), ordered_events AS (
                 SELECT
                     id,
                     ts_orig,
+                    true AS in_page,
                     LAG(id) OVER (PARTITION BY source ORDER BY id) as prev_id,
                     LAG(ts_orig) OVER (PARTITION BY source ORDER BY id) as prev_ts
-                FROM bounded_events
+                FROM (
+                    SELECT id, source, ts_orig, true AS in_page
+                    FROM bounded_events
+                    UNION ALL
+                    SELECT id, source, ts_orig, false AS in_page
+                    FROM page_predecessors
+                ) AS events_with_predecessors
             )
             SELECT
                 id::uuid as "id!",
                 prev_id::uuid as "prev_id!",
-                ts_orig as "ts_orig: Timestamp",
+                ts_orig as "ts_orig!: Timestamp",
                 prev_ts as "prev_ts: Timestamp"
             FROM ordered_events
-            WHERE prev_ts IS NOT NULL AND ts_orig < prev_ts
+            WHERE in_page AND prev_ts IS NOT NULL AND ts_orig < prev_ts
             "#,
             limit
         )
