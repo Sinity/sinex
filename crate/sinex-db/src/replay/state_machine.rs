@@ -731,7 +731,7 @@ impl ReplayStateMachine {
                 .map_err(|e| SinexError::database(format!("cascade preview begin: {e}")))?;
 
             // Expand the cascade via repo_tx (borrows &mut tx).
-            let (all_cascade_ids, derived_ids, max_depth) = {
+            let (cascade_total, derived_count, affected_modules, affected_scopes, max_depth) = {
                 let mut repo_tx = EventRepositoryTx::new(&mut tx);
                 let session_id = format!("preview_{}", Uuid::now_v7().simple());
 
@@ -756,37 +756,38 @@ impl ReplayStateMachine {
                     .await
                     .map_err(|e| SinexError::database(format!("expand cascade: {e}")))?;
 
-                let members = repo_tx
-                    .get_event_ids_with_depth(&table_name)
+                let cascade_total = repo_tx
+                    .cascade_node_count(&table_name)
                     .await
-                    .map_err(|e| SinexError::database(format!("get cascade members: {e}")))?;
-
+                    .map_err(|e| SinexError::database(format!("count cascade members: {e}")))?;
+                let derived_count = repo_tx
+                    .cascade_derived_count(&table_name)
+                    .await
+                    .map_err(|e| SinexError::database(format!("count derived cascade members: {e}")))?;
+                let affected_modules = repo_tx
+                    .load_cascade_affected_modules_from_table(&table_name)
+                    .await
+                    .map_err(|e| SinexError::database(format!("load cascade modules: {e}")))?;
+                let affected_scopes = repo_tx
+                    .load_cascade_affected_scopes_from_table(&table_name)
+                    .await
+                    .map_err(|e| SinexError::database(format!("load cascade scopes: {e}")))?;
                 repo_tx
                     .cleanup_cascade_session(&table_name)
                     .await
                     .map_err(|e| SinexError::database(format!("cleanup cascade: {e}")))?;
 
-                let all_ids: Vec<Uuid> = members.iter().map(|(id, _)| *id).collect();
-                let derived: Vec<Uuid> = members
-                    .iter()
-                    .filter_map(|(id, depth)| (*depth > 0).then_some(*id))
-                    .collect();
-                (all_ids, derived, max_depth)
+                (cascade_total, derived_count, affected_modules, affected_scopes, max_depth)
             };
-
-            let affected_modules =
-                ReplayRepository::load_cascade_affected_modules(&mut tx, &derived_ids).await?;
-            let affected_scopes =
-                ReplayRepository::load_cascade_affected_scopes(&mut tx, &derived_ids).await?;
 
             tx.rollback()
                 .await
                 .map_err(|e| SinexError::database(format!("cascade preview rollback: {e}")))?;
 
             Ok(serde_json::json!({
-                "cascade_total": all_cascade_ids.len(),
+                "cascade_total": cascade_total,
                 "direct_events": root_snapshot.root_event_count,
-                "derived_events": derived_ids.len(),
+                "derived_events": derived_count,
                 "max_depth": max_depth,
                 "affected_modules": affected_modules,
                 "affected_scopes": affected_scopes.into_iter()

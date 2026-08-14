@@ -3048,6 +3048,45 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         .map_err(|e| db_error(e, "count cascade nodes"))
     }
 
+    /// Count derived cascade members without materializing their IDs.
+    pub async fn cascade_derived_count(&mut self, table_name: &str) -> DbResult<i64> {
+        validate_cascade_table_name(table_name)?;
+        sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT count(*)::bigint FROM {table_name} WHERE depth > 0"
+        ))
+        .fetch_one(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "count derived cascade nodes"))
+    }
+
+    /// Load affected modules directly from a cascade session table.
+    pub async fn load_cascade_affected_modules_from_table(
+        &mut self,
+        table_name: &str,
+    ) -> DbResult<Vec<String>> {
+        validate_cascade_table_name(table_name)?;
+        sqlx::query_scalar::<_, String>(&format!(
+            "SELECT DISTINCT e.source FROM core.events e JOIN {table_name} c ON c.id = e.id WHERE c.depth > 0 ORDER BY e.source"
+        ))
+        .fetch_all(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "load cascade affected modules"))
+    }
+
+    /// Load affected scopes directly from a cascade session table.
+    pub async fn load_cascade_affected_scopes_from_table(
+        &mut self,
+        table_name: &str,
+    ) -> DbResult<Vec<(String, String)>> {
+        validate_cascade_table_name(table_name)?;
+        sqlx::query_as::<_, (String, String)>(&format!(
+            "SELECT DISTINCT e.event_type, e.scope_key FROM core.events e JOIN {table_name} c ON c.id = e.id WHERE c.depth > 0 AND e.scope_key IS NOT NULL ORDER BY e.event_type, e.scope_key"
+        ))
+        .fetch_all(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "load cascade affected scopes"))
+    }
+
     pub async fn cascade_integrity_violations(
         &mut self,
         table_name: &str,
