@@ -222,8 +222,11 @@ host    all             all             ::1/128                 trust
     ExecStartPre = lib.mkAfter [
       "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/annex"
       "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/assembler_state"
-      "-${pkgs.git}/bin/git -C ${workDir}/annex init"
-      "-${pkgs.bash}/bin/bash -c 'export PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}:$PATH; cd ${workDir}/annex && git-annex init event-engine'"
+      # ExecStartPre runs with the unit's root setup permissions. Keep the
+      # repository operations under the daemon identity so Git's ownership
+      # safety check and git-annex state agree with the oneshot initializer.
+      "-${pkgs.util-linux}/bin/runuser -u sinex -- ${pkgs.git}/bin/git -C ${workDir}/annex init"
+      "-${pkgs.util-linux}/bin/runuser -u sinex -- ${pkgs.bash}/bin/bash -c 'export PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}:$PATH; cd ${workDir}/annex && git-annex init event-engine'"
     ];
     Environment = [
       "XDG_CACHE_HOME=${stateDir}/.cache"
@@ -268,7 +271,11 @@ host    all             all             ::1/128                 trust
   virtualisation = {
     # Base configuration from standard profile
     memorySize = lib.mkDefault 2048;
-    diskSize = lib.mkDefault 4096;
+    # The daemon's fail-closed startup preflight requires 10 GiB free on the
+    # data filesystem (and separate floors for state/tmp/log/work). The
+    # default 4 GiB image cannot satisfy that contract after the NixOS closure
+    # is installed, so this production-shaped VM must provide real headroom.
+    diskSize = lib.mkDefault 32768;
     cores = lib.mkDefault 2;
     graphics = false;
     writableStoreUseTmpfs = false;
