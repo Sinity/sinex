@@ -848,7 +848,25 @@ impl StateRepository<'_> {
             r"SELECT
                 id,
                 operation_type, operator, scope,
-                result_status, result_message, preview_summary, duration_ms
+                result_status, result_message,
+                CASE
+                    WHEN operation_type = 'replay'
+                         AND jsonb_typeof(COALESCE(preview_summary, '{}'::jsonb)) = 'object'
+                    THEN jsonb_set(
+                        COALESCE(preview_summary, '{}'::jsonb),
+                        '{archive_recovery,remaining_archived_events}',
+                        to_jsonb((
+                            SELECT COUNT(*)
+                            FROM audit.archived_events ae
+                            WHERE ae.archive_reason =
+                                'superseded by replay re-execution (operation '
+                                || core.operations_log.id::text || ')'
+                        )),
+                        true
+                    )
+                    ELSE preview_summary
+                END AS preview_summary,
+                duration_ms
             FROM core.operations_log WHERE 1=1",
         );
 
