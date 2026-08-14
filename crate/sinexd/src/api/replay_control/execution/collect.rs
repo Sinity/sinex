@@ -263,7 +263,15 @@ impl ReplayExecutionEngine {
                             anchor_byte: *anchor_byte,
                             offset_start: *offset_start,
                             offset_end: *offset_end,
-                            offset_kind: Some(offset_kind.as_wire_str().to_string()),
+                            // The database representation only stores the
+                            // offset kind when both range endpoints exist;
+                            // mirror extract_provenance so replay validation
+                            // compares canonical persisted occurrence keys.
+                            offset_kind: if offset_start.is_some() && offset_end.is_some() {
+                                Some(offset_kind.as_wire_str().to_string())
+                            } else {
+                                None
+                            },
                         },
                         source: event.source.as_ref().to_string(),
                         event_type: event.event_type.as_ref().to_string(),
