@@ -2188,7 +2188,10 @@ impl MaterialParser for MultiIntentParser {
                     .event_source(EventSource::from_static("test"))
                     .payload(serde_json::json!({"parsed": which}))
                     .ts_orig(ctx.acquisition_time)
-                    .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
+                    .timing(sinex_primitives::parser::TimingEvidence::UserDeclared {
+                        value: ctx.acquisition_time,
+                        reason: "deterministic multi-intent admission fixture".to_string(),
+                    })
                     .anchor(record.anchor.clone())
                     .privacy_context(ProcessingContext::Metadata)
                     .build()
