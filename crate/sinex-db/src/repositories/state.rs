@@ -6,6 +6,8 @@
 
 use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::OperationsLog;
+use crate::repositories::DbPoolExt;
+use crate::repositories::replay::REPLAY_ARCHIVE_PAGE_SIZE;
 use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use num_traits::ToPrimitive;
@@ -23,7 +25,9 @@ mod helpers;
 mod tombstone;
 mod types;
 
-pub use helpers::PROJECTION_REBUILD_OPERATION_TYPE;
+pub use helpers::{
+    PROJECTION_REBUILD_OPERATION_TYPE, REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE,
+};
 use helpers::{
     MANAGED_OPERATION_TYPES, SQLSTATE_UNDEFINED_FUNCTION, module_heartbeat_stale_after,
     probe_health, probe_health_bool,
@@ -633,6 +637,109 @@ impl StateRepository<'_> {
         self.get_operation(&op_id).await?.ok_or_else(|| {
             SinexError::database("operation created by core.start_operation() not found")
         })
+    }
+
+    /// Restore the bounded archive journal for a replay operation whose normal
+    /// compensation could not finish. The recovery itself is an audited
+    /// operation and is deliberately separate from projection invalidation
+    /// recovery: restoring authoritative events must not be mistaken for
+    /// declaring projections fresh.
+    pub async fn recover_replay_archive(
+        &self,
+        operator: &str,
+        replay_operation_id: Uuid,
+    ) -> DbResult<OperationRecord> {
+        let metadata = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id = $1::uuid
+              AND operation_type = 'replay'
+            "#,
+            replay_operation_id,
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "fetch replay archive recovery metadata"))?
+        .ok_or_else(|| {
+            SinexError::not_found(format!("Replay operation not found: {replay_operation_id}"))
+        })?;
+
+        let archive_reason = format!(
+            "superseded by replay re-execution (operation {replay_operation_id})"
+        );
+        let recovery = self
+            .start_operation(
+                REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE,
+                operator,
+                serde_json::json!({
+                    "replay_operation_id": replay_operation_id.to_string(),
+                    "archive_reason": archive_reason,
+                }),
+            )
+            .await?;
+
+        let restore_result = async {
+            let mut restored = 0_u64;
+            loop {
+                let page = self
+                    .pool
+                    .replay()
+                    .archived_replay_event_ids_page(&archive_reason, REPLAY_ARCHIVE_PAGE_SIZE)
+                    .await?;
+                if page.is_empty() {
+                    break;
+                }
+                let restored_page = self
+                    .pool
+                    .events()
+                    .execute_cascade_restore(&page, &recovery.id.to_string())
+                    .await?;
+                if restored_page == 0 {
+                    return Err(SinexError::service(
+                        "Replay archive recovery made no progress; conflicting archived rows remain",
+                    )
+                    .with_id("replay_operation_id", replay_operation_id.to_string())
+                    .with_context("archive_reason", archive_reason.clone()));
+                }
+                restored += restored_page;
+            }
+            Ok::<u64, SinexError>(restored)
+        }
+        .await;
+
+        match restore_result {
+            Ok(restored) => {
+                let summary = serde_json::json!({
+                    "replay_operation_id": replay_operation_id.to_string(),
+                    "archive_reason": archive_reason,
+                    "restored_events": restored,
+                    "archive_recovery": "completed",
+                });
+                self.update_operation_meta(
+                    &recovery.id,
+                    OperationStatus::Success,
+                    Some("Replay archive journal restored"),
+                    summary,
+                )
+                .await?;
+                self.get_operation(&recovery.id)
+                    .await?
+                    .ok_or_else(|| SinexError::database("archive recovery operation disappeared"))
+            }
+            Err(error) => {
+                let summary = metadata.preview_summary.unwrap_or_else(|| serde_json::json!({}));
+                let _ = self
+                    .update_operation_meta(
+                        &recovery.id,
+                        OperationStatus::Failed,
+                        Some(&error.to_string()),
+                        summary,
+                    )
+                    .await;
+                Err(error)
+            }
+        }
     }
 
     /// Drain a pending replay scope invalidation marker through a completed

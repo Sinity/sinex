@@ -4,7 +4,9 @@ use serde::Deserialize;
 use sinex_db::DbPoolExt;
 use sinex_db::SourceMaterialRecord;
 use sinex_db::repositories::state::Operation as DbOperation;
-use sinex_db::repositories::state::PROJECTION_REBUILD_OPERATION_TYPE;
+use sinex_db::repositories::state::{
+    PROJECTION_REBUILD_OPERATION_TYPE, REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE,
+};
 use sinex_db::repositories::{
     EmailMailboxProjectionEvent, EmailProviderStateUpsert, EventStorageLane,
 };
@@ -253,7 +255,9 @@ pub async fn handle_ops_start(
     // method-wide RpcRole::Write ceiling that admits ordinary package ops.
     let is_admin = auth.has_permission(crate::api::auth::Role::Admin);
 
-    let record = if request.operation_type == PROJECTION_REBUILD_OPERATION_TYPE {
+    let record = if request.operation_type == REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE {
+        start_replay_archive_recovery_operation(pool, actor, scope_jsonb).await?
+    } else if request.operation_type == PROJECTION_REBUILD_OPERATION_TYPE {
         start_projection_rebuild_operation(pool, actor, scope_jsonb).await?
     } else if package_operation_spec(&request.operation_type).is_some() {
         start_package_operation(pool, actor, &request.operation_type, scope_jsonb, is_admin).await?
@@ -275,6 +279,31 @@ pub async fn handle_ops_start(
     };
 
     Ok(response)
+}
+
+async fn start_replay_archive_recovery_operation(
+    pool: &PgPool,
+    actor: &str,
+    scope: serde_json::Value,
+) -> Result<sinex_db::repositories::OperationRecord> {
+    let replay_operation_id = scope
+        .get("replay_operation_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            SinexError::validation(
+                "replay-archive-recovery scope requires replay_operation_id",
+            )
+            .with_operation("ops.start")
+        })?;
+    let replay_operation_id = uuid::Uuid::parse_str(replay_operation_id).map_err(|error| {
+        SinexError::validation("replay-archive-recovery replay_operation_id must be a UUID")
+            .with_std_error(&error)
+            .with_operation("ops.start")
+    })?;
+
+    pool.state()
+        .recover_replay_archive(actor, replay_operation_id)
+        .await
 }
 
 async fn start_package_operation(

@@ -651,13 +651,33 @@ pub(super) fn debt_row_from_replay_operation(operation: &OpsOperation) -> Option
                 message: "archived replay rows remain authoritative and must be restored or explicitly reconciled before destructive operations; terminal operation status does not clear this debt".to_string(),
                 ref_: Some(operation_ref.clone()),
             }],
-            actions: vec![ActionAvailability::read(
-                "replay.operation.inspect",
-                "Inspect",
-                ActionAvailabilityState::Enabled,
-            )
-            .with_command_hint(format!("sinexctl ops jobs show {}", operation.id))
-            .with_rpc_method("ops.get")],
+            actions: vec![
+                ActionAvailability {
+                    id: "replay.archive.recover".to_string(),
+                    label: "Recover archive".to_string(),
+                    state: ActionAvailabilityState::Enabled,
+                    reason: Some(
+                        "restores the replay operation's bounded archive journal before destructive work"
+                            .to_string(),
+                    ),
+                    command_hint: Some(format!(
+                        "sinexctl ops start -t replay-archive-recovery -s '{}'",
+                        serde_json::json!({"replay_operation_id": operation.id})
+                    )),
+                    rpc_method: Some("ops.start".to_string()),
+                    side_effect: ActionSideEffect::Write,
+                    requires_confirmation: true,
+                    dry_run_available: false,
+                    audit_output_ref: None,
+                },
+                ActionAvailability::read(
+                    "replay.operation.inspect",
+                    "Inspect",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint(format!("sinexctl ops jobs show {}", operation.id))
+                .with_rpc_method("ops.get"),
+            ],
         });
     }
 
