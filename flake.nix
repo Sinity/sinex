@@ -119,7 +119,10 @@
           # requires .md files to be present at compile time.
           src = pkgs.lib.cleanSourceWith {
             src = craneLib.path ./.;
-            filter = path: type: (craneLib.filterCargoSources path type) || (pkgs.lib.hasSuffix ".md" path);
+            filter = path: type:
+              (craneLib.filterCargoSources path type)
+              || (pkgs.lib.hasSuffix ".md" path)
+              || (pkgs.lib.hasSuffix "nixos/modules/source-catalog.generated.json" path);
           };
 
           # Common build arguments
