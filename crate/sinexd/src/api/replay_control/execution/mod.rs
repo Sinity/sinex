@@ -88,6 +88,9 @@ pub(super) struct ExpectedReplayOutput {
 
 #[derive(Debug)]
 pub(super) struct ScopeInvalidationBucket {
+    /// One archive-metadata page contributes at most
+    /// `REPLAY_SCOPE_METADATA_PAGE_SIZE` entries across every bucket. This
+    /// type must never represent a complete replay cascade.
     pub(super) event_ids: Vec<Uuid>,
     pub(super) event_source: EventSource,
     pub(super) event_type: EventType,

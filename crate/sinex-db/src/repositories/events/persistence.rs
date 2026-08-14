@@ -2855,6 +2855,56 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
             .map_err(|error| db_error(error, "populate cascade roots for replay scope"))
     }
 
+    /// Count scope-invalidation metadata while the cascade working table is
+    /// still authoritative inside the archive transaction.
+    ///
+    /// The returned values are scalar evidence only: scoped event rows,
+    /// distinct `(source, event_type, lineage)` buckets, and distinct scope
+    /// keys within those buckets. The executor later checks every bounded
+    /// archive page against the scoped-event count before treating the
+    /// invalidation pass as complete.
+    pub async fn cascade_scope_invalidation_counts(
+        &mut self,
+        table_name: &str,
+    ) -> DbResult<(u64, usize, usize)> {
+        validate_cascade_table_name(table_name)?;
+        let row = sqlx::query(&format!(
+            r"
+            SELECT
+                COUNT(*)::bigint AS scoped_event_count,
+                COUNT(DISTINCT (e.source, e.event_type, (e.source_event_ids IS NOT NULL)))::bigint
+                    AS bucket_count,
+                COUNT(DISTINCT (e.source, e.event_type, (e.source_event_ids IS NOT NULL), e.scope_key))::bigint
+                    AS scope_key_count
+            FROM core.events e
+            JOIN {table_name} c ON c.id = e.id
+            WHERE e.scope_key IS NOT NULL
+            "
+        ))
+        .fetch_one(&mut **self.tx)
+        .await
+        .map_err(|error| db_error(error, "count cascade scope invalidation metadata"))?;
+
+        let scoped_event_count: i64 = row
+            .try_get("scoped_event_count")
+            .map_err(|error| db_error(error, "read cascade scoped-event count"))?;
+        let bucket_count: i64 = row
+            .try_get("bucket_count")
+            .map_err(|error| db_error(error, "read cascade scope bucket count"))?;
+        let scope_key_count: i64 = row
+            .try_get("scope_key_count")
+            .map_err(|error| db_error(error, "read cascade scope-key count"))?;
+
+        Ok((
+            u64::try_from(scoped_event_count)
+                .map_err(|_| SinexError::database("negative cascade scoped-event count"))?,
+            usize::try_from(bucket_count)
+                .map_err(|_| SinexError::database("invalid cascade scope bucket count"))?,
+            usize::try_from(scope_key_count)
+                .map_err(|_| SinexError::database("invalid cascade scope-key count"))?,
+        ))
+    }
+
     pub async fn populate_cascade_roots_from(
         &mut self,
         table_name: &str,

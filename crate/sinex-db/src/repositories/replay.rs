@@ -19,6 +19,26 @@ const SCOPE_ROOT_PAGE_SIZE: i64 = 10_000;
 pub const REPLAY_ROOT_SAMPLE_SIZE: i64 = 100;
 /// Maximum cascade journal page handed to replay recovery/compensation.
 pub const REPLAY_ARCHIVE_PAGE_SIZE: i64 = 1_000;
+/// Maximum archived scope-metadata rows one replay invalidation handoff owns.
+///
+/// This is deliberately smaller than `REPLAY_ARCHIVE_PAGE_SIZE`: an
+/// invalidation includes both UUIDs and potentially long scope keys, so the
+/// transport-facing page needs a tighter bound.
+pub const REPLAY_SCOPE_METADATA_PAGE_SIZE: i64 = 100;
+
+/// One archived event that needs a scope invalidation.
+///
+/// Values are read in bounded keyset pages from the archive identified by an
+/// operation-unique archive reason. They are intentionally not journaled or
+/// accumulated by the replay executor.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ArchivedReplayScopeMetadataRow {
+    pub id: Uuid,
+    pub source: String,
+    pub event_type: String,
+    pub has_lineage: bool,
+    pub scope_key: String,
+}
 
 /// Bounded identity evidence for a replay scope.
 ///
@@ -460,6 +480,56 @@ impl ReplayRepository<'_> {
         .fetch_all(self.pool)
         .await
         .map_err(|error| SinexError::database("read archived replay event page").with_source(error))
+    }
+
+    /// Read one keyset page of archived replay scope metadata.
+    ///
+    /// `archive_reason` is the authoritative cascade identity. Callers must
+    /// advance `after_id` with the final returned ID and verify their processed
+    /// row count against the count captured during the archive transaction.
+    /// A missing page therefore fails the replay closed instead of silently
+    /// dropping an invalidation or leaving a projection ready over archived
+    /// inputs.
+    pub async fn archived_replay_scope_metadata_page(
+        &self,
+        archive_reason: &str,
+        after_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<ArchivedReplayScopeMetadataRow>> {
+        if !(1..=REPLAY_SCOPE_METADATA_PAGE_SIZE).contains(&limit) {
+            return Err(SinexError::validation(format!(
+                "archived replay scope metadata page limit must be between 1 and {REPLAY_SCOPE_METADATA_PAGE_SIZE}"
+            )));
+        }
+
+        let mut query = String::from(
+            "SELECT id, source, event_type, (source_event_ids IS NOT NULL) AS has_lineage, scope_key \
+             FROM audit.archived_events \
+             WHERE archive_reason = $1 AND scope_key IS NOT NULL",
+        );
+        if after_id.is_some() {
+            query.push_str(" AND id < $2");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $3"
+        } else {
+            " ORDER BY id DESC LIMIT $2"
+        });
+
+        let mut request = sqlx::query_as::<_, ArchivedReplayScopeMetadataRow>(&query)
+            .bind(archive_reason);
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id);
+        }
+        request
+            .bind(limit)
+            .fetch_all(self.pool)
+            .await
+            .map_err(|error| {
+                SinexError::database("read archived replay scope metadata page")
+                    .with_source(error)
+                    .with_context("archive_reason", archive_reason.to_string())
+            })
     }
 
     /// Count total material-root events matching a replay scope.

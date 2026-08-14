@@ -378,18 +378,6 @@ async fn replay_abort_before_scan_ack_restores_cascade_and_emits_compensating_in
     let event_id = inserted.id.expect("inserted replay target must have id");
     let operation_id = Uuid::now_v7();
 
-    let scope_metadata = engine
-        .collect_cascade_scope_metadata(&ctx.pool, &[event_id.to_uuid()])
-        .await?;
-    assert_eq!(scope_metadata.len(), 1);
-    assert_eq!(scope_metadata[0].event_source.as_str(), "fs-test");
-    assert_eq!(
-        scope_metadata[0].event_type.as_str(),
-        FileCreatedPayload::EVENT_TYPE.as_static_str()
-    );
-    assert!(!scope_metadata[0].has_lineage);
-    assert_eq!(scope_metadata[0].event_ids, vec![event_id.to_uuid()]);
-
     ctx.pool
         .events()
         .execute_cascade_archive(
@@ -407,7 +395,7 @@ async fn replay_abort_before_scan_ack_restores_cascade_and_emits_compensating_in
             &ctx.pool,
             "archive before compensating restore test",
             1,
-            &scope_metadata,
+            1,
             operation_id,
             test_error("boom"),
         )
@@ -463,11 +451,6 @@ async fn replay_abort_before_scan_ack_surfaces_compensating_invalidation_failure
     let event_id = inserted.id.expect("inserted replay target must have id");
     let operation_id = Uuid::now_v7();
 
-    let scope_metadata = engine
-        .collect_cascade_scope_metadata(&ctx.pool, &[event_id.to_uuid()])
-        .await?;
-    assert_eq!(scope_metadata.len(), 1);
-
     ctx.pool
         .events()
         .execute_cascade_archive(
@@ -483,7 +466,7 @@ async fn replay_abort_before_scan_ack_surfaces_compensating_invalidation_failure
             &ctx.pool,
             "archive before compensating restore failure test",
             1,
-            &scope_metadata,
+            1,
             operation_id,
             test_error("boom"),
         )
@@ -491,7 +474,7 @@ async fn replay_abort_before_scan_ack_surfaces_compensating_invalidation_failure
         .expect_err("compensating invalidation publish failure should surface");
     assert!(
         err.to_string()
-            .contains("failed to publish compensating scope invalidations"),
+            .contains("publishing compensating scope invalidations from the archive also failed"),
         "unexpected error: {err}"
     );
 
@@ -507,14 +490,108 @@ async fn replay_abort_before_scan_ack_surfaces_compensating_invalidation_failure
     .fetch_one(&ctx.pool)
     .await?;
     assert_eq!(
-        live_count, 1,
-        "aborted replay should still restore the archived event"
+        live_count, 0,
+        "a failed compensating page must leave the authoritative archive intact"
     );
     assert_eq!(
-        archived_count, 0,
-        "aborted replay should not leave the archived event behind"
+        archived_count, 1,
+        "a failed compensating page must not discard recovery evidence"
     );
 
+    Ok(())
+}
+
+/// Scope metadata is read from the authoritative archive in fixed keyset
+/// pages. This crosses the page boundary and proves every archived scoped
+/// event produces one bounded invalidation membership rather than rebuilding a
+/// cascade-wide UUID vector in the executor.
+#[sinex_test]
+async fn replay_scope_invalidations_cover_every_archived_metadata_page(
+    ctx: TestContext,
+) -> Result<()> {
+    use sinex_db::repositories::replay::REPLAY_SCOPE_METADATA_PAGE_SIZE;
+
+    const EVENT_COUNT: i64 = REPLAY_SCOPE_METADATA_PAGE_SIZE * 10 + 1;
+    let ctx = ctx.with_nats().dedicated().await?;
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let engine = ReplayExecutionEngine::new(replay, ctx.nats_client());
+    let material_id = ctx
+        .create_source_material(Some("replay-bounded-scope-metadata"))
+        .await?;
+    sqlx::query("UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2")
+        .bind(EVENT_COUNT)
+        .bind(material_id)
+        .execute(&ctx.pool)
+        .await?;
+
+    let mut events = (0..EVENT_COUNT)
+        .map(|anchor| {
+            let mut event = DynamicPayload::new(
+                "fs-test",
+                FileCreatedPayload::EVENT_TYPE.as_static_str(),
+                json!({ "path": format!("/tmp/replay-scope-page-{anchor}.txt") }),
+            )
+            .from_material_at(material_id, anchor)
+            .build()?;
+            event.scope_key = Some(format!("scope://fs-test/replay-scope-page-{anchor}"));
+            Ok(event)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let ts_orig = Timestamp::now() - time::Duration::seconds(10);
+    for event in &mut events {
+        event.ts_orig = Some(ts_orig);
+    }
+    let ids = ctx
+        .pool
+        .events()
+        .insert_batch(events)
+        .await?
+        .into_iter()
+        .map(|event| event.id.expect("inserted scoped event must have ID").to_uuid())
+        .collect::<Vec<_>>();
+    let operation_id = Uuid::now_v7();
+    let archive_reason = "bounded replay scope metadata page test";
+    ctx.pool
+        .events()
+        .execute_cascade_archive(
+            &ids,
+            archive_reason,
+            &operation_id.to_string(),
+            "test:replay-bounded-scope-metadata",
+        )
+        .await?;
+
+    let mut invalidation_rx = spawn_invalidation_listener_for_test(&ctx.nats_client()).await?;
+    engine
+        .publish_scope_invalidations(archive_reason, EVENT_COUNT as u64, operation_id)
+        .await?;
+
+    let mut received_ids = std::collections::HashSet::new();
+    let mut received_scope_keys = std::collections::HashSet::new();
+    let expected_message_count = usize::try_from(
+        (EVENT_COUNT + REPLAY_SCOPE_METADATA_PAGE_SIZE - 1) / REPLAY_SCOPE_METADATA_PAGE_SIZE,
+    )?;
+    for _ in 0..expected_message_count {
+        let payload = tokio::time::timeout(Duration::from_secs(1), invalidation_rx.recv())
+            .await?
+            .ok_or_else(|| test_error("bounded invalidation stream ended early"))??;
+        let invalidation: crate::runtime::automaton::invalidation::DerivedScopeInvalidation =
+            serde_json::from_slice(&payload)?;
+        assert!(
+            invalidation.affected_event_ids.len() <= REPLAY_SCOPE_METADATA_PAGE_SIZE as usize,
+            "each publication must own at most one metadata page"
+        );
+        assert!(
+            invalidation.affected_scope_keys.len() <= REPLAY_SCOPE_METADATA_PAGE_SIZE as usize,
+            "each publication must own at most one metadata page"
+        );
+        received_ids.extend(invalidation.affected_event_ids);
+        received_scope_keys.extend(invalidation.affected_scope_keys);
+    }
+
+    assert_eq!(received_ids.len(), EVENT_COUNT as usize);
+    assert_eq!(received_scope_keys.len(), EVENT_COUNT as usize);
+    assert!(ids.into_iter().all(|id| received_ids.contains(&id)));
     Ok(())
 }
 

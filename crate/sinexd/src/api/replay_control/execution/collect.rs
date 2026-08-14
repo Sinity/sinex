@@ -10,7 +10,9 @@ use super::{
 use crate::runtime::automaton::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::stream::{ReplayMaterialOccurrence, ResolvedReplayMaterial};
-use sinex_db::repositories::replay::REPLAY_ARCHIVE_PAGE_SIZE;
+use sinex_db::repositories::replay::{
+    ArchivedReplayScopeMetadataRow, REPLAY_ARCHIVE_PAGE_SIZE, REPLAY_SCOPE_METADATA_PAGE_SIZE,
+};
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_primitives::domain::{EventSource, EventType, SourceIdentifier};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
@@ -18,14 +20,13 @@ use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid, transport};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tracing::debug;
-use sqlx::Row;
 
 use sinex_db::replay::state_machine::ReplayScope;
 
 pub(crate) struct ArchivedReplayCascade {
     pub(crate) archive_reason: String,
-    pub(crate) scope_metadata: Vec<ScopeInvalidationBucket>,
     pub(crate) archived_count: u64,
+    pub(crate) scoped_event_count: u64,
 }
 
 /// The largest root/material context sent in one source-scan command.
@@ -73,40 +74,53 @@ impl ReplayExecutionEngine {
     pub(super) async fn stale_projection_registry_for_scopes(
         &self,
         pool: &sqlx::PgPool,
-        scope_metadata: &[ScopeInvalidationBucket],
+        archive_reason: &str,
+        expected_scoped_event_count: u64,
         operation_id: Uuid,
     ) -> Result<()> {
-        let mut scope_keys: Vec<&str> = scope_metadata
-            .iter()
-            .flat_map(|bucket| bucket.scope_keys.iter().map(String::as_str))
-            .collect();
-        scope_keys.sort_unstable();
-        scope_keys.dedup();
-
         let reason = format!("replay scope invalidation (operation {operation_id})");
-        for scope_key in scope_keys {
-            let staled = pool
-                .projection_registry()
-                .mark_stale_by_scope_key(scope_key, &reason)
-                .await
-                .map_err(|error| {
-                    SinexError::database(
-                        "Failed to stale projection registry rows after replay archive",
-                    )
-                    .with_context("scope_key", scope_key)
-                    .with_context("operation_id", operation_id.to_string())
-                    .with_source(error)
-                })?;
-            if staled > 0 {
-                debug!(
-                    operation_id = %operation_id,
-                    scope_key,
-                    staled_rows = staled,
-                    "Staled projection registry rows for archived replay scope"
-                );
+        let mut after_id = None;
+        let mut processed = 0_u64;
+        loop {
+            let (scope_metadata, next_after_id, page_count) = self
+                .archived_scope_metadata_page(archive_reason, after_id)
+                .await?;
+            if page_count == 0 {
+                break;
             }
+            for bucket in scope_metadata {
+                for scope_key in bucket.scope_keys {
+                    let staled = pool
+                        .projection_registry()
+                        .mark_stale_by_scope_key(&scope_key, &reason)
+                        .await
+                        .map_err(|error| {
+                            SinexError::database(
+                                "Failed to stale projection registry rows after replay archive",
+                            )
+                            .with_context("scope_key", scope_key.clone())
+                            .with_context("operation_id", operation_id.to_string())
+                            .with_source(error)
+                        })?;
+                    if staled > 0 {
+                        debug!(
+                            operation_id = %operation_id,
+                            scope_key,
+                            staled_rows = staled,
+                            "Staled projection registry rows for archived replay scope"
+                        );
+                    }
+                }
+            }
+            processed += page_count;
+            after_id = next_after_id;
         }
-        Ok(())
+        self.ensure_scope_metadata_complete(
+            archive_reason,
+            expected_scoped_event_count,
+            processed,
+            "stale projection registry",
+        )
     }
 
     /// Read one bounded replay batch from the operation's archive journal.
@@ -624,8 +638,8 @@ impl ReplayExecutionEngine {
         if expected_root_count == 0 {
             return Ok(ArchivedReplayCascade {
                 archive_reason: replay_archive_reason(operation_id),
-                scope_metadata: Vec::new(),
                 archived_count: 0,
+                scoped_event_count: 0,
             });
         }
 
@@ -678,70 +692,10 @@ impl ReplayExecutionEngine {
                 .await
                 .map_err(|e| e.with_context("operation", "expand replay cascade"))?;
 
-            let rows = sqlx::query(&format!(
-                "SELECT e.id, e.source, e.event_type, e.scope_key, \
-                        (e.source_event_ids IS NOT NULL) AS has_lineage \
-                 FROM core.events e JOIN {table_name} c ON c.id = e.id \
-                 WHERE e.scope_key IS NOT NULL"
-            ))
-            .fetch_all(&mut **repo_tx.transaction())
-            .await
-            .map_err(|err| {
-                SinexError::database("Failed to collect cascade scope metadata")
-                    .with_std_error(&err)
-            })?;
-
-            let mut grouped: HashMap<(EventSource, EventType, bool), ScopeInvalidationBucket> =
-                HashMap::new();
-            for row in rows {
-                if let Some(sk) = row.try_get::<Option<String>, _>("scope_key").map_err(|error| {
-                    SinexError::database("Failed to read replay cascade scope key").with_source(error)
-                })? {
-                    let source: String = row.try_get("source").map_err(|error| {
-                        SinexError::database("Failed to read replay cascade source").with_source(error)
-                    })?;
-                    let event_type: String = row.try_get("event_type").map_err(|error| {
-                        SinexError::database("Failed to read replay cascade event type").with_source(error)
-                    })?;
-                    let event_source = EventSource::new(source.clone()).map_err(|error| {
-                        SinexError::validation(format!(
-                            "Invalid event source '{}' in replay cascade scope metadata: {error}",
-                            source
-                        ))
-                    })?;
-                    let event_type = EventType::new(event_type.clone()).map_err(|error| {
-                        SinexError::validation(format!(
-                            "Invalid event type '{}' in replay cascade scope metadata: {error}",
-                            event_type
-                        ))
-                    })?;
-                    let has_lineage: bool = row.try_get("has_lineage").map_err(|error| {
-                        SinexError::database("Failed to read replay cascade lineage").with_source(error)
-                    })?;
-                    let event_id: Uuid = row.try_get("id").map_err(|error| {
-                        SinexError::database("Failed to read replay cascade event id").with_source(error)
-                    })?;
-                    let bucket = grouped
-                        .entry((event_source.clone(), event_type.clone(), has_lineage))
-                        .or_insert_with(|| ScopeInvalidationBucket {
-                            event_ids: Vec::new(),
-                            event_source,
-                            event_type,
-                            has_lineage,
-                            scope_keys: Vec::new(),
-                        });
-                    bucket.event_ids.push(event_id);
-                    bucket.scope_keys.push(sk);
-                }
-            }
-
-            let mut scope_metadata = grouped.into_values().collect::<Vec<_>>();
-            for bucket in &mut scope_metadata {
-                bucket.event_ids.sort_unstable();
-                bucket.event_ids.dedup();
-                bucket.scope_keys.sort_unstable();
-                bucket.scope_keys.dedup();
-            }
+            let (scoped_event_count, bucket_count, scope_key_count) = repo_tx
+                .cascade_scope_invalidation_counts(&table_name)
+                .await
+                .map_err(|e| e.with_context("operation", "count replay cascade scope metadata"))?;
 
             let archived_count = repo_tx
                 .execute_cascade_archive_from_table(
@@ -753,15 +707,6 @@ impl ReplayExecutionEngine {
                 .await
                 .map_err(|e| e.with_context("operation", "archive replay cascade"))?;
 
-            let bucket_count = scope_metadata.len();
-            let scope_key_count = scope_metadata
-                .iter()
-                .map(|bucket| bucket.scope_keys.len())
-                .sum();
-            let event_count = scope_metadata
-                .iter()
-                .map(|bucket| bucket.event_ids.len())
-                .sum();
             self.replay
                 .record_scope_invalidations_pending_with_tx(
                     repo_tx.transaction(),
@@ -769,7 +714,9 @@ impl ReplayExecutionEngine {
                     archived_count,
                     bucket_count,
                     scope_key_count,
-                    event_count,
+                    usize::try_from(scoped_event_count).map_err(|_| {
+                        SinexError::invalid_state("replay cascade scoped event count exceeds usize")
+                    })?,
                     // Durable replay journal (#2194): persist only the
                     // operation-unique archive reason. Recovery pages the
                     // archive instead of serializing every cascade UUID.
@@ -787,8 +734,8 @@ impl ReplayExecutionEngine {
 
             Ok(ArchivedReplayCascade {
                 archive_reason: reason.clone(),
-                scope_metadata,
                 archived_count,
+                scoped_event_count,
             })
         })
         .await
@@ -877,72 +824,75 @@ impl ReplayExecutionEngine {
     /// were archived. Only publishes for events that had `scope_keys`.
     pub(crate) async fn publish_scope_invalidations(
         &self,
-        scope_metadata: &[ScopeInvalidationBucket],
+        archive_reason: &str,
+        expected_scoped_event_count: u64,
         operation_id: Uuid,
     ) -> Result<()> {
-        if scope_metadata.is_empty() {
-            return Ok(());
-        }
-
         let invalidation_subject = self.env.nats_subject(INVALIDATION_SUBJECT);
-
-        for bucket in scope_metadata {
-            let invalidation = DerivedScopeInvalidation::archived(
-                bucket.event_ids.clone(),
-                bucket.event_source.clone(),
-                bucket.event_type.clone(),
-            )
-            .with_has_lineage(bucket.has_lineage)
-            .with_operation(operation_id)
-            .with_scope_keys(bucket.scope_keys.clone());
-
-            match serde_json::to_vec(&invalidation) {
-                Ok(payload) => {
-                    self.maybe_fail_scope_invalidation_publish()?;
-                    // transport::Class::Invalidation — JetStream-backed scope
-                    // fan-out; failure propagated to caller (replay operation
-                    // decides abort/continue).
-                    ensure_nats_payload_fits(
-                        "replay scope invalidation",
-                        &invalidation_subject,
-                        payload.len(),
-                    )?;
-                    let mut headers = async_nats::HeaderMap::new();
-                    transport::insert_transport_class_headers(
-                        &mut headers,
-                        transport::Class::Invalidation,
-                    );
-                    if let Err(e) = self
-                        .js
-                        .publish_with_headers(invalidation_subject.clone(), headers, payload.into())
-                        .await
-                    {
-                        return Err(SinexError::nats_publish(format!(
-                            "Failed to publish replay scope invalidation for event type '{}' (scope_count={}): {e}",
-                            bucket.event_type,
-                            bucket.scope_keys.len()
-                        ))
-                        .with_std_error(&e));
-                    }
-                    debug!(
-                        operation_id = %operation_id,
-                        event_type = %bucket.event_type,
-                        scope_count = bucket.scope_keys.len(),
-                        "Published scope invalidation"
-                    );
-                }
-                Err(e) => {
-                    return Err(SinexError::serialization(format!(
-                        "Failed to serialize replay scope invalidation for event type '{}' (scope_count={}): {e}",
-                        bucket.event_type,
-                        bucket.scope_keys.len()
-                    ))
-                    .with_std_error(&e));
-                }
+        let mut after_id = None;
+        let mut processed = 0_u64;
+        loop {
+            let (scope_metadata, next_after_id, page_count) = self
+                .archived_scope_metadata_page(archive_reason, after_id)
+                .await?;
+            if page_count == 0 {
+                break;
             }
-        }
+            for bucket in scope_metadata {
+                let scope_count = bucket.scope_keys.len();
+                let event_type = bucket.event_type.clone();
+                let invalidation = DerivedScopeInvalidation::archived(
+                    bucket.event_ids,
+                    bucket.event_source,
+                    bucket.event_type,
+                )
+                .with_has_lineage(bucket.has_lineage)
+                .with_operation(operation_id)
+                .with_scope_keys(bucket.scope_keys);
 
-        Ok(())
+                let payload = serde_json::to_vec(&invalidation).map_err(|error| {
+                    SinexError::serialization(format!(
+                        "Failed to serialize replay scope invalidation for event type '{event_type}' (scope_count={scope_count}): {error}"
+                    ))
+                    .with_std_error(&error)
+                })?;
+                self.maybe_fail_scope_invalidation_publish()?;
+                ensure_nats_payload_fits(
+                    "replay scope invalidation",
+                    &invalidation_subject,
+                    payload.len(),
+                )?;
+                let mut headers = async_nats::HeaderMap::new();
+                transport::insert_transport_class_headers(
+                    &mut headers,
+                    transport::Class::Invalidation,
+                );
+                if let Err(error) = self
+                    .js
+                    .publish_with_headers(invalidation_subject.clone(), headers, payload.into())
+                    .await
+                {
+                    return Err(SinexError::nats_publish(format!(
+                        "Failed to publish replay scope invalidation for event type '{event_type}' (scope_count={scope_count}): {error}"
+                    ))
+                    .with_std_error(&error));
+                }
+                debug!(
+                    operation_id = %operation_id,
+                    event_type = %event_type,
+                    scope_count,
+                    "Published scope invalidation"
+                );
+            }
+            processed += page_count;
+            after_id = next_after_id;
+        }
+        self.ensure_scope_metadata_complete(
+            archive_reason,
+            expected_scoped_event_count,
+            processed,
+            "publish scope invalidations",
+        )
     }
 
     pub(crate) async fn restore_cascade(
@@ -994,10 +944,25 @@ impl ReplayExecutionEngine {
         pool: &sqlx::PgPool,
         archive_reason: &str,
         archived_count: u64,
-        scope_metadata: &[ScopeInvalidationBucket],
+        scoped_event_count: u64,
         operation_id: Uuid,
         error: SinexError,
     ) -> Result<u64> {
+        // The archive is the only durable source for scope metadata. Publish
+        // compensation before restoring rows (which removes their archive
+        // records), then restore only after the complete bounded pass has
+        // succeeded. A failed page therefore leaves the authoritative archive
+        // intact for operator recovery instead of silently dropping scopes.
+        if let Err(invalidation_error) = self
+            .publish_scope_invalidations(archive_reason, scoped_event_count, operation_id)
+            .await
+        {
+            return Err(SinexError::service(format!(
+                "Replay dispatch failed before source acknowledgement, and publishing compensating scope invalidations from the archive also failed: {invalidation_error}"
+            ))
+            .with_source(error)
+            .with_source(invalidation_error));
+        }
         let restored = match self
             .restore_cascade(pool, archive_reason, archived_count, operation_id)
             .await
@@ -1019,21 +984,95 @@ impl ReplayExecutionEngine {
             .with_source(error));
         }
 
-        if let Err(invalidation_error) = self
-            .publish_scope_invalidations(scope_metadata, operation_id)
-            .await
-        {
-            return Err(SinexError::service(format!(
-                "Replay dispatch failed before source acknowledgement, restored the archived cascade, but failed to publish compensating scope invalidations: {invalidation_error}"
-            ))
-            .with_source(error)
-            .with_source(invalidation_error));
-        }
-
         Err(SinexError::service(
             "Replay dispatch failed before source acknowledgement; restored archived cascade and published compensating scope invalidations",
         )
         .with_source(error))
+    }
+
+    async fn archived_scope_metadata_page(
+        &self,
+        archive_reason: &str,
+        after_id: Option<Uuid>,
+    ) -> Result<(Vec<ScopeInvalidationBucket>, Option<Uuid>, u64)> {
+        let rows = self
+            .replay
+            .pool()
+            .replay()
+            .archived_replay_scope_metadata_page(
+                archive_reason,
+                after_id,
+                REPLAY_SCOPE_METADATA_PAGE_SIZE,
+            )
+            .await?;
+        let page_count = u64::try_from(rows.len())
+            .map_err(|_| SinexError::invalid_state("replay scope metadata page exceeds u64"))?;
+        let next_after_id = rows.last().map(|row| row.id);
+        let buckets = Self::group_scope_metadata_page(rows)?;
+        Ok((buckets, next_after_id, page_count))
+    }
+
+    fn group_scope_metadata_page(
+        rows: Vec<ArchivedReplayScopeMetadataRow>,
+    ) -> Result<Vec<ScopeInvalidationBucket>> {
+        if rows.len() > REPLAY_SCOPE_METADATA_PAGE_SIZE as usize {
+            return Err(SinexError::invalid_state(format!(
+                "Replay scope metadata repository returned {} rows for a {}-row page",
+                rows.len(), REPLAY_SCOPE_METADATA_PAGE_SIZE
+            )));
+        }
+
+        let mut grouped: HashMap<(EventSource, EventType, bool), ScopeInvalidationBucket> =
+            HashMap::new();
+        for row in rows {
+            let event_source = EventSource::new(row.source.clone()).map_err(|error| {
+                SinexError::validation(format!(
+                    "Invalid event source '{}' in replay archive scope metadata: {error}",
+                    row.source
+                ))
+            })?;
+            let event_type = EventType::new(row.event_type.clone()).map_err(|error| {
+                SinexError::validation(format!(
+                    "Invalid event type '{}' in replay archive scope metadata: {error}",
+                    row.event_type
+                ))
+            })?;
+            let bucket = grouped
+                .entry((event_source.clone(), event_type.clone(), row.has_lineage))
+                .or_insert_with(|| ScopeInvalidationBucket {
+                    event_ids: Vec::new(),
+                    event_source,
+                    event_type,
+                    has_lineage: row.has_lineage,
+                    scope_keys: Vec::new(),
+                });
+            bucket.event_ids.push(row.id);
+            bucket.scope_keys.push(row.scope_key);
+        }
+
+        for bucket in grouped.values_mut() {
+            bucket.event_ids.sort_unstable();
+            bucket.event_ids.dedup();
+            bucket.scope_keys.sort_unstable();
+            bucket.scope_keys.dedup();
+        }
+        Ok(grouped.into_values().collect())
+    }
+
+    fn ensure_scope_metadata_complete(
+        &self,
+        archive_reason: &str,
+        expected: u64,
+        processed: u64,
+        action: &str,
+    ) -> Result<()> {
+        if processed == expected {
+            return Ok(());
+        }
+        Err(SinexError::invalid_state(format!(
+            "Replay {action} processed {processed}/{expected} archived scope metadata rows; refusing incomplete cascade handling"
+        ))
+        .with_context("archive_reason", archive_reason.to_string()))
     }
 
     /// Timeout for the source to acknowledge the scan command.
