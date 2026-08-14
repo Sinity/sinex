@@ -1,5 +1,7 @@
 use crate::repositories::DbPoolExt;
-use crate::repositories::replay::{ReplayRepository, ReplayScopeRootSnapshot};
+use crate::repositories::replay::{
+    REPLAY_ARCHIVE_PAGE_SIZE, ReplayRepository, ReplayScopeRootSnapshot,
+};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{ModuleName, ReplayOutcome};
@@ -310,10 +312,14 @@ pub struct ReplayScopeInvalidationRecovery {
     /// the archive transaction. This is the durable replay journal that makes a
     /// crash between archive-commit and re-ingest recoverable (#2194): on
     /// crash-recovery the events are restored from `audit.archived_events`
-    /// rather than lost permanently. Empty for operations whose marker predates
-    /// this field (recovery then degrades to the prior mark-Failed-only
-    /// behavior).
+    /// Archive reason is the durable, bounded journal key for the complete
+    /// cascade. Older operation metadata can still carry `cascade_ids`; new
+    /// operations never persist a scope-sized UUID array.
     #[serde(default)]
+    pub archive_reason: Option<String>,
+    /// Legacy journal payload, retained only to recover operations created
+    /// before bounded archive journaling landed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cascade_ids: Vec<Uuid>,
 }
 
@@ -323,7 +329,7 @@ impl ReplayScopeInvalidationRecovery {
         bucket_count: usize,
         scope_key_count: usize,
         event_count: usize,
-        cascade_ids: Vec<Uuid>,
+        archive_reason: String,
     ) -> Self {
         Self {
             phase: ReplayScopeInvalidationPhase::Pending,
@@ -333,7 +339,8 @@ impl ReplayScopeInvalidationRecovery {
             event_count,
             recorded_at: temporal::now(),
             published_at: None,
-            cascade_ids,
+            archive_reason: Some(archive_reason),
+            cascade_ids: Vec::new(),
         }
     }
 
@@ -990,7 +997,7 @@ impl ReplayStateMachine {
         bucket_count: usize,
         scope_key_count: usize,
         event_count: usize,
-        cascade_ids: &[Uuid],
+        archive_reason: &str,
     ) -> Result<()> {
         let repo = self.repo();
         let existing = repo.fetch_meta_for_update(tx, operation_id).await?;
@@ -1000,7 +1007,7 @@ impl ReplayStateMachine {
             bucket_count,
             scope_key_count,
             event_count,
-            cascade_ids.to_vec(),
+            archive_reason.to_string(),
         ));
         let meta_json = serde_json::to_value(&meta)?;
         repo.update_operation_meta_only(tx, operation_id, meta_json)
@@ -1255,7 +1262,49 @@ impl ReplayStateMachine {
         // already live again from re-emission) and idempotent (ON CONFLICT (id)
         // DO NOTHING), so a crash mid-recovery simply re-runs it next sweep.
         let restore_note = if let Some(invalidation) = meta.scope_invalidation.as_ref() {
-            if invalidation.cascade_ids.is_empty() {
+            if let Some(archive_reason) = invalidation.archive_reason.as_deref() {
+                let mut restored = 0_u64;
+                loop {
+                    let ids = repo
+                        .archived_replay_event_ids_page(archive_reason, REPLAY_ARCHIVE_PAGE_SIZE)
+                        .await?;
+                    if ids.is_empty() {
+                        break;
+                    }
+                    restored += self
+                        .pool
+                        .events()
+                        .execute_cascade_restore(&ids, &operation_id.to_string())
+                        .await
+                        .map_err(|e| {
+                            SinexError::database(
+                                "Failed to restore archived replay cascade during crash recovery",
+                            )
+                            .with_source(e.to_string())
+                            .with_id("operation_id", operation_id.to_string())
+                            .with_context("archive_reason", archive_reason)
+                            .with_operation("recover_stale_executing")
+                        })?;
+                }
+                if restored != invalidation.archived_count {
+                    return Err(SinexError::service(format!(
+                        "Crash recovery restored only {restored}/{} archived replay events",
+                        invalidation.archived_count
+                    ))
+                    .with_id("operation_id", operation_id.to_string())
+                    .with_context("archive_reason", archive_reason));
+                }
+                warn!(
+                    operation_id = %operation_id,
+                    restored,
+                    archived_count = invalidation.archived_count,
+                    "Restored archived replay cascade during crash recovery (#2194)"
+                );
+                Some(format!(
+                    "restored {restored}/{} archived events from bounded archive journal",
+                    invalidation.archived_count
+                ))
+            } else if invalidation.cascade_ids.is_empty() {
                 // Marker predates the journal, or zero events were archived.
                 // Nothing durable to restore; degrade to mark-Failed only.
                 Some("no archived cascade journal to restore".to_string())

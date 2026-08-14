@@ -1,7 +1,7 @@
 //! Event-replacement recording and the replay scan/loop core for
 //! `ReplayExecutionEngine`. See `execution/mod.rs` for the engine type.
 
-use super::collect::{ReplayExecutionBatch, replay_archive_reason};
+use super::collect::ReplayExecutionBatch;
 use super::{
     ExpectedReplayOutputs, ExtendedMaterialOccurrenceKey, OperationOutputEvent,
     REPLAY_OUTPUT_VISIBILITY_TIMEOUT, ReplayExecutionEngine, ReplayPreviewSummary,
@@ -98,7 +98,7 @@ impl ReplayExecutionEngine {
     /// Record replacement relations between archived material events and newly-created events.
     ///
     /// After a successful replay scan, this queries for:
-    /// - Old events: from `audit.archived_events` matching `cascade_ids`
+    /// - Old events: from `audit.archived_events` matching the durable archive reason
     /// - New events: from `core.events` with `created_by_operation_id = operation_id`
     ///
     /// Matching strategy: material replay uses physical source occurrence coordinates:
@@ -109,13 +109,9 @@ impl ReplayExecutionEngine {
         &self,
         pool: &sqlx::PgPool,
         operation_id: Uuid,
-        cascade_ids: &[Uuid],
+        archive_reason: &str,
     ) -> Result<()> {
         use sinex_db::repositories::ReplacementRecord;
-
-        if cascade_ids.is_empty() {
-            return Ok(());
-        }
 
         // Query physical occurrence coordinates for archived material events.
         let old_rows = sqlx::query!(
@@ -129,10 +125,10 @@ impl ReplayExecutionEngine {
                 offset_kind,
                 anchor_payload_hash AS "anchor_payload_hash: Vec<u8>"
              FROM audit.archived_events
-             WHERE id = ANY($1::uuid[])
+             WHERE archive_reason = $1
                AND source_material_id IS NOT NULL
                AND anchor_byte IS NOT NULL"#,
-            cascade_ids,
+            archive_reason,
         )
         .fetch_all(pool)
         .await
@@ -246,7 +242,7 @@ impl ReplayExecutionEngine {
                 unmatched_count,
                 skipped_old_count,
                 integrity_mismatch_count,
-                old_count = cascade_ids.len(),
+                archive_reason,
                 new_count = new_events.len(),
                 "Skipped or mismatched replay replacement records detected"
             );
@@ -255,7 +251,7 @@ impl ReplayExecutionEngine {
         if replacements.is_empty() {
             debug!(
                 operation_id = %operation_id,
-                old_count = cascade_ids.len(),
+                archive_reason,
                 new_count = new_events.len(),
                 "No replay replacement matches found — skipping replacement recording"
             );
@@ -278,48 +274,12 @@ impl ReplayExecutionEngine {
         info!(
             operation_id = %operation_id,
             replacement_count = count,
-            old_events = cascade_ids.len(),
+            archive_reason,
             new_events = new_events.len(),
             "Recorded event replacement relations"
         );
 
         Ok(())
-    }
-
-    /// Archive any outputs emitted by a replay that is being compensated.
-    ///
-    /// Restoring the pre-replay cascade while leaving partial replacement
-    /// interpretations live creates two interpretations for the same source
-    /// occurrence. Compensation therefore removes the operation's outputs
-    /// from the live surface as a reversible archive operation before the old
-    /// cascade is restored.
-    async fn archive_partial_replay_outputs(
-        &self,
-        pool: &sqlx::PgPool,
-        operation_id: Uuid,
-    ) -> Result<u64> {
-        let output_ids = self
-            .collect_operation_output_events(pool, operation_id)
-            .await?
-            .into_iter()
-            .map(|event| event.id)
-            .collect::<Vec<_>>();
-        if output_ids.is_empty() {
-            return Ok(0);
-        }
-
-        pool.events()
-            .execute_cascade_archive(
-                &output_ids,
-                "archive replay outputs during compensation",
-                &operation_id.to_string(),
-                "replay-compensation",
-            )
-            .await
-            .map_err(|err| {
-                SinexError::database("Failed to archive partial replay outputs during compensation")
-                    .with_source(err)
-            })
     }
 
     /// Dispatch a replay by telling the source runtime to re-scan source material.
@@ -387,7 +347,7 @@ impl ReplayExecutionEngine {
                 executor_name,
             )
             .await?;
-        let cascade_ids = archived_cascade.cascade_ids;
+        let archive_reason = archived_cascade.archive_reason;
         let scope_metadata = archived_cascade.scope_metadata;
         let archived_count = archived_cascade.archived_count;
         info!(
@@ -405,7 +365,8 @@ impl ReplayExecutionEngine {
                 return self
                     .compensate_after_archive_failure(
                         pool,
-                        &cascade_ids,
+                        &archive_reason,
+                        archived_count,
                         &scope_metadata,
                         operation_id,
                         error,
@@ -437,7 +398,8 @@ impl ReplayExecutionEngine {
             return self
                     .abort_before_scan_ack(
                         pool,
-                        &cascade_ids,
+                        &archive_reason,
+                        archived_count,
                         &scope_metadata,
                         operation_id,
                         SinexError::nats_publish(format!(
@@ -464,7 +426,6 @@ impl ReplayExecutionEngine {
 
         checkpoint.total_events = expected_total_events;
 
-        let archive_reason = replay_archive_reason(operation_id);
         let mut after_root_id = None;
         let mut dispatched_root_count = 0_u64;
         let mut scan_processed_count = 0_u64;
@@ -495,7 +456,8 @@ impl ReplayExecutionEngine {
                         return self
                             .compensate_after_archive_failure(
                                 pool,
-                                &cascade_ids,
+                                &archive_reason,
+                                archived_count,
                                 &scope_metadata,
                                 operation_id,
                                 error,
@@ -517,7 +479,8 @@ impl ReplayExecutionEngine {
                 return self
                     .compensate_after_archive_failure(
                         pool,
-                        &cascade_ids,
+                        &archive_reason,
+                        archived_count,
                         &scope_metadata,
                         operation_id,
                         SinexError::invalid_state(
@@ -539,7 +502,8 @@ impl ReplayExecutionEngine {
                     operation_id,
                     scope,
                     pool,
-                    &cascade_ids,
+                    &archive_reason,
+                    archived_count,
                     &scope_metadata,
                     executor_name,
                     &expected_replay_outputs,
@@ -557,7 +521,8 @@ impl ReplayExecutionEngine {
                     return self
                         .compensate_after_archive_failure(
                             pool,
-                            &cascade_ids,
+                            &archive_reason,
+                            archived_count,
                             &scope_metadata,
                             operation_id,
                             error,
@@ -580,7 +545,8 @@ impl ReplayExecutionEngine {
                         return self
                             .compensate_after_archive_failure(
                                 pool,
-                                &cascade_ids,
+                                &archive_reason,
+                                archived_count,
                                 &scope_metadata,
                                 operation_id,
                                 error,
@@ -593,7 +559,8 @@ impl ReplayExecutionEngine {
             {
                 return self.compensate_after_archive_failure(
                     pool,
-                    &cascade_ids,
+                    &archive_reason,
+                    archived_count,
                     &scope_metadata,
                     operation_id,
                     SinexError::invalid_state("Replay scope spans multiple source runtime identities across execution batches"),
@@ -623,7 +590,8 @@ impl ReplayExecutionEngine {
                     return self
                         .compensate_after_archive_failure(
                             pool,
-                            &cascade_ids,
+                            &archive_reason,
+                            archived_count,
                             &scope_metadata,
                             operation_id,
                             error,
@@ -637,7 +605,8 @@ impl ReplayExecutionEngine {
             return self
                 .compensate_after_archive_failure(
                     pool,
-                    &cascade_ids,
+                    &archive_reason,
+                    archived_count,
                     &scope_metadata,
                     operation_id,
                     SinexError::invalid_state(
@@ -661,7 +630,8 @@ impl ReplayExecutionEngine {
             return self
                 .compensate_after_archive_failure(
                     pool,
-                    &cascade_ids,
+                    &archive_reason,
+                    archived_count,
                     &scope_metadata,
                     operation_id,
                     error,
@@ -675,7 +645,8 @@ impl ReplayExecutionEngine {
             return self
                 .compensate_after_archive_failure(
                     pool,
-                    &cascade_ids,
+                    &archive_reason,
+                    archived_count,
                     &scope_metadata,
                     operation_id,
                     error,
@@ -683,13 +654,14 @@ impl ReplayExecutionEngine {
                 .await;
         }
         if let Err(error) = self
-            .record_event_replacements(pool, operation_id, &cascade_ids)
+            .record_event_replacements(pool, operation_id, &archive_reason)
             .await
         {
             return self
                 .compensate_after_archive_failure(
                     pool,
-                    &cascade_ids,
+                    &archive_reason,
+                    archived_count,
                     &scope_metadata,
                     operation_id,
                     error,
@@ -851,7 +823,8 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         scope: &ReplayScope,
         pool: &sqlx::PgPool,
-        cascade_ids: &[Uuid],
+        archive_reason: &str,
+        archived_count: u64,
         scope_metadata: &[ScopeInvalidationBucket],
         executor_name: &str,
         expected_replay_outputs: &ExpectedReplayOutputs,
@@ -875,7 +848,8 @@ impl ReplayExecutionEngine {
                 return self
                     .abort_before_scan_ack(
                         pool,
-                        cascade_ids,
+                        archive_reason,
+                        archived_count,
                         scope_metadata,
                         operation_id,
                         SinexError::serialization("Failed to serialize source parse command")
@@ -904,7 +878,8 @@ impl ReplayExecutionEngine {
                 return self
                     .abort_before_scan_ack(
                         pool,
-                        cascade_ids,
+                        archive_reason,
+                        archived_count,
                         scope_metadata,
                         operation_id,
                         SinexError::nats(format!("NATS request to {parse_subject} failed"))
@@ -916,7 +891,8 @@ impl ReplayExecutionEngine {
                 return self
                     .abort_before_scan_ack(
                         pool,
-                        cascade_ids,
+                        archive_reason,
+                        archived_count,
                         scope_metadata,
                         operation_id,
                         SinexError::timeout(format!(
@@ -934,7 +910,8 @@ impl ReplayExecutionEngine {
                 return self
                     .abort_before_scan_ack(
                         pool,
-                        cascade_ids,
+                        archive_reason,
+                        archived_count,
                         scope_metadata,
                         operation_id,
                         SinexError::serialization("Failed to deserialize source parse ack")
@@ -948,7 +925,8 @@ impl ReplayExecutionEngine {
             return self
                 .abort_before_scan_ack(
                     pool,
-                    cascade_ids,
+                    archive_reason,
+                    archived_count,
                     scope_metadata,
                     operation_id,
                     SinexError::invalid_state(format!(
@@ -978,7 +956,8 @@ impl ReplayExecutionEngine {
                     return self
                         .compensate_after_archive_failure(
                             pool,
-                            cascade_ids,
+                            archive_reason,
+                            archived_count,
                             scope_metadata,
                             operation_id,
                             error,
@@ -986,13 +965,14 @@ impl ReplayExecutionEngine {
                         .await;
                 }
                 if let Err(link_error) = self
-                    .record_event_replacements(pool, operation_id, cascade_ids)
+                    .record_event_replacements(pool, operation_id, archive_reason)
                     .await
                 {
                     return self
                         .compensate_after_archive_failure(
                             pool,
-                            cascade_ids,
+                            archive_reason,
+                            archived_count,
                             scope_metadata,
                             operation_id,
                             SinexError::service(format!(
@@ -1010,7 +990,8 @@ impl ReplayExecutionEngine {
                 if let Err(compensation_error) = self
                     .compensate_staged_replay_failure(
                         pool,
-                        cascade_ids,
+                        archive_reason,
+                        archived_count,
                         scope_metadata,
                         operation_id,
                     )
@@ -1027,7 +1008,8 @@ impl ReplayExecutionEngine {
             StagedReplayWait::Error(wait_error) => {
                 self.compensate_after_archive_failure(
                     pool,
-                    cascade_ids,
+                    archive_reason,
+                    archived_count,
                     scope_metadata,
                     operation_id,
                     SinexError::service(format!(
@@ -1113,13 +1095,14 @@ impl ReplayExecutionEngine {
     async fn compensate_staged_replay_failure(
         &self,
         pool: &sqlx::PgPool,
-        cascade_ids: &[Uuid],
+        archive_reason: &str,
+        archived_count: u64,
         scope_metadata: &[ScopeInvalidationBucket],
         operation_id: Uuid,
     ) -> Result<()> {
         let mut compensation_errors = Vec::new();
         if let Err(link_error) = self
-            .record_event_replacements(pool, operation_id, cascade_ids)
+            .record_event_replacements(pool, operation_id, archive_reason)
             .await
         {
             warn!(
@@ -1129,18 +1112,10 @@ impl ReplayExecutionEngine {
             );
             compensation_errors.push(link_error);
         }
-        if let Err(output_error) = self
-            .archive_partial_replay_outputs(pool, operation_id)
+        let restored = match self
+            .restore_cascade(pool, archive_reason, archived_count, operation_id)
             .await
         {
-            warn!(
-                operation_id = %operation_id,
-                error = %output_error,
-                "Failed to archive partial replay outputs during staged-replay failure compensation"
-            );
-            compensation_errors.push(output_error);
-        }
-        let restored = match self.restore_cascade(pool, cascade_ids, operation_id).await {
             Ok(restored) => restored,
             Err(restore_error) => {
                 warn!(
@@ -1152,10 +1127,10 @@ impl ReplayExecutionEngine {
                 0
             }
         };
-        if restored != cascade_ids.len() as u64 {
+        if restored != archived_count {
             compensation_errors.push(SinexError::service(format!(
                 "restored only {restored}/{} archived cascade members; operator recovery is required",
-                cascade_ids.len()
+                archived_count
             )));
         }
         if let Err(invalidation_error) = self
@@ -1189,23 +1164,21 @@ impl ReplayExecutionEngine {
     async fn compensate_after_archive_failure(
         &self,
         pool: &sqlx::PgPool,
-        cascade_ids: &[Uuid],
+        archive_reason: &str,
+        archived_count: u64,
         scope_metadata: &[ScopeInvalidationBucket],
         operation_id: Uuid,
         error: SinexError,
     ) -> Result<u64> {
-        let was_cancelled = matches!(&error, SinexError::Cancelled(_));
         let link_error = self
-            .record_event_replacements(pool, operation_id, cascade_ids)
+            .record_event_replacements(pool, operation_id, archive_reason)
             .await
             .err();
 
-        let output_archive_error = self
-            .archive_partial_replay_outputs(pool, operation_id)
+        let restored = match self
+            .restore_cascade(pool, archive_reason, archived_count, operation_id)
             .await
-            .err();
-
-        let restored = match self.restore_cascade(pool, cascade_ids, operation_id).await {
+        {
             Ok(restored) => restored,
             Err(restore_error) => {
                 return Err(SinexError::service(format!(
@@ -1215,10 +1188,10 @@ impl ReplayExecutionEngine {
             .with_source(restore_error));
             }
         };
-        if restored != cascade_ids.len() as u64 {
+        if restored != archived_count {
             return Err(SinexError::service(format!(
                 "Replay failed after archive; restored only {restored}/{} cascade members and operator recovery is required",
-                cascade_ids.len()
+                archived_count
             ))
             .with_source(error));
         }
@@ -1240,22 +1213,6 @@ impl ReplayExecutionEngine {
             ))
             .with_source(error)
             .with_source(link_error));
-        }
-
-        if let Some(output_archive_error) = output_archive_error {
-            return Err(SinexError::service(format!(
-                "Replay failed after archive; restored archived cascade and published compensating scope invalidations, but archiving partial replacement outputs failed: {output_archive_error}"
-            ))
-            .with_source(error)
-            .with_source(output_archive_error));
-        }
-
-        if was_cancelled {
-            // Preserve the typed cancellation after compensation so the
-            // execution coordinator can finalize the operation as Cancelled
-            // instead of misclassifying a successfully compensated stop as a
-            // generic failure.
-            return Err(error);
         }
 
         Err(SinexError::service(

@@ -405,7 +405,8 @@ async fn replay_abort_before_scan_ack_restores_cascade_and_emits_compensating_in
     let err = engine
         .abort_before_scan_ack(
             &ctx.pool,
-            &[event_id.to_uuid()],
+            "archive before compensating restore test",
+            1,
             &scope_metadata,
             operation_id,
             test_error("boom"),
@@ -480,7 +481,8 @@ async fn replay_abort_before_scan_ack_surfaces_compensating_invalidation_failure
     let err = engine
         .abort_before_scan_ack(
             &ctx.pool,
-            &[event_id.to_uuid()],
+            "archive before compensating restore failure test",
+            1,
             &scope_metadata,
             operation_id,
             test_error("boom"),

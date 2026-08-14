@@ -17,6 +17,8 @@ use uuid::Uuid;
 
 const SCOPE_ROOT_PAGE_SIZE: i64 = 10_000;
 pub const REPLAY_ROOT_SAMPLE_SIZE: i64 = 100;
+/// Maximum cascade journal page handed to replay recovery/compensation.
+pub const REPLAY_ARCHIVE_PAGE_SIZE: i64 = 1_000;
 
 /// Bounded identity evidence for a replay scope.
 ///
@@ -430,6 +432,34 @@ impl ReplayRepository<'_> {
             .fetch_all(self.pool)
             .await
             .map_err(|e| SinexError::database(format!("collect scope root ids page: {e}")))
+    }
+
+    /// Read one bounded page of cascade IDs archived by a replay operation.
+    ///
+    /// The operation journal stores the archive reason rather than every
+    /// cascade UUID.  Recovery repeatedly reads this page from the durable
+    /// archive as it restores rows, so no public operation payload or Rust
+    /// handoff owns the complete cascade membership.
+    pub async fn archived_replay_event_ids_page(
+        &self,
+        archive_reason: &str,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        if limit <= 0 {
+            return Err(SinexError::validation(
+                "archived replay event page limit must be positive",
+            ));
+        }
+
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT id::uuid FROM audit.archived_events \
+             WHERE archive_reason = $1 ORDER BY id DESC LIMIT $2",
+        )
+        .bind(archive_reason)
+        .bind(limit)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| SinexError::database("read archived replay event page").with_source(error))
     }
 
     /// Count total material-root events matching a replay scope.

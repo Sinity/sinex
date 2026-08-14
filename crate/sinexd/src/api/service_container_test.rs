@@ -166,7 +166,7 @@ async fn startup_recovery_restores_a_cascade_stranded_by_an_immediate_restart(
             0,
             0,
             1,
-            &[*event_id.as_uuid()],
+            "superseded by replay re-execution",
         )
         .await?;
     tx.commit().await?;

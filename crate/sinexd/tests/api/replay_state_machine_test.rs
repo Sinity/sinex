@@ -844,7 +844,7 @@ async fn recover_stale_executing_restores_archived_cascade(ctx: TestContext) -> 
     let event_id = event.id.expect("inserted event should have an id");
 
     // Simulate the committed archive step: events leave core.events, and the
-    // durable journal (cascade_ids) is recorded in the operation marker.
+    // durable archive key is recorded in the operation marker.
     ctx.pool()
         .events()
         .execute_cascade_archive(
@@ -863,7 +863,7 @@ async fn recover_stale_executing_restores_archived_cascade(ctx: TestContext) -> 
             0,
             0,
             1,
-            &[*event_id.as_uuid()],
+            "superseded by replay re-execution",
         )
         .await?;
     tx.commit().await?;

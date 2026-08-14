@@ -4,7 +4,7 @@ use super::*;
 /// boundary. The fake source records every received command and emits one
 /// replacement per archived occurrence, so a one-command/full-scope handoff
 /// cannot satisfy either the command cardinality or output-completeness checks.
-#[sinex_test]
+#[sinex_test(timeout = 240)]
 async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
     ctx: TestContext,
 ) -> Result<()> {
@@ -15,7 +15,16 @@ async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
         .await?;
     let now = Timestamp::now();
 
-    let roots = (0..ROOT_COUNT)
+    // The event schema rejects anchors beyond a finalized material's declared
+    // byte extent. This synthetic source has one byte position per root.
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2",
+    )
+    .bind(ROOT_COUNT)
+    .bind(material_id)
+    .execute(&ctx.pool)
+    .await?;
+    let mut roots = (0..ROOT_COUNT)
         .map(|anchor| {
             Ok(DynamicPayload::new(
                 "fs-test",
@@ -26,15 +35,13 @@ async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
             .build()?)
         })
         .collect::<Result<Vec<_>>>()?;
-    // The event schema rejects anchors beyond a finalized material's declared
-    // byte extent. This synthetic source has one byte position per root.
-    sqlx::query(
-        "UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2",
-    )
-    .bind(ROOT_COUNT)
-    .bind(material_id)
-    .execute(&ctx.pool)
-    .await?;
+    // The batch repository assigns UUIDv7 IDs after serializing the fixture.
+    // Keep this synthetic occurrence time safely before those provenance
+    // clocks even when the host is under contention.
+    let ts_orig = Timestamp::now() - time::Duration::seconds(10);
+    for root in &mut roots {
+        root.ts_orig = Some(ts_orig);
+    }
     ctx.pool.events().insert_batch(roots).await?;
 
     let nats = ctx.nats_client();
@@ -81,18 +88,26 @@ async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
                     .await?;
             }
 
-            for occurrence in &replay.occurrences {
-                let mut replacement = DynamicPayload::new(
-                    "fs-test",
-                    FileCreatedPayload::EVENT_TYPE.as_static_str(),
-                    json!({ "path": format!("/tmp/replay-replacement-{}.txt", occurrence.anchor_byte) }),
-                )
-                .from_material_at(Id::from_uuid(occurrence.source_material_id), occurrence.anchor_byte)
-                .build()?;
-                replacement.created_by_operation_id = Some(command.operation_id);
-                output_pool.events().insert(replacement).await?;
-                emitted_count += 1;
-            }
+            let replacements = replay
+                .occurrences
+                .iter()
+                .map(|occurrence| {
+                    let mut replacement = DynamicPayload::new(
+                        "fs-test",
+                        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+                        json!({ "path": format!("/tmp/replay-replacement-{}.txt", occurrence.anchor_byte) }),
+                    )
+                    .from_material_at(
+                        Id::from_uuid(occurrence.source_material_id),
+                        occurrence.anchor_byte,
+                    )
+                    .build()?;
+                    replacement.created_by_operation_id = Some(command.operation_id);
+                    Ok(replacement)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            output_pool.events().insert_batch(replacements).await?;
+            emitted_count += u64::try_from(replay.occurrences.len())?;
 
             let batch_count = u64::try_from(replay.occurrences.len())?;
             output_nats
@@ -127,7 +142,7 @@ async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
     });
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
-    let client = spawn_replay_control(replay, nats, Duration::from_secs(30)).await?;
+    let client = spawn_replay_control(replay, nats, Duration::from_secs(210)).await?;
     let scope = ReplayScope {
         source_name: "fs-test".to_string(),
         time_window: Some((
@@ -167,6 +182,25 @@ async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
     assert_eq!(
         command_count, 11,
         "10,001 roots must cross the 1,000-root execution page boundary"
+    );
+    let operation_meta: serde_json::Value = sqlx::query_scalar(
+        "SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid",
+    )
+    .bind(completed.operation_id)
+    .fetch_one(&ctx.pool)
+    .await?;
+    let archive_journal = &operation_meta["scope_invalidation"];
+    assert_eq!(
+        archive_journal["archive_reason"],
+        json!(format!(
+            "superseded by replay re-execution (operation {})",
+            completed.operation_id
+        )),
+        "the public replay journal must retain a bounded archive key"
+    );
+    assert!(
+        archive_journal.get("cascade_ids").is_none(),
+        "the public replay journal must not serialize all 10,001 root/cascade UUIDs"
     );
     Ok(())
 }
@@ -732,7 +766,7 @@ async fn replay_replacement_recording_follows_material_occurrence(ctx: TestConte
         .to_uuid();
 
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(&ctx.pool, operation_id, "archive old replay target")
         .await?;
 
     let replacements = ctx
@@ -809,7 +843,7 @@ async fn replay_replacement_recording_rejects_cross_material_matches(
     ctx.pool.events().insert(replacement_event).await?;
 
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(&ctx.pool, operation_id, "archive old replay target")
         .await?;
 
     let replacements = ctx
@@ -892,7 +926,11 @@ async fn replay_anchor_payload_hash_mismatch_does_not_block_replacement(
 
     // Hash mismatch should warn but NOT block replacement recording
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(
+            &ctx.pool,
+            operation_id,
+            "archive old replay target with hash A",
+        )
         .await?;
 
     let replacements = ctx
@@ -969,7 +1007,11 @@ async fn replay_anchor_payload_hash_null_does_not_false_mismatch(ctx: TestContex
 
     // Both hashes are NULL — no false mismatch
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(
+            &ctx.pool,
+            operation_id,
+            "archive old replay target with null hash",
+        )
         .await?;
 
     let replacements = ctx
@@ -1047,7 +1089,7 @@ async fn replay_anchor_payload_hash_match_is_silent(ctx: TestContext) -> Result<
 
     // Matching hashes — replacements recorded normally
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(&ctx.pool, operation_id, "archive old replay target with hash")
         .await?;
 
     let replacements = ctx

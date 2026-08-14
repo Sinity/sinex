@@ -10,6 +10,7 @@ use super::{
 use crate::runtime::automaton::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::stream::{ReplayMaterialOccurrence, ResolvedReplayMaterial};
+use sinex_db::repositories::replay::REPLAY_ARCHIVE_PAGE_SIZE;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_primitives::domain::{EventSource, EventType, SourceIdentifier};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
@@ -17,11 +18,12 @@ use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid, transport};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tracing::debug;
+use sqlx::Row;
 
 use sinex_db::replay::state_machine::ReplayScope;
 
 pub(crate) struct ArchivedReplayCascade {
-    pub(crate) cascade_ids: Vec<Uuid>,
+    pub(crate) archive_reason: String,
     pub(crate) scope_metadata: Vec<ScopeInvalidationBucket>,
     pub(crate) archived_count: u64,
 }
@@ -613,7 +615,7 @@ impl ReplayExecutionEngine {
     ) -> Result<ArchivedReplayCascade> {
         if expected_root_count == 0 {
             return Ok(ArchivedReplayCascade {
-                cascade_ids: Vec::new(),
+                archive_reason: replay_archive_reason(operation_id),
                 scope_metadata: Vec::new(),
                 archived_count: 0,
             });
@@ -668,35 +670,12 @@ impl ReplayExecutionEngine {
                 .await
                 .map_err(|e| e.with_context("operation", "expand replay cascade"))?;
 
-            let mut cascade_ids: Vec<Uuid> = repo_tx
-                .get_event_dependencies(&table_name)
-                .await
-                .map_err(|e| e.with_context("operation", "read replay cascade members"))?
-                .into_iter()
-                .map(|(event_id, _)| event_id)
-                .collect();
-            cascade_ids.sort_unstable();
-            cascade_ids.dedup();
-
-            if cascade_ids.is_empty() {
-                repo_tx
-                    .cleanup_cascade_session(&table_name)
-                    .await
-                    .map_err(|e| e.with_context("operation", "cleanup replay cascade session"))?;
-                return Ok(ArchivedReplayCascade {
-                    cascade_ids,
-                    scope_metadata: Vec::new(),
-                    archived_count: 0,
-                });
-            }
-
-            let rows = sqlx::query!(
-                "SELECT id, source, event_type, scope_key, \
-                        (source_event_ids IS NOT NULL) AS \"has_lineage!: bool\" \
-                 FROM core.events \
-                 WHERE id = ANY($1::uuid[]) AND scope_key IS NOT NULL",
-                &cascade_ids,
-            )
+            let rows = sqlx::query(&format!(
+                "SELECT e.id, e.source, e.event_type, e.scope_key, \
+                        (e.source_event_ids IS NOT NULL) AS has_lineage \
+                 FROM core.events e JOIN {table_name} c ON c.id = e.id \
+                 WHERE e.scope_key IS NOT NULL"
+            ))
             .fetch_all(&mut **repo_tx.transaction())
             .await
             .map_err(|err| {
@@ -707,29 +686,43 @@ impl ReplayExecutionEngine {
             let mut grouped: HashMap<(EventSource, EventType, bool), ScopeInvalidationBucket> =
                 HashMap::new();
             for row in rows {
-                if let Some(sk) = row.scope_key {
-                    let event_source = EventSource::new(row.source.clone()).map_err(|error| {
+                if let Some(sk) = row.try_get::<Option<String>, _>("scope_key").map_err(|error| {
+                    SinexError::database("Failed to read replay cascade scope key").with_source(error)
+                })? {
+                    let source: String = row.try_get("source").map_err(|error| {
+                        SinexError::database("Failed to read replay cascade source").with_source(error)
+                    })?;
+                    let event_type: String = row.try_get("event_type").map_err(|error| {
+                        SinexError::database("Failed to read replay cascade event type").with_source(error)
+                    })?;
+                    let event_source = EventSource::new(source.clone()).map_err(|error| {
                         SinexError::validation(format!(
                             "Invalid event source '{}' in replay cascade scope metadata: {error}",
-                            row.source
+                            source
                         ))
                     })?;
-                    let event_type = EventType::new(row.event_type.clone()).map_err(|error| {
+                    let event_type = EventType::new(event_type.clone()).map_err(|error| {
                         SinexError::validation(format!(
                             "Invalid event type '{}' in replay cascade scope metadata: {error}",
-                            row.event_type
+                            event_type
                         ))
                     })?;
+                    let has_lineage: bool = row.try_get("has_lineage").map_err(|error| {
+                        SinexError::database("Failed to read replay cascade lineage").with_source(error)
+                    })?;
+                    let event_id: Uuid = row.try_get("id").map_err(|error| {
+                        SinexError::database("Failed to read replay cascade event id").with_source(error)
+                    })?;
                     let bucket = grouped
-                        .entry((event_source.clone(), event_type.clone(), row.has_lineage))
+                        .entry((event_source.clone(), event_type.clone(), has_lineage))
                         .or_insert_with(|| ScopeInvalidationBucket {
                             event_ids: Vec::new(),
                             event_source,
                             event_type,
-                            has_lineage: row.has_lineage,
+                            has_lineage,
                             scope_keys: Vec::new(),
                         });
-                    bucket.event_ids.push(row.id);
+                    bucket.event_ids.push(event_id);
                     bucket.scope_keys.push(sk);
                 }
             }
@@ -743,8 +736,8 @@ impl ReplayExecutionEngine {
             }
 
             let archived_count = repo_tx
-                .execute_cascade_archive(
-                    &cascade_ids,
+                .execute_cascade_archive_from_table(
+                    &table_name,
                     reason.as_str(),
                     &operation_id_string,
                     archived_by.as_str(),
@@ -769,10 +762,10 @@ impl ReplayExecutionEngine {
                     bucket_count,
                     scope_key_count,
                     event_count,
-                    // Durable replay journal (#2194): persist the archived
-                    // cascade ids inside the archive TX so crash-recovery can
-                    // restore them instead of losing them permanently.
-                    &cascade_ids,
+                    // Durable replay journal (#2194): persist only the
+                    // operation-unique archive reason. Recovery pages the
+                    // archive instead of serializing every cascade UUID.
+                    reason.as_str(),
                 )
                 .await
                 .map_err(|e| {
@@ -785,7 +778,7 @@ impl ReplayExecutionEngine {
                 .map_err(|e| e.with_context("operation", "cleanup replay cascade session"))?;
 
             Ok(ArchivedReplayCascade {
-                cascade_ids,
+                archive_reason: reason.clone(),
                 scope_metadata,
                 archived_count,
             })
@@ -947,35 +940,52 @@ impl ReplayExecutionEngine {
     pub(crate) async fn restore_cascade(
         &self,
         pool: &sqlx::PgPool,
-        cascade_ids: &[Uuid],
+        archive_reason: &str,
+        expected_archived_count: u64,
         operation_id: Uuid,
     ) -> Result<u64> {
-        if cascade_ids.is_empty() {
+        if expected_archived_count == 0 {
             return Ok(0);
         }
 
-        let restored = pool
-            .events()
-            .execute_cascade_restore(cascade_ids, &operation_id.to_string())
-            .await
-            .map_err(|err| {
-                SinexError::database(
-                    "Failed to restore archived replay cascade after replay dispatch failure",
-                )
-                .with_source(err)
-            })?;
+        let mut restored = 0_u64;
+        loop {
+            let page = self
+                .replay
+                .pool()
+                .replay()
+                .archived_replay_event_ids_page(archive_reason, REPLAY_ARCHIVE_PAGE_SIZE)
+                .await?;
+            if page.is_empty() {
+                break;
+            }
+            restored += pool
+                .events()
+                .execute_cascade_restore(&page, &operation_id.to_string())
+                .await
+                .map_err(|err| {
+                    SinexError::database(
+                        "Failed to restore archived replay cascade after replay dispatch failure",
+                    )
+                    .with_source(err)
+                })?;
+        }
         Ok(restored)
     }
 
     pub(crate) async fn abort_before_scan_ack(
         &self,
         pool: &sqlx::PgPool,
-        cascade_ids: &[Uuid],
+        archive_reason: &str,
+        archived_count: u64,
         scope_metadata: &[ScopeInvalidationBucket],
         operation_id: Uuid,
         error: SinexError,
     ) -> Result<u64> {
-        let restored = match self.restore_cascade(pool, cascade_ids, operation_id).await {
+        let restored = match self
+            .restore_cascade(pool, archive_reason, archived_count, operation_id)
+            .await
+        {
             Ok(restored) => restored,
             Err(restore_error) => {
                 return Err(SinexError::service(format!(
@@ -985,10 +995,10 @@ impl ReplayExecutionEngine {
                 .with_source(restore_error));
             }
         };
-        if restored != cascade_ids.len() as u64 {
+        if restored != archived_count {
             return Err(SinexError::service(format!(
                 "Replay dispatch failed before source acknowledgement; restored only {restored}/{} archived cascade members and operator recovery is required",
-                cascade_ids.len()
+                archived_count
             ))
             .with_source(error));
         }
