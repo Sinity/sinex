@@ -1930,6 +1930,15 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
         }
         other => panic!("state component extras should round-trip, got {other:?}"),
     }
+    let cas = back
+        .components
+        .iter()
+        .find(|component| component.name == "cas")
+        .expect("CAS component should round-trip");
+    match &cas.extras {
+        Some(ComponentExtras::Cas(extras)) => assert_eq!(extras.blob_count, 2),
+        other => panic!("CAS component extras should preserve blob_count, got {other:?}"),
+    }
     assert_eq!(back.totals.archive_bytes, Some(3_000_000));
 
     Ok(())

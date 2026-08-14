@@ -180,6 +180,11 @@ pub struct AdminSnapshotRestoreCommand {
     #[arg(long)]
     pub target_dir: PathBuf,
 
+    /// Deployed state root used to resolve the service topology during an
+    /// isolated drill.  Normal deployments may omit this and use discovery.
+    #[arg(long, env = "SINEX_STATE_DIR")]
+    pub state_dir: Option<PathBuf>,
+
     /// Plan and validate only; do not extract or write restored state.
     #[arg(long)]
     pub dry_run: bool,
@@ -834,7 +839,7 @@ impl AdminSnapshotRestoreCommand {
             );
         }
 
-        let topology = exec::SnapshotTopology::discover(None, None, false, true)
+        let topology = exec::SnapshotTopology::discover(self.state_dir.as_deref(), None, false, true)
             .context("discover deployed backup topology before restore planning")?;
         let active_services = topology.active_writer_units.clone();
         let mut warnings = Vec::new();

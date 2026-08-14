@@ -79,10 +79,14 @@ pub enum ComponentExtras {
     Nats(NatsExtras),
     /// Runtime state metadata.
     State(StateExtras),
+    /// CAS blob count.
+    ///
+    /// Keep this before `Postgres`: `PostgresExtras::row_counts` is optional,
+    /// so serde's untagged matching would otherwise accept the CAS object as
+    /// an empty PostgreSQL record and silently discard `blob_count`.
+    Cas(CasExtras),
     /// `PostgreSQL` row counts per table.
     Postgres(PostgresExtras),
-    /// CAS blob count.
-    Cas(CasExtras),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

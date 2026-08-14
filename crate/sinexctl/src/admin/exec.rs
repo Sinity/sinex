@@ -245,7 +245,30 @@ pub fn pg_user_relation_count(database_url: &str, psql_bin: Option<&Path>) -> Re
 /// conventional disposable name makes an accidental production URL fail
 /// before any restore command runs.
 pub fn validate_restore_database_url(database_url: &str) -> Result<()> {
-    let parsed = reqwest::Url::parse(database_url)
+    // PostgreSQL's `postgresql:///db?host=/run/postgresql` form is a valid
+    // Unix-socket connection URL, but `reqwest::Url` rejects its empty
+    // authority.  Validation only needs the scheme and database path; retain
+    // the original URL for pg_restore/psql and give the parser a placeholder
+    // authority for this form.
+    let parseable_url = ["postgresql://", "postgres://"]
+        .iter()
+        .find_map(|scheme| {
+            let rest = database_url.strip_prefix(scheme)?;
+            let normalized = if rest.starts_with('/') {
+                format!("localhost{rest}")
+            } else if let Some((authority, path)) = rest.split_once('/') {
+                if authority.ends_with('@') {
+                    format!("{authority}localhost/{path}")
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            };
+            Some(format!("{scheme}{normalized}"))
+        })
+        .unwrap_or_else(|| database_url.to_owned());
+    let parsed = reqwest::Url::parse(&parseable_url)
         .context("parse restore database URL for rehearsal-target validation")?;
     if !matches!(parsed.scheme(), "postgres" | "postgresql") {
         bail!(

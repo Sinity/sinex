@@ -33,6 +33,13 @@ pkgs.testers.nixosTest {
       terminal.enable = false;
       desktop.enable = false;
       system.enable = false;
+      # This scenario proves the filesystem path.  The common VM base inherits
+      # the deployment default browser history sources; disable them explicitly
+      # so they cannot introduce unrelated hosted-worker identities.
+      browser.enable = false;
+      # The document scanner is not part of this fixture and its deployment
+      # default expects a separate user cache root that the VM does not create.
+      document.enable = false;
     };
 
     # Add jq for JSON parsing in tests
@@ -106,13 +113,29 @@ pkgs.testers.nixosTest {
         return values[0] if len(values) == 1 else values
 
     def parse_json_output(output):
-        """Parse sinexctl JSON output, including JSON-lines list output."""
+        """Parse pretty JSON and newline-delimited JSON output."""
         output = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        stripped = output.strip()
+        if not stripped:
+            return []
+        # Most commands emit one complete (often pretty-printed) document.
+        try:
+            return [json.loads(stripped)]
+        except json.JSONDecodeError:
+            pass
+
+        # Streaming/list commands may emit one compact JSON document per line.
         values = []
-        for line in output.strip().split('\n'):
+        for line in stripped.split('\n'):
             line = line.strip()
             if line.startswith("{") or line.startswith("["):
-                values.append(json.loads(line))
+                try:
+                    values.append(json.loads(line))
+                except json.JSONDecodeError:
+                    # Pretty-printed JSON was already handled above; an
+                    # unparsable candidate here is diagnostic noise, not a
+                    # second document.
+                    continue
         return values
 
     def flatten_json_items(values, collection_keys=()):
@@ -230,7 +253,8 @@ pkgs.testers.nixosTest {
         # Poll until at least one event is visible (up to 30 s) instead of a
         # fixed sleep that races against pipeline latency.
         machine.wait_until_succeeds(
-            "sinexctl --insecure events recent -n 1 --format json 2>/dev/null | grep -q '{'",
+            "sinexctl --insecure events recent -n 1 --format json "
+            ">/tmp/sinex-recent.json 2>/dev/null && test -s /tmp/sinex-recent.json",
             timeout=30
         )
 
@@ -344,7 +368,8 @@ pkgs.testers.nixosTest {
         machine.succeed(f"runuser -u postgres -- createdb {drill_database}")
         snapshot = machine.succeed(
             "sinexctl --insecure ops state snapshot "
-            f"--output {archive} --database-url 'postgresql:///sinex_dev?host=/run/postgresql' "
+            f"--output {archive} --database-url 'postgresql://sinex@/sinex_dev?host=/run/postgresql' "
+            "--state-dir /var/lib/sinex --nats-store-dir /var/lib/sinex/nats/jetstream "
             "--mode quiesce --auto-stop --compression 1 --workers 1 "
             "--components postgres,nats,cas,state --format json"
         )
@@ -377,7 +402,8 @@ pkgs.testers.nixosTest {
         restore = machine.succeed(
             "sinexctl --insecure ops state restore "
             f"--archive {archive} --target-dir {restore_target} "
-            f"--restore-database-url 'postgresql:///{drill_database}?host=/run/postgresql' "
+            "--state-dir /var/lib/sinex "
+            f"--restore-database-url 'postgresql://postgres@/{drill_database}?host=/run/postgresql' "
             "--confirm-restore --format json"
         )
         parsed = parse_json_output(restore)
