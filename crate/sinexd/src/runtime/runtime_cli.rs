@@ -1013,7 +1013,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
     ) -> String {
         let candidates = adjudication_candidates
             .map_or_else(|| "unavailable".to_string(), |count| count.to_string());
-        format!(
+        let mut receipt = format!(
             "Import idempotence: {} new, {} suppressed, {} superseded, {} failures, {} DLQ, {} unresolved, {candidates} adjudication candidates",
             report.new,
             report.suppressed,
@@ -1021,7 +1021,30 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             report.failures,
             report.dlq,
             report.unresolved,
-        )
+        );
+
+        if report.breakdown.is_empty() {
+            receipt.push_str(
+                "\nImport breakdown: unavailable (the durable report contains no source/event-type outcome rows)",
+            );
+        } else {
+            receipt.push_str("\nImport breakdown:");
+            for row in &report.breakdown {
+                receipt.push_str(&format!(
+                    "\n  source={} event_type={} material={} new={} suppressed={} superseded={} failures={} dlq={}",
+                    row.source,
+                    row.event_type,
+                    row.source_material_id.as_deref().unwrap_or("-"),
+                    row.new,
+                    row.suppressed,
+                    row.superseded,
+                    row.failures,
+                    row.dlq,
+                ));
+            }
+        }
+
+        receipt
     }
 
     #[allow(

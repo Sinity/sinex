@@ -8,7 +8,9 @@ use crate::runtime::SinexError;
 use crate::runtime::stream::Checkpoint;
 use clap::Parser;
 use sinex_primitives::SanitizedPath;
-use sinex_primitives::rpc::sources::SourcesImportReportResponse;
+use sinex_primitives::rpc::sources::{
+    ImportReportBreakdown, SourcesImportReportResponse,
+};
 use sinex_primitives::JsonValue;
 use std::str::FromStr;
 use xtask::sandbox::sinex_serial_test;
@@ -68,10 +70,53 @@ async fn direct_scan_import_receipt_includes_all_durable_outcomes_and_adjudicati
         Some(4),
     );
 
-    assert_eq!(
-        line,
+    assert!(line.starts_with(
         "Import idempotence: 7 new, 3 suppressed, 2 superseded, 1 failures, 1 DLQ, 1 unresolved, 4 adjudication candidates"
+    ));
+    assert!(line.contains(
+        "Import breakdown: unavailable (the durable report contains no source/event-type outcome rows)"
+    ));
+    Ok(())
+}
+
+#[sinex_test]
+async fn direct_scan_import_receipt_prints_durable_breakdown_rows() -> TestResult<()> {
+    let report = SourcesImportReportResponse {
+        operation_id: "018f0d0b-4f07-7f02-87d3-b8d221a5d6b2".to_string(),
+        operation_type: "import".to_string(),
+        operation_status: "success".to_string(),
+        scope: JsonValue::Null,
+        source: Some("documents.library".to_string()),
+        source_material_ids: vec!["material-1".to_string()],
+        attempted: 2,
+        new: 1,
+        suppressed: 1,
+        superseded: 0,
+        failures: 0,
+        dlq: 0,
+        unresolved: 0,
+        breakdown: vec![ImportReportBreakdown {
+            source: "documents.library".to_string(),
+            event_type: "document.indexed".to_string(),
+            source_material_id: Some("material-1".to_string()),
+            new: 1,
+            suppressed: 1,
+            superseded: 0,
+            failures: 0,
+            dlq: 0,
+        }],
+        examples: Vec::new(),
+    };
+
+    let line = RuntimeCliRunner::<TerminalCommandCanonicalizerRuntime>::format_direct_scan_import_receipt(
+        &report,
+        Some(0),
     );
+
+    assert!(line.contains("Import breakdown:"));
+    assert!(line.contains(
+        "source=documents.library event_type=document.indexed material=material-1 new=1 suppressed=1 superseded=0 failures=0 dlq=0"
+    ));
     Ok(())
 }
 
