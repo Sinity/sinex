@@ -344,6 +344,72 @@ async fn privacy_dictionary_matcher_redacts_from_db(ctx: TestContext) -> TestRes
     Ok(())
 }
 
+#[sinex_test]
+async fn privacy_dictionary_rules_batch_resolve_id_and_name_references(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool().privacy_policy();
+    let id_terms = vec!["ID_TERM".to_string()];
+    let name_terms = vec!["NAME_TERM".to_string()];
+    let id = repo
+        .add_dictionary(
+            "batch-id-dictionary",
+            "dictionary referenced by id",
+            Some("en"),
+            "imported",
+            &[],
+            &id_terms,
+        )
+        .await?;
+    repo.add_dictionary(
+        "batch-name-dictionary",
+        "dictionary referenced by name",
+        Some("en"),
+        "imported",
+        &[],
+        &name_terms,
+    )
+    .await?;
+
+    repo.add_recognizer_rule(
+        "batch-id-rule",
+        "dictionary by id",
+        "dictionary",
+        "",
+        json!({ "dictionary_id": id.to_string() }),
+        None,
+        "dictionary",
+        false,
+        "redact",
+        Some("<ID>"),
+        "default",
+    )
+    .await?;
+    repo.add_recognizer_rule(
+        "batch-name-rule",
+        "dictionary by name",
+        "dictionary",
+        "",
+        json!({ "dictionary": "batch-name-dictionary" }),
+        None,
+        "dictionary",
+        false,
+        "redact",
+        Some("<NAME>"),
+        "default",
+    )
+    .await?;
+
+    let loaded = repo.load_enabled_rules().await?;
+    let by_name: std::collections::HashMap<_, _> = loaded
+        .into_iter()
+        .map(|rule| (rule.rule.name, rule.rule.matcher_config["terms"].clone()))
+        .collect();
+    assert_eq!(by_name["batch-id-rule"], json!(["ID_TERM"]));
+    assert_eq!(by_name["batch-name-rule"], json!(["NAME_TERM"]));
+    Ok(())
+}
+
 /// DB-configured literals use the same policy engine and persistence
 /// chokepoint as operator rules. Unicode case-fold expansion before a match
 /// must neither panic nor reuse a lowercased byte offset against the original
@@ -386,7 +452,9 @@ async fn privacy_literal_policy_handles_unicode_and_forged_envelope_marker(
     let note = payload_str(&result[0].event.payload, "/note");
     let without_replacement_markers = note.replace("<SECRET>", "");
     assert!(
-        !without_replacement_markers.to_ascii_lowercase().contains("secret"),
+        !without_replacement_markers
+            .to_ascii_lowercase()
+            .contains("secret"),
         "got: {note}"
     );
     assert_eq!(note.matches("<SECRET>").count(), 4, "got: {note}");

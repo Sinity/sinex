@@ -44,6 +44,48 @@ pub struct PrivacyRuleRecord {
     pub enabled: bool,
 }
 
+#[derive(Debug, Default)]
+struct DictionaryTermsByReference {
+    by_id: HashMap<Uuid, Vec<String>>,
+    by_name: HashMap<String, Vec<String>>,
+}
+
+fn hydrate_dictionary_rule_config(
+    matcher_config: &serde_json::Value,
+    dictionary_terms: &DictionaryTermsByReference,
+) -> DbResult<serde_json::Value> {
+    let dictionary_id = matcher_config
+        .get("dictionary_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| value.parse::<Uuid>().ok());
+    let dictionary_name = matcher_config
+        .get("dictionary")
+        .or_else(|| matcher_config.get("dictionary_name"))
+        .and_then(serde_json::Value::as_str);
+    let terms = dictionary_id
+        .and_then(|id| dictionary_terms.by_id.get(&id))
+        .or_else(|| dictionary_name.and_then(|name| dictionary_terms.by_name.get(name)));
+    let Some(terms) = terms else {
+        return Ok(matcher_config.clone());
+    };
+
+    let mut config = matcher_config.clone();
+    let object = config.as_object_mut().ok_or_else(|| {
+        SinexError::validation("privacy dictionary rule matcher_config must be an object")
+    })?;
+    object.insert(
+        "terms".to_string(),
+        serde_json::Value::Array(
+            terms
+                .iter()
+                .cloned()
+                .map(serde_json::Value::String)
+                .collect(),
+        ),
+    );
+    Ok(config)
+}
+
 /// A field scope binding a rule to a `(source, event_type, field_path)` triple.
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 pub struct FieldRuleRecord {
@@ -182,13 +224,13 @@ impl<'a> PrivacyPolicyRepository<'a> {
             .filter_map(|rule| rule.recognizer_backend_id)
             .collect();
         let backends = self.load_enabled_recognizer_backends(&backend_ids).await?;
+        let dictionary_terms = self.load_dictionary_terms_for_rules(&rules).await?;
 
         let mut loaded = Vec::with_capacity(rules.len());
         for mut rule in rules {
             if rule.matcher_type == "dictionary" {
-                rule.matcher_config = self
-                    .hydrate_dictionary_rule_config(&rule.matcher_config)
-                    .await?;
+                rule.matcher_config =
+                    hydrate_dictionary_rule_config(&rule.matcher_config, &dictionary_terms)?;
             }
 
             let backend = if let Some(id) = rule.recognizer_backend_id {
@@ -226,81 +268,75 @@ impl<'a> PrivacyPolicyRepository<'a> {
         Ok(loaded)
     }
 
-    async fn hydrate_dictionary_rule_config(
+    async fn load_dictionary_terms_for_rules(
         &self,
-        matcher_config: &serde_json::Value,
-    ) -> DbResult<serde_json::Value> {
-        let dictionary_id = matcher_config
-            .get("dictionary_id")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|value| value.parse::<Uuid>().ok());
-        let dictionary_name = matcher_config
-            .get("dictionary")
-            .or_else(|| matcher_config.get("dictionary_name"))
-            .and_then(serde_json::Value::as_str);
+        rules: &[PrivacyRuleRecord],
+    ) -> DbResult<DictionaryTermsByReference> {
+        let mut dictionary_ids = Vec::new();
+        let mut dictionary_names = Vec::new();
+        for rule in rules {
+            if rule.matcher_type != "dictionary" {
+                continue;
+            }
+            let dictionary_id = rule
+                .matcher_config
+                .get("dictionary_id")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| value.parse::<Uuid>().ok());
+            let dictionary_name = rule
+                .matcher_config
+                .get("dictionary")
+                .or_else(|| rule.matcher_config.get("dictionary_name"))
+                .and_then(serde_json::Value::as_str);
+            if let Some(id) = dictionary_id {
+                if !dictionary_ids.contains(&id) {
+                    dictionary_ids.push(id);
+                }
+            } else if let Some(name) = dictionary_name {
+                if !dictionary_names.iter().any(|known| known == name) {
+                    dictionary_names.push(name.to_owned());
+                }
+            }
+        }
+        if dictionary_ids.is_empty() && dictionary_names.is_empty() {
+            return Ok(DictionaryTermsByReference::default());
+        }
 
-        let Some(terms) = self
-            .load_dictionary_terms_for_rule(dictionary_id, dictionary_name)
-            .await?
-        else {
-            return Ok(matcher_config.clone());
-        };
-
-        let mut config = matcher_config.clone();
-        let object = config.as_object_mut().ok_or_else(|| {
-            SinexError::validation("privacy dictionary rule matcher_config must be an object")
+        let rows = sqlx::query!(
+            r#"
+            SELECT d.id AS dictionary_id, d.name AS dictionary_name, dt.term
+            FROM privacy.dictionary_terms dt
+            JOIN privacy.dictionaries d ON d.id = dt.dictionary_id
+            WHERE d.enabled = true
+              AND dt.enabled = true
+              AND (d.id = ANY($1) OR d.name = ANY($2))
+            ORDER BY d.id, d.name, dt.term
+            "#,
+            &dictionary_ids,
+            &dictionary_names,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| {
+            SinexError::database(format!(
+                "failed to batch-load privacy dictionary terms: {e}"
+            ))
         })?;
-        object.insert(
-            "terms".to_string(),
-            serde_json::Value::Array(terms.into_iter().map(serde_json::Value::String).collect()),
-        );
-        Ok(config)
-    }
 
-    async fn load_dictionary_terms_for_rule(
-        &self,
-        dictionary_id: Option<Uuid>,
-        dictionary_name: Option<&str>,
-    ) -> DbResult<Option<Vec<String>>> {
-        if let Some(id) = dictionary_id {
-            let terms = sqlx::query_scalar!(
-                r#"
-                SELECT dt.term
-                FROM privacy.dictionary_terms dt
-                JOIN privacy.dictionaries d ON d.id = dt.dictionary_id
-                WHERE d.id = $1 AND d.enabled = true AND dt.enabled = true
-                ORDER BY dt.term
-                "#,
-                id,
-            )
-            .fetch_all(self.pool)
-            .await
-            .map_err(|e| {
-                SinexError::database(format!("failed to load privacy dictionary terms: {e}"))
-            })?;
-            return Ok(Some(terms));
+        let mut terms = DictionaryTermsByReference::default();
+        for row in rows {
+            terms
+                .by_id
+                .entry(row.dictionary_id)
+                .or_default()
+                .push(row.term.clone());
+            terms
+                .by_name
+                .entry(row.dictionary_name)
+                .or_default()
+                .push(row.term);
         }
-
-        if let Some(name) = dictionary_name {
-            let terms = sqlx::query_scalar!(
-                r#"
-                SELECT dt.term
-                FROM privacy.dictionary_terms dt
-                JOIN privacy.dictionaries d ON d.id = dt.dictionary_id
-                WHERE d.name = $1 AND d.enabled = true AND dt.enabled = true
-                ORDER BY dt.term
-                "#,
-                name,
-            )
-            .fetch_all(self.pool)
-            .await
-            .map_err(|e| {
-                SinexError::database(format!("failed to load privacy dictionary terms: {e}"))
-            })?;
-            return Ok(Some(terms));
-        }
-
-        Ok(None)
+        Ok(terms)
     }
 
     /// List all rules (enabled and disabled). Used by management surfaces.
