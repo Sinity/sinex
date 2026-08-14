@@ -1567,7 +1567,11 @@ fn mode_detail_lines(mode: &SourceModeStatusView) -> Vec<Line<'static>> {
     )));
     lines.push(Line::from(format!(
         "  delivery={} ordering={} replay={} dlq={} pressure={}",
-        mode.delivery, mode.ordering, mode.replayable, mode.dlq, mode.backpressure
+        mode.delivery,
+        mode.ordering,
+        mode.transport_replayable,
+        mode.dlq,
+        mode.backpressure
     )));
     if mode.provider_operation_status.is_some()
         || mode.provider_required_action.is_some()
