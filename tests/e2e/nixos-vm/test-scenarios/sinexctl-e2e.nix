@@ -51,7 +51,20 @@ pkgs.testers.nixosTest {
     def wait_for_API():
         """Wait for API to be ready and accepting connections"""
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinexd.service", timeout=180)
+        try:
+            # First-run schema convergence, annex setup, TLS, and pool warm-up
+            # happen before Type=notify emits READY=1. This is a deployment
+            # proof, so allow a cold VM enough time and preserve diagnostics if
+            # readiness still fails.
+            machine.wait_for_unit("sinexd.service", timeout=600)
+        except Exception:
+            print(machine.execute("systemctl status sinexd.service --no-pager"))
+            print(machine.execute("journalctl -u sinexd.service -b --no-pager"))
+            print(machine.execute(
+                "systemctl status postgresql.service nats.service "
+                "sinexd-annex-setup.service --no-pager"
+            ))
+            raise
         # Wait until API health endpoint responds
         machine.wait_until_succeeds(
             "curl -k -s https://127.0.0.1:9999/health",
