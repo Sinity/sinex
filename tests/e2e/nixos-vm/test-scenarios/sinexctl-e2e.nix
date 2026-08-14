@@ -52,6 +52,8 @@ pkgs.testers.nixosTest {
     def wait_for_API():
         """Wait for API to be ready and accepting connections"""
         machine.wait_for_unit("postgresql.service", timeout=60)
+        def readiness_diagnostics():
+            return machine.succeed("systemctl is-active sinexd.service").strip()
         # Poll explicitly so a failed unit produces its journal immediately;
         # machine.wait_for_unit otherwise hides the useful state until its
         # entire Type=notify timeout expires.
@@ -67,7 +69,9 @@ pkgs.testers.nixosTest {
                     "systemctl status postgresql.service nats.service "
                     "sinexd-annex-setup.service --no-pager"
                 ))
-                raise AssertionError("sinexd.service entered failed state")
+                raise AssertionError(
+                    "sinexd.service entered failed state:\n" + readiness_diagnostics()
+                )
             machine.sleep(1)
         else:
             print(machine.execute("systemctl status sinexd.service --no-pager"))
@@ -76,7 +80,11 @@ pkgs.testers.nixosTest {
                 "systemctl status postgresql.service nats.service "
                 "sinexd-annex-setup.service --no-pager"
             ))
-            raise AssertionError("sinexd.service did not become active within 600 seconds")
+            raise AssertionError(
+                "sinexd readiness state="
+                + readiness_diagnostics()
+                + "; did not become active within 600 seconds"
+            )
         # Wait until API health endpoint responds
         machine.wait_until_succeeds(
             "curl -k -s https://127.0.0.1:9999/health",
