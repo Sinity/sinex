@@ -452,16 +452,16 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
     .fetch_one(&ctx.pool)
     .await?;
     assert_eq!(
-        live_target_count, 0,
-        "replacement-record failure occurs after the original event has already been archived"
+        live_target_count, 1,
+        "replacement-record failure compensation must restore the original event"
     );
     assert_eq!(
-        archived_target_count, 1,
-        "replacement-record failure must leave the archived target in audit storage"
+        archived_target_count, 0,
+        "replacement-record failure compensation must not strand the original event in audit storage"
     );
     assert_eq!(
-        live_replacement_count, 1,
-        "replacement-record failure must not delete already-emitted replay outputs"
+        live_replacement_count, 0,
+        "replacement-record failure compensation must archive the partial replay output"
     );
 
     let replacements = ctx
