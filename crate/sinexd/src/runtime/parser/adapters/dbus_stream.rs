@@ -514,6 +514,7 @@ fn zvariant_value_to_json(v: &zvariant::Value<'_>) -> serde_json::Value {
 /// consulted by `open_with_backend`, which tests use to bypass the live bus.
 pub struct DbusStreamAdapter {
     injected_backend: std::sync::Mutex<Option<Box<dyn DbusBackend + Send + Sync>>>,
+    injected_backend_configured: bool,
 }
 
 impl DbusStreamAdapter {
@@ -521,6 +522,7 @@ impl DbusStreamAdapter {
     pub fn with_backend(backend: impl DbusBackend + Sync + 'static) -> Self {
         Self {
             injected_backend: std::sync::Mutex::new(Some(Box::new(backend))),
+            injected_backend_configured: true,
         }
     }
 }
@@ -531,6 +533,7 @@ impl Default for DbusStreamAdapter {
     fn default() -> Self {
         Self {
             injected_backend: std::sync::Mutex::new(None),
+            injected_backend_configured: false,
         }
     }
 }
@@ -547,14 +550,21 @@ impl InputShapeAdapter for DbusStreamAdapter {
         config: &Self::Config,
         _cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        // If a test injected a backend, consume it; otherwise build a fresh
-        // RealDbusBackend. Either way, subscribe(...) takes ownership.
+        // An injected backend is intentionally one-shot because subscribe takes
+        // ownership. Never silently replace an exhausted test backend with a
+        // live D-Bus connection on a later open.
         let backend: Box<dyn DbusBackend + Send + Sync> = {
             let mut slot = self.injected_backend.lock().map_err(|e| {
                 ParserError::Adapter(format!("injected_backend mutex poisoned: {e}"))
             })?;
             match slot.take() {
                 Some(b) => b,
+                None if self.injected_backend_configured => {
+                    return Err(ParserError::Adapter(
+                        "injected D-Bus backend already consumed; create a new adapter for another subscription"
+                            .to_string(),
+                    ));
+                }
                 None => Box::new(RealDbusBackend),
             }
         };

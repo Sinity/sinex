@@ -17,6 +17,24 @@ fn make_msg(interface: &str, member: &str) -> DbusMessage {
 }
 
 #[sinex_test]
+async fn injected_dbus_backend_cannot_fall_back_to_live_backend_on_reopen()
+-> xtask::sandbox::TestResult<()> {
+    let adapter = DbusStreamAdapter::with_backend(MockDbusBackend::new(vec![]));
+    let config = DbusStreamConfig {
+        bus: DbusBus::Session,
+        match_rules: vec!["type='signal',interface='org.example'".into()],
+    };
+
+    let _first = adapter.open(dummy_material_id(), &config, None).await?;
+    let error = match adapter.open(dummy_material_id(), &config, None).await {
+        Ok(_) => panic!("a consumed injected backend must not fall back to a live bus"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("already consumed"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_mock_backend_yields_messages() -> xtask::sandbox::TestResult<()> {
     let msgs = vec![
         make_msg("org.test.Iface", "Signal1"),

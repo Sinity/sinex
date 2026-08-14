@@ -141,6 +141,7 @@ pub struct ClipboardPollingCursor;
 /// [`ClipboardPollingAdapter::from_backend`].
 pub struct ClipboardPollingAdapter {
     injected_backend: StdMutex<Option<Box<dyn ClipboardBackend>>>,
+    injected_backend_configured: bool,
 }
 
 impl ClipboardPollingAdapter {
@@ -149,6 +150,7 @@ impl ClipboardPollingAdapter {
         let backend = ArboardBackend::new()?;
         Ok(Self {
             injected_backend: StdMutex::new(Some(Box::new(backend))),
+            injected_backend_configured: true,
         })
     }
 
@@ -156,6 +158,7 @@ impl ClipboardPollingAdapter {
     pub fn from_backend(backend: impl ClipboardBackend + 'static) -> Self {
         Self {
             injected_backend: StdMutex::new(Some(Box::new(backend))),
+            injected_backend_configured: true,
         }
     }
 }
@@ -164,6 +167,7 @@ impl Default for ClipboardPollingAdapter {
     fn default() -> Self {
         Self {
             injected_backend: StdMutex::new(None),
+            injected_backend_configured: false,
         }
     }
 }
@@ -184,10 +188,16 @@ impl InputShapeAdapter for ClipboardPollingAdapter {
             let mut injected = self.injected_backend.lock().map_err(|_| {
                 ParserError::Adapter("clipboard backend injection lock poisoned".to_string())
             })?;
-            injected.take().map_or_else(
-                || ArboardBackend::new().map(|backend| Box::new(backend) as _),
-                Ok,
-            )?
+            match injected.take() {
+                Some(backend) => backend,
+                None if self.injected_backend_configured => {
+                    return Err(ParserError::Adapter(
+                        "injected clipboard backend already consumed; create a new adapter for another poll"
+                            .to_string(),
+                    ));
+                }
+                None => Box::new(ArboardBackend::new()?) as _,
+            }
         };
         let backend = Arc::new(Mutex::new(backend));
         let poll_interval = std::time::Duration::from_millis(config.poll_interval_ms);

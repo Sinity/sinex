@@ -12,6 +12,24 @@ fn make_adapter(snapshots: Vec<Option<String>>) -> ClipboardPollingAdapter {
 }
 
 #[sinex_test]
+async fn injected_clipboard_backend_cannot_fall_back_to_live_backend_on_reopen()
+-> xtask::sandbox::TestResult<()> {
+    let adapter = make_adapter(vec![Some("one".into())]);
+    let config = ClipboardPollingConfig {
+        poll_interval_ms: 1,
+        max_content_bytes: 1024,
+    };
+
+    let _first = adapter.open(dummy_material_id(), &config, None).await?;
+    let error = match adapter.open(dummy_material_id(), &config, None).await {
+        Ok(_) => panic!("a consumed injected backend must not fall back to arboard"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("already consumed"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_clipboard_emits_record_on_change() -> xtask::sandbox::TestResult<()> {
     let adapter = make_adapter(vec![
         Some("hello".into()),
