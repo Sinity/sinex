@@ -282,6 +282,38 @@ impl ReplayExecutionEngine {
         Ok(())
     }
 
+    /// Archive outputs emitted by a replay that is being compensated before
+    /// restoring the pre-replay cascade. This prevents partial replacement
+    /// interpretations from remaining live alongside the restored originals.
+    async fn archive_partial_replay_outputs(
+        &self,
+        pool: &sqlx::PgPool,
+        operation_id: Uuid,
+    ) -> Result<u64> {
+        let output_ids = self
+            .collect_operation_output_events(pool, operation_id)
+            .await?
+            .into_iter()
+            .map(|event| event.id)
+            .collect::<Vec<_>>();
+        if output_ids.is_empty() {
+            return Ok(0);
+        }
+
+        pool.events()
+            .execute_cascade_archive(
+                &output_ids,
+                "archive replay outputs during compensation",
+                &operation_id.to_string(),
+                "replay-compensation",
+            )
+            .await
+            .map_err(|err| {
+                SinexError::database("Failed to archive partial replay outputs during compensation")
+                    .with_source(err)
+            })
+    }
+
     /// Dispatch a replay by telling the source runtime to re-scan source material.
     ///
     /// Instead of republishing stored event rows to NATS (reinjection), this:
@@ -1112,6 +1144,17 @@ impl ReplayExecutionEngine {
             );
             compensation_errors.push(link_error);
         }
+        if let Err(output_error) = self
+            .archive_partial_replay_outputs(pool, operation_id)
+            .await
+        {
+            warn!(
+                operation_id = %operation_id,
+                error = %output_error,
+                "Failed to archive partial replay outputs during staged-replay failure compensation"
+            );
+            compensation_errors.push(output_error);
+        }
         let restored = match self
             .restore_cascade(pool, archive_reason, archived_count, operation_id)
             .await
@@ -1170,8 +1213,14 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         error: SinexError,
     ) -> Result<u64> {
+        let was_cancelled = matches!(&error, SinexError::Cancelled(_));
         let link_error = self
             .record_event_replacements(pool, operation_id, archive_reason)
+            .await
+            .err();
+
+        let output_archive_error = self
+            .archive_partial_replay_outputs(pool, operation_id)
             .await
             .err();
 
@@ -1213,6 +1262,18 @@ impl ReplayExecutionEngine {
             ))
             .with_source(error)
             .with_source(link_error));
+        }
+
+        if let Some(output_archive_error) = output_archive_error {
+            return Err(SinexError::service(format!(
+                "Replay failed after archive; restored archived cascade and published compensating scope invalidations, but archiving partial replacement outputs failed: {output_archive_error}"
+            ))
+            .with_source(error)
+            .with_source(output_archive_error));
+        }
+
+        if was_cancelled {
+            return Err(error);
         }
 
         Err(SinexError::service(
