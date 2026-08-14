@@ -18,7 +18,7 @@ use sinexctl::admin::exec;
 use sinexctl::admin::manifest::{ComponentExtras, QuiesceReceipt};
 use sinexctl::admin::snapshot::{
     AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
-    format_snapshot_restore_plan_result,
+    format_snapshot_inspect_result, format_snapshot_restore_plan_result,
 };
 
 /// Helper: build a fake state directory with recognizable fixture files.
