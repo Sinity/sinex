@@ -445,7 +445,10 @@ impl ReplayStateMachine {
     }
 
     /// Build bounded identity evidence for the roots that match a replay scope.
-    pub async fn scope_root_snapshot(&self, scope: &ReplayScope) -> Result<ReplayScopeRootSnapshot> {
+    pub async fn scope_root_snapshot(
+        &self,
+        scope: &ReplayScope,
+    ) -> Result<ReplayScopeRootSnapshot> {
         self.repo().scope_root_snapshot(scope).await
     }
 
@@ -760,10 +763,13 @@ impl ReplayStateMachine {
                     .cascade_node_count(&table_name)
                     .await
                     .map_err(|e| SinexError::database(format!("count cascade members: {e}")))?;
-                let derived_count = repo_tx
-                    .cascade_derived_count(&table_name)
-                    .await
-                    .map_err(|e| SinexError::database(format!("count derived cascade members: {e}")))?;
+                let derived_count =
+                    repo_tx
+                        .cascade_derived_count(&table_name)
+                        .await
+                        .map_err(|e| {
+                            SinexError::database(format!("count derived cascade members: {e}"))
+                        })?;
                 let affected_modules = repo_tx
                     .load_cascade_affected_modules_from_table(&table_name)
                     .await
@@ -777,7 +783,13 @@ impl ReplayStateMachine {
                     .await
                     .map_err(|e| SinexError::database(format!("cleanup cascade: {e}")))?;
 
-                (cascade_total, derived_count, affected_modules, affected_scopes, max_depth)
+                (
+                    cascade_total,
+                    derived_count,
+                    affected_modules,
+                    affected_scopes,
+                    max_depth,
+                )
             };
 
             tx.rollback()
@@ -1565,7 +1577,13 @@ mod replay_event_sources_tests {
     fn legacy_umbrella_names_still_resolve_their_existing_aliases() {
         // Regression guard: the fix must not disturb the four pre-existing cases.
         let sources = scope_for("desktop-watcher").replay_event_sources();
-        for expected in ["desktop", "activitywatch", "webhistory", "clipboard", "wm.hyprland"] {
+        for expected in [
+            "desktop",
+            "activitywatch",
+            "webhistory",
+            "clipboard",
+            "wm.hyprland",
+        ] {
             assert!(
                 sources.iter().any(|s| s == expected),
                 "expected {expected:?} among desktop-watcher's resolved replay sources, got: {sources:?}"
