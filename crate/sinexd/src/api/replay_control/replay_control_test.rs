@@ -8,7 +8,7 @@ use crate::runtime::automaton::invalidation::INVALIDATION_SUBJECT;
 use crate::runtime::stream::ScanReport;
 use crate::runtime::stream::{
     Checkpoint, ResolvedReplayMaterial, SourceScanAck, SourceScanCancel, SourceScanCommand,
-    SourceScanProgress,
+    SourceScanProgress, ReplayMaterialOccurrence,
 };
 use async_nats::Client;
 use futures::StreamExt;
@@ -774,6 +774,23 @@ async fn replay_scan_control_source_keeps_scope_without_runtime_identity() -> Re
     let source = ReplayExecutionEngine::scan_control_source_name(&scope, &replay_materials)?;
 
     assert_eq!(source, "fs-test");
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_coordinate_validation_rejects_incomplete_range() -> Result<()> {
+    let error = ReplayExecutionEngine::validate_replay_material_occurrences(&[
+        ReplayMaterialOccurrence {
+            source_material_id: Uuid::now_v7(),
+            anchor_byte: 12,
+            offset_start: Some(12),
+            offset_end: None,
+            record_metadata: json!(null),
+        },
+    ])
+    .expect_err("an incomplete replay range must fail before archive");
+
+    assert!(error_contains(&error, "missing offset_end"));
     Ok(())
 }
 

@@ -365,6 +365,46 @@ impl ReplayExecutionEngine {
         Ok(occurrences)
     }
 
+    /// Validate the byte coordinates that the CAS replay route requires before
+    /// it can safely cross the archive boundary.
+    pub(crate) fn validate_replay_material_occurrences(
+        occurrences: &[ReplayMaterialOccurrence],
+    ) -> Result<()> {
+        for occurrence in occurrences {
+            if occurrence.anchor_byte < 0 {
+                return Err(SinexError::invalid_state(
+                    "Replay occurrence anchor_byte must be non-negative",
+                )
+                .with_context("source_material_id", occurrence.source_material_id.to_string())
+                .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
+            }
+            let Some(offset_start) = occurrence.offset_start else {
+                return Err(SinexError::invalid_state(
+                    "Replay occurrence is missing offset_start; cannot safely recover bytes",
+                )
+                .with_context("source_material_id", occurrence.source_material_id.to_string())
+                .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
+            };
+            let Some(offset_end) = occurrence.offset_end else {
+                return Err(SinexError::invalid_state(
+                    "Replay occurrence is missing offset_end; cannot safely recover bytes",
+                )
+                .with_context("source_material_id", occurrence.source_material_id.to_string())
+                .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
+            };
+            if offset_start != occurrence.anchor_byte || offset_end < offset_start {
+                return Err(SinexError::invalid_state(
+                    "Replay occurrence byte coordinates are inconsistent",
+                )
+                .with_context("source_material_id", occurrence.source_material_id.to_string())
+                .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+                .with_context("offset_start", offset_start.to_string())
+                .with_context("offset_end", offset_end.to_string()));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn logical_source_identifier(material: &ResolvedReplayMaterial) -> String {
         material
             .material_metadata
@@ -602,6 +642,52 @@ impl ReplayExecutionEngine {
                 .filter(|material_id| validated.insert(*material_id))
                 .collect::<Vec<_>>();
             self.validate_material_authority(&unseen).await?;
+        }
+        Ok(())
+    }
+
+    /// Validate the replay coordinates and adapter metadata for every selected
+    /// material root before the archive boundary.  The source scan consumes
+    /// these coordinates after archiving; discovering a missing range or a
+    /// malformed FileDrop path only after archive would turn a caller error
+    /// into a compensation/recovery operation.
+    pub(crate) async fn validate_scope_replay_inputs(
+        &self,
+        pool: &sqlx::PgPool,
+        scope: &ReplayScope,
+    ) -> Result<()> {
+        let mut after_id = None;
+        loop {
+            let root_ids = self
+                .replay
+                .scope_root_ids_page(scope, after_id, REPLAY_EXECUTION_ROOT_BATCH_SIZE)
+                .await?;
+            let Some(last_root_id) = root_ids.last().copied() else {
+                break;
+            };
+
+            let typed_ids = root_ids
+                .iter()
+                .copied()
+                .map(sinex_primitives::Id::from_uuid)
+                .collect::<Vec<_>>();
+            let roots = pool.events().get_by_ids(&typed_ids).await.map_err(|error| {
+                SinexError::database("Failed to hydrate replay roots before archive")
+                    .with_source(error)
+            })?;
+            if roots.len() != root_ids.len() {
+                return Err(SinexError::invalid_state(
+                    "Replay root set changed while validating material coordinates before archive",
+                )
+                .with_context("expected_root_count", root_ids.len().to_string())
+                .with_context("actual_root_count", roots.len().to_string()));
+            }
+
+            // This validates material provenance and FileDrop path metadata
+            // without retaining the whole replay scope in memory.
+            let occurrences = Self::replay_material_occurrences(&roots)?;
+            Self::validate_replay_material_occurrences(&occurrences)?;
+            after_id = Some(last_root_id);
         }
         Ok(())
     }

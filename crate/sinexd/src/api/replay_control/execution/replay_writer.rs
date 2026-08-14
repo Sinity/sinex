@@ -366,6 +366,7 @@ impl ReplayExecutionEngine {
             )
             .with_source(error));
         }
+        self.validate_scope_replay_inputs(pool, scope).await?;
 
         // Step 1: Archive the affected cascade
         let archived_cascade = self
