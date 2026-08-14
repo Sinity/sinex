@@ -1,6 +1,6 @@
 # Fresh-rebuild reimport manifest
 
-Status: execution manifest for the operator-approved fresh rebuild. This file is a route and scope ledger, not authorization to wipe production.
+Status: proposed execution manifest for the fresh rebuild. This file is a route and scope ledger, not approval or authorization to wipe production.
 
 The inventory was reconciled against `/realm/data` on 2026-08-12. The measured sizes are coarse planning evidence from `du -sxh`; they are not a promise that the lake is immutable. Raw files remain authoritative and must not be replaced by the derived products listed below.
 
