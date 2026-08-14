@@ -45,26 +45,38 @@ pkgs.testers.nixosTest {
     import json
     import re
     import base64
+    import time
 
     start_all()
 
     def wait_for_API():
         """Wait for API to be ready and accepting connections"""
         machine.wait_for_unit("postgresql.service", timeout=60)
-        try:
-            # First-run schema convergence, annex setup, TLS, and pool warm-up
-            # happen before Type=notify emits READY=1. This is a deployment
-            # proof, so allow a cold VM enough time and preserve diagnostics if
-            # readiness still fails.
-            machine.wait_for_unit("sinexd.service", timeout=600)
-        except Exception:
+        # Poll explicitly so a failed unit produces its journal immediately;
+        # machine.wait_for_unit otherwise hides the useful state until its
+        # entire Type=notify timeout expires.
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            result = machine.execute("systemctl is-active sinexd.service")
+            if result[0] == 0 and result[1].strip() == "active":
+                break
+            if "failed" in result[1]:
+                print(machine.execute("systemctl status sinexd.service --no-pager"))
+                print(machine.execute("journalctl -u sinexd.service -b --no-pager"))
+                print(machine.execute(
+                    "systemctl status postgresql.service nats.service "
+                    "sinexd-annex-setup.service --no-pager"
+                ))
+                raise AssertionError("sinexd.service entered failed state")
+            machine.sleep(1)
+        else:
             print(machine.execute("systemctl status sinexd.service --no-pager"))
             print(machine.execute("journalctl -u sinexd.service -b --no-pager"))
             print(machine.execute(
                 "systemctl status postgresql.service nats.service "
                 "sinexd-annex-setup.service --no-pager"
             ))
-            raise
+            raise AssertionError("sinexd.service did not become active within 600 seconds")
         # Wait until API health endpoint responds
         machine.wait_until_succeeds(
             "curl -k -s https://127.0.0.1:9999/health",
