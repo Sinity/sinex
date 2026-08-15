@@ -5,8 +5,12 @@ use super::{
 };
 use crate::api::{ReplayScope, ReplayState};
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_db::validation::SchemaCompilationFailure;
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::{EventPayload, payloads::FileCreatedPayload};
+use sinex_primitives::rpc::system::SystemHealthRequest;
+use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
@@ -81,6 +85,75 @@ async fn health_report_marks_schema_compilation_failures_as_degraded() -> TestRe
     );
     assert_eq!(recovered_report.status, GatewayHealthStatus::Healthy);
     assert!(recovered_report.degradation_reasons.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn system_health_reports_schema_compilation_failure_from_active_db_row(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    let temp_dir = tempfile::TempDir::new()?;
+    env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
+    env.set(
+        "SINEX_CONTENT_STORE_PATH",
+        temp_dir.path().to_string_lossy().as_ref(),
+    );
+
+    let source = EventSource::from_static("health_schema_probe");
+    let event_type = EventType::from_static("health_schema_probe.event");
+    let invalid = ctx
+        .pool
+        .schemas()
+        .register_schema(NewEventSchema {
+            source: source.clone(),
+            event_type: event_type.clone(),
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({"type": 42}),
+        })
+        .await?;
+
+    let container = super::ServiceContainer::from_database_url(ctx.database_url()).await?;
+    let failure_response = super::super::handlers::handle_system_health(
+        &container,
+        SystemHealthRequest {},
+    )
+    .await?;
+    let failure_reason = failure_response
+        .degradation_reasons
+        .iter()
+        .find(|reason| reason.contains("schema compilation failure"))
+        .expect("active invalid schema must be visible through system.health");
+    assert!(failure_reason.contains(source.as_str()));
+    assert!(failure_reason.contains(event_type.as_str()));
+    assert!(failure_reason.contains(&invalid.id.to_string()));
+    assert!(!failure_response.healthy);
+
+    ctx.pool
+        .schemas()
+        .register_schema(NewEventSchema {
+            source,
+            event_type,
+            schema_version: "2.0.0".to_string(),
+            schema_content: json!({"type": "object"}),
+        })
+        .await?;
+
+    let recovered_response = super::super::handlers::handle_system_health(
+        &container,
+        SystemHealthRequest {},
+    )
+    .await?;
+    assert!(
+        recovered_response
+            .degradation_reasons
+            .iter()
+            .all(|reason| !reason.contains("schema compilation failure")),
+        "successful schema reload must clear the schema failure signal: {:?}",
+        recovered_response.degradation_reasons
+    );
+
     Ok(())
 }
 
