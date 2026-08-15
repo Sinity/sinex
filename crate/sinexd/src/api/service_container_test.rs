@@ -370,6 +370,95 @@ async fn terminal_replay_archive_recovery_stays_retryable_on_occurrence_conflict
 }
 
 #[sinex_test]
+async fn replay_archive_recovery_retry_after_lost_response_is_idempotent(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let replay = sinex_db::replay::state_machine::ReplayStateMachine::new(ctx.pool.clone());
+    let operation = replay
+        .create_operation(
+            ReplayScope {
+                source_name: "lost-response-recovery".to_string(),
+                filters: HashMap::new(),
+                ..Default::default()
+            },
+            "test:lost-response".to_string(),
+        )
+        .await?;
+    let material_id = ctx
+        .create_source_material(Some("lost-response-recovery-material"))
+        .await?;
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            FileCreatedPayload {
+                path: "/tmp/lost-response-recovery.txt".into(),
+                size: 7,
+                created_at: sinex_primitives::Timestamp::now(),
+                permissions: None,
+            }
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event should have an id");
+    let archive_reason = format!(
+        "superseded by replay re-execution (operation {})",
+        operation.operation_id
+    );
+    ctx.pool()
+        .events()
+        .execute_cascade_archive(
+            &[*event_id.as_uuid()],
+            &archive_reason,
+            &operation.operation_id.to_string(),
+            "test",
+        )
+        .await?;
+    ctx.pool()
+        .state()
+        .update_operation_meta(
+            &sinex_primitives::Id::<sinex_db::repositories::Operation>::from_uuid(
+                operation.operation_id,
+            ),
+            OperationStatus::Failed,
+            Some("compensation failed after archive"),
+            serde_json::json!({"archive_recovery": {"remaining_archived_events": 1}}),
+        )
+        .await?;
+
+    let first = ctx
+        .pool()
+        .state()
+        .recover_replay_archive("test:lost-response", operation.operation_id)
+        .await?;
+    assert_eq!(first.result_status, OperationStatus::Success);
+    assert!(ctx.pool().events().get_by_id(event_id).await?.is_some());
+
+    // Model a client losing the first response after its durable commit: the
+    // retry must return the committed operation rather than minting another.
+    let retry = ctx
+        .pool()
+        .state()
+        .recover_replay_archive("test:lost-response-retry", operation.operation_id)
+        .await?;
+    assert_eq!(retry.id, first.id);
+    assert_eq!(
+        ctx.pool()
+            .state()
+            .list_operations(
+                Some("replay-archive-recovery"),
+                Some(OperationStatus::Success),
+                10,
+            )
+            .await?
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn startup_recovery_restores_a_cascade_stranded_by_an_immediate_restart(
     ctx: TestContext,
 ) -> TestResult<()> {

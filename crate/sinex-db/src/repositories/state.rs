@@ -669,14 +669,57 @@ impl StateRepository<'_> {
         let archive_reason = format!(
             "superseded by replay re-execution (operation {replay_operation_id})"
         );
+        let recovery_scope = serde_json::json!({
+            "replay_operation_id": replay_operation_id.to_string(),
+            "archive_reason": archive_reason,
+        });
+
+        // A caller may lose the response after the recovery operation commits.
+        // Treat a later request as a retry of that durable operation when the
+        // journal is empty; otherwise a stale success marker must not hide
+        // remaining authoritative rows.
+        if let Some(existing) = sqlx::query_as::<_, OperationRecord>(
+            r#"
+            SELECT
+                id,
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            FROM core.operations_log
+            WHERE operation_type = $1
+              AND result_status = $2
+              AND scope @> $3
+            ORDER BY id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE)
+        .bind(OperationStatus::Success)
+        .bind(&recovery_scope)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "find replay archive recovery operation"))?
+        {
+            if self
+                .pool
+                .replay()
+                .archived_replay_event_ids_page(&archive_reason, 1)
+                .await?
+                .is_empty()
+            {
+                return Ok(existing);
+            }
+        }
+
         let recovery = self
             .start_operation(
                 REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE,
                 operator,
-                serde_json::json!({
-                    "replay_operation_id": replay_operation_id.to_string(),
-                    "archive_reason": archive_reason,
-                }),
+                recovery_scope,
             )
             .await?;
 
