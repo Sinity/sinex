@@ -26,13 +26,15 @@ async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
     .await?;
     let mut roots = (0..ROOT_COUNT)
         .map(|anchor| {
-            Ok(DynamicPayload::new(
+            let builder = DynamicPayload::new(
                 "fs-test",
                 FileCreatedPayload::EVENT_TYPE.as_static_str(),
                 json!({ "path": format!("/tmp/replay-batch-{anchor}.txt") }),
             )
             .from_material_at(material_id, anchor)
-            .build()?)
+            .with_offset_start(anchor)?
+            .with_offset_end(anchor + 1)?;
+            Ok(builder.build()?)
         })
         .collect::<Result<Vec<_>>>()?;
     // The batch repository assigns UUIDv7 IDs after serializing the fixture.
@@ -101,6 +103,8 @@ async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
                         Id::from_uuid(occurrence.source_material_id),
                         occurrence.anchor_byte,
                     )
+                    .with_offset_start(occurrence.anchor_byte)?
+                    .with_offset_end(occurrence.anchor_byte + 1)?
                     .build()?;
                     replacement.created_by_operation_id = Some(command.operation_id);
                     Ok(replacement)
