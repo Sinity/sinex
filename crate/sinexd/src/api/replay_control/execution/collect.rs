@@ -168,6 +168,8 @@ impl ReplayExecutionEngine {
             Self::expected_replay_outputs(&material_roots)?,
             &replay_materials,
         )?;
+        self.validate_material_authority(&expected_outputs.source_material_ids)
+            .await?;
 
         Ok(Some(ReplayExecutionBatch {
             material_roots,
@@ -194,10 +196,10 @@ impl ReplayExecutionEngine {
         aggregate.event_types.dedup();
         aggregate.logical_source_identifiers.sort_unstable();
         aggregate.logical_source_identifiers.dedup();
-        aggregate.expected_outputs.extend(batch.expected_outputs);
-        aggregate.source_material_ids.extend(batch.source_material_ids);
-        aggregate.source_material_ids.sort_unstable();
-        aggregate.source_material_ids.dedup();
+        // Expected occurrence keys and material IDs are batch-local evidence.
+        // Output matching is performed against the archive journal in the
+        // database, and material authority is checked before this batch is
+        // returned, so neither vector may grow with total replay scope size.
     }
 
     pub(super) async fn collect_operation_output_events(
@@ -375,28 +377,40 @@ impl ReplayExecutionEngine {
                 return Err(SinexError::invalid_state(
                     "Replay occurrence anchor_byte must be non-negative",
                 )
-                .with_context("source_material_id", occurrence.source_material_id.to_string())
+                .with_context(
+                    "source_material_id",
+                    occurrence.source_material_id.to_string(),
+                )
                 .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
             }
             let Some(offset_start) = occurrence.offset_start else {
                 return Err(SinexError::invalid_state(
                     "Replay occurrence is missing offset_start; cannot safely recover bytes",
                 )
-                .with_context("source_material_id", occurrence.source_material_id.to_string())
+                .with_context(
+                    "source_material_id",
+                    occurrence.source_material_id.to_string(),
+                )
                 .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
             };
             let Some(offset_end) = occurrence.offset_end else {
                 return Err(SinexError::invalid_state(
                     "Replay occurrence is missing offset_end; cannot safely recover bytes",
                 )
-                .with_context("source_material_id", occurrence.source_material_id.to_string())
+                .with_context(
+                    "source_material_id",
+                    occurrence.source_material_id.to_string(),
+                )
                 .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
             };
             if offset_start != occurrence.anchor_byte || offset_end < offset_start {
                 return Err(SinexError::invalid_state(
                     "Replay occurrence byte coordinates are inconsistent",
                 )
-                .with_context("source_material_id", occurrence.source_material_id.to_string())
+                .with_context(
+                    "source_material_id",
+                    occurrence.source_material_id.to_string(),
+                )
                 .with_context("anchor_byte", occurrence.anchor_byte.to_string())
                 .with_context("offset_start", offset_start.to_string())
                 .with_context("offset_end", offset_end.to_string()));
@@ -472,10 +486,11 @@ impl ReplayExecutionEngine {
         &self,
         pool: &sqlx::PgPool,
         operation_id: Uuid,
+        archive_reason: &str,
         expected: &ExpectedReplayOutputs,
     ) -> Result<i64> {
         Ok(self
-            .validate_replay_outputs(pool, operation_id, expected)
+            .validate_replay_outputs(pool, operation_id, archive_reason, expected)
             .await?
             .matching_count as i64)
     }
@@ -484,42 +499,25 @@ impl ReplayExecutionEngine {
         &self,
         pool: &sqlx::PgPool,
         operation_id: Uuid,
+        archive_reason: &str,
         expected: &ExpectedReplayOutputs,
     ) -> Result<ReplayOutputValidation> {
-        let outputs = self.collect_operation_output_events(pool, operation_id).await?;
-        let mut remaining = HashMap::<ExpectedReplayOutput, u64>::new();
-        for output in &expected.expected_outputs {
-            *remaining.entry(output.clone()).or_default() += 1;
-        }
-
-        let mut validation = ReplayOutputValidation::default();
-        for output in outputs {
-            let Some(occurrence) = super::replay_writer::material_occurrence_key(&output) else {
-                validation.unexpected_count += 1;
-                continue;
-            };
-            let key = ExpectedReplayOutput {
-                occurrence,
-                source: output.source,
-                event_type: output.event_type,
-            };
-            if let Some(count) = remaining.get_mut(&key)
-                && *count > 0
-            {
-                *count -= 1;
-                validation.matching_count += 1;
-            } else {
-                validation.unexpected_count += 1;
-            }
-        }
-        validation.missing_count = remaining.values().sum();
-        Ok(validation)
+        let counts = pool
+            .replay()
+            .replay_output_match_counts(archive_reason, operation_id)
+            .await?;
+        Ok(ReplayOutputValidation {
+            matching_count: counts.matching_count,
+            missing_count: counts.missing_count,
+            unexpected_count: counts.unexpected_count,
+        })
     }
 
     pub(crate) async fn wait_for_replay_outputs_visible(
         &self,
         pool: &sqlx::PgPool,
         operation_id: Uuid,
+        archive_reason: &str,
         expected: &ExpectedReplayOutputs,
     ) -> Result<()> {
         let timeout = self
@@ -529,7 +527,7 @@ impl ReplayExecutionEngine {
         let wait_result = tokio::time::timeout(timeout, async {
             loop {
                 let validation = self
-                    .validate_replay_outputs(pool, operation_id, expected)
+                    .validate_replay_outputs(pool, operation_id, archive_reason, expected)
                     .await?;
                 if validation.complete() {
                     debug!(
@@ -553,7 +551,10 @@ impl ReplayExecutionEngine {
                 // be collapsed into a synthetic "-1 visible" timeout message —
                 // that misclassifies a persistence/availability outage as mere
                 // visibility lag and discards the real error entirely.
-                match self.validate_replay_outputs(pool, operation_id, expected).await {
+                match self
+                    .validate_replay_outputs(pool, operation_id, archive_reason, expected)
+                    .await
+                {
                     Ok(validation) => Err(SinexError::timeout(format!(
                         "Replay outputs did not match the archived source-material occurrence scope after successful scan within {:?} (matching={}, missing={}, unexpected={}, expected={})",
                         timeout,
@@ -611,7 +612,10 @@ impl ReplayExecutionEngine {
 
     /// Validate every material selected by the live scope before archiving its
     /// roots. The source scan may only run after this durable authority check.
-    pub(crate) async fn validate_scope_material_authority(&self, scope: &ReplayScope) -> Result<()> {
+    pub(crate) async fn validate_scope_material_authority(
+        &self,
+        scope: &ReplayScope,
+    ) -> Result<()> {
         if self.material_authority.is_none() {
             return Ok(());
         }
@@ -671,10 +675,14 @@ impl ReplayExecutionEngine {
                 .copied()
                 .map(sinex_primitives::Id::from_uuid)
                 .collect::<Vec<_>>();
-            let roots = pool.events().get_by_ids(&typed_ids).await.map_err(|error| {
-                SinexError::database("Failed to hydrate replay roots before archive")
-                    .with_source(error)
-            })?;
+            let roots = pool
+                .events()
+                .get_by_ids(&typed_ids)
+                .await
+                .map_err(|error| {
+                    SinexError::database("Failed to hydrate replay roots before archive")
+                        .with_source(error)
+                })?;
             if roots.len() != root_ids.len() {
                 return Err(SinexError::invalid_state(
                     "Replay root set changed while validating material coordinates before archive",
@@ -1104,7 +1112,8 @@ impl ReplayExecutionEngine {
         if rows.len() > REPLAY_SCOPE_METADATA_PAGE_SIZE as usize {
             return Err(SinexError::invalid_state(format!(
                 "Replay scope metadata repository returned {} rows for a {}-row page",
-                rows.len(), REPLAY_SCOPE_METADATA_PAGE_SIZE
+                rows.len(),
+                REPLAY_SCOPE_METADATA_PAGE_SIZE
             )));
         }
 

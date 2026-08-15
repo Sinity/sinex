@@ -17,13 +17,11 @@ async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
 
     // The event schema rejects anchors beyond a finalized material's declared
     // byte extent. This synthetic source has one byte position per root.
-    sqlx::query(
-        "UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2",
-    )
-    .bind(ROOT_COUNT)
-    .bind(material_id)
-    .execute(&ctx.pool)
-    .await?;
+    sqlx::query("UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2")
+        .bind(ROOT_COUNT)
+        .bind(material_id)
+        .execute(&ctx.pool)
+        .await?;
     let mut roots = (0..ROOT_COUNT)
         .map(|anchor| {
             let builder = DynamicPayload::new(
@@ -187,12 +185,11 @@ async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
         command_count, 11,
         "10,001 roots must cross the 1,000-root execution page boundary"
     );
-    let operation_meta: serde_json::Value = sqlx::query_scalar(
-        "SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid",
-    )
-    .bind(completed.operation_id)
-    .fetch_one(&ctx.pool)
-    .await?;
+    let operation_meta: serde_json::Value =
+        sqlx::query_scalar("SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid")
+            .bind(completed.operation_id)
+            .fetch_one(&ctx.pool)
+            .await?;
     let archive_journal = &operation_meta["scope_invalidation"];
     assert_eq!(
         archive_journal["archive_reason"],
@@ -1093,7 +1090,11 @@ async fn replay_anchor_payload_hash_match_is_silent(ctx: TestContext) -> Result<
 
     // Matching hashes — replacements recorded normally
     engine
-        .record_event_replacements(&ctx.pool, operation_id, "archive old replay target with hash")
+        .record_event_replacements(
+            &ctx.pool,
+            operation_id,
+            "archive old replay target with hash",
+        )
         .await?;
 
     let replacements = ctx
@@ -1294,7 +1295,12 @@ async fn output_validation_gate_passes_when_most_archived_events_never_return(
         source_material_ids: vec![*material_id.as_uuid()],
     };
     let visible = engine
-        .count_visible_replay_outputs(&ctx.pool, operation_id, &expected)
+        .count_visible_replay_outputs(
+            &ctx.pool,
+            operation_id,
+            "archive for output-gate trivial-satisfy test",
+            &expected,
+        )
         .await?;
 
     assert!(

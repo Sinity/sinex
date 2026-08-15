@@ -40,6 +40,15 @@ pub struct ArchivedReplayScopeMetadataRow {
     pub scope_key: String,
 }
 
+/// Cardinality comparison between archived material roots and one replay's
+/// newly persisted operation outputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayOutputMatchCounts {
+    pub matching_count: u64,
+    pub missing_count: u64,
+    pub unexpected_count: u64,
+}
+
 /// Bounded identity evidence for a replay scope.
 ///
 /// The complete root set is deliberately never retained in an operation
@@ -130,6 +139,93 @@ fn build_filter_query<'a>(
 // ── ReplayRepository methods ─────────────────────────────────────────────
 
 impl ReplayRepository<'_> {
+    /// Compare replay outputs with the archived material-root occurrence
+    /// multiset without hydrating either side into application memory.
+    ///
+    /// `row_number` makes duplicate occurrence keys compare as a multiset,
+    /// preserving the old Vec/HashMap validator's semantics while keeping the
+    /// working set in PostgreSQL. `IS NOT DISTINCT FROM` is intentional: an
+    /// absent offset kind is a meaningful persisted occurrence value.
+    pub async fn replay_output_match_counts(
+        &self,
+        archive_reason: &str,
+        operation_id: Uuid,
+    ) -> Result<ReplayOutputMatchCounts> {
+        let row = sqlx::query!(
+            r#"
+            WITH expected AS (
+                SELECT
+                    id,
+                    source,
+                    event_type,
+                    source_material_id,
+                    anchor_byte,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    row_number() OVER (
+                        PARTITION BY source, event_type, source_material_id,
+                            anchor_byte, offset_start, offset_end, offset_kind
+                        ORDER BY id
+                    ) AS ordinal
+                FROM audit.archived_events
+                WHERE archive_reason = $1
+                  AND source_material_id IS NOT NULL
+                  AND source_event_ids IS NULL
+            ), actual AS (
+                SELECT
+                    id,
+                    source,
+                    event_type,
+                    source_material_id,
+                    anchor_byte,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    row_number() OVER (
+                        PARTITION BY source, event_type, source_material_id,
+                            anchor_byte, offset_start, offset_end, offset_kind
+                        ORDER BY id
+                    ) AS ordinal
+                FROM core.events
+                WHERE created_by_operation_id = $2
+            ), compared AS (
+                SELECT expected.id AS expected_id, actual.id AS actual_id
+                FROM expected
+                FULL OUTER JOIN actual
+                  ON expected.source = actual.source
+                 AND expected.event_type = actual.event_type
+                 AND expected.source_material_id = actual.source_material_id
+                 AND expected.anchor_byte = actual.anchor_byte
+                 AND expected.offset_start IS NOT DISTINCT FROM actual.offset_start
+                 AND expected.offset_end IS NOT DISTINCT FROM actual.offset_end
+                 AND expected.offset_kind IS NOT DISTINCT FROM actual.offset_kind
+                 AND expected.ordinal = actual.ordinal
+            )
+            SELECT
+                count(*) FILTER (WHERE expected_id IS NOT NULL AND actual_id IS NOT NULL)::bigint AS "matching_count!",
+                count(*) FILTER (WHERE expected_id IS NOT NULL AND actual_id IS NULL)::bigint AS "missing_count!",
+                count(*) FILTER (WHERE expected_id IS NULL AND actual_id IS NOT NULL)::bigint AS "unexpected_count!"
+            FROM compared
+            "#,
+            archive_reason,
+            operation_id,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to compare replay output cardinality")
+                .with_source(error.to_string())
+                .with_operation("replay_output_match_counts")
+        })?;
+
+        Ok(ReplayOutputMatchCounts {
+            matching_count: row.matching_count as u64,
+            missing_count: row.missing_count as u64,
+            unexpected_count: row.unexpected_count as u64,
+        })
+    }
+
     // ── Advisory lock ────────────────────────────────────────────────────
 
     /// Acquire the per-source advisory lock for replay operation creation.
@@ -390,7 +486,10 @@ impl ReplayRepository<'_> {
     // ── Scope queries (preview) ──────────────────────────────────────────
 
     /// Build bounded identity evidence for the roots matching a replay scope.
-    pub async fn scope_root_snapshot(&self, scope: &ReplayScope) -> Result<ReplayScopeRootSnapshot> {
+    pub async fn scope_root_snapshot(
+        &self,
+        scope: &ReplayScope,
+    ) -> Result<ReplayScopeRootSnapshot> {
         let mut root_event_count = 0_u64;
         let mut root_event_id_sample = Vec::with_capacity(REPLAY_ROOT_SAMPLE_SIZE as usize);
         let mut hasher = blake3::Hasher::new();
@@ -516,8 +615,8 @@ impl ReplayRepository<'_> {
             " ORDER BY id DESC LIMIT $2"
         });
 
-        let mut request = sqlx::query_as::<_, ArchivedReplayScopeMetadataRow>(&query)
-            .bind(archive_reason);
+        let mut request =
+            sqlx::query_as::<_, ArchivedReplayScopeMetadataRow>(&query).bind(archive_reason);
         if let Some(after_id) = after_id {
             request = request.bind(after_id);
         }

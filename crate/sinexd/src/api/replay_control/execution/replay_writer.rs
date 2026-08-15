@@ -378,7 +378,7 @@ impl ReplayExecutionEngine {
                 expected_total_events,
                 executor_name,
             )
-        .await?;
+            .await?;
         let archive_reason = archived_cascade.archive_reason;
         let archived_count = archived_cascade.archived_count;
         let scoped_event_count = archived_cascade.scoped_event_count;
@@ -661,22 +661,12 @@ impl ReplayExecutionEngine {
                 .await;
         }
         if let Err(error) = self
-            .wait_for_replay_outputs_visible(pool, operation_id, &expected_replay_outputs)
-            .await
-        {
-            return self
-                .compensate_after_archive_failure(
-                    pool,
-                    &archive_reason,
-                    archived_count,
-                    scoped_event_count,
-                    operation_id,
-                    error,
-                )
-                .await;
-        }
-        if let Err(error) = self
-            .validate_material_authority(&expected_replay_outputs.source_material_ids)
+            .wait_for_replay_outputs_visible(
+                pool,
+                operation_id,
+                &archive_reason,
+                &expected_replay_outputs,
+            )
             .await
         {
             return self
@@ -982,25 +972,15 @@ impl ReplayExecutionEngine {
         );
 
         match self
-            .wait_for_staged_replay_outputs_or_cancel(pool, operation_id, expected_replay_outputs)
+            .wait_for_staged_replay_outputs_or_cancel(
+                pool,
+                operation_id,
+                archive_reason,
+                expected_replay_outputs,
+            )
             .await
         {
             StagedReplayWait::Visible => {
-                if let Err(error) = self
-                    .validate_material_authority(&expected_replay_outputs.source_material_ids)
-                    .await
-                {
-                    return self
-                        .compensate_after_archive_failure(
-                            pool,
-                            archive_reason,
-                            archived_count,
-                            scoped_event_count,
-                            operation_id,
-                            error,
-                        )
-                        .await;
-                }
                 if let Err(link_error) = self
                     .record_event_replacements(pool, operation_id, archive_reason)
                     .await
@@ -1071,6 +1051,7 @@ impl ReplayExecutionEngine {
         &self,
         pool: &sqlx::PgPool,
         operation_id: Uuid,
+        archive_reason: &str,
         expected: &ExpectedReplayOutputs,
     ) -> StagedReplayWait {
         let timeout = self
@@ -1081,7 +1062,7 @@ impl ReplayExecutionEngine {
         let wait_result = tokio::time::timeout(timeout, async {
             loop {
                 let validation = match self
-                    .validate_replay_outputs(pool, operation_id, expected)
+                    .validate_replay_outputs(pool, operation_id, archive_reason, expected)
                     .await
                 {
                     Ok(validation) => validation,
