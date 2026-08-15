@@ -469,10 +469,6 @@ impl ReplayExecutionEngine {
         let mut batch_number = 0_u32;
         let mut expected_replay_outputs = ExpectedReplayOutputs {
             minimum_visible_count: 0,
-            sources: Vec::new(),
-            event_types: Vec::new(),
-            logical_source_identifiers: Vec::new(),
-            expected_outputs: Vec::new(),
             source_material_ids: Vec::new(),
         };
         let mut control_source_name: Option<String> = None;

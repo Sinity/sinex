@@ -7,8 +7,8 @@ use super::*;
 use crate::runtime::automaton::invalidation::INVALIDATION_SUBJECT;
 use crate::runtime::stream::ScanReport;
 use crate::runtime::stream::{
-    Checkpoint, ResolvedReplayMaterial, SourceScanAck, SourceScanCancel, SourceScanCommand,
-    SourceScanProgress, ReplayMaterialOccurrence,
+    Checkpoint, ReplayMaterialOccurrence, ResolvedReplayMaterial, SourceScanAck, SourceScanCancel,
+    SourceScanCommand, SourceScanProgress,
 };
 use async_nats::Client;
 use futures::StreamExt;
@@ -695,14 +695,10 @@ fn spawn_replay_output_inserter(
 }
 
 #[sinex_test]
-async fn replay_output_expectations_deduplicate_logical_sources() -> Result<()> {
+async fn replay_output_expectations_require_replay_materials() -> Result<()> {
     let logical_source = "/tmp/replay-dedup.txt";
     let expected = ExpectedReplayOutputs {
-        minimum_visible_count: 0,
-        sources: vec!["fs-test".to_string()],
-        event_types: vec![FileCreatedPayload::EVENT_TYPE.as_static_str().to_string()],
-        logical_source_identifiers: Vec::new(),
-        expected_outputs: Vec::new(),
+        minimum_visible_count: 1,
         source_material_ids: Vec::new(),
     };
     let replay_materials = vec![
@@ -725,14 +721,11 @@ async fn replay_output_expectations_deduplicate_logical_sources() -> Result<()> 
     ];
 
     let expected =
-        ReplayExecutionEngine::with_logical_source_identifiers(expected, &replay_materials)
-            .expect("logical source expectation should succeed");
+        ReplayExecutionEngine::validate_replay_materials_present(expected, &replay_materials)
+            .expect("replay material expectation should succeed");
 
     assert_eq!(expected.minimum_visible_count, 1);
-    assert_eq!(
-        expected.logical_source_identifiers,
-        vec![logical_source.to_string()]
-    );
+    assert!(expected.source_material_ids.is_empty());
     Ok(())
 }
 
@@ -779,16 +772,15 @@ async fn replay_scan_control_source_keeps_scope_without_runtime_identity() -> Re
 
 #[sinex_test]
 async fn replay_coordinate_validation_rejects_incomplete_range() -> Result<()> {
-    let error = ReplayExecutionEngine::validate_replay_material_occurrences(&[
-        ReplayMaterialOccurrence {
+    let error =
+        ReplayExecutionEngine::validate_replay_material_occurrences(&[ReplayMaterialOccurrence {
             source_material_id: Uuid::now_v7(),
             anchor_byte: 12,
             offset_start: Some(12),
             offset_end: None,
             record_metadata: json!(null),
-        },
-    ])
-    .expect_err("an incomplete replay range must fail before archive");
+        }])
+        .expect_err("an incomplete replay range must fail before archive");
 
     assert!(error_contains(&error, "missing offset_end"));
     Ok(())
@@ -1063,11 +1055,11 @@ async fn replay_client_honors_a_configured_timeout_longer_than_ten_seconds(
 mod abort;
 #[path = "tests/bookkeeping.rs"]
 mod bookkeeping;
+#[path = "tests/cascade_restore_parent_liveness.rs"]
+mod cascade_restore_parent_liveness;
 #[path = "tests/execution_failures.rs"]
 mod execution_failures;
 #[path = "tests/execution_outcome.rs"]
 mod execution_outcome;
 #[path = "tests/staged_replay.rs"]
 mod staged_replay;
-#[path = "tests/cascade_restore_parent_liveness.rs"]
-mod cascade_restore_parent_liveness;

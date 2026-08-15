@@ -78,14 +78,6 @@ pub(super) struct ExtendedMaterialOccurrenceKey {
     offset_kind: Option<String>,
 }
 
-/// One material event that a successful replay must re-emit.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct ExpectedReplayOutput {
-    pub(super) occurrence: ExtendedMaterialOccurrenceKey,
-    pub(super) source: String,
-    pub(super) event_type: String,
-}
-
 #[derive(Debug)]
 pub(super) struct ScopeInvalidationBucket {
     /// One archive-metadata page contributes at most
@@ -800,13 +792,6 @@ pub(super) struct ExpectedReplayOutputs {
     /// source scan. This is proportional to the archived replay roots, not a
     /// distinct logical-source label.
     pub(super) minimum_visible_count: u64,
-    /// Batch-local labels used to route and diagnose one scan handoff.
-    pub(super) sources: Vec<String>,
-    pub(super) event_types: Vec<String>,
-    pub(super) logical_source_identifiers: Vec<String>,
-    /// Batch-local occurrence evidence. Final matching uses the archive
-    /// journal in PostgreSQL so this never becomes operation-wide state.
-    pub(super) expected_outputs: Vec<ExpectedReplayOutput>,
     /// Batch-local CAS authority inputs; checked before the batch is released.
     pub(super) source_material_ids: Vec<Uuid>,
 }

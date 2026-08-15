@@ -3,9 +3,8 @@
 //! engine type itself and the public-API entry points.
 
 use super::{
-    ExpectedReplayOutput, ExpectedReplayOutputs, ExtendedMaterialOccurrenceKey,
-    OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT, ReplayExecutionEngine,
-    ScopeInvalidationBucket,
+    ExpectedReplayOutputs, OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT,
+    ReplayExecutionEngine, ScopeInvalidationBucket,
 };
 use crate::runtime::automaton::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
@@ -164,7 +163,7 @@ impl ReplayExecutionEngine {
             .collect();
         let replay_materials = self.resolve_replay_materials(pool, &material_ids).await?;
         let replay_occurrences = Self::replay_material_occurrences(&material_roots)?;
-        let expected_outputs = Self::with_logical_source_identifiers(
+        let expected_outputs = Self::validate_replay_materials_present(
             Self::expected_replay_outputs(&material_roots)?,
             &replay_materials,
         )?;
@@ -185,17 +184,6 @@ impl ReplayExecutionEngine {
         batch: ExpectedReplayOutputs,
     ) {
         aggregate.minimum_visible_count += batch.minimum_visible_count;
-        aggregate.sources.extend(batch.sources);
-        aggregate.event_types.extend(batch.event_types);
-        aggregate
-            .logical_source_identifiers
-            .extend(batch.logical_source_identifiers);
-        aggregate.sources.sort_unstable();
-        aggregate.sources.dedup();
-        aggregate.event_types.sort_unstable();
-        aggregate.event_types.dedup();
-        aggregate.logical_source_identifiers.sort_unstable();
-        aggregate.logical_source_identifiers.dedup();
         // Expected occurrence keys and material IDs are batch-local evidence.
         // Output matching is performed against the archive journal in the
         // database, and material authority is checked before this batch is
@@ -256,42 +244,14 @@ impl ReplayExecutionEngine {
             ));
         }
 
-        let mut sources = HashSet::new();
-        let mut event_types = HashSet::new();
-        let mut expected_outputs = Vec::with_capacity(material_roots.len());
+        let mut expected_output_count = 0_u64;
         let mut source_material_ids = HashSet::new();
 
         for event in material_roots {
-            sources.insert(event.source.as_ref().to_string());
-            event_types.insert(event.event_type.as_ref().to_string());
             match &event.provenance {
-                Provenance::Material {
-                    id,
-                    anchor_byte,
-                    offset_start,
-                    offset_end,
-                    offset_kind,
-                } => {
+                Provenance::Material { id, .. } => {
                     source_material_ids.insert(*id.as_uuid());
-                    expected_outputs.push(ExpectedReplayOutput {
-                        occurrence: ExtendedMaterialOccurrenceKey {
-                            source_material_id: *id.as_uuid(),
-                            anchor_byte: *anchor_byte,
-                            offset_start: *offset_start,
-                            offset_end: *offset_end,
-                            // The database representation only stores the
-                            // offset kind when both range endpoints exist;
-                            // mirror extract_provenance so replay validation
-                            // compares canonical persisted occurrence keys.
-                            offset_kind: if offset_start.is_some() && offset_end.is_some() {
-                                Some(offset_kind.as_wire_str().to_string())
-                            } else {
-                                None
-                            },
-                        },
-                        source: event.source.as_ref().to_string(),
-                        event_type: event.event_type.as_ref().to_string(),
-                    });
+                    expected_output_count += 1;
                 }
                 Provenance::Derived { .. } => {
                     return Err(SinexError::invalid_state(format!(
@@ -302,19 +262,11 @@ impl ReplayExecutionEngine {
             }
         }
 
-        let mut sources: Vec<_> = sources.into_iter().collect();
-        sources.sort_unstable();
-        let mut event_types: Vec<_> = event_types.into_iter().collect();
-        event_types.sort_unstable();
         let mut source_material_ids: Vec<_> = source_material_ids.into_iter().collect();
         source_material_ids.sort_unstable();
 
         Ok(ExpectedReplayOutputs {
-            minimum_visible_count: expected_outputs.len() as u64,
-            sources,
-            event_types,
-            logical_source_identifiers: Vec::new(),
-            expected_outputs,
+            minimum_visible_count: expected_output_count,
             source_material_ids,
         })
     }
@@ -433,24 +385,15 @@ impl ReplayExecutionEngine {
             )
     }
 
-    pub(crate) fn with_logical_source_identifiers(
-        mut expected: ExpectedReplayOutputs,
+    pub(crate) fn validate_replay_materials_present(
+        expected: ExpectedReplayOutputs,
         replay_materials: &[ResolvedReplayMaterial],
     ) -> Result<ExpectedReplayOutputs> {
-        let mut logical_source_identifiers = replay_materials
-            .iter()
-            .map(Self::logical_source_identifier)
-            .collect::<Vec<_>>();
-        logical_source_identifiers.sort_unstable();
-        logical_source_identifiers.dedup();
-
-        if logical_source_identifiers.is_empty() {
+        if replay_materials.is_empty() {
             return Err(SinexError::invalid_state(
-                "Replay output expectations require at least one logical source identifier",
+                "Replay output expectations require at least one replay material",
             ));
         }
-
-        expected.logical_source_identifiers = logical_source_identifiers;
         Ok(expected)
     }
 
@@ -500,7 +443,7 @@ impl ReplayExecutionEngine {
         pool: &sqlx::PgPool,
         operation_id: Uuid,
         archive_reason: &str,
-        expected: &ExpectedReplayOutputs,
+        _expected: &ExpectedReplayOutputs,
     ) -> Result<ReplayOutputValidation> {
         let counts = pool
             .replay()
