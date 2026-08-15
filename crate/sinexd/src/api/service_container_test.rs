@@ -261,6 +261,115 @@ async fn startup_recovery_restores_terminal_failed_replay_archive_debt(
 }
 
 #[sinex_test]
+async fn terminal_replay_archive_recovery_stays_retryable_on_occurrence_conflict(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let replay = sinex_db::replay::state_machine::ReplayStateMachine::new(ctx.pool.clone());
+    let operation = replay
+        .create_operation(
+            ReplayScope {
+                source_name: "terminal-recovery-conflict".to_string(),
+                filters: HashMap::new(),
+                ..Default::default()
+            },
+            "test:conflict".to_string(),
+        )
+        .await?;
+    let material_id = ctx
+        .create_source_material(Some("terminal-recovery-conflict-material"))
+        .await?;
+    let original = ctx
+        .pool()
+        .events()
+        .insert(
+            FileCreatedPayload {
+                path: "/tmp/terminal-recovery-conflict.txt".into(),
+                size: 7,
+                created_at: sinex_primitives::Timestamp::now(),
+                permissions: None,
+            }
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+    let original_id = original.id.expect("original event should have an id");
+    let archive_reason = format!(
+        "superseded by replay re-execution (operation {})",
+        operation.operation_id
+    );
+    ctx.pool()
+        .events()
+        .execute_cascade_archive(
+            &[*original_id.as_uuid()],
+            &archive_reason,
+            &operation.operation_id.to_string(),
+            "test",
+        )
+        .await?;
+
+    // A fresh interpretation of the same material occurrence wins the
+    // occurrence-safety race. Recovery must report no progress and retain
+    // the debt instead of falsely marking recovery successful.
+    ctx.pool()
+        .events()
+        .insert(
+            FileCreatedPayload {
+                path: "/tmp/terminal-recovery-conflict-reemitted.txt".into(),
+                size: 8,
+                created_at: sinex_primitives::Timestamp::now(),
+                permissions: None,
+            }
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+    ctx.pool()
+        .state()
+        .update_operation_meta(
+            &sinex_primitives::Id::<sinex_db::repositories::Operation>::from_uuid(
+                operation.operation_id,
+            ),
+            OperationStatus::Failed,
+            Some("compensation failed after archive"),
+            serde_json::json!({"archive_recovery": {"remaining_archived_events": 1}}),
+        )
+        .await?;
+
+    let error = ctx
+        .pool()
+        .state()
+        .recover_replay_archive("test:operator", operation.operation_id)
+        .await
+        .expect_err("occurrence conflict must keep recovery visibly retryable");
+    assert!(error.to_string().contains("no progress"));
+    assert_eq!(
+        ctx.pool()
+            .state()
+            .list_failed_replay_archive_debt(32)
+            .await?
+            .len(),
+        1
+    );
+    let failed_recoveries = ctx
+        .pool()
+        .state()
+        .list_operations(
+            Some("replay-archive-recovery"),
+            Some(OperationStatus::Failed),
+            10,
+        )
+        .await?;
+    assert_eq!(failed_recoveries.len(), 1);
+    assert!(
+        failed_recoveries[0]
+            .result_message
+            .as_deref()
+            .is_some_and(|message| message.contains("no progress"))
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn startup_recovery_restores_a_cascade_stranded_by_an_immediate_restart(
     ctx: TestContext,
 ) -> TestResult<()> {
