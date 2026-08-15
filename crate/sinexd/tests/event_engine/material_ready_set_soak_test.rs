@@ -77,10 +77,15 @@ async fn route_level_material_ready_set_soak(ctx: TestContext) -> TestResult<()>
     let consumer_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
 
     let mut events = Vec::with_capacity(event_count);
-    let source = "readyset_soak";
-    let event_type = "readyset_soak";
+    // Use the same registered synthetic event contract as the proven consumer
+    // route tests. An invented source/type pair would exercise schema/DLQ
+    // rejection rather than MaterialReadySet admission.
+    let source = "r6d12soak";
+    let event_type = "r6d12soak.ready";
+    let mut first_event_id = None;
     for index in 0..event_count {
         let event_id = Uuid::now_v7();
+        first_event_id.get_or_insert(event_id);
         events.push(json!({
             "id": event_id.to_string(),
             "source": source,
@@ -90,8 +95,7 @@ async fn route_level_material_ready_set_soak(ctx: TestContext) -> TestResult<()>
             "host": "test-host",
             "source_material_id": support::FIXTURE_SOURCE_MATERIAL_ID,
             "anchor_byte": index,
-            "offset_start": index,
-            "offset_end": index + 1,
+            "equivalence_key": null,
         }));
     }
     let subject = env.nats_subject_with_namespace(
@@ -111,6 +115,14 @@ async fn route_level_material_ready_set_soak(ctx: TestContext) -> TestResult<()>
         .await?;
     nats_client.flush().await?;
 
+    WaitHelpers::wait_for_event_id(
+        &ctx.pool,
+        first_event_id
+            .expect("event_count is configured positive")
+            .into(),
+        Timeouts::LONG,
+    )
+    .await?;
     WaitHelpers::wait_for_source_events(&ctx.pool, source, event_count, Timeouts::LONG).await?;
     let elapsed = started.elapsed();
     let after = ready_set.metrics_snapshot();
