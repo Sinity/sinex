@@ -539,6 +539,24 @@ async fn stale_cas_lease_is_reported_and_does_not_protect_unreferenced_object_in
 async fn referenced_cas_quarantine_is_restored_by_apply_reconciliation(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("cas-quarantine-reconciliation".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            runtime.block_on(async move {
+                referenced_cas_quarantine_is_restored_by_apply_reconciliation_inner(ctx).await
+            })
+        })
+        .map_err(|error| eyre!(error))?
+        .join()
+        .map_err(|_| eyre!("CAS quarantine reconciliation test thread panicked"))??;
+    Ok(())
+}
+
+async fn referenced_cas_quarantine_is_restored_by_apply_reconciliation_inner(
+    ctx: TestContext,
+) -> TestResult<()> {
     let store_dir = tempfile::tempdir()?;
     let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
         .expect("temporary content-store path must be UTF-8");
