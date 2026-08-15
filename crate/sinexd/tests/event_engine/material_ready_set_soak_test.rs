@@ -45,7 +45,6 @@ async fn route_level_material_ready_set_soak(ctx: TestContext) -> TestResult<()>
     let cardinality = configured_usize("SINEX_READY_SET_SOAK_CARDINALITY", DEFAULT_CARDINALITY);
     let event_count = configured_usize("SINEX_READY_SET_SOAK_EVENT_COUNT", DEFAULT_EVENT_COUNT);
     let ctx = ctx.with_nats().shared().await?;
-    println!("readyset soak: context ready");
     let nats_client = ctx.nats_client();
     let js = ctx.jetstream().await?;
     let env = ctx.env();
@@ -76,11 +75,10 @@ async fn route_level_material_ready_set_soak(ctx: TestContext) -> TestResult<()>
     .with_ready_set(ready_set.clone())
     .with_max_ack_pending(1_000);
     let consumer_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
-    println!("readyset soak: consumer ready");
 
     let mut events = Vec::with_capacity(event_count);
-    let source = "readyset-soak";
-    let event_type = "readyset.soak";
+    let source = "readyset_soak";
+    let event_type = "readyset_soak";
     for index in 0..event_count {
         let event_id = Uuid::now_v7();
         events.push(json!({
@@ -112,10 +110,8 @@ async fn route_level_material_ready_set_soak(ctx: TestContext) -> TestResult<()>
         )
         .await?;
     nats_client.flush().await?;
-    println!("readyset soak: raw envelope published");
 
     WaitHelpers::wait_for_source_events(&ctx.pool, source, event_count, Timeouts::LONG).await?;
-    println!("readyset soak: persistence observed");
     let elapsed = started.elapsed();
     let after = ready_set.metrics_snapshot();
     println!(
