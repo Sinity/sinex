@@ -1,4 +1,5 @@
 use super::*;
+use xtask::TestContext;
 #[sinex_test]
 async fn replay_execution_fails_when_outputs_never_become_query_visible(
     ctx: TestContext,
@@ -495,6 +496,8 @@ async fn replay_execution_restores_archived_cascade_when_dispatch_fails_before_a
         json!({ "path": "/tmp/replay-pre-ack-failure.txt" }),
     )
     .from_material(material_id)
+    .with_offset_start(0)?
+    .with_offset_end(1)?
     .build()?;
     let inserted = ctx.pool.events().insert(event).await?;
     let target_id = inserted
@@ -674,6 +677,23 @@ async fn replay_execution_fails_before_archive_when_scope_metadata_collection_fa
 async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publish_fails(
     ctx: TestContext,
 ) -> Result<()> {
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("replay-scope-invalidation-failure".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || runtime.block_on(async move {
+            replay_execution_restores_cascade_when_initial_scope_invalidation_publish_fails_inner(ctx)
+                .await
+        }))
+        .map_err(|error| test_error(format!("failed to start replay test thread: {error}")))?
+        .join()
+        .map_err(|_| test_error("replay test thread panicked"))??;
+    Ok(())
+}
+
+async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publish_fails_inner(
+    ctx: TestContext,
+) -> xtask::TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
     let material_id = ctx
@@ -685,6 +705,8 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
         json!({ "path": "/tmp/replay-scope-invalidation-publish-failure.txt" }),
     )
     .from_material(material_id)
+    .with_offset_start(0)?
+    .with_offset_end(1)?
     .build()?;
     event.scope_key = Some("scope://scope-invalidation-test/replay".to_string());
     let inserted = ctx.pool.events().insert(event).await?;
