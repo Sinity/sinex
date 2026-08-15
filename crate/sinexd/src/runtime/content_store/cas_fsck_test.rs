@@ -334,6 +334,24 @@ async fn fsck_runtime_budget_stops_before_pending_deletion_reconciliation(
 async fn live_cas_lease_survives_restart_and_protects_fsck_until_commit(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("cas-fsck-lease-lifecycle-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            runtime.block_on(async move {
+                live_cas_lease_survives_restart_and_protects_fsck_until_commit_inner(ctx).await
+            })
+        })
+        .map_err(|error| eyre!(error))?
+        .join()
+        .map_err(|_| eyre!("CAS fsck lease lifecycle test thread panicked"))??;
+    Ok(())
+}
+
+async fn live_cas_lease_survives_restart_and_protects_fsck_until_commit_inner(
+    ctx: TestContext,
+) -> TestResult<()> {
     let store_dir = tempfile::tempdir()?;
     let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
         .expect("temporary content-store path must be UTF-8");
