@@ -92,7 +92,46 @@ async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> SinexRe
         )
         .with_operation("gateway.recover_stale_replay_operations")
         .with_source(error.to_string())),
+    }?;
+
+    // A compensation failure can leave a terminal Failed replay with durable
+    // archive rows. It is not covered by stale-state recovery because there
+    // is no live executor to classify as stale. Reconcile this debt in bounded
+    // pages before the gateway starts serving requests.
+    const ARCHIVE_RECOVERY_PAGE_SIZE: i64 = 32;
+    loop {
+        let debt = replay
+            .pool()
+            .state()
+            .list_failed_replay_archive_debt(ARCHIVE_RECOVERY_PAGE_SIZE)
+            .await
+            .map_err(|error| {
+                SinexError::service(
+                    "Failed to census terminal replay archive recovery debt on startup",
+                )
+                .with_operation("gateway.recover_failed_replay_archive_debt")
+                .with_source(error.to_string())
+            })?;
+        if debt.is_empty() {
+            break;
+        }
+        for replay_operation_id in debt {
+            replay
+                .pool()
+                .state()
+                .recover_replay_archive("system:sinexd-startup-recovery", replay_operation_id)
+                .await
+                .map_err(|error| {
+                    SinexError::service(
+                        "Failed to recover terminal replay archive debt on startup",
+                    )
+                    .with_operation("gateway.recover_failed_replay_archive_debt")
+                    .with_id("replay_operation_id", replay_operation_id.to_string())
+                    .with_source(error.to_string())
+                })?;
+        }
     }
+    Ok(())
 }
 
 impl ServiceContainer {

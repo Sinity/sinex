@@ -2143,7 +2143,7 @@ RETURNS UUID AS $$
 DECLARE
     v_operation_id UUID;
 BEGIN
-    IF p_operation_type NOT IN ('import', 'replay', 'archive', 'restore', 'purge', 'tombstone', 'dlq.requeue', 'projection-rebuild') THEN
+    IF p_operation_type NOT IN ('import', 'replay', 'archive', 'restore', 'purge', 'tombstone', 'dlq.requeue', 'projection-rebuild', 'replay-archive-recovery') THEN
         RAISE EXCEPTION 'Unsupported managed operation type: %', p_operation_type
             USING ERRCODE = '22023';
     END IF;

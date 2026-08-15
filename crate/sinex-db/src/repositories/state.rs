@@ -12,9 +12,11 @@ use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use num_traits::ToPrimitive;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{HealthStatus, ModuleKind, ModuleName, ModuleState, OperationStatus};
-use sinex_primitives::{RuntimeLivenessEvidence, RuntimeLivenessMembership};
+use sinex_primitives::domain::{
+    HealthStatus, ModuleKind, ModuleName, ModuleState, OperationStatus,
+};
 use sinex_primitives::error::SinexError;
+use sinex_primitives::{RuntimeLivenessEvidence, RuntimeLivenessMembership};
 use sqlx::postgres::types::PgRange;
 use sqlx::{Executor, PgPool, Postgres};
 use std::ops::Bound;
@@ -35,8 +37,7 @@ use helpers::{
 pub use types::{
     AutomataStatusRow, LiveModulePresence, ManifestRow, ModuleHealthSummary, ModuleManifest,
     ModuleRun, Operation, OperationRecord, OperationStatistics, RuntimeLivenessEvidenceRow,
-    SourcesStatusRow,
-    SystemHealthReport,
+    SourcesStatusRow, SystemHealthReport,
 };
 
 /// State repository combining checkpoints and operations
@@ -740,6 +741,33 @@ impl StateRepository<'_> {
                 Err(error)
             }
         }
+    }
+
+    /// Return terminal replay operations whose archive journal still contains
+    /// rows. These are recoverable debt even when the original operation is no
+    /// longer in an executing/cancelling/committing state; startup must not
+    /// mistake a terminal status for proof that the archive is empty.
+    pub async fn list_failed_replay_archive_debt(&self, limit: i64) -> DbResult<Vec<Uuid>> {
+        sqlx::query_scalar(
+            r#"
+            SELECT o.id
+            FROM core.operations_log AS o
+            WHERE o.operation_type = 'replay'
+              AND o.result_status = 'failure'
+              AND EXISTS (
+                  SELECT 1
+                  FROM audit.archived_events AS ae
+                  WHERE ae.archive_reason =
+                      'superseded by replay re-execution (operation ' || o.id::text || ')'
+              )
+            ORDER BY o.id
+            LIMIT $1
+            "#,
+        )
+        .bind(limit.clamp(1, 100))
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list failed replay archive recovery debt"))
     }
 
     /// Drain a pending replay scope invalidation marker through a completed

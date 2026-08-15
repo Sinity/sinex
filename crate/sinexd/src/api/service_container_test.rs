@@ -8,6 +8,7 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_db::validation::SchemaCompilationFailure;
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::events::{EventPayload, payloads::FileCreatedPayload};
 use sinex_primitives::rpc::system::SystemHealthRequest;
 use serde_json::json;
@@ -171,6 +172,91 @@ async fn stale_replay_recovery_surfaces_startup_failures() -> TestResult<()> {
     let message = error.to_string();
     assert!(message.contains("Failed to recover stale replay operations on startup"));
     assert!(message.contains("gateway.recover_stale_replay_operations"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn startup_recovery_restores_terminal_failed_replay_archive_debt(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let replay = sinex_db::replay::state_machine::ReplayStateMachine::new(ctx.pool.clone());
+    let operation = replay
+        .create_operation(
+            ReplayScope {
+                source_name: "startup-terminal-failed-replay".to_string(),
+                time_window: None,
+                material_filter: None,
+                filters: HashMap::new(),
+                ..Default::default()
+            },
+            "test:startup-recovery".to_string(),
+        )
+        .await?;
+
+    let material_id = ctx
+        .create_source_material(Some("terminal-failed-replay-material"))
+        .await?;
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            FileCreatedPayload {
+                path: "/tmp/terminal-failed-replay.txt".into(),
+                size: 7,
+                created_at: sinex_primitives::Timestamp::now(),
+                permissions: None,
+            }
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event should have an id");
+    let archive_reason = format!(
+        "superseded by replay re-execution (operation {})",
+        operation.operation_id
+    );
+    ctx.pool()
+        .events()
+        .execute_cascade_archive(
+            &[*event_id.as_uuid()],
+            &archive_reason,
+            &operation.operation_id.to_string(),
+            "test",
+        )
+        .await?;
+    ctx.pool()
+        .state()
+        .update_operation_meta(
+            &sinex_primitives::Id::<sinex_db::repositories::Operation>::from_uuid(
+                operation.operation_id,
+            ),
+            OperationStatus::Failed,
+            Some("compensation failed after archive"),
+            serde_json::json!({"archive_recovery": {"remaining_archived_events": 1}}),
+        )
+        .await?;
+
+    assert!(ctx.pool().events().get_by_id(event_id).await?.is_none());
+    assert_eq!(
+        ctx.pool()
+            .state()
+            .list_failed_replay_archive_debt(32)
+            .await?
+            .len(),
+        1
+    );
+
+    recover_stale_replay_operations(&replay).await?;
+
+    assert!(ctx.pool().events().get_by_id(event_id).await?.is_some());
+    assert!(
+        ctx.pool()
+            .state()
+            .list_failed_replay_archive_debt(32)
+            .await?
+            .is_empty(),
+        "startup recovery must not leave terminal failed archive debt behind"
+    );
     Ok(())
 }
 
