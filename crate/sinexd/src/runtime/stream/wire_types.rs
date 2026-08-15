@@ -111,6 +111,10 @@ pub struct ReplayMaterialOccurrence {
 
     /// The coordinate unit used by the original material provenance. The
     /// bounded CAS replay route currently reconstructs byte ranges only.
+    /// Missing values from pre-`offset_kind` internal messages retain the
+    /// historical byte-coordinate meaning; explicit non-byte values fail
+    /// closed before archive.
+    #[serde(default)]
     pub offset_kind: OffsetKind,
 
     /// Original record start in the material when known.
