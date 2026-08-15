@@ -3070,6 +3070,64 @@ fn file_drop_replay_fails_closed_without_durable_range_coordinates() {
     );
 }
 
+#[test]
+fn replay_context_preflight_rejects_non_byte_coordinates_before_work() {
+    let material_id = Uuid::nil();
+    let replay = MaterialReplayContext {
+        operation_id: Uuid::now_v7(),
+        materials: vec![ResolvedReplayMaterial {
+            source_material_id: material_id,
+            material_kind: "local_cas".to_string(),
+            source_identifier: "test-material".to_string(),
+            material_metadata: JsonValue::Null,
+            material_start_time: None,
+            material_end_time: None,
+        }],
+        occurrences: vec![ReplayMaterialOccurrence {
+            source_material_id: material_id,
+            anchor_byte: 4,
+            offset_kind: sinex_primitives::events::OffsetKind::Record,
+            offset_start: Some(4),
+            offset_end: Some(8),
+            record_metadata: JsonValue::Null,
+        }],
+        replay_scope: ReplayScopeFilters::default(),
+    };
+
+    let error = validate_material_replay_context(&replay)
+        .expect_err("non-byte native coordinates must fail before CAS work");
+    assert!(error.to_string().contains("non-byte occurrence coordinate"));
+}
+
+#[test]
+fn replay_context_preflight_rejects_missing_coordinates_before_work() {
+    let material_id = Uuid::nil();
+    let replay = MaterialReplayContext {
+        operation_id: Uuid::now_v7(),
+        materials: vec![ResolvedReplayMaterial {
+            source_material_id: material_id,
+            material_kind: "local_cas".to_string(),
+            source_identifier: "test-material".to_string(),
+            material_metadata: JsonValue::Null,
+            material_start_time: None,
+            material_end_time: None,
+        }],
+        occurrences: vec![ReplayMaterialOccurrence {
+            source_material_id: material_id,
+            anchor_byte: 4,
+            offset_kind: sinex_primitives::events::OffsetKind::Byte,
+            offset_start: Some(4),
+            offset_end: None,
+            record_metadata: JsonValue::Null,
+        }],
+        replay_scope: ReplayScopeFilters::default(),
+    };
+
+    let error = validate_material_replay_context(&replay)
+        .expect_err("missing byte coordinates must fail before archive/replay");
+    assert!(error.to_string().contains("missing offset_end"));
+}
+
 /// The FileDrop parity check must use the same serialized bytes and append
 /// acquirer that live capture uses. Synthetic non-zero offsets can pass while
 /// the live/replay coordinate spaces still disagree.
