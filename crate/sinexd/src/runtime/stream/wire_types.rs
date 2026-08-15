@@ -6,6 +6,7 @@ use super::{Checkpoint, TimeHorizon};
 use serde::{Deserialize, Serialize};
 use sinex_db::SourceMaterialRecord;
 use sinex_primitives::{Timestamp, Uuid};
+use sinex_primitives::events::OffsetKind;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -107,6 +108,10 @@ pub struct ReplayMaterialOccurrence {
 
     /// Original stable occurrence anchor.
     pub anchor_byte: i64,
+
+    /// The coordinate unit used by the original material provenance. The
+    /// bounded CAS replay route currently reconstructs byte ranges only.
+    pub offset_kind: OffsetKind,
 
     /// Original record start in the material when known.
     pub offset_start: Option<i64>,

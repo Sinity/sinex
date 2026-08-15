@@ -14,7 +14,7 @@ use sinex_db::repositories::replay::{
 };
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_primitives::domain::{EventSource, EventType, SourceIdentifier};
-use sinex_primitives::events::{Event as StoredEvent, Provenance};
+use sinex_primitives::events::{Event as StoredEvent, OffsetKind, Provenance};
 use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid, transport};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -283,6 +283,7 @@ impl ReplayExecutionEngine {
             let Provenance::Material {
                 id,
                 anchor_byte,
+                offset_kind,
                 offset_start,
                 offset_end,
                 ..
@@ -296,6 +297,7 @@ impl ReplayExecutionEngine {
             occurrences.push(ReplayMaterialOccurrence {
                 source_material_id: *id.as_uuid(),
                 anchor_byte: *anchor_byte,
+                offset_kind: *offset_kind,
                 offset_start: *offset_start,
                 offset_end: *offset_end,
                 record_metadata: file_drop_record_metadata(event)?,
@@ -325,6 +327,17 @@ impl ReplayExecutionEngine {
         occurrences: &[ReplayMaterialOccurrence],
     ) -> Result<()> {
         for occurrence in occurrences {
+            if occurrence.offset_kind != OffsetKind::Byte {
+                return Err(SinexError::invalid_state(
+                    "Replay occurrence uses a non-byte coordinate; the CAS replay route cannot safely reconstruct it",
+                )
+                .with_context(
+                    "source_material_id",
+                    occurrence.source_material_id.to_string(),
+                )
+                .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+                .with_context("offset_kind", occurrence.offset_kind.as_wire_str()));
+            }
             if occurrence.anchor_byte < 0 {
                 return Err(SinexError::invalid_state(
                     "Replay occurrence anchor_byte must be non-negative",

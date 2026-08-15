@@ -1677,6 +1677,7 @@ async fn directory_walk_scoped_replay_fails_closed_before_source_rescan(
                     occurrences: vec![ReplayMaterialOccurrence {
                         source_material_id: selected_material,
                         anchor_byte: 0,
+                        offset_kind: sinex_primitives::events::OffsetKind::Byte,
                         offset_start: None,
                         offset_end: None,
                         record_metadata: JsonValue::Null,
@@ -2996,6 +2997,7 @@ fn file_drop_replay_reuses_original_append_offsets() {
     let occurrence_one = crate::runtime::stream::ReplayMaterialOccurrence {
         source_material_id: Uuid::nil(),
         anchor_byte: 17,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
         offset_start: Some(17),
         offset_end: Some(23),
         record_metadata: json!({"event_kind": "Deleted", "path": "/tmp/one"}),
@@ -3003,6 +3005,7 @@ fn file_drop_replay_reuses_original_append_offsets() {
     let occurrence_two = crate::runtime::stream::ReplayMaterialOccurrence {
         source_material_id: Uuid::nil(),
         anchor_byte: 23,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
         offset_start: Some(23),
         offset_end: Some(31),
         record_metadata: json!({"event_kind": "Deleted", "path": "/tmp/two"}),
@@ -3029,6 +3032,7 @@ fn file_drop_replay_reuses_original_append_offsets() {
     let content_occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
         source_material_id: Uuid::nil(),
         anchor_byte: 0,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
         offset_start: Some(0),
         offset_end: Some(42),
         record_metadata: json!({
@@ -3050,6 +3054,7 @@ fn file_drop_replay_fails_closed_without_durable_range_coordinates() {
     let occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
         source_material_id: Uuid::nil(),
         anchor_byte: 0,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
         offset_start: None,
         offset_end: None,
         record_metadata: json!({"event_kind": "Created", "path": "/tmp/missing"}),
@@ -3097,6 +3102,7 @@ async fn file_drop_replay_anchor_matches_live_append_capture(ctx: TestContext) -
     let occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
         source_material_id: live.material_id,
         anchor_byte: live.offset_start,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
         offset_start: Some(live.offset_start),
         offset_end: Some(live.offset_end),
         record_metadata: record.metadata,
@@ -3170,6 +3176,7 @@ async fn file_drop_replay_preserves_each_live_append_occurrence(
         let occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
             source_material_id: live.material_id,
             anchor_byte: live.offset_start,
+            offset_kind: sinex_primitives::events::OffsetKind::Byte,
             offset_start: Some(live.offset_start),
             offset_end: Some(live.offset_end),
             record_metadata: json!({"event_kind": "Deleted"}),
@@ -3342,6 +3349,7 @@ async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_imp
                     occurrences: vec![ReplayMaterialOccurrence {
                         source_material_id: material.id,
                         anchor_byte: 0,
+                        offset_kind: sinex_primitives::events::OffsetKind::Byte,
                         offset_start: Some(0),
                         offset_end: Some(authoritative_bytes.len() as i64),
                         record_metadata: json!({

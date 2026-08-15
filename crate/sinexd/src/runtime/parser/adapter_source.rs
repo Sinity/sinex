@@ -2940,6 +2940,12 @@ fn material_replay_range(
     material_len: u64,
     occurrence: &crate::runtime::stream::ReplayMaterialOccurrence,
 ) -> RuntimeResult<(MaterialAnchor, std::ops::Range<usize>)> {
+    if occurrence.offset_kind != sinex_primitives::events::OffsetKind::Byte {
+        return Err(crate::runtime::SinexError::invalid_state(
+            "material replay occurrence uses a non-byte coordinate",
+        )
+        .with_context("offset_kind", occurrence.offset_kind.as_wire_str()));
+    }
     let anchor = material_replay_anchor(material_len, occurrence)?;
     let MaterialAnchor::ByteRange { start, len } = anchor else {
         return Err(crate::runtime::SinexError::invalid_state(

@@ -359,6 +359,7 @@ async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<
         occurrences: vec![ReplayMaterialOccurrence {
             source_material_id: material.id,
             anchor_byte: original_event.1,
+            offset_kind: sinex_primitives::events::OffsetKind::Byte,
             offset_start: original_event.2,
             offset_end: original_event.3,
             record_metadata: material.metadata.clone(),

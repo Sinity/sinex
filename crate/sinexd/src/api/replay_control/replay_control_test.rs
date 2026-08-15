@@ -776,6 +776,7 @@ async fn replay_coordinate_validation_rejects_incomplete_range() -> Result<()> {
         ReplayExecutionEngine::validate_replay_material_occurrences(&[ReplayMaterialOccurrence {
             source_material_id: Uuid::now_v7(),
             anchor_byte: 12,
+            offset_kind: sinex_primitives::events::OffsetKind::Byte,
             offset_start: Some(12),
             offset_end: None,
             record_metadata: json!(null),
@@ -783,6 +784,24 @@ async fn replay_coordinate_validation_rejects_incomplete_range() -> Result<()> {
         .expect_err("an incomplete replay range must fail before archive");
 
     assert!(error_contains(&error, "missing offset_end"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_coordinate_validation_rejects_non_byte_offsets() -> Result<()> {
+    let error = ReplayExecutionEngine::validate_replay_material_occurrences(&[
+        ReplayMaterialOccurrence {
+            source_material_id: Uuid::now_v7(),
+            anchor_byte: 12,
+            offset_kind: sinex_primitives::events::OffsetKind::Record,
+            offset_start: Some(12),
+            offset_end: Some(13),
+            record_metadata: json!(null),
+        },
+    ])
+    .expect_err("a row/record coordinate must not enter byte-range CAS replay");
+
+    assert!(error_contains(&error, "non-byte coordinate"));
     Ok(())
 }
 
