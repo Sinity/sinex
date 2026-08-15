@@ -437,6 +437,91 @@ async fn live_cas_lease_survives_restart_and_protects_fsck_until_commit_inner(
 }
 
 #[sinex_test]
+async fn stale_cas_lease_is_reported_and_does_not_protect_unreferenced_object(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("stale-cas-lease-fsck".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            runtime.block_on(async move {
+                stale_cas_lease_is_reported_and_does_not_protect_unreferenced_object_inner(ctx)
+                    .await
+            })
+        })
+        .map_err(|error| eyre!(error))?
+        .join()
+        .map_err(|_| eyre!("stale CAS lease test thread panicked"))??;
+    Ok(())
+}
+
+async fn stale_cas_lease_is_reported_and_does_not_protect_unreferenced_object_inner(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("stale-lease-source.txt");
+    tokio::fs::write(&source, b"stale lease is no longer authority").await?;
+    let (key, lease) = content_store.store_file_with_lease(&source).await?;
+    let object_path = content_store
+        .path_if_local(&key.key)?
+        .expect("local CAS key must resolve to an object");
+    let old_time = SystemTime::now()
+        .checked_sub(Duration::from_secs(25 * 60 * 60))
+        .expect("stale fixture timestamp must be representable");
+    std::fs::File::open(object_path.as_std_path())?.set_times(
+        std::fs::FileTimes::new().set_modified(old_time),
+    )?;
+
+    let mut stale_lease = lease;
+    stale_lease.created_at_unix_secs = old_time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("stale fixture timestamp must be after the epoch")
+        .as_secs();
+    tokio::fs::write(
+        &stale_lease.record_path,
+        serde_json::to_vec(&stale_lease)?,
+    )
+    .await?;
+
+    // Keep an unrelated database authority so the apply ratio safeguard is
+    // exercised rather than bypassed by an empty authority set.
+    let retained_hash = blake3::hash(b"retained stale-lease test authority")
+        .to_hex()
+        .to_string();
+    ctx.pool
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(retained_hash.clone())
+                .size_bytes(35)
+                .checksum_blake3(retained_hash)
+                .build(),
+        )
+        .await?;
+
+    let report = check_cas(ctx.pool(), &content_store, true).await?.0;
+    assert_eq!(report.stale_leases, 1);
+    assert_eq!(report.quarantined, 1);
+    assert_eq!(report.pending_deletes, 1);
+    assert!(!object_path.exists(), "stale lease must not protect an orphan");
+    assert_eq!(content_store.list_pending_deletions().await?.len(), 1);
+    assert_eq!(
+        content_store.list_write_leases().await?.len(),
+        1,
+        "stale lease metadata remains durable for explicit operator recovery"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn referenced_cas_quarantine_is_restored_by_apply_reconciliation(
     ctx: TestContext,
 ) -> TestResult<()> {
