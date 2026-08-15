@@ -178,9 +178,23 @@ async fn pending_cas_delete_survives_failure_and_resumes(_ctx: TestContext) -> T
     assert!(pending.quarantine_path.exists());
     assert_eq!(content_store.list_pending_deletions().await?.len(), 1);
 
-    content_store.drop_content(&key.key, true).await?;
+    // Reconstruct the store as a fresh process would. The durable pending
+    // record, rather than in-memory state from the failed attempt, must make
+    // the deletion resumable after restart.
+    let restarted_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path,
+        ..Default::default()
+    })?;
+    let pending_after_restart = restarted_store
+        .list_pending_deletions()
+        .await?
+        .pop()
+        .expect("restart must recover the pending deletion record");
+    restarted_store
+        .finalize_pending_deletion(&pending_after_restart)
+        .await?;
     assert!(!pending.quarantine_path.exists());
-    assert!(content_store.list_pending_deletions().await?.is_empty());
+    assert!(restarted_store.list_pending_deletions().await?.is_empty());
     Ok(())
 }
 
