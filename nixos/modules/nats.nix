@@ -210,6 +210,11 @@ let
     SOURCE_MATERIAL = {
       subjects = [ "source_material.frames.>" ];
       retention = "work";
+      # Source-material frames are the durable raw-byte ingress witness.  At
+      # capacity, reject new publishes so producers backpressure; silently
+      # discarding the oldest unacked frame would make a later material hash
+      # failure look like an ordinary missing slice and lose the only copy.
+      discard = "new";
       maxAge = "72h";
       maxBytes = natsCliMaxBytes;
     };
