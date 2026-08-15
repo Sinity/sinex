@@ -17,7 +17,101 @@ async fn document_parser_filters_to_document_and_canonical_command_events() -> T
             CanonicalCommandPayload::EVENT_TYPE.as_static_str(),
         ]
     );
-    assert_eq!(automaton.input_provenance_filter(), InputProvenanceFilter::Any);
+    assert_eq!(
+        automaton.input_provenance_filter(),
+        InputProvenanceFilter::Any
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn oversized_dendron_document_returns_recoverable_input_failure() -> TestResult<()> {
+    let dir = std::env::temp_dir();
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let file_path = dir.join(format!("sinex-docparser-oversized-test-{unique}.md"));
+    let content = "x".repeat(MAX_DOCUMENT_BYTES as usize + 1);
+    std::fs::write(&file_path, &content).expect("write oversized fixture");
+
+    let automaton = DocumentParserAutomaton::default();
+    let mut state = DocumentParserState::default();
+    let event_id = Id::new();
+    let context = AutomatonContext {
+        trigger_event_id: event_id,
+        source: "dendron".into(),
+        event_type: "document.ingested".into(),
+        ts_orig: Some(Timestamp::UNIX_EPOCH),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    };
+
+    let result = automaton.process_dendron(
+        &mut state,
+        serde_json::json!({
+            "file_path": file_path.to_string_lossy(),
+            "source_material_id": "test-material",
+        }),
+        &context,
+    );
+    std::fs::remove_file(&file_path).ok();
+
+    let error = result.expect_err("oversized document must be an explicit input failure");
+    let AutomatonLogicError::InputParsing(message) = error else {
+        return Err(color_eyre::eyre::eyre!(
+            "expected InputParsing error, got {error:?}"
+        ));
+    };
+    assert!(message.contains("oversized document"));
+    assert!(message.contains(&(content.len().to_string())));
+    assert!(message.contains(&MAX_DOCUMENT_BYTES.to_string()));
+    assert!(message.contains(file_path.to_string_lossy().as_ref()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn oversized_terminal_output_returns_recoverable_input_failure() -> TestResult<()> {
+    let automaton = DocumentParserAutomaton::default();
+    let mut state = DocumentParserState::default();
+    let event_id = Id::new();
+    let context = AutomatonContext {
+        trigger_event_id: event_id,
+        source: "terminal".into(),
+        event_type: "command.canonical".into(),
+        ts_orig: Some(Timestamp::UNIX_EPOCH),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    };
+    let stdout = "x".repeat(MAX_DOCUMENT_BYTES as usize + 1);
+
+    let result = automaton.process_terminal(
+        &mut state,
+        serde_json::json!({
+            "command": "cat large-output",
+            "output": stdout,
+        }),
+        &context,
+    );
+
+    let error = result.expect_err("oversized terminal output must be an explicit input failure");
+    let AutomatonLogicError::InputParsing(message) = error else {
+        return Err(color_eyre::eyre::eyre!(
+            "expected InputParsing error, got {error:?}"
+        ));
+    };
+    assert!(message.contains("oversized terminal output"));
+    assert!(message.contains(&(MAX_DOCUMENT_BYTES as usize + 1).to_string()));
+    assert!(message.contains(&MAX_DOCUMENT_BYTES.to_string()));
+    assert!(message.contains(&event_id.to_string()));
     Ok(())
 }
 
@@ -141,7 +235,10 @@ async fn test_paragraph_spans_round_trip_with_irregular_separators() -> TestResu
 
     // Spans must be strictly increasing and reflect the real gaps consumed
     // by separators — not a tight running sum of chunk lengths.
-    assert!(chunks[0].end < chunks[1].start, "separator bytes must be skipped, not summed away");
+    assert!(
+        chunks[0].end < chunks[1].start,
+        "separator bytes must be skipped, not summed away"
+    );
     assert!(chunks[1].end < chunks[2].start);
     assert!(chunks[2].end < chunks[3].start);
     Ok(())
@@ -160,7 +257,10 @@ async fn test_overlong_chunk_split_respects_utf8_char_boundaries() -> TestResult
     text.push_str(&"a".repeat(65534));
     text.push('😀'); // 4-byte UTF-8 char occupying bytes [65534, 65538)
     text.push_str(&"a".repeat(200));
-    assert!(text.len() > MAX_CHUNK_BYTES, "fixture must exceed the cap to exercise the split");
+    assert!(
+        text.len() > MAX_CHUNK_BYTES,
+        "fixture must exceed the cap to exercise the split"
+    );
 
     let chunks = paragraph_chunks(&text);
 
@@ -210,7 +310,7 @@ async fn document_chunked_offsets_round_trip_against_source_bytes() -> TestResul
         source: "dendron".into(),
         event_type: "document.ingested".into(),
         ts_orig: Some(Timestamp::UNIX_EPOCH),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -268,7 +368,7 @@ async fn terminal_chunks_are_not_parser_redacted() -> TestResult<()> {
         source: "terminal".into(),
         event_type: "command.canonical".into(),
         ts_orig: Some(Timestamp::UNIX_EPOCH),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -317,7 +417,7 @@ async fn document_parser_terminal_outputs_stamp_equivalence_key_and_semantics_ve
         source: "terminal".into(),
         event_type: "command.canonical".into(),
         ts_orig: Some(Timestamp::UNIX_EPOCH),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

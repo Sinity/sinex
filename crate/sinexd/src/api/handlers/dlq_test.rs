@@ -34,6 +34,54 @@ async fn parse_retry_count_header_rejects_invalid_value() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn dlq_progress_summary_preserves_unfinished_work_signal() -> TestResult<()> {
+    let progress = super::DlqRetryProgress {
+        processed: 4,
+        retried: 3,
+        permanently_failed: 0,
+        transient_failures: 1,
+        last_sequence: Some(18),
+    };
+    let summary = super::dlq_progress_summary(&progress);
+    assert_eq!(summary["processed"].as_u64(), Some(4));
+    assert_eq!(summary["transient_failures"].as_u64(), Some(1));
+    assert_eq!(summary["last_sequence"].as_u64(), Some(18));
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_operation_fails_when_bulk_settlement_is_incomplete_or_transient() -> TestResult<()> {
+    assert_eq!(
+        super::dlq_operation_status(&crate::runtime::DlqRetryResult {
+            retried: 4,
+            permanently_failed: 0,
+            transient_failures: 0,
+            incomplete: true,
+        }),
+        sinex_primitives::domain::OperationStatus::Failed
+    );
+    assert_eq!(
+        super::dlq_operation_status(&crate::runtime::DlqRetryResult {
+            retried: 3,
+            permanently_failed: 0,
+            transient_failures: 1,
+            incomplete: false,
+        }),
+        sinex_primitives::domain::OperationStatus::Failed
+    );
+    assert_eq!(
+        super::dlq_operation_status(&crate::runtime::DlqRetryResult {
+            retried: 3,
+            permanently_failed: 1,
+            transient_failures: 0,
+            incomplete: false,
+        }),
+        sinex_primitives::domain::OperationStatus::Success
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn dlq_list_pressure_classifies_empty_warning_and_critical_depth() -> TestResult<()> {
     assert_eq!(dlq_pressure_level(0, 10), RuntimePressureLevel::Nominal);
     assert_eq!(dlq_pressure_level(10, 10), RuntimePressureLevel::Warning);

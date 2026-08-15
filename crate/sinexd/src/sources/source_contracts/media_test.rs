@@ -1,9 +1,11 @@
 use super::*;
+use crate::sources::bindings::{SourceBinding, validate_bindings};
 use camino::Utf8PathBuf;
 use sinex_primitives::source_contracts::{
     RunnerPack, RuntimeShape, all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::{Uuid, ids::Id};
+use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
 
 fn test_ctx(source_id: &'static str) -> ParserContext {
@@ -179,6 +181,43 @@ async fn media_runtime_bindings_cover_staged_model_on_demand_and_live_modes() ->
             .capabilities
             .contains(&"operation:media.screen-ocr.import-video")
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn enabled_media_sources_pass_real_startup_binding_validation() -> TestResult<()> {
+    let media_bindings = source_runtime_bindings()
+        .filter(|binding| {
+            binding.source_id == "media.audio-transcript" || binding.source_id == "media.screen-ocr"
+        })
+        .collect::<Vec<_>>();
+    assert!(!media_bindings.is_empty());
+    assert!(
+        media_bindings
+            .iter()
+            .all(|binding| binding.proposed || binding.criticality.is_some()),
+        "every deployable media runtime binding must declare criticality"
+    );
+
+    let manifest = [
+        SourceBinding {
+            source_id: "media.audio-transcript".to_string(),
+            instance_idx: 1,
+            service_name: None,
+            runtime_config: None,
+            extra_args: Vec::new(),
+            extra_env: HashMap::new(),
+        },
+        SourceBinding {
+            source_id: "media.screen-ocr".to_string(),
+            instance_idx: 1,
+            service_name: None,
+            runtime_config: None,
+            extra_args: Vec::new(),
+            extra_env: HashMap::new(),
+        },
+    ];
+    validate_bindings(&manifest)?;
     Ok(())
 }
 

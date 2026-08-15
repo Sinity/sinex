@@ -15,6 +15,8 @@ use crate::runtime::parser::{
     InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint,
 };
 
+use super::{MAX_WHOLE_FILE_BYTES, read_file_bounded, read_file_bounded_sync};
+
 // =============================================================================
 // StaticFileAdapter
 // =============================================================================
@@ -25,6 +27,8 @@ use crate::runtime::parser::{
 /// Suitable for JSON/CSV/XML exports and other one-shot file formats.
 #[derive(Debug, Clone, Default)]
 pub struct StaticFileAdapter;
+
+const MAX_FILE_BYTES: u64 = MAX_WHOLE_FILE_BYTES;
 
 /// Configuration for [`StaticFileAdapter`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -94,7 +98,15 @@ impl InputShapeAdapter for StaticFileAdapter {
         let bytes = if metadata.is_dir() {
             Vec::new()
         } else {
-            std::fs::read(&path)?
+            if metadata.len() > MAX_FILE_BYTES {
+                return Err(ParserError::Adapter(format!(
+                    "file {} exceeds the {}-byte static input cap",
+                    config.path, MAX_FILE_BYTES
+                )));
+            }
+            read_file_bounded(Path::new(&path), MAX_FILE_BYTES)
+                .await
+                .map_err(ParserError::Io)?
         };
 
         let len = bytes.len() as u64;
@@ -118,7 +130,15 @@ impl InputShapeAdapter for StaticFileAdapter {
             return Ok(None);
         }
 
-        let bytes = std::fs::read(&config.path)?;
+        let metadata = std::fs::metadata(&config.path)?;
+        if metadata.len() > MAX_FILE_BYTES {
+            return Err(ParserError::Adapter(format!(
+                "file {} exceeds the {}-byte static input cap",
+                config.path, MAX_FILE_BYTES
+            )));
+        }
+        let bytes = read_file_bounded_sync(Path::new(&config.path), MAX_FILE_BYTES)
+            .map_err(ParserError::Io)?;
         match Utf8Path::new(&config.path)
             .extension()
             .map(str::to_ascii_lowercase)

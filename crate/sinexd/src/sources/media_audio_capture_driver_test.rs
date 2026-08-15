@@ -1,4 +1,15 @@
 use super::*;
+use crate::runtime::{
+    CheckpointManager, EventTransport,
+    stream::{EventEmitter, RuntimeContext, RuntimeHandles, ServiceInfo},
+};
+use camino::Utf8PathBuf;
+use sinex_primitives::{HostName, SinexError, Uuid};
+use std::collections::HashMap;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use xtask::sandbox::prelude::sinex_test;
 
 /// Minimal 44-byte WAV header + `data` body for `channels`/`sample_rate`.
@@ -22,6 +33,81 @@ fn fake_wav(channels: u16, sample_rate: u32, data_bytes: usize) -> Vec<u8> {
     b.extend_from_slice(&(data_bytes as u32).to_le_bytes());
     b.extend(std::iter::repeat(0u8).take(data_bytes));
     b
+}
+
+struct CountingBackend {
+    captures: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl AudioCaptureBackend for CountingBackend {
+    async fn capture(&self, _request: &AudioCaptureRequest) -> RuntimeResult<CapturedAudio> {
+        self.captures.fetch_add(1, Ordering::SeqCst);
+        Ok(decode_audio_metadata(fake_wav(1, 16_000, 16_000)))
+    }
+}
+
+async fn edge_runtime(
+    ctx: &xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<RuntimeContext> {
+    let checkpoint_manager = Arc::new(CheckpointManager::new(
+        ctx.checkpoint_kv().await?,
+        "audio-capture-gate-test".to_string(),
+        "test-group".to_string(),
+        format!("test-consumer-{}", Uuid::now_v7().simple()),
+    ));
+    let (event_sender, _event_receiver) = tokio::sync::mpsc::channel(1);
+    let handles = RuntimeHandles::new_edge(
+        checkpoint_manager,
+        EventEmitter::new(event_sender, false),
+        EventTransport::new_noop_direct(),
+        None,
+    );
+    let work_dir = tempfile::tempdir()?;
+    let work_dir_path = work_dir.keep();
+    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+        SinexError::validation("temporary work dir should be UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    Ok(RuntimeContext::new(
+        ServiceInfo::new(
+            "audio-capture-gate-test".to_string(),
+            "audio-capture-gate-test".to_string(),
+            HostName::from_static("test-host"),
+            work_dir_path,
+            false,
+            format!("instance-{}", Uuid::now_v7().simple()),
+            env!("CARGO_PKG_VERSION").to_string(),
+            None,
+        ),
+        handles,
+        HashMap::new(),
+        work_dir_utf8,
+    ))
+}
+
+#[sinex_test]
+async fn startup_gate_blocks_audio_backend_without_database_pool(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let captures = Arc::new(AtomicUsize::new(0));
+    let driver = MediaAudioCaptureDriver::with_backend(
+        CountingBackend {
+            captures: Arc::clone(&captures),
+        },
+        MediaAudioCaptureConfig::default(),
+    );
+    let runtime = edge_runtime(&ctx).await?;
+    let state_dir = tempfile::tempdir()?;
+
+    let captured = driver
+        .capture_if_allowed(&runtime, state_dir.path())
+        .await?;
+
+    assert!(!captured);
+    assert_eq!(captures.load(Ordering::SeqCst), 0);
+    Ok(())
 }
 
 #[sinex_test]

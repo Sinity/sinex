@@ -32,6 +32,7 @@ pub mod otel_projection;
 pub mod output_kind;
 pub mod pacing;
 pub mod parser;
+pub mod polylogue_protocol;
 pub mod primitives;
 pub mod privacy;
 pub mod public_ref;
@@ -39,12 +40,14 @@ pub mod query;
 pub mod query_units;
 pub mod relations;
 pub mod rpc;
+pub mod runtime_liveness;
 pub mod runtime_pressure;
 pub mod runtime_target;
 pub mod schema_constraints;
 pub mod semantic;
 pub mod session_lane;
 pub mod source_contracts;
+pub mod source_material_manifest;
 pub mod text;
 pub mod views;
 
@@ -98,9 +101,14 @@ pub mod prelude {
     pub use crate::temporal::OffsetDateTime;
 }
 
-/// Expected binary schema version — checked at startup against `sinex_schemas.binary_schema_version`.
-/// Bump when the DB schema changes in a backward-incompatible way.
-pub const EXPECTED_BINARY_SCHEMA_VERSION: &str = "1";
+/// Expected binary schema version — checked at startup against
+/// `sinex_schemas.binary_schema_version`.
+///
+/// Bump this only for destructive declarative convergence (for example, a
+/// new `columns_to_drop` entry). `sinex_db::apply_schema` writes this value
+/// only after DDL convergence succeeds, so rolling back to an older binary
+/// fails before it can recreate a dropped column as empty data.
+pub const EXPECTED_BINARY_SCHEMA_VERSION: &str = "2";
 
 // Re-export commonly used types at crate root
 pub use activity::{ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source};
@@ -124,9 +132,9 @@ pub use deployment_readiness::{
 };
 pub use derivation::{
     AdjudicationStatus, ClaimSupport, ClaimSupportTemplate, ClaimTemporalQuality,
-    DerivationDeclarationId, DerivationOutputDeclaration, DerivationScope,
-    DerivationWriteSurface, DerivedProductClass, InputEligibility, ProjectionFreshnessClass,
-    ProjectionStatus, SourceCoverage, SupportLevel, TstzRange,
+    DerivationDeclarationId, DerivationOutputDeclaration, DerivationScope, DerivationWriteSurface,
+    DerivedProductClass, InputEligibility, ProjectionFreshnessClass, ProjectionStatus,
+    SourceCoverage, SupportLevel, TstzRange,
 };
 pub use derivations::{
     DERIVATION_SPECS, DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION,
@@ -186,6 +194,12 @@ pub use query_units::{
     QueryUnitDescriptor, QueryUnitId, QueryValue, SinexQuery, SinexQueryPredicate, SinexQuerySort,
     parse_sinex_query, query_unit_descriptor, query_unit_descriptors,
 };
+pub use runtime_liveness::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLiveness, RuntimeLivenessAggregate,
+    RuntimeLivenessAssessment, RuntimeLivenessEvidence, RuntimeLivenessMembership,
+    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus,
+    evaluate_runtime_liveness,
+};
 pub use runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 pub use runtime_target::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,
@@ -197,11 +211,20 @@ pub use semantic::*;
 pub use serde_json::Value as JsonValue;
 pub use session_lane::*;
 pub use source_contracts::{SourceRuntimeBinding, SubjectQuery, SubjectRef};
+pub use source_material_manifest::{
+    ByteRange, ByteRange as MaterialByteRange, Captured as CapturedMetadata, ContainerEnvelope,
+    ContentDigest, ContinuityEnvelope, DecodedMaterialManifest, FilesystemEnvelope,
+    InterpretationEnvelope, LEGACY_MANIFEST_V0, MATERIAL_MANIFEST_V1, LegacyManifestV0,
+    ManifestFidelity, ManifestPrivacyClass, MaterialBytes, MaterialManifestType,
+    MaterialManifestV1, MetadataAvailability, ProvenanceEnvelope, TransportEnvelope,
+    UnknownMaterialManifest,
+};
 pub use task_domain::*;
 pub use temporal::{OffsetDateTime, now};
 pub use units::{Bytes, Seconds};
 pub use validation::{
-    sanitize_filename_component, strip_postgres_jsonb_nul_chars, validate_json,
-    validate_json_value, validate_path, validate_path_within_root,
+    sanitize_filename_component, strip_postgres_jsonb_nul_chars,
+    try_strip_postgres_jsonb_nul_chars, validate_json, validate_json_value, validate_path,
+    validate_path_within_root,
 };
 pub use views::*;

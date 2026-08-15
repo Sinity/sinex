@@ -15,6 +15,7 @@ use xtask::sandbox::prelude::*;
 
 use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
 use sinex_primitives::domain::HealthStatus;
+use sinex_primitives::{RuntimeLivenessAggregate, RuntimeLivenessPolicy, Timestamp};
 use sinex_primitives::rpc::system::{
     ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
 };
@@ -86,6 +87,11 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
                 detail: None,
                 attributes: Default::default(),
             },
+            runtime_liveness: RuntimeLivenessAggregate::evaluate(
+                Vec::new(),
+                RuntimeLivenessPolicy::default(),
+                Timestamp::now(),
+            ),
         },
     };
 

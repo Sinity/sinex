@@ -123,3 +123,50 @@ async fn test_fs_source_config_deserializes_as_file_content_drop() -> TestResult
 
     Ok(())
 }
+
+#[cfg(unix)]
+#[sinex_test]
+async fn directory_walk_production_route_terminates_symlink_cycle() -> TestResult<()> {
+    use futures::StreamExt;
+    use sinex_primitives::events::SourceMaterial;
+    use sinex_primitives::ids::Id;
+    use sinexd::runtime::parser::{DirectoryWalkAdapter, DirectoryWalkConfig, InputShapeAdapter};
+
+    let dir = tempfile::tempdir()?;
+    let loop_dir = dir.path().join("loop");
+    std::fs::create_dir(&loop_dir)?;
+    std::fs::write(loop_dir.join("target.txt"), b"content")?;
+    std::os::unix::fs::symlink(&loop_dir, loop_dir.join("self"))?;
+
+    let config = DirectoryWalkConfig {
+        roots: vec![
+            camino::Utf8PathBuf::from_path_buf(dir.path().to_path_buf())
+                .map_err(|path| color_eyre::eyre::eyre!("non-UTF-8 test path: {path:?}"))?,
+        ],
+        globs: Vec::new(),
+        follow_symlinks: true,
+        max_depth: Some(5),
+    };
+    let material_id = Id::<SourceMaterial>::from_uuid(uuid::Uuid::new_v4());
+    let adapter = DirectoryWalkAdapter;
+    let stream = adapter.open(material_id, &config, None).await?;
+    let records: Vec<_> = stream.collect::<Vec<_>>().await;
+    let records = records
+        .into_iter()
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let target_hits = records
+        .iter()
+        .filter(|record| {
+            record
+                .logical_path
+                .as_ref()
+                .is_some_and(|path| path.file_name() == Some("target.txt"))
+        })
+        .count();
+    assert_eq!(
+        target_hits, 1,
+        "symlink cycle must not rediscover target.txt"
+    );
+    Ok(())
+}

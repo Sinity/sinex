@@ -15,8 +15,8 @@ use walkdir::{DirEntry, WalkDir};
 
 use crate::admin::exec;
 use crate::admin::manifest::{
-    CasExtras, ComponentExtras, ComponentRecord, NatsExtras, PostgresExtras, SnapshotManifest,
-    StateExtras, Totals,
+    CasExtras, ComponentExtras, ComponentRecord, NatsExtras, PostgresExtras, QuiesceReceipt,
+    SnapshotManifest, StateExtras, Totals,
 };
 use crate::admin::staging::StagingDir;
 
@@ -117,9 +117,17 @@ pub struct AdminSnapshotCommand {
     #[arg(long, env = "DATABASE_URL")]
     pub database_url: Option<String>,
 
-    /// Sinex state directory root (defaults to `SINEX_STATE_DIR`, then /var/lib/sinex).
+    /// Sinex state directory root (defaults to the deployed `SINEX_STATE_DIR`).
     #[arg(long, env = "SINEX_STATE_DIR")]
     pub state_dir: Option<PathBuf>,
+
+    /// NATS JetStream store directory for an alternate deployment.
+    ///
+    /// The deployed default is discovered from `SINEX_NATS_JETSTREAM_STORE_DIR`
+    /// on the deployed Sinex daemon; this override keeps a separate NATS root explicit
+    /// when `--state-dir` points at a fixture or alternate topology.
+    #[arg(long, env = "SINEX_NATS_JETSTREAM_STORE_DIR")]
+    pub nats_store_dir: Option<PathBuf>,
 
     /// Stop sinex services automatically if they are running.
     #[arg(long)]
@@ -142,8 +150,8 @@ EXAMPLES:
     sinexctl ops state inspect --archive /var/backup/sinex/latest.sinex.tar.zst
 
 NOTES:
-    This reads manifest.json from the archive and checks that non-empty
-    component paths named by the manifest are present in the tar member list.
+    This reads manifest.json from the archive and checks that component paths
+    named by the manifest are present in the tar member list.
 ")]
 pub struct AdminSnapshotInspectCommand {
     /// Snapshot archive to inspect.
@@ -171,6 +179,11 @@ pub struct AdminSnapshotRestoreCommand {
     /// Empty target directory intended for the restore drill.
     #[arg(long)]
     pub target_dir: PathBuf,
+
+    /// Deployed state root used to resolve the service topology during an
+    /// isolated drill.  Normal deployments may omit this and use discovery.
+    #[arg(long, env = "SINEX_STATE_DIR")]
+    pub state_dir: Option<PathBuf>,
 
     /// Plan and validate only; do not extract or write restored state.
     #[arg(long)]
@@ -309,10 +322,24 @@ impl AdminSnapshotCommand {
     pub fn execute(&self) -> Result<SnapshotResult> {
         let mode = SnapshotMode::parse(&self.mode)?;
 
-        let state_dir = self
-            .state_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("/var/lib/sinex"));
+        let captures_nats = self.components.iter().any(|c| c == &Component::Nats);
+        // Live NATS capture always needs discovered topology. A dry-run may
+        // use the state fixture fallback, but an explicit NATS override must
+        // still flow through topology discovery so it is not discarded.
+        let require_nats_topology =
+            captures_nats && (!self.dry_run || self.nats_store_dir.is_some());
+        let topology = exec::SnapshotTopology::discover(
+            self.state_dir.as_deref(),
+            self.nats_store_dir.as_deref(),
+            require_nats_topology,
+            !self.dry_run && mode.requires_quiescence(),
+        )?;
+        let state_dir = topology.state_dir.clone();
+        let content_store_dir = match self.state_dir.as_ref() {
+            Some(_) => state_dir.join("blob-repository"),
+            None => exec::sinex_service_path("SINEX_CONTENT_STORE_PATH")
+                .context("resolve deployed SINEX_CONTENT_STORE_PATH")?,
+        };
 
         let captures_postgres = self.components.iter().any(|c| c == &Component::Postgres);
         let database_url = if captures_postgres {
@@ -328,26 +355,34 @@ impl AdminSnapshotCommand {
         let created_at = current_rfc3339();
 
         // 2. Verify/stop services.
-        if !self.dry_run && mode.requires_quiescence() {
-            let active = exec::active_sinex_services();
-            if !active.is_empty() {
-                if self.auto_stop {
-                    eprintln!("Stopping {} active sinex service(s)…", active.len());
-                    exec::stop_sinex_services()
-                        .context("auto-stop sinex services before snapshot")?;
-                } else {
-                    bail!(
-                        "sinex services are running ({}). \
-                         Stop them before snapshotting, or pass --auto-stop.\n\
-                         Active units:\n  {}",
-                        active.len(),
-                        active.join("\n  ")
-                    );
-                }
+        let quiesce_receipt = if !self.dry_run && mode.requires_quiescence() {
+            let active = &topology.active_writer_units;
+            if active.is_empty() {
+                Some(QuiesceReceipt {
+                    active_writer_units_before: Vec::new(),
+                    stopped_writer_units: Vec::new(),
+                    active_writer_units_after: Vec::new(),
+                })
+            } else if self.auto_stop {
+                eprintln!("Stopping {} active sinex service(s)…", active.len());
+                exec::stop_sinex_services_for(active)
+                    .context("auto-stop sinex services before snapshot")
+                    .map(Some)?
+            } else {
+                bail!(
+                    "sinex services are running ({}). \
+                     Stop them before snapshotting, or pass --auto-stop.\n\
+                     Active units:\n  {}",
+                    active.len(),
+                    active.join("\n  ")
+                );
             }
         } else if !self.dry_run && self.auto_stop && !mode.requires_quiescence() {
             eprintln!("Ignoring --auto-stop for live snapshot mode; services remain active.");
-        }
+            None
+        } else {
+            None
+        };
 
         // 3. Probe disk free.
         let output_parent = self
@@ -385,7 +420,10 @@ impl AdminSnapshotCommand {
             &snapshot_id,
             &created_at,
             &state_dir,
+            &content_store_dir,
+            &topology,
             database_url.as_deref(),
+            quiesce_receipt.as_ref(),
             &mut staging,
         );
 
@@ -404,7 +442,10 @@ impl AdminSnapshotCommand {
         snapshot_id: &str,
         created_at: &str,
         state_dir: &Path,
+        content_store_dir: &Path,
+        topology: &exec::SnapshotTopology,
         database_url: Option<&str>,
+        quiesce_receipt: Option<&QuiesceReceipt>,
         staging: &mut StagingDir,
     ) -> Result<SnapshotResult> {
         let mut component_records: Vec<ComponentRecord> = Vec::new();
@@ -421,11 +462,31 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("nats") {
-            let nats_src = state_dir.join("nats/jetstream");
+            let dry_run_source;
+            let nats_src = if let Some(path) = topology.nats_store_dir.as_deref() {
+                path
+            } else if self.dry_run {
+                // A dry run only estimates bytes. With an explicit --state-dir
+                // fixture, use its conventional fixture child without ever
+                // treating it as the deployed live NATS topology.
+                dry_run_source = state_dir.join("nats/jetstream");
+                &dry_run_source
+            } else {
+                return Err(eyre!(
+                    "NATS JetStream store directory was not discovered; refusing to use a \
+                     state-directory fallback"
+                ));
+            };
+            if !self.dry_run && !nats_src.is_dir() {
+                bail!(
+                    "NATS JetStream store directory {} is absent; refusing to record an empty backup",
+                    nats_src.display()
+                );
+            }
             let mut record = self.capture_dir_component(
                 "nats",
                 "nats/jetstream/",
-                &nats_src,
+                nats_src,
                 staging,
                 self.dry_run,
                 mode.tolerates_vanished_files(),
@@ -442,7 +503,13 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("cas") {
-            let cas_src = state_dir.join("blob-repository");
+            let cas_src = content_store_dir;
+            if !self.dry_run && !cas_src.is_dir() {
+                bail!(
+                    "CAS content-store directory {} is absent; refusing to record an empty backup",
+                    cas_src.display()
+                );
+            }
             let blob_count = if cas_src.exists() {
                 count_files_recursive(&cas_src)
             } else {
@@ -461,6 +528,12 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("state") {
+            if !self.dry_run && !state_dir.is_dir() {
+                bail!(
+                    "SINEX state directory {} is absent; refusing to record an empty backup",
+                    state_dir.display()
+                );
+            }
             let source_ids = registered_source_ids();
             let private_mode_state_present = state_dir.join("private-mode/state.json").exists();
             let mut record = self.capture_state_component(
@@ -487,6 +560,7 @@ impl AdminSnapshotCommand {
             git_sha: git_sha(),
             host: hostname(),
             mode: mode.as_str().to_string(),
+            quiesce_receipt: quiesce_receipt.cloned(),
             source_ids: source_ids.clone(),
             components: component_records.clone(),
             totals: Totals {
@@ -531,6 +605,12 @@ impl AdminSnapshotCommand {
         // 11. Verify integrity.
         exec::tar_verify(&self.output)
             .with_context(|| format!("verify snapshot archive at {}", self.output.display()))?;
+        verify_archive_content_integrity(&self.output, &manifest).with_context(|| {
+            format!(
+                "verify snapshot component hashes at {}",
+                self.output.display()
+            )
+        })?;
 
         let archive_bytes = self.output.metadata().map_or(0, |m| m.len());
 
@@ -572,11 +652,14 @@ impl AdminSnapshotCommand {
         } else {
             exec::pg_dump(database_url, &dump_path).context("capture postgres component")?;
             let bytes = dump_path.metadata().map_or(0, |m| m.len());
-            let blake3 = blake3_file(&dump_path).unwrap_or_else(|_| "error".to_string());
+            let blake3 = blake3_file(&dump_path).context("hash captured PostgreSQL dump")?;
             (bytes, blake3)
         };
 
-        let row_counts = exec::pg_row_counts(database_url).unwrap_or_default();
+        let row_counts = Some(
+            exec::pg_row_counts(database_url)
+                .context("capture authoritative PostgreSQL row-count evidence")?,
+        );
 
         Ok(ComponentRecord {
             name: "postgres".to_string(),
@@ -618,7 +701,8 @@ impl AdminSnapshotCommand {
                     .with_context(|| format!("copy {name} component from {}", src.display()))?;
             }
             let bytes = estimate_dir_bytes(&component_root);
-            let blake3 = blake3_dir(&component_root).unwrap_or_else(|_| "error".to_string());
+            let blake3 = component_blake3(name, &component_root)
+                .with_context(|| format!("hash captured {name} component"))?;
             (bytes, blake3)
         };
 
@@ -692,17 +776,28 @@ impl AdminSnapshotCommand {
                     }
                 } else {
                     let dst_file = dst_dir.join(&fname);
-                    std::fs::copy(&src_entry, &dst_file).with_context(|| {
-                        format!(
-                            "copy state file {} -> {}",
-                            src_entry.display(),
-                            dst_file.display()
-                        )
-                    })?;
+                    if tolerate_vanished_files {
+                        exec::cp_entry_live(&src_entry, &dst_file).with_context(|| {
+                            format!(
+                                "live-copy state file {} -> {}",
+                                src_entry.display(),
+                                dst_file.display()
+                            )
+                        })?;
+                    } else {
+                        std::fs::copy(&src_entry, &dst_file).with_context(|| {
+                            format!(
+                                "copy state file {} -> {}",
+                                src_entry.display(),
+                                dst_file.display()
+                            )
+                        })?;
+                    }
                 }
             }
             let bytes = estimate_dir_bytes(&dst_dir);
-            let blake3 = blake3_dir(&dst_dir).unwrap_or_else(|_| "error".to_string());
+            let blake3 =
+                component_blake3("state", &dst_dir).context("hash captured state component")?;
             (bytes, blake3)
         };
 
@@ -744,7 +839,9 @@ impl AdminSnapshotRestoreCommand {
             );
         }
 
-        let active_services = exec::active_sinex_services();
+        let topology = exec::SnapshotTopology::discover(self.state_dir.as_deref(), None, false, true)
+            .context("discover deployed backup topology before restore planning")?;
+        let active_services = topology.active_writer_units.clone();
         let mut warnings = Vec::new();
         if !active_services.is_empty() {
             warnings.push(format!(
@@ -776,7 +873,12 @@ impl AdminSnapshotRestoreCommand {
         let observed_checks = if self.dry_run {
             None
         } else {
-            Some(self.execute_restore_drill(&inspect, &archive_entries, &target_state)?)
+            Some(self.execute_restore_drill(
+                &inspect,
+                &archive_entries,
+                &target_state,
+                &topology,
+            )?)
         };
 
         Ok(SnapshotRestorePlanResult {
@@ -800,6 +902,7 @@ impl AdminSnapshotRestoreCommand {
         inspect: &SnapshotInspectResult,
         archive_entries: &[String],
         target_state: &RestoreTargetState,
+        topology: &exec::SnapshotTopology,
     ) -> Result<RestoreObservedChecks> {
         if !self.confirm_restore {
             bail!(
@@ -808,7 +911,7 @@ impl AdminSnapshotRestoreCommand {
             );
         }
         if !self.allow_active_services {
-            let active_services = exec::active_sinex_services();
+            let active_services = &topology.active_writer_units;
             if !active_services.is_empty() {
                 bail!(
                     "sinex services are active; stop them before restore drill execution or pass \
@@ -844,6 +947,8 @@ impl AdminSnapshotRestoreCommand {
             );
         }
 
+        self.verify_postgres_restore_target_empty(&inspect.manifest, topology)?;
+
         std::fs::create_dir_all(&self.target_dir)
             .with_context(|| format!("create restore target {}", self.target_dir.display()))?;
         exec::tar_extract_zstd(&self.archive, &self.target_dir).with_context(|| {
@@ -867,9 +972,6 @@ impl AdminSnapshotRestoreCommand {
         &self,
         manifest: &SnapshotManifest,
     ) -> Result<Option<BTreeMap<String, i64>>> {
-        let Some(expected_row_counts) = expected_postgres_row_counts(manifest) else {
-            return Ok(None);
-        };
         let Some(component) = manifest
             .components
             .iter()
@@ -880,6 +982,12 @@ impl AdminSnapshotRestoreCommand {
         if component.bytes == 0 {
             return Ok(Some(BTreeMap::new()));
         }
+
+        let expected_row_counts = expected_postgres_row_counts(manifest).ok_or_else(|| {
+            eyre!(
+                "snapshot manifest lacks authoritative PostgreSQL row-count evidence; refusing restore verification"
+            )
+        })?;
 
         let restore_database_url = self.restore_database_url.as_deref().ok_or_else(|| {
             eyre!(
@@ -915,6 +1023,29 @@ impl AdminSnapshotRestoreCommand {
         )
         .context("query restored postgres row counts")?;
         Ok(Some(observed))
+    }
+
+    fn verify_postgres_restore_target_empty(
+        &self,
+        manifest: &SnapshotManifest,
+        topology: &exec::SnapshotTopology,
+    ) -> Result<()> {
+        if !manifest
+            .components
+            .iter()
+            .any(|component| component.name == "postgres" && component.bytes > 0)
+        {
+            return Ok(());
+        }
+        let restore_database_url = self.restore_database_url.as_deref().ok_or_else(|| {
+            eyre!(
+                "postgres restore drill execution requires --restore-database-url pointing at \
+                 an empty drill database"
+            )
+        })?;
+        exec::validate_restore_database_url(restore_database_url)
+            .context("validate PostgreSQL restore rehearsal target")?;
+        topology.verify_restore_database_empty(restore_database_url, self.psql_bin.as_deref())
     }
 }
 
@@ -986,6 +1117,24 @@ fn registered_source_ids() -> Vec<String> {
     let mut ids: Vec<String> = source_contracts::all_source_contracts()
         .map(|descriptor| descriptor.id.to_string())
         .collect();
+    // `sinexctl` does not retain every sinexd source-registration object at
+    // link time, so its inventory can legitimately be empty even though the
+    // daemon's generated catalog is populated. The generated catalog is the
+    // checked-in Rust→Nix source-of-truth projection; use it as the CLI
+    // metadata fallback rather than writing a misleading empty source list.
+    if ids.is_empty() {
+        let catalog: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../nixos/modules/source-catalog.generated.json"
+        ))
+        .expect("generated source catalog must be valid JSON");
+        ids = catalog["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry["contract"]["id"].as_str())
+            .map(str::to_owned)
+            .collect();
+    }
     ids.sort();
     ids.dedup();
     ids
@@ -995,13 +1144,24 @@ fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult
     let manifest = read_snapshot_manifest_from_archive(archive_path)?;
     let entries = exec::tar_list_zstd(archive_path)
         .with_context(|| format!("list snapshot archive {}", archive_path.display()))?;
-    let missing_component_paths = manifest
+    validate_archive_entries_safe(&entries)?;
+    let missing_component_paths: Vec<String> = manifest
         .components
         .iter()
-        .filter(|component| component.bytes > 0)
         .filter(|component| !archive_path_contains(&entries, &component.path))
         .map(|component| component.path.clone())
         .collect();
+    // Preserve a structured coverage report for inspect callers. Restore still
+    // fails closed on this list, while hash verification remains strict for
+    // archives whose declared members are present.
+    if missing_component_paths.is_empty() {
+        verify_archive_content_integrity(archive_path, &manifest).with_context(|| {
+            format!(
+                "verify snapshot component hashes at {}",
+                archive_path.display()
+            )
+        })?;
+    }
     let components = manifest
         .components
         .iter()
@@ -1084,6 +1244,20 @@ struct RestoreTargetState {
 }
 
 fn classify_restore_target(target_dir: &Path) -> Result<RestoreTargetState> {
+    match std::fs::symlink_metadata(target_dir) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            bail!(
+                "restore target must not be a symbolic link: {}",
+                target_dir.display()
+            );
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect restore target {}", target_dir.display()));
+        }
+    }
     if !target_dir.exists() {
         let parent = target_dir
             .parent()
@@ -1159,7 +1333,9 @@ fn restore_drill_checks(
         .components
         .iter()
         .find_map(|component| match &component.extras {
-            Some(ComponentExtras::Postgres(extras)) => Some(extras.row_counts.len()),
+            Some(ComponentExtras::Postgres(extras)) => {
+                extras.row_counts.as_ref().map(BTreeMap::len)
+            }
             _ => None,
         })
         .unwrap_or(0);
@@ -1196,6 +1372,75 @@ fn restore_drill_checks(
         ),
         missing_component_paths,
     }
+}
+
+/// Extract the completed archive into an isolated temporary directory and
+/// verify every captured component against the hash recorded before archiving.
+/// Listing tar members proves only that the container is readable; this check
+/// also proves that the payload survived compression and archive creation.
+fn verify_archive_content_integrity(
+    archive_path: &Path,
+    manifest: &SnapshotManifest,
+) -> Result<()> {
+    let unverifiable = manifest
+        .components
+        .iter()
+        .filter(|component| component.bytes > 0)
+        .filter(|component| matches!(component.blake3.as_str(), "absent" | "dry-run" | "error"))
+        .map(|component| component.name.as_str())
+        .collect::<Vec<_>>();
+    if !unverifiable.is_empty() {
+        bail!(
+            "snapshot manifest has unverifiable non-empty component hashes: {}",
+            unverifiable.join(", ")
+        );
+    }
+    let empty_required = manifest
+        .components
+        .iter()
+        .filter(|component| matches!(component.name.as_str(), "postgres" | "nats"))
+        .filter(|component| component.bytes == 0)
+        .map(|component| component.name.as_str())
+        .collect::<Vec<_>>();
+    if !empty_required.is_empty() {
+        bail!(
+            "snapshot manifest has empty required components: {}",
+            empty_required.join(", ")
+        );
+    }
+    let archive_entries = exec::tar_list_zstd(archive_path).with_context(|| {
+        format!(
+            "list archive {} for content verification",
+            archive_path.display()
+        )
+    })?;
+    validate_archive_entries_safe(&archive_entries)?;
+    let parent = archive_path.parent().unwrap_or_else(|| Path::new("."));
+    let extracted = tempfile::tempdir_in(parent).with_context(|| {
+        format!(
+            "create temporary archive verification directory in {}",
+            parent.display()
+        )
+    })?;
+    exec::tar_extract_zstd(archive_path, extracted.path()).with_context(|| {
+        format!(
+            "extract {} for content verification",
+            archive_path.display()
+        )
+    })?;
+
+    let observed = observed_component_blake3(manifest, extracted.path());
+    let mismatches = expected_component_blake3_matches(manifest, &observed)
+        .into_iter()
+        .filter_map(|(name, matches)| (!matches).then_some(name))
+        .collect::<Vec<_>>();
+    if !mismatches.is_empty() {
+        bail!(
+            "snapshot archive component hash mismatch: {}",
+            mismatches.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn observe_restored_target(
@@ -1235,8 +1480,13 @@ fn observe_restored_target(
     let manifest_private_mode_state_present = expected_private_mode_state_present(manifest)
         .unwrap_or_else(|| archive_path_contains(archive_entries, "state/private-mode/state.json"));
     let source_ids_match = source_ids == manifest.source_ids;
+    let postgres_component_is_non_empty = manifest
+        .components
+        .iter()
+        .any(|component| component.name == "postgres" && component.bytes > 0);
     let postgres_row_counts_match = expected_postgres_row_counts
-        .map(|expected| postgres_row_counts.is_some_and(|observed| observed == &expected));
+        .map(|expected| postgres_row_counts.is_some_and(|observed| observed == &expected))
+        .or_else(|| postgres_component_is_non_empty.then_some(false));
     let nats_member_paths_match = expected_nats_member_paths.map(|expected| {
         nats_member_paths
             .as_ref()
@@ -1294,7 +1544,10 @@ fn restore_failed_checks(input: &RestoreFailedCheckInput<'_>) -> Vec<String> {
             failed.push(format!("component_blake3_matches.{component}"));
         }
     }
-    if input.postgres_row_counts_match == Some(false) {
+    if input
+        .postgres_row_counts_match
+        .is_some_and(|matched| !matched)
+    {
         failed.push("postgres_row_counts_match".to_string());
     }
     if input.nats_member_paths_match == Some(false) {
@@ -1324,23 +1577,21 @@ fn observed_component_blake3(
                     let component_root = target_dir.join(&component.name);
                     component_root
                         .exists()
-                        .then(|| {
-                            blake3_dir_excluding(&component_root, &["streams.summary.json"]).ok()
-                        })
+                        .then(|| component_blake3("nats", &component_root).ok())
                         .flatten()
                 }
                 "state" | "cas" => {
                     let component_root = target_dir.join(&component.name);
                     component_root
                         .exists()
-                        .then(|| blake3_dir(&component_root).ok())
+                        .then(|| component_blake3(&component.name, &component_root).ok())
                         .flatten()
                 }
                 other => {
                     let component_root = target_dir.join(other);
                     component_root
                         .exists()
-                        .then(|| blake3_dir(&component_root).ok())
+                        .then(|| component_blake3(other, &component_root).ok())
                         .flatten()
                 }
             }?;
@@ -1377,6 +1628,7 @@ fn expected_postgres_row_counts(manifest: &SnapshotManifest) -> Option<BTreeMap<
             Some(ComponentExtras::Postgres(extras)) => Some(
                 extras
                     .row_counts
+                    .as_ref()?
                     .iter()
                     .filter(|(table, _)| durable_postgres_row_count_key(table))
                     .map(|(table, count)| (table.clone(), *count))
@@ -1523,13 +1775,17 @@ fn blake3_file(path: &Path) -> Result<String> {
     Ok(hash.to_hex().to_string())
 }
 
-/// Compute a deterministic BLAKE3 summary over a directory tree.
-///
-/// Strategy: sort all regular file paths lexicographically, hash each file's
-/// contents, then hash the concatenation of (`relative_path` + `file_hash`) pairs.
-/// This gives a stable content-addressed fingerprint of the tree.
-fn blake3_dir(dir: &Path) -> Result<String> {
-    blake3_dir_excluding(dir, &[])
+const NATS_SUMMARY_PATH: &str = "streams.summary.json";
+
+/// Hash a captured component using the same content policy at capture and
+/// restore time. The NATS stream listing is operator metadata, not JetStream
+/// state, so it is excluded from both sides of the comparison.
+fn component_blake3(name: &str, root: &Path) -> Result<String> {
+    let excluded = match name {
+        "nats" => &[NATS_SUMMARY_PATH][..],
+        _ => &[][..],
+    };
+    blake3_dir_excluding(root, excluded)
 }
 
 fn blake3_dir_excluding(dir: &Path, excluded_relative_paths: &[&str]) -> Result<String> {
@@ -1670,6 +1926,27 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
             }
         ));
     }
+    match &result.manifest.quiesce_receipt {
+        Some(receipt) => {
+            out.push_str("  Quiesce receipt:\n");
+            out.push_str(&format!(
+                "    active before: {}\n",
+                format_unit_list(&receipt.active_writer_units_before)
+            ));
+            out.push_str(&format!(
+                "    stopped: {}\n",
+                format_unit_list(&receipt.stopped_writer_units)
+            ));
+            out.push_str(&format!(
+                "    active after: {}\n",
+                format_unit_list(&receipt.active_writer_units_after)
+            ));
+        }
+        None if result.mode == "quiesce" => {
+            out.push_str("  Quiesce receipt: absent (legacy archive; mode is not self-proving)\n");
+        }
+        None => {}
+    }
     out.push_str("\n  Components:\n");
     for component in &result.components {
         out.push_str(&format!(
@@ -1688,6 +1965,14 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
         }
     }
     out
+}
+
+fn format_unit_list(units: &[String]) -> String {
+    if units.is_empty() {
+        "none".to_string()
+    } else {
+        units.join(", ")
+    }
 }
 
 /// Render a snapshot restore plan or isolated drill result as a human-readable table string.

@@ -1,7 +1,7 @@
 //! Shutdown sequence for `RuntimeRunner`.
 //!
 //! Hosts the public `shutdown` entry point and its supporting helpers
-//! (`shutdown_task`, `shutdown_leader_state`, `shutdown_event_batcher`).
+//! (`shutdown_task`, `shutdown_event_batcher`).
 //! Idempotent: safe to call on already-shut-down or never-initialized
 //! runners.
 
@@ -47,17 +47,17 @@ impl RuntimeRunner {
             )
             .await,
         );
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "dispatched replay worker",
+            self.shutdown_replay_worker().await,
+        );
         // Parse listener (#1780) holds a NATS subscription with no clean-exit
         // signal; aborted directly after the grace period (like the consumer).
         Self::push_shutdown_error(
             &mut shutdown_errors,
             "parse listener",
             Self::shutdown_task(&mut self.parse_listener_handle, None, "parse listener").await,
-        );
-        Self::push_shutdown_error(
-            &mut shutdown_errors,
-            "coordination",
-            self.shutdown_leader_state().await,
         );
         Self::push_shutdown_error(
             &mut shutdown_errors,
@@ -128,26 +128,39 @@ impl RuntimeRunner {
         }
     }
 
-    pub(super) async fn shutdown_leader_state(&mut self) -> RuntimeResult<()> {
-        if let Some(state) = self.leader_state.take() {
-            let mut shutdown_errors = Vec::new();
-            Self::signal_shutdown_channel(state.heartbeat_shutdown, "coordination heartbeat");
-            Self::push_shutdown_error(
-                &mut shutdown_errors,
-                "coordination heartbeat",
-                Self::shutdown_join_result("coordination heartbeat", state.heartbeat_handle.await),
-            );
-            Self::push_shutdown_error(
-                &mut shutdown_errors,
-                "coordination leadership release",
-                Self::leadership_release_result(
-                    &state.instance_id,
-                    state.kv_client.release_leadership(&state.instance_id).await,
-                ),
-            );
-            Self::collapse_shutdown_errors(shutdown_errors)
+    /// Stop and join the replay worker that the command listener dispatched.
+    ///
+    /// The listener is stopped first, so no new worker can be accepted while
+    /// shutdown owns this handle. Cancellation lets the worker run its own
+    /// shutdown path; the grace-period abort is only a last resort.
+    async fn shutdown_replay_worker(&self) -> RuntimeResult<()> {
+        let cancel = self
+            .replay_worker_cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some((_operation_id, cancel_tx)) = cancel {
+            Self::signal_watch_shutdown(cancel_tx, "dispatched replay worker");
+        }
+
+        let handle = self
+            .replay_worker_handle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let Some(mut handle) = handle else {
+            return Ok(());
+        };
+
+        if let Ok(result) = tokio::time::timeout(TASK_SHUTDOWN_GRACE_PERIOD, &mut handle).await {
+            Self::shutdown_join_result("dispatched replay worker", result)
         } else {
-            Ok(())
+            debug!(
+                grace_period_ms = TASK_SHUTDOWN_GRACE_PERIOD.as_millis(),
+                "Dispatched replay worker did not stop within shutdown grace period; aborting"
+            );
+            handle.abort();
+            Self::shutdown_join_result("dispatched replay worker", handle.await)
         }
     }
 

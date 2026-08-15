@@ -15,6 +15,10 @@ use sinex_primitives::rpc::{
     audit::AUDIT_GET_METHOD,
     automata::AUTOMATA_STATUS_METHOD,
     browser::BROWSER_CAPTURE_BATCH_METHOD,
+    coordination::{
+        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
+        COORDINATION_LIST_INSTANCES_METHOD,
+    },
     content::{CONTENT_RETRIEVE_BLOB_METHOD, CONTENT_STORE_BLOB_METHOD},
     curation::{
         CURATION_DUPLICATE_CANDIDATES_LIST_METHOD, CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD,
@@ -37,7 +41,10 @@ use sinex_primitives::rpc::{
         LIFECYCLE_TOMBSTONE_CREATE_METHOD, LIFECYCLE_TOMBSTONE_LIST_METHOD,
         LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
     },
-    llm::{LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD},
+    llm::{
+        LLM_BUDGET_REPORT_METHOD, LLM_EMBEDDING_ESTIMATE_METHOD, LLM_PROMPTS_LIST_METHOD,
+        LLM_ROUTE_EXPLAIN_METHOD,
+    },
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
     privacy::{
@@ -46,6 +53,7 @@ use sinex_primitives::rpc::{
         PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
         PRIVACY_POLICY_RULE_REMOVE_METHOD, PRIVACY_POLICY_RULE_SET_ENABLED_METHOD,
         PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
+        PRIVACY_SHADOW_AUDIT_METHOD,
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
         PRIVACY_PRIVATE_MODE_STATUS_METHOD,
     },
@@ -74,8 +82,8 @@ use sinex_primitives::rpc::{
         SOURCES_BINDINGS_LIST_METHOD, SOURCES_BINDINGS_RESOLVE_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_DRIFT_LIST_METHOD, SOURCES_IMPORT_PROGRESS_METHOD, SOURCES_LIST_METHOD,
-        SOURCES_PACKAGE_COMPLETENESS_METHOD, SOURCES_PRESETS_LIST_METHOD,
+        SOURCES_DRIFT_LIST_METHOD, SOURCES_IMPORT_PROGRESS_METHOD, SOURCES_IMPORT_REPORT_METHOD,
+        SOURCES_LIST_METHOD, SOURCES_PACKAGE_COMPLETENESS_METHOD, SOURCES_PRESETS_LIST_METHOD,
         SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
         SOURCES_REMEDIATION_PLAN_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
     },
@@ -515,31 +523,35 @@ pub fn list_all_methods() -> Vec<(String, crate::api::auth::Role)> {
 fn build_registry_impl() -> RpcRegistry {
     use crate::api::handlers::{
         handle_audit_get, handle_automata_status, handle_browser_capture_batch,
-        handle_create_entities, handle_create_note,
-        handle_curation_finalize, handle_curation_list_duplicate_candidates,
-        handle_curation_list_proposals, handle_curation_record_duplicate_judgment,
-        handle_curation_record_judgment, handle_dlq_list, handle_dlq_peek, handle_dlq_purge,
-        handle_dlq_requeue, handle_documents_get, handle_documents_get_chunks,
-        handle_documents_get_chunks_redacted, handle_documents_search, handle_events_annotate,
-        handle_events_cards, handle_events_lineage, handle_events_query,
-        handle_events_relation_evidence, handle_health_effect_record, handle_health_intake_record,
-        handle_hyprland_workspace_switch, handle_lifecycle_archive, handle_lifecycle_restore,
-        handle_lifecycle_status, handle_link_entities, handle_llm_budget_report,
-        handle_llm_prompts_list, handle_llm_route_explain, handle_ops_cancel, handle_ops_get,
-        handle_ops_list, handle_ops_start, handle_privacy_policy_backend_add,
-        handle_privacy_policy_dictionary_add, handle_privacy_policy_field_bind,
-        handle_privacy_policy_field_unbind, handle_privacy_policy_list,
-        handle_privacy_policy_rule_add, handle_privacy_policy_rule_remove,
-        handle_privacy_policy_rule_set_enabled, handle_privacy_policy_scope_bind,
-        handle_privacy_policy_seed_builtin, handle_private_mode_disable_service,
-        handle_private_mode_enable_service, handle_private_mode_status_service,
-        handle_replay_approve_operation, handle_replay_cancel_operation,
-        handle_replay_create_operation, handle_replay_execute_operation,
-        handle_replay_list_operations, handle_replay_operation_status,
-        handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
-        handle_runtime_drain, handle_runtime_health, handle_runtime_list,
-        handle_runtime_list_active, handle_runtime_resume, handle_runtime_set_horizon,
-        handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
+        handle_coordination_get_leader, handle_coordination_instance_health,
+        handle_coordination_list_instances,
+        handle_create_entities, handle_create_note, handle_curation_finalize,
+        handle_curation_list_duplicate_candidates, handle_curation_list_proposals,
+        handle_curation_record_duplicate_judgment, handle_curation_record_judgment,
+        handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
+        handle_documents_get, handle_documents_get_chunks, handle_documents_get_chunks_redacted,
+        handle_documents_search, handle_events_annotate, handle_events_cards,
+        handle_events_lineage, handle_events_query, handle_events_relation_evidence,
+        handle_health_effect_record, handle_health_intake_record, handle_hyprland_workspace_switch,
+        handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
+        handle_link_entities, handle_llm_budget_report, handle_llm_embedding_estimate,
+        handle_llm_prompts_list,
+        handle_llm_route_explain, handle_ops_cancel, handle_ops_get, handle_ops_list,
+        handle_ops_start, handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
+        handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,
+        handle_privacy_policy_list, handle_privacy_policy_rule_add,
+        handle_privacy_policy_rule_remove, handle_privacy_policy_rule_set_enabled,
+        handle_privacy_policy_scope_bind, handle_privacy_policy_seed_builtin,
+        handle_privacy_shadow_audit,
+        handle_private_mode_disable_service, handle_private_mode_enable_service,
+        handle_private_mode_status_service, handle_replay_approve_operation,
+        handle_replay_cancel_operation, handle_replay_create_operation,
+        handle_replay_execute_operation, handle_replay_list_operations,
+        handle_replay_operation_status, handle_replay_preview_operation,
+        handle_replay_submit_operation, handle_retrieve_blob, handle_runtime_drain,
+        handle_runtime_health, handle_runtime_list, handle_runtime_list_active,
+        handle_runtime_resume, handle_runtime_set_horizon, handle_semantic_epoch_create,
+        handle_semantic_epoch_list, handle_semantic_lane_create,
         handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_diffs_list,
         handle_semantic_lane_discard, handle_semantic_lane_outputs_list,
         handle_semantic_lane_outputs_seed_canonical_graph,
@@ -550,8 +562,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_sources_bindings_resolve, handle_sources_continuity,
         handle_sources_continuity_explain_gap, handle_sources_continuity_get,
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_drift_list,
-        handle_sources_import_progress, handle_sources_list, handle_sources_package_completeness,
-        handle_sources_presets_list,
+        handle_sources_import_progress, handle_sources_import_report, handle_sources_list,
+        handle_sources_package_completeness, handle_sources_presets_list,
         handle_sources_readiness_get, handle_sources_readiness_list,
         handle_sources_remediation_plan, handle_sources_show, handle_sources_stage,
         handle_sources_status, handle_sources_status_view, handle_store_blob, handle_system_health,
@@ -600,6 +612,10 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(LLM_PROMPTS_LIST_METHOD, boxed!(handle_llm_prompts_list))
         .pool_typed_rpc(LLM_ROUTE_EXPLAIN_METHOD, boxed!(handle_llm_route_explain))
         .pool_typed_rpc(LLM_BUDGET_REPORT_METHOD, boxed!(handle_llm_budget_report))
+        .pool_typed_rpc(
+            LLM_EMBEDDING_ESTIMATE_METHOD,
+            boxed!(handle_llm_embedding_estimate),
+        )
         .service_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
         .pool_typed_rpc(TASKS_LIST_METHOD, boxed!(handle_tasks_list))
         .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
@@ -657,6 +673,18 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_runtime_list_active),
         )
         .pool_typed_rpc(RUNTIME_HEALTH_METHOD, boxed!(handle_runtime_health))
+        .pool_typed_rpc(
+            COORDINATION_LIST_INSTANCES_METHOD,
+            boxed!(handle_coordination_list_instances),
+        )
+        .pool_typed_rpc(
+            COORDINATION_GET_LEADER_METHOD,
+            boxed!(handle_coordination_get_leader),
+        )
+        .pool_typed_rpc(
+            COORDINATION_INSTANCE_HEALTH_METHOD,
+            boxed!(handle_coordination_instance_health),
+        )
         .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
         .pool_typed_rpc(SOURCES_STATUS_METHOD, boxed!(handle_sources_status))
         .service_typed_rpc(
@@ -674,6 +702,10 @@ fn build_registry_impl() -> RpcRegistry {
         .service_typed_rpc(
             SOURCES_IMPORT_PROGRESS_METHOD,
             boxed!(handle_sources_import_progress),
+        )
+        .service_typed_rpc(
+            SOURCES_IMPORT_REPORT_METHOD,
+            boxed!(handle_sources_import_report),
         )
         .service_typed_rpc(
             SOURCES_PACKAGE_COMPLETENESS_METHOD,
@@ -915,6 +947,7 @@ fn build_registry_impl() -> RpcRegistry {
             PRIVACY_POLICY_FIELD_UNBIND_METHOD,
             boxed!(handle_privacy_policy_field_unbind),
         )
+        .pool_typed_rpc(PRIVACY_SHADOW_AUDIT_METHOD, boxed!(handle_privacy_shadow_audit))
         // Replay create/preview (Write - doesn't execute yet)
         .replay_typed_rpc(
             REPLAY_CREATE_OPERATION_METHOD,

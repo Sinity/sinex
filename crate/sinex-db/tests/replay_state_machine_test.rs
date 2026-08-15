@@ -65,7 +65,8 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
         .from_parents(vec![root_id])?
         .build()?;
     derived.scope_key = Some("scope:replay-preview".to_string());
-    derived.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    derived.product_class =
+        Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
     derived.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
     derived.derivation_declaration_id = Some("replay-preview-test-decl".to_string());
     ctx.pool().events().insert(derived).await?;
@@ -93,9 +94,9 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
         "metadata query failures must invalidate cascade impact instead of synthesizing empty metadata"
     );
     assert_eq!(
-        preview["root_event_ids"],
+        preview["root_event_id_sample"],
         serde_json::json!([root_id.to_uuid()]),
-        "preview summaries must carry root ids for downstream replay execution"
+        "preview summaries must carry a bounded root-id sample"
     );
     assert!(
         preview["anchor_churn_pct"].is_null(),
@@ -136,8 +137,8 @@ async fn replay_preview_maps_watcher_source_ids_to_emitted_event_sources(
         .generate_preview_summary(&ReplayScope {
             source_name: "filesystem-watcher".to_string(),
             time_window: Some((
-                root_id.timestamp() - time::Duration::minutes(1),
-                root_id.timestamp() + time::Duration::minutes(1),
+                root_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::minutes(1),
+                root_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::minutes(1),
             )),
             material_filter: None,
             filters: HashMap::new(),
@@ -151,9 +152,60 @@ async fn replay_preview_maps_watcher_source_ids_to_emitted_event_sources(
         "watcher source names should match the emitted fs-watcher event source during replay preview"
     );
     assert_eq!(
-        preview["root_event_ids"],
+        preview["root_event_id_sample"],
         serde_json::json!([root_id.to_uuid()]),
-        "preview summaries must keep the matched replay roots after source alias expansion"
+        "preview summaries must keep sampled replay roots after source alias expansion"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_preview_bounds_root_identity_at_the_keyset_page_boundary(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("replay-preview-root-boundary"))
+        .await?;
+    let now = Timestamp::now();
+
+    for anchor in 0..=10_000_i64 {
+        ctx.pool()
+            .events()
+            .insert(
+                FileCreatedPayload::test_default(
+                    RecordedPath::from_observed("/tmp/replay-preview-boundary.txt")
+                        .map_err(|e| color_eyre::eyre::eyre!(e))?,
+                )
+                .from_material_at(material_id, anchor)
+                .build()?,
+            )
+            .await?;
+    }
+
+    let preview = ReplayStateMachine::new(ctx.pool().clone())
+        .generate_preview_summary(&ReplayScope {
+            source_name: "fs-watcher".to_string(),
+            time_window: Some((
+                now - time::Duration::minutes(1),
+                Timestamp::now() + time::Duration::minutes(1),
+            )),
+            material_filter: Some(vec![*material_id.as_uuid()]),
+            ..Default::default()
+        })
+        .await?;
+
+    assert_eq!(preview["total_events"], serde_json::json!(10_001));
+    assert_eq!(preview["root_event_count"], serde_json::json!(10_001));
+    assert_eq!(
+        preview["root_event_id_sample"]
+            .as_array()
+            .map(Vec::len),
+        Some(100),
+        "the persisted preview must stay bounded after the 10,000-root query page"
+    );
+    assert!(preview.get("root_event_ids").is_none());
+    assert!(preview["root_event_id_fingerprint"]
+        .as_str()
+        .is_some_and(|fingerprint| !fingerprint.is_empty()));
     Ok(())
 }

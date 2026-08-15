@@ -25,7 +25,10 @@ async fn llm_prompts_empty_envelope_names_absent_producer() -> xtask::sandbox::T
         .expect("empty prompts view must expose source.absent caveat");
     assert!(caveat.message.contains("prompt-template registry rows"));
     assert_eq!(
-        caveat.ref_.as_ref().map(|object_ref| object_ref.id.as_str()),
+        caveat
+            .ref_
+            .as_ref()
+            .map(|object_ref| object_ref.id.as_str()),
         Some("llm.prompt_template.registered")
     );
     Ok(())
@@ -62,7 +65,10 @@ async fn llm_budget_report_envelope_lifts_response_caveats() -> xtask::sandbox::
         .expect("budget report envelope must preserve response caveats");
     assert!(caveat.message.contains("budget-ledger producer"));
     assert_eq!(
-        caveat.ref_.as_ref().map(|object_ref| object_ref.id.as_str()),
+        caveat
+            .ref_
+            .as_ref()
+            .map(|object_ref| object_ref.id.as_str()),
         Some("llm.budget.ledger")
     );
     Ok(())

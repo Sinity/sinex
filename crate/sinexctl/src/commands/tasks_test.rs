@@ -1,7 +1,11 @@
 use super::*;
+use crate::client::ClientConfig;
 use crate::fmt::render_finite_envelope;
 use sinex_primitives::task_domain::TaskState;
 use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
+use std::sync::{Arc, Mutex};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask::sandbox::sinex_test;
 
 fn task_id(value: u128) -> Uuid {
@@ -116,45 +120,208 @@ async fn task_state_present_envelope_renders_without_caveats() -> xtask::TestRes
     Ok(())
 }
 
-/// sinex-3z2t: Taskwarrior import must not drop tags/due_at (lossy) and must
-/// populate external_refs with the Taskwarrior UUID so the server's
-/// reject_duplicate_external_refs guard actually fires on re-import
-/// (idempotency). Exercises the real build_task_create_request() used by
-/// TaskImportCommand::execute(), not a reimplementation.
 #[sinex_test]
-#[ignore = "sinex-3z2t open: import drops tags/due_at and never populates external_refs -- fails until fixed"]
-async fn task_import_preserves_tags_due_at_and_external_refs_for_idempotency()
--> xtask::TestResult<()> {
-    let taskwarrior_export = serde_json::json!({
-        "uuid": "8b3f1c9e-4a2d-4e7f-9c1a-2d3e4f5a6b7c",
+async fn task_import_preserves_fields_over_gateway_route() -> xtask::TestResult<()> {
+    let server = MockServer::start().await;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let captured_requests = Arc::clone(&requests);
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(move |request: &wiremock::Request| {
+            let request: serde_json::Value =
+                serde_json::from_slice(&request.body).expect("valid JSON-RPC task request");
+            captured_requests
+                .lock()
+                .expect("capture task import request")
+                .push(request.clone());
+            successful_task_create_response(&request)
+        })
+        .mount(&server)
+        .await;
+
+    run_task_import(&server).await?;
+
+    let requests = requests.lock().expect("read task import requests");
+    assert_eq!(requests.len(), 1, "import must make one create RPC call");
+    let request = &requests[0];
+    assert_eq!(request["method"], "tasks.create");
+    assert_eq!(request["params"]["tags"], serde_json::json!(["ops", "ssl"]));
+    assert_eq!(request["params"]["due_at"], "2026-09-01T00:00:00Z");
+    assert_eq!(
+        request["params"]["external_refs"],
+        serde_json::json!([{
+            "system": "taskwarrior",
+            "external_id": taskwarrior_uuid(),
+        }]),
+        "the gateway request must retain the stable Taskwarrior identity"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn task_import_rerun_reaches_duplicate_external_ref_protection() -> xtask::TestResult<()> {
+    let server = MockServer::start().await;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let captured_requests = Arc::clone(&requests);
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(move |request: &wiremock::Request| {
+            let request: serde_json::Value =
+                serde_json::from_slice(&request.body).expect("valid JSON-RPC task request");
+            let mut requests = captured_requests
+                .lock()
+                .expect("capture task import request");
+            requests.push(request.clone());
+            if requests.len() == 1 {
+                successful_task_create_response(&request)
+            } else {
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32602,
+                        "message": "tasks: external ref already belongs to another task",
+                        "data": {
+                            "external_system": "taskwarrior",
+                            "external_id": taskwarrior_uuid(),
+                        },
+                    },
+                    "id": request["id"],
+                }))
+            }
+        })
+        .mount(&server)
+        .await;
+
+    run_task_import(&server).await?;
+    let error = run_task_import(&server)
+        .await
+        .expect_err("a duplicate Taskwarrior UUID must fail the import command");
+    assert!(
+        error.to_string().contains("external ref already belongs to another task"),
+        "the duplicate rejection must reach the CLI caller: {error}"
+    );
+
+    let requests = requests.lock().expect("read task import requests");
+    assert_eq!(
+        requests.len(),
+        2,
+        "rerunning import must call the duplicate guard"
+    );
+    assert_eq!(
+        requests[0]["params"]["external_refs"], requests[1]["params"]["external_refs"],
+        "reruns must send the same Taskwarrior external reference"
+    );
+    assert_eq!(
+        requests[1]["params"]["external_refs"][0]["external_id"],
+        "8b3f1c9e-4a2d-4e7f-9c1a-2d3e4f5a6b7c",
+        "the duplicate response is keyed by the Taskwarrior UUID"
+    );
+    Ok(())
+}
+
+fn taskwarrior_uuid() -> &'static str {
+    "8b3f1c9e-4a2d-4e7f-9c1a-2d3e4f5a6b7c"
+}
+
+fn taskwarrior_export() -> serde_json::Value {
+    serde_json::json!([{
+        "uuid": taskwarrior_uuid(),
         "description": "Renew SSL certificate",
         "project": "infra",
         "priority": "H",
         "tags": ["ops", "ssl"],
         "due": "20260901T000000Z",
-    });
+    }])
+}
 
-    let request = build_task_create_request(&taskwarrior_export);
+async fn run_task_import(server: &MockServer) -> xtask::TestResult<()> {
+    run_task_import_with_export(server, taskwarrior_export()).await
+}
 
-    assert_eq!(
-        request.tags,
-        vec!["ops".to_string(), "ssl".to_string()],
-        "Taskwarrior tags must be preserved, not silently dropped"
-    );
+async fn run_task_import_with_export(
+    server: &MockServer,
+    export: serde_json::Value,
+) -> xtask::TestResult<()> {
+    let export_file = tempfile::NamedTempFile::new()?;
+    std::fs::write(export_file.path(), serde_json::to_vec(&export)?)?;
+    let client = GatewayClient::new(ClientConfig {
+        url: server.uri(),
+        token: Some("test-token".to_string()),
+        insecure: true,
+        ..ClientConfig::default()
+    })?;
+    TaskImportCommand {
+        file: export_file.path().display().to_string(),
+        dry_run: false,
+    }
+    .execute(&client, OutputFormat::Table)
+    .await
+}
+
+#[sinex_test]
+async fn task_import_rejects_metadata_type_loss_before_gateway_route() -> xtask::TestResult<()> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let error = run_task_import_with_export(
+        &server,
+        serde_json::json!([{
+            "uuid": taskwarrior_uuid(),
+            "description": "Renew SSL certificate",
+            "tags": ["ops", 7],
+            "due": "20260901T000000Z",
+        }]),
+    )
+    .await
+    .expect_err("invalid metadata must fail instead of being silently dropped");
     assert!(
-        request.due_at.is_some(),
-        "Taskwarrior due date must be preserved, not silently dropped"
-    );
-    assert!(
-        !request.external_refs.is_empty(),
-        "external_refs must carry the Taskwarrior UUID so \
-         reject_duplicate_external_refs can detect re-import and prevent \
-         silent task duplication"
-    );
-    assert_eq!(
-        request.external_refs[0].external_id,
-        "8b3f1c9e-4a2d-4e7f-9c1a-2d3e4f5a6b7c",
-        "external ref must key on the actual Taskwarrior UUID"
+        error
+            .to_string()
+            .contains("tag at index 1 must be a string"),
+        "the invalid metadata error must identify the lossy field: {error}"
     );
     Ok(())
+}
+
+fn successful_task_create_response(request: &serde_json::Value) -> ResponseTemplate {
+    let params = &request["params"];
+    let task_id = "019f1ad5-0f6f-7d5e-8dbe-2d4b7e172d69";
+    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": {
+            "payload": {
+                "task_id": task_id,
+                "title": params["title"],
+                "source_system": "sinexctl",
+                "external_refs": params["external_refs"],
+                "project_id": params["project_id"],
+                "tags": params["tags"],
+                "due_at": params["due_at"],
+                "priority": params["priority"],
+            },
+            "event": {},
+            "material_id": "019f1ad5-0f6f-7d5e-8dbe-2d4b7e172d6a",
+            "state": {
+                "task_id": task_id,
+                "status": "open",
+                "title": params["title"],
+                "project_id": params["project_id"],
+                "tags": params["tags"],
+                "due_at": params["due_at"],
+                "priority": params["priority"],
+                "external_refs": params["external_refs"],
+                "last_event_id": "019f1ad5-0f6f-7d5e-8dbe-2d4b7e172d6b",
+                "state_hash": "fixture",
+                "updated_at": "2026-09-01T00:00:00Z",
+            },
+        },
+        "id": request["id"],
+    }))
 }

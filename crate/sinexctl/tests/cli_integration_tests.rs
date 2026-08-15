@@ -159,6 +159,21 @@ mod help_tests {
     }
 
     #[sinex_test]
+    async fn demo_requires_confirmation_before_connecting_to_database() -> TestResult<()> {
+        let output = sinexctl()
+            .args(["ops", "demo"])
+            .env("DATABASE_URL", "postgresql://unused.example/sinex_prod")
+            .output()?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "unconfirmed demo must fail: {stderr}");
+        assert!(
+            stderr.contains("--confirm"),
+            "failure should explain explicit confirmation: {stderr}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn semantic_help_contains_nested_semantic_surfaces() -> TestResult<()> {
         sinexctl()
             .args(["semantic", "--help"])
@@ -177,7 +192,7 @@ mod help_tests {
             .args([
                 "_complete",
                 "--line",
-                "sinexctl events source:wm",
+                "sinexctl query events where source = wm",
                 "--cursor",
                 "24",
                 "--format",
@@ -186,7 +201,7 @@ mod help_tests {
             .assert()
             .success()
             .stdout(predicate::str::contains("\"schema_version\""))
-            .stdout(predicate::str::contains("source:wm.hyprland"));
+            .stdout(predicate::str::contains("wm.hyprland"));
         Ok(())
     }
 

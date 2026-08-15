@@ -45,6 +45,7 @@ control plane and not an actuator.
 | `sinex_ops_list` |
 | `sinex_orient` |
 | `sinex_privacy_status` |
+| `sinex_privacy_shadow_audit` |
 | `sinex_query` |
 | `sinex_recent_activity` |
 | `sinex_relation_evidence` |
@@ -63,6 +64,7 @@ control plane and not an actuator.
 | `sinex_source_gap_explain` |
 | `sinex_source_health` |
 | `sinex_source_identifier_continuity` |
+| `sinex_source_import_report` |
 | `sinex_source_material` |
 | `sinex_source_materials` |
 | `sinex_source_package_completeness` |

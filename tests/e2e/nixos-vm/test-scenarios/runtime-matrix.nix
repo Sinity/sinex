@@ -8,7 +8,7 @@
 
 let
   inherit (pkgs) lib;
-  sinexPackage = if sinex != null then sinex else sinexd;
+  sinexPackage = sinex;
 in
 pkgs.testers.nixosTest {
   name = "sinex-runtime-matrix";

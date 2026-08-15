@@ -4,6 +4,7 @@
 
 use serde_json::Value;
 use sinex_primitives::domain::HealthStatus;
+use sinex_primitives::{RuntimeLivenessAggregate, RuntimeLivenessPolicy, Timestamp};
 use sinex_primitives::rpc::{
     coordination::InstanceInfo, dlq::*, replay::*, runtime::*, system::SystemHealthResponse,
 };
@@ -184,6 +185,11 @@ impl MockGatewayClient {
                         detail: None,
                         attributes: Default::default(),
                     },
+                    runtime_liveness: RuntimeLivenessAggregate::evaluate(
+                        Vec::new(),
+                        RuntimeLivenessPolicy::default(),
+                        Timestamp::now(),
+                    ),
                 },
             }))
     }

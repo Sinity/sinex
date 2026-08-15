@@ -28,6 +28,7 @@ pub mod checkpoint;
 pub mod config;
 pub mod confirmation_handler;
 pub mod content_store;
+pub mod confirmed_stream_liveness;
 pub mod diagnostics {
     pub mod regression;
 }
@@ -42,6 +43,7 @@ pub mod event_transport;
 pub mod examples;
 pub mod exploration;
 pub mod file_tailer;
+pub mod fault_injection;
 pub mod health_reporter;
 pub mod heartbeat;
 pub mod hyprland;
@@ -74,6 +76,10 @@ pub mod systemd_notify;
 pub mod tags;
 pub mod version;
 pub mod watcher_handle;
+pub mod work_control;
+
+#[cfg(test)]
+mod work_control_test;
 
 pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT,
@@ -100,7 +106,7 @@ pub use checkpoint::{
 pub use config::{
     AutomatonConfig, EventSourceConfig, MaterialMetadataPolicy, PathClassRule, RuntimeConfig,
 };
-pub use confirmation_handler::{ConfirmedEventHandler, ProcessingModel};
+pub use confirmation_handler::{ConfirmedEventCompletion, ConfirmedEventHandler, ProcessingModel};
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
 pub use event_transport::{EventBatcher, EventBatcherConfig, EventTransport, spawn_event_batcher};
 pub use exploration::{ExplorationProvider, ExportFormat, SourceState};
@@ -122,7 +128,7 @@ pub use material::{
     ObservationMaterializer, RetryableMaterialCapture, StreamMaterialContext,
     TransientErrorPredicate,
 };
-pub use nats_publisher::NatsPublisher;
+pub use nats_publisher::{NatsPublisher, resolve_nats_namespace};
 pub use pacing::{BacklogGate, PacingController, RateBudget, ScanPacer};
 pub use pressure::PressureMonitor;
 pub use processing::AutomatonLogicError;
@@ -164,6 +170,7 @@ pub use content_store::{
     BlobMetadata, ContentBackend, ContentStoreConfig, ContentStoreKey, ContentStoreManager,
     MaterialContentStore,
 };
+pub use fault_injection::{FaultInjector, FaultMode, FaultPoint};
 pub use preflight::{VerificationStatus, verify_service_dependencies};
 
 // ApiCursor adapter — paginated REST import support (#1746).

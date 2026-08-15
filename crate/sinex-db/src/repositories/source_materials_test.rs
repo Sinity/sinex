@@ -3,16 +3,91 @@ use crate::models::Blob;
 use crate::repositories::DbPoolExt;
 use crate::repositories::events::{EventStorageLane, StreamBatchRow};
 use serde_json::json;
-use sinex_primitives::domain::{EventType, HostName};
+use sinex_primitives::domain::{EventType, HostName, ModuleKind, ModuleName};
 use std::sync::Arc;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn realtime_capture_uses_typed_byte_offset_kind() -> ::xtask::sandbox::TestResult<()> {
-    let entry =
-        TemporalLedgerEntry::realtime_capture(uuid::Uuid::now_v7(), 42, Timestamp::now());
+    let entry = TemporalLedgerEntry::realtime_capture(uuid::Uuid::now_v7(), 42, Timestamp::now());
 
     assert_eq!(entry.offset_kind, OffsetKind::Byte);
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_readiness_rejects_failed_runtime_with_historical_output(
+    ctx: xtask::sandbox::TestContext,
+) -> ::xtask::sandbox::TestResult<()> {
+    let source = "hdnv-source-readiness";
+    let material_id = ctx.create_source_material(Some(source)).await?;
+    sqlx::query!(
+        "UPDATE raw.source_material_registry SET source_identifier = $2 WHERE id = $1",
+        material_id.to_uuid(),
+        source,
+    )
+    .execute(ctx.pool())
+    .await?;
+    let manifest = ctx
+        .pool
+        .state()
+        .register_module(
+            &ModuleName::new(source),
+            ModuleKind::Source,
+            "test",
+            Some("source readiness regression"),
+        )
+        .await?;
+    let run = ctx
+        .pool
+        .state()
+        .start_module_run(
+            manifest.id,
+            "source-readiness-test",
+            "failed-instance",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+
+    let mut output = race_test_event_row(material_id.to_uuid())?;
+    output.module_run_id = Some(run.id.to_uuid());
+    ctx.pool()
+        .events()
+        .insert_stream_batch_into(EventStorageLane::Activity, std::slice::from_ref(&output))
+        .await?;
+
+    let failed_at = time::OffsetDateTime::now_utc() - time::Duration::hours(2);
+    sqlx::query!(
+        r#"
+        UPDATE core.runs
+        SET status = 'failed', started_at = $2, last_heartbeat_at = $2
+        WHERE id = $1
+        "#,
+        run.id.to_uuid(),
+        failed_at,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let readiness = ctx
+        .pool()
+        .source_materials()
+        .get_source_readiness(source, None, Some(300))
+        .await?
+        .expect("registered source should have a readiness row");
+
+    assert_eq!(
+        readiness.status,
+        SourceReadinessStatus::Error,
+        "historical material/output must not mask a failed current source run"
+    );
+    assert_eq!(readiness.evidence["runtime"]["run_status"], "failed");
+    assert_eq!(
+        readiness.evidence["runtime"]["liveness_status"],
+        "Unhealthy"
+    );
     Ok(())
 }
 
@@ -146,9 +221,9 @@ async fn concurrent_event_insert_race_never_orphans_deleted_material(
             .await
     });
 
-    let delete_outcome = handle_a
-        .await
-        .map_err(|e| SinexError::unknown(format!("racer A (delete-on-tombstone) panicked: {e}")))??;
+    let delete_outcome = handle_a.await.map_err(|e| {
+        SinexError::unknown(format!("racer A (delete-on-tombstone) panicked: {e}"))
+    })??;
     let insert_result = handle_b
         .await
         .map_err(|e| SinexError::unknown(format!("racer B (redelivered event) panicked: {e}")))?;

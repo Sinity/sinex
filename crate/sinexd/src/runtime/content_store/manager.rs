@@ -12,6 +12,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::json;
 use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
+use sinex_db::SourceMaterialRecord;
 use sinex_db::models::{Blob, SourceMaterial};
 use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
 use sinex_primitives::DynamicPayload;
@@ -19,13 +20,16 @@ use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_primitives::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
-use sinex_primitives::{Event, Id, JsonValue};
+use sinex_primitives::{
+    ByteRange, DecodedMaterialManifest, Event, Id, JsonValue, MaterialManifestV1, Uuid,
+};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use super::{
     ContentStoreConfig, ContentStoreKey, LOCAL_BLAKE3_CAS_BACKEND, MaterialContentStore,
     path_validator::{VerifiedPath, create_secure_temp_path, validate_path_exists},
+    run_command_async,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command as AsyncCommand;
@@ -35,8 +39,79 @@ use tokio::sync::mpsc::error::TrySendError;
 // Re-export Blob type for content-store consumers.
 pub use sinex_db::models::Blob as BlobMetadata;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaterialReplayAuthority {
+    ManifestV1,
+    LegacyBlobFallback,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialReplayContent {
+    pub authority: MaterialReplayAuthority,
+    pub bytes: Vec<u8>,
+    manifest: Option<MaterialManifestV1>,
+}
+
+impl MaterialReplayContent {
+    pub fn slice_range(&self, material_id: Uuid, range: ByteRange) -> RuntimeResult<Vec<u8>> {
+        let selected = if let Some(manifest) = &self.manifest {
+            manifest.exact_range(range).map_err(|error| {
+                SinexError::validation(format!(
+                    "manifest replay range validation failed for source material {material_id}: {error}"
+                ))
+            })?
+        } else {
+            let start = usize::try_from(range.start).map_err(|error| {
+                SinexError::validation("legacy replay range start does not fit host index")
+                    .with_source(error)
+            })?;
+            let end = usize::try_from(range.end).map_err(|error| {
+                SinexError::validation("legacy replay range end does not fit host index")
+                    .with_source(error)
+            })?;
+            if start >= end || end > self.bytes.len() {
+                return Err(SinexError::validation(format!(
+                    "legacy replay range is outside source material {material_id}"
+                )));
+            }
+            start..end
+        };
+        Ok(self.bytes[selected].to_vec())
+    }
+}
+
 /// Default capacity for content-store-manager event channels to prevent unbounded buffering.
 pub const BLOB_EVENT_CHANNEL_CAPACITY: usize = 1024;
+
+/// Owns the transient source path used while copying an in-memory upload into
+/// the durable CAS.  The CAS copy is not the ownership transfer: every error
+/// after this path is created must still remove the source file, including
+/// post-write verification and metadata-registration failures.
+struct TemporaryBlobPath(Utf8PathBuf);
+
+impl TemporaryBlobPath {
+    fn new(path: Utf8PathBuf) -> Self {
+        Self(path)
+    }
+
+    fn as_path(&self) -> &Utf8Path {
+        &self.0
+    }
+}
+
+impl Drop for TemporaryBlobPath {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(self.0.as_std_path())
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            warn!(
+                error = %error,
+                path = %self.0,
+                "Failed to remove temporary blob file after ingest"
+            );
+        }
+    }
+}
 
 fn verification_status_persist_error(
     content_key: &str,
@@ -332,19 +407,18 @@ impl ContentStoreManager {
         let file_metadata = tokio::fs::metadata(validated_path)
             .await
             .map_err(SinexError::io)?;
-        let size_bytes = file_metadata.len() as i64;
-        let max_size = self.content_store.config.max_blob_size;
-        if max_size > 0 && file_metadata.len() as usize > max_size {
-            return Err(SinexError::blob_storage(format!(
-                "blob size {} exceeds limit {max_size} for {:?}",
-                file_metadata.len(),
-                validated_path
-            )));
-        }
+        self.content_store
+            .ensure_file_size_allowed(file_metadata.len())?;
+        let size_bytes = i64::try_from(file_metadata.len()).map_err(|error| {
+            SinexError::blob_storage("blob size does not fit database metadata").with_source(error)
+        })?;
 
-        let blake3_hash = MaterialContentStore::compute_blake3_hash(validated_path)
-            .await
-            .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
+        let blake3_hash = MaterialContentStore::compute_blake3_hash_with_limit(
+            validated_path,
+            self.content_store.config.max_blob_size,
+        )
+        .await
+        .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
 
         let effective_filename = require_ingest_filename(validated_path, original_filename)?;
 
@@ -355,9 +429,9 @@ impl ContentStoreManager {
         let mime_type = Self::detect_mime_type(validated_path)
             .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
 
-        let content_key = self
+        let (content_key, write_lease) = self
             .content_store
-            .store_file(validated_path)
+            .store_file_with_lease(validated_path)
             .await
             .map_err(|e| {
                 SinexError::processing("Failed to add file to content store").with_source(e)
@@ -367,14 +441,22 @@ impl ContentStoreManager {
         self.verify_post_write(&content_key.key, &blake3_hash)
             .await?;
 
-        self.register_new_blob(
+        let blob_metadata = self.register_new_blob(
             &content_key,
             effective_filename,
             size_bytes,
             mime_type,
             blake3_hash,
         )
-        .await
+        .await?;
+        if let Err(error) = self.content_store.release_write_lease(&write_lease).await {
+            warn!(
+                content_key = %content_key.key,
+                error = %error,
+                "Blob metadata commit was durable but CAS write lease release will retry"
+            );
+        }
+        Ok(blob_metadata)
     }
 
     /// Ingest content from bytes (for in-memory content like clipboard)
@@ -402,24 +484,29 @@ impl ContentStoreManager {
         }
 
         // Write to secure temp file for content-store ingestion
-        let temp_file_path = create_secure_temp_path("sinex_blob", "tmp")
-            .map_err(|e| SinexError::io(std::io::Error::other(e)))?;
+        let temp_file_path = TemporaryBlobPath::new(
+            create_secure_temp_path("sinex_blob", "tmp")
+                .map_err(|e| SinexError::io(std::io::Error::other(e)))?,
+        );
 
-        let mut temp_file = tokio::fs::File::create(&temp_file_path)
+        let mut temp_file = tokio::fs::File::create(temp_file_path.as_path())
             .await
             .map_err(SinexError::io)?;
         // sinex-vyi3: this transient file (holding the full content bytes
         // about to be staged into CAS) lives in the SYSTEM temp directory,
         // not under any of the ingest-spool paths the NixOS directoryRules
         // fix tightens -- restrict it explicitly.
-        super::restrict_permissions(temp_file_path.as_std_path(), super::CONTENT_STORE_FILE_MODE);
+        super::restrict_permissions(
+            temp_file_path.as_path().as_std_path(),
+            super::CONTENT_STORE_FILE_MODE,
+        );
         temp_file.write_all(content).await.map_err(SinexError::io)?;
         temp_file.sync_all().await.map_err(SinexError::io)?;
         drop(temp_file);
 
-        let content_key = self
+        let (content_key, write_lease) = self
             .content_store
-            .store_file(temp_file_path.as_path())
+            .store_owned_temp_file_with_lease(temp_file_path.as_path())
             .await
             .map_err(|e| {
                 SinexError::processing("Failed to add buffered upload to content store")
@@ -430,22 +517,25 @@ impl ContentStoreManager {
         self.verify_post_write(&content_key.key, &blake3_hash)
             .await?;
 
-        if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
-            warn!(
-                error = %e,
-                path = %temp_file_path,
-                "Failed to remove temporary blob file after ingest"
-            );
-        }
-
-        self.register_new_blob(
+        let blob_metadata = self.register_new_blob(
             &content_key,
             filename,
-            content.len() as i64,
+            i64::try_from(content.len()).map_err(|error| {
+                SinexError::blob_storage("blob size does not fit database metadata")
+                    .with_source(error)
+            })?,
             content_type.to_string(),
             blake3_hash,
         )
-        .await
+        .await?;
+        if let Err(error) = self.content_store.release_write_lease(&write_lease).await {
+            warn!(
+                content_key = %content_key.key,
+                error = %error,
+                "Blob metadata commit was durable but CAS write lease release will retry"
+            );
+        }
+        Ok(blob_metadata)
     }
 
     /// Retrieve blob content as bytes
@@ -458,13 +548,11 @@ impl ContentStoreManager {
                 blob.size_bytes
             )));
         }
-        let max_size = self.content_store.config.max_blob_size;
-        if max_size > 0 && blob.size_bytes as usize > max_size {
-            return Err(SinexError::blob_storage(format!(
-                "blob metadata size {} exceeds retrieval limit {max_size} for {content_key}",
-                blob.size_bytes
-            )));
-        }
+        let metadata_size = u64::try_from(blob.size_bytes).map_err(|error| {
+            SinexError::processing("Blob metadata size does not fit an unsigned size")
+                .with_source(error)
+        })?;
+        self.content_store.ensure_file_size_allowed(metadata_size)?;
         let canonical_key = blob.content_key();
 
         // Ensure content is available locally
@@ -476,15 +564,18 @@ impl ContentStoreManager {
         // Find the actual file path
         let path = self.find_symlink_path(&canonical_key).await?;
 
-        let file_len = tokio::fs::metadata(&path).await.map_err(SinexError::io)?.len();
-        if max_size > 0 && file_len as usize > max_size {
-            return Err(SinexError::blob_storage(format!(
-                "blob content size {file_len} exceeds retrieval limit {max_size} for {content_key}"
-            )));
-        }
+        let file_len = tokio::fs::metadata(&path)
+            .await
+            .map_err(SinexError::io)?
+            .len();
+        self.content_store.ensure_file_size_allowed(file_len)?;
 
         // Read the content
-        let content = tokio::fs::read(&path).await.map_err(SinexError::io)?;
+        let content = MaterialContentStore::read_file_with_limit(
+            &path,
+            self.content_store.config.max_blob_size,
+        )
+        .await?;
 
         // Verify integrity against the stored hashes if available. Prefer the
         // canonical content hash (git-annex SHA256), but fall back to the
@@ -562,6 +653,219 @@ impl ContentStoreManager {
         .await?;
 
         Ok(content)
+    }
+
+    /// Retrieve a local CAS object that is not represented by a `core.blobs`
+    /// row, such as a `MaterialManifestV1` object.  The key is still parsed,
+    /// size-checked, path-confined, and BLAKE3-verified before bytes are
+    /// returned; this is intentionally narrower than the user-facing blob
+    /// retrieval route.
+    pub async fn retrieve_cas_object(&self, content_key: &str) -> RuntimeResult<Vec<u8>> {
+        let parsed = ContentStoreKey::parse(content_key).map_err(SinexError::validation)?;
+        if !parsed.is_local_blake3_cas() {
+            return Err(SinexError::validation(
+                "unregistered CAS object retrieval requires a local BLAKE3 key",
+            ));
+        }
+        self.content_store.ensure_file_size_allowed(parsed.size)?;
+        self.content_store
+            .ensure_content_local(content_key)
+            .await
+            .map_err(|error| {
+                SinexError::blob_storage(error).with_operation("retrieve_cas_object")
+            })?;
+        let path = self
+            .content_store
+            .path_if_local(content_key)?
+            .ok_or_else(|| SinexError::processing("local CAS path was not resolved"))?;
+        let path = self
+            .content_store
+            .canonicalize_local_cas_path(&path)
+            .await?;
+        let content = MaterialContentStore::read_file_with_limit(
+            &path,
+            self.content_store.config.max_blob_size,
+        )
+        .await?;
+        if content.len() as u64 != parsed.size {
+            return Err(
+                SinexError::processing("CAS object size does not match its key")
+                    .with_context("expected_size", parsed.size.to_string())
+                    .with_context("actual_size", content.len().to_string()),
+            );
+        }
+        let actual_digest = blake3::hash(&content).to_hex().to_string();
+        if actual_digest != parsed.digest {
+            return Err(
+                SinexError::processing("CAS object digest does not match its key")
+                    .with_context("expected_digest", parsed.digest)
+                    .with_context("actual_digest", actual_digest),
+            );
+        }
+        Ok(content)
+    }
+
+    /// Load and fully validate one material's durable replay authority.
+    ///
+    /// V1 materials are resolved through the canonical manifest object and its
+    /// encoded BLAKE3 CAS identity. Materials without a manifest retain the
+    /// explicit legacy registry-blob fallback. The returned bytes are bounded
+    /// by the content-store max object size and can be sliced repeatedly for
+    /// all occurrences of this material without another full CAS read/hash.
+    pub async fn retrieve_material_replay_content(
+        &self,
+        material_id: Uuid,
+    ) -> RuntimeResult<MaterialReplayContent> {
+        let material = self
+            .db_pool
+            .source_materials()
+            .get_by_id(Id::<SourceMaterialRecord>::from_uuid(material_id))
+            .await?
+            .ok_or_else(|| {
+                SinexError::processing(format!(
+                    "source material {material_id} not found in registry"
+                ))
+            })?;
+
+        if let Some(manifest_reference) = material.metadata.get("material_manifest") {
+            let manifest_object = manifest_reference.as_object().ok_or_else(|| {
+                SinexError::validation(format!(
+                    "source material {material_id} has malformed manifest reference"
+                ))
+            })?;
+            let manifest_key = manifest_object
+                .get("content_key")
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| {
+                    SinexError::validation(format!(
+                        "source material {material_id} has malformed manifest reference"
+                    ))
+                })?;
+            let manifest_bytes = self.retrieve_cas_object(manifest_key).await?;
+            let manifest = match MaterialManifestV1::decode(&manifest_bytes).map_err(|error| {
+                SinexError::serialization(format!(
+                    "failed to decode manifest for source material {material_id}"
+                ))
+                .with_context("reason", error)
+            })? {
+                DecodedMaterialManifest::V1(manifest) => manifest,
+                DecodedMaterialManifest::Legacy(legacy) => {
+                    return Err(SinexError::validation(format!(
+                        "source material {material_id} has unsupported legacy manifest {}",
+                        legacy.manifest_type.as_str()
+                    )));
+                }
+                DecodedMaterialManifest::Unknown(unknown) => {
+                    return Err(SinexError::validation(format!(
+                        "source material {material_id} has unsupported manifest {}",
+                        unknown.manifest_type.as_str()
+                    )));
+                }
+            };
+            let canonical_manifest_bytes = manifest.canonical_bytes().map_err(|error| {
+                SinexError::serialization(format!(
+                    "failed to canonicalize manifest for source material {material_id}"
+                ))
+                .with_source(error)
+            })?;
+            if manifest_bytes != canonical_manifest_bytes {
+                return Err(SinexError::validation(format!(
+                    "manifest for source material {material_id} is not in canonical encoding"
+                )));
+            }
+            manifest.validate().map_err(|error| {
+                SinexError::validation(format!(
+                    "manifest validation failed for source material {material_id}: {error}"
+                ))
+            })?;
+            if manifest.source_material_id != material_id {
+                return Err(SinexError::validation(format!(
+                    "manifest source material mismatch: expected {material_id}, got {}",
+                    manifest.source_material_id
+                )));
+            }
+
+            let encoded_key = manifest.encoded_content_store_key().map_err(|error| {
+                SinexError::validation(format!(
+                    "manifest for source material {material_id} has invalid encoded CAS identity: {error}"
+                ))
+            })?;
+            let encoded_bytes = self.retrieve_cas_object(&encoded_key).await?;
+            if encoded_bytes.len() as u64 != manifest.bytes.encoded_size
+                || blake3::hash(&encoded_bytes).to_hex().to_string()
+                    != manifest.bytes.encoded.value_hex
+            {
+                return Err(SinexError::processing(format!(
+                    "manifest-authoritative CAS bytes failed digest or size validation for source material {material_id}"
+                )));
+            }
+            if let Some(blob_id) = material.optional_blob_id
+                && let Some(blob) = self
+                    .db_pool
+                    .blobs()
+                    .get_by_id(Id::<Blob>::from_uuid(blob_id))
+                    .await?
+            {
+                let blob_matches = blob.size_bytes >= 0
+                    && blob.size_bytes as u64 == manifest.bytes.encoded_size
+                    && blob
+                        .checksum_blake3
+                        .as_deref()
+                        .is_none_or(|checksum| checksum == manifest.bytes.encoded.value_hex);
+                if !blob_matches {
+                    return Err(SinexError::processing(format!(
+                        "manifest byte identity mismatch for source material {material_id}"
+                    )));
+                }
+            }
+
+            return Ok(MaterialReplayContent {
+                authority: MaterialReplayAuthority::ManifestV1,
+                bytes: encoded_bytes,
+                manifest: Some(manifest),
+            });
+        }
+
+        let blob_id = material.optional_blob_id.ok_or_else(|| {
+            SinexError::validation(format!(
+                "legacy source material {material_id} has no associated blob for replay fallback"
+            ))
+        })?;
+        let blob = self
+            .db_pool
+            .blobs()
+            .get_by_id(Id::<Blob>::from_uuid(blob_id))
+            .await?
+            .ok_or_else(|| {
+                SinexError::processing(format!(
+                    "legacy replay blob {blob_id} for source material {material_id} not found"
+                ))
+            })?;
+        let bytes = self.retrieve_content(&blob.content_key()).await?;
+        Ok(MaterialReplayContent {
+            authority: MaterialReplayAuthority::LegacyBlobFallback,
+            bytes,
+            manifest: None,
+        })
+    }
+
+    /// Resolve one replay occurrence from a previously fully validated
+    /// material authority. This convenience route preserves the range API for
+    /// callers that need one occurrence, while generic replay preflight uses
+    /// [`Self::retrieve_material_replay_content`] once per material.
+    pub async fn retrieve_material_replay_range(
+        &self,
+        material_id: Uuid,
+        range: ByteRange,
+    ) -> RuntimeResult<MaterialReplayContent> {
+        let resolved = self.retrieve_material_replay_content(material_id).await?;
+        let authority = resolved.authority;
+        let bytes = resolved.slice_range(material_id, range)?;
+        Ok(MaterialReplayContent {
+            authority,
+            bytes,
+            manifest: None,
+        })
     }
 
     /// Retrieve a blob's content path
@@ -692,7 +996,12 @@ impl ContentStoreManager {
         expected_blake3: &str,
     ) -> RuntimeResult<()> {
         let path = self.find_symlink_path(content_key).await?;
-        let stored_content = tokio::fs::read(&path).await.map_err(|e| {
+        let stored_content = MaterialContentStore::read_file_with_limit(
+            &path,
+            self.content_store.config.max_blob_size,
+        )
+        .await
+        .map_err(|e| {
             SinexError::blob_storage(format!(
                 "Post-write verification: failed to re-read {content_key}: {e}"
             ))
@@ -719,13 +1028,11 @@ impl ContentStoreManager {
             )));
         }
 
-        let output = AsyncCommand::new("git-annex")
-            .arg("contentlocation")
+        let mut cmd = AsyncCommand::new("git-annex");
+        cmd.arg("contentlocation")
             .arg(content_key)
-            .current_dir(self.content_store.root_path())
-            .output()
-            .await
-            .map_err(SinexError::io)?;
+            .current_dir(self.content_store.root_path());
+        let output = run_command_async(cmd, "Failed to run git-annex contentlocation").await?;
 
         if !output.status.success() {
             return Err(SinexError::processing(format!(
@@ -734,18 +1041,12 @@ impl ContentStoreManager {
             )));
         }
 
-        let relative = String::from_utf8(output.stdout).map_err(|e| {
-            SinexError::processing("Invalid UTF-8 from git-annex contentlocation").with_source(e)
-        })?;
-        let trimmed = relative.trim();
-        if trimmed.is_empty() {
-            return Err(SinexError::processing(format!(
-                "git-annex contentlocation returned empty path for {content_key}"
-            )));
-        }
-
-        let path = self.content_store.root_path().join(trimmed);
-        Ok(path)
+        self.content_store
+            .resolve_command_path(
+                &output.stdout,
+                "Failed to resolve git-annex contentlocation path",
+            )
+            .await
     }
 
     /// Simple MIME type detection

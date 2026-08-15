@@ -22,11 +22,13 @@ async fn register_source_contract_named_form_compiles() -> TestResult<()> {
     use crate::source_contracts::{
         Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, SourceContract,
     };
+    use crate::sources::SourceRole;
 
     let descriptor = SourceContract {
         id: "test.register-form",
         namespace: "test",
         event_types: &[("test.source", "test.event")],
+        source_role: SourceRole::Activity,
         privacy_tier: PrivacyTier::Sensitive,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
@@ -55,6 +57,7 @@ async fn source_runtime_binding_builder_accepts_all_required_fields() -> TestRes
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build();
 
     assert_eq!(descriptor.output_event_type, "test.output");
@@ -71,6 +74,45 @@ async fn source_runtime_binding_builder_accepts_all_required_fields() -> TestRes
     assert_eq!(
         descriptor.transport_semantics,
         TransportSemantics::DIRECT_APPEND_STREAM
+    );
+    assert_eq!(
+        descriptor.recovery_policy,
+        SourceRecoveryPolicy::APPEND_STREAM
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_recovery_policy_rejects_vacuous_loss_acceptance() -> TestResult<()> {
+    let missing_rationale = SourceRecoveryPolicy::live_observation("", "sinex-r6d.8");
+    assert_eq!(
+        missing_rationale.validate(),
+        Err("accepted-loss policy requires a rationale and durable record")
+    );
+
+    let missing_record = SourceRecoveryPolicy::live_observation("live upstream", "");
+    assert_eq!(
+        missing_record.validate(),
+        Err("accepted-loss policy requires a rationale and durable record")
+    );
+
+    let policy = SourceRecoveryPolicy::live_observation("live upstream", "sinex-r6d.8");
+    assert!(!policy.is_replayable());
+    assert_eq!(policy.validate(), Ok(()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_recovery_policy_rejects_incompatible_authority() -> TestResult<()> {
+    let policy = SourceRecoveryPolicy {
+        replayability_class: SourceReplayabilityClass::AppendStream,
+        catch_up_authority: CatchUpAuthority::ParentEvents,
+        accepted_loss_policy: AcceptedLossPolicy::NoSilentLoss,
+    };
+
+    assert_eq!(
+        policy.validate(),
+        Err("replayability class and catch-up authority are incompatible")
     );
     Ok(())
 }
@@ -190,6 +232,7 @@ async fn source_runtime_binding_exposes_typed_capability_refs() -> TestResult<()
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build();
 
     let capabilities = binding.capability_refs().collect::<Vec<_>>();
@@ -227,6 +270,7 @@ async fn source_runtime_binding_exposes_typed_capability_refs() -> TestResult<()
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build()
 }
 

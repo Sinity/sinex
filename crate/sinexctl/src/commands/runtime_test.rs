@@ -5,6 +5,11 @@ use super::*;
 use crate::commands::runtime_presence::{EnrichedRuntimeInfo, runtime_modules_envelope};
 use std::collections::BTreeMap;
 
+use crate::fmt::render_finite_envelope;
+use sinex_primitives::{
+    RuntimeLivenessAggregate, RuntimeLivenessEvidence, RuntimeLivenessMembership,
+    RuntimeLivenessPolicy, RuntimeLivenessStatus,
+};
 use sinex_primitives::domain::{HealthStatus, InstanceId, ModuleKind, ModuleName};
 use sinex_primitives::rpc::coordination::{ErrorInfo, InstanceInfo};
 use sinex_primitives::rpc::runtime::RuntimeHeartbeatSource;
@@ -13,7 +18,6 @@ use sinex_primitives::rpc::system::{
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
-use crate::fmt::render_finite_envelope;
 use xtask::sandbox::sinex_test;
 
 fn make_module(id: &str, kind: ModuleKind) -> RuntimeInfo {
@@ -50,8 +54,13 @@ fn fixture_envelope(count: usize) -> ViewEnvelope<RuntimeModuleListView> {
 fn enriched_module(info: RuntimeInfo, healthy: bool, stale: bool) -> EnrichedRuntimeInfo {
     EnrichedRuntimeInfo {
         info,
-        healthy,
-        stale,
+        liveness: if stale {
+            RuntimeLivenessStatus::Stale
+        } else if healthy {
+            RuntimeLivenessStatus::Healthy
+        } else {
+            RuntimeLivenessStatus::Unknown
+        },
     }
 }
 
@@ -82,6 +91,11 @@ fn fixture_system_health() -> SystemHealthResponse {
                 last_error: None,
             },
             sse_confirmation: healthy_component(),
+            runtime_liveness: RuntimeLivenessAggregate::evaluate(
+                Vec::new(),
+                RuntimeLivenessPolicy::default(),
+                Timestamp::now(),
+            ),
         },
     }
 }
@@ -107,8 +121,8 @@ async fn json_renders_one_finite_envelope_across_counts() -> xtask::TestResult<(
         let envelope = fixture_envelope(count);
         let items = envelope.payload.modules.clone();
 
-        let output = render_envelope(&envelope, &items, OutputFormat::Json)?
-            .expect("json must return Some");
+        let output =
+            render_envelope(&envelope, &items, OutputFormat::Json)?.expect("json must return Some");
 
         let parsed: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
             color_eyre::eyre::eyre!("json output did not parse (count={count}): {e}")
@@ -137,8 +151,8 @@ async fn json_renders_one_finite_envelope_across_counts() -> xtask::TestResult<(
 #[sinex_test]
 async fn runtime_status_json_renders_finite_view_envelope() -> xtask::TestResult<()> {
     let envelope = runtime_status_envelope(fixture_instance_health());
-    let output = render_finite_envelope(&envelope, OutputFormat::Json)?
-        .expect("json must return Some");
+    let output =
+        render_finite_envelope(&envelope, OutputFormat::Json)?.expect("json must return Some");
     let parsed: serde_json::Value = serde_json::from_str(&output)?;
 
     assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
@@ -160,10 +174,14 @@ async fn runtime_status_json_renders_finite_view_envelope() -> xtask::TestResult
 
 #[sinex_test]
 async fn runtime_modules_json_renders_finite_view_envelope() -> xtask::TestResult<()> {
-    let modules = vec![enriched_module(make_module("terminal-source", ModuleKind::Source), true, false)];
+    let modules = vec![enriched_module(
+        make_module("terminal-source", ModuleKind::Source),
+        true,
+        false,
+    )];
     let envelope = runtime_modules_envelope(&modules, Some(RuntimeModuleRole::Capture));
-    let output = render_finite_envelope(&envelope, OutputFormat::Json)?
-        .expect("json must return Some");
+    let output =
+        render_finite_envelope(&envelope, OutputFormat::Json)?.expect("json must return Some");
     let parsed: serde_json::Value = serde_json::from_str(&output)?;
 
     assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
@@ -173,14 +191,17 @@ async fn runtime_modules_json_renders_finite_view_envelope() -> xtask::TestResul
         "sinex.runtime-module-presence/v1"
     );
     assert_eq!(parsed["payload"]["count"], 1);
-    assert_eq!(parsed["payload"]["modules"][0]["module_name"], "terminal-source");
+    assert_eq!(
+        parsed["payload"]["modules"][0]["module_name"],
+        "terminal-source"
+    );
     assert_eq!(parsed["query_echo"]["role"], "capture");
+    assert_eq!(parsed["payload"]["modules"][0]["liveness"], "healthy");
     Ok(())
 }
 
 #[sinex_test]
-async fn runtime_modules_caveats_name_empty_stale_and_unmeasurable()
--> xtask::TestResult<()> {
+async fn runtime_modules_caveats_name_empty_stale_and_unmeasurable() -> xtask::TestResult<()> {
     let empty = runtime_modules_envelope(&[], Some(RuntimeModuleRole::Derived));
     assert_eq!(empty.caveats.len(), 1);
     assert_eq!(
@@ -205,18 +226,24 @@ async fn runtime_modules_caveats_name_empty_stale_and_unmeasurable()
 
     assert!(caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()));
     assert!(caveat_ids.contains(&ReadinessCaveatId::CoverageUnmeasurable.as_str()));
-    assert!(envelope.caveats.iter().any(|caveat| caveat
-        .message
-        .contains("stale-source")));
-    assert!(envelope.caveats.iter().any(|caveat| caveat
-        .message
-        .contains("unknown-automaton")));
+    assert!(
+        envelope
+            .caveats
+            .iter()
+            .any(|caveat| caveat.message.contains("stale-source"))
+    );
+    assert!(
+        envelope
+            .caveats
+            .iter()
+            .any(|caveat| caveat.message.contains("unknown-automaton"))
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn runtime_status_caveats_name_unhealthy_and_unmeasurable_freshness()
--> xtask::TestResult<()> {
+async fn runtime_status_caveats_name_unhealthy_and_unmeasurable_freshness() -> xtask::TestResult<()>
+{
     let mut status = fixture_instance_health();
     status.healthy = false;
     status.instance.last_heartbeat = None;
@@ -262,8 +289,8 @@ async fn runtime_status_caveats_name_unhealthy_and_unmeasurable_freshness()
 #[sinex_test]
 async fn runtime_health_json_renders_finite_view_envelope() -> xtask::TestResult<()> {
     let envelope = runtime_health_envelope(fixture_system_health());
-    let output = render_finite_envelope(&envelope, OutputFormat::Json)?
-        .expect("json must return Some");
+    let output =
+        render_finite_envelope(&envelope, OutputFormat::Json)?.expect("json must return Some");
     let parsed: serde_json::Value = serde_json::from_str(&output)?;
 
     assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
@@ -319,9 +346,10 @@ async fn runtime_health_caveats_name_absent_and_partial_components() -> xtask::T
         "overall degraded health and connected degraded components must be surfaced as window.partial"
     );
     assert!(
-        envelope.caveats.iter().any(|caveat| caveat
-            .message
-            .contains("runtime health component `nats`")),
+        envelope
+            .caveats
+            .iter()
+            .any(|caveat| caveat.message.contains("runtime health component `nats`")),
         "component caveat must name the disconnected component"
     );
     assert!(
@@ -332,6 +360,48 @@ async fn runtime_health_caveats_name_absent_and_partial_components() -> xtask::T
             == Some("sinexctl runtime health")),
         "component caveats must preserve a command hint"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_health_renders_failed_and_stale_runtime_evidence() -> xtask::TestResult<()> {
+    let now = Timestamp::now();
+    let mut health = fixture_system_health();
+    health.status = HealthStatus::Unhealthy;
+    health.healthy = false;
+    health.components.runtime_liveness = RuntimeLivenessAggregate::evaluate(
+        [
+            RuntimeLivenessEvidence {
+                module_name: ModuleName::new("failed-source"),
+                module_kind: ModuleKind::Source,
+                membership: RuntimeLivenessMembership::Assessed,
+                run_status: Some("failed".to_string()),
+                health_status: Some(HealthStatus::Healthy),
+                last_heartbeat_at: Some(now),
+                last_output_at: None,
+            },
+            RuntimeLivenessEvidence {
+                module_name: ModuleName::new("stale-automaton"),
+                module_kind: ModuleKind::Automaton,
+                membership: RuntimeLivenessMembership::Assessed,
+                run_status: Some("running".to_string()),
+                health_status: Some(HealthStatus::Healthy),
+                last_heartbeat_at: Some(now - time::Duration::seconds(301)),
+                last_output_at: None,
+            },
+        ],
+        RuntimeLivenessPolicy::default(),
+        now,
+    );
+
+    let envelope = runtime_health_envelope(health.clone());
+    assert!(envelope.caveats.iter().any(|caveat| caveat.message.contains("failed-source")));
+    assert!(envelope.caveats.iter().any(|caveat| caveat.message.contains("stale-automaton")));
+
+    let table = format_health_table(&health);
+    assert!(table.contains("Runtime Liveness: unhealthy"));
+    assert!(table.contains("failed-source (source): unhealthy"));
+    assert!(table.contains("stale-automaton (automaton): stale"));
     Ok(())
 }
 
@@ -421,8 +491,8 @@ async fn machine_formats_contain_no_ansi_sequences() -> xtask::TestResult<()> {
     let items = envelope.payload.modules.clone();
 
     for format in [OutputFormat::Json, OutputFormat::Ndjson, OutputFormat::Yaml] {
-        let output = render_envelope(&envelope, &items, format)?
-            .expect("machine format must return Some");
+        let output =
+            render_envelope(&envelope, &items, format)?.expect("machine format must return Some");
         assert!(
             !output.contains("\x1b["),
             "format {format:?} must not contain ANSI escape sequences"

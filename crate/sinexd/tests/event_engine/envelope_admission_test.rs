@@ -25,6 +25,13 @@ fn admission_service(ctx: &TestContext) -> AdmissionService {
     )
 }
 
+fn validating_admission_service(ctx: &TestContext) -> AdmissionService {
+    AdmissionService::new(
+        ctx.pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(true))),
+    )
+}
+
 fn make_event(source: &str, event_type: &str, payload: JsonValue) -> TestResult<Event<JsonValue>> {
     let material_id = Id::<sinex_primitives::events::SourceMaterial>::from_uuid(Uuid::now_v7());
     let mut event = DynamicPayload::new(source, event_type, payload)
@@ -105,6 +112,36 @@ async fn envelope_single_event_admitted(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(decisions.len(), 1);
     assert!(matches!(decisions[0], AdmissionDecision::Admitted(_)));
+    Ok(())
+}
+
+/// The durable `EventIntent` ingress must reach the full ingest validator, not
+/// merely the registered-schema lookup. A scalar payload has no registered
+/// schema here, so the old payload-only path accepted it; the structural
+/// validator must reject it before the normal redaction/persistence phase.
+#[sinex_test]
+async fn envelope_rejects_non_object_payload_via_full_ingest_validator(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let service = validating_admission_service(&ctx);
+    let intent = make_intent(vec![make_event(
+        "test.structural",
+        "payload.invalid",
+        serde_json::json!("not an object"),
+    )?]);
+
+    let decisions = service
+        .admit_intent_bytes(&serde_json::to_vec(&intent)?)
+        .await?;
+
+    let [AdmissionDecision::Rejected(rejection)] = decisions.as_slice() else {
+        panic!("durable envelope admission must reject scalar payloads: {decisions:?}");
+    };
+    assert_eq!(rejection.kind, AdmissionRejectionKind::SchemaValidation);
+    assert!(
+        rejection.reason.contains("expected object"),
+        "full validator failure must explain the payload-shape violation: {rejection:?}"
+    );
     Ok(())
 }
 

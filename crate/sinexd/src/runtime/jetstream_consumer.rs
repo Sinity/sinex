@@ -13,7 +13,13 @@
 //! before delivery. Failure isolation is preserved: each automaton runs an
 //! independent durable consumer, so a dead automaton never blocks others.
 
-use crate::runtime::confirmation_handler::ConfirmedEventHandler;
+use crate::runtime::confirmation_handler::{ConfirmedEventCompletion, ConfirmedEventHandler};
+use crate::runtime::confirmed_stream_liveness::{
+    ConfirmedStreamLiveness, ConfirmedStreamLivenessAssessment,
+    ConfirmedStreamLivenessSnapshot, ConfirmedStreamLivenessStatus,
+    DEFAULT_CHECK_INTERVAL,
+};
+use crate::runtime::self_observation::SelfObserver;
 use crate::runtime::automaton::traits::InputProvenanceFilter;
 use crate::runtime::stream::{
     PullConsumerSpec, delete_consumer, ensure_pull_consumer, list_consumers, pull_batch_bounded,
@@ -26,7 +32,7 @@ use sinex_primitives::error::SinexErrorKind;
 use sinex_primitives::events::Event;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, oneshot};
 use tracing::{debug, error, info, warn};
 
 /// Cumulative payload-byte cap per confirmed-event fetch.
@@ -54,6 +60,10 @@ pub struct JetStreamEventConsumerConfig {
     /// Combined with `provenance_filter` for server-side filtering. Empty
     /// means wildcard.
     pub event_type_filters: Vec<String>,
+    /// How often to inspect stream retention and consumer progress while live.
+    pub liveness_check_interval: Duration,
+    /// Durable self-observation sink for operator-visible liveness evidence.
+    pub liveness_observer: Option<Arc<SelfObserver>>,
 }
 
 impl Default for JetStreamEventConsumerConfig {
@@ -65,6 +75,8 @@ impl Default for JetStreamEventConsumerConfig {
             deliver_policy: jetstream::consumer::DeliverPolicy::All,
             provenance_filter: InputProvenanceFilter::Any,
             event_type_filters: Vec::new(),
+            liveness_check_interval: DEFAULT_CHECK_INTERVAL,
+            liveness_observer: None,
         }
     }
 }
@@ -77,6 +89,35 @@ pub struct JetStreamEventConsumer {
     confirmed_handler: Arc<dyn ConfirmedEventHandler>,
     running: Arc<RwLock<bool>>,
     namespace: Option<String>,
+}
+
+struct PendingConfirmedMessage {
+    message: jetstream::Message,
+    event_id: Option<sinex_primitives::events::builder::EventId>,
+    completion: PendingConfirmedCompletion,
+}
+
+enum PendingConfirmedCompletion {
+    Immediate(ConfirmedEventCompletion),
+    Deferred(oneshot::Receiver<ConfirmedEventCompletion>),
+}
+
+impl PendingConfirmedMessage {
+    async fn completion(&mut self) -> ConfirmedEventCompletion {
+        match &mut self.completion {
+            PendingConfirmedCompletion::Immediate(outcome) => *outcome,
+            PendingConfirmedCompletion::Deferred(receiver) => match receiver.await {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    warn!(
+                        ?self.event_id,
+                        "Automaton dropped confirmed-event completion receipt; retrying delivery"
+                    );
+                    ConfirmedEventCompletion::Retry
+                }
+            },
+        }
+    }
 }
 
 impl JetStreamEventConsumer {
@@ -156,7 +197,31 @@ impl JetStreamEventConsumer {
             *running = true;
         }
 
-        let result = self.run_inner(ready_tx).await;
+        let result = self.run_inner(ready_tx, None).await;
+        *self.running.write().await = false;
+        result
+    }
+
+    /// Create the durable consumer and signal readiness, then wait for the
+    /// caller to release the pull loop. This lets a production startup create
+    /// the `DeliverPolicy::New` consumer before a historical scan without
+    /// processing the same events concurrently through both paths.
+    pub async fn run_with_ready_and_start_gate(
+        &self,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        start_rx: tokio::sync::oneshot::Receiver<()>,
+    ) -> RuntimeResult<()> {
+        {
+            let mut running = self.running.write().await;
+            if *running {
+                return Err(SinexError::lifecycle(
+                    "Consumer already running".to_string(),
+                ));
+            }
+            *running = true;
+        }
+
+        let result = self.run_inner(ready_tx, Some(start_rx)).await;
         *self.running.write().await = false;
         result
     }
@@ -164,6 +229,7 @@ impl JetStreamEventConsumer {
     async fn run_inner(
         &self,
         ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        start_rx: Option<tokio::sync::oneshot::Receiver<()>>,
     ) -> RuntimeResult<()> {
         info!(
             "Starting confirmed-event consumer: {}",
@@ -184,6 +250,11 @@ impl JetStreamEventConsumer {
         let consumer = self
             .create_or_get_consumer(&js, &confirmed_stream, &confirmed_subject)
             .await?;
+        let stream = js.get_stream(&confirmed_stream).await.map_err(|error| {
+            SinexError::processing(format!(
+                "Failed to retain confirmed stream handle for liveness monitoring: {error}"
+            ))
+        })?;
         self.retire_legacy_filter_consumers(&js, &confirmed_stream)
             .await?;
 
@@ -192,9 +263,23 @@ impl JetStreamEventConsumer {
             let _ = tx.send(());
         }
 
+        if let Some(start_rx) = start_rx {
+            start_rx.await.map_err(|_| {
+                SinexError::lifecycle(
+                    "Confirmed-event consumer start gate dropped before catch-up completed"
+                        .to_string(),
+                )
+            })?;
+        }
+
         Self::consume_confirmed_events(
             consumer,
+            stream,
+            confirmed_stream,
+            self.config.consumer_name.clone(),
             self.config.batch_size,
+            self.config.liveness_check_interval,
+            self.config.liveness_observer.clone(),
             self.confirmed_handler.clone(),
             self.running.clone(),
         )
@@ -282,30 +367,87 @@ impl JetStreamEventConsumer {
     }
 
     async fn consume_confirmed_events(
-        consumer: jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+        mut consumer: jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+        mut stream: jetstream::stream::Stream,
+        stream_name: String,
+        consumer_name: String,
         batch_size: usize,
+        liveness_check_interval: Duration,
+        liveness_observer: Option<Arc<SelfObserver>>,
         confirmed_handler: Arc<dyn ConfirmedEventHandler>,
         running: Arc<RwLock<bool>>,
     ) -> RuntimeResult<()> {
+        let mut liveness = ConfirmedStreamLiveness::new();
+        let mut previous_liveness_status = None;
+        let mut liveness_interval = tokio::time::interval(liveness_check_interval.max(Duration::from_millis(1)));
+        liveness_interval.tick().await;
+        let mut batch_future = Box::pin(Self::pull_confirmed_batch(consumer.clone(), batch_size));
+
         while *running.read().await {
-            let messages = pull_batch_bounded(
-                &consumer,
-                batch_size,
-                CONFIRMED_EVENT_FETCH_MAX_BYTES,
-                Duration::from_secs(1),
-            )
-            .await?;
-            for msg in messages {
-                // Break promptly on stop() instead of finishing the whole batch,
-                // so graceful shutdown completes well under the stop timeout.
-                if !*running.read().await {
-                    break;
+            tokio::select! {
+                result = &mut batch_future => {
+                    let messages = result?;
+                    let mut pending = Vec::with_capacity(messages.len());
+                    for msg in messages {
+                        // Break promptly on stop() instead of finishing the whole batch,
+                        // so graceful shutdown completes well under the stop timeout.
+                        if !*running.read().await {
+                            break;
+                        }
+
+                        let delivery = msg.info().map_err(|error| {
+                            SinexError::processing("Failed to inspect confirmed-event delivery metadata")
+                                .with_source(error.to_string())
+                        })?;
+                        let observation = liveness.observe_delivery(delivery.stream_sequence);
+                        if let Some(assessment) = Self::inspect_confirmed_stream_liveness(
+                            &mut stream,
+                            &mut consumer,
+                            &stream_name,
+                            &consumer_name,
+                            &liveness,
+                            Some(observation),
+                            liveness_observer.as_deref(),
+                            &mut previous_liveness_status,
+                        ).await? {
+                            return Err(Self::confirmed_stream_gap_error(&assessment));
+                        }
+
+                        let Some(message) = Self::dispatch_confirmed_message(
+                            msg,
+                            &*confirmed_handler,
+                        ).await? else {
+                            // Handler reported shutdown (channel closed). Leave the
+                            // current and already-dispatched messages unsettled so
+                            // they are redelivered to the next run.
+                            return Ok(());
+                        };
+                        pending.push(message);
+                    }
+                    if !Self::settle_confirmed_batch(&mut pending).await? {
+                        // Do not ACK a later safe completion across an earlier
+                        // retry hole; the suffix must be redelivered together.
+                        batch_future = Box::pin(Self::pull_confirmed_batch(
+                            consumer.clone(),
+                            batch_size,
+                        ));
+                        continue;
+                    }
+                    batch_future = Box::pin(Self::pull_confirmed_batch(consumer.clone(), batch_size));
                 }
-                if !Self::handle_confirmed_message(msg, &*confirmed_handler).await? {
-                    // Handler reported shutdown (channel closed). Leave the
-                    // message unsettled so it is redelivered to the next run,
-                    // and exit the loop cleanly.
-                    return Ok(());
+                _ = liveness_interval.tick() => {
+                    if let Some(assessment) = Self::inspect_confirmed_stream_liveness(
+                        &mut stream,
+                        &mut consumer,
+                        &stream_name,
+                        &consumer_name,
+                        &liveness,
+                        None,
+                        liveness_observer.as_deref(),
+                        &mut previous_liveness_status,
+                    ).await? {
+                        return Err(Self::confirmed_stream_gap_error(&assessment));
+                    }
                 }
             }
         }
@@ -313,55 +455,131 @@ impl JetStreamEventConsumer {
         Ok(())
     }
 
-    /// Handle a single confirmed-event message: deserialize the full event,
-    /// dispatch it, and ack/nak. Returns `false` if processing should stop
-    /// (handler channel closed during shutdown), `true` to continue.
-    async fn handle_confirmed_message(
+    async fn pull_confirmed_batch(
+        consumer: jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+        batch_size: usize,
+    ) -> RuntimeResult<Vec<jetstream::Message>> {
+        pull_batch_bounded(
+            &consumer,
+            batch_size,
+            CONFIRMED_EVENT_FETCH_MAX_BYTES,
+            Duration::from_secs(1),
+        )
+        .await
+    }
+
+    async fn inspect_confirmed_stream_liveness(
+        stream: &mut jetstream::stream::Stream,
+        consumer: &mut jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+        stream_name: &str,
+        consumer_name: &str,
+        liveness: &ConfirmedStreamLiveness,
+        delivery: Option<crate::runtime::confirmed_stream_liveness::DeliveryObservation>,
+        observer: Option<&SelfObserver>,
+        previous_status: &mut Option<ConfirmedStreamLivenessStatus>,
+    ) -> RuntimeResult<Option<ConfirmedStreamLivenessAssessment>> {
+        let stream_info = stream.info().await.map_err(|error| {
+            SinexError::network("Failed to inspect confirmed stream liveness").with_source(error)
+        })?;
+        let consumer_info = consumer.info().await.map_err(|error| {
+            SinexError::network("Failed to inspect confirmed consumer liveness").with_source(error)
+        })?;
+        let snapshot = ConfirmedStreamLivenessSnapshot {
+            stream_name: stream_name.to_string(),
+            consumer_name: consumer_name.to_string(),
+            first_sequence: stream_info.state.first_sequence,
+            last_sequence: stream_info.state.last_sequence,
+            first_timestamp: stream_info.state.first_timestamp,
+            retained_messages: stream_info.state.messages,
+            retained_bytes: stream_info.state.bytes,
+            max_messages: stream_info.config.max_messages.max(0) as u64,
+            max_bytes: stream_info.config.max_bytes.max(0) as u64,
+            max_age_secs: stream_info.config.max_age.as_secs(),
+            consumer_pending: consumer_info.num_pending,
+            consumer_ack_pending: consumer_info.num_ack_pending,
+        };
+        let now = time::OffsetDateTime::now_utc();
+        let assessment = delivery.map_or_else(
+            || liveness.assess(&snapshot, now),
+            |delivery| liveness.assess_after_delivery(&snapshot, now, delivery),
+        );
+        let status_changed = *previous_status != Some(assessment.status);
+        if let Some(observer) = observer
+            && (status_changed || assessment.status != ConfirmedStreamLivenessStatus::Nominal)
+            && let Err(error) = observer
+                .emit_confirmed_stream_liveness(&assessment, *previous_status)
+                .await
+        {
+            warn!(
+                stream = %stream_name,
+                consumer = %consumer_name,
+                error = %error,
+                "Failed to persist confirmed-stream liveness evidence"
+            );
+        }
+        *previous_status = Some(assessment.status);
+
+        if assessment.status == ConfirmedStreamLivenessStatus::GapDetected {
+            warn!(
+                stream = %stream_name,
+                consumer = %consumer_name,
+                evidence = %assessment.describe(),
+                "Confirmed-stream retention gap detected; consumer will restart for historical catch-up"
+            );
+            Ok(Some(assessment))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn confirmed_stream_gap_error(assessment: &ConfirmedStreamLivenessAssessment) -> SinexError {
+        SinexError::service(
+            "Confirmed-event consumer stopped after retention gap; historical catch-up required",
+        )
+        .with_context("liveness_evidence", assessment.describe())
+    }
+
+    /// Deserialize and dispatch a confirmed event, retaining its completion
+    /// receipt for ordered settlement. Returns `None` only during shutdown.
+    async fn dispatch_confirmed_message(
         msg: jetstream::Message,
         confirmed_handler: &dyn ConfirmedEventHandler,
-    ) -> RuntimeResult<bool> {
+    ) -> RuntimeResult<Option<PendingConfirmedMessage>> {
         let event: Event<JsonValue> = match serde_json::from_slice(&msg.payload) {
             Ok(event) => event,
             Err(e) => {
                 // A confirmed-event message that does not deserialize as an
-                // `Event` is a genuine poison payload. Ack/drop it (tracked by
-                // the metric) rather than NAK-looping forever.
+                // `Event` is a genuine poison payload. It is terminally safe,
+                // but still settles in order behind earlier deliveries.
                 error!(
                     target: "sinex_metrics",
                     metric = "runtime.confirmed_event_parse_failures_total",
                     error = %e,
                     "Failed to parse confirmed event message"
                 );
-                msg.ack().await.map_err(|ack_err| {
-                    Self::message_settlement_error(
-                        "failed to ack bad confirmed event",
-                        &msg,
-                        None::<String>,
-                        ack_err,
-                    )
-                })?;
-                return Ok(true);
+                return Ok(Some(PendingConfirmedMessage {
+                    message: msg,
+                    event_id: None,
+                    completion: PendingConfirmedCompletion::Immediate(
+                        ConfirmedEventCompletion::Safe,
+                    ),
+                }));
             }
         };
 
         let event_id = event.id;
-        match confirmed_handler.handle_confirmed(&event).await {
-            Ok(()) => {
-                msg.ack().await.map_err(|error| {
-                    Self::message_settlement_error(
-                        "failed to ack confirmed event",
-                        &msg,
-                        event_id,
-                        error,
-                    )
-                })?;
-                Ok(true)
-            }
+        let (completion_tx, completion_rx) = oneshot::channel();
+        match confirmed_handler.handle_confirmed(&event, completion_tx).await {
+            Ok(()) => Ok(Some(PendingConfirmedMessage {
+                message: msg,
+                event_id,
+                completion: PendingConfirmedCompletion::Deferred(completion_rx),
+            })),
             Err(e) if e.kind() == SinexErrorKind::Lifecycle => {
                 // Channel closed = shutdown in progress. Do NOT ack — leave the
                 // message for redelivery to the next run.
                 debug!(?event_id, "Confirmed handler channel closed (shutdown)");
-                Ok(false)
+                Ok(None)
             }
             Err(e) => {
                 error!(
@@ -371,21 +589,56 @@ impl JetStreamEventConsumer {
                     error = %e,
                     "Confirmed handler failed"
                 );
-                msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                    Duration::from_secs(5),
-                )))
-                .await
-                .map_err(|error| {
-                    Self::message_settlement_error(
-                        "failed to NAK confirmed handler failure",
-                        &msg,
-                        event_id,
-                        error,
-                    )
-                })?;
-                Ok(true)
+                Ok(Some(PendingConfirmedMessage {
+                    message: msg,
+                    event_id,
+                    completion: PendingConfirmedCompletion::Immediate(
+                        ConfirmedEventCompletion::Retry,
+                    ),
+                }))
             }
         }
+    }
+
+    /// ACK only the contiguous safe prefix; NAK the first retry and suffix.
+    async fn settle_confirmed_batch(
+        pending: &mut [PendingConfirmedMessage],
+    ) -> RuntimeResult<bool> {
+        for index in 0..pending.len() {
+            match pending[index].completion().await {
+                ConfirmedEventCompletion::Safe => {
+                    let message = &pending[index];
+                    message.message.ack().await.map_err(|error| {
+                        Self::message_settlement_error(
+                            "failed to ack safely completed confirmed event",
+                            &message.message,
+                            message.event_id,
+                            error,
+                        )
+                    })?;
+                }
+                ConfirmedEventCompletion::Retry => {
+                    for message in &pending[index..] {
+                        message
+                            .message
+                            .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                                Duration::from_secs(5),
+                            )))
+                            .await
+                            .map_err(|error| {
+                                Self::message_settlement_error(
+                                    "failed to NAK retrying confirmed event",
+                                    &message.message,
+                                    message.event_id,
+                                    error,
+                                )
+                            })?;
+                    }
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 }
 

@@ -324,6 +324,14 @@ pub struct TombstoneApproveCommand {
     /// REQUIRED: Acknowledge that data will be permanently deleted
     #[arg(long, required = true)]
     yes_i_understand_data_is_gone: bool,
+
+    /// Explicitly purge manifest-backed source-material replay roots orphaned by this tombstone
+    #[arg(long)]
+    purge_manifest_replay_roots: bool,
+
+    /// REQUIRED with --purge-manifest-replay-roots: acknowledge loss of manifest and exact CAS replay authority
+    #[arg(long, requires = "purge_manifest_replay_roots")]
+    yes_i_understand_manifest_replay_authority_is_gone: bool,
 }
 
 impl TombstoneApproveCommand {
@@ -332,6 +340,14 @@ impl TombstoneApproveCommand {
             return Err(color_eyre::eyre::eyre!(
                 "You must acknowledge that tombstoning is PERMANENT.\n\
                  Add --yes-i-understand-data-is-gone to confirm."
+            ));
+        }
+        if self.purge_manifest_replay_roots
+            && !self.yes_i_understand_manifest_replay_authority_is_gone
+        {
+            return Err(color_eyre::eyre::eyre!(
+                "Purging manifest-backed replay roots is PERMANENT.\n\
+                 Add --yes-i-understand-manifest-replay-authority-is-gone to confirm."
             ));
         }
 
@@ -358,7 +374,12 @@ impl TombstoneApproveCommand {
         let response = with_spinner_result(
             "Executing tombstone operation...".to_string(),
             "Tombstone operation complete",
-            client.tombstone_approve(self.operation_id.clone(), true),
+            client.tombstone_approve(
+                self.operation_id.clone(),
+                true,
+                self.purge_manifest_replay_roots,
+                self.yes_i_understand_manifest_replay_authority_is_gone,
+            ),
         )
         .await?;
 
@@ -727,6 +748,9 @@ fn format_tombstone_approve_table(response: &TombstoneApproveResponse) -> String
     ));
     if let Some(count) = response.operation.tombstoned_count {
         output.push_str(&format!("  Tombstoned:    {count} events\n"));
+    }
+    if let Some(count) = response.operation.manifest_replay_roots_purged {
+        output.push_str(&format!("  Replay roots:  {count} manifest authorities purged\n"));
     }
     output.push('\n');
     output.push_str("Data has been permanently deleted.\n");

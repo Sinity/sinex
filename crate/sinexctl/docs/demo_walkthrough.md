@@ -5,7 +5,7 @@
 # Sinex Demo Walkthrough
 
 A reproducible end-to-end smoke test against the deterministic seeded
-dataset (`sinexctl ops demo`). Issue #1172 AC-10.
+dataset (`sinexctl ops demo --confirm`). Issue #1172 AC-10.
 
 ## Quick run
 
@@ -14,7 +14,8 @@ dataset (`sinexctl ops demo`). Issue #1172 AC-10.
 xtask infra start
 
 # 2. Run the walkthrough. If the database is empty, this also seeds
-#    deterministic events via `sinexctl ops demo` first.
+#    deterministic events via the explicitly confirmed `sinexctl ops demo`
+#    route first.
 sinexctl ops verify --demo
 ```
 

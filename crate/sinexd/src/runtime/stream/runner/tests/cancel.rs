@@ -12,6 +12,9 @@
 
 use super::*;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::Notify;
+
 const SLOW_SOURCE_ITERATIONS: usize = 12;
 const SLOW_SOURCE_DELAY: Duration = Duration::from_millis(120);
 
@@ -21,9 +24,38 @@ const SLOW_SOURCE_DELAY: Duration = Duration::from_millis(120);
 /// prove cancellation stops emission mid-flight instead of merely reacting
 /// to a single terminal report.
 #[cfg(feature = "messaging")]
-#[derive(Default)]
 struct SlowEmittingReplaySource {
     emitter: Option<EventEmitter>,
+    lifecycle: Option<Arc<ReplayWorkerLifecycle>>,
+}
+
+#[cfg(feature = "messaging")]
+impl Default for SlowEmittingReplaySource {
+    fn default() -> Self {
+        Self {
+            emitter: None,
+            lifecycle: None,
+        }
+    }
+}
+
+#[cfg(feature = "messaging")]
+impl SlowEmittingReplaySource {
+    fn blocking(lifecycle: Arc<ReplayWorkerLifecycle>) -> Self {
+        Self {
+            emitter: None,
+            lifecycle: Some(lifecycle),
+        }
+    }
+}
+
+#[cfg(feature = "messaging")]
+impl Drop for SlowEmittingReplaySource {
+    fn drop(&mut self) {
+        if let Some(lifecycle) = &self.lifecycle {
+            lifecycle.terminated.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 #[cfg(feature = "messaging")]
@@ -32,6 +64,9 @@ impl RuntimeModule for SlowEmittingReplaySource {
 
     async fn initialize(&mut self, init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
         self.emitter = Some(init.handles().emitter().clone());
+        if let Some(lifecycle) = &self.lifecycle {
+            lifecycle.initialized.notify_one();
+        }
         Ok(())
     }
 
@@ -41,6 +76,10 @@ impl RuntimeModule for SlowEmittingReplaySource {
         _until: TimeHorizon,
         _args: ScanArgs,
     ) -> RuntimeResult<ScanReport> {
+        if self.lifecycle.is_some() {
+            return std::future::pending::<RuntimeResult<ScanReport>>().await;
+        }
+
         let emitter = self
             .emitter
             .clone()
@@ -85,6 +124,22 @@ impl RuntimeModule for SlowEmittingReplaySource {
 
     async fn current_checkpoint(&self) -> RuntimeResult<Checkpoint> {
         Ok(Checkpoint::None)
+    }
+}
+
+#[cfg(feature = "messaging")]
+struct ReplayWorkerLifecycle {
+    initialized: Notify,
+    terminated: AtomicBool,
+}
+
+#[cfg(feature = "messaging")]
+impl ReplayWorkerLifecycle {
+    fn new() -> Self {
+        Self {
+            initialized: Notify::new(),
+            terminated: AtomicBool::new(false),
+        }
     }
 }
 
@@ -191,6 +246,128 @@ async fn dispatched_scan_cancel_stops_in_flight_emission(ctx: TestContext) -> Te
         stopped_after < SLOW_SOURCE_DELAY * (SLOW_SOURCE_ITERATIONS as u32),
         "the dispatched scan should stop promptly after cancel (took {stopped_after:?}), not \
          run out the full uninterrupted duration"
+    );
+
+    Ok(())
+}
+
+/// `sinex-q102`: a replay worker is spawned from the command listener, but it
+/// remains owned by its parent runner. Shutting down that runner must cancel
+/// and join the worker before returning, rather than leaving it to emit after
+/// the command listener has stopped.
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn runner_shutdown_cancels_and_joins_dispatched_replay_worker(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(client.clone())));
+    let work_dir = tempdir()?;
+
+    let worker_lifecycle = Arc::new(ReplayWorkerLifecycle::new());
+    let worker_lifecycle_for_factory = worker_lifecycle.clone();
+    let mut runner = RuntimeRunner::new_with_factory(
+        SlowEmittingReplaySource::default(),
+        Arc::new(move || SlowEmittingReplaySource::blocking(worker_lifecycle_for_factory.clone())),
+    );
+    runner
+        .initialize_with_transport(
+            "slow-emitting-test-source".to_string(),
+            HashMap::new(),
+            Some(ctx.pool().clone()),
+            transport,
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await?;
+    runner.start_command_listener();
+
+    let env = sinex_primitives::environment::environment();
+    let operation_id = Uuid::now_v7();
+    let scan_subject = env.nats_subject("sinex.control.sources.slow-emitting-test-source.scan");
+    let progress_subject =
+        env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+    let mut progress_sub = client.subscribe(progress_subject).await?;
+    let command = SourceScanCommand {
+        operation_id,
+        from: Checkpoint::None,
+        until: TimeHorizon::Historical {
+            end_time: Timestamp::now(),
+        },
+        args: ScanArgs::default(),
+    };
+
+    let ack_msg = tokio::time::timeout(
+        Duration::from_secs(3),
+        client.request(scan_subject, serde_json::to_vec(&command)?.into()),
+    )
+    .await??;
+    let ack: SourceScanAck = serde_json::from_slice(&ack_msg.payload)?;
+    assert!(
+        ack.accepted,
+        "scan command should be accepted: {:?}",
+        ack.error
+    );
+
+    let start_msg = tokio::time::timeout(Duration::from_secs(3), progress_sub.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("progress subscription closed early"))?;
+    let start_progress: SourceScanProgress = serde_json::from_slice(&start_msg.payload)?;
+    assert!(start_progress.final_report.is_none());
+
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        worker_lifecycle.initialized.notified(),
+    )
+    .await
+    .map_err(|_| color_eyre::eyre::eyre!("replay worker did not initialize"))?;
+
+    {
+        let handle_guard = runner
+            .replay_worker_handle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let handle = handle_guard.as_ref().ok_or_else(|| {
+            color_eyre::eyre::eyre!(
+                "replay worker handle is missing: registration must succeed before shutdown"
+            )
+        })?;
+        assert!(
+            !handle.is_finished(),
+            "replay worker handle registered in a finished state before shutdown"
+        );
+    }
+
+    tokio::time::timeout(Duration::from_secs(2), runner.shutdown())
+        .await?
+        .map_err(|error| color_eyre::eyre::eyre!("runner shutdown failed: {error}"))?;
+
+    assert!(
+        worker_lifecycle.terminated.load(Ordering::SeqCst),
+        "runner shutdown returned while the registered replay worker remained detached"
+    );
+    assert!(
+        runner
+            .replay_worker_handle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_none(),
+        "runner shutdown must consume the joined replay worker handle"
+    );
+
+    let final_msg = tokio::time::timeout(Duration::from_millis(500), progress_sub.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("progress subscription closed before terminal update"))?;
+    let final_progress: SourceScanProgress = serde_json::from_slice(&final_msg.payload)?;
+    assert!(
+        final_progress.cancelled,
+        "runner shutdown must cancel the dispatched replay worker: {final_progress:?}"
+    );
+    assert!(
+        final_progress.events_emitted < SLOW_SOURCE_ITERATIONS as u64,
+        "runner shutdown must join the worker before it emits every event, got {}",
+        final_progress.events_emitted
     );
 
     Ok(())

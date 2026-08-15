@@ -18,10 +18,12 @@
       host = "127.0.0.1";
       name = "sinex_obs_prod";
       user = "sinex";
+      passwordFile = "/etc/sinex/db-password";
     };
 
     nats = {
       environment = "prod";
+      authorization.sharedClient.nkey = "UCEXAMPLESHAREDCLIENTNKEY";
       # Staging environment prefers quick shutdowns over graceful drains.
       killPolicy = {
         signal = "SIGTERM";
@@ -38,6 +40,7 @@
 
     runtime = {
       enable = true;
+      nats.auth.nkeySeedFile = "/etc/sinex/nats-client.nk";
     };
 
     sources = {
@@ -84,6 +87,8 @@
   };
 
   environment.etc."sinex/api-admin-token".text = "monitoring-admin:admin";
+  environment.etc."sinex/db-password".text = "replace-with-secret-managed-db-password";
+  environment.etc."sinex/nats-client.nk".text = "SUEXAMPLECLIENTNKEYSEED";
 
   networking.firewall.interfaces.lo.allowedTCPPorts = [ 9090 3000 ];
 }

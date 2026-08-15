@@ -109,11 +109,13 @@ impl EventCardView {
         let event = &result.event;
         let event_id = event.id.map(|id| id.to_string());
         let ref_ = event_ref(event_id.as_deref());
-        let ingested = event.id.map(|id| id.timestamp());
+        let ingested = event.id.and_then(|id| id.timestamp());
         let quality = if event.ts_orig.is_some() {
             "original_timestamp".to_string()
-        } else {
+        } else if ingested.is_some() {
             "ingest_timestamp_fallback".to_string()
+        } else {
+            "timestamp_unknown".to_string()
         };
 
         let provenance = provenance_view(&event.provenance);
@@ -158,7 +160,10 @@ impl EventCardView {
             summary: event_summary(event, result.snippet.as_deref()),
             payload_preview: payload_preview(&event.payload),
             material_refs: provenance.material_refs,
-            privacy_state: PrivacyStateView::raw_visible(),
+            // The primitive view constructor has no route-level disclosure
+            // receipt. Callers that actually run disclosure must overwrite
+            // this explicitly; never infer redaction from the card shape.
+            privacy_state: PrivacyStateView::transformation_unknown(),
             caveats,
             trace_refs: provenance.trace_refs,
             trace_links: provenance.trace_links,
@@ -690,10 +695,7 @@ pub fn claim_support_list_caveats(events: &[QueryResultEvent]) -> Vec<CaveatView
     let mut accepted_count = 0usize;
 
     for result in events {
-        let is_candidate = result
-            .event
-            .product_class
-            .is_some_and(is_candidate_grade);
+        let is_candidate = result.event.product_class.is_some_and(is_candidate_grade);
         if !is_candidate {
             continue;
         }

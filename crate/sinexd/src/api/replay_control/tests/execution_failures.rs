@@ -1,4 +1,5 @@
 use super::*;
+use xtask::TestContext;
 #[sinex_test]
 async fn replay_execution_fails_when_outputs_never_become_query_visible(
     ctx: TestContext,
@@ -16,14 +17,41 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     .from_material(material_id)
     .build()?;
     let inserted = ctx.pool.events().insert(event).await?;
-    let target_id = inserted
+    let target_event_id = inserted.id.expect("inserted replay target must have id");
+    let target_id = target_event_id.to_uuid();
+    let target_ts = target_event_id.timestamp().expect("test ID must be UUIDv7");
+
+    // The non-cancel failure must recover the entire archived cascade, not
+    // merely the material root. A derived child is archived alongside the
+    // root before output validation begins.
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    seed_product_declaration(
+        &ctx.pool,
+        "sinex.test.replay_output_visibility_timeout",
+        product_class,
+        "replay-output-visibility-derived",
+        "analytics.summary",
+    )
+    .await?;
+    let mut derived = DynamicPayload::new(
+        "replay-output-visibility-derived",
+        "analytics.summary",
+        json!({ "path": "/tmp/replay-output-visibility-timeout-derived.txt" }),
+    )
+    .from_parents([target_event_id])?
+    .build()?;
+    derived.product_class = Some(product_class);
+    derived.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    derived.derivation_declaration_id =
+        Some("sinex.test.replay_output_visibility_timeout".to_string());
+    let derived_id = ctx
+        .pool
+        .events()
+        .insert(derived)
+        .await?
         .id
-        .expect("inserted replay target must have id")
+        .expect("inserted derived cascade member must have id")
         .to_uuid();
-    let target_ts = inserted
-        .id
-        .expect("inserted replay target must have id")
-        .timestamp();
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -60,8 +88,7 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
         .await
         .expect_err("missing replay outputs must fail before completion");
     assert!(
-        err.to_string()
-            .contains("Replay outputs were not query-visible after successful scan"),
+        err.to_string().contains("Replay outputs did not match"),
         "unexpected error: {err}"
     );
 
@@ -72,19 +99,26 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
         Some(sinex_primitives::domain::ReplayOutcome::Failed)
     );
 
-    let live_target_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
-            .bind(target_id)
+    let cascade_ids = [target_id, derived_id];
+    let live_cascade_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = ANY($1::uuid[])")
+            .bind(&cascade_ids)
             .fetch_one(&ctx.pool)
             .await?;
-    let archived_target_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+    let archived_cascade_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = ANY($1::uuid[])",
     )
-    .bind(target_id)
+    .bind(&cascade_ids)
     .fetch_one(&ctx.pool)
     .await?;
-    assert_eq!(live_target_count, 0);
-    assert_eq!(archived_target_count, 1);
+    assert_eq!(
+        live_cascade_count, 2,
+        "output-validation timeout must restore every archived cascade member"
+    );
+    assert_eq!(
+        archived_cascade_count, 0,
+        "output-validation timeout must not leave root or derived rows orphaned in audit storage"
+    );
 
     let dispatched_command = scan_command_rx.await.map_err(|_| {
         test_error("fake visibility-timeout-test source runtime did not receive a scan command")
@@ -118,7 +152,8 @@ async fn replay_execution_fails_when_source_runtime_never_reports_completion(
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -163,7 +198,7 @@ async fn replay_execution_fails_when_source_runtime_never_reports_completion(
         .await
         .expect_err("execute should fail when the source runtime never reports completion");
     assert!(
-        err.to_string().contains("archived cascade left untouched"),
+        err.to_string().contains("restored archived cascade"),
         "timeout failure should explain why replay execution failed: {err}"
     );
 
@@ -183,12 +218,12 @@ async fn replay_execution_fails_when_source_runtime_never_reports_completion(
     .fetch_one(&ctx.pool)
     .await?;
     assert_eq!(
-        live_count, 0,
-        "timed-out replay should not resurrect archived rows"
+        live_count, 1,
+        "timed-out replay should restore the archived cascade before reporting failure"
     );
     assert_eq!(
-        archived_count, 1,
-        "timed-out replay should leave the archived cascade untouched"
+        archived_count, 0,
+        "timed-out replay should not leave the archived cascade stranded"
     );
 
     let dispatched_command = scan_command_rx.await.map_err(|_| {
@@ -225,7 +260,8 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -235,7 +271,7 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
         env,
         "checkpoint-fail-test",
         1,
-        0,
+        1,
     )
     .await?;
 
@@ -294,11 +330,11 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
     .await?;
     assert_eq!(
         live_count, 1,
-        "checkpoint persistence failure before replacements should restore live rows"
+        "checkpoint persistence failure after partial emission should restore untouched live rows"
     );
     assert_eq!(
         archived_count, 0,
-        "checkpoint persistence failure before replacements should not leave archived rows behind"
+        "checkpoint persistence failure after partial emission must not leave archived rows behind"
     );
 
     await_fake_scan_source_runtime(scan_handle, "checkpoint-fail-test").await?;
@@ -328,7 +364,8 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -416,16 +453,16 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
     .fetch_one(&ctx.pool)
     .await?;
     assert_eq!(
-        live_target_count, 0,
-        "replacement-record failure occurs after the original event has already been archived"
+        live_target_count, 1,
+        "replacement-record failure compensation must restore the original event"
     );
     assert_eq!(
-        archived_target_count, 1,
-        "replacement-record failure must leave the archived target in audit storage"
+        archived_target_count, 0,
+        "replacement-record failure compensation must not strand the original event in audit storage"
     );
     assert_eq!(
-        live_replacement_count, 1,
-        "replacement-record failure must not delete already-emitted replay outputs"
+        live_replacement_count, 0,
+        "replacement-record failure compensation must archive the partial replay output"
     );
 
     let replacements = ctx
@@ -433,9 +470,10 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
         .events()
         .get_replacements_by_operation(planned.operation_id)
         .await?;
-    assert!(
-        replacements.is_empty(),
-        "failed replacement recording must not partially insert lineage rows"
+    assert_eq!(
+        replacements.len(),
+        1,
+        "replacement-record failure compensation should retry and leave one complete lineage row"
     );
 
     await_fake_scan_source_runtime(scan_handle, "replacement-record-fail-test").await?;
@@ -458,6 +496,8 @@ async fn replay_execution_restores_archived_cascade_when_dispatch_fails_before_a
         json!({ "path": "/tmp/replay-pre-ack-failure.txt" }),
     )
     .from_material(material_id)
+    .with_offset_start(0)?
+    .with_offset_end(1)?
     .build()?;
     let inserted = ctx.pool.events().insert(event).await?;
     let target_id = inserted
@@ -467,7 +507,8 @@ async fn replay_execution_restores_archived_cascade_when_dispatch_fails_before_a
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -564,7 +605,8 @@ async fn replay_execution_fails_before_archive_when_scope_metadata_collection_fa
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let mut scope = sample_scope();
@@ -635,6 +677,23 @@ async fn replay_execution_fails_before_archive_when_scope_metadata_collection_fa
 async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publish_fails(
     ctx: TestContext,
 ) -> Result<()> {
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("replay-scope-invalidation-failure".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || runtime.block_on(async move {
+            replay_execution_restores_cascade_when_initial_scope_invalidation_publish_fails_inner(ctx)
+                .await
+        }))
+        .map_err(|error| test_error(format!("failed to start replay test thread: {error}")))?
+        .join()
+        .map_err(|_| test_error("replay test thread panicked"))??;
+    Ok(())
+}
+
+async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publish_fails_inner(
+    ctx: TestContext,
+) -> xtask::TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
     let material_id = ctx
@@ -646,6 +705,8 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
         json!({ "path": "/tmp/replay-scope-invalidation-publish-failure.txt" }),
     )
     .from_material(material_id)
+    .with_offset_start(0)?
+    .with_offset_end(1)?
     .build()?;
     event.scope_key = Some("scope://scope-invalidation-test/replay".to_string());
     let inserted = ctx.pool.events().insert(event).await?;
@@ -656,7 +717,8 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let mut scope = sample_scope();
@@ -734,5 +796,206 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
     assert!(payload.contains("scope://scope-invalidation-test/replay"));
     assert!(payload.contains(&target_id.to_string()));
 
+    Ok(())
+}
+
+/// sinex-x47r: a source material that has lost its authoritative CAS/blob
+/// backing must stop replay before the archive transaction can remove roots.
+#[sinex_test]
+async fn replay_rejects_unreadable_authority_before_archive(ctx: TestContext) -> Result<()> {
+    use crate::runtime::content_store::{
+        ContentStoreConfig, ContentStoreManager, MaterialContentStore,
+    };
+    use camino::Utf8PathBuf;
+
+    let ctx = ctx.with_nats().dedicated().await?;
+    let temp = tempfile::tempdir()?;
+    let root = Utf8PathBuf::from_path_buf(temp.path().join("content-store"))
+        .map_err(|_| test_error("temporary content-store path must be UTF-8"))?;
+    let config = ContentStoreConfig {
+        root_path: root,
+        ..Default::default()
+    };
+    let authority = Arc::new(ContentStoreManager::new(
+        config.clone(),
+        ctx.pool.clone(),
+        None,
+    )?);
+    let blob = authority
+        .ingest_from_bytes(
+            b"authority-before-archive",
+            "authority-before.log",
+            "text/plain",
+        )
+        .await?;
+    let material = ctx
+        .pool
+        .source_materials()
+        .register_material(
+            sinex_db::repositories::source_materials::SourceMaterial::blob_text(
+                "authority-before.log",
+            )
+            .with_blob_id(blob.id)
+            .with_metadata(json!({
+                "content_key": blob.content_key(),
+                "content_hash": blob.content_hash,
+                "size_bytes": blob.size_bytes,
+                "storage_backend": blob.storage_backend,
+            })),
+        )
+        .await?;
+    let material_id = Id::from_uuid(material.id);
+    let backing_store = MaterialContentStore::new(config)?;
+    let path = backing_store
+        .path_if_local(&blob.content_key())?
+        .ok_or_else(|| test_error("test blob must use local CAS"))?;
+    tokio::fs::remove_file(path).await?;
+
+    let event = DynamicPayload::new(
+        "authority-before-archive",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/authority-before-archive.txt"}),
+    )
+    .from_material(material_id)
+    .build()?;
+    let inserted = ctx.pool.events().insert(event).await?;
+    let event_id = inserted.id.expect("replay target must have an ID");
+    let event_ts = event_id.timestamp().expect("test event ID is UUIDv7");
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let mut scope = sample_scope();
+    scope.source_name = "authority-before-archive".to_string();
+    scope.time_window = Some((
+        event_ts - time::Duration::milliseconds(1),
+        event_ts + time::Duration::milliseconds(1),
+    ));
+    let operation = replay
+        .create_operation(scope.clone(), "test:authority-before".into())
+        .await?;
+    replay
+        .update_preview(
+            operation.operation_id,
+            replay.generate_preview_summary(&scope).await?,
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".into())
+        .await?;
+
+    let error = ReplayExecutionEngine::new(replay, ctx.nats_client())
+        .with_material_authority(authority)
+        .execute(operation.operation_id, "service:executor-runtime".into())
+        .await
+        .expect_err("missing authoritative bytes must reject replay before archive");
+    assert!(
+        error
+            .to_string()
+            .contains("authority validation failed before archive"),
+        "unexpected error: {error}"
+    );
+    let live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1")
+        .bind(event_id.to_uuid())
+        .fetch_one(&ctx.pool)
+        .await?;
+    let archived: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1")
+            .bind(event_id.to_uuid())
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        live, 1,
+        "authority preflight must leave the live root intact"
+    );
+    assert_eq!(
+        archived, 0,
+        "authority preflight must prevent destructive archive"
+    );
+    Ok(())
+}
+
+/// sinex-x47r: a matching output from another material cannot satisfy the
+/// replay contract merely because it has the same source/type/anchor shape.
+#[sinex_test]
+async fn replay_rejects_output_from_outside_material_scope(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let expected_material = ctx
+        .create_source_material(Some("scope-output-expected"))
+        .await?;
+    let unrelated_material = ctx
+        .create_source_material(Some("scope-output-unrelated"))
+        .await?;
+    let event = DynamicPayload::new(
+        "scope-output-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/scope-output-expected.txt"}),
+    )
+    .from_material(expected_material)
+    .build()?;
+    let inserted = ctx.pool.events().insert(event).await?;
+    let event_id = inserted.id.expect("replay target must have an ID");
+    let event_ts = event_id.timestamp().expect("test event ID is UUIDv7");
+
+    let nats = ctx.nats_client();
+    let env = environment();
+    let (command_rx, scan_handle) =
+        spawn_fake_scan_source_runtime(nats.clone(), env, "scope-output-test", 1).await?;
+    let output_pool = ctx.pool.clone();
+    let output_handle = tokio::spawn(async move {
+        let command = command_rx
+            .await
+            .map_err(|_| test_error("wrong-material fake did not receive scan command"))?;
+        let mut output = DynamicPayload::new(
+            "scope-output-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({"path": "/tmp/scope-output-unrelated.txt"}),
+        )
+        .from_material(unrelated_material)
+        .build()?;
+        output.created_by_operation_id = Some(command.operation_id);
+        output_pool.events().insert(output).await?;
+        Ok::<(), SinexError>(())
+    });
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let mut scope = sample_scope();
+    scope.source_name = "scope-output-test".to_string();
+    scope.time_window = Some((
+        event_ts - time::Duration::milliseconds(1),
+        event_ts + time::Duration::milliseconds(1),
+    ));
+    let operation = replay
+        .create_operation(scope.clone(), "test:wrong-material-output".into())
+        .await?;
+    replay
+        .update_preview(
+            operation.operation_id,
+            replay.generate_preview_summary(&scope).await?,
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".into())
+        .await?;
+
+    let error = ReplayExecutionEngine::new(replay, nats)
+        .with_scan_completion_timeout(Duration::from_millis(100))
+        .execute(operation.operation_id, "service:executor-runtime".into())
+        .await
+        .expect_err("cross-material output must not satisfy replay validation");
+    assert!(
+        error
+            .to_string()
+            .contains("source-material occurrence scope"),
+        "unexpected error: {error}"
+    );
+    output_handle.await??;
+    await_fake_scan_source_runtime(scan_handle, "scope-output-test").await?;
+    let live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1")
+        .bind(event_id.to_uuid())
+        .fetch_one(&ctx.pool)
+        .await?;
+    assert_eq!(
+        live, 1,
+        "failed output validation must restore the archived root"
+    );
     Ok(())
 }

@@ -84,7 +84,17 @@ impl RuntimeRunner {
                 "Replay scan for operation {operation_id} was cancelled before completion"
             ))),
         };
+        tracing::info!(
+            operation_id = %operation_id,
+            result = if scan_result.is_ok() { "ok" } else { "error" },
+            "dispatched replay scan returned"
+        );
         let shutdown_result = worker.shutdown().await;
+        tracing::info!(
+            operation_id = %operation_id,
+            result = if shutdown_result.is_ok() { "ok" } else { "error" },
+            "dispatched replay worker shutdown returned"
+        );
         drop(worker);
 
         let forwarder_result =

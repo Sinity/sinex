@@ -28,6 +28,13 @@ fn admission_service(ctx: &TestContext) -> AdmissionService {
     )
 }
 
+fn validating_admission_service(ctx: &TestContext) -> AdmissionService {
+    AdmissionService::new(
+        ctx.pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(true))),
+    )
+}
+
 fn material_event(
     material_id: Id<SourceMaterial>,
     event_id: Uuid,
@@ -158,12 +165,47 @@ async fn admission_decision_outcome_maps_negative_anchor_rejection(
     Ok(())
 }
 
+/// The production admission path must run `IngestEventValidator::validate_event`,
+/// rather than only its payload-schema lookup. A scalar payload has no registered
+/// schema here, so the old payload-only path accepted it; the full validator must
+/// reject it before persistence because canonical event payloads are objects.
+#[sinex_test]
+async fn admission_rejects_non_object_payload_via_full_ingest_validator(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-full-validator"))
+        .await?;
+    let event = material_event(
+        material_id,
+        Uuid::now_v7(),
+        "test.structural",
+        "payload.invalid",
+        serde_json::json!("not an object"),
+    )?;
+
+    let decision = validating_admission_service(&ctx)
+        .admit_event(event)
+        .await?;
+    let AdmissionDecision::Rejected(rejection) = decision else {
+        panic!("the production admission path must reject scalar event payloads");
+    };
+    assert_eq!(rejection.kind, AdmissionRejectionKind::SchemaValidation);
+    assert!(
+        rejection.reason.contains("expected object"),
+        "full validator failure must explain the payload-shape violation: {rejection:?}"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn admission_decision_outcome_maps_occurrence_duplicate_to_deduplicated() -> TestResult<()> {
     let decision = AdmissionDecision::Suppressed(AdmissionRejection {
         kind: AdmissionRejectionKind::OccurrenceDuplicate,
         reason: "live event with equivalence_key test-key already exists".to_string(),
         event_id: None,
+        existing_event_id: None,
+        candidate: None,
     });
 
     match decision.to_admission_outcome() {
@@ -331,6 +373,59 @@ async fn admission_service_rejects_future_timestamp_with_event_id(
         .await?;
     assert!(persisted.is_none());
 
+    Ok(())
+}
+
+/// Historical source-native dates are legitimate input. The default admission
+/// service must preserve a pre-2000 event while the independent future-skew
+/// check and timestamp deserialization remain active.
+#[sinex_test]
+async fn admission_service_preserves_pre_2000_historical_timestamp(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-pre-2000-timestamp"))
+        .await?;
+    let event_id = Uuid::now_v7();
+    let mut event = DynamicPayload::new(
+        "admission-test",
+        "historical.timestamp",
+        serde_json::json!({ "ok": true }),
+    )
+    .from_material_at(material_id, 0)
+    .at_time(Timestamp::from_const(
+        time::macros::datetime!(1990-01-01 00:00:00 UTC),
+    ))
+    .build()?
+    .to_json_event()?;
+    event.id = Some(Id::from_uuid(event_id));
+
+    let service = admission_service(&ctx);
+    match service.admit_event(event).await? {
+        AdmissionDecision::Admitted(_) => {}
+        other => panic!("pre-2000 source timestamp must be admitted by default: {other:?}"),
+    }
+
+    let bounded_service = admission_service(&ctx).with_ts_orig_lower_bound(Some(
+        Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC)),
+    ));
+    let mut bounded_event = DynamicPayload::new(
+        "admission-test",
+        "historical.timestamp.bounded",
+        serde_json::json!({ "ok": true }),
+    )
+    .from_material_at(material_id, 1)
+    .at_time(Timestamp::from_const(
+        time::macros::datetime!(1990-01-01 00:00:00 UTC),
+    ))
+    .build()?
+    .to_json_event()?;
+    bounded_event.id = Some(Id::new());
+    assert!(matches!(
+        bounded_service.admit_event(bounded_event).await?,
+        AdmissionDecision::Rejected(rejection)
+            if rejection.kind == AdmissionRejectionKind::PastTimestamp
+    ));
     Ok(())
 }
 
@@ -728,6 +823,7 @@ async fn supersede_on_change_identical_content_suppresses(ctx: TestContext) -> T
     match service.admit_event(repeat).await? {
         AdmissionDecision::Suppressed(rejection) => {
             assert_eq!(rejection.kind, AdmissionRejectionKind::OccurrenceDuplicate);
+            assert_eq!(rejection.existing_event_id, Some(live_id));
         }
         other => panic!("identical re-emit must suppress, not supersede: {other:?}"),
     }
@@ -1528,6 +1624,136 @@ async fn supersede_on_change_intrabatch_multiple_revisions_only_final_applies(
             "expected the final same-key revision to supersede the original live row: {other:?}"
         ),
     }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn supersede_on_change_across_fetch_messages_archives_original_live_row(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-fetch-batch-supersede"))
+        .await?;
+    let ts = Timestamp::now();
+    let key = "admission-fetch-batch-supersede-key".to_string();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 100),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    assert_eq!(admit_and_persist(&service, live).await?, live_id);
+
+    let first_id = Uuid::now_v7();
+    let mut first = material_event(
+        material_id,
+        first_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 200),
+    )?;
+    first.equivalence_key = Some(key.clone());
+    let second_id = Uuid::now_v7();
+    let mut second = material_event(
+        material_id,
+        second_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 300),
+    )?;
+    second.equivalence_key = Some(key);
+
+    let first_payload = serde_json::to_vec(&EventIntent::new(
+        "test-source",
+        "test-parser",
+        "1.0.0",
+        vec![first],
+        HostName::from_static("test-host"),
+    ))?;
+    let second_payload = serde_json::to_vec(&EventIntent::new(
+        "test-source",
+        "test-parser",
+        "1.0.0",
+        vec![second],
+        HostName::from_static("test-host"),
+    ))?;
+
+    let decisions = service
+        .admit_intent_bytes_batch(&[first_payload.as_slice(), second_payload.as_slice()])
+        .await?;
+    assert_eq!(decisions.len(), 2);
+    assert!(matches!(
+        decisions[0].as_slice(),
+        [AdmissionDecision::Suppressed(rejection)]
+            if rejection.kind == AdmissionRejectionKind::SupersededWithinBatch
+                && rejection.event_id == Some(first_id)
+    ));
+    assert!(matches!(
+        decisions[1].as_slice(),
+        [AdmissionDecision::Superseded { admitted, superseded_event_id }]
+            if admitted.event_id == second_id && *superseded_event_id == live_id
+    ));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn distinct_equivalence_keys_in_one_fetch_batch_are_both_admitted(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-fetch-batch-distinct"))
+        .await?;
+    let ts = Timestamp::now();
+    let service = admission_service(&ctx);
+
+    let mut first = material_event(
+        material_id,
+        Uuid::now_v7(),
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 100),
+    )?;
+    first.equivalence_key = Some("admission-fetch-batch-distinct-a".to_string());
+    let mut second = material_event(
+        material_id,
+        Uuid::now_v7(),
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 100),
+    )?;
+    second.equivalence_key = Some("admission-fetch-batch-distinct-b".to_string());
+
+    let first_payload = serde_json::to_vec(&EventIntent::new(
+        "test-source",
+        "test-parser",
+        "1.0.0",
+        vec![first],
+        HostName::from_static("test-host"),
+    ))?;
+    let second_payload = serde_json::to_vec(&EventIntent::new(
+        "test-source",
+        "test-parser",
+        "1.0.0",
+        vec![second],
+        HostName::from_static("test-host"),
+    ))?;
+
+    let decisions = service
+        .admit_intent_bytes_batch(&[first_payload.as_slice(), second_payload.as_slice()])
+        .await?;
+    assert_eq!(decisions.len(), 2);
+    assert!(
+        decisions
+            .iter()
+            .all(|decisions| matches!(decisions.as_slice(), [AdmissionDecision::Admitted(_)]))
+    );
 
     Ok(())
 }

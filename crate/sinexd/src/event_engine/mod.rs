@@ -7,6 +7,7 @@
 
 pub mod admission;
 pub mod config;
+pub(crate) mod durable_failure;
 pub mod jetstream_consumer;
 pub mod material_assembler;
 pub mod material_ready_set;
@@ -27,7 +28,7 @@ pub use material_assembler::MaterialAssembler;
 pub use material_ready_set::MaterialReadySet;
 pub use service::IngestService;
 pub use sinex_db::repositories::schema_management::SchemaSyncResult;
-pub use sinex_db::validation::SchemaInfo;
+pub use sinex_db::validation::{SchemaCompilationFailure, SchemaInfo};
 pub use sinex_primitives::error::{Result, Result as EventEngineResult, SinexError};
 pub use sinex_primitives::nats::{JetStreamEventLane, JetStreamTopology};
 pub use validator::{IngestEventValidator, ValidationResult};

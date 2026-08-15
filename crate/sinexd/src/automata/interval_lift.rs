@@ -1176,6 +1176,7 @@ register_source_contract! {
         event_types: &[
             ("derived.interval-lift", "state.interval"),
         ],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         privacy_tier: ContractPrivacyTier::Sensitive,
         horizons: &[ContractHorizon::Continuous],
         retention: ContractRetentionPolicy::Forever,
@@ -1202,6 +1203,7 @@ register_source_runtime_binding! {
     .checkpoint_family(ContractCheckpointFamily::AppendStream)
     .runtime_shape(ContractRuntimeShape::Continuous)
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
+    .recovery_policy(sinex_primitives::source_contracts::SourceRecoveryPolicy::DERIVED_INTERNAL)
     .build()
 }
 

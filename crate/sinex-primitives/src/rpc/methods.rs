@@ -15,6 +15,7 @@ pub const PRIVACY_POLICY_DICTIONARY_ADD: &str = "privacy.policy.dictionary.add";
 pub const PRIVACY_POLICY_RULE_ADD: &str = "privacy.policy.rule.add";
 pub const PRIVACY_POLICY_SEED_BUILTIN: &str = "privacy.policy.seed.builtin";
 pub const PRIVACY_POLICY_SCOPE_BIND: &str = "privacy.policy.scope.bind";
+pub const PRIVACY_SHADOW_AUDIT: &str = "privacy.shadow_audit";
 pub const PRIVACY_POLICY_RULE_REMOVE: &str = "privacy.policy.rule.remove";
 pub const PRIVACY_POLICY_RULE_SET_ENABLED: &str = "privacy.policy.rule.set_enabled";
 pub const PRIVACY_POLICY_FIELD_BIND: &str = "privacy.policy.field.bind";
@@ -37,6 +38,7 @@ pub const CURATION_FINALIZE: &str = "curation.finalize";
 pub const LLM_PROMPTS_LIST: &str = "llm.prompts.list";
 pub const LLM_ROUTE_EXPLAIN: &str = "llm.route.explain";
 pub const LLM_BUDGET_REPORT: &str = "llm.budget.report";
+pub const LLM_EMBEDDING_ESTIMATE: &str = "llm.embedding.estimate";
 
 // Tasks
 pub const TASKS_CREATE: &str = "tasks.create";
@@ -162,6 +164,7 @@ pub const SOURCES_LIST: &str = "sources.list";
 pub const SOURCES_SHOW: &str = "sources.show";
 pub const SOURCES_COVERAGE: &str = "sources.coverage";
 pub const SOURCES_IMPORT_PROGRESS: &str = "sources.import_progress";
+pub const SOURCES_IMPORT_REPORT: &str = "sources.import_report";
 pub const SOURCES_REMEDIATION_PLAN: &str = "sources.remediation_plan";
 pub const SOURCES_PACKAGE_COMPLETENESS: &str = "sources.package_completeness";
 pub const SOURCES_ANNOTATE: &str = "sources.annotate";

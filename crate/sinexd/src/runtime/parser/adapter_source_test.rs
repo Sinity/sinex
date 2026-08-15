@@ -1,16 +1,25 @@
 use super::*;
+use crate::event_engine::admission::{AdmissionDecision, AdmissionService};
+use crate::event_engine::validator::IngestEventValidator;
 use crate::runtime::checkpoint::CheckpointManager;
-use crate::runtime::parser::adapters::{AppendOnlyCursor, ChainedCursor, SqliteRowCursor};
+use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
+use crate::runtime::parser::adapters::{
+    AppendOnlyCursor, ChainedCursor, DirectoryWalkAdapter, FileDropAdapter, SqliteRowCursor,
+};
 use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
 use crate::runtime::stream::{
-    Checkpoint, ContinuousStart, EventEmitter, RuntimeHandles, ScanArgs, ServiceInfo, TimeHorizon,
+    Checkpoint, ContinuousStart, EventEmitter, ReplayMaterialOccurrence, ReplayScopeFilters,
+    ResolvedReplayMaterial, RuntimeHandles, ScanArgs, ServiceInfo, TimeHorizon,
 };
+use crate::sources::source_contracts::library::DocsLibraryParser;
 use crate::runtime::{EventTransport, NatsPublisher, SOURCE_MATERIAL_STREAM};
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
+use color_eyre::eyre::eyre;
 use futures::stream::{self, BoxStream};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::source_material_relation_types;
+use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::parser::{MaterialAnchor, ParserId, ParserManifest, SourceId};
@@ -20,10 +29,18 @@ use sinex_primitives::privacy::{
     save_private_mode_state,
 };
 use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
-use sinex_primitives::{Bytes, HostName, JsonValue, Seconds, SinexError};
-use std::collections::HashMap;
-use tokio::sync::mpsc;
-use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
+use sinex_primitives::{Bytes, HostName, JsonValue, MaterialManifestV1, Seconds, SinexError};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+use tokio::sync::{RwLock, mpsc};
+use xtask::sandbox::prelude::{
+    EnvGuard, TestContext, TestResult, WaitHelpers, sinex_serial_test, sinex_test,
+};
 
 #[derive(Default)]
 struct TestAdapter;
@@ -50,6 +67,107 @@ impl InputShapeAdapter for TestAdapter {
 }
 
 impl InputShapeAdapterExt for TestAdapter {}
+
+/// Probe adapter for the private-mode acquisition gate. Its stream contains a
+/// record that would create source material if `drain_adapter` reached the
+/// adapter, so the open count and material assertion verify suppression at the
+/// raw acquisition boundary rather than only checking a binding flag.
+static PRIVATE_MODE_PROBE_OPENS: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Default)]
+struct PrivateModeProbeAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for PrivateModeProbeAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+    async fn open(
+        &self,
+        material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        PRIVATE_MODE_PROBE_OPENS.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::pin(stream::once(async move {
+            Ok(SourceRecord {
+                material_id,
+                anchor: MaterialAnchor::ByteRange { start: 0, len: 18 },
+                bytes: b"private probe record".to_vec(),
+                logical_path: None,
+                source_ts_hint: None,
+                metadata: JsonValue::Null,
+            })
+        })))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(1)
+    }
+}
+
+impl InputShapeAdapterExt for PrivateModeProbeAdapter {}
+
+/// Counts adapter opens so the replay guard test can prove that a scoped
+/// replay never falls through to a fresh-cursor whole-source scan.
+static REPLAY_GUARD_OPENS: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Default)]
+struct ReplayGuardAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for ReplayGuardAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+    async fn open(
+        &self,
+        _material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        REPLAY_GUARD_OPENS.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::pin(stream::empty()))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(0)
+    }
+}
+
+impl InputShapeAdapterExt for ReplayGuardAdapter {}
+
+#[derive(Default)]
+struct ErroringAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for ErroringAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::StaticFile;
+
+    async fn open(
+        &self,
+        _material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        Ok(Box::pin(stream::iter(vec![Err(ParserError::Adapter(
+            "fixture input exceeded whole-file limit".to_string(),
+        ))])))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(1)
+    }
+}
+
+impl InputShapeAdapterExt for ErroringAdapter {}
 
 #[derive(Default)]
 struct FingerprintAdapter {
@@ -193,6 +311,45 @@ impl InputShapeAdapter for EmptyLogicalPathRecordAdapter {
 }
 
 impl InputShapeAdapterExt for EmptyLogicalPathRecordAdapter {}
+
+/// Replays the same durable material occurrence on every open. This models a
+/// retry of one source record after a sibling settlement boundary without
+/// introducing a new material id, which is the occurrence identity contract
+/// exercised by sinex-w4i.
+#[derive(Default)]
+struct StableMaterialRecordAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for StableMaterialRecordAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::StaticFile;
+
+    async fn open(
+        &self,
+        _material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        Ok(Box::pin(stream::once(async {
+            Ok(SourceRecord {
+                material_id: Id::from_uuid(Uuid::from_u128(0x535441424c455f4d4154455249414c)),
+                anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
+                bytes: Vec::new(),
+                logical_path: None,
+                source_ts_hint: None,
+                metadata: JsonValue::Null,
+            })
+        })))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(1)
+    }
+}
+
+impl InputShapeAdapterExt for StableMaterialRecordAdapter {}
 
 #[derive(Default)]
 struct PendingAfterOneRecordAdapter;
@@ -407,7 +564,10 @@ impl MaterialParser for EmittingParser {
                 .parser_version("1.0.0")
                 .event_type(EventType::from_static("test.event"))
                 .event_source(EventSource::from_static("test"))
-                .payload(serde_json::json!({"parsed": true}))
+                .payload(serde_json::json!({
+                    "parsed": true,
+                    "record_bytes": record.bytes,
+                }))
                 .ts_orig(ctx.acquisition_time)
                 .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
                 .anchor(record.anchor)
@@ -556,8 +716,57 @@ fn auto_settle_events(
     forward_rx
 }
 
+/// Persist an adapter emission through the same admission service that owns
+/// occurrence-key duplicate suppression, then resolve the source receipt from
+/// that durable outcome. This intentionally exercises the production
+/// admission/persistence path instead of synthesizing a suppression receipt in
+/// the adapter test itself.
+async fn settle_adapter_event_through_admission(
+    admission: &AdmissionService,
+    registry: &crate::runtime::durable_emission::SettlementRegistry,
+    event: Event<JsonValue>,
+) -> TestResult<(Option<String>, bool)> {
+    let event_id = event.id.expect("emit() assigns an id");
+    let equivalence_key = event.equivalence_key.clone();
+    match admission.admit_event(event).await? {
+        AdmissionDecision::Admitted(admitted) | AdmissionDecision::Transformed(admitted) => {
+            admission.persist_batch(&[admitted]).await?;
+            registry.resolve(
+                event_id,
+                crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
+                    lane: sinex_db::repositories::EventStorageLane::Activity,
+                    inserted: true,
+                    confirmed_sequence: None,
+                },
+            );
+            Ok((equivalence_key, false))
+        }
+        AdmissionDecision::Suppressed(_) => {
+            registry.resolve(
+                event_id,
+                crate::runtime::durable_emission::EmissionReceiptState::Suppressed {
+                    reason:
+                        crate::runtime::durable_emission::SuppressionReason::EquivalenceKeyDuplicate,
+                    existing_event_id: None,
+                },
+            );
+            Ok((equivalence_key, true))
+        }
+        outcome => Err(eyre!(
+            "adapter retry event must be admitted or occurrence-suppressed: {outcome:?}"
+        )),
+    }
+}
+
 async fn make_adapter_runtime(
     ctx: &TestContext,
+) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
+    make_adapter_runtime_with_namespace(ctx, None).await
+}
+
+async fn make_adapter_runtime_with_namespace(
+    ctx: &TestContext,
+    namespace: Option<String>,
 ) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -568,7 +777,7 @@ async fn make_adapter_runtime(
     ));
     let (event_sender, event_receiver_raw) = mpsc::channel::<Event<JsonValue>>(8);
     let emitter = EventEmitter::new(event_sender, false);
-    let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+    let publisher = Arc::new(NatsPublisher::with_namespace(ctx.nats_client(), namespace));
     let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
     let event_receiver = auto_settle_events(event_receiver_raw, settlement_registry.clone());
     let handles = RuntimeHandles::new_edge(
@@ -721,6 +930,30 @@ async fn adapter_source_config_derives_private_mode_binding_flag() -> xtask::san
         ..Default::default()
     };
 
+    let binding = config.to_binding_config_for_source("desktop.clipboard")?;
+
+    assert!(binding.is_truthy("private_mode_active"));
+    Ok(())
+}
+
+#[sinex_serial_test]
+async fn adapter_source_config_uses_service_state_dir_by_default() -> xtask::sandbox::TestResult<()>
+{
+    let dir = tempfile::tempdir()?;
+    save_private_mode_state(
+        dir.path(),
+        &RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        ),
+    )?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_STATE_DIR", dir.path().display().to_string());
+
+    // This is the production shape: source bindings provide adapter fields
+    // but do not repeat the daemon's private-mode state root.
+    let config = AdapterSourceConfig::default();
     let binding = config.to_binding_config_for_source("desktop.clipboard")?;
 
     assert!(binding.is_truthy("private_mode_active"));
@@ -886,6 +1119,55 @@ async fn adapter_backed_source_refreshes_private_mode_binding() -> xtask::sandbo
     Ok(())
 }
 
+#[sinex_serial_test]
+async fn adapter_backed_sources_suppress_acquisition_from_shared_state_dir(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let state_dir = tempfile::tempdir()?;
+    save_private_mode_state(
+        state_dir.path(),
+        &RuntimePrivateModeState::enabled_by("test-operator", Vec::new(), Timestamp::UNIX_EPOCH),
+    )?;
+
+    let mut env = EnvGuard::new();
+    env.set("SINEX_STATE_DIR", state_dir.path().display().to_string());
+    PRIVATE_MODE_PROBE_OPENS.store(0, Ordering::SeqCst);
+
+    let (runtime, _events) = make_adapter_runtime(&ctx).await?;
+    for source_id in [
+        "desktop.clipboard",
+        "browser.history",
+        "terminal.bash-history",
+    ] {
+        let mut source = AdapterBackedSource::<PrivateModeProbeAdapter, TestParser>::new(source_id);
+        let mut state = AdapterModuleState::default();
+
+        source
+            .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+            .await?;
+        let emitted = source.drain_adapter(None, &mut state, None, None).await?;
+
+        assert_eq!(emitted, 0, "private mode must suppress {source_id}");
+        assert_eq!(
+            state.cursor, None,
+            "suppressed {source_id} must not advance"
+        );
+        assert_eq!(
+            source.current_material_id(),
+            None,
+            "suppressed {source_id} must not create raw source material"
+        );
+    }
+
+    assert_eq!(
+        PRIVATE_MODE_PROBE_OPENS.load(Ordering::SeqCst),
+        0,
+        "private mode must stop adapter-backed acquisition before adapter open"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn adapter_oversized_record_is_chunked_and_emitted(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -921,6 +1203,33 @@ async fn adapter_oversized_record_is_chunked_and_emitted(ctx: TestContext) -> Te
         material_frame_messages <= 4,
         "one oversized logical record should use BEGIN plus a few material slices, got {material_frame_messages}"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_stream_error_is_returned_without_advancing_cursor(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<ErroringAdapter, TestParser>::new("desktop.clipboard");
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+    let error = source
+        .drain_adapter(None, &mut state, None, None)
+        .await
+        .expect_err("adapter stream failures must remain visible to the runtime");
+
+    assert!(
+        error
+            .to_string()
+            .contains("adapter stream yielded an error")
+    );
+    assert!(error.to_string().contains("whole-file limit"));
+    assert_eq!(state.cursor, None);
     Ok(())
 }
 
@@ -1229,6 +1538,180 @@ async fn adapter_historical_finalizes_finite_drain_material(ctx: TestContext) ->
         source.current_material_id().is_none(),
         "finite historical drains should finalize their stream material"
     );
+    Ok(())
+}
+
+/// sinex-nbag: a scoped replay for an adapter without a material-backed
+/// replay route must fail closed before opening the adapter. Opening it with
+/// the replay worker's fresh checkpoint namespace would rescan both the
+/// selected and unselected occurrences from cursor zero, creating duplicate
+/// live interpretations for the unselected ones.
+#[sinex_test]
+async fn scoped_replay_does_not_open_generic_adapter_from_fresh_cursor(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    REPLAY_GUARD_OPENS.store(0, Ordering::SeqCst);
+    let mut source =
+        AdapterBackedSource::<ReplayGuardAdapter, TestParser>::new("test.scoped-replay-guard");
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    let selected_material = Uuid::now_v7();
+    let unselected_material = Uuid::now_v7();
+    let error = source
+        .scan_historical(
+            &mut state,
+            Checkpoint::None,
+            TimeHorizon::Historical {
+                end_time: Timestamp::now(),
+            },
+            ScanArgs {
+                replay: Some(MaterialReplayContext {
+                    operation_id: Uuid::now_v7(),
+                    materials: vec![
+                        ResolvedReplayMaterial {
+                            source_material_id: selected_material,
+                            material_kind: "fixture".to_string(),
+                            source_identifier: "selected".to_string(),
+                            material_metadata: JsonValue::Null,
+                            material_start_time: None,
+                            material_end_time: None,
+                        },
+                        ResolvedReplayMaterial {
+                            source_material_id: unselected_material,
+                            material_kind: "fixture".to_string(),
+                            source_identifier: "unselected".to_string(),
+                            material_metadata: JsonValue::Null,
+                            material_start_time: None,
+                            material_end_time: None,
+                        },
+                    ],
+                    occurrences: Vec::new(),
+                    replay_scope: ReplayScopeFilters {
+                        material_ids: Some(vec![selected_material]),
+                        event_types: Some(vec!["test.event".to_string()]),
+                    },
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("generic scoped replay must fail closed");
+
+    assert!(
+        error.to_string().contains("material replay"),
+        "guard error should explain that replay stayed on the bounded material route: {error}"
+    );
+    assert_eq!(
+        REPLAY_GUARD_OPENS.load(Ordering::SeqCst),
+        0,
+        "scoped replay must not open a fresh cursor and rescan selected plus unselected material"
+    );
+    assert_eq!(state.cursor, None);
+    Ok(())
+}
+
+/// `DirectoryWalkAdapter` has a logical `DirectoryEntry` occurrence, but the
+/// replay envelope currently carries neither its path nor its native anchor.
+/// The production source route must therefore reject before a root walk can
+/// rescan selected and unselected files and emit duplicate live interpretations.
+#[sinex_test]
+async fn directory_walk_scoped_replay_fails_closed_before_source_rescan(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
+    let source_root = tempfile::tempdir()?;
+    tokio::fs::write(source_root.path().join("selected.md"), b"selected").await?;
+    tokio::fs::write(source_root.path().join("unselected.md"), b"unselected").await?;
+
+    let mut source =
+        AdapterBackedSource::<DirectoryWalkAdapter, DocsLibraryParser>::new("library.replay");
+    let mut state = AdapterModuleState::default();
+    source
+        .initialize(
+            AdapterSourceConfig {
+                adapter: json!({"roots": [source_root.path()]}),
+                ..Default::default()
+            },
+            &runtime,
+            &mut state,
+        )
+        .await?;
+
+    let selected_material = Uuid::now_v7();
+    let unselected_material = Uuid::now_v7();
+    let error = source
+        .scan_historical(
+            &mut state,
+            Checkpoint::None,
+            TimeHorizon::Historical {
+                end_time: Timestamp::now(),
+            },
+            ScanArgs {
+                replay: Some(MaterialReplayContext {
+                    operation_id: Uuid::now_v7(),
+                    materials: vec![
+                        ResolvedReplayMaterial {
+                            source_material_id: selected_material,
+                            material_kind: "append_stream".to_string(),
+                            source_identifier: "selected".to_string(),
+                            material_metadata: JsonValue::Null,
+                            material_start_time: None,
+                            material_end_time: None,
+                        },
+                        ResolvedReplayMaterial {
+                            source_material_id: unselected_material,
+                            material_kind: "append_stream".to_string(),
+                            source_identifier: "unselected".to_string(),
+                            material_metadata: JsonValue::Null,
+                            material_start_time: None,
+                            material_end_time: None,
+                        },
+                    ],
+                    occurrences: vec![ReplayMaterialOccurrence {
+                        source_material_id: selected_material,
+                        anchor_byte: 0,
+                        offset_kind: sinex_primitives::events::OffsetKind::Byte,
+                        offset_start: None,
+                        offset_end: None,
+                        record_metadata: JsonValue::Null,
+                    }],
+                    replay_scope: ReplayScopeFilters {
+                        material_ids: Some(vec![selected_material]),
+                        event_types: Some(vec!["document.indexed".to_string()]),
+                    },
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("DirectoryWalk scoped replay must fail closed");
+
+    assert!(
+        error
+            .to_string()
+            .contains("DirectoryWalkAdapter because the replay context lacks"),
+        "error must identify the unsupported bounded replay contract: {error}"
+    );
+    assert!(
+        state.cursor.is_none(),
+        "a rejected replay must not advance the source cursor"
+    );
+    assert_eq!(
+        source.current_material_id(),
+        None,
+        "a rejected replay must not open source material"
+    );
+    assert!(matches!(
+        event_receiver.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
     Ok(())
 }
 
@@ -1706,7 +2189,10 @@ impl MaterialParser for MultiIntentParser {
                     .event_source(EventSource::from_static("test"))
                     .payload(serde_json::json!({"parsed": which}))
                     .ts_orig(ctx.acquisition_time)
-                    .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
+                    .timing(sinex_primitives::parser::TimingEvidence::UserDeclared {
+                        value: ctx.acquisition_time,
+                        reason: "deterministic multi-intent admission fixture".to_string(),
+                    })
                     .anchor(record.anchor.clone())
                     .privacy_context(ProcessingContext::Metadata)
                     .build()
@@ -1715,38 +2201,30 @@ impl MaterialParser for MultiIntentParser {
     }
 }
 
-/// sinex-w4i: a record that parses into multiple intents currently commits
-/// or withholds progress as ONE atom (every sibling event must settle for
-/// the record's cursor to advance — proven by the first half of this test),
-/// but that all-or-nothing gate is only a re-emission guard, not a
-/// durability-idempotence guard: the sibling that DID already durably
-/// settle on the first attempt (`inserted: true` — the real event-engine
-/// already wrote it) has no equivalence_key and is not remembered anywhere
-/// once the retry starts from scratch. The second attempt mints and
-/// durably persists a BRAND NEW event for that same logical occurrence.
-/// Fix per the bead's AC: either buffer-then-emit only after all of a
-/// record's intents durably settle (so a never-settled sibling can never
-/// leave an orphaned already-persisted twin), or stamp occurrence identity
-/// so admission-side equivalence_key suppression catches the duplicate on
-/// retry. Neither exists yet — this test only proves the gap, per the
-/// coordinator's explicit "test only, do not fix" scope (r6d.11's shared
-/// durable-emission primitive is being fixed in a separate sequenced pass).
+/// sinex-w4i: every keyless sibling emitted from one material record receives
+/// a deterministic occurrence identity. The durable-emission gate still keeps
+/// the record cursor closed until every sibling settles, while the normal
+/// admission outcome suppresses a sibling that was already persisted when the
+/// whole record is retried.
 #[sinex_test]
-#[ignore = "sinex-w4i open: a multi-intent record's already-durably-settled \
-            sibling has no occurrence identity, so a retry forced by an \
-            unsettled sibling re-emits and re-persists a duplicate event \
-            for the settled one"]
-async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_on_retry(
+async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_retry(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let material_id = Uuid::from_u128(0x535441424c455f4d4154455249414c);
+    ctx.ensure_specific_material(material_id, Some("multi-intent-retry"))
+        .await?;
+    let admission = Arc::new(AdmissionService::new(
+        ctx.pool().clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(false))),
+    ));
     let mut state = AdapterModuleState::<u64>::default();
 
     // --- Attempt 1: "first" durably settles, "second" never does. ---
     let registry1 = crate::runtime::durable_emission::SettlementRegistry::new();
     let (runtime1, mut event_receiver1) =
         make_adapter_runtime_with_settlement_registry(&ctx, registry1.clone()).await?;
-    let mut source1 = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
+    let mut source1 = AdapterBackedSource::<StableMaterialRecordAdapter, MultiIntentParser>::new(
         "desktop.clipboard",
     )
     .with_durable_emission_timeout(std::time::Duration::from_millis(150));
@@ -1754,31 +2232,29 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
         .initialize(AdapterSourceConfig::default(), &runtime1, &mut state)
         .await?;
 
+    let admission1 = Arc::clone(&admission);
     let settler1 = tokio::spawn(async move {
-        let mut ids = Vec::new();
-        while ids.len() < 2 {
+        let mut outcomes = Vec::new();
+        while outcomes.len() < 2 {
             let Some(event) = event_receiver1.recv().await else {
                 break;
             };
-            let id = event.id.expect("emit() assigns an id");
-            if ids.is_empty() {
-                registry1.resolve(
-                    id,
-                    crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
-                        lane: sinex_db::repositories::EventStorageLane::Activity,
-                        inserted: true,
-                        confirmed_sequence: None,
-                    },
+            if outcomes.is_empty() {
+                outcomes.push(
+                    settle_adapter_event_through_admission(&admission1, &registry1, event).await?,
                 );
+            } else {
+                outcomes.push((event.equivalence_key.clone(), false));
             }
             // second event: deliberately never resolved (crash/timeout window).
-            ids.push((id, event.equivalence_key.clone()));
         }
-        ids
+        Ok::<_, color_eyre::Report>(outcomes)
     });
 
     let emitted_1 = source1.drain_adapter(None, &mut state, None, None).await?;
-    let attempt1 = settler1.await.expect("settler1 did not panic");
+    let attempt1 = settler1
+        .await
+        .expect("settler1 did not panic")?;
 
     assert_eq!(
         attempt1.len(),
@@ -1786,9 +2262,13 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
         "both sibling intents reach the mpsc handoff"
     );
     assert_eq!(
-        attempt1[0].1, None,
-        "no occurrence_key was ever stamped, so equivalence_key is None -- admission-side \
-         dedup has nothing to key off"
+        attempt1.iter().filter(|(key, _)| key.is_some()).count(),
+        2,
+        "every keyless sibling must carry an admission identity"
+    );
+    assert_ne!(
+        attempt1[0].0, attempt1[1].0,
+        "sibling slots must not collide"
     );
     assert_eq!(
         emitted_1, 0,
@@ -1804,7 +2284,7 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
     let registry2 = crate::runtime::durable_emission::SettlementRegistry::new();
     let (runtime2, mut event_receiver2) =
         make_adapter_runtime_with_settlement_registry(&ctx, registry2.clone()).await?;
-    let mut source2 = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
+    let mut source2 = AdapterBackedSource::<StableMaterialRecordAdapter, MultiIntentParser>::new(
         "desktop.clipboard",
     )
     .with_durable_emission_timeout(std::time::Duration::from_millis(150));
@@ -1812,66 +2292,59 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
         .initialize(AdapterSourceConfig::default(), &runtime2, &mut state)
         .await?;
 
+    let admission2 = Arc::clone(&admission);
     let settler2 = tokio::spawn(async move {
-        let mut ids = Vec::new();
-        while ids.len() < 2 {
+        let mut outcomes = Vec::new();
+        while outcomes.len() < 2 {
             let Some(event) = event_receiver2.recv().await else {
                 break;
             };
-            let id = event.id.expect("emit() assigns an id");
-            registry2.resolve(
-                id,
-                crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
-                    lane: sinex_db::repositories::EventStorageLane::Activity,
-                    inserted: true,
-                    confirmed_sequence: None,
-                },
+            outcomes.push(
+                settle_adapter_event_through_admission(&admission2, &registry2, event).await?,
             );
-            ids.push((id, event.equivalence_key.clone()));
         }
-        ids
+        Ok::<_, color_eyre::Report>(outcomes)
     });
 
     let emitted_2 = source2.drain_adapter(None, &mut state, None, None).await?;
-    let attempt2_ids = settler2.await.expect("settler2 did not panic");
+    let attempt2_outcomes = settler2
+        .await
+        .expect("settler2 did not panic")?;
 
     assert_eq!(
-        attempt2_ids.len(),
+        attempt2_outcomes.len(),
         2,
-        "the retry re-parses the whole record and re-emits BOTH intents, including the one \
-         that was already durably confirmed in attempt 1"
+        "the retry re-parses the whole record, so both sibling identities reach admission"
     );
     assert_eq!(
         emitted_2, 2,
-        "this time both siblings settle, so the record fully unlocks and both its events count \
-         as emitted"
+        "suppressed and persisted terminal outcomes both unlock the record's durable frontier"
     );
     assert_eq!(state.cursor, Some(1));
 
-    // THE BUG, proven at its actual root cause: `emit_batch_durable`
-    // (durable_emission_backend.rs) assigns every event a BRAND NEW random
-    // id via `Id::new()` on every call, with no check against
-    // `DurableEmissionRequest::progress_atom` or any other prior-attempt
-    // state -- there is categorically no idempotency mechanism between
-    // attempt 1 and attempt 2 at all. Combined with `MultiIntentParser`
-    // never setting `occurrence_key` (matching every real multi-intent
-    // source with no natural dedup key -- the bead's exact precondition),
-    // "first" receives an `inserted: true` durable-persistence confirmation
-    // in BOTH attempts: once in attempt 1 (even though the record never
-    // unlocked because "second" never settled) and again in attempt 2's
-    // full re-parse. An idempotent retry must durably confirm each logical
-    // occurrence exactly once; this codebase currently confirms it twice.
-    let attempt1_confirmed_first = 1; // registry1.resolve(attempt1[0].0, inserted: true) above
-    let attempt2_confirmed_first = 1; // registry2.resolve(attempt2_ids[0].0, inserted: true) above
-    let first_occurrence_durable_confirmations =
-        attempt1_confirmed_first + attempt2_confirmed_first;
     assert_eq!(
-        1, first_occurrence_durable_confirmations,
-        "a multi-intent record's already-durably-confirmed sibling must not be durably \
-         reconfirmed a second time when an unsettled sibling forces a full retry -- this \
-         codebase has no mechanism (neither request-level idempotency in \
-         emit_batch_durable, nor an equivalence_key on the retried event) preventing it, \
-         per sinex-w4i's AC"
+        attempt2_outcomes[0],
+        (attempt1[0].0.clone(), true),
+        "the previously settled sibling must take the admission suppression path"
+    );
+    assert_ne!(
+        attempt2_outcomes[0].0, attempt2_outcomes[1].0,
+        "retry sibling slots must remain distinct"
+    );
+    assert_eq!(
+        attempt2_outcomes[1].1, false,
+        "the sibling without a durable first-attempt outcome must persist on retry"
+    );
+    let persisted: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1::uuid AND event_type = 'test.event'",
+    )
+    .bind(material_id)
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(
+        persisted, 2,
+        "the persisted first sibling and retried second sibling must leave exactly one live event \
+         per occurrence; removing the adapter fallback equivalence key makes this count three"
     );
     Ok(())
 }
@@ -2025,6 +2498,143 @@ async fn adapter_source_state_summarizes_latest_input_drift_caveats()
 // #1570 Prong C — occurrence_key lands on the event as equivalence_key
 // -------------------------------------------------------------------------
 
+/// A malformed ActivityWatch `started_at` is material timing that the parser
+/// cannot resolve. The adapter must therefore preserve the missing event time
+/// for temporal-ledger resolution at admission instead of promoting the
+/// parser's acquisition-time placeholder.
+#[sinex_test]
+async fn activitywatch_malformed_started_at_defers_ts_orig_to_material_tier(
+) -> xtask::sandbox::TestResult<()> {
+    use crate::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
+    use crate::runtime::parser::MaterialParser;
+
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
+    let record = SourceRecord {
+        material_id,
+        anchor: MaterialAnchor::SqliteRow {
+            table: "events".to_string(),
+            rowid: 42,
+        },
+        bytes: br#"{"bucket_id":"aw-watcher-window_test","started_at":{"malformed":true},"duration":1.0,"data":{"app":"kitty","title":"shell"}}"#.to_vec(),
+        logical_path: None,
+        source_ts_hint: None,
+        metadata: JsonValue::Null,
+    };
+    let ctx = ParserContext {
+        source_id: SourceId::from_static("desktop.activitywatch"),
+        source_material_id: material_id,
+        record_anchor: record.anchor.clone(),
+        operation_id: Uuid::now_v7(),
+        job_id: Uuid::now_v7(),
+        host: "test-host".to_string(),
+        acquisition_time: Timestamp::now(),
+    };
+
+    let mut parser = ActivityWatchParser;
+    let intent = parser
+        .parse_record(record.clone(), &ctx)
+        .await?
+        .pop()
+        .expect("known ActivityWatch bucket produces one intent");
+    assert_eq!(intent.timing, TimingEvidence::Atemporal);
+
+    let event = intent_to_event_with_anchor(intent, material_id, 42, None, None, None, 0)
+        .expect("ActivityWatch intent converts to an event");
+    assert_eq!(event.ts_orig, None);
+    assert_eq!(event.ts_quality, None);
+
+    // Replaying the same malformed source bytes at a different acquisition
+    // time must not mint a different material event-time or occurrence key.
+    let replay_ctx = ParserContext {
+        acquisition_time: Timestamp::from_unix_timestamp(1_800_000_000)
+            .expect("fixed replay acquisition time"),
+        ..ctx
+    };
+    let replay_intent = parser
+        .parse_record(record, &replay_ctx)
+        .await?
+        .pop()
+        .expect("known ActivityWatch bucket produces one replay intent");
+    assert_eq!(replay_intent.timing, TimingEvidence::Atemporal);
+    let replay_event = intent_to_event_with_anchor(replay_intent, material_id, 42, None, None, None, 0)
+        .expect("replayed ActivityWatch intent converts to an event");
+    assert_eq!(replay_event.ts_orig, None);
+    assert_eq!(replay_event.ts_quality, None);
+    assert_eq!(event.equivalence_key, replay_event.equivalence_key);
+    Ok(())
+}
+
+/// Material parsers can carry their acquisition time in an intent because the
+/// intent type is concrete, but invalid provider timestamps must still take
+/// the production `Atemporal` route and arrive at admission unresolved.
+#[sinex_test]
+async fn journald_and_systemd_invalid_timestamps_defer_to_material_tier(
+) -> xtask::sandbox::TestResult<()> {
+    use crate::runtime::parser::records_from_journal_lines;
+    use crate::runtime::parser::MaterialParser;
+    use crate::sources::source_contracts::system::journald::JournaldParser;
+    use crate::sources::source_contracts::system::systemd::SystemdParser;
+
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
+    let make_ctx = |source_id| ParserContext {
+        source_id: SourceId::from_static(source_id),
+        source_material_id: material_id,
+        record_anchor: MaterialAnchor::Line {
+            byte_start: 0,
+            line: 1,
+        },
+        operation_id: Uuid::now_v7(),
+        job_id: Uuid::now_v7(),
+        host: "test-host".to_string(),
+        acquisition_time: Timestamp::from_unix_timestamp(1_700_000_000)
+            .expect("fixed acquisition time"),
+    };
+    let assert_deferred = |intent: ParsedEventIntent| {
+        assert_eq!(intent.timing, TimingEvidence::Atemporal);
+        let event = intent_to_event_with_anchor(intent, material_id, 0, None, None, None, 0)
+            .expect("journal intent converts to a material event");
+        assert_eq!(event.ts_orig, None);
+        assert_eq!(event.ts_quality, None);
+    };
+
+    let mut journald = JournaldParser;
+    for line in [
+        r#"{"__CURSOR":"s=journal;i=1","MESSAGE":"missing timestamp"}"#,
+        r#"{"__CURSOR":"s=journal;i=2","__REALTIME_TIMESTAMP":"not-a-timestamp","MESSAGE":"malformed timestamp"}"#,
+        r#"{"__CURSOR":"s=journal;i=3","__REALTIME_TIMESTAMP":"9223372036854775807","MESSAGE":"out-of-range timestamp"}"#,
+    ] {
+        let record = records_from_journal_lines(material_id, &[line])
+            .into_iter()
+            .next()
+            .expect("one journal record")?;
+        let intent = journald
+            .parse_record(record, &make_ctx("system.journald"))
+            .await?
+            .pop()
+            .expect("journald emits one intent");
+        assert_deferred(intent);
+    }
+
+    let mut systemd = SystemdParser;
+    for line in [
+        r#"{"__CURSOR":"s=systemd;i=1","UNIT":"nginx.service","MESSAGE":"Started nginx.service."}"#,
+        r#"{"__CURSOR":"s=systemd;i=2","__REALTIME_TIMESTAMP":"not-a-timestamp","UNIT":"nginx.service","MESSAGE":"Started nginx.service."}"#,
+        r#"{"__CURSOR":"s=systemd;i=3","__REALTIME_TIMESTAMP":"9223372036854775807","UNIT":"nginx.service","MESSAGE":"Started nginx.service."}"#,
+    ] {
+        let record = records_from_journal_lines(material_id, &[line])
+            .into_iter()
+            .next()
+            .expect("one journal record")?;
+        let intent = systemd
+            .parse_record(record, &make_ctx("system.systemd"))
+            .await?
+            .pop()
+            .expect("systemd emits one intent");
+        assert_deferred(intent);
+    }
+    Ok(())
+}
+
 /// A parser-supplied occurrence key is carried onto the event as
 /// `equivalence_key`, so it reaches the curation duplicate workbench.
 #[sinex_test]
@@ -2057,16 +2667,19 @@ async fn occurrence_key_lands_as_equivalence_key() -> xtask::sandbox::TestResult
         None,
         None,
         None,
+        0,
     )
     .expect("intent conversion");
     assert_eq!(event.equivalence_key, Some(occurrence_key_string(&key)));
     Ok(())
 }
 
-/// Intents without an occurrence key leave `equivalence_key` unset (the
-/// curation workbench simply has nothing to group on for that event).
+/// Keyless material intents use the material coordinates and deterministic
+/// parser output ordinal as a retry-stable fallback identity.
 #[sinex_test]
-async fn absent_occurrence_key_leaves_equivalence_key_none() -> xtask::sandbox::TestResult<()> {
+async fn keyless_material_intent_gets_retry_stable_equivalence_key()
+-> xtask::sandbox::TestResult<()> {
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
     let intent = ParsedEventIntent::builder()
         .source_id(SourceId::from_static("test.unit"))
         .parser_id(ParserId::from_static("test-parser"))
@@ -2079,16 +2692,75 @@ async fn absent_occurrence_key_leaves_equivalence_key_none() -> xtask::sandbox::
         .anchor(MaterialAnchor::ByteRange { start: 0, len: 0 })
         .privacy_context(ProcessingContext::Metadata)
         .build();
-    let event = intent_to_event_with_anchor(
-        intent,
-        Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
-        0,
-        None,
-        None,
-        None,
-    )
-    .expect("intent conversion");
-    assert_eq!(event.equivalence_key, None);
+    let event = intent_to_event_with_anchor(intent, material_id, 0, None, None, None, 0)
+        .expect("intent conversion");
+    assert!(event.equivalence_key.is_some());
+    assert!(
+        event
+            .equivalence_key
+            .as_deref()
+            .unwrap()
+            .contains("sibling_index")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn keyless_multi_intent_sibling_identity_is_stable_across_reparse()
+-> xtask::sandbox::TestResult<()> {
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
+    let make_intent = |which| {
+        ParsedEventIntent::builder()
+            .source_id(SourceId::from_static("test.unit"))
+            .parser_id(ParserId::from_static("multi-intent-parser"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("test.event"))
+            .event_source(EventSource::from_static("test"))
+            .payload(serde_json::json!({"parsed": which}))
+            .ts_orig(Timestamp::from_unix_timestamp(1_700_000_000).expect("timestamp"))
+            .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
+            .anchor(MaterialAnchor::ByteRange { start: 12, len: 4 })
+            .privacy_context(ProcessingContext::Metadata)
+            .build()
+    };
+    let first_attempt = ["first", "second"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, which)| {
+            intent_to_event_with_anchor(
+                make_intent(which),
+                material_id,
+                12,
+                Some(12),
+                Some(16),
+                None,
+                index,
+            )
+            .expect("first conversion")
+            .equivalence_key
+            .expect("fallback identity")
+        })
+        .collect::<Vec<_>>();
+    let retry = ["first", "second"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, which)| {
+            intent_to_event_with_anchor(
+                make_intent(which),
+                material_id,
+                12,
+                Some(12),
+                Some(16),
+                None,
+                index,
+            )
+            .expect("retry conversion")
+            .equivalence_key
+            .expect("fallback identity")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(first_attempt, retry);
+    assert_ne!(first_attempt[0], first_attempt[1]);
     Ok(())
 }
 
@@ -2128,6 +2800,7 @@ async fn record_realtime_hint_promotes_atemporal_intent_timing() -> xtask::sandb
         None,
         None,
         None,
+        0,
     )
     .expect("intent conversion");
     assert_eq!(event.ts_orig, Some(hinted_ts));
@@ -2315,72 +2988,417 @@ fn git_object_anchors_hash_to_distinct_anchor_bytes() {
     assert_ne!(one_anchor_byte, two_anchor_byte);
 }
 
-// sinex-audit-anchor-byte-degenerate: replay must reconstruct the SAME
-// MaterialAnchor variant the original capture used, so the two functions
-// together (file_drop_replay_anchor -> anchor_offsets_for_materialized_record)
-// reproduce the exact anchor_byte captured live. This is the direct
-// regression test for `replay_file_drop_materials`, exercised at the
-// pure-function level since the full replay dispatch requires a live
-// acquisition manager.
+// sinex-fka1: replay must use the original append-stream coordinates rather
+// than deriving a path hash. This is the direct regression test for
+// `replay_file_drop_materials`, exercised at the pure-function level since
+// the full replay dispatch requires a live acquisition manager.
 #[test]
-fn file_drop_replay_reconstructs_distinguishable_anchors_for_multiple_events() {
-    // Two distinct non-content-materialized occurrences (e.g. two `Deleted`
-    // events for different paths) sharing one append-stream material at
-    // capture time, as `file_drop.rs::records_from_file_drop_event` emits.
-    let deleted_one_metadata = json!({
-        "event_kind": "Deleted",
-        "path": "/tmp/replay/deleted-one.txt",
-    });
-    let deleted_two_metadata = json!({
-        "event_kind": "Deleted",
-        "path": "/tmp/replay/deleted-two.txt",
-    });
+fn file_drop_replay_reuses_original_append_offsets() {
+    let occurrence_one = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: Uuid::nil(),
+        anchor_byte: 17,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
+        offset_start: Some(17),
+        offset_end: Some(23),
+        record_metadata: json!({"event_kind": "Deleted", "path": "/tmp/one"}),
+    };
+    let occurrence_two = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: Uuid::nil(),
+        anchor_byte: 23,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
+        offset_start: Some(23),
+        offset_end: Some(31),
+        record_metadata: json!({"event_kind": "Deleted", "path": "/tmp/two"}),
+    };
 
-    let anchor_one = file_drop_replay_anchor(
-        &deleted_one_metadata,
-        Some(&Utf8PathBuf::from("/tmp/replay/deleted-one.txt")),
-        "/tmp/replay/deleted-one.txt".len() as u64,
+    let anchor_one = material_replay_anchor(31, &occurrence_one).unwrap();
+    let anchor_two = material_replay_anchor(31, &occurrence_two).unwrap();
+    assert_eq!(anchor_one, MaterialAnchor::ByteRange { start: 17, len: 6 });
+    assert_eq!(anchor_two, MaterialAnchor::ByteRange { start: 23, len: 8 });
+
+    let (anchor_byte_one, start_one, end_one) = anchor_offsets_for_materialized_record(&anchor_one);
+    let (anchor_byte_two, start_two, end_two) = anchor_offsets_for_materialized_record(&anchor_two);
+    assert_eq!(
+        (anchor_byte_one, start_one, end_one),
+        (17, Some(17), Some(23))
     );
-    let anchor_two = file_drop_replay_anchor(
-        &deleted_two_metadata,
-        Some(&Utf8PathBuf::from("/tmp/replay/deleted-two.txt")),
-        "/tmp/replay/deleted-two.txt".len() as u64,
-    );
-
-    assert!(matches!(anchor_one, MaterialAnchor::DirectoryEntry { .. }));
-    assert!(matches!(anchor_two, MaterialAnchor::DirectoryEntry { .. }));
-
-    let (anchor_byte_one, ..) = anchor_offsets_for_materialized_record(&anchor_one);
-    let (anchor_byte_two, ..) = anchor_offsets_for_materialized_record(&anchor_two);
-
-    assert_ne!(
-        anchor_byte_one, 0,
-        "replayed deleted-file occurrence must not collapse to the degenerate constant 0"
-    );
-    assert_ne!(
-        anchor_byte_one, anchor_byte_two,
-        "two distinct replayed fs occurrences sharing a material must not land in the \
-         same record_event_replacements bucket (the cross-product bug)"
+    assert_eq!(
+        (anchor_byte_two, start_two, end_two),
+        (23, Some(23), Some(31))
     );
 
-    // A content-materialized record (regular file bytes staged into its own
-    // dedicated material) must still reconstruct the original ByteRange{0, len}
-    // shape — this path was already correct and must not regress.
-    let content_metadata = json!({
-        "event_kind": "Created",
-        "path": "/tmp/replay/created.txt",
-        "content_materialized": true,
-        "content_size_bytes": 42,
-    });
-    let content_anchor = file_drop_replay_anchor(
-        &content_metadata,
-        Some(&Utf8PathBuf::from("/tmp/replay/created.txt")),
-        0,
-    );
+    // A content-materialized record still reconstructs its original byte
+    // range when the persisted occurrence coordinates say it began at zero.
+    let content_occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: Uuid::nil(),
+        anchor_byte: 0,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
+        offset_start: Some(0),
+        offset_end: Some(42),
+        record_metadata: json!({
+            "event_kind": "Created",
+            "path": "/tmp/replay/created.txt",
+            "content_materialized": true,
+            "content_size_bytes": 42,
+        }),
+    };
+    let content_anchor = material_replay_anchor(42, &content_occurrence).unwrap();
     assert_eq!(
         content_anchor,
         MaterialAnchor::ByteRange { start: 0, len: 42 }
     );
+}
+
+#[test]
+fn file_drop_replay_fails_closed_without_durable_range_coordinates() {
+    let occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: Uuid::nil(),
+        anchor_byte: 0,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
+        offset_start: None,
+        offset_end: None,
+        record_metadata: json!({"event_kind": "Created", "path": "/tmp/missing"}),
+    };
+
+    let error = material_replay_range(32, &occurrence)
+        .expect_err("replay must not guess a byte range from logical metadata");
+    assert!(
+        error
+            .to_string()
+            .contains("missing offset_start; cannot safely recover bytes"),
+        "unexpected error: {error}"
+    );
+}
+
+/// The FileDrop parity check must use the same serialized bytes and append
+/// acquirer that live capture uses. Synthetic non-zero offsets can pass while
+/// the live/replay coordinate spaces still disagree.
+#[sinex_test]
+async fn file_drop_replay_anchor_matches_live_append_capture(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let work_dir = tempfile::tempdir()?;
+    let manager = Arc::new(
+        AcquisitionManager::with_defaults(ctx.nats_client(), "file-drop-parity")
+            .with_work_dir(work_dir.path()),
+    );
+    let mut acquirer = AppendStreamAcquirer::new(manager);
+    let record = SourceRecord {
+        material_id: Id::from_uuid(Uuid::nil()),
+        anchor: MaterialAnchor::DirectoryEntry {
+            path: Utf8PathBuf::from("/tmp/file-drop/parity.txt"),
+            content_hash: None,
+        },
+        bytes: b"/tmp/file-drop/parity.txt".to_vec(),
+        logical_path: Some(Utf8PathBuf::from("/tmp/file-drop/parity.txt")),
+        source_ts_hint: None,
+        metadata: json!({"event_kind": "Created", "capture_surface": "file_drop"}),
+    };
+    let live_bytes = materialization_bytes_for_adapter_record(&record)?;
+    let live = acquirer
+        .append_with_anchor(&live_bytes, "file-drop")
+        .await?;
+    acquirer.finalize("parity-test").await?;
+
+    let occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: live.material_id,
+        anchor_byte: live.offset_start,
+        offset_kind: sinex_primitives::events::OffsetKind::Byte,
+        offset_start: Some(live.offset_start),
+        offset_end: Some(live.offset_end),
+        record_metadata: record.metadata,
+    };
+    let replay = material_replay_anchor(live_bytes.len() as u64, &occurrence)?;
+    assert_eq!(
+        replay,
+        MaterialAnchor::ByteRange {
+            start: live.offset_start as u64,
+            len: live_bytes.len() as u64,
+        }
+    );
+    assert_eq!(
+        anchor_offsets_for_materialized_record(&replay),
+        (
+            live.offset_start,
+            Some(live.offset_start),
+            Some(live.offset_end)
+        ),
+        "replay must reuse the append acquirer's exact coordinate space"
+    );
+    Ok(())
+}
+
+/// Multiple FileDrop records share one append-stream material. Replay must
+/// retain each record's physical range instead of collapsing them onto a
+/// logical-path-derived anchor.
+#[sinex_test]
+async fn file_drop_replay_preserves_each_live_append_occurrence(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let work_dir = tempfile::tempdir()?;
+    let manager = Arc::new(
+        AcquisitionManager::with_defaults(ctx.nats_client(), "file-drop-multi-parity")
+            .with_work_dir(work_dir.path()),
+    );
+    let mut acquirer = AppendStreamAcquirer::new(manager);
+    let records = [
+        ("/tmp/file-drop/first.txt", json!({"event_kind": "Deleted"})),
+        (
+            "/tmp/file-drop/second.txt",
+            json!({"event_kind": "Deleted"}),
+        ),
+    ];
+    let mut captured = Vec::with_capacity(records.len());
+    let mut authoritative_bytes = Vec::new();
+
+    for (path, mut metadata) in records {
+        metadata["path"] = json!(path);
+        let record = SourceRecord {
+            material_id: Id::from_uuid(Uuid::nil()),
+            anchor: MaterialAnchor::DirectoryEntry {
+                path: Utf8PathBuf::from(path),
+                content_hash: None,
+            },
+            bytes: path.as_bytes().to_vec(),
+            logical_path: Some(Utf8PathBuf::from(path)),
+            source_ts_hint: None,
+            metadata,
+        };
+        let bytes = materialization_bytes_for_adapter_record(&record)?;
+        let live = acquirer.append_with_anchor(&bytes, "file-drop").await?;
+        authoritative_bytes.extend_from_slice(&bytes);
+        captured.push((bytes, live));
+    }
+    acquirer.finalize("multi-parity-test").await?;
+
+    let material_len = authoritative_bytes.len() as u64;
+    for (bytes, live) in &captured {
+        let occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
+            source_material_id: live.material_id,
+            anchor_byte: live.offset_start,
+            offset_kind: sinex_primitives::events::OffsetKind::Byte,
+            offset_start: Some(live.offset_start),
+            offset_end: Some(live.offset_end),
+            record_metadata: json!({"event_kind": "Deleted"}),
+        };
+        let (replay, range) = material_replay_range(material_len, &occurrence)?;
+
+        assert_eq!(
+            &authoritative_bytes[range], bytes,
+            "replay must read the same physical append-stream range as capture"
+        );
+        assert_eq!(
+            replay,
+            MaterialAnchor::ByteRange {
+                start: live.offset_start as u64,
+                len: bytes.len() as u64,
+            }
+        );
+        assert_eq!(
+            anchor_offsets_for_materialized_record(&replay),
+            (
+                live.offset_start,
+                Some(live.offset_start),
+                Some(live.offset_end)
+            )
+        );
+    }
+    assert_ne!(captured[0].1.offset_start, captured[1].1.offset_start);
+    Ok(())
+}
+
+#[sinex_serial_test]
+async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("file-drop-replay-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            runtime.block_on(async move {
+                file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_impl(ctx).await
+            })
+        })
+        .map_err(|error| eyre!(error))?
+        .join()
+        .map_err(|_| eyre!("file-drop replay test thread panicked"))??;
+    Ok(())
+}
+
+async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_impl(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, mut event_receiver) = make_adapter_runtime_with_db(&ctx).await?;
+
+    let _cas_dir = tempfile::tempdir()?;
+    let cas_root = Utf8PathBuf::from_path_buf(_cas_dir.path().to_path_buf()).map_err(|path| {
+        SinexError::validation("test CAS path should be valid UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_CONTENT_STORE_PATH", &cas_root);
+    let content_store = ContentStoreManager::new(
+        ContentStoreConfig {
+            root_path: cas_root,
+            ..Default::default()
+        },
+        ctx.pool().clone(),
+        None,
+    )?;
+
+    let source_root = tempfile::tempdir()?;
+    let source_path = source_root.path().join("original.txt");
+    tokio::fs::write(&source_path, b"path-derived bytes before mutation").await?;
+    let logical_path = Utf8PathBuf::from_path_buf(source_path.clone()).map_err(|path| {
+        SinexError::validation("test source path should be valid UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    let authoritative_bytes = b"authoritative bytes retained in CAS";
+    let blob = content_store
+        .ingest_from_bytes(authoritative_bytes, "original.txt", "text/plain")
+        .await?;
+    let material = ctx
+        .pool()
+        .source_materials()
+        .register_material(
+            SourceMaterialRegistration::blob_text(logical_path.as_str())
+                .with_blob_id(blob.id)
+                .with_metadata(json!({
+                    "path": logical_path,
+                    "logical_source_identifier": "file-drop-replay-test",
+                })),
+        )
+        .await?;
+
+    // Exercise the production replay authority, not only the legacy blob
+    // fallback: the manifest is canonical CAS metadata and its encoded digest
+    // names the exact bytes that the replay range must read.
+    let manifest = MaterialManifestV1::from_capture(
+        material.id,
+        logical_path.as_str(),
+        "local_cas",
+        blake3::hash(authoritative_bytes).to_hex().to_string(),
+        authoritative_bytes.len() as u64,
+        json!({
+            "logical_source_identifier": "file-drop-replay-test",
+            "path": logical_path,
+        }),
+        "2026-08-12T00:00:00Z",
+        "2026-08-12T00:00:01Z",
+    );
+    manifest.validate().map_err(|error| eyre!(error))?;
+    let manifest_blob = content_store
+        .ingest_from_bytes(
+            &manifest.canonical_bytes()?,
+            "material-manifest.json",
+            "application/json",
+        )
+        .await?;
+    ctx.pool()
+        .source_materials()
+        .update_metadata(
+            Id::from_uuid(material.id),
+            json!({
+                "material_manifest": {
+                    "manifest_type": sinex_primitives::MATERIAL_MANIFEST_V1,
+                    "content_key": manifest_blob.content_key(),
+                }
+            }),
+        )
+        .await?;
+
+    // Anti-vacuity mutation: the watched path is changed and then removed while
+    // the registry row and CAS object remain available to replay.
+    tokio::fs::write(&source_path, b"mutated path bytes that replay must ignore").await?;
+    tokio::fs::remove_file(&source_path).await?;
+
+    let mut source =
+        AdapterBackedSource::<FileDropAdapter, EmittingParser>::new("file-drop-replay-test");
+    let mut state = AdapterModuleState::default();
+    source
+        .initialize(
+            AdapterSourceConfig {
+                adapter: json!({"watch_paths": []}),
+                ..Default::default()
+            },
+            &runtime,
+            &mut state,
+        )
+        .await?;
+
+    let report = source
+        .scan_historical(
+            &mut state,
+            Checkpoint::None,
+            TimeHorizon::Historical {
+                end_time: Timestamp::now(),
+            },
+            ScanArgs {
+                replay: Some(MaterialReplayContext {
+                    operation_id: Uuid::now_v7(),
+                    materials: vec![ResolvedReplayMaterial {
+                        source_material_id: material.id,
+                        material_kind: "local_cas".to_string(),
+                        source_identifier: logical_path.to_string(),
+                        material_metadata: json!({"path": logical_path}),
+                        material_start_time: None,
+                        material_end_time: None,
+                    }],
+                    occurrences: vec![ReplayMaterialOccurrence {
+                        source_material_id: material.id,
+                        anchor_byte: 0,
+                        offset_kind: sinex_primitives::events::OffsetKind::Byte,
+                        offset_start: Some(0),
+                        offset_end: Some(authoritative_bytes.len() as i64),
+                        record_metadata: json!({
+                            "event_kind": "Created",
+                            "path": logical_path,
+                        }),
+                    }],
+                    replay_scope: ReplayScopeFilters::default(),
+                }),
+                ..Default::default()
+            },
+        )
+        .await?;
+    let event = event_receiver
+        .recv()
+        .await
+        .ok_or_else(|| SinexError::processing("expected replayed file-drop event"))?;
+    let authoritative_hash = blake3::hash(authoritative_bytes);
+    let logical_path_hash = blake3::hash(logical_path.as_str().as_bytes());
+
+    assert_eq!(report.events_processed, 1);
+    assert_eq!(
+        event.payload["record_bytes"],
+        json!(authoritative_bytes.as_slice())
+    );
+    assert_eq!(
+        event.anchor_payload_hash.as_deref(),
+        Some(authoritative_hash.as_bytes().as_slice()),
+        "replay must hash the bytes loaded from authoritative CAS"
+    );
+    assert_ne!(
+        event.anchor_payload_hash.as_deref(),
+        Some(logical_path_hash.as_bytes().as_slice()),
+        "replay must never synthesize bytes from logical_path"
+    );
+    match event.provenance() {
+        sinex_primitives::events::Provenance::Material {
+            anchor_byte,
+            offset_start,
+            offset_end,
+            ..
+        } => {
+            assert_eq!(*anchor_byte, 0);
+            assert_eq!(*offset_start, Some(0));
+            assert_eq!(*offset_end, Some(authoritative_bytes.len() as i64));
+        }
+        other => panic!("expected material provenance, got {other:?}"),
+    }
+    Ok(())
 }
 
 // =============================================================================
@@ -2573,12 +3591,10 @@ mod pacing_e2e {
         ctx: TestContext,
     ) -> TestResult<()> {
         // Shared process-wide NATS (matches every other test in this file);
-        // isolated from concurrent tests via a unique namespace, which also
-        // has to be visible to `scan_historical`'s own namespace resolution
-        // (`SINEX_NAMESPACE` env var) — safe to set process-wide here since
-        // nextest runs one test per process.
+        // isolated from concurrent tests via a unique namespace. The runtime
+        // receives it through its publisher exactly as a `--namespace` flag
+        // would; do not set `SINEX_NAMESPACE` here.
         let namespace = format!("pacing-e2e-{}", Uuid::now_v7().simple());
-        let _namespace_guard = xtask::sandbox::EnvGuard::set_single("SINEX_NAMESPACE", &namespace);
         let ctx = ctx.with_nats().shared().await?;
         let nats_client = ctx.nats_client();
 
@@ -2700,7 +3716,8 @@ mod pacing_e2e {
         };
 
         // --- The production route under test ---
-        let (runtime, event_receiver_raw) = make_adapter_runtime(&ctx).await?;
+        let (runtime, event_receiver_raw) =
+            make_adapter_runtime_with_namespace(&ctx, Some(namespace.clone())).await?;
         let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
         let publish_subject =
             env.nats_raw_event_subject_with_namespace(Some(&namespace), "test", "pacing.e2e");

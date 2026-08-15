@@ -1,5 +1,5 @@
 use sinex_primitives::{
-    source_contracts::{CheckpointFamily, SourceRuntimeBinding, SourceBuildImpact},
+    source_contracts::{CheckpointFamily, SourceRecoveryPolicy, SourceRuntimeBinding, SourceBuildImpact},
     subject_ref,
 };
 use sinex_primitives::privacy::ProcessingContext;
@@ -15,5 +15,6 @@ fn main() {
     .privacy_context(ProcessingContext::Command)
     .checkpoint_family(CheckpointFamily::AppendStream)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build();
 }

@@ -1,4 +1,5 @@
 use serde_json::json;
+use sinex_db::replay::state_machine::ReplayScope;
 use sinex_db::repositories::{
     COPY_BATCH_THRESHOLD, DbPoolExt, EventStorageLane, ReplacementKind, ReplacementRecord,
     StreamBatchRow,
@@ -99,7 +100,8 @@ async fn ensure_fs_watcher_derived_declaration(pool: &sqlx::PgPool) -> color_eyr
 fn mark_fs_watcher_derived_event<T>(
     mut event: sinex_primitives::Event<T>,
 ) -> sinex_primitives::Event<T> {
-    event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    event.product_class =
+        Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
     event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
     event.derivation_declaration_id = Some(FS_WATCHER_DERIVED_DECLARATION_ID.to_string());
     event
@@ -135,6 +137,234 @@ async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<
     assert_eq!(inserted.payload["path"], json!("/tmp/repo-insert.txt"));
     assert_eq!(inserted.payload["size"], json!(512));
     assert!(inserted.id.is_some());
+    Ok(())
+}
+
+#[sinex_test]
+async fn reimport_scale_pages_use_bounded_keysets_and_quality_limits(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("reimport-scale-page-test"))
+        .await?;
+    let source = EventSource::new("reimport-scale")?;
+    let mut inserted_ids = Vec::new();
+
+    for anchor in 0..5i64 {
+        let event = DynamicPayload::new(source.clone(), "reimport.page", json!({"anchor": anchor}))
+            .from_material_at(material_id, anchor)
+            .at_time(Timestamp::now())
+            .build()?;
+        inserted_ids.push(ctx.pool.events().insert(event).await?.id.unwrap());
+    }
+
+    let first_page = ctx
+        .pool
+        .events()
+        .get_by_source_after_id(&source, None, 2)
+        .await?;
+    assert_eq!(first_page.len(), 2);
+    let second_page = ctx
+        .pool
+        .events()
+        .get_by_source_after_id(&source, first_page.last().map(|event| event.id.unwrap()), 2)
+        .await?;
+    assert_eq!(second_page.len(), 2);
+    assert!(
+        first_page
+            .iter()
+            .all(|first| second_page.iter().all(|second| first.id != second.id)),
+        "keyset pages must not repeat rows"
+    );
+    let legacy_page = ctx
+        .pool
+        .events()
+        .get_by_source(&source, Pagination::new(Some(2), Some(2)))
+        .await?;
+    assert_eq!(
+        legacy_page.iter().map(|event| event.id).collect::<Vec<_>>(),
+        second_page.iter().map(|event| event.id).collect::<Vec<_>>(),
+        "legacy offset-shaped pagination must walk the same keyset pages"
+    );
+
+    let start = Timestamp::now() - time::Duration::minutes(1);
+    let end = Timestamp::now() + time::Duration::minutes(1);
+    let event_type = EventType::new("reimport.page")?;
+    let type_page = ctx
+        .pool
+        .events()
+        .get_by_event_type_after_id(&event_type, None, 2)
+        .await?;
+    let type_next_page = ctx
+        .pool
+        .events()
+        .get_by_event_type_after_id(
+            &event_type,
+            type_page.last().map(|event| event.id.unwrap()),
+            2,
+        )
+        .await?;
+    assert_eq!(type_page.len(), 2);
+    assert_eq!(type_next_page.len(), 2);
+    assert!(
+        type_page
+            .iter()
+            .all(|first| type_next_page.iter().all(|second| first.id != second.id)),
+        "event-type keyset pages must not repeat rows"
+    );
+
+    let range_page = ctx
+        .pool
+        .events()
+        .get_by_time_range_after_id(start, end, None, 2)
+        .await?;
+    let range_next_page = ctx
+        .pool
+        .events()
+        .get_by_time_range_after_id(
+            start,
+            end,
+            range_page.last().map(|event| event.id.unwrap()),
+            2,
+        )
+        .await?;
+    assert_eq!(range_page.len(), 2);
+    assert_eq!(range_next_page.len(), 2);
+    assert!(
+        range_page
+            .iter()
+            .all(|first| range_next_page.iter().all(|second| first.id != second.id)),
+        "time-range keyset pages must not repeat rows"
+    );
+
+    let source_range_page = ctx
+        .pool
+        .events()
+        .get_by_source_and_time_range_after_id(&source, start, end, None, 2)
+        .await?;
+    let source_range_next_page = ctx
+        .pool
+        .events()
+        .get_by_source_and_time_range_after_id(
+            &source,
+            start,
+            end,
+            source_range_page.last().map(|event| event.id.unwrap()),
+            2,
+        )
+        .await?;
+    assert_eq!(source_range_page.len(), 2);
+    assert_eq!(source_range_next_page.len(), 2);
+    assert!(
+        source_range_page.iter().all(|first| source_range_next_page
+            .iter()
+            .all(|second| first.id != second.id)),
+        "source/time keyset pages must not repeat rows"
+    );
+
+    let material_root_page = ctx
+        .pool
+        .events()
+        .get_material_root_events_in_range_after_id(&source, start, end, None, 2)
+        .await?;
+    let material_root_next_page = ctx
+        .pool
+        .events()
+        .get_material_root_events_in_range_after_id(
+            &source,
+            start,
+            end,
+            material_root_page.last().map(|event| event.id.unwrap()),
+            2,
+        )
+        .await?;
+    assert_eq!(material_root_page.len(), 2);
+    assert_eq!(material_root_next_page.len(), 2);
+    assert!(
+        material_root_page
+            .iter()
+            .all(|first| material_root_next_page
+                .iter()
+                .all(|second| first.id != second.id)),
+        "material-root keyset pages must not repeat rows"
+    );
+
+    let scope = ReplayScope {
+        source_name: source.to_string(),
+        ..Default::default()
+    };
+    let root_page = ctx
+        .pool
+        .replay()
+        .collect_scope_root_ids_page(&scope, None, 2)
+        .await?;
+    assert_eq!(root_page.len(), 2);
+    let next_root_page = ctx
+        .pool
+        .replay()
+        .collect_scope_root_ids_page(&scope, root_page.last().copied(), 2)
+        .await?;
+    assert_eq!(next_root_page.len(), 2);
+    assert!(
+        root_page.iter().all(|id| !next_root_page.contains(id)),
+        "replay root keyset pages must not repeat rows"
+    );
+    let root_snapshot = ctx.pool.replay().scope_root_snapshot(&scope).await?;
+    assert_eq!(
+        root_snapshot.root_event_count, 5,
+        "the bounded replay-root snapshot must traverse every keyset page"
+    );
+    assert_eq!(root_snapshot.root_event_id_sample.len(), 5);
+    assert!(
+        !root_snapshot.root_event_id_fingerprint.is_empty(),
+        "the bounded replay-root snapshot must retain deterministic identity evidence"
+    );
+
+    assert_eq!(inserted_ids.len(), 5);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn timestamp_regression_scan_keeps_page_predecessor(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("timestamp-regression-page-boundary"))
+        .await?;
+    let source = EventSource::new("timestamp-regression-page-boundary")?;
+    let predecessor_ts = Timestamp::now();
+    let predecessor = DynamicPayload::new(
+        source.clone(),
+        "timestamp.regression",
+        json!({"position": 1}),
+    )
+    .from_material_at(material_id, 0)
+    .at_time(predecessor_ts)
+    .build()?;
+    let predecessor_id = ctx.pool.events().insert(predecessor).await?.id.unwrap();
+
+    let regression_ts = predecessor_ts - time::Duration::seconds(1);
+    let regression = DynamicPayload::new(
+        source,
+        "timestamp.regression",
+        json!({"position": 2}),
+    )
+    .from_material_at(material_id, 1)
+    .at_time(regression_ts)
+    .build()?;
+    let regression_id = ctx.pool.events().insert(regression).await?.id.unwrap();
+
+    let regressions = ctx.pool.events().find_timestamp_regressions(1).await?;
+    // The regression query returns PostgreSQL timestamptz values, which are
+    // microsecond precision even though Timestamp preserves sub-microsecond
+    // source fidelity elsewhere.
+    let predecessor_db_ts = Timestamp::new(predecessor_ts.to_postgres_parts().0);
+    let regression_db_ts = Timestamp::new(regression_ts.to_postgres_parts().0);
+    assert_eq!(
+        regressions,
+        vec![(regression_id, predecessor_id, regression_db_ts, predecessor_db_ts)],
+        "a one-row page must retain its source predecessor for LAG"
+    );
+
     Ok(())
 }
 
@@ -425,7 +655,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
-        content_hash: None,
+            content_hash: None,
         });
     }
 
@@ -666,7 +896,8 @@ async fn get_material_root_events_in_range_excludes_synthesis_rows(
     )
     .from_parents(vec![material_event_id])?
     .build()?;
-    derived_event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    derived_event.product_class =
+        Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
     derived_event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
     derived_event.derivation_declaration_id = Some("material-root-range-filter-decl".to_string());
     ctx.pool.events().insert(derived_event).await?;
@@ -784,7 +1015,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
-        content_hash: None,
+            content_hash: None,
         },
         StreamBatchRow {
             id: second_id,
@@ -816,7 +1047,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
-        content_hash: None,
+            content_hash: None,
         },
     ];
 
@@ -1061,7 +1292,10 @@ async fn stream_batch_insert_rejects_genuinely_missing_parent_across_chunk_bound
     let stored = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::new("test.source")?, Pagination::new(Some(1), None))
+        .get_by_source(
+            &EventSource::new("test.source")?,
+            Pagination::new(Some(1), None),
+        )
         .await?;
     assert!(
         stored.is_empty(),
@@ -1150,6 +1384,77 @@ async fn register_material_persists_source_material_metadata_contract(
             .as_ref()
             .and_then(|statistics| statistics.record_count),
         Some(17)
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_material_with_total_bytes_is_atomic_and_authoritative(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!("finalized-material-{}.txt", uuid::Uuid::now_v7());
+    let contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Text,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_material_with_total_bytes(
+            sinex_db::repositories::SourceMaterial::file(&identifier)
+                .with_metadata_contract(&contract),
+            42,
+        )
+        .await?;
+
+    assert_eq!(
+        record.status,
+        sinex_primitives::domain::MaterialStatus::Completed
+    );
+    assert_eq!(record.total_bytes, Some(42));
+    assert_eq!(
+        SourceMaterialMetadataContract::from_metadata(&record.metadata)
+            .and_then(|contract| contract.statistics)
+            .and_then(|statistics| statistics.total_bytes),
+        Some(42),
+        "the returned material must reflect the committed byte finalization"
+    );
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(record.id))
+        .await?
+        .expect("atomic registration should persist its material");
+    assert_eq!(persisted.total_bytes, Some(42));
+    assert_eq!(
+        SourceMaterialMetadataContract::from_metadata(&persisted.metadata)
+            .and_then(|contract| contract.statistics)
+            .and_then(|statistics| statistics.total_bytes),
+        Some(42)
+    );
+
+    let rejected_identifier = format!("rejected-finalization-{}.txt", uuid::Uuid::now_v7());
+    let result = ctx
+        .pool
+        .source_materials()
+        .register_material_with_total_bytes(
+            sinex_db::repositories::SourceMaterial::file(&rejected_identifier),
+            -1,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "negative total_bytes must reject finalization"
+    );
+    let persisted_count = sqlx::query_scalar!(
+        "SELECT COUNT(*) as \"count!: i64\" FROM raw.source_material_registry WHERE source_identifier = $1",
+        rejected_identifier,
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(
+        persisted_count, 0,
+        "a failed byte finalization must roll its material insert back"
     );
     Ok(())
 }

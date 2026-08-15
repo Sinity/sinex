@@ -6,12 +6,14 @@ pub mod blobs;
 pub mod common;
 pub mod continuity;
 pub mod derivation;
+pub mod dlq;
 pub mod document_search;
 pub mod email_mailbox_projection;
 pub mod email_provider_state;
 pub mod embeddings;
 pub mod events;
 pub mod events_extensions;
+pub mod import_outcomes;
 pub mod integrity;
 pub mod knowledge_graph;
 pub mod model_effects;
@@ -34,6 +36,7 @@ pub use derivation::{
     CreateDerivationEpoch, CreateDerivationLane, DerivationRepository, ExistingProductDeclaration,
     LaneOutputRow, ProductDeclarationRepository,
 };
+pub use dlq::DlqEventRepository;
 pub use document_search::{
     DEFAULT_PAGE_SIZE, DocumentSearchQuery, DocumentSearchRepository, DocumentSearchResult,
     DocumentSearchResults, MAX_PAGE_SIZE, SearchEmptyReason, SearchMode, VectorSearchParams,
@@ -53,6 +56,10 @@ pub use events::{
     COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
     EventStorageLane, LiveEquivalenceRow, ReplacementKind, ReplacementRecord,
     StreamBatchInsertResult, StreamBatchRow,
+};
+pub use import_outcomes::{
+    ImportEventRow, ImportOutcomeRepository, ImportReplacementRow, ImportReportData,
+    SourceDedupBreakdownRow, SourceDedupExampleRow,
 };
 pub use integrity::IntegrityRepository;
 pub use knowledge_graph::{
@@ -108,6 +115,7 @@ pub trait DbPoolExt {
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
     fn product_declarations(&self) -> derivation::ProductDeclarationRepository<'_>;
     fn derivation_lanes(&self) -> derivation::DerivationRepository<'_>;
+    fn dlq_events(&self) -> dlq::DlqEventRepository<'_>;
     fn projection_registry(&self) -> projection_registry::ProjectionRegistryRepository<'_>;
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
@@ -115,6 +123,7 @@ pub trait DbPoolExt {
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
     fn replay(&self) -> replay::ReplayRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
+    fn import_outcomes(&self) -> import_outcomes::ImportOutcomeRepository<'_>;
     fn continuity(&self) -> continuity::ContinuityRepository<'_>;
     fn model_effects(&self) -> model_effects::ModelEffectRepository<'_>;
     fn documents(&self) -> document_search::DocumentSearchRepository<'_>;
@@ -167,6 +176,10 @@ impl DbPoolExt for PgPool {
         derivation::DerivationRepository::new(self)
     }
 
+    fn dlq_events(&self) -> dlq::DlqEventRepository<'_> {
+        dlq::DlqEventRepository::new(self)
+    }
+
     fn projection_registry(&self) -> projection_registry::ProjectionRegistryRepository<'_> {
         projection_registry::ProjectionRegistryRepository::new(self)
     }
@@ -193,6 +206,10 @@ impl DbPoolExt for PgPool {
 
     fn integrity(&self) -> integrity::IntegrityRepository<'_> {
         integrity::IntegrityRepository::new(self)
+    }
+
+    fn import_outcomes(&self) -> import_outcomes::ImportOutcomeRepository<'_> {
+        import_outcomes::ImportOutcomeRepository::new(self)
     }
 
     fn continuity(&self) -> continuity::ContinuityRepository<'_> {

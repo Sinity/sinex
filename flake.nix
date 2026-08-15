@@ -119,7 +119,10 @@
           # requires .md files to be present at compile time.
           src = pkgs.lib.cleanSourceWith {
             src = craneLib.path ./.;
-            filter = path: type: (craneLib.filterCargoSources path type) || (pkgs.lib.hasSuffix ".md" path);
+            filter = path: type:
+              (craneLib.filterCargoSources path type)
+              || (pkgs.lib.hasSuffix ".md" path)
+              || (pkgs.lib.hasSuffix "nixos/modules/source-catalog.generated.json" path);
           };
 
           # Common build arguments
@@ -355,15 +358,66 @@
               };
               sinexdServiceConfig = consumerConfig.config.systemd.services.sinexd.serviceConfig;
               sinexdEnv = sinexdServiceConfig.Environment or [ ];
+              sourceManifestEnv =
+                pkgs.lib.findFirst
+                  (value: pkgs.lib.hasPrefix "SINEX_SOURCE_BINDINGS_PATH=" value)
+                  null
+                  sinexdEnv;
+              sourceManifestPath =
+                if sourceManifestEnv == null then null
+                else pkgs.lib.removePrefix "SINEX_SOURCE_BINDINGS_PATH=" sourceManifestEnv;
+              sourceManifest =
+                if sourceManifestPath == null then { bindings = [ ]; }
+                else builtins.fromJSON (builtins.readFile sourceManifestPath);
+              staticImportBinding = sourceId:
+                pkgs.lib.findFirst
+                  (binding: binding.source_id == sourceId)
+                  null
+                  (sourceManifest.bindings or [ ]);
+              gitStaticImport = staticImportBinding "git-commit-history";
+              raindropStaticImport = staticImportBinding "raindrop-bookmarks";
               hasSourceManifestEnv =
                 builtins.any
                   (value: pkgs.lib.hasPrefix "SINEX_SOURCE_BINDINGS_PATH=" value)
                   sinexdEnv;
+              staticImportAssertions = [
+                (
+                  if gitStaticImport == null then
+                    throw "source catalog consumer omitted git-commit-history from SINEX_SOURCE_BINDINGS_PATH"
+                  else if gitStaticImport.runtime_config != {
+                    path = "/realm/project/sinex";
+                    continuous_poll_interval_secs = 30;
+                  } then
+                    throw "source catalog consumer rendered the wrong git-commit-history runtime_config"
+                  else if gitStaticImport.extra_env != {
+                    GIT_CONFIG_COUNT = "1";
+                    GIT_CONFIG_KEY_0 = "safe.directory";
+                    GIT_CONFIG_VALUE_0 = "/realm/project/sinex";
+                    RUST_LOG = "info";
+                  } then
+                    throw "source catalog consumer dropped git-commit-history extra_env"
+                  else true
+                )
+                (
+                  if raindropStaticImport == null then
+                    throw "source catalog consumer omitted raindrop-bookmarks from SINEX_SOURCE_BINDINGS_PATH"
+                  else if raindropStaticImport.runtime_config != {
+                    path = "/realm/data/exports/raindrop/processed/bookmarks.csv";
+                    source_identifier = "raindrop-bookmarks";
+                  } then
+                    throw "source catalog consumer rendered the wrong raindrop-bookmarks runtime_config"
+                  else if raindropStaticImport.extra_env != { RUST_LOG = "info"; } then
+                    throw "source catalog consumer dropped raindrop-bookmarks extra_env"
+                  else true
+                )
+              ];
               consumerAssertions =
                 if !hasSourceManifestEnv then
                   throw "source catalog consumer did not render SINEX_SOURCE_BINDINGS_PATH"
                 else if !(sinexdServiceConfig ? MemoryMax) then
                   throw "source catalog consumer did not render catalog-derived sinexd MemoryMax"
+                else if !(builtins.all (value: value) staticImportAssertions) then
+                  throw "source catalog consumer failed static-import manifest assertions"
                 else { sinexdMemoryMax = sinexdServiceConfig.MemoryMax; };
               requiredSources = catalog.requireFieldsFor [
                 "fs"
@@ -386,6 +440,10 @@
               evalSummary = builtins.toJSON {
                 inherit (catalog) entryCount schemaVersion;
                 inherit (consumerAssertions) sinexdMemoryMax;
+                staticImports = [
+                  gitStaticImport.source_id
+                  raindropStaticImport.source_id
+                ];
                 required = builtins.attrNames requiredSources;
               };
             in

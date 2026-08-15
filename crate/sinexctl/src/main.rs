@@ -607,6 +607,9 @@ fn command_path(cmd: &Commands) -> String {
             },
             OpsCommands::Import(import_cmd) => match import_cmd {
                 sinexctl::commands::ops::ImportCommands::List => "ops import list".to_string(),
+                sinexctl::commands::ops::ImportCommands::Report { .. } => {
+                    "ops import report".to_string()
+                }
             },
             OpsCommands::Evidence(evidence_cmd) => match evidence_cmd {
                 sinexctl::commands::ops::EvidenceCommands::Compile { .. } => {
@@ -762,6 +765,7 @@ fn llm_command_path(cmd: &sinexctl::commands::llm::LlmCommand) -> String {
         LlmSubcommand::Prompts(_) => "llm prompts".to_string(),
         LlmSubcommand::RouteExplain(_) => "llm route-explain".to_string(),
         LlmSubcommand::BudgetReport(_) => "llm budget-report".to_string(),
+        LlmSubcommand::EmbeddingEstimate(_) => "llm embedding-estimate".to_string(),
     }
 }
 

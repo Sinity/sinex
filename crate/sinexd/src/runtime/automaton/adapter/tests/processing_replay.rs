@@ -626,7 +626,7 @@ async fn historical_replay_filters_wildcard_material_only_inputs(
 
 #[cfg(feature = "messaging")]
 #[sinex_test]
-async fn handle_invalidation_message_returns_none_when_output_emit_fails(
+async fn handle_invalidation_archives_before_output_emit_and_retries_without_duplicates(
     ctx: TestContext,
 ) -> TestResult<()> {
     use super::super::super::DerivedScopeInvalidation;
@@ -656,8 +656,7 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         .and_then(|event| event.id)
         .expect("inserted input should have id");
     let product_class = sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent;
-    let declaration_id =
-        "sinex.test.handle_invalidation_message_returns_none_when_output_emit_fails";
+    let declaration_id = "sinex.test.handle_invalidation_archives_before_output_emit";
     seed_product_declaration(
         ctx.pool(),
         declaration_id,
@@ -679,13 +678,18 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
     stale_output.derivation_declaration_id = Some(declaration_id.to_string());
     ctx.pool().events().insert_batch(vec![stale_output]).await?;
 
-    let (runtime, event_receiver) =
+    let (runtime, _event_receiver) =
         make_runtime_state_with_db(&ctx, "adapter-regression-scope-reconciler", None).await?;
-    drop(event_receiver);
 
     let mut adapter = AutomatonRuntime::new(ScopeReconcilerWrapper(TestScopeReconcilerAutomaton));
     adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
-    adapter.event_emitter = Some(runtime.event_emitter().clone());
+    // The runtime helper owns a background settlement receiver, so dropping
+    // its returned receiver does not make the shared emitter fail. Use an
+    // intentionally receiver-less channel for the first attempt to exercise
+    // the archive-before-emission failure window.
+    let (failing_sender, failing_receiver) = mpsc::channel(1);
+    drop(failing_receiver);
+    adapter.event_emitter = Some(EventEmitter::new(failing_sender, false));
     adapter.host = runtime.service_info().host().to_string();
     adapter.runtime = Some(runtime);
 
@@ -694,7 +698,7 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         EventSource::from_static("measurements"),
         EventType::from_static("measurement.taken"),
     )
-    .with_scope_keys(vec![scope_key.to_string()]);
+        .with_scope_keys(vec![scope_key.to_string()]);
     let payload = serde_json::to_vec(&invalidation)?;
 
     let result = adapter.handle_invalidation_message(&payload).await;
@@ -718,8 +722,8 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         other => panic!("expected count result, got {other:?}"),
     };
     assert_eq!(
-        live_output_count, 1,
-        "stale outputs must remain live when replacement emission fails"
+        live_output_count, 0,
+        "stale outputs must be archived before replacement emission begins"
     );
 
     let archived_output_count = sqlx::query_scalar!(
@@ -735,8 +739,25 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
     .fetch_one(ctx.pool())
     .await?;
     assert_eq!(
-        archived_output_count, 0,
-        "replacement emission failure must not archive stale outputs"
+        archived_output_count, 1,
+        "the archive marker must survive a failed replacement emission"
+    );
+    let (retry_sender, mut retry_receiver) = mpsc::channel(4);
+    adapter.event_emitter = Some(EventEmitter::new(retry_sender, false));
+    let retry = adapter.handle_invalidation_message(&payload).await?;
+    assert_eq!(
+        retry,
+        Some(1),
+        "redelivery must recompute exactly one replacement"
+    );
+    let emitted = tokio::time::timeout(std::time::Duration::from_secs(1), retry_receiver.recv())
+        .await?
+        .expect("redelivery should emit the recomputed replacement");
+    assert_eq!(emitted.scope_key.as_deref(), Some(scope_key));
+    assert_eq!(
+        retry_receiver.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty),
+        "redelivery must not emit a duplicate replacement"
     );
     Ok(())
 }
@@ -779,7 +800,9 @@ async fn handle_invalidation_message_checkpoints_state_only_mutations(
         make_runtime_state_with_db(&ctx, "adapter-regression-stateful-invalidation", None).await?;
 
     let mut adapter = AutomatonRuntime::with_config(
-        ScopeReconcilerWrapper(StatefulInvalidationNode),
+        ScopeReconcilerWrapper(StatefulInvalidationNode {
+            allow_scope_recompute: true,
+        }),
         AutomatonAdapterConfig {
             checkpoint_interval: 1,
             ..AutomatonAdapterConfig::default()
@@ -812,6 +835,73 @@ async fn handle_invalidation_message_checkpoints_state_only_mutations(
     assert_eq!(
         adapter.events_since_checkpoint, 0,
         "successful invalidation checkpoint should clear the dirty counter"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn global_state_invalidation_does_not_clobber_unrelated_state(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use super::super::super::DerivedScopeInvalidation;
+    use sinex_db::DbPoolExt;
+    use sinex_primitives::events::DynamicPayload;
+    use sinex_primitives::{EventSource, EventType};
+
+    let ctx = ctx.with_nats().dedicated().await?;
+    let material_id = ctx
+        .create_source_material(Some("derived-invalidation-global-state"))
+        .await?;
+    let mut input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        serde_json::json!({ "value": 11_i64 }),
+    )
+    .from_material(material_id)
+    .build()?;
+    input.scope_key = Some("scope:foreign".to_string());
+    let input_id = ctx
+        .pool()
+        .events()
+        .insert_batch(vec![input])
+        .await?
+        .into_iter()
+        .next()
+        .and_then(|event| event.id)
+        .expect("invalidation input should have an id");
+
+    let (runtime, _event_receiver) =
+        make_runtime_state_with_db(&ctx, "adapter-regression-global-state", None).await?;
+    let mut adapter = AutomatonRuntime::with_config(
+        ScopeReconcilerWrapper(StatefulInvalidationNode {
+            allow_scope_recompute: false,
+        }),
+        AutomatonAdapterConfig {
+            checkpoint_interval: 1,
+            ..AutomatonAdapterConfig::default()
+        },
+    );
+    adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
+    adapter.event_emitter = Some(runtime.event_emitter().clone());
+    adapter.host = runtime.service_info().host().to_string();
+    adapter.runtime = Some(runtime);
+    adapter.persisted_state.state.invalidations_applied = 41;
+
+    let invalidation = DerivedScopeInvalidation::replaced(
+        vec![*input_id.as_uuid()],
+        EventSource::from_static("measurements"),
+        EventType::from_static("measurement.taken"),
+    )
+    .with_scope_keys(vec!["scope:foreign".to_string()]);
+    let processed = adapter
+        .handle_invalidation_message(&serde_json::to_vec(&invalidation)?)
+        .await?;
+
+    assert_eq!(processed, Some(0));
+    assert_eq!(
+        adapter.persisted_state.state.invalidations_applied, 41,
+        "a foreign scope must not replace a global accumulator with default state"
     );
     Ok(())
 }

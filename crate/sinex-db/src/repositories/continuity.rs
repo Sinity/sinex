@@ -28,11 +28,14 @@
 //!   carries a `privacy.tier` that requires a more conservative answer.
 
 use super::common::{DbResult, db_error};
-use sinex_primitives::Timestamp;
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
     CoverageContract, CoverageGap, DeclaredCoverageContract, DeclaredCoverageContractKind, GapKind,
     PrivacyClass, Replayability, SeamKind, SourceContinuityReport, TemporalSeam,
+};
+use sinex_primitives::{
+    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus,
+    Timestamp, evaluate_runtime_liveness,
 };
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -55,11 +58,12 @@ impl<'a> ContinuityRepository<'a> {
     pub async fn list_continuity_reports(
         &self,
         since: Option<Timestamp>,
+        stale_after_secs: u64,
     ) -> DbResult<Vec<SourceContinuityReport>> {
         let families = self.observed_families(since).await?;
         let mut out = Vec::with_capacity(families.len());
         for family in families {
-            if let Some(report) = self.build_report(&family, since).await? {
+            if let Some(report) = self.build_report(&family, since, stale_after_secs).await? {
                 out.push(report);
             }
         }
@@ -73,8 +77,10 @@ impl<'a> ContinuityRepository<'a> {
     pub async fn get_continuity_report(
         &self,
         source_family: &SourceFamily,
+        stale_after_secs: u64,
     ) -> DbResult<Option<SourceContinuityReport>> {
-        self.build_report(source_family, None).await
+        self.build_report(source_family, None, stale_after_secs)
+            .await
     }
 
     /// Resolve attribution for a single point inside a suspected gap.
@@ -84,8 +90,12 @@ impl<'a> ContinuityRepository<'a> {
         &self,
         source_family: &SourceFamily,
         at: Timestamp,
+        stale_after_secs: u64,
     ) -> DbResult<Option<CoverageGap>> {
-        let Some(report) = self.build_report(source_family, None).await? else {
+        let Some(report) = self
+            .build_report(source_family, None, stale_after_secs)
+            .await?
+        else {
             return Ok(None);
         };
         Ok(report.gaps.into_iter().find(|gap| {
@@ -134,6 +144,7 @@ impl<'a> ContinuityRepository<'a> {
         &self,
         family: &SourceFamily,
         since: Option<Timestamp>,
+        stale_after_secs: u64,
     ) -> DbResult<Option<SourceContinuityReport>> {
         let family_str = family.as_str();
         let since_pg: Option<OffsetDateTime> = since.map(Into::into);
@@ -322,6 +333,16 @@ impl<'a> ContinuityRepository<'a> {
             prev = Some(chunk);
         }
 
+        if coverage_contract == CoverageContract::Continuous {
+            if let Some(latest) = agg.latest_ts {
+                if let Some(gap) =
+                    continuous_trailing_gap(latest, OffsetDateTime::now_utc(), stale_after_secs)
+                {
+                    gaps.push(gap);
+                }
+            }
+        }
+
         let replayability = build_replayability(ReplayabilityFlags {
             any_blob: agg.any_blob,
             good_timing: agg.good_timing,
@@ -365,6 +386,29 @@ where
     R: ChunkAccess,
 {
     row.end_time()
+}
+
+fn continuous_trailing_gap(
+    latest: OffsetDateTime,
+    now: OffsetDateTime,
+    stale_after_secs: u64,
+) -> Option<CoverageGap> {
+    let liveness = evaluate_runtime_liveness(
+        RuntimeLivenessSignals {
+            run_status: None,
+            health_status: None,
+            last_heartbeat_at: None,
+            last_output_at: Some(latest.into()),
+        },
+        RuntimeLivenessPolicy::new(stale_after_secs),
+        now.into(),
+    );
+    matches!(liveness.status, RuntimeLivenessStatus::Stale).then(|| CoverageGap {
+        from_ts: latest.into(),
+        to_ts: now.into(),
+        kind: GapKind::ServiceCrash,
+        attribution: Some("continuous source has no recent observed coverage".to_string()),
+    })
 }
 
 trait ChunkAccess {

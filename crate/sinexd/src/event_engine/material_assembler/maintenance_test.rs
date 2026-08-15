@@ -92,10 +92,6 @@ async fn end_before_begin_without_slices_short_timeouts(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
-#[ignore = "sinex-2nsg open: a material wedged in AssemblyPhase::Finalizing is never surfaced by \
-            find_stale_materials no matter how old it is (maintenance.rs unconditional `continue` \
-            on Finalizing), so a panicked detached finalize worker leaves it permanently invisible \
-            to the stale sweep; un-ignore once Finalizing gets an age bound"]
 async fn finalizing_phase_material_stuck_for_hours_is_never_flagged_stale(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -519,7 +515,6 @@ async fn stale_zero_event_source_material_timeout_recovers_partial_without_dlq(
 /// aborts the WHOLE cleanup pass. Every other genuinely orphaned folder in
 /// that run is skipped until the bad entry is manually removed.
 #[sinex_test]
-#[ignore = "sinex-ijps open: one non-UUID-named directory under state_root aborts the entire orphan-cleanup pass instead of being skipped"]
 async fn cleanup_orphaned_temp_files_one_bad_entry_does_not_abort_whole_pass(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -537,7 +532,14 @@ async fn cleanup_orphaned_temp_files_one_bad_entry_does_not_abort_whole_pass(
     // A genuinely orphaned material folder that IS a valid UUID and has no
     // corresponding live assembler state -- this should be cleanable.
     let orphan_material_id = Uuid::now_v7();
-    std::fs::create_dir_all(state_dir.path().join(orphan_material_id.to_string()))?;
+    let orphan_dir = state_dir.path().join(orphan_material_id.to_string());
+    std::fs::create_dir_all(&orphan_dir)?;
+    let orphan_temp_path = orphan_dir.join(super::super::state::TEMP_FILE_NAME);
+    std::fs::write(&orphan_temp_path, b"orphaned material")?;
+    std::fs::File::options()
+        .append(true)
+        .open(&orphan_temp_path)?
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7_200))?;
 
     let result = assembler.cleanup_orphaned_temp_files().await;
 
@@ -545,6 +547,14 @@ async fn cleanup_orphaned_temp_files_one_bad_entry_does_not_abort_whole_pass(
         result.is_ok(),
         "sinex-ijps: one malformed entry under state_root must not abort the whole \
          orphan-cleanup pass; got {result:?}"
+    );
+    assert!(
+        state_dir.path().join("not-a-material-id").exists(),
+        "the malformed entry must be skipped rather than removed"
+    );
+    assert!(
+        !orphan_dir.exists(),
+        "anti-vacuity: the valid stale orphan must still be cleaned after the malformed entry"
     );
     Ok(())
 }

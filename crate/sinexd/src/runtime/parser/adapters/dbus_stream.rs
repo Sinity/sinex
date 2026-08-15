@@ -144,10 +144,9 @@ pub struct DbusMessage {
 /// A parsed D-Bus match rule subset.
 ///
 /// We only model the conditions the source host uses: `type`, `interface`,
-/// `member`, `path`, `path_namespace`, `sender`. Any other keys (e.g. `arg0`)
-/// are stored verbatim and currently treated as "pass-through" — the broker
-/// will enforce them, and the post-filter is conservative (does not drop a
-/// message just because it carries an arg0 the rule expected).
+/// `member`, `path`, `path_namespace`, and `sender`. Rules without at least
+/// one modeled condition are rejected so an unsupported or empty rule cannot
+/// become an unconstrained post-filter that admits every signal.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedMatchRule {
     pub msg_type: Option<String>,
@@ -164,10 +163,13 @@ impl FromStr for ParsedMatchRule {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // D-Bus match rule: `key='value',key='value',...`
         let mut rule = ParsedMatchRule::default();
+        let mut has_modeled_condition = false;
         for raw_clause in s.split(',') {
             let clause = raw_clause.trim();
             if clause.is_empty() {
-                continue;
+                return Err(ParserError::Config(
+                    "invalid match rule clause: empty clause".into(),
+                ));
             }
             let (key, value) = clause.split_once('=').ok_or_else(|| {
                 ParserError::Config(format!("invalid match rule clause (no `=`): {clause}"))
@@ -175,16 +177,41 @@ impl FromStr for ParsedMatchRule {
             let key = key.trim();
             let value = value.trim().trim_matches('\'').trim_matches('"');
             match key {
-                "type" => rule.msg_type = Some(value.to_string()),
-                "interface" => rule.interface = Some(value.to_string()),
-                "member" => rule.member = Some(value.to_string()),
-                "path" => rule.path = Some(value.to_string()),
-                "path_namespace" => rule.path_namespace = Some(value.to_string()),
-                "sender" => rule.sender = Some(value.to_string()),
-                // Unknown keys are ignored by the post-filter; the broker
-                // will still enforce them if the rule was forwarded.
-                _ => {}
+                "type" => {
+                    has_modeled_condition = true;
+                    rule.msg_type = Some(value.to_string());
+                }
+                "interface" => {
+                    has_modeled_condition = true;
+                    rule.interface = Some(value.to_string());
+                }
+                "member" => {
+                    has_modeled_condition = true;
+                    rule.member = Some(value.to_string());
+                }
+                "path" => {
+                    has_modeled_condition = true;
+                    rule.path = Some(value.to_string());
+                }
+                "path_namespace" => {
+                    has_modeled_condition = true;
+                    rule.path_namespace = Some(value.to_string());
+                }
+                "sender" => {
+                    has_modeled_condition = true;
+                    rule.sender = Some(value.to_string());
+                }
+                _ => {
+                    return Err(ParserError::Config(format!(
+                        "unsupported D-Bus match rule key: {key}"
+                    )));
+                }
             }
+        }
+        if !has_modeled_condition {
+            return Err(ParserError::Config(
+                "D-Bus match rule has no modeled conditions".into(),
+            ));
         }
         Ok(rule)
     }
@@ -232,12 +259,9 @@ impl ParsedMatchRule {
 }
 
 /// Does the message satisfy at least one of the parsed rules? An empty rule
-/// list is treated as "match everything" (mirrors how an empty `match_rules`
-/// config is rewritten to the defaults at subscription time).
+/// list matches nothing. Malformed configured rules must not silently widen a
+/// subscription to every message.
 pub fn matches_any_rule(msg: &DbusMessage, rules: &[ParsedMatchRule]) -> bool {
-    if rules.is_empty() {
-        return true;
-    }
     rules.iter().any(|r| r.matches(msg))
 }
 
@@ -490,6 +514,7 @@ fn zvariant_value_to_json(v: &zvariant::Value<'_>) -> serde_json::Value {
 /// consulted by `open_with_backend`, which tests use to bypass the live bus.
 pub struct DbusStreamAdapter {
     injected_backend: std::sync::Mutex<Option<Box<dyn DbusBackend + Send + Sync>>>,
+    injected_backend_configured: bool,
 }
 
 impl DbusStreamAdapter {
@@ -497,6 +522,7 @@ impl DbusStreamAdapter {
     pub fn with_backend(backend: impl DbusBackend + Sync + 'static) -> Self {
         Self {
             injected_backend: std::sync::Mutex::new(Some(Box::new(backend))),
+            injected_backend_configured: true,
         }
     }
 }
@@ -507,6 +533,7 @@ impl Default for DbusStreamAdapter {
     fn default() -> Self {
         Self {
             injected_backend: std::sync::Mutex::new(None),
+            injected_backend_configured: false,
         }
     }
 }
@@ -523,14 +550,21 @@ impl InputShapeAdapter for DbusStreamAdapter {
         config: &Self::Config,
         _cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        // If a test injected a backend, consume it; otherwise build a fresh
-        // RealDbusBackend. Either way, subscribe(...) takes ownership.
+        // An injected backend is intentionally one-shot because subscribe takes
+        // ownership. Never silently replace an exhausted test backend with a
+        // live D-Bus connection on a later open.
         let backend: Box<dyn DbusBackend + Send + Sync> = {
             let mut slot = self.injected_backend.lock().map_err(|e| {
                 ParserError::Adapter(format!("injected_backend mutex poisoned: {e}"))
             })?;
             match slot.take() {
                 Some(b) => b,
+                None if self.injected_backend_configured => {
+                    return Err(ParserError::Adapter(
+                        "injected D-Bus backend already consumed; create a new adapter for another subscription"
+                            .to_string(),
+                    ));
+                }
                 None => Box::new(RealDbusBackend),
             }
         };

@@ -167,9 +167,6 @@ async fn archived_annotation_count(ctx: &TestContext, event_id: &str) -> TestRes
 /// operator-authored annotation content behind forever, orphaned and
 /// unreachable by any later purge attempt.
 #[sinex_test]
-#[ignore = "sinex-kwwt open: execute_cascade_tombstone leaks audit.archived_annotations rows (and \
-            archived_embeddings/archived_tagged_items) for any tombstoned event that had one; \
-            un-ignore once the tombstone path cleans up all archive side-tables like restore does"]
 async fn tombstone_approve_purges_archived_annotation_content(ctx: TestContext) -> TestResult<()> {
     let auth = RpcAuthContext::system();
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
@@ -528,6 +525,174 @@ async fn tombstone_approve_deletes_orphan_source_material(ctx: TestContext) -> T
     Ok(())
 }
 
+#[sinex_test]
+async fn tombstone_approve_retains_manifest_replay_root_without_explicit_purge(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.manifest-retained";
+    let material_id = ctx.create_source_material(Some(source)).await?;
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET metadata = jsonb_build_object('material_manifest', jsonb_build_object('content_key', 'local-cas-s1--aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) WHERE id = $1",
+    )
+    .bind(material_id.to_uuid())
+    .execute(ctx.pool())
+    .await?;
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.manifest", json!({ "kind": "fixture" }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event must have id").to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id.clone()],
+                "dry_run": false,
+                "reason": "manifest retention test: archive before tombstone",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({ "source": source, "limit": 1, "reason": "manifest retention test" }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": create.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approve.operation.tombstoned_count, Some(1));
+    assert_eq!(approve.operation.manifest_replay_roots_purged, Some(0));
+    assert!(
+        ctx.pool()
+            .source_materials()
+            .get_by_id(sinex_primitives::Id::from_uuid(material_id.to_uuid()))
+            .await?
+            .is_some(),
+        "ordinary tombstone cleanup must retain the manifest-backed replay root"
+    );
+    assert_eq!(tombstone_count(&ctx, &event_id).await?, 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn tombstone_approve_purges_manifest_root_only_after_specific_acknowledgement(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.manifest-reviewed-purge";
+    let material_id = ctx.create_source_material(Some(source)).await?;
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET metadata = jsonb_build_object('material_manifest', jsonb_build_object('content_key', 'local-cas-s1--aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) WHERE id = $1",
+    )
+    .bind(material_id.to_uuid())
+    .execute(ctx.pool())
+    .await?;
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.manifest", json!({ "kind": "fixture" }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event must have id").to_string();
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id.clone()],
+                "dry_run": false,
+                "reason": "manifest purge test: archive before tombstone",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({ "source": source, "limit": 1, "reason": "manifest purge test" }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let missing_ack = handle_tombstone_approve(
+        json!({
+            "operation_id": create.operation.operation_id,
+            "yes_i_understand_data_is_gone": true,
+            "purge_manifest_replay_roots": true,
+        }),
+        &services,
+        &auth,
+    )
+    .await;
+    assert!(
+        missing_ack.is_err(),
+        "requesting replay-root purge without its distinct acknowledgement must fail closed"
+    );
+    assert!(
+        ctx.pool()
+            .source_materials()
+            .get_by_id(sinex_primitives::Id::from_uuid(material_id.to_uuid()))
+            .await?
+            .is_some(),
+        "a rejected purge request must not remove the manifest replay authority"
+    );
+
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": create.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+                "purge_manifest_replay_roots": true,
+                "yes_i_understand_manifest_replay_authority_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approve.operation.tombstoned_count, Some(1));
+    assert_eq!(approve.operation.manifest_replay_roots_purged, Some(1));
+    assert!(
+        ctx.pool()
+            .source_materials()
+            .get_by_id(sinex_primitives::Id::from_uuid(material_id.to_uuid()))
+            .await?
+            .is_none(),
+        "the reviewed, specifically acknowledged purge must remove the manifest replay root"
+    );
+    assert_eq!(tombstone_count(&ctx, &event_id).await?, 1);
+    Ok(())
+}
+
 /// Companion test: when an event references material that is ALSO referenced
 /// by a separate live event, tombstoning the first event must NOT delete
 /// the material — the second event still depends on it.
@@ -836,6 +1001,10 @@ async fn tombstone_approve_deletes_blob_row_once_last_reference_is_gone(
         .await?,
     )?;
 
+    // A repeat apply must preserve the lifecycle function and temporal-facts
+    // view relationship before the real tombstone path reaches its CAS checks.
+    sinex_db::apply_schema(ctx.pool()).await?;
+
     let approve: TombstoneApproveResponse = serde_json::from_value(
         handle_tombstone_approve(
             json!({
@@ -870,6 +1039,133 @@ async fn tombstone_approve_deletes_blob_row_once_last_reference_is_gone(
         retrieve_result.is_err(),
         "CAS content must be genuinely dropped once the last reference is gone"
     );
+
+    Ok(())
+}
+
+/// A database failure while removing the final `core.blobs` authority must
+/// leave the CAS bytes intact. The old route called `drop_content` before the
+/// DELETE, so this trigger reproduced a surviving blob row whose bytes were
+/// already gone. The real tombstone route now reaches the CAS cleanup only
+/// after the transaction has durably deleted that row.
+#[sinex_test]
+async fn tombstone_approve_retains_cas_when_blob_authority_delete_fails(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.blob-authority-failure";
+
+    let content_store = services.content.content_store();
+    let payload = b"blob authority must outlive failed deletion";
+    let blob = content_store
+        .ingest_from_bytes(payload, "authority-failure.bin", "application/octet-stream")
+        .await?;
+    let content_key = blob.content_key();
+
+    let material = ctx
+        .pool()
+        .source_materials()
+        .register_material(
+            SourceMaterialRegistration::blob_binary("authority-failure.bin")
+                .with_blob_id(blob.id),
+        )
+        .await?;
+    let material_id = sinex_primitives::Id::from_uuid(material.id);
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.blob-authority-failure", json!({}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event must have an id").to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id],
+                "dry_run": false,
+                "reason": "prepare blob authority delete failure",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+    let created: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "limit": 1,
+                "reason": "exercise blob authority delete failure",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    sqlx::query(
+        r#"
+        CREATE OR REPLACE FUNCTION public.test_fail_tombstone_blob_authority_delete()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RAISE EXCEPTION 'injected tombstone blob authority delete failure';
+        END;
+        $$;
+        "#,
+    )
+    .execute(ctx.pool())
+    .await?;
+    sqlx::query(
+        r#"
+        CREATE TRIGGER test_fail_tombstone_blob_authority_delete
+        BEFORE DELETE ON core.blobs
+        FOR EACH ROW
+        EXECUTE FUNCTION public.test_fail_tombstone_blob_authority_delete();
+        "#,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": created.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approve.operation.tombstoned_count, Some(1));
+
+    let blob_after = ctx.pool().blobs().get_by_id(blob.id).await?;
+    assert!(
+        blob_after.is_some(),
+        "anti-vacuity: injected authority-delete failure must preserve the committed blob row"
+    );
+    assert_eq!(
+        content_store.retrieve_content(&content_key).await?,
+        payload,
+        "anti-vacuity: DB deletion failure must not strand a committed blob authority without CAS bytes"
+    );
+
+    sqlx::query(
+        "DROP TRIGGER test_fail_tombstone_blob_authority_delete ON core.blobs",
+    )
+    .execute(ctx.pool())
+    .await?;
+    sqlx::query("DROP FUNCTION public.test_fail_tombstone_blob_authority_delete()")
+        .execute(ctx.pool())
+        .await?;
 
     Ok(())
 }
@@ -939,7 +1235,7 @@ async fn tombstone_cancel_persists_terminal_metadata(ctx: TestContext) -> TestRe
         Some("Cancelled by system:local: operator requested stop")
     );
 
-    let persisted_duration_ms: i32 = sqlx::query_scalar!(
+    let persisted_duration_ms: i64 = sqlx::query_scalar!(
         r#"SELECT duration_ms as "duration_ms!" FROM core.operations_log WHERE id = $1::uuid"#,
         created.operation.operation_id.parse::<uuid::Uuid>()?
     )
@@ -1013,7 +1309,7 @@ async fn tombstone_expiry_persists_terminal_metadata(ctx: TestContext) -> TestRe
         Some("Expired before approval")
     );
 
-    let persisted_duration_ms: i32 = sqlx::query_scalar!(
+    let persisted_duration_ms: i64 = sqlx::query_scalar!(
         r#"SELECT duration_ms as "duration_ms!" FROM core.operations_log WHERE id = $1::uuid"#,
         created.operation.operation_id.parse::<uuid::Uuid>()?
     )
@@ -1035,22 +1331,12 @@ async fn tombstone_expiry_persists_terminal_metadata(ctx: TestContext) -> TestRe
 /// approval"` -- a factually false statement, since the deletion already
 /// happened.
 ///
-/// This test reproduces the stuck end-state directly: it runs the real
-/// approve flow to a genuine, verified completion (so the deletion is real,
-/// not simulated), then rewrites the persisted operation back to the
-/// `Executing`/lapsed-TTL shape step 3's failure would have left behind --
-/// the same "rewrite `operations_log.scope` via SQL to force a lapsed TTL"
-/// technique `tombstone_expiry_persists_terminal_metadata` above uses for
-/// the "never approved" case.
-///
-/// Expected to FAIL against current code: `reconcile_tombstone_expiry` has
-/// no way to distinguish "never started" from "deletion committed,
-/// completion write lost" and unconditionally relabels any lapsed-TTL
-/// non-terminal operation as Expired/"Expired before approval".
+/// This test injects a real database failure into the terminal completion
+/// update, after `execute_cascade_tombstone` has committed its deletion and
+/// boundary receipt. The same operation must then be recoverable through the
+/// normal approve route after the injected failure is removed.
 #[sinex_test]
-#[ignore = "sinex-9djc open: reconcile_tombstone_expiry has no way to distinguish \
-'never started' from 'deletion committed, completion write lost' -- fails until fixed"]
-async fn tombstone_status_does_not_mislabel_completed_deletion_as_expired(
+async fn tombstone_completion_failure_is_recoverable_after_deletion_boundary(
     ctx: TestContext,
 ) -> TestResult<()> {
     let auth = RpcAuthContext::system();
@@ -1088,9 +1374,167 @@ async fn tombstone_status_does_not_mislabel_completed_deletion_as_expired(
         .await?,
     )?;
 
-    // Run the real approve flow to genuine completion: step 2
-    // (execute_cascade_tombstone) truly commits the deletion here, exactly
-    // as it would in the production failure this bead describes.
+    // Fail only the separate terminal completion write. The deletion-boundary
+    // update inside execute_cascade_tombstone is still allowed to commit.
+    sqlx::query(
+        r#"
+        CREATE OR REPLACE FUNCTION public.test_fail_tombstone_completion()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF NEW.operation_type = 'tombstone'
+               AND NEW.scope->>'phase' = 'completed' THEN
+                RAISE EXCEPTION 'injected tombstone completion-write failure';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        "#,
+    )
+    .execute(ctx.pool())
+    .await?;
+    sqlx::query(
+        r#"
+        CREATE TRIGGER test_fail_tombstone_completion
+        BEFORE UPDATE ON core.operations_log
+        FOR EACH ROW
+        EXECUTE FUNCTION public.test_fail_tombstone_completion();
+        "#,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let error = handle_tombstone_approve(
+        json!({
+            "operation_id": created.operation.operation_id,
+            "yes_i_understand_data_is_gone": true,
+        }),
+        &services,
+        &auth,
+    )
+    .await
+    .expect_err("injected completion write must fail the approve request");
+    assert!(
+        error.to_string().contains("Failed to finalize tombstone operation"),
+        "unexpected completion-write error: {error}"
+    );
+
+    let persisted = ctx
+        .pool()
+        .state()
+        .get_tombstone_operation(&created.operation.operation_id)
+        .await?
+        .expect("operation must remain after completion-write failure");
+    let persisted_operation: sinex_primitives::rpc::lifecycle::TombstoneOperation =
+        serde_json::from_value(persisted.scope.expect("tombstone scope must remain"))?;
+    assert_eq!(
+        persisted_operation.state,
+        TombstoneOperationState::Executing,
+        "lost completion must leave an explicitly recoverable execution state"
+    );
+    assert!(
+        persisted_operation.deletion_committed_at.is_some(),
+        "deletion boundary receipt must survive the failed completion update"
+    );
+    assert_eq!(persisted_operation.tombstoned_count, Some(1));
+    assert_eq!(
+        tombstone_count(&ctx, &event_id).await?,
+        1,
+        "deletion must have genuinely committed before the injected failure"
+    );
+
+    sqlx::query("DROP TRIGGER test_fail_tombstone_completion ON core.operations_log")
+        .execute(ctx.pool())
+        .await?;
+    sqlx::query("DROP FUNCTION public.test_fail_tombstone_completion()")
+        .execute(ctx.pool())
+        .await?;
+
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET scope = jsonb_set(scope, '{expires_at}', to_jsonb($2::text), false)
+        WHERE id = $1::uuid
+        "#,
+        created.operation.operation_id.parse::<uuid::Uuid>()?,
+        "2000-01-01T00:00:00Z"
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let recovered_status: TombstoneStatusResponse = serde_json::from_value(
+        handle_tombstone_status(
+            ctx.pool(),
+            json!({ "operation_id": created.operation.operation_id }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(
+        recovered_status.operation.state,
+        TombstoneOperationState::Completed,
+        "expiry reconciliation must recover a committed deletion before expiry"
+    );
+    assert_eq!(
+        recovered_status.operation.error_details.as_deref(),
+        Some("Deletion committed; lifecycle completion state recovered")
+    );
+
+    let resumed: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": created.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(resumed.operation.state, TombstoneOperationState::Completed);
+    assert_eq!(resumed.operation.tombstoned_count, Some(1));
+    assert_eq!(
+        resumed.operation.error_details.as_deref(),
+        Some("Deletion committed; lifecycle completion state recovered")
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn tombstone_cascade_reuses_committed_receipt(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.receipt-retry";
+    let event = publish_event(&ctx, source, 1).await?;
+    let event_id = event.id.expect("published event should have an id");
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id.to_string()],
+                "dry_run": false,
+                "reason": "prepare receipt retry",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let created: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "reason": "receipt retry",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
     let approved: TombstoneApproveResponse = serde_json::from_value(
         handle_tombstone_approve(
             json!({
@@ -1102,62 +1546,29 @@ async fn tombstone_status_does_not_mislabel_completed_deletion_as_expired(
         )
         .await?,
     )?;
-    assert_eq!(approved.operation.tombstoned_count, Some(1));
+    let operation_id = created.operation.operation_id.parse::<uuid::Uuid>()?;
+
+    let repeated_count = ctx
+        .pool()
+        .events()
+        .execute_cascade_tombstone(&[*event_id.as_uuid()], "receipt retry", operation_id)
+        .await?;
+    assert_eq!(repeated_count, 1);
+
+    let persisted = ctx
+        .pool()
+        .state()
+        .get_tombstone_operation(&created.operation.operation_id)
+        .await?
+        .expect("tombstone operation must remain persisted");
+    let persisted_operation: sinex_primitives::rpc::lifecycle::TombstoneOperation =
+        serde_json::from_value(persisted.scope.expect("tombstone scope must remain"))?;
+    assert_eq!(persisted_operation.tombstoned_count, Some(1));
     assert_eq!(
-        tombstone_count(&ctx, &event_id).await?,
-        1,
-        "deletion (step 2) must have genuinely committed for this repro to be meaningful"
+        persisted_operation.deletion_committed_at,
+        approved.operation.deletion_committed_at
     );
-
-    // Rewrite the persisted operation back to the stuck-Executing shape
-    // step 3's failure would have left behind: phase=executing, no
-    // finished_at/error_details, TTL lapsed.
-    //
-    // operation_record_to_tombstone() treats `phase` as the canonical
-    // field and overwrites `state` from it on every read
-    // (`operation.state = operation.phase.into()`), so mutating `state`
-    // alone is a no-op against the real read path -- `phase` is what
-    // must be rewritten to reach reconcile_tombstone_expiry's
-    // `!operation.state.is_terminal()` guard with Executing.
-    sqlx::query!(
-        r#"
-        UPDATE core.operations_log
-        SET scope = jsonb_set(
-            jsonb_set(
-                jsonb_set(
-                    jsonb_set(scope, '{phase}', to_jsonb('executing'::text), false),
-                    '{state}', to_jsonb('executing'::text), false
-                ),
-                '{expires_at}', to_jsonb($2::text), false
-            ),
-            '{finished_at}', 'null'::jsonb, false
-        )
-        WHERE id = $1::uuid
-        "#,
-        created.operation.operation_id.parse::<uuid::Uuid>()?,
-        "2000-01-01T00:00:00Z"
-    )
-    .execute(ctx.pool())
-    .await?;
-
-    let status: TombstoneStatusResponse = serde_json::from_value(
-        handle_tombstone_status(
-            ctx.pool(),
-            json!({ "operation_id": created.operation.operation_id }),
-            &auth,
-        )
-        .await?,
-    )?;
-
-    // The deletion already happened -- status must not claim it "expired
-    // before approval". This is the single most destructive path in the
-    // system; telling an operator the destructive op never went through
-    // when it actually did is worse than saying nothing.
-    assert_ne!(
-        status.operation.error_details.as_deref(),
-        Some("Expired before approval"),
-        "deletion already committed; status must not claim the operation never happened"
-    );
+    assert_eq!(tombstone_count(&ctx, &event_id.to_string()).await?, 1);
 
     Ok(())
 }

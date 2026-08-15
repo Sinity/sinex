@@ -8,6 +8,10 @@ use color_eyre::Result;
 use console::style;
 use futures::StreamExt;
 use serde_json::json;
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    evaluate_runtime_liveness,
+};
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::privacy::{load_private_mode_state, resolve_private_mode_state_dir};
 use sinex_primitives::query::{
@@ -238,16 +242,28 @@ async fn collect_runtime_and_dlq_signals(
     signals: &mut Vec<RuntimeStatusSignal>,
     warnings: &mut Vec<RuntimeStatusWarning>,
 ) {
-    match client.runtime_list_active(31_536_000).await {
+    match client
+        .runtime_list_active(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
+        .await
+    {
         Ok(response) => {
             let modules = response.modules;
             let total = modules.len();
-            let now = Timestamp::now();
             let healthy = modules
                 .iter()
-                .filter(|n| {
-                    n.last_heartbeat_at
-                        .is_some_and(|hb| (now - hb).whole_seconds() < 60)
+                .filter(|module| {
+                    evaluate_runtime_liveness(
+                        RuntimeLivenessSignals {
+                            run_status: Some(module.status.as_str()),
+                            health_status: None,
+                            last_heartbeat_at: module.last_heartbeat_at,
+                            last_output_at: None,
+                        },
+                        RuntimeLivenessPolicy::default(),
+                        Timestamp::now(),
+                    )
+                    .status
+                    .is_live()
                 })
                 .count();
             let status = if healthy == total {

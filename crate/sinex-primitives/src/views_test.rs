@@ -115,6 +115,10 @@ async fn event_card_preserves_refs_actions_and_payload_preview() -> xtask::TestR
                 && action.reason.is_some())
     );
     assert!(card.payload_preview.is_some());
+    assert_eq!(
+        card.privacy_state.state,
+        PrivacyStateKind::TransformationUnknown
+    );
     Ok(())
 }
 

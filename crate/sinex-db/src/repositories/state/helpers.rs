@@ -6,14 +6,18 @@ use std::time::Duration;
 const DEFAULT_MODULE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
 pub(super) const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
 pub const PROJECTION_REBUILD_OPERATION_TYPE: &str = "projection-rebuild";
+pub const REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE: &str = "replay-archive-recovery";
 
 pub(super) const MANAGED_OPERATION_TYPES: &[&str] = &[
+    "import",
     "replay",
     "archive",
     "restore",
     "purge",
     "tombstone",
+    "dlq.requeue",
     PROJECTION_REBUILD_OPERATION_TYPE,
+    REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE,
 ];
 
 pub(super) fn module_heartbeat_stale_after() -> DbResult<Duration> {

@@ -23,6 +23,7 @@
       host = "127.0.0.1";
       name = "sinex_dev";
       user = "sinex";
+      localAuth = "trust";
     };
 
     nats = {

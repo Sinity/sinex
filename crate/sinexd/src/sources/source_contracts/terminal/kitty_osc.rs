@@ -45,6 +45,7 @@ pub struct KittyOscParserConfig;
     runner_pack = RunnerPack::Live,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("live source has no recoverable history", "sinex-r6d.8"),
 )]
 pub struct KittyOscParser;
 

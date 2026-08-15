@@ -3,6 +3,7 @@ use super::test_support::{build_test_assembler, build_test_content_store};
 use super::{
     MaterialAssembler, disk_usage_allows_assembly, maintenance::MaterialTaskOutcome, signal_ready,
 };
+use crate::event_engine::durable_failure::DURABLE_FAILURE_ID_HEADER;
 use crate::event_engine::MaterialReadySet;
 use sinex_db::DbPoolExt;
 use sinex_primitives::{Id, domain::MaterialStatus};
@@ -57,6 +58,139 @@ async fn route_material_error_propagates_oversized_dlq_payload_failure(
         "error should describe the payload-size rejection from ensure_nats_payload_fits, \
          got: {error}"
     );
+    Ok(())
+}
+
+/// The material route enters the production JetStream path and the live test
+/// database. A successful return therefore proves both the Postgres witness
+/// was written and the JetStream publish was server-confirmed; replacing the
+/// confirmed publish with core NATS, or removing the evidence insert, makes
+/// this fail (the stream is bootstrapped only by this test).
+#[sinex_test]
+async fn material_dlq_requires_and_records_durable_evidence(ctx: TestContext) -> TestResult<()> {
+    // The production material assembler uses the process-wide JetStream
+    // topology. Keep this route proof on the shared sandbox, as the adjacent
+    // material-DLQ tests do, so the test exercises the same responder and
+    // namespace setup rather than a second ephemeral server lifecycle.
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    super::pipeline::bootstrap_streams(&assembler).await?;
+    let dlq_stream_name = ctx.env().nats_stream_name_with_namespace(
+        Some(ctx.pipeline_namespace().prefix()),
+        "SINEX_RAW_EVENTS_DLQ",
+    );
+    async_nats::jetstream::new(ctx.nats_client())
+        .create_or_update_stream(async_nats::jetstream::stream::Config {
+            name: dlq_stream_name.clone(),
+            subjects: vec![assembler.dlq_subject.clone()],
+            retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
+            storage: async_nats::jetstream::stream::StorageType::File,
+            max_age: tokio::time::Duration::from_secs(300),
+            allow_direct: true,
+            ..Default::default()
+        })
+        .await?;
+    let mut dlq_stream = async_nats::jetstream::new(ctx.nats_client())
+        .get_stream(&dlq_stream_name)
+        .await?;
+    let dlq_info = dlq_stream.info().await?;
+    assert_eq!(dlq_info.config.subjects, vec![assembler.dlq_subject.clone()]);
+    let material_id = uuid::Uuid::now_v7();
+    let durable_failure_id = assembler
+        .route_material_error(
+            material_id,
+            "test_material_failure",
+            serde_json::json!({"fixture": true}),
+        )
+        .await?;
+
+    let evidence = sqlx::query!(
+        "SELECT failed_event_id, error_category FROM sinex_schemas.dlq_events WHERE dlq_id = $1",
+        durable_failure_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(evidence.failed_event_id, material_id);
+    assert_eq!(evidence.error_category, "permanent");
+
+    let mut stream = async_nats::jetstream::new(ctx.nats_client())
+        .get_stream(&dlq_stream_name)
+        .await?;
+    let state = stream.info().await?.state.clone();
+    assert_eq!(state.messages, 1);
+    let entry = stream.direct_get(state.first_sequence).await?;
+    let expected_failure_id = durable_failure_id.to_string();
+    assert_eq!(
+        entry
+            .headers
+            .get(DURABLE_FAILURE_ID_HEADER)
+            .map(|value| value.as_str()),
+        Some(expected_failure_id.as_str()),
+        "the confirmed DLQ message must carry the Postgres witness identity"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn material_dlq_publish_failure_preserves_retryable_material_state(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (mut assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = uuid::Uuid::now_v7();
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "test",
+            Some("test://material-dlq-publish-failure"),
+            json!({}),
+            sinex_primitives::Timestamp::now(),
+        )
+        .await?;
+
+    // No JetStream stream owns this unique subject. The production publish
+    // path therefore fails at confirmation after the Postgres witness is
+    // written, exercising the same error boundary as an unavailable DLQ.
+    assembler.dlq_subject = format!(
+        "{}.missing.{}",
+        ctx.pipeline_namespace().subject("events.dlq.event_engine"),
+        material_id
+    );
+    let error = assembler
+        .route_material_error_then_finalize_failed(
+            material_id,
+            "material_dlq_publish_failure",
+            json!({"fixture": true}),
+        )
+        .await
+        .expect_err("a missing DLQ stream must not settle the material terminally");
+    assert!(
+        error.to_string().contains("DLQ") || error.to_string().contains("publish"),
+        "unexpected DLQ publish error: {error}"
+    );
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(sinex_primitives::Id::from_uuid(material_id))
+        .await?
+        .expect("material should remain registered");
+    assert_eq!(
+        material.status,
+        MaterialStatus::Sensing,
+        "failed DLQ publication must preserve a retryable nonterminal material"
+    );
+    let evidence = sqlx::query_scalar!(
+        r#"SELECT count(*)::bigint AS "count!: i64"
+           FROM sinex_schemas.dlq_events
+           WHERE failed_event_id = $1"#,
+        material_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(evidence, 1, "the failure still has a durable witness");
     Ok(())
 }
 

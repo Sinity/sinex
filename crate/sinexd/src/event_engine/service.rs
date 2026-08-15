@@ -4,8 +4,9 @@
 
 // Local crate imports
 use crate::event_engine::{
-    EventEngineResult, JetStreamEventLane, JetStreamTopology, SinexError, config::EventEngineConfig,
-    material_ready_set::MaterialReadySet, validator::IngestEventValidator,
+    EventEngineResult, JetStreamEventLane, JetStreamTopology, SinexError,
+    config::EventEngineConfig, material_ready_set::MaterialReadySet,
+    validator::IngestEventValidator,
 };
 // External crates
 use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
@@ -645,7 +646,11 @@ impl IngestService {
             if let Some(module_run_id) = module_run_id {
                 let module_run_id =
                     Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
-                if let Err(error) = pool.state().record_module_run_heartbeat(module_run_id).await {
+                if let Err(error) = pool
+                    .state()
+                    .record_module_run_heartbeat(module_run_id)
+                    .await
+                {
                     warn!(
                         module_run_id = %module_run_id,
                         error = %error,
@@ -1039,18 +1044,20 @@ impl IngestService {
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
         let settlement_registry = self.settlement_registry.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-        let Some(ts_orig_lower_bound) =
-            Timestamp::from_unix_timestamp(self.config.ts_orig_lower_bound_unix)
-        else {
-            let error =
-                SinexError::configuration("ts_orig_lower_bound_unix is outside timestamp range")
-                    .with_context(
-                        "ts_orig_lower_bound_unix",
-                        self.config.ts_orig_lower_bound_unix.to_string(),
-                    );
-            let _ = ready_tx.send(());
-            let handle = tokio::spawn(async move { Err(error) });
-            return (handle, ready_rx);
+        let ts_orig_lower_bound = match self.config.ts_orig_lower_bound_unix {
+            Some(unix_seconds) => match Timestamp::from_unix_timestamp(unix_seconds) {
+                Some(timestamp) => Some(timestamp),
+                None => {
+                    let error = SinexError::configuration(
+                        "ts_orig_lower_bound_unix is outside timestamp range",
+                    )
+                    .with_context("ts_orig_lower_bound_unix", unix_seconds.to_string());
+                    let _ = ready_tx.send(());
+                    let handle = tokio::spawn(async move { Err(error) });
+                    return (handle, ready_rx);
+                }
+            },
+            None => None,
         };
         let handle = tokio::spawn(async move {
             let mut consumer = crate::event_engine::JetStreamConsumer::new(
@@ -1139,10 +1146,19 @@ impl IngestService {
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
             let durability_thresholds = durability_thresholds?;
+            let max_blob_size = usize::try_from(max_material_size_bytes).map_err(|error| {
+                SinexError::validation("max material size does not fit content-store limit")
+                    .with_context(
+                        "max_material_size_bytes",
+                        max_material_size_bytes.to_string(),
+                    )
+                    .with_std_error(&error)
+            })?;
             let content_store_config = ContentStoreConfig {
                 root_path: content_store_path.clone(),
                 num_copies: None,
                 large_files: None,
+                max_blob_size,
                 ..Default::default()
             };
 
@@ -1295,6 +1311,7 @@ impl IngestService {
     ) -> JoinHandle<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
+        let observer = self.observer.clone();
         let interval_duration = ready_set.maintenance_interval();
 
         tokio::spawn(async move {
@@ -1311,6 +1328,27 @@ impl IngestService {
                                 retained = ready_set.len(),
                                 "Evicted stale materials from MaterialReadySet background maintenance"
                             );
+                        }
+                        let snapshot = ready_set.metrics_snapshot();
+                        for (metric, value) in [
+                            ("material_ready_set.current_len", snapshot.current_len as f64),
+                            ("material_ready_set.peak_len", snapshot.peak_len as f64),
+                            (
+                                "material_ready_set.mark_ready_max_ns",
+                                snapshot.mark_ready_max_ns as f64,
+                            ),
+                            ("material_ready_set.seed_total_ns", snapshot.seed_total_ns as f64),
+                            ("material_ready_set.seed_max_ns", snapshot.seed_max_ns as f64),
+                            (
+                                "material_ready_set.purge_total_ns",
+                                snapshot.purge_total_ns as f64,
+                            ),
+                            ("material_ready_set.purge_max_ns", snapshot.purge_max_ns as f64),
+                            ("material_ready_set.purged_entries", snapshot.purged_entries as f64),
+                        ] {
+                            if let Err(error) = observer.emit_gauge(metric, value, None).await {
+                                warn!(metric, %error, "Failed to emit MaterialReadySet telemetry");
+                            }
                         }
                     }
                     () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
@@ -1371,6 +1409,22 @@ impl IngestService {
                             Err(error) => {
                                 warn!(error = %error, "blob GC sweep failed");
                             }
+                        }
+
+                        match crate::runtime::content_store::gc::sweep_stale_material_registry(
+                            &pool,
+                            &content_store,
+                            true,
+                        )
+                        .await
+                        {
+                            Ok(report) => info!(
+                                registry_rows_deleted = report.registry_rows_deleted,
+                                blobs_deleted = report.blobs_deleted,
+                                blob_cleanup_failures = report.blob_cleanup_failures,
+                                "source-material lifecycle GC sweep complete"
+                            ),
+                            Err(error) => warn!(error = %error, "source-material lifecycle GC sweep failed"),
                         }
                     }
                     () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {

@@ -108,6 +108,34 @@ async fn preserves_normal_commands() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn count_only_detection_reports_metadata_without_values()
+-> ::xtask::sandbox::TestResult<()> {
+    let e = test_engine();
+    let secret = aws_access_key_fixture();
+    let input = format!("url=https://user:password@example.test and key={secret}");
+    let findings = e.detect_matches(&input, ProcessingContext::Metadata);
+    let aws = findings
+        .iter()
+        .find(|finding| finding.rule_name == "aws_access_key")
+        .expect("AWS fixture should be detected");
+    assert_eq!(aws.match_count, 1);
+    let serialized = serde_json::to_string(&findings)?;
+    assert!(!serialized.contains(&secret));
+    assert!(!serialized.contains("password"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn count_only_detection_keeps_benign_text_empty()
+-> ::xtask::sandbox::TestResult<()> {
+    let e = test_engine();
+    assert!(e
+        .detect_matches("git status --short", ProcessingContext::Command)
+        .is_empty());
+    Ok(())
+}
+
 // ── Suppress strategy ──
 
 #[sinex_test]
@@ -234,6 +262,56 @@ async fn encrypt_strategy_produces_decryptable_tokens() -> ::xtask::sandbox::Tes
 
     let decrypted = engine.decrypt_all(&result.text).unwrap();
     assert_eq!(decrypted, "value=SECRET_ABC123");
+    Ok(())
+}
+
+#[sinex_test]
+async fn encrypted_tokens_are_preserved_without_protecting_neighboring_plaintext()
+-> ::xtask::sandbox::TestResult<()> {
+    use super::super::{Matcher, PatternRule, RuleCategory, Strategy};
+
+    let mut config = PrivacyConfig::default();
+    config.key.key_hex = Some("42".repeat(32));
+    config.builtin_categories = CategorySet::None;
+    config.extra_rules.push(PatternRule {
+        name: "test_encrypt".into(),
+        description: "test".into(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Literal {
+            text: "SECRET".into(),
+            case_sensitive: true,
+        },
+        strategy: Strategy::Encrypt,
+        contexts: vec![],
+        enabled: true,
+    });
+    config.extra_rules.push(PatternRule {
+        name: "test_redact".into(),
+        description: "test".into(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Regex {
+            pattern: r"\d{4}".into(),
+        },
+        strategy: Strategy::Redact {
+            label: Some("<DIGITS>".into()),
+        },
+        contexts: vec![],
+        enabled: true,
+    });
+
+    let engine = PrivacyEngine::new(config).unwrap();
+    let first = engine.process("SECRET", ProcessingContext::Command);
+    let input = format!("{} and SECRET 1234", first.text);
+    let result = engine.process(&input, ProcessingContext::Command);
+
+    assert_eq!(result.text.matches("enc:v1:").count(), 2);
+    assert!(result.text.contains("and ⌜enc:v1:"), "got: {}", result.text);
+    assert!(result.text.contains("<DIGITS>"), "got: {}", result.text);
+    assert_eq!(
+        engine.decrypt_all(&result.text).unwrap(),
+        "SECRET and SECRET <DIGITS>"
+    );
+    assert_eq!(engine.decrypt_all(first.text.as_ref()).unwrap(), "SECRET");
     Ok(())
 }
 
@@ -369,19 +447,157 @@ fn engine_with_compound(matcher: super::super::Matcher) -> PrivacyEngine {
 }
 
 #[sinex_test]
-async fn any_matcher_fires_on_first_sub_match() -> ::xtask::sandbox::TestResult<()> {
+async fn any_matcher_applies_all_matching_dictionary_terms() -> ::xtask::sandbox::TestResult<()> {
     use super::super::Matcher;
     let e = engine_with_compound(Matcher::Any(vec![
-        Matcher::Regex {
-            pattern: r"FOO".into(),
+        Matcher::Literal {
+            text: "PRIVATE_PROJECT".into(),
+            case_sensitive: true,
         },
-        Matcher::Regex {
-            pattern: r"BAR".into(),
+        Matcher::Literal {
+            text: "PRIVATE_PERSON".into(),
+            case_sensitive: true,
         },
     ]));
-    let result = e.process("contains BAR here", ProcessingContext::Command);
+    let result = e.process(
+        "contains PRIVATE_PROJECT and PRIVATE_PERSON here",
+        ProcessingContext::Command,
+    );
     assert!(result.any_matched());
-    assert!(result.text.contains("<COMPOUND>"));
+    assert_eq!(result.text.matches("<COMPOUND>").count(), 2);
+    Ok(())
+}
+
+#[sinex_test]
+async fn case_insensitive_matching_maps_expanded_unicode_to_original_spans()
+-> ::xtask::sandbox::TestResult<()> {
+    use super::super::{Matcher, PatternRule, RuleCategory, Strategy};
+    let mut config = PrivacyConfig::default();
+    config.builtin_categories = CategorySet::None;
+    config.extra_rules.push(PatternRule {
+        name: "unicode-long-secret".into(),
+        description: "test".into(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Literal {
+            text: "hunter2secret".into(),
+            case_sensitive: false,
+        },
+        strategy: Strategy::Redact {
+            label: Some("<LONG_SECRET>".into()),
+        },
+        contexts: vec![],
+        enabled: true,
+    });
+    config.extra_rules.push(PatternRule {
+        name: "unicode-secret".into(),
+        description: "test".into(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Literal {
+            text: "secret".into(),
+            case_sensitive: false,
+        },
+        strategy: Strategy::Redact {
+            label: Some("<LITERAL>".into()),
+        },
+        contexts: vec![],
+        enabled: true,
+    });
+    let engine = PrivacyEngine::new(config).unwrap();
+    let direct_expansion = engine.process("İsecret", ProcessingContext::Command);
+    assert_eq!(direct_expansion.text, "İ<LITERAL>");
+
+    let result = engine.process("İ SECRET; ẞ SECRET", ProcessingContext::Command);
+    assert_eq!(result.text.matches("<LITERAL>").count(), 2);
+    assert!(!result.text.to_ascii_lowercase().contains("secret"));
+    let expanded = engine.process("ẞhunter2secret", ProcessingContext::Command);
+    assert!(expanded.text.starts_with("ẞ<LONG_"));
+    assert!(!expanded.text.contains("hunter2secret"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn forged_encrypted_marker_does_not_bypass_engine_redaction()
+-> ::xtask::sandbox::TestResult<()> {
+    use super::super::{Matcher, PatternRule, RuleCategory, Strategy};
+
+    let mut config = PrivacyConfig::default();
+    config.builtin_categories = CategorySet::None;
+    config.key.key_hex = Some("42".repeat(32));
+    config.extra_rules.push(PatternRule {
+        name: "forged-marker-secret".into(),
+        description: "test forged marker handling".into(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Literal {
+            text: "SECRET".into(),
+            case_sensitive: true,
+        },
+        strategy: Strategy::Redact {
+            label: Some("<SECRET>".into()),
+        },
+        contexts: vec![],
+        enabled: true,
+    });
+
+    let engine = PrivacyEngine::new(config).unwrap();
+    let forged = "documentation ⌜enc:v1:example⌝ still contains SECRET";
+    let result = engine.process(forged, ProcessingContext::Document);
+
+    assert_eq!(result.text, "documentation ⌜enc:v1:example⌝ still contains <SECRET>");
+    Ok(())
+}
+
+#[sinex_test]
+async fn builtin_catalog_redacts_high_value_secret_and_pii_shapes()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut config = PrivacyConfig::default();
+    config.builtin_categories = CategorySet::All;
+    let engine = PrivacyEngine::new(config).unwrap();
+
+    for (input, context, leaked) in [
+        (
+            "curl -u alice:correct-horse-battery-staple",
+            ProcessingContext::Command,
+            "correct-horse-battery-staple",
+        ),
+        (
+            r#"{"password": "correct horse battery staple"}"#,
+            ProcessingContext::Document,
+            "correct horse battery staple",
+        ),
+        (
+            "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+            ProcessingContext::Clipboard,
+            "dXNlcjpwYXNzd29yZA==",
+        ),
+        (
+            "sk-ant-oat01-aaaaaaaaaaaaaaaaaaaaaaaa",
+            ProcessingContext::Document,
+            "sk-ant-oat01-",
+        ),
+        (
+            "sk-svcacct-aaaaaaaaaaaaaaaaaaaaaaaa",
+            ProcessingContext::Document,
+            "sk-svcacct-",
+        ),
+        (
+            "card 4111.1111.1111.1111",
+            ProcessingContext::Document,
+            "4111.1111.1111.1111",
+        ),
+        (
+            "ssn 123.45.6789",
+            ProcessingContext::Document,
+            "123.45.6789",
+        ),
+        ("phone 501234567", ProcessingContext::Document, "501234567"),
+    ] {
+        let result = engine.process(input, context);
+        assert!(
+            result.suppressed || !result.text.contains(leaked),
+            "input={input:?}, got={:?}",
+            result.text
+        );
+    }
     Ok(())
 }
 

@@ -33,6 +33,13 @@ pkgs.testers.nixosTest {
       terminal.enable = false;
       desktop.enable = false;
       system.enable = false;
+      # This scenario proves the filesystem path.  The common VM base inherits
+      # the deployment default browser history sources; disable them explicitly
+      # so they cannot introduce unrelated hosted-worker identities.
+      browser.enable = false;
+      # The document scanner is not part of this fixture and its deployment
+      # default expects a separate user cache root that the VM does not create.
+      document.enable = false;
     };
 
     # Add jq for JSON parsing in tests
@@ -44,13 +51,47 @@ pkgs.testers.nixosTest {
   testScript = ''
     import json
     import re
+    import base64
+    import time
 
     start_all()
 
     def wait_for_API():
         """Wait for API to be ready and accepting connections"""
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinexd.service", timeout=180)
+        def readiness_diagnostics():
+            return machine.succeed("systemctl is-active sinexd.service").strip()
+        # Poll explicitly so a failed unit produces its journal immediately;
+        # machine.wait_for_unit otherwise hides the useful state until its
+        # entire Type=notify timeout expires.
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            result = machine.execute("systemctl is-active sinexd.service")
+            if result[0] == 0 and result[1].strip() == "active":
+                break
+            if "failed" in result[1]:
+                print(machine.execute("systemctl status sinexd.service --no-pager"))
+                print(machine.execute("journalctl -u sinexd.service -b --no-pager"))
+                print(machine.execute(
+                    "systemctl status postgresql.service nats.service "
+                    "sinexd-annex-setup.service --no-pager"
+                ))
+                raise AssertionError(
+                    "sinexd.service entered failed state:\n" + readiness_diagnostics()
+                )
+            machine.sleep(1)
+        else:
+            print(machine.execute("systemctl status sinexd.service --no-pager"))
+            print(machine.execute("journalctl -u sinexd.service -b --no-pager"))
+            print(machine.execute(
+                "systemctl status postgresql.service nats.service "
+                "sinexd-annex-setup.service --no-pager"
+            ))
+            raise AssertionError(
+                "sinexd readiness state="
+                + readiness_diagnostics()
+                + "; did not become active within 600 seconds"
+            )
         # Wait until API health endpoint responds
         machine.wait_until_succeeds(
             "curl -k -s https://127.0.0.1:9999/health",
@@ -72,13 +113,29 @@ pkgs.testers.nixosTest {
         return values[0] if len(values) == 1 else values
 
     def parse_json_output(output):
-        """Parse sinexctl JSON output, including JSON-lines list output."""
+        """Parse pretty JSON and newline-delimited JSON output."""
         output = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        stripped = output.strip()
+        if not stripped:
+            return []
+        # Most commands emit one complete (often pretty-printed) document.
+        try:
+            return [json.loads(stripped)]
+        except json.JSONDecodeError:
+            pass
+
+        # Streaming/list commands may emit one compact JSON document per line.
         values = []
-        for line in output.strip().split('\n'):
+        for line in stripped.split('\n'):
             line = line.strip()
             if line.startswith("{") or line.startswith("["):
-                values.append(json.loads(line))
+                try:
+                    values.append(json.loads(line))
+                except json.JSONDecodeError:
+                    # Pretty-printed JSON was already handled above; an
+                    # unparsable candidate here is diagnostic noise, not a
+                    # second document.
+                    continue
         return values
 
     def flatten_json_items(values, collection_keys=()):
@@ -104,6 +161,37 @@ pkgs.testers.nixosTest {
         """Generate filesystem events for testing"""
         for i in range(count):
             machine.succeed(f"echo 'test content {i}' > /var/lib/sinex/watched/test_{i}.txt")
+
+    def store_snapshot_cas_blob():
+        """Store a blob through the deployed API's configured content store."""
+        content = b"sinexctl snapshot CAS round-trip proof\n"
+        request = {
+            "jsonrpc": "2.0",
+            "method": "content.store_blob",
+            "params": {
+                "content": base64.b64encode(content).decode("ascii"),
+                "filename": "sinexctl-snapshot-cas-proof.txt",
+                "content_type": "text/plain",
+                "source": "sinexctl-e2e",
+            },
+            "id": 1,
+        }
+        response = machine.succeed(
+            "curl -k -sS -X POST "
+            "-H 'Content-Type: application/json' "
+            "-H 'Authorization: Bearer test-admin-token:admin' "
+            f"--data '{json.dumps(request)}' "
+            "https://127.0.0.1:9999/rpc"
+        )
+        payload = json.loads(response)
+        assert "error" not in payload, f"CAS seed RPC failed: {payload}"
+        result = payload.get("result")
+        assert isinstance(result, dict), f"CAS seed RPC returned no result: {payload}"
+        assert result.get("size") == len(content), \
+            f"CAS seed size mismatch: {result}"
+        assert result.get("content_key", "").startswith("SINEXBLAKE3-"), \
+            f"CAS seed did not produce a local BLAKE3 key: {result}"
+        return result
 
     # Initialize test environment
     with subtest("System initialization"):
@@ -165,7 +253,8 @@ pkgs.testers.nixosTest {
         # Poll until at least one event is visible (up to 30 s) instead of a
         # fixed sleep that races against pipeline latency.
         machine.wait_until_succeeds(
-            "sinexctl --insecure events recent -n 1 --format json 2>/dev/null | grep -q '{'",
+            "sinexctl --insecure events recent -n 1 --format json "
+            ">/tmp/sinex-recent.json 2>/dev/null && test -s /tmp/sinex-recent.json",
             timeout=30
         )
 
@@ -264,6 +353,76 @@ pkgs.testers.nixosTest {
         # Query with limit
         result = sinexctl("events query -s 1h -n 5 --format json", check=False)
         print(f"Limited query: exit={result[0]}")
+
+    # Test 11: real isolated snapshot/restore drill. This uses the deployed
+    # NixOS unit topology, real pg_dump/pg_restore, and a newly-created drill
+    # database. It also seeds the deployed content store through the live API
+    # so the CAS assertions prove that real blob bytes survive the round trip.
+    # It never drops or overwrites an existing database or service state; all
+    # writes stay inside this disposable VM.
+    with subtest("Real isolated snapshot restore drill"):
+        archive = "/tmp/sinexctl-real-roundtrip.sinex.tar.zst"
+        restore_target = "/tmp/sinexctl-real-roundtrip-target"
+        drill_database = "sinex_restore_drill"
+        seeded_blob = store_snapshot_cas_blob()
+        machine.succeed(f"runuser -u postgres -- createdb {drill_database}")
+        snapshot = machine.succeed(
+            "sinexctl --insecure ops state snapshot "
+            f"--output {archive} --database-url 'postgresql://sinex@/sinex_dev?host=/run/postgresql' "
+            "--state-dir /var/lib/sinex --nats-store-dir /var/lib/sinex/nats/jetstream "
+            "--mode quiesce --auto-stop --compression 1 --workers 1 "
+            "--components postgres,nats,cas,state --format json"
+        )
+        snapshot_values = parse_json_output(snapshot)
+        assert snapshot_values, f"snapshot should return structured evidence: {snapshot}"
+        snapshot_payload = snapshot_values[-1].get("payload", snapshot_values[-1])
+        assert snapshot_payload.get("mode") == "quiesce", \
+            f"snapshot must record quiesce mode after auto-stop: {snapshot_payload}"
+        inspect = sinexctl("ops state inspect " f"--archive {archive} --format json")
+        inspect_values = parse_json_output(inspect)
+        assert inspect_values, f"snapshot inspect should return structured evidence: {inspect}"
+        inspect_payload = inspect_values[-1].get("payload", inspect_values[-1])
+        manifest = inspect_payload.get("manifest", {})
+        receipt = manifest.get("quiesce_receipt")
+        assert isinstance(receipt, dict), \
+            f"quiesced snapshot must retain its quiesce receipt: {manifest}"
+        assert receipt.get("active_writer_units_after") == [], \
+            f"quiesce receipt must prove no writers remain active: {receipt}"
+        cas_component = next(
+            (component for component in manifest.get("components", []) if component.get("name") == "cas"),
+            None,
+        )
+        assert cas_component is not None, f"snapshot manifest is missing the CAS component: {manifest}"
+        assert cas_component.get("bytes", 0) > 0, \
+            f"snapshot CAS component must contain the seeded blob: {cas_component}"
+        cas_blob_count = cas_component.get("extras", {}).get("blob_count")
+        assert isinstance(cas_blob_count, int) and cas_blob_count > 0, \
+            f"snapshot CAS manifest count must be non-zero: {cas_component}"
+        assert seeded_blob.get("content_key"), f"CAS seed result was incomplete: {seeded_blob}"
+        restore = machine.succeed(
+            "sinexctl --insecure ops state restore "
+            f"--archive {archive} --target-dir {restore_target} "
+            "--state-dir /var/lib/sinex "
+            f"--restore-database-url 'postgresql://postgres@/{drill_database}?host=/run/postgresql' "
+            "--confirm-restore --format json"
+        )
+        parsed = parse_json_output(restore)
+        assert parsed, f"restore drill should return structured evidence: {restore}"
+        payload = parsed[-1].get("payload", parsed[-1])
+        observed = payload.get("observed_checks", {})
+        assert observed.get("checks_passed") is True, \
+            f"real restore drill failed: {observed}"
+        assert observed.get("postgres_row_counts_match") is True, \
+            f"real PostgreSQL row counts did not match: {observed}"
+        assert observed.get("component_blake3_matches", {}).get("nats") is True, \
+            f"real NATS component hash did not match: {observed}"
+        assert observed.get("component_blake3_matches", {}).get("cas") is True, \
+            f"real CAS component hash did not match: {observed}"
+        assert observed.get("cas_blob_count") == cas_blob_count, \
+            f"restored CAS blob count did not match snapshot manifest: {observed}"
+        assert observed.get("cas_blob_count_matches") is True, \
+            f"restore did not report CAS blob-count parity: {observed}"
+        print("Real snapshot/restore drill verified PostgreSQL, NATS, and seeded CAS state")
 
     print("sinexctl E2E tests completed successfully")
   '';

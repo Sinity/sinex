@@ -43,7 +43,8 @@ const DERIVED_OUTPUT_PARENT_HARD_LIMIT: usize = 1000;
 /// `adapter_source.rs::ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT` — both are
 /// bounding the same underlying `SettlementRegistry::await_batch` wait.
 /// Overridable via `AutomatonRuntime::with_durable_emission_timeout` (tests).
-const AUTOMATON_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration = Duration::from_secs(30);
+const AUTOMATON_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration =
+    crate::event_engine::jetstream_consumer::settings::DURABLE_EMISSION_SETTLEMENT_TIMEOUT;
 
 fn stale_output_ids_or_fail_scope(
     module_name: &str,
@@ -332,7 +333,7 @@ where
 /// When `sub` is `None` (no NATS available), pends forever — effectively
 /// disabling the select arm without needing `#[cfg]` inside `tokio::select!`.
 #[cfg(feature = "messaging")]
-async fn recv_invalidation(
+pub(crate) async fn recv_invalidation(
     sub: &mut Option<async_nats::jetstream::consumer::push::Messages>,
     fail_point_after_ack: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Option<Vec<u8>> {
@@ -373,7 +374,7 @@ async fn recv_invalidation(
 
 /// Stub when messaging feature is disabled — always pends.
 #[cfg(not(feature = "messaging"))]
-async fn recv_invalidation(
+pub(crate) async fn recv_invalidation(
     _sub: &mut (),
     _fail_point_after_ack: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Option<Vec<u8>> {
@@ -489,14 +490,7 @@ where
                     };
 
                     let observer = Arc::new(SelfObserver::new(nats_client, config));
-                    let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
-                        warn!(
-                            automaton = %self.automaton.name(),
-                            error = %error,
-                            "Invalid health monitoring threshold override; using defaults"
-                        );
-                        HealthThresholds::default()
-                    });
+                    let thresholds = HealthThresholds::from_env()?;
 
                     self.health_reporter = Some(Arc::new(HealthReporter::new(
                         self.automaton.name().to_string(),
@@ -661,6 +655,10 @@ where
             duration: std::time::Duration::from_secs_f64(batch_runtime_ms / 1000.0),
             ..ProcessingStats::default()
         })
+    }
+
+    async fn process_invalidation_message(&mut self, payload: &[u8]) -> RuntimeResult<Option<u64>> {
+        self.handle_invalidation_message(payload).await
     }
 
     async fn shutdown(&mut self) -> RuntimeResult<()> {

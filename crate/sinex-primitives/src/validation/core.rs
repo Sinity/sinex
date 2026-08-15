@@ -311,20 +311,61 @@ pub fn validate_json_value(value: &Value) -> Result<()> {
 /// values at the JSON boundary instead of adding source-specific filters.
 #[must_use]
 pub fn strip_postgres_jsonb_nul_chars(value: &mut Value) -> usize {
+    match try_strip_postgres_jsonb_nul_chars(value) {
+        Ok(stripped) => stripped,
+        Err(error) => panic!("refusing to strip colliding JSON object keys: {error}"),
+    }
+}
+
+/// Strip NUL characters while rejecting object-key collisions caused by the
+/// normalization.
+///
+/// The legacy [`strip_postgres_jsonb_nul_chars`] API cannot return a validation
+/// error, so it panics on this data-loss condition. Call this fallible variant
+/// at boundaries that can propagate [`SinexError`] instead. The transformation
+/// is built before replacing the input, so a rejected value is left unchanged.
+pub fn try_strip_postgres_jsonb_nul_chars(value: &mut Value) -> Result<usize> {
+    let (stripped, count) = strip_postgres_jsonb_nul_chars_checked(value)?;
+    *value = stripped;
+    Ok(count)
+}
+
+fn strip_postgres_jsonb_nul_chars_checked(value: &Value) -> Result<(Value, usize)> {
     match value {
-        Value::String(text) => strip_nul_chars_from_string(text),
-        Value::Array(values) => values.iter_mut().map(strip_postgres_jsonb_nul_chars).sum(),
-        Value::Object(map) => {
-            let mut stripped = 0;
-            let entries = std::mem::take(map);
-            for (mut key, mut nested) in entries {
-                stripped += strip_nul_chars_from_string(&mut key);
-                stripped += strip_postgres_jsonb_nul_chars(&mut nested);
-                map.insert(key, nested);
-            }
-            stripped
+        Value::String(text) => {
+            let mut stripped = text.clone();
+            let count = strip_nul_chars_from_string(&mut stripped);
+            Ok((Value::String(stripped), count))
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) => 0,
+        Value::Array(values) => {
+            let mut stripped_values = Vec::with_capacity(values.len());
+            let mut count = 0;
+            for value in values {
+                let (stripped, nested_count) = strip_postgres_jsonb_nul_chars_checked(value)?;
+                stripped_values.push(stripped);
+                count += nested_count;
+            }
+            Ok((Value::Array(stripped_values), count))
+        }
+        Value::Object(map) => {
+            let mut stripped_map = serde_json::Map::with_capacity(map.len());
+            let mut count = 0;
+            for (key, value) in map {
+                let mut stripped_key = key.clone();
+                count += strip_nul_chars_from_string(&mut stripped_key);
+                if stripped_map.contains_key(&stripped_key) {
+                    return Err(SinexError::validation(format!(
+                        "JSON object keys collide after NUL stripping: {key:?} becomes {stripped_key:?}"
+                    ))
+                    .with_context("validation_type", "json"));
+                }
+                let (stripped_value, nested_count) = strip_postgres_jsonb_nul_chars_checked(value)?;
+                stripped_map.insert(stripped_key, stripped_value);
+                count += nested_count;
+            }
+            Ok((Value::Object(stripped_map), count))
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => Ok((value.clone(), 0)),
     }
 }
 

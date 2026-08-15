@@ -1,4 +1,5 @@
-use crate::runtime::{RuntimeResult, SinexError};
+use crate::runtime::work_control::{WorkCancellation, WorkFileAdmission};
+use crate::runtime::{FaultInjector, FaultPoint, RuntimeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -12,7 +13,8 @@ use std::sync::{
     OnceLock,
     atomic::{AtomicU64, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as AsyncCommand;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
@@ -46,15 +48,25 @@ pub mod manager;
 pub mod path_validator;
 
 pub use cas_fsck::{CasFileStatus, CasFsckReport, CasStatus, check_cas, sweep_orphans_cas};
-pub use manager::{BlobMetadata, ContentStoreManager};
+pub use manager::{
+    BlobMetadata, ContentStoreManager, MaterialReplayAuthority, MaterialReplayContent,
+};
 pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_convert_path};
 
 pub const LOCAL_BLAKE3_CAS_BACKEND: &str = ContentKey::LOCAL_BLAKE3_CAS_BACKEND;
 const LOCAL_BLAKE3_CAS_DIR: &str = "sinex-cas";
+pub(crate) const CAS_LIFECYCLE_DIR: &str = ".sinex-cas-lifecycle";
+const CAS_INGEST_LEASE_DIR: &str = "ingest-leases";
+const CAS_PENDING_DELETE_DIR: &str = "pending-deletes";
+const CAS_QUARANTINE_DIR: &str = "quarantine";
+const CAS_DESTRUCTIVE_LOCK_FILE: &str = ".sinex-cas-destructive.lock";
 const CONTENT_STORE_PROCESS_COUNTERS_PATH_ENV: &str = "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH";
 
 static CONTENT_STORE_PROCESS_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 static CONTENT_STORE_PROCESS_COUNTERS: OnceLock<ContentStoreProcessCounterState> = OnceLock::new();
+#[cfg(test)]
+static TEST_FAIL_NEXT_PENDING_DELETE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContentStoreProcessCounters {
@@ -204,10 +216,8 @@ async fn run_command_async(
     mut cmd: AsyncCommand,
     context: &'static str,
 ) -> RuntimeResult<std::process::Output> {
-    {
-        let _guard = content_store_process_lock().lock().await;
-        record_process_invocation(cmd.as_std().get_program(), false);
-    }
+    let _guard = content_store_process_lock().lock().await;
+    record_process_invocation(cmd.as_std().get_program(), false);
     cmd.output()
         .await
         .map_err(|e| SinexError::processing(context).with_source(e))
@@ -221,18 +231,29 @@ async fn run_command_async(
 /// resolve from this same key so they address one CAS — replay reading source
 /// material must hit the exact store that ingestion wrote, or it fails closed.
 #[must_use]
-pub fn default_content_store_path() -> String {
+pub fn default_content_store_path() -> camino::Utf8PathBuf {
     if let Ok(v) = std::env::var("SINEX_CONTENT_STORE_PATH") {
-        return v;
+        match sinex_primitives::validation::validate_path(&v) {
+            Ok(path) => return path,
+            Err(error) => {
+                warn!(
+                    value = %v,
+                    %error,
+                    "Invalid content-store path override; using the shared fallback"
+                );
+            }
+        }
     }
     std::env::var("HOME").map_or_else(
         |_| {
-            sinex_primitives::environment::environment()
-                .work_directory("content-store")
-                .to_string_lossy()
-                .into_owned()
+            camino::Utf8PathBuf::from(
+                sinex_primitives::environment::environment()
+                    .work_directory("content-store")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
         },
-        |home| format!("{home}/.local/share/sinex/content-store"),
+        |home| camino::Utf8PathBuf::from(format!("{home}/.local/share/sinex/content-store")),
     )
 }
 
@@ -246,13 +267,21 @@ pub struct ContentStoreConfig {
     #[serde(default)]
     pub legacy_annex_enabled: bool,
     /// Maximum blob size in bytes before ingestion is rejected.
-    /// Defaults to 100 MB. Set to 0 to disable.
+    /// Defaults to the material assembler's 512 MiB acceptance ceiling. Set to 0 to disable.
     #[serde(default = "default_max_blob_size")]
     pub max_blob_size: usize,
 }
 
 const fn default_max_blob_size() -> usize {
-    100 * 1024 * 1024 // 100 MB
+    sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES
+}
+
+fn configured_max_blob_size() -> usize {
+    sinex_primitives::env::parse_or(
+        "SINEX_CONTENT_STORE_MAX_BLOB_SIZE",
+        default_max_blob_size(),
+        "content-store maximum blob size",
+    )
 }
 
 impl Default for ContentStoreConfig {
@@ -262,7 +291,7 @@ impl Default for ContentStoreConfig {
             num_copies: None,
             large_files: None,
             legacy_annex_enabled: false,
-            max_blob_size: default_max_blob_size(),
+            max_blob_size: configured_max_blob_size(),
         }
     }
 }
@@ -341,6 +370,35 @@ pub struct ContentStoreKey {
     pub digest: String,
 }
 
+/// Durable record for a CAS object that has crossed the reference recheck and
+/// is waiting for irreversible removal. The record is written before the
+/// source name is moved, so a crash can always be reconciled without guessing
+/// whether the object was already quarantined.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingDeletion {
+    pub operation_id: String,
+    pub key: ContentStoreKey,
+    pub source_path: Utf8PathBuf,
+    pub quarantine_path: Utf8PathBuf,
+    pub created_at_unix_secs: u64,
+    #[serde(skip)]
+    pub(crate) record_path: Utf8PathBuf,
+}
+
+/// Durable intent for a CAS publish that has not yet crossed its database
+/// commit boundary. The record is created before the temporary copy starts
+/// and removed only after the owning metadata transaction commits.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CasWriteLease {
+    pub operation_id: String,
+    pub key: ContentStoreKey,
+    pub source_path: Utf8PathBuf,
+    pub target_path: Utf8PathBuf,
+    pub created_at_unix_secs: u64,
+    #[serde(skip)]
+    pub(crate) record_path: Utf8PathBuf,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnusedContentEntry {
     pub number: u32,
@@ -354,6 +412,21 @@ pub struct ContentVerificationResult {
 }
 
 impl ContentStoreKey {
+    /// Construct a validated key for an object in the local BLAKE3 CAS.
+    ///
+    /// Callers must provide an observed size and digest; this constructor does
+    /// not derive either value from a path or a logical source identifier.
+    pub fn local_blake3(size: u64, digest: impl Into<String>) -> RuntimeResult<Self> {
+        let digest = digest.into();
+        validate_local_blake3_digest(&digest)?;
+        Ok(Self {
+            key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{size}--{digest}"),
+            backend: ContentBackend::LocalBlake3Cas,
+            size,
+            digest,
+        })
+    }
+
     pub fn parse(key_str: &str) -> RuntimeResult<Self> {
         let content_key = ContentKey::from_str(key_str).map_err(|err| {
             SinexError::processing(format!("Invalid content-store key format: {key_str}"))
@@ -403,9 +476,231 @@ fn validate_local_blake3_digest(digest: &str) -> RuntimeResult<()> {
         .map_err(|err| SinexError::validation(err).with_context("digest_len", digest.len()))
 }
 
+async fn canonicalize_path_within_root(
+    root: &Utf8Path,
+    path: &Utf8Path,
+) -> RuntimeResult<Utf8PathBuf> {
+    let canonical_root = tokio::fs::canonicalize(root)
+        .await
+        .map_err(SinexError::io)?;
+    let canonical_path = tokio::fs::canonicalize(path)
+        .await
+        .map_err(SinexError::io)?;
+    let canonical_root = Utf8PathBuf::from_path_buf(canonical_root).map_err(|path| {
+        SinexError::validation("canonical content-store root path is not valid UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    let canonical_path = Utf8PathBuf::from_path_buf(canonical_path).map_err(|path| {
+        SinexError::validation("canonical content-store path is not valid UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(
+            SinexError::validation("canonical content-store path escapes configured root")
+                .with_context("path", canonical_path.to_string())
+                .with_context("root", canonical_root.to_string()),
+        );
+    }
+    Ok(canonical_path)
+}
+
 #[derive(Debug)]
 pub struct MaterialContentStore {
     pub config: ContentStoreConfig,
+    fault_injector: FaultInjector,
+    sync_parent_directory: fn(&Path) -> std::io::Result<()>,
+}
+
+/// A restart-safe cursor for the local CAS prefix tree.
+///
+/// The cursor advances only after an entire `XX/YY` directory has been
+/// drained. If a pass stops inside that directory, resuming replays that
+/// directory rather than risking a skipped entry from an unspecified
+/// filesystem enumeration order.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CasWalkCheckpoint {
+    pub prefix_a: Option<String>,
+    pub prefix_b: Option<String>,
+    pub complete: bool,
+}
+
+#[derive(Debug)]
+pub struct CasWalkBatch {
+    pub entries: Vec<(String, Utf8PathBuf, u64)>,
+    pub checkpoint: CasWalkCheckpoint,
+    pub complete: bool,
+}
+
+#[derive(Debug)]
+pub struct CasWalker {
+    prefix_dirs: Vec<Utf8PathBuf>,
+    prefix_index: usize,
+    hash_dirs: Vec<Utf8PathBuf>,
+    hash_index: usize,
+    hash_entries: Option<tokio::fs::ReadDir>,
+    checkpoint: CasWalkCheckpoint,
+    cancellation: Option<crate::runtime::work_control::WorkCancellation>,
+}
+
+async fn read_sorted_cas_directories(
+    path: &Utf8Path,
+    cancellation: Option<&crate::runtime::work_control::WorkCancellation>,
+) -> RuntimeResult<Vec<Utf8PathBuf>> {
+    let mut read_dir = tokio::fs::read_dir(path).await.map_err(SinexError::io)?;
+    let mut directories = Vec::new();
+    while let Some(entry) = read_dir.next_entry().await.map_err(SinexError::io)? {
+        if cancellation.is_some_and(|cancellation| cancellation.is_cancelled()) {
+            return Err(SinexError::validation("CAS directory walk cancelled"));
+        }
+        if !entry.file_type().await.map_err(SinexError::io)?.is_dir() {
+            continue;
+        }
+        let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| {
+            SinexError::processing(format!(
+                "non-UTF-8 path in CAS directory tree: {}",
+                path.display()
+            ))
+        })?;
+        directories.push(path);
+    }
+    directories.sort_unstable();
+    Ok(directories)
+}
+
+fn cas_path_name(path: &Utf8Path) -> RuntimeResult<String> {
+    path.file_name().map(str::to_owned).ok_or_else(|| {
+        SinexError::processing(format!("CAS directory path has no filename: {path}"))
+    })
+}
+
+impl CasWalker {
+    async fn new(
+        cas_root: Utf8PathBuf,
+        checkpoint: CasWalkCheckpoint,
+        cancellation: Option<crate::runtime::work_control::WorkCancellation>,
+    ) -> RuntimeResult<Self> {
+        if cancellation
+            .as_ref()
+            .is_some_and(crate::runtime::work_control::WorkCancellation::is_cancelled)
+        {
+            return Err(SinexError::validation("CAS directory walk cancelled"));
+        }
+        let mut prefix_dirs = if checkpoint.complete {
+            Vec::new()
+        } else {
+            read_sorted_cas_directories(&cas_root, cancellation.as_ref()).await?
+        };
+        if let Some(prefix_a) = checkpoint.prefix_a.as_deref() {
+            prefix_dirs
+                .retain(|path| cas_path_name(path).is_ok_and(|name| name.as_str() >= prefix_a));
+        }
+        Ok(Self {
+            prefix_dirs,
+            prefix_index: 0,
+            hash_dirs: Vec::new(),
+            hash_index: 0,
+            hash_entries: None,
+            checkpoint,
+            cancellation,
+        })
+    }
+
+    /// Read at most `batch_size` CAS files while retaining only one open
+    /// directory and the bounded two-level prefix lists.
+    pub async fn next_batch(&mut self, batch_size: usize) -> RuntimeResult<CasWalkBatch> {
+        let batch_size = batch_size.max(1);
+        let mut entries = Vec::with_capacity(batch_size);
+
+        while entries.len() < batch_size {
+            if self
+                .cancellation
+                .as_ref()
+                .is_some_and(|cancellation| cancellation.is_cancelled())
+            {
+                return Err(SinexError::validation("CAS directory walk cancelled"));
+            }
+            if let Some(hash_entries) = &mut self.hash_entries {
+                match hash_entries.next_entry().await.map_err(SinexError::io)? {
+                    Some(entry) => {
+                        if !entry.file_type().await.map_err(SinexError::io)?.is_file() {
+                            continue;
+                        }
+                        let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| {
+                            SinexError::processing(format!(
+                                "non-UTF-8 path in CAS tree: {}",
+                                path.display()
+                            ))
+                        })?;
+                        let hash = cas_path_name(&path)?;
+                        let size = tokio::fs::metadata(&path)
+                            .await
+                            .map_err(SinexError::io)?
+                            .len();
+                        entries.push((hash, path, size));
+                    }
+                    None => {
+                        self.hash_entries = None;
+                        let prefix_a = cas_path_name(&self.prefix_dirs[self.prefix_index])?;
+                        let prefix_b = cas_path_name(&self.hash_dirs[self.hash_index])?;
+                        self.checkpoint = CasWalkCheckpoint {
+                            prefix_a: Some(prefix_a),
+                            prefix_b: Some(prefix_b),
+                            complete: false,
+                        };
+                        self.hash_index += 1;
+                    }
+                }
+                continue;
+            }
+
+            if self.prefix_index >= self.prefix_dirs.len() {
+                self.checkpoint.complete = true;
+                return Ok(CasWalkBatch {
+                    entries,
+                    checkpoint: self.checkpoint.clone(),
+                    complete: true,
+                });
+            }
+
+            if self.hash_index >= self.hash_dirs.len() {
+                if !self.hash_dirs.is_empty() {
+                    self.prefix_index += 1;
+                    self.hash_dirs.clear();
+                    self.hash_index = 0;
+                    continue;
+                }
+                let prefix_path = &self.prefix_dirs[self.prefix_index];
+                self.hash_dirs =
+                    read_sorted_cas_directories(prefix_path, self.cancellation.as_ref()).await?;
+                let prefix_a = cas_path_name(prefix_path)?;
+                if self.checkpoint.prefix_a.as_deref() == Some(prefix_a.as_str()) {
+                    if let Some(prefix_b) = self.checkpoint.prefix_b.as_deref() {
+                        self.hash_dirs.retain(|path| {
+                            cas_path_name(path).is_ok_and(|name| name.as_str() > prefix_b)
+                        });
+                    }
+                }
+                self.hash_index = 0;
+                if self.hash_dirs.is_empty() {
+                    self.prefix_index += 1;
+                    continue;
+                }
+            }
+
+            let hash_path = self.hash_dirs[self.hash_index].clone();
+            self.hash_entries = Some(
+                tokio::fs::read_dir(hash_path)
+                    .await
+                    .map_err(SinexError::io)?,
+            );
+        }
+
+        Ok(CasWalkBatch {
+            entries,
+            checkpoint: self.checkpoint.clone(),
+            complete: false,
+        })
+    }
 }
 
 impl MaterialContentStore {
@@ -468,13 +763,356 @@ impl MaterialContentStore {
             }
         }
 
-        Ok(MaterialContentStore { config })
+        Ok(Self::new_with_fault_injector(
+            config,
+            FaultInjector::from_env(),
+        ))
+    }
+
+    pub fn new_with_fault_injector(
+        config: ContentStoreConfig,
+        fault_injector: FaultInjector,
+    ) -> Self {
+        Self {
+            config,
+            fault_injector,
+            sync_parent_directory,
+        }
+    }
+
+    pub(crate) fn fault_injector(&self) -> FaultInjector {
+        self.fault_injector.clone()
     }
 
     /// Get the repository path
     #[must_use]
     pub fn root_path(&self) -> &Utf8Path {
         &self.config.root_path
+    }
+
+    /// Serialize destructive CAS mutations across daemons, CLI processes, and
+    /// system timers that share this content-store root.
+    pub(crate) async fn acquire_destructive_admission(
+        &self,
+        cancellation: &WorkCancellation,
+    ) -> RuntimeResult<WorkFileAdmission> {
+        let lock_path = self.config.root_path.join(CAS_DESTRUCTIVE_LOCK_FILE);
+        WorkFileAdmission::acquire(lock_path.as_std_path(), cancellation).await
+    }
+
+    fn lifecycle_root(&self) -> Utf8PathBuf {
+        self.config.root_path.join(CAS_LIFECYCLE_DIR)
+    }
+
+    fn pending_delete_root(&self) -> Utf8PathBuf {
+        self.lifecycle_root().join(CAS_PENDING_DELETE_DIR)
+    }
+
+    fn ingest_lease_root(&self) -> Utf8PathBuf {
+        self.lifecycle_root().join(CAS_INGEST_LEASE_DIR)
+    }
+
+    fn quarantine_root(&self) -> Utf8PathBuf {
+        self.lifecycle_root().join(CAS_QUARANTINE_DIR)
+    }
+
+    async fn sync_directory(path: &Utf8Path) -> RuntimeResult<()> {
+        tokio::fs::File::open(path)
+            .await
+            .map_err(SinexError::io)?
+            .sync_all()
+            .await
+            .map_err(SinexError::io)
+    }
+
+    async fn write_pending_deletion(&self, pending: &PendingDeletion) -> RuntimeResult<()> {
+        let bytes = serde_json::to_vec(pending).map_err(|error| {
+            SinexError::serialization("serialize CAS pending-delete record").with_source(error)
+        })?;
+        let temp_path = pending
+            .record_path
+            .with_extension(format!("json.tmp-{}", Uuid::now_v7()));
+        let mut file = tokio::fs::File::create(&temp_path)
+            .await
+            .map_err(SinexError::io)?;
+        file.write_all(&bytes).await.map_err(SinexError::io)?;
+        file.sync_all().await.map_err(SinexError::io)?;
+        drop(file);
+        tokio::fs::rename(&temp_path, &pending.record_path)
+            .await
+            .map_err(SinexError::io)?;
+        Self::sync_directory(
+            pending
+                .record_path
+                .parent()
+                .ok_or_else(|| SinexError::processing("CAS pending-delete record has no parent"))?,
+        )
+        .await
+    }
+
+    async fn write_ingest_lease(&self, lease: &CasWriteLease) -> RuntimeResult<()> {
+        let bytes = serde_json::to_vec(lease).map_err(|error| {
+            SinexError::serialization("serialize CAS ingest lease").with_source(error)
+        })?;
+        let temp_path = lease
+            .record_path
+            .with_extension(format!("json.tmp-{}", Uuid::now_v7()));
+        let mut file = tokio::fs::File::create(&temp_path)
+            .await
+            .map_err(SinexError::io)?;
+        file.write_all(&bytes).await.map_err(SinexError::io)?;
+        file.sync_all().await.map_err(SinexError::io)?;
+        drop(file);
+        tokio::fs::rename(&temp_path, &lease.record_path)
+            .await
+            .map_err(SinexError::io)?;
+        Self::sync_directory(
+            lease
+                .record_path
+                .parent()
+                .ok_or_else(|| SinexError::processing("CAS ingest lease has no parent"))?,
+        )
+        .await
+    }
+
+    /// List durable CAS publish leases left by current or previous processes.
+    /// Malformed records fail closed so fsck cannot delete content while its
+    /// lifecycle authority is unreadable.
+    pub async fn list_write_leases(&self) -> RuntimeResult<Vec<CasWriteLease>> {
+        let root = self.ingest_lease_root();
+        if !root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries = tokio::fs::read_dir(&root).await.map_err(SinexError::io)?;
+        let mut leases = Vec::new();
+        while let Some(entry) = entries.next_entry().await.map_err(SinexError::io)? {
+            if !entry.file_type().await.map_err(SinexError::io)?.is_file()
+                || entry.path().extension().and_then(|ext| ext.to_str()) != Some("json")
+            {
+                continue;
+            }
+            let record_path = Self::require_utf8_path(entry.path())?;
+            let bytes = tokio::fs::read(&record_path)
+                .await
+                .map_err(SinexError::io)?;
+            let mut lease: CasWriteLease = serde_json::from_slice(&bytes).map_err(|error| {
+                SinexError::serialization("parse CAS ingest lease")
+                    .with_context("path", record_path.to_string())
+                    .with_source(error)
+            })?;
+            lease.record_path = record_path;
+            leases.push(lease);
+        }
+        leases.sort_by(|left, right| left.operation_id.cmp(&right.operation_id));
+        Ok(leases)
+    }
+
+    /// Release a publish lease after its owning metadata commit is durable.
+    /// A missing record is idempotent; other failures leave it for fsck retry.
+    pub async fn release_write_lease(&self, lease: &CasWriteLease) -> RuntimeResult<()> {
+        match tokio::fs::remove_file(&lease.record_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(SinexError::io(error)),
+        }
+        Self::sync_directory(&self.ingest_lease_root()).await
+    }
+
+    /// List durable CAS deletion records. Malformed records fail closed: the
+    /// caller must repair the lifecycle directory before any sweep can mutate
+    /// content.
+    pub async fn list_pending_deletions(&self) -> RuntimeResult<Vec<PendingDeletion>> {
+        let root = self.pending_delete_root();
+        if !root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries = tokio::fs::read_dir(&root).await.map_err(SinexError::io)?;
+        let mut pending = Vec::new();
+        while let Some(entry) = entries.next_entry().await.map_err(SinexError::io)? {
+            if !entry.file_type().await.map_err(SinexError::io)?.is_file()
+                || entry.path().extension().and_then(|ext| ext.to_str()) != Some("json")
+            {
+                continue;
+            }
+            let record_path = Self::require_utf8_path(entry.path())?;
+            let bytes = tokio::fs::read(&record_path)
+                .await
+                .map_err(SinexError::io)?;
+            let mut record: PendingDeletion = serde_json::from_slice(&bytes).map_err(|error| {
+                SinexError::serialization("parse CAS pending-delete record")
+                    .with_context("path", record_path.to_string())
+                    .with_source(error)
+            })?;
+            record.record_path = record_path;
+            pending.push(record);
+        }
+        pending.sort_by(|left, right| left.operation_id.cmp(&right.operation_id));
+        Ok(pending)
+    }
+
+    /// Atomically move a local CAS object into a durable quarantine. The
+    /// pending-delete record is created and fsynced before the rename, and is
+    /// intentionally retained until the quarantine bytes are gone.
+    pub async fn quarantine_local_cas(
+        &self,
+        key: &ContentStoreKey,
+    ) -> RuntimeResult<Option<PendingDeletion>> {
+        let admission = self
+            .acquire_destructive_admission(&WorkCancellation::new())
+            .await?;
+        self.quarantine_local_cas_with_admission(key, &admission)
+            .await
+    }
+
+    /// Move a local CAS object while the caller holds the store's destructive
+    /// admission. Keeping this separate from the acquiring wrapper prevents
+    /// fsck and other multi-step operations from recursively locking the same
+    /// file when they already own the admission.
+    pub(crate) async fn quarantine_local_cas_with_admission(
+        &self,
+        key: &ContentStoreKey,
+        _admission: &WorkFileAdmission,
+    ) -> RuntimeResult<Option<PendingDeletion>> {
+        if !key.is_local_blake3_cas() {
+            return Err(SinexError::validation(
+                "CAS quarantine requires a local BLAKE3 content key",
+            ));
+        }
+        let source_path = self
+            .path_if_local(&key.key)?
+            .ok_or_else(|| SinexError::validation("local CAS key did not resolve to a path"))?;
+        if !source_path.exists() {
+            return Ok(None);
+        }
+        self.canonicalize_local_cas_path(&source_path).await?;
+
+        let lifecycle_root = self.lifecycle_root();
+        let records_root = self.pending_delete_root();
+        let quarantine_root = self.quarantine_root();
+        tokio::fs::create_dir_all(&records_root)
+            .await
+            .map_err(SinexError::io)?;
+        tokio::fs::create_dir_all(&quarantine_root)
+            .await
+            .map_err(SinexError::io)?;
+        restrict_permissions(lifecycle_root.as_std_path(), CONTENT_STORE_DIR_MODE);
+        restrict_permissions(records_root.as_std_path(), CONTENT_STORE_DIR_MODE);
+        restrict_permissions(quarantine_root.as_std_path(), CONTENT_STORE_DIR_MODE);
+
+        let operation_id = Uuid::now_v7().to_string();
+        let quarantine_path = quarantine_root.join(format!("{operation_id}-{}", key.digest));
+        let record_path = records_root.join(format!("{operation_id}.json"));
+        let created_at_unix_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let pending = PendingDeletion {
+            operation_id,
+            key: key.clone(),
+            source_path: source_path.clone(),
+            quarantine_path: quarantine_path.clone(),
+            created_at_unix_secs,
+            record_path,
+        };
+        self.write_pending_deletion(&pending).await?;
+        if let Err(error) = tokio::fs::rename(&source_path, &quarantine_path).await {
+            let _ = tokio::fs::remove_file(&pending.record_path).await;
+            return Err(SinexError::io(error));
+        }
+        Self::sync_directory(
+            source_path
+                .parent()
+                .ok_or_else(|| SinexError::processing("local CAS object has no parent"))?,
+        )
+        .await?;
+        Self::sync_directory(&quarantine_root).await?;
+        self.fault_injector.inject(FaultPoint::CasQuarantine)?;
+        Ok(Some(pending))
+    }
+
+    /// Finish a previously quarantined deletion. If the unlink fails, both
+    /// the quarantine bytes and its record remain for a later retry.
+    pub async fn finalize_pending_deletion(&self, pending: &PendingDeletion) -> RuntimeResult<()> {
+        let admission = self
+            .acquire_destructive_admission(&WorkCancellation::new())
+            .await?;
+        self.finalize_pending_deletion_with_admission(pending, &admission)
+            .await
+    }
+
+    /// Finish a quarantined deletion while the caller owns destructive
+    /// admission; see [`Self::quarantine_local_cas_with_admission`].
+    pub(crate) async fn finalize_pending_deletion_with_admission(
+        &self,
+        pending: &PendingDeletion,
+        _admission: &WorkFileAdmission,
+    ) -> RuntimeResult<()> {
+        #[cfg(test)]
+        if TEST_FAIL_NEXT_PENDING_DELETE.swap(false, Ordering::SeqCst) {
+            return Err(SinexError::io("injected CAS quarantine delete failure"));
+        }
+        match tokio::fs::remove_file(&pending.quarantine_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(SinexError::io(error)),
+        }
+        Self::sync_directory(&self.quarantine_root()).await?;
+        self.fault_injector.inject(FaultPoint::CasPendingDelete)?;
+        match tokio::fs::remove_file(&pending.record_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(SinexError::io(error)),
+        }
+        Self::sync_directory(&self.pending_delete_root()).await
+    }
+
+    /// Restore a pending deletion when a database reference reappears during
+    /// the quarantine grace period.
+    pub async fn restore_pending_deletion(&self, pending: &PendingDeletion) -> RuntimeResult<()> {
+        let admission = self
+            .acquire_destructive_admission(&WorkCancellation::new())
+            .await?;
+        self.restore_pending_deletion_with_admission(pending, &admission)
+            .await
+    }
+
+    /// Restore a pending deletion while the caller owns destructive admission;
+    /// see [`Self::quarantine_local_cas_with_admission`].
+    pub(crate) async fn restore_pending_deletion_with_admission(
+        &self,
+        pending: &PendingDeletion,
+        _admission: &WorkFileAdmission,
+    ) -> RuntimeResult<()> {
+        if pending.quarantine_path.exists() {
+            if pending.source_path.exists() {
+                tokio::fs::remove_file(&pending.quarantine_path)
+                    .await
+                    .map_err(SinexError::io)?;
+            } else {
+                let parent = pending.source_path.parent().ok_or_else(|| {
+                    SinexError::processing("pending CAS source path has no parent")
+                })?;
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(SinexError::io)?;
+                tokio::fs::rename(&pending.quarantine_path, &pending.source_path)
+                    .await
+                    .map_err(SinexError::io)?;
+                Self::sync_directory(parent).await?;
+            }
+            Self::sync_directory(&self.quarantine_root()).await?;
+        }
+        match tokio::fs::remove_file(&pending.record_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(SinexError::io(error)),
+        }
+        Self::sync_directory(&self.pending_delete_root()).await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_pending_delete_for_tests() {
+        TEST_FAIL_NEXT_PENDING_DELETE.store(true, Ordering::SeqCst);
     }
 
     /// Initialize a content-store root. Uses git-annex when `legacy_annex_enabled` is true;
@@ -548,45 +1186,117 @@ impl MaterialContentStore {
         })
     }
 
+    async fn resolve_root_contained_file_path(
+        &self,
+        file_path: Utf8PathBuf,
+    ) -> RuntimeResult<Utf8PathBuf> {
+        let candidate = if file_path.is_absolute() {
+            file_path
+        } else {
+            self.config.root_path.join(file_path)
+        };
+        self.canonicalize_root_contained_path(&candidate).await
+    }
+
     /// Store a file and return the backend-neutral content-store key.
     pub async fn store_file(&self, file_path: impl AsRef<Path>) -> RuntimeResult<ContentStoreKey> {
+        let (key, lease) = self.store_file_with_lease(file_path).await?;
+        self.release_write_lease(&lease).await?;
+        Ok(key)
+    }
+
+    /// Store a file and retain a durable lease until the caller's metadata
+    /// transaction commits. The lease protects both the temporary publish and
+    /// the final CAS object across process restart.
+    pub async fn store_file_with_lease(
+        &self,
+        file_path: impl AsRef<Path>,
+    ) -> RuntimeResult<(ContentStoreKey, CasWriteLease)> {
         let file_path = Self::require_utf8_path(file_path)?;
         debug!("Storing file in content store: {:?}", file_path);
 
-        // Allow callers to pass either absolute paths or paths relative to the
-        // content-store root. Resolve to an absolute path for validation so
-        // we don't accidentally check the process CWD (which may differ from
-        // the repo path for systemd services).
-        let resolved_path = if file_path.is_absolute() {
-            file_path
-        } else {
-            self.config.root_path.join(&file_path)
-        };
-
-        if !resolved_path.exists() {
-            return Err(SinexError::processing(format!(
-                "File does not exist: {resolved_path:?}"
-            )));
-        }
+        // Resolve and contain the path before metadata, hashing, or copying.
+        // This protects both absolute inputs and root-relative traversal from
+        // escaping through a symlink or parent component.
+        let resolved_path = self.resolve_root_contained_file_path(file_path).await?;
 
         let file_size = tokio::fs::metadata(&resolved_path)
             .await
             .map_err(SinexError::io)?
             .len();
+        self.ensure_file_size_allowed(file_size)?;
         self.store_file_local_cas(&resolved_path, file_size).await
+    }
+
+    /// Store an internal, process-owned staging file while retaining the
+    /// durable lease until the caller's metadata transaction commits. Unlike
+    /// `store_file`, this intentionally does not apply external source-root
+    /// containment: the assembler's private staging directory is a sibling
+    /// of the configured CAS root and is protected by the caller's ownership
+    /// and path construction contract.
+    pub(crate) async fn store_owned_temp_file_with_lease(
+        &self,
+        file_path: impl AsRef<Path>,
+    ) -> RuntimeResult<(ContentStoreKey, CasWriteLease)> {
+        let file_path = Self::require_utf8_path(file_path)?;
+        let file_size = tokio::fs::metadata(&file_path)
+            .await
+            .map_err(SinexError::io)?
+            .len();
+        self.ensure_file_size_allowed(file_size)?;
+        self.store_file_local_cas(&file_path, file_size).await
+    }
+
+    pub(super) fn ensure_file_size_allowed(&self, file_size: u64) -> RuntimeResult<()> {
+        let Some(max_blob_size) = (self.config.max_blob_size > 0)
+            .then(|| u64::try_from(self.config.max_blob_size))
+            .transpose()
+            .map_err(|error| {
+                SinexError::validation("configured content-store size limit is unsupported")
+                    .with_source(error)
+            })?
+        else {
+            return Ok(());
+        };
+        if file_size > max_blob_size {
+            return Err(SinexError::blob_storage(format!(
+                "blob size {file_size} exceeds limit {}",
+                self.config.max_blob_size
+            )));
+        }
+        Ok(())
     }
 
     async fn store_file_local_cas(
         &self,
         resolved_path: &Utf8Path,
         file_size: u64,
-    ) -> RuntimeResult<ContentStoreKey> {
-        let hash = Self::compute_blake3_hash(resolved_path).await?;
+    ) -> RuntimeResult<(ContentStoreKey, CasWriteLease)> {
+        let hash =
+            Self::compute_blake3_hash_with_limit(resolved_path, self.config.max_blob_size).await?;
         let target = self.local_blake3_cas_path_for_hash(&hash)?;
-        if !target.exists() {
+        let key = ContentStoreKey {
+            key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{file_size}--{hash}"),
+            backend: ContentBackend::LocalBlake3Cas,
+            size: file_size,
+            digest: hash.clone(),
+        };
+        let lease = self
+            .create_ingest_lease(&key, resolved_path, &target)
+            .await?;
+        if target.exists() {
+            self.canonicalize_local_cas_path(&target).await?;
+        } else {
             let parent = target.parent().ok_or_else(|| {
                 SinexError::processing(format!("Local CAS target has no parent: {target}"))
             })?;
+            let mut existing_parent = parent;
+            while !existing_parent.exists() {
+                existing_parent = existing_parent.parent().ok_or_else(|| {
+                    SinexError::validation("local CAS path has no existing ancestor")
+                })?;
+            }
+            canonicalize_path_within_root(&self.local_blake3_cas_root(), existing_parent).await?;
             tokio::fs::create_dir_all(parent)
                 .await
                 .map_err(SinexError::io)?;
@@ -596,6 +1306,33 @@ impl MaterialContentStore {
             tokio::fs::copy(resolved_path, &tmp)
                 .await
                 .map_err(SinexError::io)?;
+            self.fault_injector.inject(FaultPoint::CasStagedFile)?;
+            let copied_size = tokio::fs::metadata(&tmp)
+                .await
+                .map_err(SinexError::io)?
+                .len();
+            if let Err(error) = self.ensure_file_size_allowed(copied_size) {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(error);
+            }
+            if copied_size != file_size {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(SinexError::processing(
+                    "source file changed while copying into local CAS",
+                )
+                .with_context("observed_size", copied_size.to_string())
+                .with_context("initial_size", file_size.to_string()));
+            }
+            let copied_hash =
+                Self::compute_blake3_hash_with_limit(&tmp, self.config.max_blob_size).await?;
+            if copied_hash != hash {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(SinexError::processing(
+                    "source file changed while copying into local CAS",
+                )
+                .with_context("expected_hash", hash)
+                .with_context("copied_hash", copied_hash));
+            }
             // tokio::fs::copy (like std::fs::copy) preserves the SOURCE file's
             // permission bits -- if resolved_path was ever more permissive
             // than CAS content should be, that permissiveness would otherwise
@@ -610,15 +1347,47 @@ impl MaterialContentStore {
                 tokio::fs::rename(&tmp, &target)
                     .await
                     .map_err(SinexError::io)?;
+                // The file fsync makes the object durable, while the parent
+                // directory fsync makes the atomic name publication durable.
+                // Without the latter, a power loss can lose the directory
+                // entry after callers have acknowledged the material.
+                (self.sync_parent_directory)(parent.as_std_path()).map_err(SinexError::io)?;
+                self.fault_injector.inject(FaultPoint::CasPublish)?;
             }
         }
 
-        Ok(ContentStoreKey {
-            key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{file_size}--{hash}"),
-            backend: ContentBackend::LocalBlake3Cas,
-            size: file_size,
-            digest: hash,
-        })
+        Ok((key, lease))
+    }
+
+    async fn create_ingest_lease(
+        &self,
+        key: &ContentStoreKey,
+        source_path: &Utf8Path,
+        target_path: &Utf8Path,
+    ) -> RuntimeResult<CasWriteLease> {
+        let root = self.ingest_lease_root();
+        tokio::fs::create_dir_all(&root)
+            .await
+            .map_err(SinexError::io)?;
+        restrict_permissions(self.lifecycle_root().as_std_path(), CONTENT_STORE_DIR_MODE);
+        restrict_permissions(root.as_std_path(), CONTENT_STORE_DIR_MODE);
+        let operation_id = Uuid::now_v7().to_string();
+        let record_path = root.join(format!("{operation_id}.json"));
+        let created_at_unix_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let lease = CasWriteLease {
+            operation_id,
+            key: key.clone(),
+            source_path: source_path.to_owned(),
+            target_path: target_path.to_owned(),
+            created_at_unix_secs,
+            record_path,
+        };
+        self.write_ingest_lease(&lease).await?;
+        self.fault_injector.inject(FaultPoint::CasLease)?;
+        Ok(lease)
     }
 
     fn local_blake3_cas_root(&self) -> Utf8PathBuf {
@@ -652,28 +1421,37 @@ impl MaterialContentStore {
 
     pub async fn canonicalize_local_cas_path(&self, path: &Utf8Path) -> RuntimeResult<Utf8PathBuf> {
         self.ensure_local_cas_path_within_root(path)?;
-        let canonical_root = tokio::fs::canonicalize(self.local_blake3_cas_root())
-            .await
-            .map_err(SinexError::io)?;
-        let canonical_path = tokio::fs::canonicalize(path)
-            .await
-            .map_err(SinexError::io)?;
-        let canonical_root = Utf8PathBuf::from_path_buf(canonical_root).map_err(|path| {
-            SinexError::validation("canonical local CAS root path is not valid UTF-8")
-                .with_context("path", path.display().to_string())
-        })?;
-        let canonical_path = Utf8PathBuf::from_path_buf(canonical_path).map_err(|path| {
-            SinexError::validation("canonical local CAS content path is not valid UTF-8")
-                .with_context("path", path.display().to_string())
-        })?;
-        if !canonical_path.starts_with(&canonical_root) {
-            return Err(SinexError::validation(
-                "canonical local CAS path escapes content-store root",
-            )
-            .with_context("path", canonical_path.to_string())
-            .with_context("root", canonical_root.to_string()));
+        canonicalize_path_within_root(&self.local_blake3_cas_root(), path).await
+    }
+
+    /// Canonicalize an existing path and require that it remains under the
+    /// configured content-store root. This is used for paths returned by
+    /// external backends, which may contain symlinks or absolute paths.
+    pub async fn canonicalize_root_contained_path(
+        &self,
+        path: &Utf8Path,
+    ) -> RuntimeResult<Utf8PathBuf> {
+        canonicalize_path_within_root(&self.config.root_path, path).await
+    }
+
+    pub(super) async fn resolve_command_path(
+        &self,
+        stdout: &[u8],
+        context: &'static str,
+    ) -> RuntimeResult<Utf8PathBuf> {
+        let reported = String::from_utf8(stdout.to_vec())
+            .map_err(|error| SinexError::processing(context).with_source(error))?;
+        let reported = reported.trim();
+        if reported.is_empty() {
+            return Err(SinexError::processing(context)
+                .with_context("reason", "command returned an empty content path"));
         }
-        Ok(canonical_path)
+        let candidate = if Path::new(reported).is_absolute() {
+            Utf8PathBuf::from(reported)
+        } else {
+            self.config.root_path.join(reported)
+        };
+        self.canonicalize_root_contained_path(&candidate).await
     }
 
     pub fn path_if_local(&self, key: &str) -> RuntimeResult<Option<Utf8PathBuf>> {
@@ -702,13 +1480,11 @@ impl MaterialContentStore {
                 "legacy annex is disabled; cannot resolve annex content path",
             ));
         }
-        let output = AsyncCommand::new("git-annex")
-            .arg("contentlocation")
+        let mut cmd = AsyncCommand::new("git-annex");
+        cmd.arg("contentlocation")
             .arg(key)
-            .current_dir(&self.config.root_path)
-            .output()
-            .await
-            .map_err(SinexError::io)?;
+            .current_dir(&self.config.root_path);
+        let output = run_command_async(cmd, "Failed to run git-annex contentlocation").await?;
 
         if !output.status.success() {
             return Err(SinexError::processing(format!(
@@ -717,18 +1493,11 @@ impl MaterialContentStore {
             )));
         }
 
-        let relative = String::from_utf8(output.stdout).map_err(|e| {
-            SinexError::processing("Invalid UTF-8 from git-annex contentlocation").with_source(e)
-        })?;
-        let trimmed = relative.trim();
-        if trimmed.is_empty() {
-            return Err(SinexError::processing(format!(
-                "git-annex contentlocation returned empty path for {key}"
-            )));
-        }
-
-        let path = self.config.root_path.join(trimmed);
-        Ok(path)
+        self.resolve_command_path(
+            &output.stdout,
+            "Failed to resolve git-annex contentlocation path",
+        )
+        .await
     }
 
     /// Get the content-store key for a file.
@@ -741,16 +1510,15 @@ impl MaterialContentStore {
     ) -> RuntimeResult<ContentStoreKey> {
         let file_path = Self::require_utf8_path(file_path)?;
         if !self.config.legacy_annex_enabled {
-            let resolved_path = if file_path.is_absolute() {
-                file_path
-            } else {
-                self.config.root_path.join(&file_path)
-            };
+            let resolved_path = self.resolve_root_contained_file_path(file_path).await?;
             let file_size = tokio::fs::metadata(&resolved_path)
                 .await
                 .map_err(SinexError::io)?
                 .len();
-            let hash = Self::compute_blake3_hash(&resolved_path).await?;
+            self.ensure_file_size_allowed(file_size)?;
+            let hash =
+                Self::compute_blake3_hash_with_limit(&resolved_path, self.config.max_blob_size)
+                    .await?;
             let _path = self.local_blake3_cas_path_for_hash(&hash)?;
             return Ok(ContentStoreKey {
                 key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{file_size}--{hash}"),
@@ -759,9 +1527,10 @@ impl MaterialContentStore {
                 digest: hash,
             });
         }
+        let (_is_key, argument) = self.resolve_argument(file_path.as_str()).await?;
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("lookupkey")
-            .arg(file_path.as_str())
+            .arg(argument)
             .current_dir(&self.config.root_path);
         let output = run_command_async(cmd, "Failed to run git-annex lookupkey").await?;
 
@@ -782,15 +1551,36 @@ impl MaterialContentStore {
         ContentStoreKey::parse(&key_str)
     }
 
-    fn resolve_argument(&self, key_or_path: &str) -> (bool, String) {
+    async fn resolve_argument(&self, key_or_path: &str) -> RuntimeResult<(bool, String)> {
         let candidate = self.config.root_path.join(key_or_path);
         if candidate.exists() {
-            let rel = candidate
-                .strip_prefix(&self.config.root_path)
-                .unwrap_or(&candidate);
-            (false, rel.to_string())
+            let canonical_root = tokio::fs::canonicalize(&self.config.root_path)
+                .await
+                .map_err(SinexError::io)?;
+            let canonical_candidate = tokio::fs::canonicalize(&candidate)
+                .await
+                .map_err(SinexError::io)?;
+            if !canonical_candidate.starts_with(&canonical_root) {
+                return Err(SinexError::validation(
+                    "content-store path escapes configured root",
+                ));
+            }
+            let rel = canonical_candidate
+                .strip_prefix(&canonical_root)
+                .map_err(|_| SinexError::validation("content-store path is not root-relative"))?;
+            return Ok((false, rel.to_string_lossy().into_owned()));
         } else {
-            (true, key_or_path.to_string())
+            let path = Path::new(key_or_path);
+            if path.is_absolute()
+                || path
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir))
+            {
+                return Err(SinexError::validation(
+                    "content-store argument must be a key or a root-contained relative path",
+                ));
+            }
+            Ok((true, key_or_path.to_string()))
         }
     }
 
@@ -800,6 +1590,7 @@ impl MaterialContentStore {
 
         if let Some(path) = self.path_if_local(key_or_path)? {
             if path.exists() {
+                self.canonicalize_local_cas_path(&path).await?;
                 return Ok(());
             }
             return Err(SinexError::processing(format!(
@@ -813,7 +1604,7 @@ impl MaterialContentStore {
             )));
         }
 
-        let (is_key, argument) = self.resolve_argument(key_or_path);
+        let (is_key, argument) = self.resolve_argument(key_or_path).await?;
 
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("get");
@@ -839,6 +1630,22 @@ impl MaterialContentStore {
     /// Drop content if sufficient copies exist elsewhere
     pub async fn drop_content(&self, key_or_path: &str, force: bool) -> RuntimeResult<()> {
         debug!("Dropping content for: {key_or_path}");
+        let admission = self
+            .acquire_destructive_admission(&WorkCancellation::new())
+            .await?;
+        self.drop_content_with_admission(key_or_path, force, &admission)
+            .await
+    }
+
+    /// Drop content while the caller owns destructive admission. This is the
+    /// form used by multi-step CAS operations that already hold the lock.
+    pub(crate) async fn drop_content_with_admission(
+        &self,
+        key_or_path: &str,
+        force: bool,
+        admission: &WorkFileAdmission,
+    ) -> RuntimeResult<()> {
+        debug!("Dropping content for: {key_or_path}");
 
         if let Some(path) = self.path_if_local(key_or_path)? {
             if !force {
@@ -846,11 +1653,28 @@ impl MaterialContentStore {
                     "cannot drop local CAS content without force: {key_or_path}"
                 )));
             }
-            match tokio::fs::remove_file(&path).await {
-                Ok(()) => return Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(error) => return Err(SinexError::io(error)),
+            let key = ContentStoreKey::parse(key_or_path)?;
+            if !path.exists() {
+                if let Some(pending) = self
+                    .list_pending_deletions()
+                    .await?
+                    .into_iter()
+                    .find(|pending| pending.key == key)
+                {
+                    self.finalize_pending_deletion_with_admission(&pending, admission)
+                        .await?;
+                }
+                return Ok(());
             }
+            self.canonicalize_local_cas_path(&path).await?;
+            if let Some(pending) = self
+                .quarantine_local_cas_with_admission(&key, admission)
+                .await?
+            {
+                self.finalize_pending_deletion_with_admission(&pending, admission)
+                    .await?;
+            }
+            return Ok(());
         }
 
         if !self.config.legacy_annex_enabled {
@@ -859,7 +1683,7 @@ impl MaterialContentStore {
             )));
         }
 
-        let (is_key, argument) = self.resolve_argument(key_or_path);
+        let (is_key, argument) = self.resolve_argument(key_or_path).await?;
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("drop");
         if is_key {
@@ -904,7 +1728,11 @@ impl MaterialContentStore {
                     success: false,
                 });
             }
-            let hash = Self::compute_blake3_hash(&path).await?;
+            let metadata = tokio::fs::metadata(&path).await.map_err(SinexError::io)?;
+            self.ensure_file_size_allowed(metadata.len())?;
+            let path = self.canonicalize_local_cas_path(&path).await?;
+            let hash =
+                Self::compute_blake3_hash_with_limit(&path, self.config.max_blob_size).await?;
             return Ok(ContentVerificationResult {
                 output: format!("local CAS verification {key}"),
                 success: hash == parsed.digest,
@@ -1034,70 +1862,88 @@ impl MaterialContentStore {
 
     /// Compute BLAKE3 hash for deduplication
     pub async fn compute_blake3_hash(file_path: &Utf8Path) -> RuntimeResult<String> {
-        let content = tokio::fs::read(file_path).await.map_err(SinexError::io)?;
+        Self::compute_blake3_hash_with_limit(file_path, 0).await
+    }
+
+    pub(super) async fn compute_blake3_hash_with_limit(
+        file_path: &Utf8Path,
+        max_blob_size: usize,
+    ) -> RuntimeResult<String> {
+        let content = Self::read_file_with_limit(file_path, max_blob_size).await?;
 
         let hash = blake3::hash(&content);
         Ok(hash.to_hex().to_string())
     }
 
+    pub(super) async fn read_file_with_limit(
+        file_path: &Utf8Path,
+        max_blob_size: usize,
+    ) -> RuntimeResult<Vec<u8>> {
+        let mut file = tokio::fs::File::open(file_path)
+            .await
+            .map_err(SinexError::io)?;
+        let mut content = Vec::new();
+        let mut chunk = [0_u8; 64 * 1024];
+        loop {
+            let bytes_read = file.read(&mut chunk).await.map_err(SinexError::io)?;
+            if bytes_read == 0 {
+                break;
+            }
+            let new_len = content.len().checked_add(bytes_read).ok_or_else(|| {
+                SinexError::blob_storage("blob content size overflow while reading")
+            })?;
+            if max_blob_size > 0 && new_len > max_blob_size {
+                return Err(SinexError::blob_storage(format!(
+                    "blob size exceeds limit {max_blob_size} while reading {file_path}"
+                )));
+            }
+            content.extend_from_slice(&chunk[..bytes_read]);
+        }
+        Ok(content)
+    }
+
     /// Walk the local CAS directory structure and yield all discovered hash paths.
     ///
     /// Returns a list of `(hash_hex, full_path, file_size)` tuples.
-    /// The `sinex-cas/XX/YY/` prefix layout is traversed recursively.
+    /// The `sinex-cas/XX/YY/` prefix layout is traversed recursively. This
+    /// compatibility collector is intentionally separate from fsck, which
+    /// consumes `cas_walker()` in bounded batches.
     pub async fn walk_cas(&self) -> RuntimeResult<Vec<(String, Utf8PathBuf, u64)>> {
         let cas_root = self.config.root_path.join(LOCAL_BLAKE3_CAS_DIR);
         if !cas_root.exists() {
             return Ok(Vec::new());
         }
+        let mut walker = self.cas_walker(None).await?;
         let mut entries = Vec::new();
-        let mut read_dir = tokio::fs::read_dir(&cas_root)
-            .await
-            .map_err(SinexError::io)?;
-        while let Some(entry) = read_dir.next_entry().await.map_err(SinexError::io)? {
-            let prefix_a = entry.path();
-            if !entry.file_type().await.map_err(SinexError::io)?.is_dir() {
-                continue;
-            }
-            let mut inner = tokio::fs::read_dir(&prefix_a)
-                .await
-                .map_err(SinexError::io)?;
-            while let Some(sub_entry) = inner.next_entry().await.map_err(SinexError::io)? {
-                if !sub_entry
-                    .file_type()
-                    .await
-                    .map_err(SinexError::io)?
-                    .is_dir()
-                {
-                    continue;
-                }
-                let mut hash_dir = tokio::fs::read_dir(sub_entry.path())
-                    .await
-                    .map_err(SinexError::io)?;
-                while let Some(hash_entry) = hash_dir.next_entry().await.map_err(SinexError::io)? {
-                    let path = hash_entry.path();
-                    if !hash_entry
-                        .file_type()
-                        .await
-                        .map_err(SinexError::io)?
-                        .is_file()
-                    {
-                        continue;
-                    }
-                    let metadata = tokio::fs::metadata(&path).await.map_err(SinexError::io)?;
-                    let path_utf8 = Utf8PathBuf::from_path_buf(path.clone()).map_err(|p| {
-                        SinexError::processing(format!(
-                            "non-UTF-8 path in CAS tree: {}",
-                            p.display()
-                        ))
-                    })?;
-                    let hash_str = path_utf8.file_name().ok_or_else(|| {
-                        SinexError::processing(format!("CAS path has no filename: {path_utf8}"))
-                    })?;
-                    entries.push((hash_str.to_string(), path_utf8, metadata.len()));
-                }
+        loop {
+            let batch = walker.next_batch(256).await?;
+            entries.extend(batch.entries);
+            if batch.complete {
+                break;
             }
         }
         Ok(entries)
+    }
+
+    /// Create a resumable, bounded-state walker over the local CAS tree.
+    pub async fn cas_walker(
+        &self,
+        checkpoint: Option<CasWalkCheckpoint>,
+    ) -> RuntimeResult<CasWalker> {
+        self.cas_walker_with_control(checkpoint, None).await
+    }
+
+    pub async fn cas_walker_with_control(
+        &self,
+        checkpoint: Option<CasWalkCheckpoint>,
+        cancellation: Option<crate::runtime::work_control::WorkCancellation>,
+    ) -> RuntimeResult<CasWalker> {
+        CasWalker::new(
+            self.config.root_path.join(LOCAL_BLAKE3_CAS_DIR),
+            checkpoint.unwrap_or_default(),
+            cancellation,
+        )
+        .await
     }
 
     /// Produce a human-readable summary of the local CAS directory.
@@ -1169,6 +2015,10 @@ impl MaterialContentStore {
 
         Ok(())
     }
+}
+
+fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
 }
 
 fn parse_unused_output(stdout: &[u8]) -> Result<Vec<UnusedContentEntry>, String> {

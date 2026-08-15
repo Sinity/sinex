@@ -280,16 +280,13 @@ async fn occurrence_key_fields_and_order() -> TestResult<()> {
     let key = intents[0].occurrence_key.as_ref().unwrap();
     assert_eq!(key.fields[0].0, "date");
     assert_eq!(key.fields[1].0, "description");
-    assert_eq!(key.fields[2].0, "first_amount");
+    assert_eq!(key.fields[2].0, "first_explicit_posting_amount_or_anchor");
     // The first explicit amount for the first transaction is "40.00" (Fuel posting).
     assert_eq!(key.fields[2].1, "40.00");
     Ok(())
 }
 
 #[sinex_test]
-#[ignore = "sinex-ztlf open: first_amount falls back to a fixed \"0\" sentinel when no posting \
-            has an explicit amount, so two distinct same-day same-description transactions with \
-            only elided (implicit-balance) postings collide onto the same occurrence_key"]
 async fn occurrence_key_does_not_collide_when_all_postings_elide_amount() -> TestResult<()> {
     // Two distinct transactions, same date and description (a plausible
     // recurring same-day entry, e.g. two cash withdrawals), neither posting
@@ -310,11 +307,15 @@ async fn occurrence_key_does_not_collide_when_all_postings_elide_amount() -> Tes
     assert_eq!(intents.len(), 2);
     let key_a = intents[0].occurrence_key.as_ref().unwrap();
     let key_b = intents[1].occurrence_key.as_ref().unwrap();
+    assert_eq!(key_a.fields[2].1, "anchor:0");
+    assert_eq!(key_b.fields[2].1, "anchor:1");
     assert_ne!(
         key_a, key_b,
-        "two distinct transactions collided onto the same occurrence_key because \
-         first_amount fell back to the same \"0\" sentinel for both: {key_a:?}"
+        "two distinct transactions must retain distinct material anchors when no posting \
+         supplies an explicit amount: {key_a:?} vs {key_b:?}"
     );
+    // Anti-vacuity mutation: replacing the fallback with `unwrap_or("0")`
+    // makes both assertions above fail because both keys become `0`.
     Ok(())
 }
 
@@ -357,27 +358,15 @@ async fn timestamp_matches_journal_date() -> TestResult<()> {
 }
 
 // ---------------------------------------------------------------------------
-// sinex-xtmp bug 2: declared vs. emitted occurrence-identity field name
+// Declared vs. emitted occurrence-identity field name
 // ---------------------------------------------------------------------------
 
-/// `HledgerJournalParser`'s `#[source_meta(occurrence_identity =
-/// OccurrenceIdentity::Uuid5From("(date, description,
-/// first_explicit_posting_amount)"))]` declaration names the third
-/// occurrence-key field `first_explicit_posting_amount`, but the emitted
-/// `OccurrenceKey.fields` (see `occurrence_key_fields_and_order` above,
-/// which pins the CURRENT emitted name as its expectation) actually uses
-/// `first_amount`. This is a real declared-vs-emitted contract mismatch,
-/// not just a naming nit -- anything that resolves occurrence identity
-/// against the declared contract string (rather than the parser's actual
-/// runtime output) would look for a field that doesn't exist. This test
-/// operationalizes the mismatch without presupposing which side the
-/// eventual fix keeps (rename the emitted field, or update the
-/// declaration) -- it exists to make the gap executable and fails against
-/// current code either way, since the two never actually agree today.
+/// The third emitted field must use the same name as the third field in the
+/// `#[source_meta(occurrence_identity = ...)]` declaration. This keeps catalog
+/// identity metadata and runtime occurrence keys on one contract.
 #[sinex_test]
-#[ignore = "sinex-xtmp open (finance occurrence-key mismatch): declared vs emitted field name disagree -- fails until fixed"]
 async fn occurrence_key_field_name_matches_declared_contract() -> TestResult<()> {
-    const DECLARED_THIRD_FIELD_NAME: &str = "first_explicit_posting_amount";
+    const DECLARED_THIRD_FIELD_NAME: &str = "first_explicit_posting_amount_or_anchor";
 
     let mut parser = HledgerJournalParser;
     let intents = parser
@@ -387,11 +376,8 @@ async fn occurrence_key_field_name_matches_declared_contract() -> TestResult<()>
     let key = intents[0].occurrence_key.as_ref().unwrap();
     assert_eq!(
         key.fields[2].0, DECLARED_THIRD_FIELD_NAME,
-        "the #[source_meta(occurrence_identity = ...)] declaration on \
-         HledgerJournalParser (finance.rs) names this field \
-         `first_explicit_posting_amount`, but the parser actually emits it \
-         as `{}` -- the declared contract and the real implementation \
-         disagree",
+        "the #[source_meta(occurrence_identity = ...)] declaration and \
+         runtime occurrence key must use the same third field, got `{}`",
         key.fields[2].0
     );
     Ok(())

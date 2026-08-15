@@ -414,16 +414,12 @@ impl NativeImapSyncClient {
             .await
             .map_err(|error| NativeImapSyncError::new("uid fetch", error))?;
         let mut records = Vec::new();
-        let mut last_uid = None;
         while let Some(fetch) = fetches
             .try_next()
             .await
             .map_err(|error| NativeImapSyncError::new("read fetch", error))?
         {
             let uid = fetch.uid;
-            if let Some(uid) = uid {
-                last_uid = Some(uid);
-            }
             let header = fetch.header().map(bytes_to_lossy_string);
             let body = request
                 .fetch_bodies
@@ -461,22 +457,29 @@ impl NativeImapSyncClient {
             .await
             .map_err(|error| NativeImapSyncError::new("logout", error))?;
 
-        let uid_next = last_uid
-            .map(|uid| uid.saturating_add(1))
-            .or(mailbox.uid_next)
-            .or(request.uid_next);
-        let has_more = match (uid_next, mailbox.uid_next) {
-            (Some(next), Some(server_next)) => next < server_next,
-            _ => false,
-        };
+        // The requested UID range is fully scanned even when every message in
+        // it has been expunged. Advancing from `last_uid` in that case falls
+        // back to UIDNEXT and silently skips the unvisited range after the
+        // empty window (e.g. a first sync whose lowest live UID is > batch_size).
+        // Advance past the window we actually examined, then clamp to the
+        // server's UIDNEXT so the cursor remains a valid caught-up boundary.
+        let uid_next = next_uid_after_window(uid_end, mailbox.uid_next);
+        let has_more = mailbox
+            .uid_next
+            .is_some_and(|server_next| uid_next < server_next);
         Ok(ImapSyncBatch {
             records,
             uid_validity: mailbox.uid_validity.or(request.uid_validity),
-            uid_next,
+            uid_next: Some(uid_next),
             highest_modseq: mailbox.highest_modseq.or(request.highest_modseq),
             has_more,
         })
     }
+}
+
+fn next_uid_after_window(uid_end: u32, server_uid_next: Option<u32>) -> u32 {
+    let window_next = uid_end.saturating_add(1);
+    server_uid_next.map_or(window_next, |server_next| window_next.min(server_next))
 }
 
 impl ImapSyncClient for NativeImapSyncClient {

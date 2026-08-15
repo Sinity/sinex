@@ -100,6 +100,56 @@ pub enum AnalyticsSubcommand {
         #[arg(long)]
         database_url: Option<String>,
     },
+    /// Project MaterialManifestV1, event, CAS, staging, and NATS deltas from a bounded fixture
+    ManifestProjection {
+        #[arg(long)]
+        measured_days: f64,
+        #[arg(long)]
+        target_days: f64,
+        #[arg(long)]
+        measured_material_bytes: u64,
+        #[arg(long)]
+        measured_manifest_bytes: u64,
+        #[arg(long)]
+        measured_core_event_bytes: u64,
+        #[arg(long)]
+        measured_cas_bytes: u64,
+        #[arg(long)]
+        measured_staging_bytes: u64,
+        #[arg(long)]
+        measured_nats_bytes: u64,
+        #[arg(long)]
+        measured_events: u64,
+        #[arg(long)]
+        copy_events_per_second: f64,
+        #[arg(long)]
+        available_bytes: Option<u64>,
+    },
+    /// Report bounded compressed-chunk replay/archive measurements
+    ReplayCost {
+        #[arg(long)]
+        fixture_events: u64,
+        #[arg(long)]
+        archived_events: u64,
+        #[arg(long)]
+        archive_wall_ms: u64,
+        #[arg(long)]
+        replay_wall_ms: u64,
+        #[arg(long)]
+        operation_duration_ms: Option<u64>,
+        #[arg(long)]
+        wal_bytes: u64,
+        #[arg(long)]
+        compressed_bytes_before: u64,
+        #[arg(long)]
+        uncompressed_bytes_before: u64,
+        #[arg(long)]
+        compressed_bytes_after: u64,
+        #[arg(long)]
+        uncompressed_bytes_after: u64,
+        #[arg(long, default_value_t = 3_600_000)]
+        pathological_threshold_ms: u64,
+    },
     /// Stage-level timing breakdowns aggregated across invocations (J7)
     Stages {
         /// Filter by command
@@ -156,6 +206,64 @@ impl XtaskCommand for AnalyticsCommand {
             return execute_storage_growth(*projection_days, *limit, database_url.as_deref(), ctx)
                 .await;
         }
+        if let AnalyticsSubcommand::ManifestProjection {
+            measured_days,
+            target_days,
+            measured_material_bytes,
+            measured_manifest_bytes,
+            measured_core_event_bytes,
+            measured_cas_bytes,
+            measured_staging_bytes,
+            measured_nats_bytes,
+            measured_events,
+            copy_events_per_second,
+            available_bytes,
+        } = sub
+        {
+            return execute_manifest_projection(
+                *measured_days,
+                *target_days,
+                *measured_material_bytes,
+                *measured_manifest_bytes,
+                *measured_core_event_bytes,
+                *measured_cas_bytes,
+                *measured_staging_bytes,
+                *measured_nats_bytes,
+                *measured_events,
+                *copy_events_per_second,
+                *available_bytes,
+                ctx,
+            );
+        }
+        if let AnalyticsSubcommand::ReplayCost {
+            fixture_events,
+            archived_events,
+            archive_wall_ms,
+            replay_wall_ms,
+            operation_duration_ms,
+            wal_bytes,
+            compressed_bytes_before,
+            uncompressed_bytes_before,
+            compressed_bytes_after,
+            uncompressed_bytes_after,
+            pathological_threshold_ms,
+        } = sub
+        {
+            return execute_replay_cost(
+                *fixture_events,
+                *archived_events,
+                *archive_wall_ms,
+                *replay_wall_ms,
+                *operation_duration_ms,
+                *wal_bytes,
+                *compressed_bytes_before,
+                *uncompressed_bytes_before,
+                *compressed_bytes_after,
+                *uncompressed_bytes_after,
+                *pathological_threshold_ms,
+                ctx,
+            );
+        }
         ctx.try_with_history_db_query(|db| {
             let analysis = HistoryAnalysis::new(db);
             match sub {
@@ -176,6 +284,10 @@ impl XtaskCommand for AnalyticsCommand {
                 AnalyticsSubcommand::Pressure { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::Store { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::StorageGrowth { .. } => unreachable!("handled before DB open"),
+                AnalyticsSubcommand::ManifestProjection { .. } => {
+                    unreachable!("handled before DB open")
+                }
+                AnalyticsSubcommand::ReplayCost { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::Stages { command, limit } => {
                     execute_stages(db, command.as_deref(), *limit, ctx)
                 }
@@ -183,6 +295,81 @@ impl XtaskCommand for AnalyticsCommand {
         })
         .ok_or_else(|| eyre!("history DB unavailable"))?
     }
+}
+
+fn execute_manifest_projection(
+    measured_days: f64,
+    target_days: f64,
+    measured_material_bytes: u64,
+    measured_manifest_bytes: u64,
+    measured_core_event_bytes: u64,
+    measured_cas_bytes: u64,
+    measured_staging_bytes: u64,
+    measured_nats_bytes: u64,
+    measured_events: u64,
+    copy_events_per_second: f64,
+    available_bytes: Option<u64>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let report = crate::measurement::project_manifest_storage(
+        crate::measurement::ManifestProjectionInput {
+            measured_days,
+            target_days,
+            measured_material_bytes,
+            measured_manifest_bytes,
+            measured_core_event_bytes,
+            measured_cas_bytes,
+            measured_staging_bytes,
+            measured_nats_bytes,
+            measured_events,
+            copy_events_per_second,
+            available_bytes,
+        },
+    )?;
+    if ctx.is_json() {
+        return Ok(CommandResult::success()
+            .with_message("MaterialManifestV1 storage projection")
+            .with_data(serde_json::to_value(report)?));
+    }
+    println!("MaterialManifestV1 storage projection: {report:#?}");
+    Ok(CommandResult::success().with_message("MaterialManifestV1 storage projection"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_replay_cost(
+    fixture_events: u64,
+    archived_events: u64,
+    archive_wall_ms: u64,
+    replay_wall_ms: u64,
+    operation_duration_ms: Option<u64>,
+    wal_bytes: u64,
+    compressed_bytes_before: u64,
+    uncompressed_bytes_before: u64,
+    compressed_bytes_after: u64,
+    uncompressed_bytes_after: u64,
+    pathological_threshold_ms: u64,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let report = crate::measurement::report_replay_cost(crate::measurement::ReplayCostInput {
+        fixture_events,
+        archived_events,
+        archive_wall_ms,
+        replay_wall_ms,
+        operation_duration_ms,
+        wal_bytes,
+        compressed_bytes_before,
+        uncompressed_bytes_before,
+        compressed_bytes_after,
+        uncompressed_bytes_after,
+        pathological_threshold_ms,
+    })?;
+    if ctx.is_json() {
+        return Ok(CommandResult::success()
+            .with_message("compressed replay cost report")
+            .with_data(serde_json::to_value(report)?));
+    }
+    println!("Compressed replay cost report: {report:#?}");
+    Ok(CommandResult::success().with_message("compressed replay cost report"))
 }
 
 // ── J1: workspace-health ──────────────────────────────────────────────────────

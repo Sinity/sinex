@@ -1,28 +1,241 @@
 use super::*;
+
+/// Exercises the public replay execution route beyond the repository page
+/// boundary. The fake source records every received command and emits one
+/// replacement per archived occurrence, so a one-command/full-scope handoff
+/// cannot satisfy either the command cardinality or output-completeness checks.
+#[sinex_test(timeout = 240)]
+async fn replay_execution_streams_10_001_roots_in_bounded_scan_batches(
+    ctx: TestContext,
+) -> Result<()> {
+    const ROOT_COUNT: i64 = 10_001;
+    let ctx = ctx.with_nats().dedicated().await?;
+    let material_id = ctx
+        .create_source_material(Some("replay-bounded-execution"))
+        .await?;
+    let now = Timestamp::now();
+
+    // The event schema rejects anchors beyond a finalized material's declared
+    // byte extent. This synthetic source has one byte position per root.
+    sqlx::query("UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2")
+        .bind(ROOT_COUNT)
+        .bind(material_id)
+        .execute(&ctx.pool)
+        .await?;
+    let mut roots = (0..ROOT_COUNT)
+        .map(|anchor| {
+            let builder = DynamicPayload::new(
+                "fs-test",
+                FileCreatedPayload::EVENT_TYPE.as_static_str(),
+                json!({ "path": format!("/tmp/replay-batch-{anchor}.txt") }),
+            )
+            .from_material_at(material_id, anchor)
+            .with_offset_start(anchor)?
+            .with_offset_end(anchor + 1)?;
+            Ok(builder.build()?)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    // The batch repository assigns UUIDv7 IDs after serializing the fixture.
+    // Keep this synthetic occurrence time safely before those provenance
+    // clocks even when the host is under contention.
+    let ts_orig = Timestamp::now() - time::Duration::seconds(10);
+    for root in &mut roots {
+        root.ts_orig = Some(ts_orig);
+    }
+    ctx.pool.events().insert_batch(roots).await?;
+
+    let nats = ctx.nats_client();
+    let env = environment();
+    let subject = env.nats_subject("sinex.control.sources.fs-test.scan");
+    let mut scan_sub = nats.subscribe(subject).await?;
+    let output_pool = ctx.pool.clone();
+    let output_nats = nats.clone();
+    let output_env = env.clone();
+    let scan_handle = tokio::spawn(async move {
+        let mut command_count = 0_usize;
+        let mut emitted_count = 0_u64;
+        while emitted_count < ROOT_COUNT as u64 {
+            let message = scan_sub.next().await.ok_or_else(|| {
+                test_error("bounded replay fake source ended before all commands")
+            })?;
+            let command: SourceScanCommand = serde_json::from_slice(&message.payload)?;
+            let replay =
+                command.args.replay.as_ref().ok_or_else(|| {
+                    test_error("bounded replay scan command omitted replay context")
+                })?;
+            assert!(
+                replay.occurrences.len() <= REPLAY_EXECUTION_ROOT_BATCH_SIZE as usize,
+                "each real source-scan command must stay bounded"
+            );
+            assert!(
+                replay.materials.len() <= REPLAY_EXECUTION_ROOT_BATCH_SIZE as usize,
+                "each real source-scan material handoff must stay bounded"
+            );
+            command_count += 1;
+
+            if let Some(reply) = message.reply {
+                output_nats
+                    .publish(
+                        reply,
+                        serde_json::to_vec(&SourceScanAck {
+                            operation_id: command.operation_id,
+                            module_name: "fs-test".to_string(),
+                            accepted: true,
+                            error: None,
+                        })?
+                        .into(),
+                    )
+                    .await?;
+            }
+
+            let replacements = replay
+                .occurrences
+                .iter()
+                .map(|occurrence| {
+                    let mut replacement = DynamicPayload::new(
+                        "fs-test",
+                        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+                        json!({ "path": format!("/tmp/replay-replacement-{}.txt", occurrence.anchor_byte) }),
+                    )
+                    .from_material_at(
+                        Id::from_uuid(occurrence.source_material_id),
+                        occurrence.anchor_byte,
+                    )
+                    .with_offset_start(occurrence.anchor_byte)?
+                    .with_offset_end(occurrence.anchor_byte + 1)?
+                    .build()?;
+                    replacement.created_by_operation_id = Some(command.operation_id);
+                    Ok(replacement)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            output_pool.events().insert_batch(replacements).await?;
+            emitted_count += u64::try_from(replay.occurrences.len())?;
+
+            let batch_count = u64::try_from(replay.occurrences.len())?;
+            output_nats
+                .publish(
+                    output_env.nats_subject(&format!(
+                        "sinex.control.replay.progress.{}",
+                        command.operation_id
+                    )),
+                    serde_json::to_vec(&SourceScanProgress {
+                        operation_id: command.operation_id,
+                        module_name: "fs-test".to_string(),
+                        events_processed: batch_count,
+                        events_emitted: batch_count,
+                        final_report: Some(ScanReport {
+                            events_processed: batch_count,
+                            duration: Duration::from_millis(1),
+                            final_checkpoint: Checkpoint::None,
+                            time_range: None,
+                            runtime_stats: HashMap::new(),
+                            successful_targets: vec!["fs-test".to_string()],
+                            failed_targets: Vec::new(),
+                            warnings: Vec::new(),
+                        }),
+                        error: None,
+                        cancelled: false,
+                    })?
+                    .into(),
+                )
+                .await?;
+        }
+        Ok::<(usize, u64), color_eyre::Report>((command_count, emitted_count))
+    });
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let client = spawn_replay_control(replay, nats, Duration::from_secs(210)).await?;
+    let scope = ReplayScope {
+        source_name: "fs-test".to_string(),
+        time_window: Some((
+            now - time::Duration::minutes(1),
+            Timestamp::now() + time::Duration::minutes(1),
+        )),
+        material_filter: Some(vec![*material_id.as_uuid()]),
+        filters: HashMap::from([(
+            "event_types".to_string(),
+            json!([FileCreatedPayload::EVENT_TYPE.as_static_str()]),
+        )]),
+        ..Default::default()
+    };
+    let planned = client.plan("test:replay-batch".into(), scope).await?;
+    let (previewed, preview) = client.preview(planned.operation_id).await?;
+    assert_eq!(preview["root_event_count"], json!(ROOT_COUNT));
+    assert_eq!(
+        preview["root_event_id_sample"].as_array().map(Vec::len),
+        Some(100)
+    );
+    client
+        .approve(previewed.operation_id, "admin:approver".into())
+        .await?;
+    let completed = client
+        .execute(
+            planned.operation_id,
+            "service:bounded-replay-executor".into(),
+            false,
+        )
+        .await?;
+
+    let (command_count, emitted_count) = scan_handle.await??;
+    assert_eq!(completed.state, ReplayState::Completed);
+    assert_eq!(completed.checkpoint.total_events, ROOT_COUNT as u64);
+    assert_eq!(completed.checkpoint.processed_events, ROOT_COUNT as u64);
+    assert_eq!(emitted_count, ROOT_COUNT as u64);
+    assert_eq!(
+        command_count, 11,
+        "10,001 roots must cross the 1,000-root execution page boundary"
+    );
+    let operation_meta: serde_json::Value =
+        sqlx::query_scalar("SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid")
+            .bind(completed.operation_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    let archive_journal = &operation_meta["scope_invalidation"];
+    assert_eq!(
+        archive_journal["archive_reason"],
+        json!(format!(
+            "superseded by replay re-execution (operation {})",
+            completed.operation_id
+        )),
+        "the public replay journal must retain a bounded archive key"
+    );
+    assert!(
+        archive_journal.get("cascade_ids").is_none(),
+        "the public replay journal must not serialize all 10,001 root/cascade UUIDs"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
-    let (material_id, inserted) = loop {
-        let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
-        let event = DynamicPayload::new(
-            "fs-test",
-            FileCreatedPayload::EVENT_TYPE.as_static_str(),
-            json!({ "path": "/tmp/replay.txt" }),
-        )
-        .from_material(material_id)
-        .build()?;
-        let inserted = ctx.pool.events().insert(event).await?;
-        if let Some(ts_orig) = inserted.ts_orig
-            && ts_orig.inner().nanosecond() > 0
-        {
-            break (material_id, inserted);
+    let (material_id, inserted) = {
+        let mut i = 0;
+        loop {
+            let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
+            let event = DynamicPayload::new(
+                "fs-test",
+                FileCreatedPayload::EVENT_TYPE.as_static_str(),
+                json!({ "path": "/tmp/replay.txt" }),
+            )
+            .from_material_at(material_id, i * 10)
+            .build()?;
+            let inserted = ctx.pool.events().insert(event).await?;
+            if let Some(ts_orig) = inserted.ts_orig
+                && ts_orig.inner().nanosecond() > 0
+            {
+                break (material_id, inserted);
+            }
+            i += 1;
         }
     };
 
     let replay_target_event_id = inserted.id.expect("inserted replay target must have id");
     let replay_target_id = replay_target_event_id.to_uuid();
-    let target_window_end = replay_target_event_id.timestamp();
+    let target_window_end = replay_target_event_id
+        .timestamp()
+        .expect("test ID must be UUIDv7");
     let target_window_start = target_window_end - time::Duration::milliseconds(1);
 
     let product_class = DerivedProductClass::CanonicalDerivedEvent;
@@ -121,24 +334,17 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
             .and_then(serde_json::Value::as_str),
         Some("reexecute_material_roots_via_source_scan")
     );
-    // Regression: the client-facing preview must never carry the full
-    // root_event_ids array -- for a real-scale scope this is hundreds of
-    // thousands of UUIDs, producing a reply payload sinexd's own
-    // oversized-publish guard silently refuses to send (discovered live
-    // while diagnosing sinex-60r's ActivityWatch replay). Execution below
-    // still succeeding proves the FULL id list is still stored server-side
-    // (state_machine.rs's approve/execute integrity checks would fail
-    // loudly otherwise) -- only the wire reply to the client is trimmed.
+    // Preview identity is bounded even in durable operation state.
     assert!(
         preview.get("root_event_ids").is_none(),
-        "client-facing preview must not include the full root_event_ids array, got: {preview:?}"
+        "preview must not include a full root_event_ids array, got: {preview:?}"
     );
     assert_eq!(
         preview
-            .get("root_event_ids_count")
+            .get("root_event_count")
             .and_then(serde_json::Value::as_u64),
         Some(1),
-        "client-facing preview should surface the count in place of the full array"
+        "preview should surface replay-root count"
     );
 
     let approved = client
@@ -312,7 +518,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         .id
         .expect("reexecution derived must have id")
         .to_uuid();
-    let reexecution_root_ts = root_event_id.timestamp();
+    let reexecution_root_ts = root_event_id.timestamp().expect("test ID must be UUIDv7");
     let reexecution_scope = ReplayScope {
         source_name: "reexecution-test".to_string(),
         time_window: Some((
@@ -426,8 +632,8 @@ async fn replay_dispatch_uses_material_runtime_identity(ctx: TestContext) -> Res
     let inserted = ctx.pool.events().insert(event).await?;
     let event_id = inserted.id.expect("inserted replay target must have an id");
     let execution_window = (
-        event_id.timestamp() - time::Duration::milliseconds(1),
-        event_id.timestamp() + time::Duration::milliseconds(1),
+        event_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        event_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
@@ -512,8 +718,8 @@ async fn replay_replacement_recording_follows_material_occurrence(ctx: TestConte
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -561,7 +767,7 @@ async fn replay_replacement_recording_follows_material_occurrence(ctx: TestConte
         .to_uuid();
 
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(&ctx.pool, operation_id, "archive old replay target")
         .await?;
 
     let replacements = ctx
@@ -602,8 +808,8 @@ async fn replay_replacement_recording_rejects_cross_material_matches(
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -638,7 +844,7 @@ async fn replay_replacement_recording_rejects_cross_material_matches(
     ctx.pool.events().insert(replacement_event).await?;
 
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(&ctx.pool, operation_id, "archive old replay target")
         .await?;
 
     let replacements = ctx
@@ -681,8 +887,8 @@ async fn replay_anchor_payload_hash_mismatch_does_not_block_replacement(
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -721,7 +927,11 @@ async fn replay_anchor_payload_hash_mismatch_does_not_block_replacement(
 
     // Hash mismatch should warn but NOT block replacement recording
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(
+            &ctx.pool,
+            operation_id,
+            "archive old replay target with hash A",
+        )
         .await?;
 
     let replacements = ctx
@@ -760,8 +970,8 @@ async fn replay_anchor_payload_hash_null_does_not_false_mismatch(ctx: TestContex
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -798,7 +1008,11 @@ async fn replay_anchor_payload_hash_null_does_not_false_mismatch(ctx: TestContex
 
     // Both hashes are NULL — no false mismatch
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(
+            &ctx.pool,
+            operation_id,
+            "archive old replay target with null hash",
+        )
         .await?;
 
     let replacements = ctx
@@ -837,8 +1051,8 @@ async fn replay_anchor_payload_hash_match_is_silent(ctx: TestContext) -> Result<
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
-        old_id.timestamp() - time::Duration::milliseconds(1),
-        old_id.timestamp() + time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") - time::Duration::milliseconds(1),
+        old_id.timestamp().expect("test ID must be UUIDv7") + time::Duration::milliseconds(1),
     );
 
     let mut scope = sample_scope();
@@ -876,7 +1090,11 @@ async fn replay_anchor_payload_hash_match_is_silent(ctx: TestContext) -> Result<
 
     // Matching hashes — replacements recorded normally
     engine
-        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .record_event_replacements(
+            &ctx.pool,
+            operation_id,
+            "archive old replay target with hash",
+        )
         .await?;
 
     let replacements = ctx
@@ -920,7 +1138,9 @@ async fn projection_registry_replay_invalidation(ctx: TestContext) -> Result<()>
     event.scope_key = Some(scope_key.clone());
     let inserted = ctx.pool.events().insert(event).await?;
     let replay_target_event_id = inserted.id.expect("inserted replay target must have id");
-    let target_window_end = replay_target_event_id.timestamp();
+    let target_window_end = replay_target_event_id
+        .timestamp()
+        .expect("test ID must be UUIDv7");
     let target_window_start = target_window_end - time::Duration::milliseconds(1);
 
     let projection_kind = "test.projection_registry_replay_invalidation";
@@ -1007,18 +1227,10 @@ async fn projection_registry_replay_invalidation(ctx: TestContext) -> Result<()>
     Ok(())
 }
 
-/// sinex-x47r: `count_visible_replay_outputs` (execution/collect.rs) counts
-/// `COUNT(DISTINCT logical_source_identifier)`, and
-/// `with_logical_source_identifiers` sets `minimum_visible_count` to the
-/// number of distinct logical sources -- normally 1. A replay that archives
-/// many events from one logical source and successfully re-emits only ONE
-/// of them satisfies the gate just as well as a replay that re-emits all of
-/// them, because the gate only asks "did at least one source show up",
-/// never "how many rows came back".
+/// sinex-x47r: output validation must count returned rows proportionally to
+/// the material roots selected for replay. A replay that archives three rows
+/// from one logical source and returns one must fail validation.
 #[sinex_test]
-#[ignore = "sinex-x47r open: the output-validation gate is trivially satisfiable by re-emitting a \
-            single event out of many archived ones from the same logical source; un-ignore once \
-            the gate checks something proportional to what was actually archived"]
 async fn output_validation_gate_passes_when_most_archived_events_never_return(
     ctx: TestContext,
 ) -> Result<()> {
@@ -1075,21 +1287,23 @@ async fn output_validation_gate_passes_when_most_archived_events_never_return(
     ctx.pool.events().insert(replacement).await?;
 
     let expected = ExpectedReplayOutputs {
-        minimum_visible_count: 1,
-        sources: vec!["fs-test".to_string()],
-        event_types: vec![FileCreatedPayload::EVENT_TYPE.as_static_str().to_string()],
-        logical_source_identifiers: vec![logical_source.to_string()],
+        minimum_visible_count: 3,
+        source_material_ids: vec![*material_id.as_uuid()],
     };
     let visible = engine
-        .count_visible_replay_outputs(&ctx.pool, operation_id, &expected)
+        .count_visible_replay_outputs(
+            &ctx.pool,
+            operation_id,
+            "archive for output-gate trivial-satisfy test",
+            &expected,
+        )
         .await?;
 
     assert!(
         visible < expected.minimum_visible_count as i64,
         "sinex-x47r: the output-validation gate should NOT report success (visible={visible} >= \
          minimum={}) when only 1 of 3 archived events from the same logical source actually came \
-         back -- a real fix needs a bound proportional to what was archived, not just \
-         'did the source show up at all'",
+         back",
         expected.minimum_visible_count
     );
 

@@ -3,7 +3,7 @@
 //! Emits one [`SourceRecord`] per file found under the configured roots,
 //! using `(size_bytes, modified_ms)` fingerprints for cursor-based dedup.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
@@ -13,7 +13,6 @@ use futures::stream::{self, BoxStream};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tokio::fs;
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -22,6 +21,8 @@ use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 use crate::runtime::parser::{
     InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint,
 };
+
+use super::{MAX_WHOLE_FILE_BYTES, read_file_bounded, read_file_bounded_sync};
 
 // =============================================================================
 // FileFingerprint
@@ -110,6 +111,8 @@ impl DirectoryWalkCursor {
 #[derive(Debug, Clone, Default)]
 pub struct DirectoryWalkAdapter;
 
+const MAX_FILE_BYTES: u64 = MAX_WHOLE_FILE_BYTES;
+
 impl DirectoryWalkAdapter {
     /// Compile the configured globs into a [`GlobSet`].
     ///
@@ -138,8 +141,21 @@ impl DirectoryWalkAdapter {
         follow_symlinks: bool,
         max_depth: Option<usize>,
         current_depth: usize,
+        visited: &mut HashSet<std::path::PathBuf>,
     ) -> ParserResult<Vec<Utf8PathBuf>> {
         let mut results = Vec::new();
+
+        if follow_symlinks {
+            let canonical = std::fs::canonicalize(root.as_std_path()).map_err(|e| {
+                ParserError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to canonicalize directory {root}: {e}"),
+                ))
+            })?;
+            if !visited.insert(canonical) {
+                return Ok(results);
+            }
+        }
 
         let entries = std::fs::read_dir(root).map_err(|e| {
             ParserError::Io(std::io::Error::new(
@@ -176,8 +192,14 @@ impl DirectoryWalkAdapter {
             if metadata.is_dir() {
                 let next_depth = current_depth + 1;
                 if max_depth.is_none_or(|limit| next_depth <= limit) {
-                    let mut sub =
-                        Self::collect_paths(&path, globs, follow_symlinks, max_depth, next_depth)?;
+                    let mut sub = Self::collect_paths(
+                        &path,
+                        globs,
+                        follow_symlinks,
+                        max_depth,
+                        next_depth,
+                        visited,
+                    )?;
                     results.append(&mut sub);
                 }
                 continue;
@@ -243,7 +265,11 @@ impl DirectoryWalkAdapter {
 }
 
 fn structured_file_shape_hash(path: &Utf8Path, extension: &str) -> Option<String> {
-    let bytes = std::fs::read(path.as_std_path()).ok()?;
+    let metadata = std::fs::metadata(path.as_std_path()).ok()?;
+    if metadata.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    let bytes = read_file_bounded_sync(path.as_std_path(), MAX_FILE_BYTES).ok()?;
     let fingerprint = match extension {
         "csv" => SourceRecordFingerprint::from_csv_bytes(&bytes).ok()?,
         "tsv" => SourceRecordFingerprint::from_tsv_bytes(&bytes).ok()?,
@@ -275,12 +301,19 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
         // Collect all matching paths across all roots (sorted per root, then
         // concatenated in root order).
         let mut all_paths: Vec<Utf8PathBuf> = Vec::new();
+        let mut visited = HashSet::new();
         for root in &config.roots {
             if !root.exists() {
                 continue; // non-existent roots are silently skipped
             }
-            let paths =
-                Self::collect_paths(root, &glob_set, config.follow_symlinks, config.max_depth, 0)?;
+            let paths = Self::collect_paths(
+                root,
+                &glob_set,
+                config.follow_symlinks,
+                config.max_depth,
+                0,
+                &mut visited,
+            )?;
             all_paths.extend(paths);
         }
 
@@ -300,6 +333,13 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
                 continue;
             }
             let fp = Self::fingerprint(&meta);
+            if fp.size_bytes > MAX_FILE_BYTES {
+                pending.push(PendingEntry {
+                    path,
+                    fingerprint: fp,
+                });
+                continue;
+            }
             if cursor.get(&path).is_some_and(|prev| *prev == fp) {
                 continue; // unchanged — skip
             }
@@ -313,12 +353,20 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
         let stream = stream::iter(pending).then(move |entry| {
             let material_id = material_id;
             async move {
-                let bytes = fs::read(entry.path.as_std_path()).await.map_err(|e| {
-                    ParserError::Io(std::io::Error::new(
-                        e.kind(),
-                        format!("failed to read {}: {e}", entry.path),
-                    ))
-                })?;
+                if entry.fingerprint.size_bytes > MAX_FILE_BYTES {
+                    return Err(ParserError::Adapter(format!(
+                        "file {} exceeds the {}-byte directory input cap",
+                        entry.path, MAX_FILE_BYTES
+                    )));
+                }
+                let bytes = read_file_bounded(entry.path.as_std_path(), MAX_FILE_BYTES)
+                    .await
+                    .map_err(|e| {
+                        ParserError::Io(std::io::Error::new(
+                            e.kind(),
+                            format!("failed to read {}: {e}", entry.path),
+                        ))
+                    })?;
 
                 // Thread the fingerprint observed during the scan through to
                 // `cursor_after()` via `metadata`. `cursor_after()` only sees
@@ -353,13 +401,20 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
     ) -> ParserResult<Option<SourceRecordFingerprint>> {
         let glob_set = Self::build_glob_set(&config.globs)?;
         let mut entries = Vec::new();
+        let mut visited = HashSet::new();
 
         for root in &config.roots {
             if !root.exists() {
                 continue;
             }
-            let paths =
-                Self::collect_paths(root, &glob_set, config.follow_symlinks, config.max_depth, 0)?;
+            let paths = Self::collect_paths(
+                root,
+                &glob_set,
+                config.follow_symlinks,
+                config.max_depth,
+                0,
+                &mut visited,
+            )?;
             entries.extend(paths.into_iter().map(|path| {
                 (
                     Self::relative_manifest_path(&path, &config.roots),

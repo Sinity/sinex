@@ -23,7 +23,8 @@
 //!   non-zero default — historical scans are paced *by default*.
 //!   `RateBudget::unlimited` is the explicit opt-out (`--unlimited`).
 //! - [`PacingController`] enforces the events/sec and bytes/sec budget
-//!   between batches with a simple "average rate since start" throttle.
+//!   between batches with capped token buckets, so idle time cannot create an
+//!   unbounded post-pause burst.
 //! - [`BacklogGate`] pauses the scan loop (with hysteresis) when the raw
 //!   stream's event-engine consumer backlog exceeds the configured
 //!   threshold, pulling the threshold from config instead of a hardcoded
@@ -42,17 +43,23 @@ use std::time::{Duration, Instant};
 pub use sinex_primitives::pacing::RateBudget;
 
 use crate::runtime::RuntimeResult;
+use crate::runtime::work_control::WorkCancellation;
 
 const BACKLOG_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const BURST_WINDOW: Duration = Duration::from_secs(1);
 
 /// Enforces a [`RateBudget`]'s events/sec and bytes/sec limits between scan
-/// batches using a simple "average rate since start" throttle: after each
-/// recorded batch, sleep just long enough that the observed average rate
-/// never exceeds the configured budget.
+/// batches with capped token buckets. Each bucket can hold at most one second
+/// of credit, so a long pause cannot accumulate an unbounded burst. The
+/// counters remain lifetime totals for progress reporting, while enforcement
+/// uses only the bounded token state.
 #[derive(Debug)]
 pub struct PacingController {
     budget: RateBudget,
     started: Instant,
+    tokens_refilled_at: Instant,
+    event_tokens: Option<f64>,
+    byte_tokens: Option<f64>,
     events_total: u64,
     bytes_total: u64,
 }
@@ -60,9 +67,13 @@ pub struct PacingController {
 impl PacingController {
     #[must_use]
     pub fn new(budget: RateBudget) -> Self {
+        let now = Instant::now();
         Self {
             budget,
-            started: Instant::now(),
+            started: now,
+            tokens_refilled_at: now,
+            event_tokens: Self::bucket_capacity(budget.events_per_sec),
+            byte_tokens: Self::bucket_capacity(budget.bytes_per_sec),
             events_total: 0,
             bytes_total: 0,
         }
@@ -108,45 +119,144 @@ impl PacingController {
         }
     }
 
-    /// Duration to sleep (if any) so that the average rate since `started`
-    /// stays within budget, given `events`/`bytes` just processed. Pure
-    /// function of internal counters — no I/O, fully unit-testable.
-    fn required_sleep(&self, elapsed: Duration) -> Duration {
-        let elapsed_secs = elapsed.as_secs_f64();
-        let mut required_secs: f64 = 0.0;
+    fn bucket_capacity(rate: Option<f64>) -> Option<f64> {
+        rate.filter(|rate| rate.is_finite() && *rate > 0.0)
+            .map(|rate| rate * BURST_WINDOW.as_secs_f64())
+    }
 
-        if let Some(rate) = self.budget.events_per_sec
-            && rate > 0.0
-        {
-            required_secs = required_secs.max(self.events_total as f64 / rate);
-        }
-        if let Some(rate) = self.budget.bytes_per_sec
-            && rate > 0.0
-        {
-            required_secs = required_secs.max(self.bytes_total as f64 / rate);
-        }
+    fn refill_bucket(
+        tokens: Option<f64>,
+        rate: Option<f64>,
+        elapsed: Duration,
+    ) -> Option<f64> {
+        let capacity = Self::bucket_capacity(rate)?;
+        Some((tokens.unwrap_or(capacity) + rate.unwrap() * elapsed.as_secs_f64()).min(capacity))
+    }
 
-        if required_secs > elapsed_secs {
-            Duration::from_secs_f64(required_secs - elapsed_secs)
-        } else {
-            Duration::ZERO
+    fn refill_tokens(&mut self) {
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.tokens_refilled_at);
+        self.event_tokens = Self::refill_bucket(
+            self.event_tokens,
+            self.budget.events_per_sec,
+            elapsed,
+        );
+        self.byte_tokens = Self::refill_bucket(
+            self.byte_tokens,
+            self.budget.bytes_per_sec,
+            elapsed,
+        );
+        self.tokens_refilled_at = now;
+    }
+
+    fn consume(tokens: &mut Option<f64>, amount: u64) {
+        if let Some(tokens) = tokens {
+            *tokens -= amount as f64;
         }
     }
 
-    /// Record a processed batch and sleep as needed to hold the average rate
-    /// within budget. No-op sleep when the budget is unlimited on both
-    /// dimensions.
+    fn wait_for_bucket(
+        tokens: Option<f64>,
+        rate: Option<f64>,
+        elapsed: Duration,
+    ) -> Duration {
+        let Some(rate) = rate.filter(|rate| rate.is_finite() && *rate > 0.0) else {
+            return Duration::ZERO;
+        };
+        let available = tokens.unwrap_or(rate * BURST_WINDOW.as_secs_f64())
+            + rate * elapsed.as_secs_f64();
+        if available >= 0.0 {
+            Duration::ZERO
+        } else {
+            Duration::from_secs_f64(-available / rate)
+        }
+    }
+
+    /// Duration to sleep (if any) until the current token debt clears. Pure
+    /// function of the bounded bucket state, so it remains unit-testable.
+    fn required_sleep(&self, elapsed: Duration) -> Duration {
+        Self::wait_for_bucket(self.event_tokens, self.budget.events_per_sec, elapsed).max(
+            Self::wait_for_bucket(self.byte_tokens, self.budget.bytes_per_sec, elapsed),
+        )
+    }
+
+    /// Record a processed batch and sleep until its bounded token debt clears.
+    /// No-op when the budget is unlimited on both rate dimensions.
     pub async fn record_and_throttle(&mut self, events: u64, bytes: u64) {
+        let _ = self
+            .record_and_throttle_inner(events, bytes, None)
+            .await;
+    }
+
+    /// Record a processed batch with a cooperative cancellation source. This
+    /// is the control-plane entry point for callers that own a
+    /// [`WorkCancellation`]; cancellation interrupts rate waits without
+    /// discarding the already-accounted batch.
+    pub async fn record_and_throttle_with_cancellation(
+        &mut self,
+        events: u64,
+        bytes: u64,
+        cancellation: &WorkCancellation,
+    ) -> RuntimeResult<()> {
+        self.record_and_throttle_inner(events, bytes, Some(cancellation))
+            .await
+    }
+
+    async fn record_and_throttle_inner(
+        &mut self,
+        events: u64,
+        bytes: u64,
+        cancellation: Option<&WorkCancellation>,
+    ) -> RuntimeResult<()> {
+        if let Some(cancellation) = cancellation {
+            if cancellation.is_cancelled() {
+                return Err(sinex_primitives::SinexError::cancelled(
+                    "Pacing cancelled before rate wait",
+                ));
+            }
+        }
+
         self.events_total = self.events_total.saturating_add(events);
         self.bytes_total = self.bytes_total.saturating_add(bytes);
 
         if self.budget.events_per_sec.is_none() && self.budget.bytes_per_sec.is_none() {
-            return;
+            return Ok(());
         }
 
-        let sleep_for = self.required_sleep(self.elapsed());
-        if sleep_for > Duration::ZERO {
-            tokio::time::sleep(sleep_for).await;
+        self.refill_tokens();
+        Self::consume(&mut self.event_tokens, events);
+        Self::consume(&mut self.byte_tokens, bytes);
+        // `refill_tokens` has already advanced the bucket clock to now. The
+        // debt calculation must therefore start from the current balance,
+        // rather than adding lifetime elapsed time a second time.
+        let sleep_for = self.required_sleep(Duration::ZERO);
+        if sleep_for.is_zero() {
+            return Ok(());
+        }
+
+        match cancellation {
+            Some(cancellation) => {
+                let cancellation_wait = cancellation.wait();
+                if cancellation.is_cancelled() {
+                    return Err(sinex_primitives::SinexError::cancelled(
+                        "Pacing cancelled while rate limited",
+                    ));
+                }
+                tokio::select! {
+                    () = tokio::time::sleep(sleep_for) => {
+                        self.refill_tokens();
+                        Ok(())
+                    }
+                    () = cancellation_wait => Err(sinex_primitives::SinexError::cancelled(
+                        "Pacing cancelled while rate limited",
+                    )),
+                }
+            }
+            None => {
+                tokio::time::sleep(sleep_for).await;
+                self.refill_tokens();
+                Ok(())
+            }
         }
     }
 }

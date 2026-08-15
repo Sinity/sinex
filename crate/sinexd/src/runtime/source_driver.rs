@@ -77,6 +77,11 @@ pub trait SourceDriver: Send + Sync + 'static {
         }
     }
 
+    /// Whether service readiness must wait until continuous capture is armed.
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        false
+    }
+
     /// Initialize the source logic.
     /// Called after state is loaded and runtime is set up.
     fn initialize(
@@ -565,14 +570,7 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
                 // Clone before SelfObserver::new() takes ownership of nats_client.
                 let nats_for_probe = nats_client.clone();
                 let observer = Arc::new(SelfObserver::new(nats_client, config));
-                let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
-                    warn!(
-                        module = %self.source.name(),
-                        error = %error,
-                        "Invalid health monitoring threshold override; using defaults"
-                    );
-                    HealthThresholds::default()
-                });
+                let thresholds = HealthThresholds::from_env()?;
                 let liveness_probe: crate::runtime::health_reporter::LivenessProbe =
                     Arc::new(move || {
                         let client = nats_for_probe.clone();
@@ -769,6 +767,10 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
 
     fn capabilities(&self) -> RuntimeCapabilities {
         self.source.capabilities()
+    }
+
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        self.source.defers_service_ready_until_continuous()
     }
 
     async fn current_checkpoint(&self) -> RuntimeResult<Checkpoint> {

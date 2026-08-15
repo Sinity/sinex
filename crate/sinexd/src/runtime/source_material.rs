@@ -71,6 +71,29 @@ pub async fn stage_material_from_file_bounded(
     metadata: Option<JsonValue>,
     max_bytes: Option<u64>,
 ) -> RuntimeResult<(Uuid, i64)> {
+    let (material_id, total_bytes, _) = stage_material_from_file_bounded_with_digest(
+        acquisition,
+        path,
+        reason,
+        metadata,
+        max_bytes,
+    )
+    .await?;
+    Ok((material_id, total_bytes))
+}
+
+/// Stream a file into source-material storage and return the digest of the
+/// exact bytes written. The digest is computed during the same read that feeds
+/// acquisition, so a file changing between a separate hash pass and capture
+/// cannot produce a false metadata witness.
+#[cfg(feature = "messaging")]
+pub async fn stage_material_from_file_bounded_with_digest(
+    acquisition: &AcquisitionManager,
+    path: &Utf8Path,
+    reason: &str,
+    metadata: Option<JsonValue>,
+    max_bytes: Option<u64>,
+) -> RuntimeResult<(Uuid, i64, String)> {
     use tokio::io::AsyncReadExt;
 
     let mut builder = acquisition.build_material(path.as_str());
@@ -92,6 +115,7 @@ pub async fn stage_material_from_file_bounded(
     }
 
     let mut total_bytes = 0i64;
+    let mut hasher = blake3::Hasher::new();
     let mut buffer = vec![0u8; MAX_STAGE_FILE_CHUNK_BYTES];
 
     loop {
@@ -127,6 +151,7 @@ pub async fn stage_material_from_file_bounded(
             )
             .await);
         }
+        hasher.update(&buffer[..read]);
         if let Err(error) = acquisition.append_slice(&mut handle, &buffer[..read]).await {
             return Err(cancel_after_material_capture_error(
                 acquisition,
@@ -138,9 +163,21 @@ pub async fn stage_material_from_file_bounded(
         }
     }
 
+    let digest = hasher.finalize().to_hex().to_string();
+    let metadata = metadata.map(|mut metadata| {
+        if let Some(object) = metadata.as_object_mut()
+            && object.contains_key("content_hash")
+        {
+            object.insert(
+                "content_hash".to_string(),
+                JsonValue::String(digest.clone()),
+            );
+        }
+        metadata
+    });
     finalize_stage_material(acquisition, &mut handle, reason, metadata).await?;
 
-    Ok((material_id, total_bytes))
+    Ok((material_id, total_bytes, digest))
 }
 
 #[cfg(feature = "messaging")]

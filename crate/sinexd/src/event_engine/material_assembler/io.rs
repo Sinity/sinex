@@ -21,7 +21,8 @@ use super::{
     },
 };
 use crate::event_engine::{EventEngineResult, SinexError};
-use crate::runtime::content_store::ContentStoreKey;
+use crate::runtime::FaultPoint;
+use crate::runtime::content_store::{CasWriteLease, ContentStoreKey};
 use blake3::Hasher;
 use camino::Utf8PathBuf;
 use sinex_primitives::Timestamp;
@@ -486,6 +487,7 @@ async fn restore_state_params(
             source_identifier: state_snapshot.source_identifier,
             metadata: state_snapshot.metadata,
             phase: state_snapshot.phase,
+            finalizing_since: None,
             hasher,
             pending_write: state_snapshot.pending_write,
             pending_end: state_snapshot.pending_end,
@@ -683,6 +685,22 @@ async fn reconcile_replayed_file_progress(
             return Ok(());
         }
 
+        if actual_size > pending_write.offset {
+            // The staged file is written before its WAL Slice commit record.
+            // A crash can therefore leave a partial or complete suffix even
+            // though the WAL still contains only the durable prefix. Preserve
+            // the prefix and keep the pending write so the source frame can be
+            // redelivered instead of discarding the whole assembly.
+            truncate_staged_file_to(temp_path, pending_write.offset).await?;
+            debug!(
+                material_id = %material_id,
+                actual_size,
+                rollback_size = pending_write.offset,
+                "Truncated uncommitted staged suffix while restoring pending material write"
+            );
+            return Ok(());
+        }
+
         return Err(
             SinexError::invalid_state("pending_write does not match staged file progress")
                 .with_context("material_id", material_id.to_string())
@@ -708,7 +726,49 @@ async fn reconcile_replayed_file_progress(
         .with_context("actual_size", actual_size.to_string()));
     }
 
+    if actual_size > state_snapshot.expected_offset {
+        // This is the same write-ahead ordering window without a replayed
+        // pending marker (for example, a crash before that checkpoint became
+        // durable). The bytes beyond the WAL frontier are not authoritative.
+        truncate_staged_file_to(temp_path, state_snapshot.expected_offset).await?;
+        debug!(
+            material_id = %material_id,
+            actual_size,
+            rollback_size = state_snapshot.expected_offset,
+            "Truncated uncommitted staged suffix while restoring material progress"
+        );
+        return Ok(());
+    }
+
     Ok(())
+}
+
+async fn truncate_staged_file_to(temp_path: &Path, size: i64) -> EventEngineResult<()> {
+    let size = u64::try_from(size).map_err(|error| {
+        SinexError::invalid_state("staged file rollback offset is negative")
+            .with_context("path", temp_path.display().to_string())
+            .with_std_error(&error)
+    })?;
+    let file = File::options()
+        .write(true)
+        .open(temp_path)
+        .await
+        .map_err(|error| {
+            SinexError::io("failed to open staged file for crash recovery")
+                .with_context("path", temp_path.display().to_string())
+                .with_source(error)
+        })?;
+    file.set_len(size).await.map_err(|error| {
+        SinexError::io("failed to truncate uncommitted staged suffix")
+            .with_context("path", temp_path.display().to_string())
+            .with_context("size", size.to_string())
+            .with_source(error)
+    })?;
+    file.sync_data().await.map_err(|error| {
+        SinexError::io("failed to sync staged-file rollback")
+            .with_context("path", temp_path.display().to_string())
+            .with_source(error)
+    })
 }
 
 async fn staged_file_size_bytes(temp_path: &Path) -> EventEngineResult<i64> {
@@ -939,13 +999,13 @@ pub(super) async fn append_wal_entry(
     })?;
     let crc = crc32fast::hash(&entry_json);
     let seq = state.wal_seq;
-    state.wal_seq += 1;
-
     let envelope = WalEntryEnvelope { seq, crc, entry };
     let serialized = serde_json::to_string(&envelope).map_err(|e| {
         SinexError::serialization("failed to serialize WAL envelope").with_std_error(&e)
     })?;
     let wal_bytes = serialized.len().saturating_add(1);
+    assembler.fault_injector.inject(FaultPoint::MaterialWal)?;
+    state.wal_seq += 1;
 
     if let Some(file) = state.wal_file.as_mut() {
         file.write_all(serialized.as_bytes())
@@ -1106,7 +1166,7 @@ pub(super) async fn handle_slice(
         let expected_slices = end.total_slices;
         let Some(incoming_end) = offset.checked_add(data.len() as i64) else {
             let resume_phase = state.phase;
-            state.phase = AssemblyPhase::Finalizing;
+            state.mark_finalizing();
             drop(state);
 
             assembler
@@ -1138,7 +1198,7 @@ pub(super) async fn handle_slice(
 
         if incoming_end > expected_total_bytes {
             let resume_phase = state.phase;
-            state.phase = AssemblyPhase::Finalizing;
+            state.mark_finalizing();
             drop(state);
 
             assembler
@@ -1186,7 +1246,7 @@ pub(super) async fn handle_slice(
                 let buffered_count = state.buffered_slices.len();
                 let expected_offset = state.expected_offset;
                 let resume_phase = state.phase;
-                state.phase = AssemblyPhase::Finalizing;
+                state.mark_finalizing();
                 drop(state);
 
                 assembler
@@ -1243,7 +1303,7 @@ pub(super) async fn handle_slice(
                 let expected_offset = state.expected_offset;
                 let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
                 let resume_phase = state.phase;
-                state.phase = AssemblyPhase::Finalizing;
+                state.mark_finalizing();
                 drop(state);
 
                 assembler
@@ -1269,7 +1329,7 @@ pub(super) async fn handle_slice(
                     let expected_offset = state.expected_offset;
                     let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
                     let resume_phase = state.phase;
-                    state.phase = AssemblyPhase::Finalizing;
+                    state.mark_finalizing();
                     drop(state);
 
                     assembler
@@ -1325,6 +1385,7 @@ pub(super) async fn handle_slice(
             let slice_io_lock = assembler.slice_io_lock(material_id);
             let _slice_io_guard = slice_io_lock.lock().await;
             notify_slice_staging_io_for_tests().await;
+            assembler.fault_injector.inject(FaultPoint::MaterialStagedFile)?;
             stage_slice_file(material_id, &temp_path, &pending_write, &data, staged_sync).await?;
             let mut state = state_handle.lock().await;
             commit_pending_slice_write(
@@ -1623,7 +1684,7 @@ async fn commit_pending_slice_write(
     } else {
         assembler
             .durability_policy
-            .sync_staged_file_if_needed(state, material_id, false)
+            .sync_staged_file_if_needed(state, material_id, true)
             .await?;
     }
 
@@ -1636,6 +1697,15 @@ async fn commit_pending_slice_write(
         },
     )
     .await?;
+
+    // A source frame may be ACKed as soon as this handler returns. The staged
+    // bytes and the WAL commit record must therefore both be durable before
+    // returning; otherwise a power loss can acknowledge a slice that restart
+    // cannot reconstruct or redeliver.
+    assembler
+        .durability_policy
+        .sync_wal_if_needed(state, true)
+        .await?;
 
     state.hasher.update(data);
     state.expected_offset = expected_size_after_write;
@@ -1759,7 +1829,7 @@ async fn notify_slice_staging_io_for_tests() {}
 pub(super) async fn import_into_content_store(
     assembler: &MaterialAssembler,
     state: &FinalizationState,
-) -> EventEngineResult<ContentStoreKey> {
+) -> EventEngineResult<(ContentStoreKey, CasWriteLease)> {
     let staging_path = Utf8PathBuf::from_path_buf(state.temp_path.clone()).map_err(|path| {
         SinexError::io(format!(
             "Staging path is not valid utf-8 for content-store import: {}",
@@ -1769,7 +1839,7 @@ pub(super) async fn import_into_content_store(
 
     assembler
         .content_store
-        .store_file(&staging_path)
+        .store_owned_temp_file_with_lease(&staging_path)
         .await
         .map_err(|e| SinexError::io("content-store import failed").with_source(e))
 }

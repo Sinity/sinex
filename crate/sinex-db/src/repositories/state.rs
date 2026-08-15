@@ -6,12 +6,17 @@
 
 use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::OperationsLog;
+use crate::repositories::DbPoolExt;
+use crate::repositories::replay::REPLAY_ARCHIVE_PAGE_SIZE;
 use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use num_traits::ToPrimitive;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{ModuleKind, ModuleName, ModuleState, OperationStatus};
+use sinex_primitives::domain::{
+    HealthStatus, ModuleKind, ModuleName, ModuleState, OperationStatus,
+};
 use sinex_primitives::error::SinexError;
+use sinex_primitives::{RuntimeLivenessEvidence, RuntimeLivenessMembership};
 use sqlx::postgres::types::PgRange;
 use sqlx::{Executor, PgPool, Postgres};
 use std::ops::Bound;
@@ -22,15 +27,17 @@ mod helpers;
 mod tombstone;
 mod types;
 
-pub use helpers::PROJECTION_REBUILD_OPERATION_TYPE;
+pub use helpers::{
+    PROJECTION_REBUILD_OPERATION_TYPE, REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE,
+};
 use helpers::{
     MANAGED_OPERATION_TYPES, SQLSTATE_UNDEFINED_FUNCTION, module_heartbeat_stale_after,
     probe_health, probe_health_bool,
 };
 pub use types::{
     AutomataStatusRow, LiveModulePresence, ManifestRow, ModuleHealthSummary, ModuleManifest,
-    ModuleRun, Operation, OperationRecord, OperationStatistics, SourcesStatusRow,
-    SystemHealthReport,
+    ModuleRun, Operation, OperationRecord, OperationStatistics, RuntimeLivenessEvidenceRow,
+    SourcesStatusRow, SystemHealthReport,
 };
 
 /// State repository combining checkpoints and operations
@@ -633,6 +640,179 @@ impl StateRepository<'_> {
         })
     }
 
+    /// Restore the bounded archive journal for a replay operation whose normal
+    /// compensation could not finish. The recovery itself is an audited
+    /// operation and is deliberately separate from projection invalidation
+    /// recovery: restoring authoritative events must not be mistaken for
+    /// declaring projections fresh.
+    pub async fn recover_replay_archive(
+        &self,
+        operator: &str,
+        replay_operation_id: Uuid,
+    ) -> DbResult<OperationRecord> {
+        let metadata = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id = $1::uuid
+              AND operation_type = 'replay'
+            "#,
+            replay_operation_id,
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "fetch replay archive recovery metadata"))?
+        .ok_or_else(|| {
+            SinexError::not_found(format!("Replay operation not found: {replay_operation_id}"))
+        })?;
+
+        let archive_reason = format!(
+            "superseded by replay re-execution (operation {replay_operation_id})"
+        );
+        let recovery_scope = serde_json::json!({
+            "replay_operation_id": replay_operation_id.to_string(),
+            "archive_reason": archive_reason,
+        });
+
+        // A caller may lose the response after the recovery operation commits.
+        // Treat a later request as a retry of that durable operation when the
+        // journal is empty; otherwise a stale success marker must not hide
+        // remaining authoritative rows.
+        if let Some(existing) = sqlx::query_as::<_, OperationRecord>(
+            r#"
+            SELECT
+                id,
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            FROM core.operations_log
+            WHERE operation_type = $1
+              AND result_status = $2
+              AND scope @> $3
+            ORDER BY id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE)
+        .bind(OperationStatus::Success)
+        .bind(&recovery_scope)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "find replay archive recovery operation"))?
+        {
+            if self
+                .pool
+                .replay()
+                .archived_replay_event_ids_page(&archive_reason, 1)
+                .await?
+                .is_empty()
+            {
+                return Ok(existing);
+            }
+        }
+
+        let recovery = self
+            .start_operation(
+                REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE,
+                operator,
+                recovery_scope,
+            )
+            .await?;
+
+        let restore_result = async {
+            let mut restored = 0_u64;
+            loop {
+                let page = self
+                    .pool
+                    .replay()
+                    .archived_replay_event_ids_page(&archive_reason, REPLAY_ARCHIVE_PAGE_SIZE)
+                    .await?;
+                if page.is_empty() {
+                    break;
+                }
+                let restored_page = self
+                    .pool
+                    .events()
+                    .execute_cascade_restore(&page, &recovery.id.to_string())
+                    .await?;
+                if restored_page == 0 {
+                    return Err(SinexError::service(
+                        "Replay archive recovery made no progress; conflicting archived rows remain",
+                    )
+                    .with_id("replay_operation_id", replay_operation_id.to_string())
+                    .with_context("archive_reason", archive_reason.clone()));
+                }
+                restored += restored_page;
+            }
+            Ok::<u64, SinexError>(restored)
+        }
+        .await;
+
+        match restore_result {
+            Ok(restored) => {
+                let summary = serde_json::json!({
+                    "replay_operation_id": replay_operation_id.to_string(),
+                    "archive_reason": archive_reason,
+                    "restored_events": restored,
+                    "archive_recovery": "completed",
+                });
+                self.update_operation_meta(
+                    &recovery.id,
+                    OperationStatus::Success,
+                    Some("Replay archive journal restored"),
+                    summary,
+                )
+                .await?;
+                self.get_operation(&recovery.id)
+                    .await?
+                    .ok_or_else(|| SinexError::database("archive recovery operation disappeared"))
+            }
+            Err(error) => {
+                let summary = metadata.preview_summary.unwrap_or_else(|| serde_json::json!({}));
+                let _ = self
+                    .update_operation_meta(
+                        &recovery.id,
+                        OperationStatus::Failed,
+                        Some(&error.to_string()),
+                        summary,
+                    )
+                    .await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Return terminal replay operations whose archive journal still contains
+    /// rows. These are recoverable debt even when the original operation is no
+    /// longer in an executing/cancelling/committing state; startup must not
+    /// mistake a terminal status for proof that the archive is empty.
+    pub async fn list_failed_replay_archive_debt(&self, limit: i64) -> DbResult<Vec<Uuid>> {
+        sqlx::query_scalar(
+            r#"
+            SELECT o.id
+            FROM core.operations_log AS o
+            WHERE o.operation_type = 'replay'
+              AND o.result_status = 'failure'
+              AND EXISTS (
+                  SELECT 1
+                  FROM audit.archived_events AS ae
+                  WHERE ae.archive_reason =
+                      'superseded by replay re-execution (operation ' || o.id::text || ')'
+              )
+            ORDER BY o.id
+            LIMIT $1
+            "#,
+        )
+        .bind(limit.clamp(1, 100))
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list failed replay archive recovery debt"))
+    }
+
     /// Drain a pending replay scope invalidation marker through a completed
     /// projection-rebuild operation.
     ///
@@ -846,7 +1026,25 @@ impl StateRepository<'_> {
             r"SELECT
                 id,
                 operation_type, operator, scope,
-                result_status, result_message, preview_summary, duration_ms
+                result_status, result_message,
+                CASE
+                    WHEN operation_type = 'replay'
+                         AND jsonb_typeof(COALESCE(preview_summary, '{}'::jsonb)) = 'object'
+                    THEN jsonb_set(
+                        COALESCE(preview_summary, '{}'::jsonb),
+                        '{archive_recovery,remaining_archived_events}',
+                        to_jsonb((
+                            SELECT COUNT(*)
+                            FROM audit.archived_events ae
+                            WHERE ae.archive_reason =
+                                'superseded by replay re-execution (operation '
+                                || core.operations_log.id::text || ')'
+                        )),
+                        true
+                    )
+                    ELSE preview_summary
+                END AS preview_summary,
+                duration_ms
             FROM core.operations_log WHERE 1=1",
         );
 
@@ -914,7 +1112,7 @@ impl StateRepository<'_> {
             UPDATE core.operations_log
             SET result_status = 'cancelled',
                 result_message = $2,
-                duration_ms = (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(id))) * 1000)::integer
+                duration_ms = (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(id))) * 1000)::bigint
             WHERE id = $1
             "#,
             id.to_uuid(),
@@ -1011,10 +1209,12 @@ impl StateRepository<'_> {
         )
         .fetch_optional(self.pool)
         .await?
-        .ok_or_else(|| crate::repositories::common::db_error(
-            sqlx::Error::RowNotFound,
-            "start_run: ON CONFLICT DO NOTHING returned no row"
-        ))
+        .ok_or_else(|| {
+            crate::repositories::common::db_error(
+                sqlx::Error::RowNotFound,
+                "start_run: ON CONFLICT DO NOTHING returned no row",
+            )
+        })
     }
 
     /// Refresh the mutable heartbeat timestamp for a running module run.
@@ -1328,6 +1528,81 @@ impl StateRepository<'_> {
         })
     }
 
+    /// List raw runtime evidence for gateway health without liveness filtering.
+    ///
+    /// Failed runs, stale telemetry, and historical output timestamps must reach
+    /// the canonical evaluator. Membership is carried separately so manifests
+    /// with no run and historical stopped runs do not become false failures.
+    pub async fn list_runtime_liveness_evidence(&self) -> DbResult<Vec<RuntimeLivenessEvidence>> {
+        let rows = sqlx::query_as!(
+            RuntimeLivenessEvidenceRow,
+            r#"
+            SELECT
+                nm.name as "module_name!: ModuleName",
+                nm.manifest_type::text as "module_kind!: ModuleKind",
+                latest_run.status as "run_status?",
+                health.status as "health_status: HealthStatus",
+                health.last_update as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
+                outputs.last_output_at as "last_output_at: sinex_primitives::temporal::Timestamp",
+                (latest_run.module_run_id IS NOT NULL) as "has_concrete_run!",
+                COALESCE(latest_run.status = 'stopped', false) as "historical_stopped!"
+            FROM core.manifests nm
+            LEFT JOIN LATERAL (
+                SELECT
+                    nr.id AS module_run_id,
+                    nr.status
+                FROM core.runs nr
+                WHERE nr.manifest_id = nm.id
+                ORDER BY nr.started_at DESC, nr.id DESC
+                LIMIT 1
+            ) latest_run ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    ch.status,
+                    ch.last_update
+                FROM sinex_telemetry.current_health ch
+                WHERE ch.source = 'sinex'
+                  AND ch.component = nm.name::text
+                ORDER BY ch.last_update DESC
+                LIMIT 1
+            ) health ON true
+            LEFT JOIN LATERAL (
+                SELECT MAX(e.ts_coided) AS last_output_at
+                FROM core.events e
+                WHERE latest_run.module_run_id IS NOT NULL
+                  AND e.module_run_id = latest_run.module_run_id
+                  AND (
+                      (nm.manifest_type = 'source' AND e.source_material_id IS NOT NULL)
+                      OR (nm.manifest_type = 'automaton' AND e.source_event_ids IS NOT NULL)
+                  )
+            ) outputs ON true
+            ORDER BY nm.name, nm.version
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list runtime liveness evidence"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| RuntimeLivenessEvidence {
+                module_name: row.module_name,
+                module_kind: row.module_kind,
+                membership: if !row.has_concrete_run {
+                    RuntimeLivenessMembership::DisabledOrProfileGated
+                } else if row.historical_stopped {
+                    RuntimeLivenessMembership::HistoricalStopped
+                } else {
+                    RuntimeLivenessMembership::Assessed
+                },
+                run_status: row.run_status,
+                health_status: row.health_status,
+                last_heartbeat_at: row.last_heartbeat_at,
+                last_output_at: row.last_output_at,
+            })
+            .collect())
+    }
+
     /// Get runtime health status
     pub async fn get_runtime_health(&self, stale_after: Duration) -> DbResult<ModuleHealthSummary> {
         let stale_secs = stale_after.as_secs() as f64;
@@ -1443,8 +1718,11 @@ impl StateRepository<'_> {
                 nm.description,
                 nr.status as "manifest_status?",
                 (
-                    COALESCE(health.status IN ('healthy', 'degraded'), false)
-                    OR outputs.last_output_at IS NOT NULL
+                    nr.status IN ('running', 'draining', 'paused')
+                    AND (
+                        COALESCE(health.status IN ('healthy', 'degraded'), false)
+                        OR outputs.last_output_at IS NOT NULL
+                    )
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
@@ -1572,7 +1850,9 @@ impl StateRepository<'_> {
                     COUNT(*) FILTER (
                         WHERE e.ts_coided > NOW() - make_interval(secs => $2::float8)
                     ) AS recent_output_count,
-                    MAX(e.ts_coided) AS last_output_at,
+                    MAX(e.ts_coided) FILTER (
+                        WHERE e.ts_coided > NOW() - make_interval(secs => $2::float8)
+                    ) AS last_output_at,
                     MAX(e.ts_coided) FILTER (WHERE e.created_by_operation_id IS NOT NULL)
                         AS last_replay_at
                 FROM core.events e
@@ -1627,8 +1907,11 @@ impl StateRepository<'_> {
                 nm.description,
                 nr.status as "manifest_status?",
                 (
-                    COALESCE(health.status IN ('healthy', 'degraded'), false)
-                    OR outputs.last_output_at IS NOT NULL
+                    nr.status IN ('running', 'draining', 'paused')
+                    AND (
+                        COALESCE(health.status IN ('healthy', 'degraded'), false)
+                        OR outputs.last_output_at IS NOT NULL
+                    )
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,

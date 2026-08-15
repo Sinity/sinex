@@ -110,21 +110,18 @@ impl<T> Id<T> {
         }
     }
 
-    /// Extract timestamp from the `UUIDv7`
+    /// Extract an embedded timestamp from a time-ordered UUID.
+    ///
+    /// UUIDs without an embedded timestamp (for example UUIDv4) return
+    /// `None`.  A missing timestamp is an unknown clock, not permission to
+    /// substitute the current wall clock.
     #[must_use]
-    pub fn timestamp(&self) -> Timestamp {
-        if let Some(ts) = self.uuid.get_timestamp() {
-            let (secs, nanos) = ts.to_unix();
-            match time::OffsetDateTime::from_unix_timestamp(secs as i64) {
-                Ok(dt) => {
-                    let full_dt = dt + time::Duration::nanoseconds(i64::from(nanos));
-                    Timestamp::new(full_dt)
-                }
-                Err(_) => Timestamp::now(), // Fallback
-            }
-        } else {
-            Timestamp::now() // Fallback if not v7/v6/v1
-        }
+    pub fn timestamp(&self) -> Option<Timestamp> {
+        let ts = self.uuid.get_timestamp()?;
+        let (secs, nanos) = ts.to_unix();
+        let dt = time::OffsetDateTime::from_unix_timestamp(secs as i64).ok()?;
+        let full_dt = dt + time::Duration::nanoseconds(i64::from(nanos));
+        Some(Timestamp::new(full_dt))
     }
 }
 

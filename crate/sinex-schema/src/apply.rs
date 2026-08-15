@@ -1,14 +1,13 @@
 use crate::defs::{
     ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems,
-    AuthorityFinalizerRegistry, BinarySchemaVersion, Blobs, DerivationEpochs,
-    DerivationLaneDiffs, DerivationLaneOutputs, DerivationLanes, DerivationProductDeclarations,
+    AuthorityFinalizerRegistry, BinarySchemaVersion, Blobs, DerivationEpochs, DerivationLaneDiffs,
+    DerivationLaneOutputs, DerivationLanes, DerivationProductDeclarations,
     DerivationProjectionDependencies, DerivationProjectionRegistry, DocumentChunks, Documents,
     EmailMailboxProjection, EmailProviderState, EmbeddingCache, EmbeddingModels, Entities,
     EntityRelations, EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings,
-    EventPayloadSchemas, EventReplacements, EventTombstones, Events, Manifests, ModelEffects,
-    OperationsLog, Runs, SourceMaterialLinks, SourceMaterialRegistry, SourceSessionState,
-    TaggedItems, Tags,
-    TemporalLedger,
+    EventPayloadSchemas, EventReplacements, EventTombstones, Events, ImportOutcomes, Manifests,
+    ModelEffects, OperationsLog, Runs, SourceMaterialLinks, SourceMaterialRegistry,
+    SourceSessionState, TaggedItems, Tags, TemporalLedger,
 };
 use crate::registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -63,6 +62,11 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     // index degrades the lookup to a sequential scan on the hypertable and
     // `apply::diff` never reports the loss (#2196 Finding 2).
     "ix_events_equivalence_key",
+    // Blob tombstone reference checks use array containment on live events.
+    // Keep the GIN index in the drift inventory as well as the create list so
+    // a manual drop cannot silently turn every blob check into a hypertable
+    // scan.
+    "ix_events_associated_blob_ids",
     // Partial index backing self-telemetry queries (created by
     // `configure_timescaledb`). Listed here so drift detection covers it.
     "ix_events_sinex_telemetry",
@@ -99,6 +103,7 @@ const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_source_ts_orig",
     "ix_archived_events_archived_at",
     "ix_archived_events_source_event_ids",
+    "ix_archived_events_associated_blob_ids",
 ];
 const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
     "uk_temporal_ledger_material_offset_source_type",
@@ -185,6 +190,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     create_tables(pool).await?;
     crate::converge::converge_tables(pool, &convergible_tables).await?;
     converge_operations_log_constraints(pool).await?;
+    converge_operations_log_duration_type(pool).await?;
     converge_source_material_registry_constraints(pool).await?;
     normalize_manifest_type_values(pool).await?;
     converge_db_check_constraints(pool).await?;
@@ -477,6 +483,41 @@ async fn converge_operations_log_constraints(pool: &PgPool) -> Result<(), ApplyE
     .await?;
 
     Ok(())
+}
+
+async fn converge_operations_log_duration_type(pool: &PgPool) -> Result<(), ApplyError> {
+    let Some(data_type) = sqlx::query_scalar::<_, String>(
+        r"
+        SELECT data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'core'
+          AND table_name = 'operations_log'
+          AND column_name = 'duration_ms'
+        ",
+    )
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(());
+    };
+
+    match data_type.as_str() {
+        "bigint" => Ok(()),
+        "integer" => {
+            execute_sql(
+                pool,
+                r"
+                ALTER TABLE core.operations_log
+                    ALTER COLUMN duration_ms TYPE BIGINT
+                    USING duration_ms::bigint
+                ",
+            )
+            .await
+        }
+        other => Err(ApplyError::Internal(format!(
+            "core.operations_log.duration_ms has unexpected type {other}"
+        ))),
+    }
 }
 
 async fn operations_log_operation_type_constraint_is_current(
@@ -881,6 +922,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&EventClusterMembers::create_table_statement()),
         render_table(&EventTombstones::create_table_statement()),
         render_table(&EventReplacements::create_table_statement()),
+        render_table(&ImportOutcomes::create_table_statement()),
         render_table(&Documents::create_table_statement()),
         render_table(&DocumentChunks::create_table_statement()),
     ];
@@ -943,12 +985,9 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.push(Events::create_claim_adjudication_index_sql());
     index_sql.push(Events::create_text_search_index_sql());
     // Derivation control plane (sinex-0vx.4 / W1): reflection.events needs the
-    // same two indexes as core.events. reflection.events is not in the
-    // ConvergibleTable/MirrorSpec engine (it converges via the hand-rolled
-    // REFLECTION_EVENTS_TABLE_SQL DO-block instead — see that constant), and
-    // CREATE TABLE ... LIKE only clones indexes existing on core.events at
-    // creation time, so these are declared explicitly rather than assumed
-    // inherited.
+    // same two indexes as core.events. Mirror convergence owns columns and
+    // named checks, but indexes remain explicit because CREATE TABLE ... LIKE
+    // only clones indexes present at creation time.
     index_sql.push(
         "CREATE INDEX IF NOT EXISTS ix_events_product_class ON reflection.events (product_class, source, event_type) WHERE product_class IS NOT NULL"
             .to_string(),
@@ -993,14 +1032,20 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(Entities::create_gin_indexes_sql());
     index_sql.extend(Entities::create_trigram_indexes_sql());
     index_sql.extend(render_indexes(EntityRelations::create_indexes()));
-    index_sql.extend(render_indexes(DerivationProductDeclarations::create_indexes()));
+    index_sql.extend(render_indexes(
+        DerivationProductDeclarations::create_indexes(),
+    ));
     index_sql.extend(render_indexes(DerivationEpochs::create_indexes()));
     index_sql.extend(render_indexes(DerivationLanes::create_indexes()));
     index_sql.extend(render_indexes(DerivationLaneOutputs::create_indexes()));
     index_sql.extend(render_indexes(DerivationLaneDiffs::create_indexes()));
-    index_sql.extend(render_indexes(DerivationProjectionRegistry::create_indexes()));
+    index_sql.extend(render_indexes(
+        DerivationProjectionRegistry::create_indexes(),
+    ));
     index_sql.extend(DerivationProjectionRegistry::create_gist_indexes_sql());
-    index_sql.extend(render_indexes(DerivationProjectionDependencies::create_indexes()));
+    index_sql.extend(render_indexes(
+        DerivationProjectionDependencies::create_indexes(),
+    ));
     index_sql.extend(render_indexes(AuthorityFinalizerRegistry::create_indexes()));
     index_sql.extend(render_indexes(TaggedItems::create_indexes()));
     index_sql.extend(render_indexes(EventAnnotations::create_indexes()));
@@ -1014,6 +1059,7 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(Manifests::create_indexes()));
     index_sql.extend(render_indexes(Runs::create_indexes()));
     index_sql.extend(render_indexes(EventReplacements::create_indexes()));
+    index_sql.extend(render_indexes(ImportOutcomes::create_indexes()));
     index_sql.extend(render_indexes(Documents::create_indexes()));
     index_sql.extend(render_indexes(DocumentChunks::create_indexes()));
     index_sql.extend(DocumentChunks::create_fts_indexes_sql());
@@ -1177,8 +1223,12 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
     )
     .await?;
 
-    ensure_function_set_sql(pool, OPERATIONS_AND_CASCADE_FUNCTIONS, OPERATIONS_AND_CASCADE_SQL)
-        .await?;
+    ensure_function_set_sql(
+        pool,
+        OPERATIONS_AND_CASCADE_FUNCTIONS,
+        OPERATIONS_AND_CASCADE_SQL,
+    )
+    .await?;
     ensure_function_set_sql(pool, TOMBSTONE_LIFECYCLE_FUNCTIONS, TOMBSTONE_LIFECYCLE_SQL).await?;
     ensure_function_set_sql(pool, JSONB_MERGE_FUNCTIONS, JSONB_MERGE_SQL).await?;
     ensure_function_and_trigger_set_sql(
@@ -1284,6 +1334,65 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(
         pool,
         "CREATE INDEX IF NOT EXISTS ix_events_source_family ON core.events ((split_part(source, '.', 1)))",
+    )
+    .await?;
+    // A root hypertable index is not sufficient evidence that every existing
+    // chunk has its physical index.  This can occur when a database was
+    // converged after chunks already existed, or when a prior per-chunk index
+    // operation stopped partway through.  Repair only missing chunk copies;
+    // do not drop/rebuild the root index, which would impose an avoidable
+    // table-wide lock on a large event store.  New chunks inherit the valid
+    // root index through Timescale's hypertable index machinery.
+    execute_sql(
+        pool,
+        r#"
+        DO $$
+        DECLARE
+            chunk_schema name;
+            chunk_name name;
+            chunk_index_name text;
+        BEGIN
+            FOR chunk_schema, chunk_name IN
+                SELECT c.chunk_schema, c.chunk_name
+                FROM timescaledb_information.chunks c
+                WHERE c.hypertable_schema = 'core'
+                  AND c.hypertable_name = 'events'
+            LOOP
+                chunk_index_name := chunk_name || '_ix_events_source_family';
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = chunk_schema
+                      AND tablename = chunk_name
+                      AND indexname = chunk_index_name
+                ) THEN
+                    EXECUTE format(
+                        'CREATE INDEX IF NOT EXISTS %I ON %I.%I ((split_part(source, ''.'', 1)))',
+                        chunk_index_name,
+                        chunk_schema,
+                        chunk_name
+                    );
+                END IF;
+
+                chunk_index_name := chunk_name || '_ix_events_associated_blob_ids';
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = chunk_schema
+                      AND tablename = chunk_name
+                      AND indexname = chunk_index_name
+                ) THEN
+                    EXECUTE format(
+                        'CREATE INDEX IF NOT EXISTS %I ON %I.%I USING GIN (associated_blob_ids) WHERE associated_blob_ids IS NOT NULL',
+                        chunk_index_name,
+                        chunk_schema,
+                        chunk_name
+                    );
+                END IF;
+            END LOOP;
+        END
+        $$;
+        "#,
     )
     .await?;
     configure_reflection_timescaledb(pool).await?;
@@ -1741,11 +1850,7 @@ async fn mark_view_applied(
 /// Skip only when the declared SQL hash matches what was last applied (the
 /// real no-op case); always apply -- and re-stamp the hash -- when the
 /// relation is missing or the declared SQL has changed.
-async fn ensure_view_sql(
-    pool: &PgPool,
-    qualified_name: &str,
-    sql: &str,
-) -> Result<(), ApplyError> {
+async fn ensure_view_sql(pool: &PgPool, qualified_name: &str, sql: &str) -> Result<(), ApplyError> {
     let expected_hash = view_sql_hash(sql);
     let exists = matches!(relation_kind(pool, qualified_name).await?, Some('v'));
 
@@ -2038,7 +2143,7 @@ RETURNS UUID AS $$
 DECLARE
     v_operation_id UUID;
 BEGIN
-    IF p_operation_type NOT IN ('replay', 'archive', 'restore', 'purge', 'tombstone', 'projection-rebuild') THEN
+    IF p_operation_type NOT IN ('import', 'replay', 'archive', 'restore', 'purge', 'tombstone', 'dlq.requeue', 'projection-rebuild', 'replay-archive-recovery') THEN
         RAISE EXCEPTION 'Unsupported managed operation type: %', p_operation_type
             USING ERRCODE = '22023';
     END IF;
@@ -2059,7 +2164,7 @@ BEGIN
         result_message = p_summary->>'message',
         duration_ms = COALESCE(
             duration_ms,
-            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::integer
+            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::bigint
         ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_summary
     WHERE id = p_operation_id;
@@ -2080,7 +2185,7 @@ BEGIN
         result_message = p_error->>'error',
         duration_ms = COALESCE(
             duration_ms,
-            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::integer
+            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::bigint
         ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_error
     WHERE id = p_operation_id;
@@ -2336,32 +2441,160 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     v_count BIGINT;
+    v_existing_receipt TEXT;
+    v_existing_count BIGINT;
 BEGIN
-    IF p_archived_ids IS NULL OR array_length(p_archived_ids, 1) IS NULL THEN
-        RETURN 0;
+    -- Serialize every invocation for this operation and make a previously
+    -- committed boundary authoritative. This covers concurrent approval
+    -- retries, which may arrive after the first invocation has removed the
+    -- archive rows and would otherwise overwrite the receipt with zero.
+    SELECT
+        scope->>'deletion_committed_at',
+        NULLIF(scope->>'tombstoned_count', '')::BIGINT
+    INTO v_existing_receipt, v_existing_count
+    FROM core.operations_log
+    WHERE id = p_operation_id
+      AND operation_type = 'tombstone'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'tombstone operation % not found while recording deletion boundary',
+            p_operation_id;
     END IF;
 
-    INSERT INTO core.event_tombstones (
-        id, source, event_type, ts_orig, ts_purged,
-        purge_reason, purge_operation_id, archived_at
-    )
-    SELECT
-        ae.id,
-        ae.source,
-        ae.event_type,
-        ae.ts_orig,
-        now(),
-        p_reason,
-        p_operation_id,
-        ae.archived_at
-    FROM audit.archived_events ae
-    WHERE ae.id = ANY(p_archived_ids)
-    ON CONFLICT (id) DO NOTHING;
+    IF v_existing_receipt IS NOT NULL THEN
+        IF v_existing_count IS NULL THEN
+            RAISE EXCEPTION 'tombstone operation % has an incomplete deletion boundary receipt',
+                p_operation_id;
+        END IF;
+        RETURN v_existing_count;
+    END IF;
 
-    GET DIAGNOSTICS v_count = ROW_COUNT;
+    IF p_archived_ids IS NOT NULL AND array_length(p_archived_ids, 1) IS NOT NULL THEN
+        -- Capture material roots before the archive rows disappear. Projection
+        -- rows may point at the material rather than at the event itself.
+        DROP TABLE IF EXISTS _tombstone_material_ids;
+        CREATE TEMP TABLE _tombstone_material_ids ON COMMIT DROP AS
+        SELECT DISTINCT source_material_id
+        FROM audit.archived_events
+        WHERE id = ANY(p_archived_ids)
+          AND source_material_id IS NOT NULL;
 
-    DELETE FROM audit.archived_events
-    WHERE id = ANY(p_archived_ids);
+        DROP TABLE IF EXISTS _tombstone_document_ids;
+        CREATE TEMP TABLE _tombstone_document_ids ON COMMIT DROP AS
+        SELECT DISTINCT d.id
+        FROM core.documents d
+        WHERE d.parsed_event_id = ANY(p_archived_ids)
+        UNION
+        SELECT DISTINCT dc.document_id
+        FROM core.document_chunks dc
+        WHERE dc.chunked_event_id = ANY(p_archived_ids);
+
+        INSERT INTO core.event_tombstones (
+            id, source, event_type, ts_orig, ts_purged,
+            purge_reason, purge_operation_id, archived_at
+        )
+        SELECT
+            ae.id,
+            ae.source,
+            ae.event_type,
+            ae.ts_orig,
+            now(),
+            p_reason,
+            p_operation_id,
+            ae.archived_at
+        FROM audit.archived_events ae
+        WHERE ae.id = ANY(p_archived_ids)
+        ON CONFLICT (id) DO NOTHING;
+
+        GET DIAGNOSTICS v_count = ROW_COUNT;
+
+        -- Permanent deletion must remove every archive-side row carrying event
+        -- content before deleting the archive root.  These tables intentionally
+        -- do not have foreign keys back to audit.archived_events (LIKE does not
+        -- copy them), so leaving them behind would strand sensitive annotations,
+        -- embedded text, or tags with no later purge path.
+        DELETE FROM audit.archived_annotations
+        WHERE event_id = ANY(p_archived_ids);
+
+        DELETE FROM audit.archived_embeddings
+        WHERE event_id = ANY(p_archived_ids);
+
+        DELETE FROM audit.archived_tagged_items
+        WHERE item_id = ANY(p_archived_ids) AND item_type = 'event';
+
+        -- Remove event-linked rebuildable projections in the same irreversible
+        -- transaction. These tables intentionally do not all have foreign keys
+        -- to the event/archive roots, so archive deletion alone is insufficient
+        -- for privacy completeness.
+        DELETE FROM core.document_chunks
+        WHERE chunked_event_id = ANY(p_archived_ids)
+           OR document_id IN (SELECT id FROM _tombstone_document_ids);
+
+        DELETE FROM core.documents
+        WHERE id IN (SELECT id FROM _tombstone_document_ids)
+           OR parsed_event_id = ANY(p_archived_ids);
+
+        DELETE FROM core.email_mailbox_projection
+        WHERE last_message_event_id = ANY(p_archived_ids)
+           OR last_thread_event_id = ANY(p_archived_ids)
+           OR last_attachment_event_id = ANY(p_archived_ids)
+           OR raw_material_id IN (
+               SELECT source_material_id::text FROM _tombstone_material_ids
+           );
+
+        DELETE FROM derivation.lane_outputs
+        WHERE source_event_id = ANY(p_archived_ids)
+           OR source_material_id IN (SELECT source_material_id FROM _tombstone_material_ids);
+
+        -- `core.event_temporal_facts` is a live view over `core.events` and
+        -- `raw.temporal_ledger`, not an authority table. Deleting from it
+        -- raises `cannot delete from view`; the underlying event/archive and
+        -- ledger lifecycle operations above/below remove its visible rows.
+
+        DELETE FROM core.event_cluster_members
+        WHERE event_id = ANY(p_archived_ids);
+
+        DELETE FROM core.model_effects
+        WHERE source_event_id = ANY(p_archived_ids);
+
+        DELETE FROM sinex_schemas.dlq_events
+        WHERE failed_event_id = ANY(p_archived_ids);
+
+        DELETE FROM core.entity_relations
+        WHERE source_event_ids && p_archived_ids;
+
+        DELETE FROM core.entities
+        WHERE source_event_ids && p_archived_ids;
+
+        DELETE FROM core.event_annotations
+        WHERE event_id = ANY(p_archived_ids);
+
+        DELETE FROM core.event_embeddings
+        WHERE event_id = ANY(p_archived_ids);
+
+        DELETE FROM audit.archived_events
+        WHERE id = ANY(p_archived_ids);
+    ELSE
+        v_count := 0;
+    END IF;
+
+    -- Record the irreversible deletion boundary in the operation row before
+    -- this transaction can commit. A later completion update may be lost, but
+    -- this receipt makes the operation safely resumable and handles zero-row
+    -- counts that event_tombstone witnesses alone cannot represent.
+    SELECT count(*)::bigint INTO v_count
+    FROM core.event_tombstones
+    WHERE purge_operation_id = p_operation_id
+      AND id = ANY(p_archived_ids);
+
+    UPDATE core.operations_log
+    SET scope = jsonb_set(
+        jsonb_set(scope, '{deletion_committed_at}',
+            to_jsonb(clock_timestamp()::text), true),
+        '{tombstoned_count}', to_jsonb(v_count), true)
+    WHERE id = p_operation_id
+      AND operation_type = 'tombstone';
 
     RETURN v_count;
 END;
@@ -2816,11 +3049,10 @@ $$;
 const REFLECTION_EVENTS_TABLE_SQL: &str = r"
 CREATE TABLE IF NOT EXISTS reflection.events (LIKE core.events INCLUDING ALL);
 
--- CREATE TABLE ... LIKE only copies columns at creation time. Columns added
--- to core.events after reflection.events already existed on a given database
--- must be explicitly propagated here (sinex-0vx.4 / W1: product_class,
--- claim_support, derivation_declaration_id, derivation_epoch_id,
--- derivation_lane_id, adjudication_event_id).
+-- CREATE TABLE ... LIKE only copies columns at creation time. The convergence
+-- engine propagates core.events columns and the provenance XOR check to this
+-- mirror. These explicit ADD COLUMN clauses retain compatibility for the
+-- derivation control-plane table bootstrap path.
 ALTER TABLE reflection.events
     ADD COLUMN IF NOT EXISTS product_class TEXT,
     ADD COLUMN IF NOT EXISTS claim_support JSONB,
@@ -3439,6 +3671,8 @@ ORDER BY last_updated DESC;
 // the database owner role.
 const ROLE_GRANTS_SQL: &str = r"
 GRANT USAGE ON SCHEMA core, reflection, raw, sinex_schemas, audit TO sinex_event_engine, sinex_api, sinex_readonly;
+GRANT SELECT, INSERT ON audit.import_outcomes TO sinex_event_engine;
+GRANT SELECT ON audit.import_outcomes TO sinex_api, sinex_readonly;
 
 -- Privacy policy (#1042): event_engine loads rules at the chokepoint; gateway manages
 -- them via sinexctl; readonly may inspect.

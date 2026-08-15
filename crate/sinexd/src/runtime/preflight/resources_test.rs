@@ -1,6 +1,6 @@
 use super::{
-    configured_hostname_resolution_probe, resolution_target_host, verify_disk_space,
-    verify_filesystem_permissions,
+    configured_data_dir, configured_hostname_resolution_probe, resolution_target_host,
+    verify_disk_space, verify_disk_space_for_paths, verify_filesystem_permissions,
 };
 use serde_json::Value;
 use std::fs;
@@ -15,8 +15,22 @@ fn spacious_tempdir() -> ::xtask::sandbox::TestResult<TempDir> {
 }
 
 #[sinex_test]
-async fn resolution_target_host_skips_local_and_socket_targets()
+async fn configured_data_dir_prefers_deployed_content_store_path()
 -> ::xtask::sandbox::TestResult<()> {
+    let root = spacious_tempdir()?;
+    let deployed_cas = root.path().join("deployed-cas");
+    let stale_data_dir = root.path().join("stale-data");
+    let mut env = EnvGuard::new();
+    env.set("SINEX_CONTENT_STORE_PATH", &deployed_cas);
+    env.set("SINEX_DATA_DIR", &stale_data_dir);
+
+    assert_eq!(configured_data_dir()?, deployed_cas.to_string_lossy());
+    Ok(())
+}
+
+#[sinex_test]
+async fn resolution_target_host_skips_local_and_socket_targets() -> ::xtask::sandbox::TestResult<()>
+{
     assert_eq!(
         resolution_target_host("postgresql://db.example/sinex"),
         Ok(Some("db.example".to_string()))
@@ -112,6 +126,28 @@ async fn verify_disk_space_accepts_missing_paths_when_parent_filesystem_exists()
             .as_bool()
             .unwrap_or(false),
         "missing work dir should reuse the nearest existing parent filesystem: {disk_info:#?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn startup_storage_preflight_rejects_insufficient_space() -> ::xtask::sandbox::TestResult<()>
+{
+    let paths = vec![(
+        "/runtime/sinex-data".to_string(),
+        "Sinex data directory".to_string(),
+        10.0,
+    )];
+    let mut messages = Vec::new();
+
+    let error = verify_disk_space_for_paths(&paths, &mut messages, |_| Ok((100.0, 9.0)))
+        .expect_err("the startup storage guard must fail when a runtime path is below its floor");
+
+    assert!(error.to_string().contains("Insufficient disk space"));
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("10.00GB required"))
     );
     Ok(())
 }

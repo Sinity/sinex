@@ -57,6 +57,9 @@ pub mod limits {
     /// NATS per-message limit enforced on the publisher side.
     pub const MAX_EVENT_PAYLOAD_BYTES: usize = 10 * 1024 * 1024;
 
+    /// Maximum accepted size of one source material (512 MiB).
+    pub const DEFAULT_SOURCE_MATERIAL_MAX_BYTES: usize = 512 * 1024 * 1024;
+
     /// Maximum string length for source names
     pub const MAX_SOURCE_NAME_LENGTH: usize = 255;
 

@@ -625,10 +625,63 @@ pub(crate) fn debt_rows_from_replay_operations(operations: &[OpsOperation]) -> V
 }
 
 pub(super) fn debt_row_from_replay_operation(operation: &OpsOperation) -> Option<DebtRowView> {
-    let marker = operation
-        .preview_summary
-        .as_ref()?
-        .get("scope_invalidation")?;
+    let preview = operation.preview_summary.as_ref()?;
+    let archive_recovery = preview.get("archive_recovery");
+    let remaining_archived_events = archive_recovery
+        .and_then(|recovery| recovery.get("remaining_archived_events"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    if remaining_archived_events > 0 {
+        let operation_ref =
+            SinexObjectRef::new(SinexObjectKind::Operation, operation.id.clone());
+        return Some(DebtRowView {
+            id: format!("debt:replay-archive:{}", operation.id),
+            kind: DebtKind::Projection,
+            stage: DebtStage::OperationFailed,
+            summary: format!(
+                "replay operation `{}` has {} stranded archived event(s) requiring archive recovery",
+                operation.id, remaining_archived_events
+            ),
+            refs: vec![operation_ref.clone()],
+            owner: Some(DebtOwnerView::operation(operation_ref.clone())),
+            age_secs: None,
+            freshness: None,
+            caveats: vec![CaveatView {
+                id: "replay.archive.recovery_required".to_string(),
+                message: "archived replay rows remain authoritative and must be restored or explicitly reconciled before destructive operations; terminal operation status does not clear this debt".to_string(),
+                ref_: Some(operation_ref.clone()),
+            }],
+            actions: vec![
+                ActionAvailability {
+                    id: "replay.archive.recover".to_string(),
+                    label: "Recover archive".to_string(),
+                    state: ActionAvailabilityState::Enabled,
+                    reason: Some(
+                        "restores the replay operation's bounded archive journal before destructive work"
+                            .to_string(),
+                    ),
+                    command_hint: Some(format!(
+                        "sinexctl ops start -t replay-archive-recovery -s '{}'",
+                        serde_json::json!({"replay_operation_id": operation.id})
+                    )),
+                    rpc_method: Some("ops.start".to_string()),
+                    side_effect: ActionSideEffect::Write,
+                    requires_confirmation: true,
+                    dry_run_available: false,
+                    audit_output_ref: None,
+                },
+                ActionAvailability::read(
+                    "replay.operation.inspect",
+                    "Inspect",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint(format!("sinexctl ops jobs show {}", operation.id))
+                .with_rpc_method("ops.get"),
+            ],
+        });
+    }
+
+    let marker = preview.get("scope_invalidation")?;
     if marker.get("phase").and_then(Value::as_str) != Some("pending") {
         return None;
     }

@@ -17,6 +17,7 @@
     use crate::event_engine::admission::AdmittedEvent;
     use sinex_db::DbPoolExt;
     use sinex_primitives::{Id, Uuid, events::DynamicPayload};
+    use std::time::Duration;
     use xtask::sandbox::prelude::*;
 
     // ─── Shared fixture source material UUID ─────────────────────────────────
@@ -924,10 +925,11 @@
         )
         .await?;
 
-        let engine_after = PolicyEngine::load(pool.clone()).await?;
         let payload2 = serde_json::json!({ "value": "CACHE_SENTINEL_XYZ" });
         let event2 = make_material_event("s", "t", payload2);
-        let result_after = engine_after.redact_batch(vec![admit(event2)]).await;
+        *engine_before.last_refresh.lock().await =
+            std::time::Instant::now() - engine_before.refresh_interval - Duration::from_secs(1);
+        let result_after = engine_before.redact_batch(vec![admit(event2)]).await;
         let value = result_after[0].event.payload["value"]
             .as_str()
             .unwrap_or("");

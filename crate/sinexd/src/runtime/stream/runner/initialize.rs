@@ -1,13 +1,13 @@
 //! `initialize_with_transport` for `RuntimeRunner`.
 //!
 //! The module initialization sequence: lifecycle gate, transport wiring,
-//! checkpoint manager bootstrap, schema/checkpoint listeners, leader election
-//! preparation, DB-backed registration, and runtime state assembly.
+//! checkpoint manager bootstrap, schema/checkpoint listeners, DB-backed
+//! registration, and runtime state assembly.
 
 use super::{
     Arc, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, ErasedInitContext, Event,
     EventBatcherConfig, EventEmitter, EventTransport, HashMap, JsonValue, ModuleKind, ModuleState,
-    PgPool, ProcessingModel, RunnerLifecycle, RuntimeHandles, RuntimeResult, RuntimeRunner,
+    PgPool, RunnerLifecycle, RuntimeHandles, RuntimeResult, RuntimeRunner,
     ServiceInfo, SinexError, Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener,
     mpsc, spawn_event_batcher, watch,
 };
@@ -18,12 +18,23 @@ impl RuntimeRunner {
     pub async fn initialize_with_transport(
         &mut self,
         service_name: impl Into<ServiceName>,
-        raw_config: HashMap<String, serde_json::Value>,
+        mut raw_config: HashMap<String, serde_json::Value>,
         #[cfg(feature = "db")] db_pool: Option<PgPool>,
         transport: EventTransport,
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> RuntimeResult<()> {
+        let default_created_by_operation_id = raw_config
+            .remove("__sinex_direct_scan_operation_id")
+            .map(serde_json::from_value::<sinex_primitives::Uuid>)
+            .transpose()
+            .map_err(|error| {
+                SinexError::configuration(
+                    "direct scan operation ID must be a UUID string in runtime configuration",
+                )
+                .with_std_error(&error)
+            })?;
+
         // Re-entrancy guard: only allow initialization from Created state
         match self.lifecycle {
             RunnerLifecycle::Created => {}
@@ -148,15 +159,8 @@ impl RuntimeRunner {
         // NATS is the only transport
         let transport_type = "NATS";
 
-        // Determine if automaton to enable LeaderStandby
-        if matches!(self.module.module_kind(), ModuleKind::Automaton) {
-            self.processing_model = ProcessingModel::LeaderStandby;
-        } else {
-            self.processing_model = ProcessingModel::StatelessWorker;
-        }
-
         #[cfg(feature = "db")]
-        let module_run_id = if let Some(pool) = db_pool.as_ref() {
+        let module_run_id = match if let Some(pool) = db_pool.as_ref() {
             self.register_runtime_identity(
                 pool,
                 &service_name,
@@ -165,9 +169,12 @@ impl RuntimeRunner {
                 &version,
                 &raw_config,
             )
-            .await?
+            .await
         } else {
-            None
+            Ok(None)
+        } {
+            Ok(module_run_id) => module_run_id,
+            Err(error) => return Err(self.fail_initialization(error).await),
         };
         #[cfg(not(feature = "db"))]
         let module_run_id = None;
@@ -186,6 +193,9 @@ impl RuntimeRunner {
 
         if let Some(module_run_id) = module_run_id {
             event_emitter = event_emitter.with_default_module_run_id(module_run_id);
+        }
+        if let Some(operation_id) = default_created_by_operation_id {
+            event_emitter = event_emitter.with_default_created_by_operation_id(operation_id);
         }
 
         // No LeaseManager passed to handles
@@ -263,8 +273,7 @@ impl RuntimeRunner {
             if let Some(pool) = handles.db_pool().cloned() {
                 Self::update_registered_run_status(&pool, &service_info, ModuleState::Failed).await;
             }
-            self.lifecycle = RunnerLifecycle::Created;
-            return Err(e);
+            return Err(self.fail_initialization(e).await);
         }
 
         self.handles = Some(handles);
@@ -316,6 +325,45 @@ impl RuntimeRunner {
         );
 
         Ok(())
+    }
+
+    /// Tear down tasks started before module initialization completed.
+    ///
+    /// `initialize_with_transport` starts the schema listener and optional
+    /// checkpoint cleanup loop before it can validate the module's typed
+    /// configuration. A later failure must explicitly await those tasks:
+    /// dropping their handles would otherwise detach them from the failed
+    /// runner.
+    async fn fail_initialization(&mut self, error: SinexError) -> SinexError {
+        let mut cleanup_errors = Vec::new();
+        Self::push_shutdown_error(
+            &mut cleanup_errors,
+            "schema broadcast listener",
+            Self::shutdown_task(
+                &mut self.schema_listener_handle,
+                self.schema_listener_shutdown.take(),
+                "schema broadcast listener",
+            )
+            .await,
+        );
+        Self::push_shutdown_error(
+            &mut cleanup_errors,
+            "checkpoint cleanup",
+            Self::shutdown_task(
+                &mut self.checkpoint_cleanup_handle,
+                self.checkpoint_cleanup_shutdown.take(),
+                "checkpoint cleanup",
+            )
+            .await,
+        );
+        self.event_batcher_shutdown.take();
+        self.lifecycle = RunnerLifecycle::Created;
+
+        match Self::collapse_shutdown_errors(cleanup_errors) {
+            Ok(()) => error,
+            Err(cleanup_error) => error
+                .with_context("initialization_cleanup_error", cleanup_error.to_string()),
+        }
     }
 
     pub(super) fn checkpoint_consumer_name(

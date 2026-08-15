@@ -202,9 +202,13 @@ fn merged_privacy_state(
     if payload.changed {
         return Some(payload.privacy_state.clone());
     }
-    snippet
-        .filter(|decision| decision.changed)
-        .map(|decision| decision.privacy_state.clone())
+    if let Some(snippet) = snippet.filter(|decision| decision.changed) {
+        return Some(snippet.privacy_state.clone());
+    }
+    // The query route did run disclosure, and the unchanged result is
+    // therefore known to be raw-visible for this route. Keep that fact
+    // distinct from the primitive constructor's unknown state.
+    Some(payload.privacy_state.clone())
 }
 
 fn disclosure_caveats(

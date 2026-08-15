@@ -55,6 +55,7 @@ const MAX_DBUS_MESSAGE_BYTES: usize = 1_048_576;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("live source has no recoverable history", "sinex-r6d.8"),
     // sinex-sn6s: D-Bus signals are pure live observation; nothing external
     // retains history once the bus delivers the message.
     criticality = SourceCriticality::NotReconstructable,

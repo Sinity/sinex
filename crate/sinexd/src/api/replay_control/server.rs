@@ -12,9 +12,7 @@ use tracing::{error, info, warn};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 
 use super::execution::{ReplayExecutionEngine, ReplayPreviewSummary};
-use super::protocol::{
-    ReplayControlRequest, ReplayControlResponse, trim_root_event_ids_in_place,
-};
+use super::protocol::{ReplayControlRequest, ReplayControlResponse};
 use super::validation::{
     ReplayAction, ensure_preview_allowed, replay_gate_report, run_safety_analysis,
     validate_actor_for_action,
@@ -343,7 +341,7 @@ impl ReplayControlServer {
 
                 // Augment preview with cascade safety analysis (integrity violations, cycles).
                 let root_ids = serde_json::from_value::<ReplayPreviewSummary>(preview.clone())
-                    .map(|summary| summary.root_event_ids)
+                    .map(|summary| summary.root_event_id_sample)
                     .map_err(|e| {
                         SinexError::serialization("Invalid replay preview summary")
                             .with_std_error(&e)
@@ -370,34 +368,12 @@ impl ReplayControlServer {
                     map.insert("replay_gates".to_string(), gate_report);
                 }
 
-                // Store the FULL preview (including root_event_ids) -- execution reads
-                // it back from operations_log.preview_summary later (replay_writer.rs)
-                // to verify the root set hasn't drifted since preview and to sanity-check
-                // root_event_ids.len() == total_events (state_machine.rs ~858-872). This
-                // is load-bearing, not display data, so it must not be trimmed here.
+                // The stored preview is already bounded: root identity is represented
+                // by a count, a sample, and a streaming fingerprint. Execution uses the
+                // fingerprint to reject a stale scope without retaining all root IDs.
                 replay.update_preview(operation_id, preview.clone()).await?;
                 let updated = replay.load_operation(operation_id).await?;
-
-                // The CLIENT-FACING response must NOT include the full root_event_ids
-                // array: for a scope covering real event volume this is hundreds of
-                // thousands of UUIDs, producing a reply payload of hundreds of MB --
-                // sinexd's own oversized-publish guard then silently refuses to send it
-                // at all (`nats_payload::publish` logs "Refusing oversized NATS publish"
-                // and the RPC caller hangs until ITS OWN timeout fires, with no error
-                // surfaced anywhere that explains why). sinexctl's own preview rendering
-                // (crate/sinexctl/src/commands/replay.rs) never reads root_event_ids --
-                // it's purely an execution-integrity artifact, never display data.
-                let client_preview = match &preview {
-                    serde_json::Value::Object(map) => {
-                        let mut trimmed = map.clone();
-                        trim_root_event_ids_in_place(&mut trimmed);
-                        serde_json::Value::Object(trimmed)
-                    }
-                    other => other.clone(),
-                };
-                // `success()` also trims `updated.preview_summary` centrally --
-                // this only handles the dedicated `client_preview` blob above.
-                ReplayControlResponse::success(Some(updated), Some(client_preview), None)
+                ReplayControlResponse::success(Some(updated), Some(preview), None)
             }
             ReplayControlRequest::Approve {
                 operation_id,

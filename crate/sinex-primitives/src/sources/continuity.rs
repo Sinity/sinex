@@ -15,6 +15,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
 use crate::temporal::Timestamp;
 
 use super::SourceFamily;
@@ -525,12 +526,24 @@ pub struct SourceContinuityReport {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Request: `sources.continuity.list`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SourcesContinuityListRequest {
     /// Restrict to material whose `staged_at` is at or after this timestamp.
     /// `None` means no lower bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<Timestamp>,
+    /// Staleness threshold for continuous trailing coverage gaps.
+    #[serde(default = "default_stale_after_secs")]
+    pub stale_after_secs: u64,
+}
+
+impl Default for SourcesContinuityListRequest {
+    fn default() -> Self {
+        Self {
+            since: None,
+            stale_after_secs: default_stale_after_secs(),
+        }
+    }
 }
 
 /// Response: `sources.continuity.list`.
@@ -543,6 +556,9 @@ pub struct SourcesContinuityListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SourcesContinuityGetRequest {
     pub source_family: SourceFamily,
+    /// Staleness threshold for continuous trailing coverage gaps.
+    #[serde(default = "default_stale_after_secs")]
+    pub stale_after_secs: u64,
 }
 
 /// Response: `sources.continuity.get`.
@@ -558,6 +574,13 @@ pub struct SourcesExplainGapRequest {
     /// A point in time inside the suspected gap. The handler resolves the
     /// surrounding window from material/event observations.
     pub at: Timestamp,
+    /// Staleness threshold used when resolving a continuous trailing gap.
+    #[serde(default = "default_stale_after_secs")]
+    pub stale_after_secs: u64,
+}
+
+fn default_stale_after_secs() -> u64 {
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS
 }
 
 /// Response: `sources.continuity.explain_gap`.

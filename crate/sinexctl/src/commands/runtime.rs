@@ -1,6 +1,7 @@
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{HealthStatus, ModuleKind};
+use sinex_primitives::{RuntimeLivenessAggregate, RuntimeLivenessStatus};
 use sinex_primitives::rpc::coordination::InstanceHealthResponse;
 use sinex_primitives::rpc::runtime::{RuntimeHeartbeatSource, RuntimeInfo};
 use sinex_primitives::rpc::system::{
@@ -338,8 +339,48 @@ fn runtime_health_caveats(health: &SystemHealthResponse) -> Vec<CaveatView> {
         "sse_confirmation",
         &health.components.sse_confirmation,
     );
+    push_runtime_liveness_caveats(&mut caveats, &health.components.runtime_liveness);
 
     caveats
+}
+
+fn push_runtime_liveness_caveats(
+    caveats: &mut Vec<CaveatView>,
+    aggregate: &RuntimeLivenessAggregate,
+) {
+    if let Some(error) = aggregate.observation_error.as_deref() {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+            message: format!("runtime liveness evidence is unavailable: {error}"),
+            ref_: Some(runtime_health_ref("runtime_liveness")),
+        });
+        return;
+    }
+
+    for runtime in &aggregate.runtimes {
+        let Some(liveness) = runtime.liveness.as_ref() else {
+            continue;
+        };
+        if liveness.status == RuntimeLivenessStatus::Healthy {
+            continue;
+        }
+        let id = if liveness.status == RuntimeLivenessStatus::Unknown {
+            ReadinessCaveatId::CoverageUnmeasurable
+        } else {
+            ReadinessCaveatId::WindowPartial
+        };
+        caveats.push(CaveatView {
+            id: id.as_str().to_string(),
+            message: format!(
+                "runtime `{}` ({}) reports canonical liveness `{}`: {}",
+                runtime.module_name,
+                runtime.module_kind,
+                liveness.status,
+                liveness.evidence.join(", "),
+            ),
+            ref_: Some(runtime_health_ref(runtime.module_name.as_ref())),
+        });
+    }
 }
 
 fn push_component_caveat(
@@ -507,6 +548,25 @@ fn format_health_table(health: &SystemHealthResponse) -> String {
     ));
     if let Some(ref detail) = health.components.sse_confirmation.detail {
         output.push_str(&format!("    Detail: {detail}\n"));
+    }
+    let runtime_liveness = &health.components.runtime_liveness;
+    output.push_str(&format!(
+        "  Runtime Liveness: {} (healthy: {}, assessed: {}, excluded disabled/profile-gated: {}, excluded historical stopped: {})\n",
+        runtime_liveness.status,
+        runtime_liveness.healthy,
+        runtime_liveness.assessed_count,
+        runtime_liveness.excluded_disabled_or_profile_gated_count,
+        runtime_liveness.excluded_historical_stopped_count,
+    ));
+    for runtime in &runtime_liveness.runtimes {
+        if let Some(liveness) = runtime.liveness.as_ref()
+            && liveness.status != RuntimeLivenessStatus::Healthy
+        {
+            output.push_str(&format!(
+                "    {} ({}): {}\n",
+                runtime.module_name, runtime.module_kind, liveness.status
+            ));
+        }
     }
 
     output

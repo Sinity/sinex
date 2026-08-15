@@ -4,8 +4,8 @@
 //! `sources.coverage` — the CLI-driven source material inventory surface.
 
 use serde::{Deserialize, Serialize};
-use sinex_db::{CascadeSource, DbPoolExt};
 use sinex_db::repositories::SourceMaterial;
+use sinex_db::{CascadeSource, DbPoolExt};
 use sinex_primitives::domain::{
     MaterialStatus, MaterialStorageKind, SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
@@ -229,35 +229,19 @@ pub async fn handle_sources_stage(
         )
         .with_metadata_contract(&contract);
 
-    let mut record = pool
-        .source_materials()
-        .register_material(material)
-        .await
-        .map_err(|error| {
-            SinexError::processing("Failed to register source material")
-                .with_context("file_path", &canonical)
-                .with_std_error(&error)
-        })?;
-
-    // Finalize the material now if we already know its full size (registration
-    // doesn't set total_bytes) -- via finalize_in_flight, not a bare
-    // total_bytes-only UPDATE (sinex-k22c). The bypassed raw UPDATE left the
-    // material permanently at status='sensing' (never Completed, no end_time),
-    // so it was forever flagged by list_stale_sensing.
-    if let Some(size) = file_size {
-        let blob_id_typed = blob_id
-            .as_ref()
-            .and_then(|id_str| uuid::Uuid::parse_str(id_str).ok().map(sinex_db::Id::from));
-        pool.source_materials()
-            .finalize_in_flight(record.id.into(), blob_id_typed, None, None, Some(size))
-            .await
-            .map_err(|error| {
-                SinexError::database("Failed to finalize staged source material")
-                    .with_context("material_id", record.id.to_string())
-                    .with_std_error(&error)
-            })?;
-        record.total_bytes = Some(size);
+    let record = match file_size {
+        Some(size) => {
+            pool.source_materials()
+                .register_material_with_total_bytes(material, size)
+                .await
+        }
+        None => pool.source_materials().register_material(material).await,
     }
+    .map_err(|error| {
+        SinexError::processing("Failed to register source material")
+            .with_context("file_path", &canonical)
+            .with_std_error(&error)
+    })?;
 
     let response = SourcesStageResponse {
         material_id: record.id.to_string(),
@@ -611,15 +595,11 @@ fn remediation_decision(
             "medium",
             "inspect recovered partial material; keep if admitted events are useful, otherwise plan replay or re-ingest",
         ),
-        MaterialStatus::Failed
-            if event_count > 0 && reason == Some("slice_arrival_timeout") =>
-        {
-            (
-                "recover_timeout_partial",
-                "high",
-                "mark timed-out material recovered_partial because events were admitted before timeout, then investigate why finalization timed out",
-            )
-        }
+        MaterialStatus::Failed if event_count > 0 && reason == Some("slice_arrival_timeout") => (
+            "recover_timeout_partial",
+            "high",
+            "mark timed-out material recovered_partial because events were admitted before timeout, then investigate why finalization timed out",
+        ),
         MaterialStatus::Failed if event_count > 0 => (
             "inspect_failed_eventful",
             "high",
@@ -823,20 +803,31 @@ pub async fn handle_sources_package_completeness(
             modes: package
                 .modes
                 .into_values()
-                .map(|mode| SourcePackageCompletenessModeView {
-                    mode_id: mode.mode_id,
-                    package_id: mode.package_id,
-                    mode_state: serialized_label(&mode.mode_state),
-                    completeness: serialized_label(&mode.completeness),
-                    subject: mode.subject,
-                    acquisition_kind: mode.acquisition_kind.to_string(),
-                    operator_enablement: mode.operator_enablement.to_string(),
-                    missing: mode.missing,
-                    caveats: mode.caveats,
-                    event_contract_refs: mode.event_contract_refs,
-                    admission_policy_refs: mode.admission_policy_refs,
-                    coverage_debt_refs: mode.coverage_debt_refs,
-                    operation_refs: mode.operation_refs,
+                .map(|mode| {
+                    let recovery_policy = mode.sources.runtime_binding.as_ref();
+                    SourcePackageCompletenessModeView {
+                        mode_id: mode.mode_id,
+                        package_id: mode.package_id,
+                        mode_state: serialized_label(&mode.mode_state),
+                        completeness: serialized_label(&mode.completeness),
+                        subject: mode.subject,
+                        replayability_class: recovery_policy
+                            .and_then(|binding| binding.replayability_class.as_str())
+                            .map(str::to_string),
+                        catch_up_authority: recovery_policy
+                            .and_then(|binding| binding.catch_up_authority.as_str())
+                            .map(str::to_string),
+                        accepted_loss_policy: recovery_policy
+                            .map(|binding| binding.accepted_loss_policy.clone()),
+                        acquisition_kind: mode.acquisition_kind.to_string(),
+                        operator_enablement: mode.operator_enablement.to_string(),
+                        missing: mode.missing,
+                        caveats: mode.caveats,
+                        event_contract_refs: mode.event_contract_refs,
+                        admission_policy_refs: mode.admission_policy_refs,
+                        coverage_debt_refs: mode.coverage_debt_refs,
+                        operation_refs: mode.operation_refs,
+                    }
                 })
                 .collect(),
         })
@@ -1156,10 +1147,13 @@ pub async fn handle_sources_archive(
                             .with_std_error(&error)
                     })?
             };
-            let cascade_count = repo_tx.cascade_node_count(&table_name).await.map_err(|error| {
-                SinexError::database("Failed to count source material archive cascade")
-                    .with_std_error(&error)
-            })?;
+            let cascade_count = repo_tx
+                .cascade_node_count(&table_name)
+                .await
+                .map_err(|error| {
+                    SinexError::database("Failed to count source material archive cascade")
+                        .with_std_error(&error)
+                })?;
             let event_id_sample = repo_tx
                 .get_cascade_id_sample(&table_name, SOURCE_ARCHIVE_EVENT_ID_SAMPLE_LIMIT)
                 .await
@@ -1227,8 +1221,10 @@ pub async fn handle_sources_archive(
                 )
                 .await
                 .map_err(|error| {
-                    SinexError::database("Failed to finalize empty source material archive operation")
-                        .with_std_error(&error)
+                    SinexError::database(
+                        "Failed to finalize empty source material archive operation",
+                    )
+                    .with_std_error(&error)
                 })?;
         }
         let preview = serde_json::json!({
@@ -1857,7 +1853,7 @@ pub async fn handle_sources_continuity_list(
     let mut reports = services
         .pool()
         .continuity()
-        .list_continuity_reports(req.since)
+        .list_continuity_reports(req.since, req.stale_after_secs)
         .await?;
     apply_private_mode_continuity_overlay(services, &mut reports);
 
@@ -1872,7 +1868,7 @@ pub async fn handle_sources_continuity_get(
     let mut report = services
         .pool()
         .continuity()
-        .get_continuity_report(&req.source_family)
+        .get_continuity_report(&req.source_family, req.stale_after_secs)
         .await?;
     apply_private_mode_continuity_get_overlay(services, &req.source_family, &mut report);
 
@@ -1887,24 +1883,11 @@ pub async fn handle_sources_continuity_explain_gap(
     let mut gap = services
         .pool()
         .continuity()
-        .explain_gap(&req.source_family, req.at)
+        .explain_gap(&req.source_family, req.at, req.stale_after_secs)
         .await?;
     apply_private_mode_explain_gap_overlay(services, &req.source_family, req.at, &mut gap);
 
-    let explanation = match (&gap, gap.as_ref().and_then(|g| g.attribution.as_deref())) {
-        (Some(_), Some(reason)) => format!(
-            "At {}, source family {} was inside a coverage gap: {}",
-            req.at, req.source_family, reason
-        ),
-        (Some(_), None) => format!(
-            "At {}, source family {} was inside a coverage gap (no attribution available)",
-            req.at, req.source_family
-        ),
-        (None, _) => format!(
-            "At {}, coverage was present for source family {} (no gap to explain)",
-            req.at, req.source_family
-        ),
-    };
+    let explanation = continuity_gap_explanation(&req.source_family, req.at, gap.as_ref());
 
     Ok(SourcesExplainGapResponse {
         source_family: req.source_family,
@@ -1912,6 +1895,27 @@ pub async fn handle_sources_continuity_explain_gap(
         gap,
         explanation,
     })
+}
+
+fn continuity_gap_explanation(
+    source_family: &SourceFamily,
+    at: Timestamp,
+    gap: Option<&ContinuityCoverageGap>,
+) -> String {
+    match (gap, gap.and_then(|g| g.attribution.as_deref())) {
+        (Some(_), Some(reason)) => format!(
+            "At {}, source family {} was inside a coverage gap: {}",
+            at, source_family, reason
+        ),
+        (Some(_), None) => format!(
+            "At {}, source family {} was inside a coverage gap (no attribution available)",
+            at, source_family
+        ),
+        (None, _) => format!(
+            "At {}, no coverage gap was observed for source family {}; this does not establish that the family had coverage at that time",
+            at, source_family
+        ),
+    }
 }
 
 fn apply_private_mode_continuity_overlay(

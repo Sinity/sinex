@@ -1,4 +1,5 @@
 use super::*;
+use sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
 use time::macros::datetime;
 use xtask::sandbox::prelude::sinex_test;
 
@@ -32,6 +33,28 @@ fn chunk_with_privacy(
     }
 }
 
+#[sinex_test]
+async fn continuous_trailing_gap_is_time_bounded() -> xtask::sandbox::TestResult<()> {
+    let now = datetime!(2026-08-12 12:00 UTC);
+
+    let gap = continuous_trailing_gap(
+        now - time::Duration::minutes(10),
+        now,
+        DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+    )
+    .expect("a continuous source silent past the liveness threshold needs a trailing gap");
+    assert_eq!(gap.kind, GapKind::ServiceCrash);
+    assert!(
+        continuous_trailing_gap(
+            now - time::Duration::minutes(4),
+            now,
+            DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+        )
+        .is_none()
+    );
+    Ok(())
+}
+
 fn chunk_with_declared(
     kind: &str,
     status: &str,
@@ -53,8 +76,7 @@ fn chunk_with_declared(
 }
 
 #[sinex_test]
-async fn classify_overlap_when_curr_starts_before_prev_ends() -> xtask::sandbox::TestResult<()>
-{
+async fn classify_overlap_when_curr_starts_before_prev_ends() -> xtask::sandbox::TestResult<()> {
     let prev = chunk(
         "annex",
         "completed",
@@ -132,8 +154,7 @@ async fn classify_discontinuity_for_long_gap() -> xtask::sandbox::TestResult<()>
 }
 
 #[sinex_test]
-async fn classify_recovered_partial_when_either_chunk_marked() -> xtask::sandbox::TestResult<()>
-{
+async fn classify_recovered_partial_when_either_chunk_marked() -> xtask::sandbox::TestResult<()> {
     let prev = chunk(
         "annex",
         "recovered_partial",
@@ -245,8 +266,8 @@ async fn private_mode_seam_only_fires_for_private_classes() -> xtask::sandbox::T
 }
 
 #[sinex_test]
-async fn declared_coverage_contract_overrides_heuristic_inference()
--> xtask::sandbox::TestResult<()> {
+async fn declared_coverage_contract_overrides_heuristic_inference() -> xtask::sandbox::TestResult<()>
+{
     let declared = DeclaredCoverageContract {
         kind: DeclaredCoverageContractKind::EphemeralStream,
         ..Default::default()
@@ -280,5 +301,20 @@ async fn unknown_declared_contract_falls_back_to_heuristic() -> xtask::sandbox::
     let (contract, is_declared) = resolve_coverage_contract("browser", &chunks);
     assert!(matches!(contract, CoverageContract::PeriodicDump));
     assert!(!is_declared);
+    Ok(())
+}
+
+#[sinex_test]
+async fn continuous_trailing_gap_requires_stale_latest_observation()
+-> xtask::sandbox::TestResult<()> {
+    let latest = datetime!(2026-08-12 11:54 UTC);
+    let now = datetime!(2026-08-12 12:00 UTC);
+    let gap = continuous_trailing_gap(latest, now, 300).expect("stale tail expected");
+    assert_eq!(gap.kind, GapKind::ServiceCrash);
+    assert_eq!(
+        gap.attribution.as_deref(),
+        Some("continuous source has no recent observed coverage")
+    );
+    assert!(continuous_trailing_gap(latest, now, 600).is_none());
     Ok(())
 }

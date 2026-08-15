@@ -75,6 +75,30 @@ async fn schema_hash_changes_when_metadata_changes() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn schema_hash_is_stable_across_json_object_key_order() -> TestResult<()> {
+    let first = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "alpha": { "type": "string" },
+            "beta": { "type": "integer" }
+        }
+    });
+    let second = serde_json::json!({
+        "properties": {
+            "beta": { "type": "integer" },
+            "alpha": { "type": "string" }
+        },
+        "type": "object"
+    });
+
+    assert_eq!(
+        calculate_schema_content_hash("source", "event", "1.0.0", &first)?,
+        calculate_schema_content_hash("source", "event", "1.0.0", &second)?
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn schema_bundle_major_version_reads_first_segment() -> TestResult<()> {
     assert_eq!(schema_bundle_major_version("7.3.9")?, 7);
     Ok(())

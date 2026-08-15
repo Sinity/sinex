@@ -185,7 +185,12 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
         assert_eq!(stored_event.payload, *expected_payload);
 
         // Verify pipeline processing metadata
-        let ingest_ts = stored_event.id.as_ref().expect("id present").timestamp();
+        let ingest_ts = stored_event
+            .id
+            .as_ref()
+            .expect("id present")
+            .timestamp()
+            .expect("test ID must be UUIDv7");
         let _ = ingest_ts;
         assert!(
             stored_event.ts_orig.is_some(),

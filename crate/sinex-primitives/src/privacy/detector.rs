@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 /// with optional space/dash separators.
 #[allow(clippy::expect_used)] // Compile-time constant regex
 static CC_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b(?:\d[ -]?){13,19}\b").expect("credit card regex"));
+    LazyLock::new(|| Regex::new(r"\b(?:\d[ .-]?){13,19}\b").expect("credit card regex"));
 
 /// Luhn algorithm check-digit validation.
 fn is_luhn_valid(digits: &str) -> bool {
@@ -95,10 +95,10 @@ pub fn find_emails(input: &str) -> Vec<(usize, usize)> {
 // ─── Phone number ────────────────────────────────────────────
 
 /// Pre-filter regex for phone numbers.
-/// Matches a `+` international prefix, a parenthesized area code, a bare
-/// NANP-shaped group (`NNN-NNN-NNNN` / `NNN.NNN.NNNN` / `NNN NNN NNNN`), or
-/// an unseparated 10-digit run — all routed through `is_plausible_phone`
-/// for the actual validation.
+/// Matches a `+` international prefix, a parenthesized area code, a NANP
+/// country-code form, a bare NANP-shaped group, a Polish local 9-digit run,
+/// or an unseparated 10-digit run — all routed through
+/// `is_plausible_phone` for actual validation.
 #[allow(clippy::expect_used)] // Compile-time constant regex
 static PHONE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -108,9 +108,15 @@ static PHONE_RE: LazyLock<Regex> = LazyLock::new(|| {
             |
             \(\d{2,4}\)[\s.-]?[\d\s.\-()]{6,18}    # Area code in parens
             |
+            \b1[\s.-]?\d{3}[\s.-]\d{3}[\s.-]\d{4}\b # NANP with country code
+            |
+            \b1\d{10}\b                              # Unseparated NANP with country code
+            |
             \b\d{3}[\s.\-]\d{3}[\s.\-]\d{4}\b      # Bare NANP: 555-867-5309 / 555.867.5309
             |
             \b\d{10}\b                              # Bare unseparated 10-digit
+            |
+            \b[2-9]\d{8}\b                           # Polish local 9-digit number
         )
         ",
     )
@@ -133,9 +139,13 @@ fn is_plausible_phone(candidate: &str) -> bool {
     if !(7..=15).contains(&digit_count) {
         return false;
     }
+    let digits: Vec<u32> = candidate.chars().filter_map(|c| c.to_digit(10)).collect();
     if digit_count == 10 && !candidate.trim_start().starts_with('+') {
-        let digits: Vec<u32> = candidate.chars().filter_map(|c| c.to_digit(10)).collect();
         if digits.len() == 10 && (digits[0] < 2 || digits[3] < 2) {
+            return false;
+        }
+    } else if digit_count == 11 && digits.first() == Some(&1) {
+        if digits.len() == 11 && (digits[1] < 2 || digits[4] < 2) {
             return false;
         }
     }
@@ -436,7 +446,7 @@ pub fn find_hostnames(input: &str) -> Vec<(usize, usize)> {
 /// plausibility filter available (SSNs have no real checksum digit).
 #[allow(clippy::expect_used)] // Compile-time constant regex
 static SSN_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").expect("ssn regex"));
+    LazyLock::new(|| Regex::new(r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b").expect("ssn regex"));
 
 /// Validate a SSN candidate: reject area 000, 666, 900-999; group 00; serial 0000.
 fn is_valid_ssn(candidate: &str) -> bool {

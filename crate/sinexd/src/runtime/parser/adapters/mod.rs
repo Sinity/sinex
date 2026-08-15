@@ -24,6 +24,49 @@
 //! | [`IncrementalDumpAdapter`] | `IncrementalDump` | `IncrementalDumpCursor` | Periodic full-export superset dumps |
 
 pub mod adapter_schemas;
+use std::io::{self, Read};
+use std::path::Path;
+
+/// Maximum size for adapters whose record contract requires one complete file
+/// in a `Vec<u8>`. Larger files must use a streaming/record-slicing adapter;
+/// they are rejected before the source bytes are partially materialized.
+pub(crate) const MAX_WHOLE_FILE_BYTES: u64 =
+    sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES as u64;
+
+fn whole_file_limit_error(path: &Path, max_bytes: u64) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "whole-file adapter input {} exceeds the {}-byte limit",
+            path.display(), max_bytes
+        ),
+    )
+}
+
+pub(crate) fn read_file_bounded_sync(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
+    let file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1)).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(whole_file_limit_error(path, max_bytes));
+    }
+    Ok(bytes)
+}
+
+pub(crate) async fn read_file_bounded(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+
+    let file = tokio::fs::File::open(path).await?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(whole_file_limit_error(path, max_bytes));
+    }
+    Ok(bytes)
+}
+
 mod api_cursor;
 mod append_only_file;
 mod chained;

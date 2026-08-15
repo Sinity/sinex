@@ -15,10 +15,10 @@ use xtask::sandbox::prelude::*;
 
 use sinex_primitives::source_contracts;
 use sinexctl::admin::exec;
-use sinexctl::admin::manifest::ComponentExtras;
+use sinexctl::admin::manifest::{ComponentExtras, QuiesceReceipt};
 use sinexctl::admin::snapshot::{
     AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
-    format_snapshot_restore_plan_result,
+    format_snapshot_inspect_result, format_snapshot_restore_plan_result,
 };
 
 /// Helper: build a fake state directory with recognizable fixture files.
@@ -114,6 +114,7 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "state".to_string(),
@@ -162,13 +163,16 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "postgres".to_string(),
             path: "postgres/sinex_prod.dump".to_string(),
             bytes: 22,
             blake3: postgres_blake3,
-            extras: Some(ComponentExtras::Postgres(PostgresExtras { row_counts })),
+            extras: Some(ComponentExtras::Postgres(PostgresExtras {
+                row_counts: Some(row_counts),
+            })),
         }],
         totals: Totals {
             uncompressed_bytes: 22,
@@ -206,6 +210,7 @@ fn make_nats_snapshot_archive_with_summary() -> TestResult<(TempDir, PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "nats".to_string(),
@@ -250,6 +255,7 @@ fn make_unsupported_component_snapshot_archive() -> TestResult<(TempDir, PathBuf
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "legacy-index".to_string(),
@@ -329,7 +335,8 @@ async fn dry_run_reports_estimates_and_creates_no_archive() -> xtask::sandbox::T
 
     let output = sinexctl_bin()
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
@@ -393,7 +400,8 @@ async fn dry_run_non_postgres_components_do_not_require_database_url()
 
     let output = sinexctl_bin()
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
@@ -432,7 +440,22 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
     let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("test.tar.zst");
     let tools = tempfile::tempdir()?;
-    let _systemctl = make_executable_script(&tools, "systemctl", "#!/bin/sh\nexit 0\n")?;
+    let nats_config = tools.path().join("nats.conf");
+    fs::write(
+        &nats_config,
+        format!(
+            "{{\"jetstream\":{{\"store_dir\":\"{}\"}}}}\n",
+            state_dir.path().join("nats/jetstream").display()
+        ),
+    )?;
+    let _systemctl = make_executable_script(
+        &tools,
+        "systemctl",
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *'nats.service'*'ExecStart'*) printf '%s\\n' '{{ path=/nix/store/nats-server/bin/nats-server ; argv[]=/nix/store/nats-server/bin/nats-server -c {} ; }}' ;;\n  *) exit 0 ;;\nesac\n",
+            nats_config.display()
+        ),
+    )?;
     let path = format!(
         "{}:{}",
         tools.path().display(),
@@ -442,12 +465,15 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
     let output = sinexctl_bin()
         .env("PATH", path)
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
             "--state-dir",
             &state_dir.path().to_string_lossy(),
+            "--nats-store-dir",
+            &state_dir.path().join("nats/jetstream").to_string_lossy(),
             "--components",
             "nats,cas,state",
             "--compression",
@@ -534,6 +560,7 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
     let restore = AdminSnapshotRestoreCommand {
         archive: output_path,
         target_dir: target.clone(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -621,15 +648,19 @@ async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox
 /// archive during dry-run.
 #[sinex_test]
 async fn state_snapshot_live_mode_dry_run_reports_estimates() -> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
     let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("state-live.tar.zst");
 
     let output = sinexctl_bin()
         .args([
+            "ops",
             "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
             "--dry-run",
             "--mode",
             "live",
@@ -700,6 +731,95 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
     Ok(())
 }
 
+#[sinex_test]
+async fn snapshot_inspect_reports_missing_component_paths_before_hash_failure()
+-> xtask::sandbox::TestResult<()> {
+    use sinexctl::admin::manifest::{ComponentRecord, SnapshotManifest, Totals};
+
+    let dir = tempfile::tempdir()?;
+    let staging = dir.path().join("staging");
+    fs::create_dir_all(&staging)?;
+    let manifest = SnapshotManifest {
+        snapshot_id: "01970a7f-391b-7000-8000-000000000006".to_string(),
+        created_at: "2026-05-15T11:35:00Z".to_string(),
+        sinex_version: "0.1.0".to_string(),
+        git_sha: None,
+        host: "fixture".to_string(),
+        mode: "quiesce".to_string(),
+        quiesce_receipt: None,
+        source_ids: Vec::new(),
+        components: vec![ComponentRecord {
+            name: "state".to_string(),
+            path: "state/".to_string(),
+            bytes: 1,
+            blake3: "unavailable".to_string(),
+            extras: None,
+        }],
+        totals: Totals {
+            uncompressed_bytes: 1,
+            archive_bytes: Some(128),
+        },
+    };
+    fs::write(
+        staging.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    let archive = dir.path().join("missing-component.sinex.tar.zst");
+    exec::tar_create_zstd(&staging, &archive, 1, 1)?;
+
+    let result = AdminSnapshotInspectCommand { archive }.execute()?;
+    assert_eq!(result.missing_component_paths, ["state/"]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn snapshot_inspect_rejects_empty_required_nats_component() -> xtask::sandbox::TestResult<()>
+{
+    use sinexctl::admin::manifest::{ComponentRecord, NatsExtras, SnapshotManifest, Totals};
+
+    let dir = tempfile::tempdir()?;
+    let staging = dir.path().join("staging");
+    fs::create_dir_all(staging.join("nats").join("jetstream"))?;
+    let manifest = SnapshotManifest {
+        snapshot_id: "01970a7f-391b-7000-8000-000000000005".to_string(),
+        created_at: "2026-05-15T11:34:00Z".to_string(),
+        sinex_version: "0.1.0".to_string(),
+        git_sha: None,
+        host: "sinnix-prime".to_string(),
+        mode: "quiesce".to_string(),
+        quiesce_receipt: None,
+        source_ids: registered_fixture_source_ids(),
+        components: vec![ComponentRecord {
+            name: "nats".to_string(),
+            path: "nats/jetstream/".to_string(),
+            bytes: 0,
+            blake3: snapshot_component_blake3(&staging.join("nats"))?,
+            extras: Some(ComponentExtras::Nats(NatsExtras {
+                member_paths: Vec::new(),
+            })),
+        }],
+        totals: Totals {
+            uncompressed_bytes: 0,
+            archive_bytes: Some(128),
+        },
+    };
+    fs::write(
+        staging.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    let archive = dir.path().join("empty-nats.sinex.tar.zst");
+    exec::tar_create_zstd(&staging, &archive, 1, 1)?;
+
+    let error = AdminSnapshotInspectCommand { archive }
+        .execute()
+        .expect_err("inspect must reject an empty required NATS component");
+    assert!(
+        format!("{error:#}").contains("empty required components: nats"),
+        "error should identify the empty required component: {error:#}"
+    );
+    Ok(())
+}
+
 /// `ops state restore --dry-run` validates archive structure and returns
 /// a non-destructive restore drill plan.
 #[sinex_test]
@@ -710,6 +830,7 @@ async fn snapshot_restore_dry_run_reports_plan_and_policy() -> xtask::sandbox::T
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path.clone(),
         target_dir: target.path().to_path_buf(),
+        state_dir: None,
         dry_run: true,
         allow_non_empty_target: false,
         confirm_restore: false,
@@ -771,6 +892,33 @@ async fn snapshot_restore_dry_run_reports_plan_and_policy() -> xtask::sandbox::T
     Ok(())
 }
 
+#[sinex_test]
+async fn snapshot_restore_rejects_symlink_target() -> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let real_target = target_parent.path().join("real-target");
+    fs::create_dir(&real_target)?;
+    let symlink_target = target_parent.path().join("restore-target");
+    std::os::unix::fs::symlink(&real_target, &symlink_target)?;
+
+    let error = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: symlink_target,
+        state_dir: None,
+        dry_run: true,
+        allow_non_empty_target: false,
+        confirm_restore: false,
+        allow_active_services: false,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    }
+    .execute()
+    .expect_err("restore must not follow a symlink target");
+    assert!(format!("{error:#}").contains("symbolic link"));
+    Ok(())
+}
+
 /// Restore planning refuses an ambiguous non-empty target unless explicitly
 /// allowed, even though dry-run itself writes nothing.
 #[sinex_test]
@@ -783,6 +931,7 @@ async fn snapshot_restore_dry_run_refuses_non_empty_target_without_override()
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target.path().to_path_buf(),
+        state_dir: None,
         dry_run: true,
         allow_non_empty_target: false,
         confirm_restore: false,
@@ -811,6 +960,7 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path.clone(),
         target_dir: target.clone(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -900,6 +1050,7 @@ async fn snapshot_restore_execute_preserves_dry_run_plan() -> xtask::sandbox::Te
     let dry_run = AdminSnapshotRestoreCommand {
         archive: archive_path.clone(),
         target_dir: restore_target.clone(),
+        state_dir: None,
         dry_run: true,
         allow_non_empty_target: false,
         confirm_restore: false,
@@ -913,6 +1064,7 @@ async fn snapshot_restore_execute_preserves_dry_run_plan() -> xtask::sandbox::Te
     let executed = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: restore_target,
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -944,6 +1096,67 @@ async fn snapshot_restore_execute_preserves_dry_run_plan() -> xtask::sandbox::Te
     Ok(())
 }
 
+/// Full backup -> restore verification against the deployed NixOS topology.
+///
+/// This is opt-in because it reads the live state root and restores PostgreSQL
+/// into an operator-provided empty drill database. Run it with
+/// `SINEX_REAL_TOPOLOGY_TEST=1`, `DATABASE_URL=<live-source-url>`, and
+/// `SINEX_REAL_RESTORE_DATABASE_URL=<dedicated-empty-drill-url>`.
+#[sinex_test]
+async fn real_deployed_topology_backup_restore_round_trip() -> TestResult<()> {
+    if std::env::var("SINEX_REAL_TOPOLOGY_TEST").as_deref() != Ok("1") {
+        return Ok(());
+    }
+    let source_database_url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must identify the real deployed source database");
+    let restore_database_url = std::env::var("SINEX_REAL_RESTORE_DATABASE_URL")
+        .expect("SINEX_REAL_RESTORE_DATABASE_URL must identify a dedicated empty drill database");
+    let output_dir = tempfile::tempdir()?;
+    let archive = output_dir.path().join("real-topology.sinex.tar.zst");
+
+    let snapshot = AdminSnapshotCommand {
+        output: archive.clone(),
+        compression: 3,
+        workers: 1,
+        mode: "live".to_string(),
+        dry_run: false,
+        database_url: Some(source_database_url),
+        state_dir: None,
+        nats_store_dir: None,
+        auto_stop: false,
+        components: Component::all(),
+    }
+    .execute()?;
+    assert_eq!(
+        snapshot.output_path.as_deref(),
+        Some(archive.to_str().unwrap())
+    );
+
+    let target_parent = tempfile::tempdir()?;
+    let restore = AdminSnapshotRestoreCommand {
+        archive,
+        target_dir: target_parent.path().join("restore-target"),
+        state_dir: None,
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: Some(restore_database_url),
+        pg_restore_bin: None,
+        psql_bin: None,
+    }
+    .execute()?;
+    let observed = restore
+        .observed_checks
+        .expect("real restore drill must produce observations");
+    assert!(
+        observed.checks_passed,
+        "real deployed-topology restore checks failed: {:?}",
+        observed.failed_checks
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
 -> xtask::sandbox::TestResult<()> {
@@ -957,7 +1170,7 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
         &tools,
         "psql",
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\ncase \"$*\" in\n  *'pg_stat_user_tables'*) printf 'core.events\\npg_temp_141.sinex_batch_staging\\n' ;;\n  *'count(*)'*) printf '7\\n' ;;\nesac\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\ncase \"$*\" in\n  *'pg_stat_user_tables'*) printf 'core.events\\npg_temp_141.sinex_batch_staging\\n' ;;\n  *'pg_class'*) printf '0\\n' ;;\n  *'count(*)'*) printf '7\\n' ;;\nesac\nexit 0\n",
             psql_log.display()
         ),
     )?;
@@ -965,6 +1178,7 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target.clone(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1016,6 +1230,208 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
 }
 
 #[sinex_test]
+async fn snapshot_restore_checks_database_empty_before_extracting_target()
+-> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_postgres_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("nonempty-database-target");
+    let tools = tempfile::tempdir()?;
+    let restore_marker = target_parent.path().join("pg-restore-ran");
+    let pg_restore = make_executable_script(
+        &tools,
+        "pg_restore",
+        &format!("#!/bin/sh\n: > {}\nexit 0\n", restore_marker.display()),
+    )?;
+    let psql = make_executable_script(
+        &tools,
+        "psql",
+        "#!/bin/sh\ncase \"$*\" in\n  *'pg_class'*) printf '1\\n' ;;\nesac\nexit 0\n",
+    )?;
+    let _systemctl = make_executable_script(
+        &tools,
+        "systemctl",
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *'sinexd.service'*'Environment'*) printf 'SINEX_STATE_DIR={}\\n' ;;\nesac\nexit 0\n",
+            target_parent.path().display()
+        ),
+    )?;
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = sinexctl_bin()
+        .env("PATH", path)
+        .args([
+            "ops",
+            "state",
+            "restore",
+            "--archive",
+            &archive_path.to_string_lossy(),
+            "--target-dir",
+            &target.to_string_lossy(),
+            "--restore-database-url",
+            "postgresql://restore/sinex_restore_nonempty",
+            "--pg-restore-bin",
+            &pg_restore.to_string_lossy(),
+            "--psql-bin",
+            &psql.to_string_lossy(),
+            "--confirm-restore",
+            "--allow-active-services",
+        ])
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "non-empty target must fail: {stderr}"
+    );
+    assert!(
+        stderr.contains("not empty"),
+        "failure should name target state: {stderr}"
+    );
+    assert!(
+        !target.exists(),
+        "filesystem target must not be extracted first"
+    );
+    assert!(
+        !restore_marker.exists(),
+        "pg_restore must not run on a non-empty target"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn quiesced_snapshot_auto_stop_targets_real_writer_units() -> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("auto-stop.sinex.tar.zst");
+    let tools = tempfile::tempdir()?;
+    let active_marker = tools.path().join("active-writers");
+    let timer_marker = tools.path().join("active-timer");
+    let postgres_marker = tools.path().join("active-postgres");
+    let inventory = tools.path().join("runtime-inventory.json");
+    fs::write(&active_marker, b"running")?;
+    fs::write(&timer_marker, b"scheduled")?;
+    fs::write(&postgres_marker, b"running")?;
+    fs::write(
+        &inventory,
+        r#"{
+  "surfaces": {
+    "sinexd": {"unit": "sinexd.service", "resourceClass": "capture-runtime"},
+    "nats": {"unit": "nats.service", "resourceClass": "capture-substrate"},
+    "sinex-postgres-dump-timer": {"unit": "sinex-postgres-dump.timer", "resourceClass": "backup-maintenance"}
+  }
+}"#,
+    )?;
+    let stop_log = tools.path().join("stop.log");
+    let _systemctl = make_executable_script(
+        &tools,
+        "systemctl",
+        &format!(
+            "#!/bin/sh\ncase \"$1\" in\n  list-units) if [ -e '{}' ]; then printf '%s\\n' 'sinexd.service loaded active running' 'nats.service loaded active running'; fi; if [ -e '{}' ]; then printf '%s\\n' 'sinex-postgres-dump.timer loaded active waiting'; fi; if [ -e '{}' ]; then printf '%s\\n' 'postgresql.service loaded active running'; fi ;;\n  stop) printf '%s\\n' \"$*\" >> '{}'; rm -f '{}' ;;\n  *) exit 0 ;;\nesac\n",
+            active_marker.display(),
+            timer_marker.display(),
+            postgres_marker.display(),
+            stop_log.display(),
+            active_marker.display(),
+        ),
+    )?;
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = sinexctl_bin()
+        .env("PATH", path)
+        .env("SINEX_RUNTIME_INVENTORY", &inventory)
+        .args([
+            "ops",
+            "state",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--components",
+            "state",
+            "--auto-stop",
+            "--compression",
+            "1",
+            "--workers",
+            "1",
+        ])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "auto-stop snapshot should succeed against active deployed writer names\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    let manifest = AdminSnapshotInspectCommand {
+        archive: output_path,
+    }
+    .execute()?;
+    assert_eq!(manifest.mode, "quiesce");
+    assert_eq!(
+        manifest.manifest.quiesce_receipt,
+        Some(QuiesceReceipt {
+            active_writer_units_before: vec!["sinexd.service".to_string(), "nats.service".to_string()],
+            stopped_writer_units: vec!["sinexd.service".to_string(), "nats.service".to_string()],
+            active_writer_units_after: Vec::new(),
+        }),
+        "the archived receipt must preserve the exact stop targets and successful post-stop verification"
+    );
+    let rendered = format_snapshot_inspect_result(&manifest);
+    assert!(
+        rendered.contains("active after: none"),
+        "the default inspect surface must expose the quiescence verdict\n{rendered}"
+    );
+    let stop_log = fs::read_to_string(stop_log)?;
+    assert!(stop_log.contains("stop sinexd.service nats.service"));
+    assert!(!stop_log.contains("postgresql.service"));
+    assert!(!stop_log.contains("sinex-postgres-dump.timer"));
+    assert!(
+        !active_marker.exists(),
+        "auto-stop must leave writer units inactive"
+    );
+    assert!(timer_marker.exists(), "a timer is not a writer stop target");
+    assert!(postgres_marker.exists(), "PostgreSQL must remain available for pg_dump");
+    Ok(())
+}
+
+#[sinex_test]
+async fn snapshot_restore_rejects_production_shaped_database_target()
+-> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_postgres_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("production-shaped-target");
+
+    let command = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: target.clone(),
+        state_dir: None,
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: Some("postgresql:///sinex_prod".to_string()),
+        pg_restore_bin: None,
+        psql_bin: None,
+    };
+    let error = command
+        .execute()
+        .expect_err("production-shaped database URLs must not be restore targets");
+    assert!(
+        format!("{error:#}").contains("disposable rehearsal target"),
+        "error should explain the rehearsal-target policy: {error:#}"
+    );
+    assert!(!target.exists(), "target extraction must not begin");
+    Ok(())
+}
+
+#[sinex_test]
 async fn snapshot_restore_ignores_nats_summary_in_component_hash() -> xtask::sandbox::TestResult<()>
 {
     let (_dir, archive_path) = make_nats_snapshot_archive_with_summary()?;
@@ -1024,7 +1440,8 @@ async fn snapshot_restore_ignores_nats_summary_in_component_hash() -> xtask::san
 
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
-        target_dir: target,
+        target_dir: target.clone(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1039,6 +1456,12 @@ async fn snapshot_restore_ignores_nats_summary_in_component_hash() -> xtask::san
         .as_ref()
         .ok_or_else(|| color_eyre::eyre::eyre!("restore drill should report observations"))?;
 
+    assert!(
+        target
+            .join("nats/jetstream/streams/events/meta.json")
+            .exists(),
+        "restore target should contain the captured JetStream member"
+    );
     assert!(observed.checks_passed);
     assert!(observed.failed_checks.is_empty());
     assert_eq!(observed.nats_member_count, Some(1));
@@ -1057,6 +1480,7 @@ async fn snapshot_restore_postgres_requires_target_database_url() -> xtask::sand
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target,
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1083,6 +1507,7 @@ async fn snapshot_restore_execute_requires_confirmation() -> xtask::sandbox::Tes
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target.path().to_path_buf(),
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: false,
@@ -1111,6 +1536,7 @@ async fn snapshot_restore_rejects_unsupported_archive_components() -> xtask::san
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
         target_dir: target,
+        state_dir: None,
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1147,7 +1573,8 @@ async fn staging_cleaned_up_on_pg_dump_failure() -> xtask::sandbox::TestResult<(
     // Use an intentionally invalid DATABASE_URL.
     let output = sinexctl_bin()
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
@@ -1189,6 +1616,113 @@ async fn staging_cleaned_up_on_pg_dump_failure() -> xtask::sandbox::TestResult<(
     Ok(())
 }
 
+/// A successful dump without authoritative row-count evidence must still fail
+/// the capture. The archive must not be published with a vacuous restore
+/// baseline.
+#[sinex_test]
+async fn snapshot_fails_when_postgres_row_count_query_fails() -> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("row-count-failure.tar.zst");
+    let tools = tempfile::tempdir()?;
+    let _pg_dump = make_executable_script(
+        &tools,
+        "pg_dump",
+        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--file\" ]; then shift; : > \"$1\"; fi\n  shift\ndone\nexit 0\n",
+    )?;
+    let psql = make_executable_script(
+        &tools,
+        "psql",
+        "#!/bin/sh\nprintf '%s\\n' 'row-count query unavailable' >&2\nexit 17\n",
+    )?;
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = sinexctl_bin()
+        .env("PATH", path)
+        .env("SINEX_PSQL_BIN", &psql)
+        .args([
+            "ops",
+            "state",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--database-url",
+            "postgresql://snapshot-test/sinex",
+            "--components",
+            "postgres",
+            "--mode",
+            "live",
+        ])
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "row-count failure must fail snapshot capture\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("row-count") || stderr.contains("psql"),
+        "failure should identify row-count evidence\nstderr: {stderr}"
+    );
+    assert!(
+        !output_path.exists(),
+        "snapshot must not publish an archive without row-count evidence"
+    );
+    Ok(())
+}
+
+/// A quiesced snapshot must not treat a failed systemd inventory query as an
+/// empty active-unit set.
+#[sinex_test]
+async fn quiesced_snapshot_fails_closed_when_systemctl_inventory_fails()
+-> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("systemctl-failure.tar.zst");
+    let tools = tempfile::tempdir()?;
+    let _systemctl = make_executable_script(
+        &tools,
+        "systemctl",
+        "#!/bin/sh\nprintf '%s\\n' 'systemd inventory unavailable' >&2\nexit 23\n",
+    )?;
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = sinexctl_bin()
+        .env("PATH", path)
+        .args([
+            "ops",
+            "state",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--components",
+            "state",
+        ])
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "systemd inventory failure must block quiesced snapshot\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("systemctl") || stderr.contains("active-unit"),
+        "failure should identify systemd inspection\nstderr: {stderr}"
+    );
+    assert!(!output_path.exists());
+    Ok(())
+}
+
 // ── Unit tests (no binary invocation) ────────────────────────────────────────
 
 /// `Component::all()` must include all four expected components.
@@ -1214,6 +1748,11 @@ async fn component_all_covers_all_four() -> xtask::sandbox::TestResult<()> {
 #[sinex_test]
 async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()> {
     let state_dir = make_fake_state_dir()?;
+    let explicit_nats_dir = tempfile::tempdir()?;
+    let explicit_nats_file = explicit_nats_dir.path().join("explicit-stream-state");
+    fs::write(&explicit_nats_file, b"explicit-nats-fixture")?;
+    let explicit_nats_bytes = fs::metadata(&explicit_nats_file)?.len();
+    let state_nats_bytes = fs::metadata(state_dir.path().join("nats/jetstream/meta.inf"))?.len();
     let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("test.tar.zst");
 
@@ -1225,6 +1764,7 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         dry_run: true,
         database_url: None,
         state_dir: Some(state_dir.path().to_path_buf()),
+        nats_store_dir: Some(explicit_nats_dir.path().to_path_buf()),
         auto_stop: false,
         components: vec![Component::Nats, Component::Cas, Component::State],
     };
@@ -1250,7 +1790,7 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         "snapshot should report compiled source descriptor ids"
     );
 
-    // Nats, CAS, and state should all appear.
+    // NATS, CAS, and state should appear in the dry-run estimate.
     let names: Vec<&str> = result
         .components_captured
         .iter()
@@ -1262,6 +1802,20 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
             "component '{expected}' must appear in dry-run result"
         );
     }
+
+    let nats = result
+        .components_captured
+        .iter()
+        .find(|component| component.name == "nats")
+        .expect("dry-run result must include the NATS component");
+    assert_eq!(
+        nats.bytes, explicit_nats_bytes,
+        "dry-run NATS estimate must use the explicit NATS store root"
+    );
+    assert_ne!(
+        nats.bytes, state_nats_bytes,
+        "dry-run NATS estimate must not silently use state_dir/nats/jetstream"
+    );
 
     Ok(())
 }
@@ -1280,8 +1834,13 @@ async fn library_live_snapshot_archive_records_live_manifest() -> xtask::sandbox
         dry_run: false,
         database_url: None,
         state_dir: Some(state_dir.path().to_path_buf()),
+        nats_store_dir: None,
         auto_stop: false,
-        components: vec![Component::Nats, Component::Cas, Component::State],
+        // A live archive test uses fixture-owned directories. NATS is
+        // discovered from the deployed systemd configuration and is covered
+        // by the dry-run path above, so it is excluded from this unprivileged
+        // fixture test.
+        components: vec![Component::Cas, Component::State],
     };
 
     let result = cmd.execute()?;
@@ -1328,6 +1887,7 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        quiesce_receipt: None,
         source_ids: vec![
             "desktop.clipboard".to_string(),
             "terminal.atuin-history".to_string(),
@@ -1338,7 +1898,9 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
                 path: "postgres/sinex_prod.dump".to_string(),
                 bytes: 12345678,
                 blake3: "a".repeat(64),
-                extras: Some(ComponentExtras::Postgres(PostgresExtras { row_counts })),
+                extras: Some(ComponentExtras::Postgres(PostgresExtras {
+                    row_counts: Some(row_counts),
+                })),
             },
             ComponentRecord {
                 name: "cas".to_string(),
@@ -1381,6 +1943,15 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
             assert!(extras.private_mode_state_present);
         }
         other => panic!("state component extras should round-trip, got {other:?}"),
+    }
+    let cas = back
+        .components
+        .iter()
+        .find(|component| component.name == "cas")
+        .expect("CAS component should round-trip");
+    match &cas.extras {
+        Some(ComponentExtras::Cas(extras)) => assert_eq!(extras.blob_count, 2),
+        other => panic!("CAS component extras should preserve blob_count, got {other:?}"),
     }
     assert_eq!(back.totals.archive_bytes, Some(3_000_000));
 

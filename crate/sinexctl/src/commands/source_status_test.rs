@@ -3,7 +3,8 @@
 use super::*;
 use crate::fmt::render_finite_envelope;
 use sinex_primitives::views::{
-    ActionAvailability, CaveatView, CoverageGapView, SourceCoverageListView, SourcePrivacyPosture,
+    ActionAvailability, CaveatView, CoverageGapView, SourceCoverageListView,
+    SourceDedupBreakdownView, SourceDedupExampleView, SourceDedupSummaryView, SourcePrivacyPosture,
     SourceResourceBudgetView, VIEW_ENVELOPE_SCHEMA_VERSION,
 };
 use xtask::sandbox::sinex_test;
@@ -50,7 +51,10 @@ fn fixture_mode() -> SourceModeStatusView {
         transport: "direct".to_string(),
         delivery: "synchronous".to_string(),
         ordering: "input_order".to_string(),
-        replayable: true,
+        replayability_class: "retained_material".to_string(),
+        catch_up_authority: "source_material".to_string(),
+        accepted_loss_policy: serde_json::json!("none"),
+        transport_replayable: true,
         dlq: false,
         backpressure: false,
         privacy_context: "metadata".to_string(),
@@ -151,6 +155,7 @@ async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult
     assert!(table.contains("Sources: total=1 ready=1"));
     assert!(table.contains("coverage_error_sources=0"));
     assert!(table.contains("coverage_error_rate=0.00%"));
+    assert!(table.contains("Dedup outcomes: admitted=0 suppressed=0 superseded=0"));
     assert!(table.contains("ready"));
     assert!(table.contains("active"));
     assert!(table.contains("accepted:1"));
@@ -158,6 +163,108 @@ async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult
     assert!(table.contains("fixture/fixture.event"));
     assert!(table.contains("source.runtime_bridge.unobserved"));
     assert!(table.contains("terminal.activity.check:enabled"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn table_renderer_shows_dedup_counts_and_source_status_caveat() -> xtask::TestResult<()> {
+    let mut envelope = ViewEnvelope::new(
+        "sinexctl.sources.status",
+        SourceCoverageListView::new(vec![fixture_source()]),
+    );
+    envelope.payload.dedup = SourceDedupSummaryView {
+        admitted: 4,
+        suppressed: 8,
+        superseded: 1,
+        failed: 0,
+        dlq: 0,
+    };
+    envelope.caveats.push(CaveatView {
+        id: "import.abnormal_suppression_rate".to_string(),
+        message: "fixture abnormal suppression".to_string(),
+        ref_: None,
+    });
+
+    let table = format_sources_status_table(&envelope);
+
+    assert!(table.contains(
+        "Dedup outcomes: admitted=4 suppressed=8 superseded=1 failed=0 dlq=0 attempted=13"
+    ));
+    assert!(table.contains("Source status caveats: import.abnormal_suppression_rate"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn table_renderer_keeps_source_event_dedup_groups_distinct() -> xtask::TestResult<()> {
+    let mut envelope = ViewEnvelope::new(
+        "sinexctl.sources.status",
+        SourceCoverageListView::new(vec![fixture_source()]),
+    );
+    envelope.payload.dedup_breakdown = vec![
+        SourceDedupBreakdownView {
+            source: "fixture.source-a".to_string(),
+            event_type: "fixture.created".to_string(),
+            admitted: 2,
+            suppressed: 0,
+            superseded: 0,
+            failed: 0,
+            dlq: 0,
+            examples: vec![SourceDedupExampleView {
+                outcome: "admitted".to_string(),
+                candidate_event_ref: "event-a".to_string(),
+                existing_event_ref: None,
+            }],
+        },
+        SourceDedupBreakdownView {
+            source: "fixture.source-b".to_string(),
+            event_type: "fixture.deleted".to_string(),
+            admitted: 0,
+            suppressed: 1,
+            superseded: 0,
+            failed: 0,
+            dlq: 0,
+            examples: vec![SourceDedupExampleView {
+                outcome: "suppressed".to_string(),
+                candidate_event_ref: "event-b".to_string(),
+                existing_event_ref: Some("event-old".to_string()),
+            }],
+        },
+    ];
+
+    let table = format_sources_status_table(&envelope);
+
+    assert!(table.contains(
+        "Dedup breakdown: source=fixture.source-a event_type=fixture.created admitted=2"
+    ));
+    assert!(table.contains("examples=[admitted:event-a]"));
+    assert!(table.contains(
+        "Dedup breakdown: source=fixture.source-b event_type=fixture.deleted admitted=0 suppressed=1"
+    ));
+    assert!(table.contains("examples=[suppressed:event-b->event-old]"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn table_renderer_shows_global_adjudication_queue_without_false_source_mapping()
+-> xtask::TestResult<()> {
+    let envelope = ViewEnvelope::new(
+        "sinexctl.sources.status",
+        SourceCoverageListView::new(vec![fixture_source()]),
+    );
+
+    let table = format_sources_status_table_with_adjudication(
+        &envelope,
+        AdjudicationQueueSummary::Available {
+            clusters: 2,
+            events: 5,
+            partial: false,
+        },
+    );
+
+    assert!(table.contains(
+        "Dedup adjudication queue: 2 pending candidate cluster(s), 5 candidate event(s)"
+    ));
+    assert!(!table.contains("fixture.source: 2 pending"));
     Ok(())
 }
 

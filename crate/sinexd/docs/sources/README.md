@@ -19,3 +19,9 @@ This directory owns source and staged-source runtime docs for
   every new source/capture package issue follows.
 - `package_completeness_gate.md` - #1792 report shape, status rules, strict
   gate, and source/capture issue consumption guidance.
+
+## Coverage error semantics
+
+The `sinexctl sources status` coverage summary reports the fraction of declared source contracts with evidence debt. `coverage_error_basis_points` is `coverage_error_sources * 10,000 / total_sources`, using integer floor division. A source counts once even when it has multiple gap reasons. `coverage_error_kinds` retains the per-reason counts, including readiness, continuity, and explicit gap evidence.
+
+This source-count denominator is a contract denominator. It answers whether Sinex has evidence for each declared source, not how many real-world records an upstream system produced. A source with no runtime binding, no material, no events, an unobserved bridge, or stale runtime evidence is reported as debt or unknown evidence; silence is never counted as successful capture. Source-specific denominators such as journald sequence ranges, filesystem notification overflow, provider cursor lag, and expected-rate models remain separate probe work and must carry an explicit observed, missing, stale, unsupported, or unknown state before they affect a record-rate estimate.

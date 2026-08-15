@@ -49,3 +49,4 @@ pub type JsonValue = serde_json::Value;
 pub type DbTransaction<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 
 pub mod postgres_copy;
+pub use postgres_copy::verify_event_copy_contract;

@@ -26,13 +26,13 @@
 
 use proptest::prelude::*;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
+use sinex_primitives::events::Event;
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::events::payloads::{
     ActivityWatchAfkChangedPayload, ActivityWatchWindowActivePayload, HyprlandWindowFocusedPayload,
     HyprlandWorkspaceSwitchedPayload, StateIntervalPayload, SystemdUnitStartedPayload,
     SystemdUnitStoppedPayload,
 };
-use sinex_primitives::events::Event;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{EventSource, EventType, Id, JsonValue, Uuid};
 use sinexd::automata::interval_lift::{IntervalLift, IntervalLiftState};
@@ -43,14 +43,35 @@ use sinexd::runtime::automaton::AutomatonContext;
 /// often enough to exercise ties, reorderings, and duplicates.
 #[derive(Debug, Clone)]
 enum SynthInput {
-    Focus { window: u8, ts: i64 },
-    Workspace { ws: i32, ts: i64 },
+    Focus {
+        window: u8,
+        ts: i64,
+    },
+    Workspace {
+        ws: i32,
+        ts: i64,
+    },
     /// `duration_ms == 0` is a heartbeat; otherwise a bounded observation.
-    AwWindow { app: u8, ts: i64, duration_ms: u64 },
-    Afk { ts: i64, duration_ms: u64 },
-    SystemdStart { unit: u8, ts: i64 },
-    SystemdStop { unit: u8, ts: i64 },
-    Suspend { ts: i64 },
+    AwWindow {
+        app: u8,
+        ts: i64,
+        duration_ms: u64,
+    },
+    Afk {
+        ts: i64,
+        duration_ms: u64,
+    },
+    SystemdStart {
+        unit: u8,
+        ts: i64,
+    },
+    SystemdStop {
+        unit: u8,
+        ts: i64,
+    },
+    Suspend {
+        ts: i64,
+    },
 }
 
 impl SynthInput {
@@ -80,7 +101,9 @@ fn context(source: &'static str, event_type: &'static str, ts: i64, seed: u64) -
         source: EventSource::from_static(source),
         event_type: EventType::from_static(event_type),
         ts_orig: Some(Timestamp::from_unix_timestamp(ts).expect("valid ts")),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -302,8 +325,11 @@ fn transition_input_strategy() -> impl Strategy<Value = SynthInput> {
     prop_oneof![
         (0u8..3, ts.clone()).prop_map(|(window, ts)| SynthInput::Focus { window, ts }),
         (0i32..3, ts.clone()).prop_map(|(ws, ts)| SynthInput::Workspace { ws, ts }),
-        (0u8..3, ts.clone())
-            .prop_map(|(app, ts)| SynthInput::AwWindow { app, ts, duration_ms: 0 }),
+        (0u8..3, ts.clone()).prop_map(|(app, ts)| SynthInput::AwWindow {
+            app,
+            ts,
+            duration_ms: 0
+        }),
         (0u8..2, ts.clone()).prop_map(|(unit, ts)| SynthInput::SystemdStart { unit, ts }),
         (0u8..2, ts.clone()).prop_map(|(unit, ts)| SynthInput::SystemdStop { unit, ts }),
         ts.prop_map(|ts| SynthInput::Suspend { ts }),
@@ -316,9 +342,15 @@ fn synth_input_strategy() -> impl Strategy<Value = SynthInput> {
     prop_oneof![
         (0u8..3, ts.clone()).prop_map(|(window, ts)| SynthInput::Focus { window, ts }),
         (0i32..3, ts.clone()).prop_map(|(ws, ts)| SynthInput::Workspace { ws, ts }),
-        (0u8..3, ts.clone(), prop_oneof![Just(0u64), 1000u64..5000])
-            .prop_map(|(app, ts, duration_ms)| SynthInput::AwWindow { app, ts, duration_ms }),
-        (ts.clone(), 1000u64..5000).prop_map(|(ts, duration_ms)| SynthInput::Afk { ts, duration_ms }),
+        (0u8..3, ts.clone(), prop_oneof![Just(0u64), 1000u64..5000]).prop_map(
+            |(app, ts, duration_ms)| SynthInput::AwWindow {
+                app,
+                ts,
+                duration_ms
+            }
+        ),
+        (ts.clone(), 1000u64..5000)
+            .prop_map(|(ts, duration_ms)| SynthInput::Afk { ts, duration_ms }),
         (0u8..2, ts.clone()).prop_map(|(unit, ts)| SynthInput::SystemdStart { unit, ts }),
         (0u8..2, ts.clone()).prop_map(|(unit, ts)| SynthInput::SystemdStop { unit, ts }),
         ts.prop_map(|ts| SynthInput::Suspend { ts }),

@@ -15,6 +15,53 @@ use sqlx::postgres::types::PgRange;
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
+const SCOPE_ROOT_PAGE_SIZE: i64 = 10_000;
+pub const REPLAY_ROOT_SAMPLE_SIZE: i64 = 100;
+/// Maximum cascade journal page handed to replay recovery/compensation.
+pub const REPLAY_ARCHIVE_PAGE_SIZE: i64 = 1_000;
+/// Maximum archived scope-metadata rows one replay invalidation handoff owns.
+///
+/// This is deliberately smaller than `REPLAY_ARCHIVE_PAGE_SIZE`: an
+/// invalidation includes both UUIDs and potentially long scope keys, so the
+/// transport-facing page needs a tighter bound.
+pub const REPLAY_SCOPE_METADATA_PAGE_SIZE: i64 = 100;
+
+/// One archived event that needs a scope invalidation.
+///
+/// Values are read in bounded keyset pages from the archive identified by an
+/// operation-unique archive reason. They are intentionally not journaled or
+/// accumulated by the replay executor.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ArchivedReplayScopeMetadataRow {
+    pub id: Uuid,
+    pub source: String,
+    pub event_type: String,
+    pub has_lineage: bool,
+    pub scope_key: String,
+}
+
+/// Cardinality comparison between archived material roots and one replay's
+/// newly persisted operation outputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayOutputMatchCounts {
+    pub matching_count: u64,
+    pub missing_count: u64,
+    pub unexpected_count: u64,
+}
+
+/// Bounded identity evidence for a replay scope.
+///
+/// The complete root set is deliberately never retained in an operation
+/// preview.  The fingerprint is calculated in keyset pages so execution can
+/// still reject a scope that changed after preview without persisting every
+/// UUID in `operations_log`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ReplayScopeRootSnapshot {
+    pub root_event_count: u64,
+    pub root_event_id_sample: Vec<Uuid>,
+    pub root_event_id_fingerprint: String,
+}
+
 /// Repository for replay-operation database access.
 pub struct ReplayRepository<'a> {
     pool: &'a PgPool,
@@ -92,6 +139,93 @@ fn build_filter_query<'a>(
 // ── ReplayRepository methods ─────────────────────────────────────────────
 
 impl ReplayRepository<'_> {
+    /// Compare replay outputs with the archived material-root occurrence
+    /// multiset without hydrating either side into application memory.
+    ///
+    /// `row_number` makes duplicate occurrence keys compare as a multiset,
+    /// preserving the old Vec/HashMap validator's semantics while keeping the
+    /// working set in PostgreSQL. `IS NOT DISTINCT FROM` is intentional: an
+    /// absent offset kind is a meaningful persisted occurrence value.
+    pub async fn replay_output_match_counts(
+        &self,
+        archive_reason: &str,
+        operation_id: Uuid,
+    ) -> Result<ReplayOutputMatchCounts> {
+        let row = sqlx::query!(
+            r#"
+            WITH expected AS (
+                SELECT
+                    id,
+                    source,
+                    event_type,
+                    source_material_id,
+                    anchor_byte,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    row_number() OVER (
+                        PARTITION BY source, event_type, source_material_id,
+                            anchor_byte, offset_start, offset_end, offset_kind
+                        ORDER BY id
+                    ) AS ordinal
+                FROM audit.archived_events
+                WHERE archive_reason = $1
+                  AND source_material_id IS NOT NULL
+                  AND source_event_ids IS NULL
+            ), actual AS (
+                SELECT
+                    id,
+                    source,
+                    event_type,
+                    source_material_id,
+                    anchor_byte,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    row_number() OVER (
+                        PARTITION BY source, event_type, source_material_id,
+                            anchor_byte, offset_start, offset_end, offset_kind
+                        ORDER BY id
+                    ) AS ordinal
+                FROM core.events
+                WHERE created_by_operation_id = $2
+            ), compared AS (
+                SELECT expected.id AS expected_id, actual.id AS actual_id
+                FROM expected
+                FULL OUTER JOIN actual
+                  ON expected.source = actual.source
+                 AND expected.event_type = actual.event_type
+                 AND expected.source_material_id = actual.source_material_id
+                 AND expected.anchor_byte = actual.anchor_byte
+                 AND expected.offset_start IS NOT DISTINCT FROM actual.offset_start
+                 AND expected.offset_end IS NOT DISTINCT FROM actual.offset_end
+                 AND expected.offset_kind IS NOT DISTINCT FROM actual.offset_kind
+                 AND expected.ordinal = actual.ordinal
+            )
+            SELECT
+                count(*) FILTER (WHERE expected_id IS NOT NULL AND actual_id IS NOT NULL)::bigint AS "matching_count!",
+                count(*) FILTER (WHERE expected_id IS NOT NULL AND actual_id IS NULL)::bigint AS "missing_count!",
+                count(*) FILTER (WHERE expected_id IS NULL AND actual_id IS NOT NULL)::bigint AS "unexpected_count!"
+            FROM compared
+            "#,
+            archive_reason,
+            operation_id,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to compare replay output cardinality")
+                .with_source(error.to_string())
+                .with_operation("replay_output_match_counts")
+        })?;
+
+        Ok(ReplayOutputMatchCounts {
+            matching_count: row.matching_count as u64,
+            missing_count: row.missing_count as u64,
+            unexpected_count: row.unexpected_count as u64,
+        })
+    }
+
     // ── Advisory lock ────────────────────────────────────────────────────
 
     /// Acquire the per-source advisory lock for replay operation creation.
@@ -301,7 +435,7 @@ impl ReplayRepository<'_> {
         meta_json: JsonValue,
         status: &str,
         msg: &str,
-        duration_ms: Option<i32>,
+        duration_ms: Option<i64>,
     ) -> Result<()> {
         sqlx::query!(
             r#"
@@ -351,16 +485,150 @@ impl ReplayRepository<'_> {
 
     // ── Scope queries (preview) ──────────────────────────────────────────
 
-    /// Collect the root event IDs matching a replay scope.
-    pub async fn collect_scope_root_ids(&self, scope: &ReplayScope) -> Result<Vec<Uuid>> {
+    /// Build bounded identity evidence for the roots matching a replay scope.
+    pub async fn scope_root_snapshot(
+        &self,
+        scope: &ReplayScope,
+    ) -> Result<ReplayScopeRootSnapshot> {
+        let mut root_event_count = 0_u64;
+        let mut root_event_id_sample = Vec::with_capacity(REPLAY_ROOT_SAMPLE_SIZE as usize);
+        let mut hasher = blake3::Hasher::new();
+        let mut after_id = None;
+
+        loop {
+            let page = self
+                .collect_scope_root_ids_page(scope, after_id, SCOPE_ROOT_PAGE_SIZE)
+                .await?;
+            let Some(last_id) = page.last().copied() else {
+                break;
+            };
+
+            for id in page {
+                if root_event_id_sample.len() < REPLAY_ROOT_SAMPLE_SIZE as usize {
+                    root_event_id_sample.push(id);
+                }
+                hasher.update(id.as_bytes());
+                root_event_count += 1;
+            }
+            after_id = Some(last_id);
+        }
+
+        Ok(ReplayScopeRootSnapshot {
+            root_event_count,
+            root_event_id_sample,
+            root_event_id_fingerprint: hasher.finalize().to_hex().to_string(),
+        })
+    }
+
+    /// Fetch one bounded keyset page of root event IDs matching a replay scope.
+    ///
+    /// Every query against the potentially large root set is bounded and seeks
+    /// from the previous UUIDv7 key rather than asking PostgreSQL to materialize
+    /// the complete result set at once.
+    pub async fn collect_scope_root_ids_page(
+        &self,
+        scope: &ReplayScope,
+        after_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        if limit <= 0 {
+            return Err(SinexError::validation(
+                "scope root page limit must be positive",
+            ));
+        }
+
         let window = resolve_time_window(scope);
         let mut builder = build_filter_query(scope, window, "SELECT id::uuid FROM core.events");
-        let rows: Vec<(Uuid,)> = builder
-            .build_query_as()
+        if let Some(after_id) = after_id {
+            builder.push(" AND id < ");
+            builder.push_bind(after_id);
+        }
+        builder.push(" ORDER BY id DESC LIMIT ");
+        builder.push_bind(limit);
+
+        builder
+            .build_query_scalar::<Uuid>()
             .fetch_all(self.pool)
             .await
-            .map_err(|e| SinexError::database(format!("collect scope root ids: {e}")))?;
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+            .map_err(|e| SinexError::database(format!("collect scope root ids page: {e}")))
+    }
+
+    /// Read one bounded page of cascade IDs archived by a replay operation.
+    ///
+    /// The operation journal stores the archive reason rather than every
+    /// cascade UUID.  Recovery repeatedly reads this page from the durable
+    /// archive as it restores rows, so no public operation payload or Rust
+    /// handoff owns the complete cascade membership.
+    pub async fn archived_replay_event_ids_page(
+        &self,
+        archive_reason: &str,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        if limit <= 0 {
+            return Err(SinexError::validation(
+                "archived replay event page limit must be positive",
+            ));
+        }
+
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT id::uuid FROM audit.archived_events \
+             WHERE archive_reason = $1 ORDER BY id DESC LIMIT $2",
+        )
+        .bind(archive_reason)
+        .bind(limit)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| SinexError::database("read archived replay event page").with_source(error))
+    }
+
+    /// Read one keyset page of archived replay scope metadata.
+    ///
+    /// `archive_reason` is the authoritative cascade identity. Callers must
+    /// advance `after_id` with the final returned ID and verify their processed
+    /// row count against the count captured during the archive transaction.
+    /// A missing page therefore fails the replay closed instead of silently
+    /// dropping an invalidation or leaving a projection ready over archived
+    /// inputs.
+    pub async fn archived_replay_scope_metadata_page(
+        &self,
+        archive_reason: &str,
+        after_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<ArchivedReplayScopeMetadataRow>> {
+        if !(1..=REPLAY_SCOPE_METADATA_PAGE_SIZE).contains(&limit) {
+            return Err(SinexError::validation(format!(
+                "archived replay scope metadata page limit must be between 1 and {REPLAY_SCOPE_METADATA_PAGE_SIZE}"
+            )));
+        }
+
+        let mut query = String::from(
+            "SELECT id, source, event_type, (source_event_ids IS NOT NULL) AS has_lineage, scope_key \
+             FROM audit.archived_events \
+             WHERE archive_reason = $1 AND scope_key IS NOT NULL",
+        );
+        if after_id.is_some() {
+            query.push_str(" AND id < $2");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $3"
+        } else {
+            " ORDER BY id DESC LIMIT $2"
+        });
+
+        let mut request =
+            sqlx::query_as::<_, ArchivedReplayScopeMetadataRow>(&query).bind(archive_reason);
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id);
+        }
+        request
+            .bind(limit)
+            .fetch_all(self.pool)
+            .await
+            .map_err(|error| {
+                SinexError::database("read archived replay scope metadata page")
+                    .with_source(error)
+                    .with_context("archive_reason", archive_reason.to_string())
+            })
     }
 
     /// Count total material-root events matching a replay scope.

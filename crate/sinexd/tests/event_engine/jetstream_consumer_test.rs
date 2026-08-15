@@ -38,6 +38,29 @@ async fn publish_event(
     payload: serde_json::Value,
     overrides: EventOverrides,
 ) -> TestResult<Uuid> {
+    publish_event_with_operation(
+        pool,
+        nats_client,
+        namespace,
+        source,
+        event_type,
+        payload,
+        overrides,
+        None,
+    )
+    .await
+}
+
+async fn publish_event_with_operation(
+    pool: &sinex_db::DbPool,
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+    overrides: EventOverrides,
+    operation_id: Option<Uuid>,
+) -> TestResult<Uuid> {
     ensure_fixture_source_material(pool).await?;
     let env = sinex_primitives::environment();
     let event_id = overrides.id.unwrap_or_else(Uuid::now_v7);
@@ -55,6 +78,7 @@ async fn publish_event(
         "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
         "anchor_byte": 0,
         "equivalence_key": overrides.equivalence_key,
+        "created_by_operation_id": operation_id.map(|id| id.to_string()),
     });
     let envelope = admission_envelope(source, event);
 
@@ -106,6 +130,14 @@ struct ConsumerSetup {
 }
 
 async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<ConsumerSetup> {
+    start_isolated_consumer_with_lower_bound(ctx, suffix, None).await
+}
+
+async fn start_isolated_consumer_with_lower_bound(
+    ctx: &TestContext,
+    suffix: &str,
+    ts_orig_lower_bound: Option<Timestamp>,
+) -> TestResult<ConsumerSetup> {
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -131,7 +163,8 @@ async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<
         pool.clone(),
         Arc::new(RwLock::new(validator)),
         topology.clone(),
-    );
+    )
+    .with_ts_orig_lower_bound(ts_orig_lower_bound);
     let handle = spawn_consumer_and_wait_ready(ctx, &js, &topology, consumer).await?;
 
     Ok(ConsumerSetup {
@@ -705,6 +738,83 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     Ok(())
 }
 
+/// Re-imported material can carry a source-native date through its manifest
+/// timing record while the event itself leaves `ts_orig` unresolved. The
+/// readiness-gated resolver must preserve a legitimate pre-2000 source date;
+/// this exercises the real deferred material path rather than only the direct
+/// AdmissionService path.
+#[sinex_test]
+async fn reimport_manifest_source_date_survives_deferred_admission(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let setup = start_isolated_consumer(&ctx, "historical-manifest-date").await?;
+    let material_id = Uuid::now_v7();
+    let source_date = Timestamp::from_const(time::macros::datetime!(1990-01-01 00:00:00 UTC));
+
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type, start_time, staged_at)
+        VALUES ($1, 'annex', $2, 'completed',
+                'intrinsic', $3::timestamptz, NOW())
+        "#,
+        material_id,
+        format!("reimport-manifest-source-date-{material_id}"),
+        source_date.inner(),
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let event_id = Uuid::now_v7();
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": "reimport-manifest",
+        "event_type": "source.date",
+        "payload": {"source_date": source_date.format_rfc3339()},
+        "ts_orig": null,
+        "host": "test-host",
+        "source_material_id": material_id.to_string(),
+        "anchor_byte": 0,
+    });
+    let subject = ctx.env().nats_subject_with_namespace(
+        Some(&setup.namespace),
+        "events.raw.reimport_manifest.source_date",
+    );
+    ctx.nats_client()
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope("reimport-manifest", event))?.into(),
+        )
+        .await?;
+    ctx.nats_client().flush().await?;
+
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::SHORT).await?;
+    let persisted = ctx
+        .pool
+        .events()
+        .get_by_id(event_id.into())
+        .await?
+        .expect("deferred historical event should persist");
+    assert_eq!(persisted.ts_orig, Some(source_date));
+
+    let (stored_ts_orig, stored_ts_coided): (Timestamp, Timestamp) = sqlx::query_as(
+        "SELECT ts_orig, ts_coided FROM core.events WHERE id = $1::uuid",
+    )
+    .bind(event_id)
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(stored_ts_orig, source_date);
+    assert!(
+        stored_ts_coided > source_date,
+        "historical import must retain its source clock while receiving a fresh interpretation clock"
+    );
+
+    setup.handle.abort();
+    let _ = setup.handle.await;
+    Ok(())
+}
+
 #[sinex_test]
 async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -853,6 +963,113 @@ async fn duplicate_equivalence_key_is_suppressed_without_dlq(ctx: TestContext) -
     );
 
     setup.handle.abort();
+    Ok(())
+}
+
+/// A duplicate rerun through the real NATS admission path must leave a
+/// durable operation-scoped report: the first operation admits one live row,
+/// while the second operation reports one suppression and no new live row.
+#[sinex_test]
+async fn duplicate_rerun_is_visible_in_import_report(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let setup = start_isolated_consumer(&ctx, "import-report-rerun").await?;
+    let nats_client = ctx.nats_client();
+    let first_operation = ctx
+        .pool
+        .state()
+        .start_replay_operation(
+            "import-report-test",
+            json!({"source": "import-report"}),
+            None,
+        )
+        .await?;
+    let second_operation = ctx
+        .pool
+        .state()
+        .start_replay_operation(
+            "import-report-test",
+            json!({"source": "import-report"}),
+            None,
+        )
+        .await?;
+    let equivalence_key = "import-report-rerun-key".to_string();
+
+    let first_id = publish_event_with_operation(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "import-report",
+        "pipeline.event",
+        json!({"sequence": 1}),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+        Some(first_operation.to_uuid()),
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, first_id.into(), Timeouts::SHORT).await?;
+
+    let duplicate_id = publish_event_with_operation(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "import-report",
+        "pipeline.event",
+        json!({"sequence": 1}),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+        Some(second_operation.to_uuid()),
+    )
+    .await?;
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.events_stream.clone();
+            let consumer_name = setup.topology.consumer_durable.clone();
+            async move {
+                let stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let mut consumer = stream
+                    .get_consumer::<jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let info = consumer
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                Ok::<bool, SinexError>(info.num_pending == 0 && info.num_ack_pending == 0)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(duplicate_id.into())
+            .await?
+            .is_none(),
+        "duplicate rerun must not create a second live row"
+    );
+    let report = ctx
+        .pool
+        .import_outcomes()
+        .report(second_operation.to_uuid())
+        .await?
+        .expect("operation-scoped import report should exist");
+    assert_eq!(report.admitted.len(), 0);
+    assert_eq!(report.outcomes.len(), 1);
+    assert_eq!(report.outcomes[0].outcome, "suppressed");
+    assert_eq!(report.outcomes[0].candidate_event_id, duplicate_id);
+
+    setup.handle.abort();
+    let _ = setup.handle.await;
     Ok(())
 }
 
@@ -1564,12 +1781,12 @@ async fn multi_child_intent_settles_valid_and_rejected_siblings(
         "source": "r6d12mixed",
         "event_type": "r6d12mixed.bad",
         "payload": {"data": "bad"},
-        // A well-formed but implausibly-old RFC3339 timestamp: it must
+        // A well-formed but implausibly-future RFC3339 timestamp: it must
         // deserialize fine (unlike a malformed string, which would poison
         // the WHOLE envelope's deserialization and reject the valid
-        // sibling too) yet still get rejected by the per-event
-        // ts_orig_lower_bound (2000-01-01) admission check.
-        "ts_orig": "1990-01-01T00:00:00Z",
+        // sibling too) yet still get rejected by the future-skew admission
+        // check. Legitimate pre-2000 timestamps are covered separately.
+        "ts_orig": (temporal::now() + temporal::Duration::days(3650)).format_rfc3339(),
         "host": "test-host",
         "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
         "anchor_byte": 1,
@@ -2431,19 +2648,24 @@ async fn settlement_registry_resolves_durable_debt_for_a_dlqd_event(
     nats_client.flush().await?;
 
     let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), rx).await??;
-    match state {
+    let debt_id = match state {
         EmissionReceiptState::DurableDebt { debt_id, reason } => {
-            assert_eq!(
-                debt_id, event_id,
-                "debt_id has no dedicated DB row here, so it must be the event's own id"
-            );
             assert!(
                 reason.contains("Source material"),
                 "reason should identify the orphaned source material, got: {reason}"
             );
+            debt_id
         }
         other => panic!("expected DurableDebt{{..}}, got {other:?}"),
-    }
+    };
+    let evidence = sqlx::query!(
+        "SELECT dlq_id, failed_event_id FROM sinex_schemas.dlq_events WHERE failed_event_id = $1 ORDER BY created_at DESC LIMIT 1",
+        event_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(evidence.failed_event_id, event_id);
+    assert_eq!(debt_id, evidence.dlq_id);
 
     consumer_handle.abort();
     let _ = consumer_handle.await;
@@ -2520,22 +2742,27 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
     nats_client.flush().await?;
 
     let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), rx).await??;
-    match state {
+    let debt_id = match state {
         EmissionReceiptState::DurableDebt { debt_id, reason } => {
-            assert_eq!(
-                debt_id, event_id,
-                "debt_id has no dedicated DB row here, so it must be the rejected event's own id"
-            );
             assert!(
                 reason.contains("admission rejection"),
                 "reason should identify this as an admission-rejection DLQ, got: {reason}"
             );
+            debt_id
         }
         other => panic!(
             "expected DurableDebt{{..}} (admission-rejected event must resolve the \
              settlement registry so the source cursor unlocks past it), got {other:?}"
         ),
-    }
+    };
+    let evidence = sqlx::query!(
+        "SELECT dlq_id, failed_event_id FROM sinex_schemas.dlq_events WHERE failed_event_id = $1 ORDER BY created_at DESC LIMIT 1",
+        event_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(evidence.failed_event_id, event_id);
+    assert_eq!(debt_id, evidence.dlq_id);
 
     // The rejected event must never reach core.events.
     assert!(
@@ -2548,17 +2775,260 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
     Ok(())
 }
 
-/// sinex-txt4 regression test (CRITICAL, currently EXPECTED TO FAIL — no fix
-/// has landed for this bead yet). Reproduces the bead's own named repro
-/// recipe exactly: two events sharing an `equivalence_key`, published as two
-/// separate NATS messages with NO persistence barrier between them, so both
-/// land in the SAME fetch batch. Admission's equivalence-key pre-pass only
-/// resolves against already-committed `core.events` rows (admission.rs
-/// intra-batch collapse maps are `admit_intent_bytes`-local and dropped at
-/// return) — so message 2's pre-pass cannot see message 1's still-in-flight
-/// event, both classify as Fresh, and both persist as live rows sharing one
-/// equivalence_key, silently violating the single-live-interpretation
-/// invariant.
+/// sinex-sbue: structural and plausibility failures from the full ingest
+/// validator must use the real admission settlement path.
+#[sinex_test]
+async fn full_validator_rejections_route_through_real_admission_dlq_settlement(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_SBUE"),
+        ctx.pipeline_namespace().consumer_name("event-engine-sbue"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(true))),
+        topology,
+    );
+    let registry = consumer.settlement_registry();
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let structural_id = Uuid::now_v7();
+    let plausibility_id = Uuid::now_v7();
+    let structural_rx = registry.register(structural_id.into());
+    let plausibility_rx = registry.register(plausibility_id.into());
+    let stale_timestamp = Timestamp::from_const(time::macros::datetime!(1970-01-01 00:00:00 UTC));
+    let cases = [
+        (
+            structural_id,
+            "structural.invalid",
+            json!("payload must be an object"),
+            temporal::now().format_rfc3339(),
+            "expected object",
+        ),
+        (
+            plausibility_id,
+            "plausibility.invalid",
+            json!({"ok": true}),
+            stale_timestamp.format_rfc3339(),
+            "ID timestamp drift",
+        ),
+    ];
+    for (event_id, event_type, payload, ts_orig, _) in &cases {
+        let event = json!({
+            "id": event_id.to_string(),
+            "source": "sbue",
+            "event_type": event_type,
+            "payload": payload,
+            "ts_orig": ts_orig,
+            "host": "test-host",
+            "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+            "anchor_byte": 0,
+        });
+        let subject = env.nats_subject_with_namespace(
+            Some(&namespace),
+            &format!("events.raw.sbue.{event_type}"),
+        );
+        nats_client
+            .publish(
+                subject,
+                serde_json::to_vec(&admission_envelope("sbue", event))?.into(),
+            )
+            .await?;
+    }
+    nats_client.flush().await?;
+
+    for (event_id, receiver, expected_reason) in [
+        (structural_id, structural_rx, cases[0].4),
+        (plausibility_id, plausibility_rx, cases[1].4),
+    ] {
+        let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), receiver).await??;
+        let EmissionReceiptState::DurableDebt { debt_id, reason } = state else {
+            panic!("validator rejection for {event_id} must settle as durable debt: {state:?}");
+        };
+        assert!(
+            reason.contains("admission rejection"),
+            "settlement must identify the admission DLQ route: {reason}"
+        );
+
+        let evidence = sqlx::query(
+            "SELECT failed_event_id, failure_reason, error_category FROM sinex_schemas.dlq_events \
+             WHERE dlq_id = $1::uuid",
+        )
+        .bind(debt_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        let failed_event_id: Uuid = evidence.try_get("failed_event_id")?;
+        let failure_reason: String = evidence.try_get("failure_reason")?;
+        let error_category: String = evidence.try_get("error_category")?;
+        assert_eq!(failed_event_id, event_id);
+        assert_eq!(error_category, "permanent");
+        assert!(
+            failure_reason.contains(expected_reason),
+            "DLQ evidence must retain the validator failure ({expected_reason}), got: {failure_reason}"
+        );
+        assert!(
+            ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+            "validator-rejected event must not reach core.events"
+        );
+    }
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
+    Ok(())
+}
+
+/// sinex-7s0: material events legitimately arrive without `ts_orig`, so their
+/// source-material start time is resolved only after the readiness FK gate. The
+/// resolved value must then pass the same plausibility checks as an explicit
+/// timestamp and route old/future values through the normal JetStream DLQ
+/// settlement path, while a valid value persists.
+#[sinex_test]
+async fn resolved_material_ts_orig_reuses_plausibility_gate(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let setup = start_isolated_consumer_with_lower_bound(
+        &ctx,
+        "resolved-ts-orig",
+        Some(Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC))),
+    )
+    .await?;
+    let nats_client = ctx.nats_client();
+    let env = ctx.env();
+    let now = temporal::now();
+    let initial_dlq_messages = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
+        .await?
+        .info()
+        .await?
+        .state
+        .messages;
+    let valid_start_time = Timestamp::from(now.to_postgres_parts().0);
+    let cases = [
+        (
+            "past",
+            Timestamp::from_const(time::macros::datetime!(1990-01-01 00:00:00 UTC)),
+        ),
+        ("future", now + time::Duration::days(1)),
+        ("valid", valid_start_time - time::Duration::minutes(1)),
+    ];
+    let mut event_ids = Vec::new();
+
+    for (label, start_time) in cases {
+        let material_id = Uuid::now_v7();
+        sqlx::query(
+            r"
+            INSERT INTO raw.source_material_registry
+                (id, material_kind, source_identifier, status, timing_info_type, staged_at, start_time)
+            VALUES ($1::uuid, 'annex', $2, 'completed', 'intrinsic', $3, $4)
+            ",
+        )
+        .bind(material_id)
+        .bind(format!("resolved-ts-orig-{label}-{material_id}"))
+        .bind(now)
+        .bind(start_time)
+        .execute(&ctx.pool)
+        .await?;
+
+        let event_id = Uuid::now_v7();
+        event_ids.push((label, event_id, material_id, start_time));
+        let event = json!({
+            "id": event_id.to_string(),
+            "source": "resolved_ts_orig",
+            "event_type": "resolved_ts_orig.event",
+            "payload": {"case": label},
+            "host": "test-host",
+            "source_material_id": material_id.to_string(),
+            "anchor_byte": 0,
+        });
+        let subject = env.nats_subject_with_namespace(
+            Some(&setup.namespace),
+            "events.raw.resolved_ts_orig.event",
+        );
+        nats_client
+            .publish(
+                subject,
+                serde_json::to_vec(&admission_envelope("resolved_ts_orig", event))?.into(),
+            )
+            .await?;
+    }
+    nats_client.flush().await?;
+
+    let valid_id = event_ids
+        .iter()
+        .find(|(label, _, _, _)| *label == "valid")
+        .map(|(_, event_id, _, _)| *event_id)
+        .expect("valid case exists");
+    WaitHelpers::wait_for_event_id(&ctx.pool, valid_id.into(), Timeouts::SHORT).await?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.dlq_stream.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let messages = stream
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?
+                    .state
+                    .messages;
+                Ok::<bool, SinexError>(messages >= initial_dlq_messages + 2)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    for (label, event_id, _, expected_ts) in event_ids {
+        let persisted: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM core.events WHERE id = $1::uuid",
+        )
+        .bind(event_id)
+        .fetch_optional(&ctx.pool)
+        .await?;
+        if label == "valid" {
+            assert_eq!(persisted, Some(event_id));
+            let stored: Timestamp = sqlx::query_scalar(
+                "SELECT ts_orig FROM core.events WHERE id = $1::uuid",
+            )
+            .bind(event_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+            assert_eq!(stored, expected_ts);
+        } else {
+            assert_eq!(persisted, None, "implausible {label} material timestamp must not persist");
+        }
+    }
+
+    setup.handle.abort();
+    let _ = setup.handle.await;
+    Ok(())
+}
+
+/// sinex-txt4 regression test. Reproduces the bead's named repro recipe:
+/// two events sharing an `equivalence_key`, published as separate NATS
+/// messages with NO persistence barrier between them, so both land in the
+/// SAME fetch batch. Admission must carry its equivalence-key state across
+/// the whole fetch, not just one intent, and leave one live interpretation.
 ///
 /// Deliberately does NOT call `wait_for_event_id` between the two
 /// `publish_event` calls, and publishes both BEFORE the consumer is spawned
@@ -2567,19 +3037,7 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
 /// barrier) blind to the bug: a quiet/barriered consumer drains one message
 /// per fetch, so the two never co-occupy a batch.
 ///
-/// sinex-txt4 open, coordinator note: this test's OWN harness is not yet
-/// reliable, separate from whether the target bug is real. The original
-/// version silently lost both publishes (a fire-and-forget core-NATS
-/// publish, `publish_event`, sent before the raw stream existed) --
-/// bootstrapping the stream first fixed that, but doing so now surfaces a
-/// deeper interaction with `recreate_raw_stream_for_workqueue_if_safe`'s
-/// WorkQueue-migration bootstrap logic when messages already exist and no
-/// consumer is attached yet (`jetstream_streams.rs`), which currently makes
-/// the consumer task exit before signalling readiness. Ignored until that
-/// harness issue is diagnosed and fixed -- do not trust this as evidence
-/// either way on sinex-txt4 until it runs clean.
 #[sinex_test]
-#[ignore = "sinex-txt4 open: test harness itself is broken (WorkQueue-migration bootstrap race), not yet proving the target bug either way -- needs harness fix first"]
 async fn equivalence_key_collision_within_one_fetch_batch_must_not_duplicate(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -2650,14 +3108,33 @@ async fn equivalence_key_collision_within_one_fetch_batch_must_not_duplicate(
         pool.clone(),
         Arc::new(RwLock::new(validator)),
         topology.clone(),
-    );
+    )
+    // This test deliberately seeds the stream before creating the durable
+    // consumer. Allow that explicit historical replay so the test exercises
+    // the batch-collision path instead of the production safety refusal for
+    // an unconfigured cold-start replay.
+    .with_reject_initial_replay(false);
     let consumer_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
 
     WaitHelpers::wait_for_source_events(&pool, "txt4-source", 1, Timeouts::STANDARD).await?;
-    // Give the second message a full drain cycle to also land (or collide)
-    // before asserting -- the bug's failure mode is a SECOND live row, not
-    // absence, so we must not race the assertion against in-flight work.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for the second revision itself to become live before checking the
+    // cardinality. This avoids a fixed sleep and proves the consumer reached
+    // the final same-key state.
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = pool.clone();
+            async move {
+                let live_second: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1")
+                        .bind(second_id)
+                        .fetch_one(&pool)
+                        .await?;
+                Ok::<bool, SinexError>(live_second == 1)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
 
     let live_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE equivalence_key = $1")

@@ -5,11 +5,15 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 async fn defaults_match_constants() -> TestResult<()> {
     let config = EventEngineConfig::default();
-    assert_eq!(config.database_pool_size, 50);
+    assert_eq!(config.database_pool_size, 16);
     assert_eq!(config.max_buffered_slices, 4096);
     assert!(!config.dry_run);
     assert!(config.validate_schemas);
     assert!(!config.nats.require_tls);
+    assert_eq!(
+        config.ts_orig_lower_bound_unix, None,
+        "historical imports must not inherit an implicit 2000 lower bound"
+    );
     Ok(())
 }
 
@@ -115,6 +119,7 @@ async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     env.set("SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING", "987");
     env.set("SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING", "1234");
     env.set("SINEX_EVENT_ENGINE_MAX_BUFFERED_SLICES", "2048");
+    env.set("SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX", "946684800");
     env.set("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_BYTES", "2048");
     env.set("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_INTERVAL_MS", "250");
     env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_BYTES", "4096");
@@ -148,6 +153,7 @@ async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     assert_eq!(config.consumer_max_ack_pending, 987);
     assert_eq!(config.material_slices_max_ack_pending, 1234);
     assert_eq!(config.max_buffered_slices, 2048);
+    assert_eq!(config.ts_orig_lower_bound_unix, Some(946_684_800));
     assert_eq!(config.material_staged_sync_bytes.as_u64(), 2048);
     assert_eq!(config.material_staged_sync_interval_ms.as_millis(), 250);
     assert_eq!(config.material_wal_sync_bytes.as_u64(), 4096);

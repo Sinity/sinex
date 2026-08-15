@@ -54,6 +54,22 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DriftCategory {
+    /// A source-declared table is absent from the live catalog.
+    Table,
+    /// A column's type, nullability, generated expression, default, or
+    /// explicit collation diverged from the source declaration.
+    ColumnDefinition,
+    /// A named CHECK body or anonymous inline CHECK body diverged.
+    ConstraintDefinition,
+    /// A foreign-key definition or action diverged.
+    ForeignKeyDefinition,
+    /// An index definition, predicate, expression, or opclass diverged.
+    IndexDefinition,
+    /// Trigger enabled state, timing/event/level/WHEN, or target function
+    /// diverged.
+    TriggerDefinition,
+    /// A source-declared function body diverged exactly after normalization.
+    FunctionDefinition,
     /// Body of a trigger or stored function diverged from the declared
     /// snapshot. The convergence engine writes the declared body via
     /// `CREATE OR REPLACE FUNCTION`, but a manual edit between applies will
@@ -92,6 +108,13 @@ pub enum DriftCategory {
 impl fmt::Display for DriftCategory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Table => write!(f, "table"),
+            Self::ColumnDefinition => write!(f, "column_definition"),
+            Self::ConstraintDefinition => write!(f, "constraint_definition"),
+            Self::ForeignKeyDefinition => write!(f, "foreign_key_definition"),
+            Self::IndexDefinition => write!(f, "index_definition"),
+            Self::TriggerDefinition => write!(f, "trigger_definition"),
+            Self::FunctionDefinition => write!(f, "function_definition"),
             Self::TriggerBody => write!(f, "trigger_body"),
             Self::ColumnDefault => write!(f, "column_default"),
             Self::InlineCheckExpr => write!(f, "inline_check_expr"),
@@ -136,6 +159,11 @@ impl fmt::Display for StrictDrift {
 /// per category but not stable across categories.
 pub async fn check_strict(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
     let mut drifts = Vec::new();
+    // The typed expectation verifier is currently exercised as a standalone
+    // catalog-comparison vertical slice. Keep the established strict-diff
+    // checks authoritative until every source declaration has a lossless
+    // catalog normalization contract; wiring the partial verifier here would
+    // turn harmless PostgreSQL formatting differences into perpetual drift.
     drifts.extend(check_column_defaults(pool).await?);
     drifts.extend(check_trigger_function_bodies(pool).await?);
     drifts.extend(check_inline_check_exprs(pool).await?);
@@ -496,7 +524,13 @@ const DECLARED_FUNCTION_BODIES: &[DeclaredFunctionBody] = &[
         schema: "core",
         function_name: "execute_cascade_tombstone",
         // Permanent deletion from archive — irrecoverable if the body is wrong.
-        expected_markers: &["event_tombstones", "archived_events", "ON CONFLICT"],
+        expected_markers: &[
+            "event_tombstones",
+            "archived_events",
+            "ON CONFLICT",
+            "deletion_committed_at",
+            "tombstone operation",
+        ],
     },
     DeclaredFunctionBody {
         schema: "core",
@@ -630,8 +664,7 @@ async fn check_view_bodies(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError
                     "view exists with markers {:?}",
                     declared.expected_markers
                 ),
-                observed_summary: "view not present in pg_class (or not a plain view)"
-                    .to_string(),
+                observed_summary: "view not present in pg_class (or not a plain view)".to_string(),
             });
             continue;
         };
@@ -677,6 +710,13 @@ struct DeclaredInlineCheck {
     expected_markers: &'static [&'static str],
 }
 
+const PROVENANCE_XOR_MARKERS: &[&str] = &[
+    "source_material_id IS NOT NULL",
+    "source_event_ids IS NULL",
+    "source_material_id IS NULL",
+    "source_event_ids IS NOT NULL",
+];
+
 const DECLARED_INLINE_CHECKS: &[DeclaredInlineCheck] = &[
     DeclaredInlineCheck {
         schema: "core",
@@ -687,12 +727,19 @@ const DECLARED_INLINE_CHECKS: &[DeclaredInlineCheck] = &[
         // it disappears, the provenance contract is gone.
         // Markers span both OR-branches of the constraint so a partial
         // rewrite that removes the derived side is also detected.
-        expected_markers: &[
-            "source_material_id IS NOT NULL",
-            "source_event_ids IS NULL",
-            "source_material_id IS NULL",
-            "source_event_ids IS NOT NULL",
-        ],
+        expected_markers: PROVENANCE_XOR_MARKERS,
+    },
+    DeclaredInlineCheck {
+        schema: "reflection",
+        table: "events",
+        label: "xor_provenance",
+        expected_markers: PROVENANCE_XOR_MARKERS,
+    },
+    DeclaredInlineCheck {
+        schema: "audit",
+        table: "archived_events",
+        label: "xor_provenance",
+        expected_markers: PROVENANCE_XOR_MARKERS,
     },
     DeclaredInlineCheck {
         schema: "core",

@@ -5,6 +5,18 @@ use crate::runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 use crate::views::CaveatView;
 use serde::{Deserialize, Serialize};
 
+/// Authority carried by a DLQ entry for retrying its ingress bytes.
+///
+/// `operator_preview` is disclosure-filtered evidence for inspection. It is
+/// never valid input for raw-stream replay. Only `exact_raw_bytes` authorizes
+/// a retry, and it must be accompanied by separately stored raw bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DlqPayloadAuthority {
+    ExactRawBytes,
+    OperatorPreview,
+}
+
 // ─────────────────────────────────────────────────────────────
 // dlq.list
 // ─────────────────────────────────────────────────────────────

@@ -170,7 +170,7 @@ impl RetryPolicy {
         let seed = (x & 0xFFFF) as f64 / 65535.0;
         let factor = 1.0 + (seed * 2.0 - 1.0) * self.jitter_ratio;
         let nanos = (capped.as_secs_f64() * factor).max(0.0);
-        Duration::from_secs_f64(nanos)
+        Duration::from_secs_f64(nanos).min(self.max_delay)
     }
 }
 
@@ -245,6 +245,9 @@ pub struct ApiCursorPosition {
     /// checkpoint with `page_incomplete = false` must not re-import.
     #[serde(default, skip_serializing_if = "is_false")]
     pub page_incomplete: bool,
+    /// Page index to fetch when resuming this checkpoint.
+    #[serde(default)]
+    pub page_index: u64,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -279,9 +282,14 @@ fn build_record_metadata(
             .map(|s| JsonValue::String(s.to_owned()))
             .unwrap_or(JsonValue::Null),
     );
+    let resume_page_index = if page_incomplete {
+        page_index
+    } else {
+        page_index.saturating_add(1)
+    };
     map.insert(
         META_PAGE_INDEX.to_owned(),
-        JsonValue::Number(page_index.into()),
+        JsonValue::Number(resume_page_index.into()),
     );
     map.insert(
         META_PAGE_INCOMPLETE.to_owned(),
@@ -428,6 +436,7 @@ where
         //   - checkpoint, last_cursor = Some → resume from the saved cursor
         //   - checkpoint, last_cursor = None → prior run consumed the final page;
         //                                      resuming would re-import, so stop.
+        let start_page_index = cursor.as_ref().map_or(0, |position| position.page_index);
         let start_cursor: Option<String> = match cursor.as_ref() {
             Some(pos) if pos.page_incomplete => pos.last_cursor.clone(),
             Some(pos) => match pos.last_cursor.as_deref() {
@@ -446,7 +455,7 @@ where
         // Vec. flat_map(stream::iter) flattens the per-page vecs into individual
         // SourceRecord items so the consumer sees a single flat stream.
         let page_stream = stream::unfold(
-            Some((start_cursor, 0u64)),
+            Some((start_cursor, start_page_index)),
             move |state: Option<(Option<String>, u64)>| {
                 let client = Arc::clone(&client);
                 async move {
@@ -535,10 +544,16 @@ where
             .get(META_PAGE_INCOMPLETE)
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let page_index = record
+            .metadata
+            .get(META_PAGE_INDEX)
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
         Ok(ApiCursorPosition {
             last_cursor,
             last_etag,
             page_incomplete,
+            page_index,
         })
     }
 }

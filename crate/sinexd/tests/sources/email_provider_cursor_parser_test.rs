@@ -275,7 +275,10 @@ JVBERi0xLjQK\r\n\
 
     assert_eq!(message.payload["attachment_count"], 1);
     assert_eq!(attachment.payload["filename"], "quarterly-plan.pdf");
-    assert_eq!(attachment.payload["content_type"], "application/pdf");
+    assert_eq!(
+        attachment.payload["content_type"],
+        "application/pdf; name=\"quarterly-plan.pdf\""
+    );
     assert_eq!(
         attachment.payload["content_id"],
         "plan-attachment@example.com"
@@ -289,7 +292,10 @@ JVBERi0xLjQK\r\n\
     let payload: EmailAttachmentObservedPayload =
         serde_json::from_value(attachment.payload.clone())?;
     assert_eq!(payload.filename.as_deref(), Some("quarterly-plan.pdf"));
-    assert_eq!(payload.content_type.as_deref(), Some("application/pdf"));
+    assert_eq!(
+        payload.content_type.as_deref(),
+        Some("application/pdf; name=\"quarterly-plan.pdf\"")
+    );
     assert_eq!(
         payload.content_id.as_deref(),
         Some("plan-attachment@example.com")

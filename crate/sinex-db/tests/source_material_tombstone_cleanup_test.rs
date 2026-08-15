@@ -114,3 +114,89 @@ async fn delete_material_removes_registry_row(ctx: TestContext) -> TestResult<()
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn delete_material_preserves_referenced_registry_row(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("delete-referenced-test"))
+        .await?
+        .to_uuid();
+    sqlx::query!(
+        r#"
+        INSERT INTO core.events (
+            id, source, event_type, host, payload, ts_orig, ts_orig_subnano,
+            source_material_id, anchor_byte
+        )
+        VALUES ($1, 'test', 'fixture.event', 'test-host', '{}'::jsonb,
+                NOW(), 0, $2, 0)
+        "#,
+        Uuid::now_v7(),
+        material_id,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let repo = ctx.pool.source_materials();
+    assert!(
+        !repo.delete_material(Id::from_uuid(material_id)).await?,
+        "referenced material must remain available for replay recovery"
+    );
+    assert!(
+        repo.get_by_id(Id::from_uuid(material_id)).await?.is_some(),
+        "failed delete must preserve the registry row"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn delete_material_preserves_manifest_replay_root(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("manifest-retention-test"))
+        .await?
+        .to_uuid();
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET metadata = jsonb_build_object('material_manifest', jsonb_build_object('content_key', 'local-cas-s1--aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) WHERE id = $1",
+    )
+    .bind(material_id)
+    .execute(ctx.pool())
+    .await?;
+
+    let repo = ctx.pool.source_materials();
+    assert!(
+        !repo.delete_material(Id::from_uuid(material_id)).await?,
+        "ordinary orphan cleanup must not remove a manifest-backed replay root"
+    );
+    assert!(
+        repo.get_by_id(Id::from_uuid(material_id)).await?.is_some(),
+        "manifest-backed material must remain discoverable after cleanup"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn reviewed_manifest_purge_removes_orphaned_replay_root(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("manifest-reviewed-purge-test"))
+        .await?
+        .to_uuid();
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET metadata = jsonb_build_object('material_manifest', jsonb_build_object('content_key', 'local-cas-s1--aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) WHERE id = $1",
+    )
+    .bind(material_id)
+    .execute(ctx.pool())
+    .await?;
+
+    let repo = ctx.pool.source_materials();
+    let deleted = repo
+        .purge_manifest_material_if_orphan(Id::from_uuid(material_id))
+        .await?;
+    assert!(
+        deleted.is_some(),
+        "the explicit purge primitive must remove an orphaned manifest replay root"
+    );
+    assert!(
+        repo.get_by_id(Id::from_uuid(material_id)).await?.is_none(),
+        "the reviewed purge must remove the registry authority it explicitly targeted"
+    );
+    Ok(())
+}

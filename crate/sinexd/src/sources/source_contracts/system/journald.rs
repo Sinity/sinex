@@ -36,7 +36,7 @@ fn journal_field<'a>(json: &'a serde_json::Value, key: &str) -> Option<&'a str> 
 /// whenever the field's raw bytes aren't valid printable UTF-8 text, which
 /// includes any line containing ANSI escape codes). Array values are decoded
 /// lossily since journald itself makes no UTF-8 guarantee for these fields.
-fn decode_journald_field(v: &serde_json::Value) -> Option<String> {
+pub(crate) fn decode_journald_field(v: &serde_json::Value) -> Option<String> {
     match v {
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Array(items) => {
@@ -82,6 +82,7 @@ fn is_sinexd_journal_entry(json: &serde_json::Value) -> bool {
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::Journal,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::JOURNAL_CURSOR,
     // sinex-sn6s: the external journal export is itself a capped rolling
     // window (journald retention), not a full-history canonical copy —
     // Sinex's own row is the only durable record beyond that window.
@@ -162,7 +163,7 @@ impl MaterialParser for JournaldParser {
                     serde_json::to_value(&payload)
                         .map_err(|e| ParserError::Parse(e.to_string()))?,
                 )
-                .ts_orig(Timestamp::now())
+                .ts_orig(ctx.acquisition_time)
                 .timing(TimingEvidence::Atemporal)
                 .anchor(record.anchor.clone())
                 .privacy_context(ProcessingContext::Journal)
@@ -177,11 +178,19 @@ impl MaterialParser for JournaldParser {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
 
-        let timestamp = if timestamp_us > 0 {
-            Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1_000)
-                .unwrap_or_else(Timestamp::now)
+        let (timestamp, timing) = if timestamp_us > 0 {
+            match Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1_000) {
+                Some(timestamp) => (
+                    timestamp,
+                    TimingEvidence::Intrinsic {
+                        field: "__REALTIME_TIMESTAMP".into(),
+                        confidence: TimingConfidence::Intrinsic,
+                    },
+                ),
+                None => (ctx.acquisition_time, TimingEvidence::Atemporal),
+            }
         } else {
-            Timestamp::now()
+            (ctx.acquisition_time, TimingEvidence::Atemporal)
         };
 
         // sinex-1877 / fresh-rebuild B1: sinexd's own journald output is redundant
@@ -274,10 +283,7 @@ impl MaterialParser for JournaldParser {
             .event_source(EventSource::from_static("journald"))
             .payload(serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?)
             .ts_orig(timestamp)
-            .timing(TimingEvidence::Intrinsic {
-                field: "__REALTIME_TIMESTAMP".into(),
-                confidence: TimingConfidence::Intrinsic,
-            })
+            .timing(timing)
             .anchor(record.anchor.clone())
             .privacy_context(ProcessingContext::Journal)
             .build();

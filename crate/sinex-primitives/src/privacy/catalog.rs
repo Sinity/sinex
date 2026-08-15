@@ -270,12 +270,17 @@ fn secret_rules() -> Vec<PatternRule> {
             category: RuleCategory::Secret,
             matcher: Matcher::Regex {
                 // Exclude values that are already redaction placeholders (<...>)
-                pattern: r"(?i)(password|passwd|secret|token|api_key|apikey|api-key|access_key|auth_token|credentials)\s*[:=]\s*([^<\s]\S*)".into(),
+                pattern: r#"(?i)["']?(password|passwd|pass|pwd|secret|token|api_key|apikey|api-key|access_key|auth_token|credentials)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^<\s,}]+)"#.into(),
             },
             strategy: Strategy::Redact {
                 label: Some("$1=<REDACTED>".into()),
             },
-            contexts: vec![ProcessingContext::Command, ProcessingContext::Journal],
+            contexts: vec![
+                ProcessingContext::Command,
+                ProcessingContext::Journal,
+                ProcessingContext::Document,
+                ProcessingContext::Clipboard,
+            ],
             enabled: true,
         },
         PatternRule {
@@ -283,10 +288,36 @@ fn secret_rules() -> Vec<PatternRule> {
             description: "Command-line flags for secrets (--password, --token, etc.)".into(),
             category: RuleCategory::Secret,
             matcher: Matcher::Regex {
-                pattern: r"(?i)--(password|token|secret|key|api-key|auth-token)[\s=]+(\S+)".into(),
+                pattern: r"(?i)--(password|token|secret|key|api-key|auth-token|user)[\s=]+(\S+)".into(),
             },
             strategy: Strategy::Redact {
                 label: Some("--$1 <REDACTED>".into()),
+            },
+            contexts: vec![ProcessingContext::Command],
+            enabled: true,
+        },
+        PatternRule {
+            name: "basic_auth_header".into(),
+            description: "HTTP Basic authentication headers".into(),
+            category: RuleCategory::Secret,
+            matcher: Matcher::Regex {
+                pattern: r"(?i)Authorization:\s*Basic\s+[A-Za-z0-9+/]{8,}={0,2}".into(),
+            },
+            strategy: Strategy::Redact {
+                label: Some("Authorization: Basic <REDACTED>".into()),
+            },
+            contexts: vec![],
+            enabled: true,
+        },
+        PatternRule {
+            name: "basic_auth_cli".into(),
+            description: "Command-line HTTP Basic credentials (-u/--user)".into(),
+            category: RuleCategory::Secret,
+            matcher: Matcher::Regex {
+                pattern: r"(?i)(?:-u|--user)[\s=]+\S+:\S+".into(),
+            },
+            strategy: Strategy::Redact {
+                label: Some("<BASIC_AUTH>".into()),
             },
             contexts: vec![ProcessingContext::Command],
             enabled: true,
@@ -336,7 +367,7 @@ fn secret_rules() -> Vec<PatternRule> {
             category: RuleCategory::Secret,
             matcher: Matcher::Regex {
                 // Length 93–108 chars after prefix; allow tolerance for future extension.
-                pattern: r"sk-ant-api\d{2}-[A-Za-z0-9_\-]{80,120}".into(),
+                pattern: r"sk-ant-(?:api\d{2}|oat\d{2}|sid\d{2})-[A-Za-z0-9_\-]{20,120}".into(),
             },
             strategy: Strategy::Suppress,
             contexts: vec![],
@@ -352,7 +383,7 @@ fn secret_rules() -> Vec<PatternRule> {
                 // Anthropic keys contain additional hyphen-delimited segments
                 // and are handled by the dedicated rule above; the legacy
                 // OpenAI shape is plain alphanumeric after `sk-`.
-                pattern: r"sk-proj-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9]{48}\b".into(),
+                pattern: r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9]{48}\b".into(),
             },
             strategy: Strategy::Suppress,
             contexts: vec![],

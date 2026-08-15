@@ -45,6 +45,7 @@ async fn skeleton_uses_package_completeness_contract_fields() -> xtask::sandbox:
     assert!(rendered.contains("occurrence_identity = OccurrenceIdentity::"));
     assert!(rendered.contains("privacy_context = ProcessingContext::"));
     assert!(rendered.contains("runtime_shape = RuntimeShape::"));
+    assert!(rendered.contains("recovery_policy = SourceRecoveryPolicy::"));
     assert!(rendered.contains("factory = \"adapter_parser\""));
     Ok(())
 }
@@ -62,6 +63,7 @@ async fn skeleton_renders_runtime_binding_metadata_when_available() -> xtask::sa
     assert!(rendered.contains("runner_pack = RunnerPack::Live"));
     assert!(rendered.contains("checkpoint_family = CheckpointFamily::LiveObservation"));
     assert!(rendered.contains("runtime_shape = RuntimeShape::Continuous"));
+    assert!(rendered.contains("recovery_policy = SourceRecoveryPolicy::live_observation("));
     assert!(rendered.contains("capabilities = \"coverage:source-coverage, debt:unified-debt-view, operation:terminal.activity.check"));
     assert!(rendered.contains("operation:terminal.activity.inspect"));
     assert!(rendered.contains("factory = \"adapter_parser\""));
@@ -81,6 +83,7 @@ async fn skeleton_renders_package_mode_binding_metadata() -> xtask::sandbox::Tes
     assert!(rendered.contains("runner_pack = RunnerPack::SinexdSource"));
     assert!(rendered.contains("checkpoint_family = CheckpointFamily::Journal"));
     assert!(rendered.contains("runtime_shape = RuntimeShape::Scheduled"));
+    assert!(rendered.contains("recovery_policy = SourceRecoveryPolicy::JOURNAL_CURSOR"));
     assert!(rendered.contains("operation:email.mailbox.authorize"));
     assert!(rendered.contains("operation:email.mailbox.sync"));
     assert!(rendered.contains("operation:email.mailbox.replay"));

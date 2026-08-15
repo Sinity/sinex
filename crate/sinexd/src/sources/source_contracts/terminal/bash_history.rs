@@ -57,6 +57,7 @@ pub struct BashHistoryParserConfig;
     resource_profile = ResourceProfile::BoundedStream,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
 )]
 pub struct BashHistoryParser {
     dedup: ContentHashWindow,

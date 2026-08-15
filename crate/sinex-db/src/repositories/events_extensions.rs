@@ -3,7 +3,7 @@
 use crate::JsonValue;
 use crate::models::Event;
 use crate::repositories::common::{DbResult, Repository, db_error};
-use crate::repositories::events::queries::extract_plan_rows;
+use crate::repositories::events::queries::{extract_plan_rows, paginate_keyset};
 use crate::repositories::events::{EventRepository, event_select_columns};
 
 use crate::EventRecord;
@@ -26,23 +26,53 @@ impl EventRepository<'_> {
         pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let (limit, offset) = pagination.as_tuple();
+        paginate_keyset(offset, limit, |after_id, page_limit| {
+            self.get_by_source_and_time_range_after_id(source, start, end, after_id, page_limit)
+        })
+        .await
+    }
 
-        let records = sqlx::query_as::<_, EventRecord>(concat!(
+    /// Fetch a bounded source/time page using a UUIDv7 keyset cursor.
+    pub async fn get_by_source_and_time_range_after_id(
+        &self,
+        source: &EventSource,
+        start: Timestamp,
+        end: Timestamp,
+        after_id: Option<sinex_primitives::Id<Event<JsonValue>>>,
+        limit: i64,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        if limit <= 0 {
+            return Err(crate::SinexError::validation(
+                "keyset page limit must be positive",
+            ));
+        }
+
+        let mut query = String::from(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3 \
-             ORDER BY ts_coided DESC LIMIT $4 OFFSET $5"
-        ))
-        .bind(source.as_str())
-        .bind(start)
-        .bind(end)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(self.pool())
-        .await
-        .map_err(|e| db_error(e, "get events by source and time range"))?;
+            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3"
+        ));
+        if after_id.is_some() {
+            query.push_str(" AND id < $4");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $5"
+        } else {
+            " ORDER BY id DESC LIMIT $4"
+        });
 
-        records
+        let mut request = sqlx::query_as::<_, EventRecord>(&query)
+            .bind(source.as_str())
+            .bind(start)
+            .bind(end);
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id.to_uuid());
+        }
+        request = request.bind(limit);
+        request
+            .fetch_all(self.pool())
+            .await
+            .map_err(|e| db_error(e, "get events by source and time range after id"))?
             .into_iter()
             .map(super::events::conversions::EventRecordExt::try_to_event)
             .collect()
@@ -58,23 +88,56 @@ impl EventRepository<'_> {
         pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let (limit, offset) = pagination.as_tuple();
+        paginate_keyset(offset, limit, |after_id, page_limit| {
+            self.get_material_root_events_in_range_after_id(
+                source, start, end, after_id, page_limit,
+            )
+        })
+        .await
+    }
 
-        let records = sqlx::query_as::<_, EventRecord>(concat!(
+    /// Fetch bounded material-root events with a UUIDv7 keyset cursor.
+    pub async fn get_material_root_events_in_range_after_id(
+        &self,
+        source: &EventSource,
+        start: Timestamp,
+        end: Timestamp,
+        after_id: Option<sinex_primitives::Id<Event<JsonValue>>>,
+        limit: i64,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        if limit <= 0 {
+            return Err(crate::SinexError::validation(
+                "keyset page limit must be positive",
+            ));
+        }
+
+        let mut query = String::from(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3 \
-             AND source_event_ids IS NULL ORDER BY ts_coided DESC LIMIT $4 OFFSET $5"
-        ))
-        .bind(source.as_str())
-        .bind(start)
-        .bind(end)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(self.pool())
-        .await
-        .map_err(|e| db_error(e, "get material-root events by source and time range"))?;
+            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3 ",
+            "AND source_event_ids IS NULL"
+        ));
+        if after_id.is_some() {
+            query.push_str(" AND id < $4");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $5"
+        } else {
+            " ORDER BY id DESC LIMIT $4"
+        });
 
-        records
+        let mut request = sqlx::query_as::<_, EventRecord>(&query)
+            .bind(source.as_str())
+            .bind(start)
+            .bind(end);
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id.to_uuid());
+        }
+        request = request.bind(limit);
+        request
+            .fetch_all(self.pool())
+            .await
+            .map_err(|e| db_error(e, "get material-root events after id"))?
             .into_iter()
             .map(super::events::conversions::EventRecordExt::try_to_event)
             .collect()

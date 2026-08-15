@@ -22,7 +22,7 @@ mod test_support;
 pub(super) const RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS: i64 = 300;
 
 use crate::runtime::content_store::MaterialContentStore;
-use crate::runtime::{SelfObservationError, SelfObserver};
+use crate::runtime::{FaultInjector, SelfObservationError, SelfObserver};
 use async_nats::{Client as NatsClient, jetstream};
 use blake3::Hasher;
 use dashmap::DashMap;
@@ -229,6 +229,7 @@ pub struct MaterialAssembler {
     env: SinexEnvironment,
     namespace: Option<String>,
     content_store: Arc<MaterialContentStore>,
+    pub(super) fault_injector: FaultInjector,
     assembler_state: Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>,
     slice_io_locks: Arc<DashMap<Uuid, Arc<Mutex<()>>>>,
     state_root: PathBuf,
@@ -364,6 +365,7 @@ impl MaterialAssembler {
         )
         .max(finalize_concurrency);
 
+        let fault_injector = content_store.fault_injector();
         Ok(Self {
             js,
             nats_client,
@@ -371,6 +373,7 @@ impl MaterialAssembler {
             env,
             namespace,
             content_store,
+            fault_injector,
             assembler_state: Arc::new(DashMap::new()),
             slice_io_locks: Arc::new(DashMap::new()),
             state_root,
@@ -722,6 +725,7 @@ impl MaterialAssembler {
             source_identifier: String::new(),
             metadata: serde_json::json!({}),
             phase: AssemblyPhase::PendingBegin,
+            finalizing_since: None,
             hasher: Hasher::new(),
             pending_write: None,
             pending_end: None,
@@ -762,7 +766,10 @@ impl MaterialAssembler {
     async fn import_into_content_store(
         &self,
         state: &FinalizationState,
-    ) -> EventEngineResult<crate::runtime::content_store::ContentStoreKey> {
+    ) -> EventEngineResult<(
+        crate::runtime::content_store::ContentStoreKey,
+        crate::runtime::content_store::CasWriteLease,
+    )> {
         io::import_into_content_store(self, state).await
     }
 
@@ -800,6 +807,7 @@ impl MaterialAssembler {
             env: self.env.clone(),
             namespace: self.namespace.clone(),
             content_store: self.content_store.clone(),
+            fault_injector: self.fault_injector.clone(),
             assembler_state: self.assembler_state.clone(),
             slice_io_locks: self.slice_io_locks.clone(),
             state_root: self.state_root.clone(),

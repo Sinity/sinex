@@ -186,6 +186,37 @@ async fn test_journald_parser_decodes_array_valued_generic_fields() -> TestResul
 }
 
 #[sinex_test]
+async fn oversized_journal_record_returns_visible_parse_error() -> TestResult<()> {
+    let mid = Id::<SourceMaterial>::new();
+    let record = SourceRecord {
+        material_id: mid,
+        anchor: MaterialAnchor::ByteRange {
+            start: 0,
+            len: (MAX_JOURNAL_LINE_BYTES + 1) as u64,
+        },
+        bytes: vec![b'x'; MAX_JOURNAL_LINE_BYTES + 1],
+        logical_path: None,
+        source_ts_hint: None,
+        metadata: serde_json::Value::Null,
+    };
+
+    let mut parser = JournaldParser;
+    let error = parser
+        .parse_record(record, &make_ctx(mid))
+        .await
+        .expect_err("oversized journal input must not be silently dropped");
+    let ParserError::Parse(message) = error else {
+        panic!("size-cap rejection must be a parse error, got {error:?}");
+    };
+    assert!(
+        message.contains("journal line exceeds")
+            && message.contains(&MAX_JOURNAL_LINE_BYTES.to_string()),
+        "size-cap error must name the rejected input and configured limit: {message}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_journald_parser_preserves_microsecond_precision() -> TestResult<()> {
     // __REALTIME_TIMESTAMP carries microsecond precision and TimingConfidence::Intrinsic
     // claims full precision -- truncating to whole seconds silently discards it.
@@ -209,19 +240,10 @@ async fn test_journald_parser_preserves_microsecond_precision() -> TestResult<()
     Ok(())
 }
 
-/// sinex-10ef open: when `__REALTIME_TIMESTAMP` is missing or malformed,
-/// `timestamp_us` falls back to 0 and `timestamp` falls back to
-/// `Timestamp::now()` -- a fabricated wall-clock value -- but the intent is
-/// still unconditionally tagged `TimingEvidence::Intrinsic`, the same tag
-/// used for a genuinely parsed, trustworthy timestamp. Admission trusts
-/// `Intrinsic` and persists it verbatim, bypassing the
-/// `raw.temporal_ledger`-based deferred-resolution path that
-/// `TimingEvidence::Atemporal` would correctly route through (matching the
-/// sibling handling in udev.rs/dbus.rs in the same directory).
+/// sinex-10ef regression: when `__REALTIME_TIMESTAMP` is missing or malformed,
+/// the parser uses a fabricated acquisition-time value, which must remain
+/// `Atemporal` rather than being tagged as a trustworthy intrinsic timestamp.
 #[sinex_test]
-#[ignore = "sinex-10ef open: journald.rs tags a fabricated Timestamp::now() fallback as \
-            TimingEvidence::Intrinsic instead of Atemporal when __REALTIME_TIMESTAMP is \
-            missing/malformed, bypassing temporal_ledger-based deferred resolution"]
 async fn test_journald_missing_realtime_timestamp_is_tagged_atemporal_not_intrinsic()
 -> TestResult<()> {
     let mid = Id::<SourceMaterial>::new();
@@ -238,8 +260,47 @@ async fn test_journald_missing_realtime_timestamp_is_tagged_atemporal_not_intrin
     assert_eq!(
         intents[0].timing,
         TimingEvidence::Atemporal,
-        "a fabricated Timestamp::now() fallback must be tagged Atemporal (deferred \
+        "an acquisition-time fallback must be tagged Atemporal (deferred \
          resolution via raw.temporal_ledger), not Intrinsic (trusted verbatim)"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_journald_malformed_realtime_timestamp_is_tagged_atemporal_not_intrinsic()
+-> TestResult<()> {
+    let mid = Id::<SourceMaterial>::new();
+    let line = r#"{"__CURSOR":"s=abc;i=2","__REALTIME_TIMESTAMP":"not-a-timestamp","MESSAGE":"entry with malformed realtime timestamp"}"#;
+    let records = records_from_journal_lines(mid, &[line]);
+    let record = records[0].as_ref().unwrap().clone();
+
+    let mut parser = JournaldParser;
+    let ctx = make_ctx(mid);
+    let intents = parser.parse_record(record, &ctx).await?;
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].ts_orig, ctx.acquisition_time);
+    assert_eq!(intents[0].timing, TimingEvidence::Atemporal);
+    Ok(())
+}
+
+/// `i64::MAX` parses as a provider microsecond value, but is beyond the
+/// representable `Timestamp` range. It must follow the same material-tier
+/// fallback as a missing or malformed journal timestamp.
+#[sinex_test]
+async fn test_journald_out_of_range_realtime_timestamp_is_tagged_atemporal_not_intrinsic()
+-> TestResult<()> {
+    let mid = Id::<SourceMaterial>::new();
+    let line = r#"{"__CURSOR":"s=abc;i=3","__REALTIME_TIMESTAMP":"9223372036854775807","MESSAGE":"entry with out-of-range realtime timestamp"}"#;
+    let records = records_from_journal_lines(mid, &[line]);
+    let record = records[0].as_ref().unwrap().clone();
+
+    let mut parser = JournaldParser;
+    let ctx = make_ctx(mid);
+    let intents = parser.parse_record(record, &ctx).await?;
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].ts_orig, ctx.acquisition_time);
+    assert_eq!(intents[0].timing, TimingEvidence::Atemporal);
     Ok(())
 }

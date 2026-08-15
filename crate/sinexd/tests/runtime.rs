@@ -9,4 +9,5 @@ mod runtime {
     mod email_gmail_api_cursor_adapter_test;
     mod email_imap_sync_adapter_test;
     mod email_mbox_file_adapter_test;
+    mod startup_storage_preflight_test;
 }

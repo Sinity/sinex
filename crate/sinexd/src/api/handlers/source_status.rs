@@ -3,7 +3,9 @@
 use crate::api::service_container::ServiceContainer;
 use serde_json::Value;
 use sinex_db::DbPoolExt;
-use sinex_db::repositories::{EmailMailboxProjectionSummary, EmailProviderStateRecord};
+use sinex_db::repositories::{
+    EmailMailboxProjectionSummary, EmailProviderStateRecord, SourceDedupBreakdownRow,
+};
 use sinex_primitives::SinexError;
 use sinex_primitives::domain::SourceIdentifier;
 use sinex_primitives::rpc::{
@@ -14,18 +16,25 @@ use sinex_primitives::rpc::{
     },
 };
 use sinex_primitives::source_contracts::{
-    AccessScope, BudgetPressureAction, CheckpointFamily, DeliverySemantics,
-    MaterialLifecyclePolicy, OrderingSemantics, ResourceBudgetSpec, ResourceProfile, RunnerPack,
-    SourceCapabilityKind, SourceContract, SourceCriticality, SourceRuntimeBinding, TransportKind,
-    WorkClass, all_source_contracts, source_runtime_bindings,
+    AcceptedLossPolicy, AccessScope, BudgetPressureAction, CatchUpAuthority, CheckpointFamily,
+    DeliverySemantics, MaterialLifecyclePolicy, OrderingSemantics, ResourceBudgetSpec,
+    ResourceProfile, RunnerPack, SourceCapabilityKind, SourceContract, SourceCriticality,
+    SourceReplayabilityClass, SourceRuntimeBinding, TransportKind, WorkClass, all_source_contracts,
+    source_runtime_bindings,
 };
 use sinex_primitives::sources::source_identity_matches_family;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, CoverageGapView,
-    ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
-    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, SourceModeStatusView,
-    SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
+    ReadinessCaveatId, SOURCE_DEDUP_EXAMPLE_LIMIT, SinexObjectKind, SinexObjectRef,
+    SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
+    SourceDedupBreakdownView, SourceDedupExampleView, SourceDedupSummaryView,
+    SourceDedupWindowView, SourceModeStatusView, SourcePrivacyPosture, SourceResourceBudgetView,
+    ViewEnvelope,
+};
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, evaluate_runtime_liveness,
 };
 use sqlx::FromRow;
 use sqlx::PgPool;
@@ -81,6 +90,7 @@ pub async fn handle_sources_status(
     pool: &PgPool,
     request: SourcesStatusRequest,
 ) -> Result<SourcesStatusResponse> {
+    let now = Timestamp::now();
     let stale_after = Duration::from_secs(request.stale_after_secs);
     let recent_window = Duration::from_secs(request.recent_window_secs);
     let sources = pool
@@ -89,24 +99,28 @@ pub async fn handle_sources_status(
         .await
         .map_err(|e| SinexError::database("Failed to list sources status").with_std_error(&e))?
         .into_iter()
-        .map(|row| SourceStatus {
-            module_name: row.module_name,
-            version: row.version,
-            description: row.description,
-            manifest_status: row.manifest_status.unwrap_or_default(),
-            live: row.live,
-            service_name: row.service_name,
-            instance_id: row.instance_id,
-            module_run_id: row.module_run_id,
-            host: row.host,
-            run_status: row.run_status,
-            started_at: row.started_at,
-            last_heartbeat_at: row.last_heartbeat_at,
-            current_health: row.current_health,
-            health_changed_at: row.health_changed_at,
-            health_reason: row.health_reason,
-            recent_output_count: row.recent_output_count,
-            last_output_at: row.last_output_at,
+        .map(|row| {
+            let mut status = SourceStatus {
+                module_name: row.module_name,
+                version: row.version,
+                description: row.description,
+                manifest_status: row.manifest_status.unwrap_or_default(),
+                live: row.live,
+                service_name: row.service_name,
+                instance_id: row.instance_id,
+                module_run_id: row.module_run_id,
+                host: row.host,
+                run_status: row.run_status,
+                started_at: row.started_at,
+                last_heartbeat_at: row.last_heartbeat_at,
+                current_health: row.current_health,
+                health_changed_at: row.health_changed_at,
+                health_reason: row.health_reason,
+                recent_output_count: row.recent_output_count,
+                last_output_at: row.last_output_at,
+            };
+            status.live = status.is_live(request.stale_after_secs, now);
+            status
         })
         .collect();
 
@@ -126,7 +140,7 @@ pub async fn handle_sources_status_view(
 ) -> Result<ViewEnvelope<SourceCoverageListView>> {
     let pool = services.pool();
     let now = Timestamp::now();
-    let status_defaults = SourcesStatusRequest::default();
+    let recent_window_secs = SourcesStatusRequest::default().recent_window_secs;
     let bindings: Vec<&'static SourceRuntimeBinding> = source_runtime_bindings().collect();
     let mut contracts = matching_source_contracts(&request);
     contracts.sort_by_key(|contract| contract.id);
@@ -136,8 +150,8 @@ pub async fn handle_sources_status_view(
     } else {
         pool.state()
             .list_sources_status_for_modules(
-                Duration::from_secs(status_defaults.stale_after_secs),
-                Duration::from_secs(status_defaults.recent_window_secs),
+                Duration::from_secs(request.stale_after_secs),
+                Duration::from_secs(recent_window_secs),
                 &source_status_module_names,
             )
             .await
@@ -164,13 +178,27 @@ pub async fn handle_sources_status_view(
     })?;
 
     let event_rows = load_source_event_aggregates(pool, &contracts, request.exact_counts).await?;
+    let dedup_rows = pool
+        .import_outcomes()
+        .source_status_breakdown(
+            &source_event_pairs(&contracts),
+            SOURCE_DEDUP_EXAMPLE_LIMIT as i64,
+        )
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to compute source deduplication outcomes")
+                .with_std_error(&error)
+        })?;
+    let dedup_breakdown = source_dedup_breakdown(dedup_rows);
+    let dedup_summary = source_dedup_summary(&dedup_breakdown);
 
     let mut event_aggregates = HashMap::<(String, String), SourceEventAggregateRow>::new();
     for row in event_rows {
         event_aggregates.insert((row.source.clone(), row.event_type.clone()), row);
     }
     let material_aggregates = material_aggregates_by_logical_source(material_rows);
-    let runtime_observations = source_runtime_observations(source_status_rows);
+    let runtime_observations =
+        source_runtime_observations(source_status_rows, request.stale_after_secs, now);
     let email_provider_states = latest_email_provider_operation_states(pool).await?;
     let email_projection_states = latest_email_mailbox_projection_states(pool).await?;
     let session_states = latest_source_session_states(pool).await?;
@@ -182,7 +210,7 @@ pub async fn handle_sources_status_view(
             .copied()
             .filter(|binding| binding.source_id == contract.id)
             .collect();
-        views.push(source_coverage_view(
+        views.push(source_coverage_view_with_stale_after(
             contract,
             &source_bindings,
             &event_aggregates,
@@ -191,19 +219,22 @@ pub async fn handle_sources_status_view(
             &email_provider_states,
             &email_projection_states,
             &session_states,
+            request.stale_after_secs,
             now,
         ));
     }
 
-    let mut envelope = ViewEnvelope::new(
-        "sinexd.sources.status.view",
-        SourceCoverageListView::new(views),
-    );
+    let mut payload = SourceCoverageListView::new(views);
+    payload.dedup = dedup_summary;
+    payload.dedup_breakdown = dedup_breakdown;
+    payload.dedup_window = SourceDedupWindowView::default();
+    let mut envelope = ViewEnvelope::new("sinexd.sources.status.view", payload);
     if source_status_view_has_filter(&request) || !request.exact_counts {
         envelope.query_echo = Some(serde_json::json!({
             "source": request.source.as_deref().filter(|value| !value.is_empty()),
             "family": request.family.as_deref().filter(|value| !value.is_empty()),
             "exact_counts": request.exact_counts,
+            "stale_after_secs": request.stale_after_secs,
         }));
     }
     if !request.exact_counts {
@@ -212,6 +243,9 @@ pub async fn handle_sources_status_view(
             message: "filtered source status uses bounded event-presence probes; event_count is the number of declared event kinds with at least one live event, not the lifetime row count".to_string(),
             ref_: None,
         });
+    }
+    if let Some(caveat) = source_dedup_caveat(&envelope.payload.dedup) {
+        envelope.caveats.push(caveat);
     }
     Ok(envelope)
 }
@@ -256,10 +290,18 @@ async fn load_source_event_aggregates(
     contracts: &[&SourceContract],
     exact_counts: bool,
 ) -> Result<Vec<SourceEventAggregateRow>> {
-    let (sources, event_types) = source_event_pairs(contracts);
-    if sources.is_empty() {
+    let pairs = source_event_pairs(contracts);
+    if pairs.is_empty() {
         return Ok(Vec::new());
     }
+    let sources = pairs
+        .iter()
+        .map(|(source, _)| source.clone())
+        .collect::<Vec<_>>();
+    let event_types = pairs
+        .iter()
+        .map(|(_, event_type)| event_type.clone())
+        .collect::<Vec<_>>();
 
     if exact_counts {
         sqlx::query_as!(
@@ -322,19 +364,63 @@ async fn load_source_event_aggregates(
     }
 }
 
-fn source_event_pairs(contracts: &[&SourceContract]) -> (Vec<String>, Vec<String>) {
+fn source_event_pairs(contracts: &[&SourceContract]) -> Vec<(String, String)> {
     let mut seen = BTreeSet::new();
-    let mut sources = Vec::new();
-    let mut event_types = Vec::new();
     for contract in contracts {
         for (source, event_type) in contract.event_types {
-            if seen.insert((*source, *event_type)) {
-                sources.push((*source).to_string());
-                event_types.push((*event_type).to_string());
-            }
+            seen.insert((*source, *event_type));
         }
     }
-    (sources, event_types)
+    seen.into_iter()
+        .map(|(source, event_type)| (source.to_string(), event_type.to_string()))
+        .collect()
+}
+
+fn source_dedup_breakdown(rows: Vec<SourceDedupBreakdownRow>) -> Vec<SourceDedupBreakdownView> {
+    rows.into_iter()
+        .map(|row| SourceDedupBreakdownView {
+            source: row.source,
+            event_type: row.event_type,
+            admitted: row.admitted,
+            suppressed: row.suppressed,
+            superseded: row.superseded,
+            failed: row.failed,
+            dlq: row.dlq,
+            examples: row
+                .examples
+                .into_iter()
+                .map(|example| SourceDedupExampleView {
+                    outcome: example.outcome,
+                    candidate_event_ref: example.candidate_event_id.to_string(),
+                    existing_event_ref: example.existing_event_id.map(|id| id.to_string()),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn source_dedup_summary(rows: &[SourceDedupBreakdownView]) -> SourceDedupSummaryView {
+    rows.iter()
+        .fold(SourceDedupSummaryView::default(), |mut summary, row| {
+            summary.admitted += row.admitted;
+            summary.suppressed += row.suppressed;
+            summary.superseded += row.superseded;
+            summary.failed += row.failed;
+            summary.dlq += row.dlq;
+            summary
+        })
+}
+
+fn source_dedup_caveat(summary: &SourceDedupSummaryView) -> Option<CaveatView> {
+    summary.has_abnormal_suppression_rate().then(|| CaveatView {
+        id: "import.abnormal_suppression_rate".to_string(),
+        message: format!(
+            "source status covers an abnormal suppression rate: {} suppressed of {} durable import outcome(s); inspect the import report and examples before treating this as a complete no-op",
+            summary.suppressed,
+            summary.attempted(),
+        ),
+        ref_: None,
+    })
 }
 
 fn material_aggregates_by_logical_source(
@@ -371,6 +457,32 @@ fn source_coverage_view(
     session_states: &HashMap<String, Vec<sinex_db::repositories::SourceSessionStateRecord>>,
     now: Timestamp,
 ) -> SourceCoverageView {
+    source_coverage_view_with_stale_after(
+        contract,
+        bindings,
+        event_aggregates,
+        material_aggregates,
+        runtime_observations,
+        email_provider_states,
+        email_projection_states,
+        session_states,
+        DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+        now,
+    )
+}
+
+fn source_coverage_view_with_stale_after(
+    contract: &SourceContract,
+    bindings: &[&SourceRuntimeBinding],
+    event_aggregates: &HashMap<(String, String), SourceEventAggregateRow>,
+    material_aggregates: &HashMap<String, SourceMaterialAggregateRow>,
+    runtime_observations: &HashMap<String, SourceStatus>,
+    email_provider_states: &HashMap<String, EmailProviderOperationState>,
+    email_projection_states: &HashMap<String, EmailMailboxProjectionState>,
+    session_states: &HashMap<String, Vec<sinex_db::repositories::SourceSessionStateRecord>>,
+    stale_after_secs: u64,
+    now: Timestamp,
+) -> SourceCoverageView {
     let mut event_count = 0i64;
     let mut last_event_at = None;
     let event_types: Vec<String> = contract
@@ -394,9 +506,37 @@ fn source_coverage_view(
     let has_live_binding = accepted_binding_count > 0;
     let has_material = material_count > 0;
     let has_events = event_count > 0;
+    // A registered contract is not covered merely because it has a binding,
+    // a runtime observation, or historical material on its own. Both sides
+    // of the contract must have evidence before this surface may report
+    // coverage as present. Keep this as one predicate so the missing-
+    // evidence guard cannot drift independently in the readiness and
+    // continuity branches below.
+    let has_coverage_evidence = has_material && has_events;
+    let fallback_last_observed = max_timestamp(
+        last_material_at.map(Into::into),
+        last_event_at.map(Into::into),
+    )
+    .map(Timestamp::from);
+    let liveness = runtime_observation_for_source(contract.id, runtime_observations)
+        .map(|observation| observation.runtime_liveness(stale_after_secs, now))
+        .unwrap_or_else(|| {
+            evaluate_runtime_liveness(
+                RuntimeLivenessSignals {
+                    run_status: None,
+                    health_status: None,
+                    last_heartbeat_at: None,
+                    last_output_at: fallback_last_observed,
+                },
+                RuntimeLivenessPolicy::new(stale_after_secs),
+                now,
+            )
+        });
+    let liveness_failure = liveness.status.is_failure();
 
     let mut gaps = Vec::new();
     let mut caveats = Vec::new();
+    let mut emit_stalled = false;
     if bindings.is_empty() {
         gaps.push(CoverageGapView {
             kind: "missing_binding".to_string(),
@@ -430,7 +570,8 @@ fn source_coverage_view(
         });
         caveats.push(CaveatView {
             id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
-            message: "no live events match this source contract's declared source/event_type pairs".to_string(),
+            message: "no live events match this source contract's declared source/event_type pairs"
+                .to_string(),
             ref_: Some(SinexObjectRef::new(
                 SinexObjectKind::SourceDriver,
                 contract.id.to_string(),
@@ -447,6 +588,7 @@ fn source_coverage_view(
                 });
             }
             let verdict = observation.classify_emit_stall(EmitStallThresholds::default(), now);
+            emit_stalled = matches!(verdict, EmitStallVerdict::Stalled);
             if matches!(verdict, EmitStallVerdict::Stalled) {
                 gaps.push(CoverageGapView {
                     kind: runtime_stalled_gap_kind(contract).to_string(),
@@ -460,6 +602,28 @@ fn source_coverage_view(
             }
             caveats.push(runtime_unobserved_caveat(contract));
         }
+    }
+    let coverage_stale = liveness_failure || emit_stalled;
+    if liveness_failure {
+        gaps.push(CoverageGapView {
+            kind: source_liveness_gap_kind(liveness.status).to_string(),
+            message: format!(
+                "{} has canonical runtime liveness status {:?}; evidence: {}",
+                runtime_subject(contract),
+                liveness.status,
+                liveness.evidence.join(", ")
+            ),
+        });
+        caveats.push(CaveatView {
+            id: runtime_caveat_id(contract, "liveness"),
+            message: format!(
+                "{} is not currently live: {:?} (last observed {:?})",
+                runtime_subject(contract),
+                liveness.status,
+                liveness.last_observed_at
+            ),
+            ref_: runtime_ref(contract),
+        });
     }
     if contract.id == "email.mailbox" {
         gaps.extend(email_provider_operation_gaps(
@@ -484,23 +648,38 @@ fn source_coverage_view(
         caveats.extend(sessions.iter().map(session_control_caveat));
     }
 
-    let readiness = if !has_live_binding && proposed_binding_count > 0 {
+    let readiness = if !has_coverage_evidence {
+        if !has_material {
+            SourceCoverageReadiness::MissingMaterial
+        } else {
+            SourceCoverageReadiness::MissingEvents
+        }
+    } else if coverage_stale && has_live_binding {
+        SourceCoverageReadiness::Stale
+    } else if !has_live_binding && proposed_binding_count > 0 {
         SourceCoverageReadiness::Proposed
     } else if !has_live_binding {
         SourceCoverageReadiness::MissingBinding
-    } else if !has_material {
-        SourceCoverageReadiness::MissingMaterial
-    } else if !has_events {
-        SourceCoverageReadiness::MissingEvents
     } else {
         SourceCoverageReadiness::Ready
     };
-    let continuity = match (has_material, has_events) {
-        (true, true) => SourceCoverageContinuity::Active,
-        (true, false) => SourceCoverageContinuity::MaterialOnly,
-        (false, true) => SourceCoverageContinuity::EventOnly,
-        (false, false) if bindings.is_empty() => SourceCoverageContinuity::Unknown,
-        (false, false) => SourceCoverageContinuity::Gapped,
+    let continuity = if !has_coverage_evidence {
+        match (has_material, has_events) {
+            (false, false) if bindings.is_empty() => SourceCoverageContinuity::Unknown,
+            (false, false) => SourceCoverageContinuity::Gapped,
+            (true, false) => SourceCoverageContinuity::MaterialOnly,
+            (false, true) => SourceCoverageContinuity::EventOnly,
+            (true, true) => unreachable!("coverage evidence predicate rejected both sides"),
+        }
+    } else if coverage_stale && has_live_binding {
+        SourceCoverageContinuity::Stale
+    } else {
+        match (has_material, has_events) {
+            (true, true) => SourceCoverageContinuity::Active,
+            (true, false) | (false, true) | (false, false) => {
+                unreachable!("coverage evidence predicate guarantees both sides")
+            }
+        }
     };
     let selected_binding = bindings
         .iter()
@@ -973,10 +1152,12 @@ fn runtime_unobserved_caveat(contract: &SourceContract) -> CaveatView {
 
 fn source_runtime_observations(
     rows: Vec<sinex_db::repositories::state::SourcesStatusRow>,
+    stale_after_secs: u64,
+    now: Timestamp,
 ) -> HashMap<String, SourceStatus> {
     rows.into_iter()
         .filter_map(|row| {
-            let status = SourceStatus {
+            let mut status = SourceStatus {
                 module_name: row.module_name,
                 version: row.version,
                 description: row.description,
@@ -995,6 +1176,7 @@ fn source_runtime_observations(
                 recent_output_count: row.recent_output_count,
                 last_output_at: row.last_output_at,
             };
+            status.live = status.is_live(stale_after_secs, now);
             source_status_has_runtime_evidence(&status)
                 .then(|| (status.module_name.to_string(), status))
         })
@@ -1002,10 +1184,23 @@ fn source_runtime_observations(
 }
 
 fn source_status_has_runtime_evidence(status: &SourceStatus) -> bool {
-    status.current_health.is_some()
+    status.run_status.is_some()
+        || status.current_health.is_some()
         || status.last_heartbeat_at.is_some()
         || status.last_output_at.is_some()
         || status.recent_output_count > 0
+}
+
+fn source_liveness_gap_kind(status: RuntimeLivenessStatus) -> &'static str {
+    match status {
+        RuntimeLivenessStatus::Stale => "runtime_liveness_stale",
+        RuntimeLivenessStatus::Unhealthy => "runtime_liveness_unhealthy",
+        RuntimeLivenessStatus::Stopped => "runtime_liveness_stopped",
+        RuntimeLivenessStatus::Degraded => "runtime_liveness_degraded",
+        RuntimeLivenessStatus::Healthy | RuntimeLivenessStatus::Unknown => {
+            "runtime_liveness_unknown"
+        }
+    }
 }
 
 fn source_mode_status_view(
@@ -1036,12 +1231,22 @@ fn source_mode_status_view(
         transport: transport_kind_name(binding.transport_semantics.transport).to_string(),
         delivery: delivery_semantics_name(binding.transport_semantics.delivery).to_string(),
         ordering: ordering_semantics_name(binding.transport_semantics.ordering).to_string(),
-        replayable: binding.transport_semantics.replayable,
+        replayability_class: replayability_class_name(binding.recovery_policy.replayability_class)
+            .to_string(),
+        catch_up_authority: catch_up_authority_name(binding.recovery_policy.catch_up_authority)
+            .to_string(),
+        accepted_loss_policy: accepted_loss_policy_view(
+            binding.recovery_policy.accepted_loss_policy,
+        ),
+        transport_replayable: binding.transport_semantics.replayable,
         dlq: binding.transport_semantics.dlq,
         backpressure: binding.transport_semantics.backpressure,
         privacy_context: format!("{:?}", binding.privacy_context).to_ascii_lowercase(),
         resource_budget: source_resource_budget_view(binding),
-        criticality: binding.criticality.map(criticality_name).map(str::to_string),
+        criticality: binding
+            .criticality
+            .map(criticality_name)
+            .map(str::to_string),
         runtime_observed: runtime_observation.map(|_| true),
         runtime_live: runtime_observation.map(|observation| observation.live),
         last_heartbeat_at: runtime_observation
@@ -1091,6 +1296,43 @@ fn source_mode_status_view(
                 )
             })
             .collect(),
+    }
+}
+
+fn replayability_class_name(class: SourceReplayabilityClass) -> &'static str {
+    match class {
+        SourceReplayabilityClass::RetainedMaterial => "retained_material",
+        SourceReplayabilityClass::AppendStream => "append_stream",
+        SourceReplayabilityClass::MutableSnapshot => "mutable_snapshot",
+        SourceReplayabilityClass::JournalCursor => "journal_cursor",
+        SourceReplayabilityClass::ExternalProducer => "external_producer",
+        SourceReplayabilityClass::LiveObservation => "live_observation",
+        SourceReplayabilityClass::DerivedInternal => "derived_internal",
+    }
+}
+
+fn catch_up_authority_name(authority: CatchUpAuthority) -> &'static str {
+    match authority {
+        CatchUpAuthority::SourceMaterialRegistry => "source_material_registry",
+        CatchUpAuthority::BackingStore => "backing_store",
+        CatchUpAuthority::JournalRetention => "journal_retention",
+        CatchUpAuthority::ExternalProducer => "external_producer",
+        CatchUpAuthority::ParentEvents => "parent_events",
+        CatchUpAuthority::None => "none",
+    }
+}
+
+fn accepted_loss_policy_view(policy: AcceptedLossPolicy) -> Value {
+    match policy {
+        AcceptedLossPolicy::NoSilentLoss => serde_json::json!({"kind": "no_silent_loss"}),
+        AcceptedLossPolicy::BoundedByAuthority { boundary } => {
+            serde_json::json!({"kind": "bounded_by_authority", "boundary": boundary})
+        }
+        AcceptedLossPolicy::Accepted { rationale, record } => serde_json::json!({
+            "kind": "accepted",
+            "rationale": rationale,
+            "record": record,
+        }),
     }
 }
 
@@ -1392,10 +1634,7 @@ fn max_timestamp(
     }
 }
 
-fn source_actions(
-    source_id: &str,
-    bindings: &[&SourceRuntimeBinding],
-) -> Vec<ActionAvailability> {
+fn source_actions(source_id: &str, bindings: &[&SourceRuntimeBinding]) -> Vec<ActionAvailability> {
     let mut actions = vec![
         ActionAvailability::read(
             "sources.readiness",

@@ -661,6 +661,7 @@ register_source_contract! {
         event_types: &[
             ("health-aggregator", "health.aggregated_report"),
         ],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         // Health metrics describe component liveness, not user content.
         privacy_tier: ContractPrivacyTier::Public,
         horizons: &[ContractHorizon::Continuous],
@@ -688,6 +689,7 @@ register_source_runtime_binding! {
     .checkpoint_family(ContractCheckpointFamily::AppendStream)
     .runtime_shape(ContractRuntimeShape::Continuous)
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
+    .recovery_policy(sinex_primitives::source_contracts::SourceRecoveryPolicy::DERIVED_INTERNAL)
     .build()
 }
 

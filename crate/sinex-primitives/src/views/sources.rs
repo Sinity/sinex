@@ -4,6 +4,7 @@ use crate::sources::continuity::{SourceContinuityReport, SourcesExplainGapRespon
 use crate::temporal::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION: &str = "sinex.source-continuity-detail/v1";
@@ -14,10 +15,19 @@ pub const SOURCE_DRIFT_LIST_SCHEMA_VERSION: &str = "sinex.source-drift-list/v1";
 pub const SOURCE_READINESS_DETAIL_SCHEMA_VERSION: &str = "sinex.source-readiness-detail/v1";
 pub const SOURCE_READINESS_LIST_SCHEMA_VERSION: &str = "sinex.source-readiness-list/v1";
 
+/// Number of example references retained for each source/event-type outcome
+/// group in `sources.status`. Counts are complete over the durable ledgers;
+/// examples are deliberately bounded for operator surfaces.
+pub const SOURCE_DEDUP_EXAMPLE_LIMIT: usize = 3;
+pub const SOURCE_DEDUP_WINDOW_POLICY: &str = "all_durable_import_outcomes";
+pub const SOURCE_DEDUP_OMITTED_HISTORY: &str =
+    "pre-ledger outcomes and candidates without operation lineage are omitted";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceCoverageReadiness {
     Ready,
+    Stale,
     Proposed,
     MissingMaterial,
     MissingEvents,
@@ -29,6 +39,7 @@ impl SourceCoverageReadiness {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ready => "ready",
+            Self::Stale => "stale",
             Self::Proposed => "proposed",
             Self::MissingMaterial => "missing_material",
             Self::MissingEvents => "missing_events",
@@ -41,6 +52,7 @@ impl SourceCoverageReadiness {
 #[serde(rename_all = "snake_case")]
 pub enum SourceCoverageContinuity {
     Active,
+    Stale,
     MaterialOnly,
     EventOnly,
     Gapped,
@@ -52,6 +64,7 @@ impl SourceCoverageContinuity {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
+            Self::Stale => "stale",
             Self::MaterialOnly => "material_only",
             Self::EventOnly => "event_only",
             Self::Gapped => "gapped",
@@ -108,7 +121,17 @@ pub struct SourceModeStatusView {
     pub transport: String,
     pub delivery: String,
     pub ordering: String,
-    pub replayable: bool,
+    /// Source-level recovery class. This is distinct from `transport_replayable`:
+    /// transport redelivery does not establish source re-read authority.
+    pub replayability_class: String,
+    /// Authority the binding uses to catch up after a checkpoint or process failure.
+    pub catch_up_authority: String,
+    /// Explicit disposition for source data that recovery cannot reconstruct.
+    pub accepted_loss_policy: Value,
+    /// Whether the delivery transport itself can redeliver messages.
+    /// Consult `replayability_class` for archive-and-scan replay eligibility.
+    #[serde(alias = "replayable")]
+    pub transport_replayable: bool,
     pub dlq: bool,
     pub backpressure: bool,
     pub privacy_context: String,
@@ -175,6 +198,67 @@ pub struct CoverageGapView {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceDedupSummaryView {
+    pub admitted: i64,
+    pub suppressed: i64,
+    pub superseded: i64,
+    pub failed: i64,
+    pub dlq: i64,
+}
+
+impl SourceDedupSummaryView {
+    #[must_use]
+    pub fn attempted(&self) -> i64 {
+        self.admitted + self.suppressed + self.superseded + self.failed + self.dlq
+    }
+
+    #[must_use]
+    pub fn has_abnormal_suppression_rate(&self) -> bool {
+        self.attempted() >= 10 && self.suppressed.saturating_mul(2) >= self.attempted()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceDedupExampleView {
+    pub outcome: String,
+    pub candidate_event_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_event_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceDedupBreakdownView {
+    pub source: String,
+    pub event_type: String,
+    pub admitted: i64,
+    pub suppressed: i64,
+    pub superseded: i64,
+    pub failed: i64,
+    pub dlq: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<SourceDedupExampleView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceDedupWindowView {
+    /// Counts cover every currently retained durable import outcome, not a
+    /// recent-time window. This makes omitted history visible to consumers.
+    pub policy: String,
+    pub example_limit: usize,
+    pub omitted_history: String,
+}
+
+impl Default for SourceDedupWindowView {
+    fn default() -> Self {
+        Self {
+            policy: SOURCE_DEDUP_WINDOW_POLICY.to_string(),
+            example_limit: SOURCE_DEDUP_EXAMPLE_LIMIT,
+            omitted_history: SOURCE_DEDUP_OMITTED_HISTORY.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceCoverageView {
     pub source_id: String,
@@ -210,6 +294,12 @@ pub struct SourceCoverageListView {
     pub count: usize,
     pub summary: SourceCoverageSummaryView,
     pub sources: Vec<SourceCoverageView>,
+    #[serde(default)]
+    pub dedup: SourceDedupSummaryView,
+    #[serde(default)]
+    pub dedup_breakdown: Vec<SourceDedupBreakdownView>,
+    #[serde(default)]
+    pub dedup_window: SourceDedupWindowView,
 }
 
 impl SourceCoverageListView {
@@ -222,6 +312,9 @@ impl SourceCoverageListView {
             count,
             summary,
             sources,
+            dedup: SourceDedupSummaryView::default(),
+            dedup_breakdown: Vec::new(),
+            dedup_window: SourceDedupWindowView::default(),
         }
     }
 

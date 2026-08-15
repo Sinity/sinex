@@ -5,10 +5,86 @@
 //! structured context so the caller can add further context.
 
 use color_eyre::eyre::{Context, Result, bail, eyre};
+use serde::Deserialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+use crate::admin::manifest::QuiesceReceipt;
+
+const DEFAULT_RUNTIME_INVENTORY: &str = "/etc/sinnix/runtime-inventory.json";
+
+#[derive(Debug, Deserialize)]
+struct RuntimeInventory {
+    surfaces: BTreeMap<String, RuntimeSurface>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RuntimeSurface {
+    unit: String,
+    #[serde(rename = "resourceClass")]
+    resource_class: String,
+}
+
+fn runtime_inventory() -> Result<Option<RuntimeInventory>> {
+    let path = std::env::var_os("SINEX_RUNTIME_INVENTORY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_RUNTIME_INVENTORY));
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => serde_json::from_str(&contents)
+            .with_context(|| format!("parse deployed runtime inventory {}", path.display()))
+            .map(Some),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error)
+            .with_context(|| format!("read deployed runtime inventory {}", path.display())),
+    }
+}
+
+fn inventory_unit(inventory: Option<&RuntimeInventory>, surface: &str) -> Option<String> {
+    inventory
+        .and_then(|inventory| inventory.surfaces.get(surface))
+        .map(|surface| surface.unit.clone())
+}
+
+fn inventory_snapshot_writer_units(inventory: &RuntimeInventory) -> Vec<String> {
+    inventory
+        .surfaces
+        .iter()
+        .filter(|(name, surface)| {
+            let relevant_class = matches!(
+                surface.resource_class.as_str(),
+                "capture-runtime"
+                    | "capture-substrate"
+                    | "background-maintenance"
+                    | "backup-maintenance"
+            );
+            let sinex_surface = *name == "sinexd"
+                || *name == "nats"
+                || name.starts_with("sinex-")
+                || name.contains("sinex");
+            // A timer schedules work but is not itself a writer. Stopping an
+            // active timer would leave its schedule disabled after the
+            // snapshot without proving that its paired service was quiescent.
+            let unit_kind = surface.unit.ends_with(".service");
+            let excluded_surface = matches!(
+                name.as_str(),
+                "sinex-runtime"
+                    | "sinex-runtime-timer"
+                    | "sinex-preflight"
+                    | "sinex-desktop-target-access"
+                    | "sinex-browser-target-access"
+                    | "sinex-terminal-target-access"
+                    | "sinex-document-target-access"
+            ) || name.contains("target-access")
+                || name.starts_with("sinex-desktop-acl-")
+                || name.starts_with("sinex-kitty-");
+            relevant_class && sinex_surface && unit_kind && !excluded_surface
+        })
+        .map(|(_, surface)| surface.unit.clone())
+        .collect()
+}
 
 /// Run `pg_dump -Fc -Z 9 -f <dump_path> <database_url>`.
 ///
@@ -125,6 +201,171 @@ pub fn psql_execute(database_url: &str, sql: &str, psql_bin: Option<&Path>) -> R
     }
 
     Ok(())
+}
+
+/// Return the number of user relations in a restore target.
+///
+/// A restore drill must start with a database that has no user-owned
+/// relations. Checking relation existence, rather than approximate row
+/// statistics, catches a target that would collide with the dump even when its
+/// tables happen to be empty.
+pub fn pg_user_relation_count(database_url: &str, psql_bin: Option<&Path>) -> Result<i64> {
+    let sql = "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%';";
+    let output = Command::new(psql_bin.unwrap_or_else(|| Path::new("psql")))
+        .args([
+            "--tuples-only",
+            "--no-align",
+            "--command",
+            sql,
+            database_url,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("spawn psql to verify restore target emptiness")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "psql restore-target emptiness query failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<i64>()
+        .context("parse restore-target user relation count")
+}
+
+/// Refuse restore drills aimed at production-shaped database names.
+///
+/// Emptiness is necessary but not sufficient evidence for a safe rehearsal:
+/// an empty database URL can still be the wrong operator target. Requiring a
+/// conventional disposable name makes an accidental production URL fail
+/// before any restore command runs.
+pub fn validate_restore_database_url(database_url: &str) -> Result<()> {
+    // PostgreSQL's `postgresql:///db?host=/run/postgresql` form is a valid
+    // Unix-socket connection URL, but `reqwest::Url` rejects its empty
+    // authority.  Validation only needs the scheme and database path; retain
+    // the original URL for pg_restore/psql and give the parser a placeholder
+    // authority for this form.
+    let parseable_url = ["postgresql://", "postgres://"]
+        .iter()
+        .find_map(|scheme| {
+            let rest = database_url.strip_prefix(scheme)?;
+            let normalized = if rest.starts_with('/') {
+                format!("localhost{rest}")
+            } else if let Some((authority, path)) = rest.split_once('/') {
+                if authority.ends_with('@') {
+                    format!("{authority}localhost/{path}")
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            };
+            Some(format!("{scheme}{normalized}"))
+        })
+        .unwrap_or_else(|| database_url.to_owned());
+    let parsed = reqwest::Url::parse(&parseable_url)
+        .context("parse restore database URL for rehearsal-target validation")?;
+    if !matches!(parsed.scheme(), "postgres" | "postgresql") {
+        bail!(
+            "restore database URL must use the postgres or postgresql scheme, got `{}`",
+            parsed.scheme()
+        );
+    }
+    let database_name = parsed
+        .path_segments()
+        .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+        .ok_or_else(|| eyre!("restore database URL must include a database name"))?;
+    let normalized = database_name.to_ascii_lowercase();
+    let is_disposable = ["dev", "test", "drill", "restore", "scratch", "tmp"]
+        .iter()
+        .any(|marker| {
+            normalized
+                .split(|ch: char| !ch.is_ascii_alphanumeric())
+                .any(|part| part == *marker)
+        });
+    if !is_disposable {
+        bail!(
+            "restore database `{database_name}` is not named as a disposable rehearsal target; \
+             use a database name containing dev, test, drill, restore, scratch, or tmp"
+        );
+    }
+    Ok(())
+}
+
+/// The independently deployed surfaces that a backup/restore operation must
+/// understand.  All callers use this discovery result instead of inventing a
+/// state path, unit glob, or database-target assumption locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotTopology {
+    pub state_dir: PathBuf,
+    pub nats_store_dir: Option<PathBuf>,
+    pub active_writer_units: Vec<String>,
+}
+
+impl SnapshotTopology {
+    /// Discover the deployed topology needed by one snapshot/restore route.
+    /// Explicit state paths are test/alternate-deployment overrides; the
+    /// normal path reads the service environment and NATS unit configuration.
+    pub fn discover(
+        state_dir_override: Option<&Path>,
+        nats_store_dir_override: Option<&Path>,
+        require_nats: bool,
+        inspect_active_units: bool,
+    ) -> Result<Self> {
+        let inventory = runtime_inventory()?;
+        let state_dir = match state_dir_override {
+            Some(path) => path.to_path_buf(),
+            None => sinex_service_path_with_inventory("SINEX_STATE_DIR", inventory.as_ref())
+                .context("resolve deployed SINEX_STATE_DIR")?,
+        };
+        let nats_store_dir = if require_nats {
+            Some(if let Some(path) = nats_store_dir_override {
+                path.to_path_buf()
+            } else if state_dir_override.is_some() {
+                bail!(
+                    "NATS JetStream store directory must be explicit when --state-dir is supplied"
+                );
+            } else {
+                nats_jetstream_store_dir_with_inventory(inventory.as_ref())
+                    .context("discover deployed NATS JetStream store directory")?
+            })
+        } else {
+            None
+        };
+        let active_writer_units = if inspect_active_units {
+            active_sinex_services_with_inventory(inventory.as_ref())
+                .context("inspect active snapshot-writer units")?
+        } else {
+            Vec::new()
+        };
+        Ok(Self {
+            state_dir,
+            nats_store_dir,
+            active_writer_units,
+        })
+    }
+
+    /// Verify the isolated PostgreSQL restore target through the same
+    /// topology object that discovered the writer services and state roots.
+    pub fn verify_restore_database_empty(
+        &self,
+        database_url: &str,
+        psql_bin: Option<&Path>,
+    ) -> Result<()> {
+        let user_relation_count = pg_user_relation_count(database_url, psql_bin)
+            .context("verify restore target database is empty")?;
+        if user_relation_count != 0 {
+            bail!(
+                "restore target database is not empty: {user_relation_count} user relation(s) exist"
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Restore a custom-format `pg_dump` archive into `database_url`.
@@ -378,60 +619,268 @@ pub fn tar_extract_zstd(archive_path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Check which sinex systemd services are currently active.
+/// Check which deployed services and timers can mutate snapshot components.
 ///
-/// Returns the list of active unit names matching `sinex-*`.  If `systemctl`
-/// is not available (dev environment) returns an empty list.
-#[must_use]
-pub fn active_sinex_services() -> Vec<String> {
-    let Ok(output) = Command::new("systemctl")
-        .args([
-            "list-units",
-            "--state=active",
-            "--plain",
-            "--no-legend",
-            "sinex-*",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-    else {
-        return Vec::new();
-    };
-
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let unit = line.split_whitespace().next()?;
-            Some(unit.to_string())
-        })
-        .collect()
+/// The runtime target is intentionally excluded. Its `PartOf` relationship
+/// also stops PostgreSQL, which must remain available for the dump. Discovery
+/// is based on the active systemd inventory so newly generated source workers
+/// are not silently missed.
+pub fn active_sinex_services() -> Result<Vec<String>> {
+    active_sinex_services_with_inventory(runtime_inventory()?.as_ref())
 }
 
-/// Stop all sinex services: `systemctl stop 'sinex-*'`.
-pub fn stop_sinex_services() -> Result<()> {
+fn active_sinex_services_with_inventory(
+    inventory: Option<&RuntimeInventory>,
+) -> Result<Vec<String>> {
     let output = Command::new("systemctl")
-        .args(["stop", "sinex-*"])
+        .args(["list-units", "--state=active", "--plain", "--no-legend"])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .context("spawn systemctl stop sinex-*")?;
-
+        .context("inspect active systemd units for snapshot quiesce")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
-            "systemctl stop sinex-* failed (exit {}): {}",
+            "systemctl active-unit inspection failed (exit {}): {}",
             output.status.code().unwrap_or(-1),
             stderr.trim()
         );
     }
+
+    let active_units = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    if let Some(inventory) = inventory {
+        let writer_units = inventory_snapshot_writer_units(inventory);
+        return Ok(active_units
+            .into_iter()
+            .filter(|unit| writer_units.iter().any(|writer| writer == unit))
+            .collect());
+    }
+
+    // Development and non-Sinnix installations may not publish the inventory.
+    // Inspect the executable identity instead of guessing from a service-name
+    // prefix; unit renames then remain safe as long as the deployed command is
+    // still a Sinex/NATS writer.
+    Ok(active_units
+        .into_iter()
+        .filter(|unit| unit.ends_with(".service") || unit.ends_with(".timer"))
+        .filter(|unit| {
+            systemd_property(unit, "ExecStart")
+                .map(|command| {
+                    command.contains("sinexd")
+                        || command.contains("nats-server")
+                        || (unit.starts_with("sinex-") && !unit.contains("target-access"))
+                })
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>())
+}
+
+/// Stop the active writer services without stopping PostgreSQL via a target.
+pub fn stop_sinex_services() -> Result<()> {
+    let topology = SnapshotTopology::discover(None, None, false, true)?;
+    stop_sinex_services_for(&topology.active_writer_units)?;
     Ok(())
+}
+
+/// Stop the writer units already observed by [`SnapshotTopology`].
+pub fn stop_sinex_services_for(active: &[String]) -> Result<QuiesceReceipt> {
+    if active.is_empty() {
+        return Ok(QuiesceReceipt {
+            active_writer_units_before: Vec::new(),
+            stopped_writer_units: Vec::new(),
+            active_writer_units_after: Vec::new(),
+        });
+    }
+    let output = Command::new("systemctl")
+        .arg("stop")
+        .args(active)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .context("spawn systemctl stop snapshot writer services")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "systemctl stop snapshot writer services failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+    let remaining = active_sinex_services()?;
+    if !remaining.is_empty() {
+        bail!(
+            "snapshot writer units remain active after stop: {}",
+            remaining.join(", ")
+        );
+    }
+    Ok(QuiesceReceipt {
+        active_writer_units_before: active.to_vec(),
+        stopped_writer_units: active.to_vec(),
+        active_writer_units_after: remaining,
+    })
+}
+
+/// Read a path-valued environment variable from the deployed Sinex daemon.
+pub fn sinex_service_path(variable: &str) -> Result<PathBuf> {
+    sinex_service_path_with_inventory(variable, runtime_inventory()?.as_ref())
+}
+
+fn sinex_service_path_with_inventory(
+    variable: &str,
+    inventory: Option<&RuntimeInventory>,
+) -> Result<PathBuf> {
+    let unit = inventory_unit(inventory, "sinexd")
+        .or_else(|| discover_unit_by_exec("sinexd").ok())
+        .ok_or_else(|| eyre!("could not discover the deployed Sinex daemon unit"))?;
+    service_path(&unit, variable)
+}
+
+fn service_path(unit: &str, variable: &str) -> Result<PathBuf> {
+    let output = Command::new("systemctl")
+        .args(["show", unit, "--property=Environment", "--value"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("inspect sinexd deployment environment")?;
+    if !output.status.success() {
+        bail!("systemctl could not inspect {unit} environment");
+    }
+    let prefix = format!("{variable}=");
+    let environment = String::from_utf8_lossy(&output.stdout);
+    let value = environment
+        .split_whitespace()
+        .find_map(|entry| entry.strip_prefix(&prefix))
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| eyre!("{unit} has no non-empty {variable}"))?;
+    Ok(PathBuf::from(value))
+}
+
+fn systemd_service_units() -> Result<Vec<String>> {
+    let output = Command::new("systemctl")
+        .args([
+            "list-unit-files",
+            "--type=service",
+            "--all",
+            "--no-legend",
+            "--no-pager",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("inspect installed systemd service units")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "systemd service inventory failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .collect())
+}
+
+fn systemd_property(unit: &str, property: &str) -> Result<String> {
+    let property_arg = format!("--property={property}");
+    let output = Command::new("systemctl")
+        .args(["show", unit, &property_arg, "--value", "--no-pager"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("inspect {property} for systemd unit {unit}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "systemd property query for {unit} failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn discover_unit_by_exec(marker: &str) -> Result<String> {
+    let units = systemd_service_units()?;
+    for unit in units {
+        let command = systemd_property(&unit, "ExecStart")?;
+        if command.contains(marker) {
+            return Ok(unit);
+        }
+    }
+    bail!("no systemd service ExecStart contains `{marker}`")
+}
+
+/// Discover the JetStream store directory from the running NATS unit's
+/// validated configuration. This avoids coupling snapshots to SINEX_STATE_DIR:
+/// NATS is deployed as a separate service with its own store root.
+pub fn nats_jetstream_store_dir() -> Result<PathBuf> {
+    nats_jetstream_store_dir_with_inventory(runtime_inventory()?.as_ref())
+}
+
+fn nats_jetstream_store_dir_with_inventory(
+    inventory: Option<&RuntimeInventory>,
+) -> Result<PathBuf> {
+    let nats_unit = inventory_unit(inventory, "nats")
+        .or_else(|| discover_unit_by_exec("nats-server").ok())
+        .ok_or_else(|| eyre!("could not discover the deployed NATS service unit"))?;
+    if let Ok(path) = service_path(&nats_unit, "SINEX_NATS_JETSTREAM_STORE_DIR") {
+        if path.is_absolute() {
+            return Ok(path);
+        }
+        bail!(
+            "{nats_unit} SINEX_NATS_JETSTREAM_STORE_DIR is not absolute: {}",
+            path.display()
+        );
+    }
+
+    // Keep a strict compatibility seam for deployments generated before the
+    // explicit sinexd environment contract existed. Both discovery paths must
+    // identify a non-empty absolute path; there is no state-root fallback.
+    let command =
+        systemd_property(&nats_unit, "ExecStart").context("discover NATS systemd command line")?;
+    let config_path = nats_config_path_from_exec_start(&command)?;
+    let config = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("read NATS config {}", config_path.display()))?;
+    nats_store_dir_from_config(&config)
+        .with_context(|| format!("parse NATS config {} as JSON", config_path.display()))
+}
+
+fn nats_config_path_from_exec_start(exec_start: &str) -> Result<PathBuf> {
+    let tokens = exec_start.split_whitespace().collect::<Vec<_>>();
+    let config_path = tokens
+        .windows(2)
+        .find_map(|parts| (parts[0] == "-c").then_some(parts[1]))
+        .ok_or_else(|| eyre!("NATS service ExecStart does not expose a -c config path"))?;
+    Ok(PathBuf::from(config_path))
+}
+
+fn nats_store_dir_from_config(config: &str) -> Result<PathBuf> {
+    let config: Value = serde_json::from_str(config)?;
+    let store_dir = config
+        .get("jetstream")
+        .and_then(|jetstream| jetstream.get("store_dir"))
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| eyre!("NATS config has no non-empty jetstream.store_dir"))?;
+    let path = PathBuf::from(store_dir);
+    if !path.is_absolute() {
+        bail!("NATS config jetstream.store_dir is not absolute: {store_dir}");
+    }
+    Ok(path)
 }
 
 /// Copy a directory tree recursively with `cp -a`.
@@ -504,12 +953,14 @@ fn copy_dir_contents_live(src: &Path, dst: &Path) -> Result<()> {
         };
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        copy_entry_live(&src_path, &dst_path)?;
+        cp_entry_live(&src_path, &dst_path)?;
     }
     Ok(())
 }
 
-fn copy_entry_live(src: &Path, dst: &Path) -> Result<()> {
+/// Copy one live-snapshot entry while treating a source that vanishes between
+/// enumeration and copying as an expected race.
+pub fn cp_entry_live(src: &Path, dst: &Path) -> Result<()> {
     let metadata = match std::fs::symlink_metadata(src) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
@@ -569,5 +1020,154 @@ fn copy_entry_live(src: &Path, dst: &Path) -> Result<()> {
         }
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        RuntimeInventory, RuntimeSurface, SnapshotTopology, inventory_snapshot_writer_units,
+        nats_config_path_from_exec_start, nats_store_dir_from_config,
+        validate_restore_database_url,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn parses_systemd_nats_execstart_and_json_store_dir() {
+        let exec_start = "{ path=/nix/store/nats/bin/nats-server ; argv[]=/nix/store/nats/bin/nats-server -c /nix/store/config ; status=0/0 }";
+        assert_eq!(
+            nats_config_path_from_exec_start(exec_start)
+                .expect("systemd ExecStart should expose -c config path")
+                .to_string_lossy(),
+            "/nix/store/config"
+        );
+        assert_eq!(
+            nats_store_dir_from_config(r#"{"jetstream":{"store_dir":"/var/lib/nats/jetstream"}}"#)
+                .expect("NATS JSON should expose jetstream.store_dir")
+                .to_string_lossy(),
+            "/var/lib/nats/jetstream"
+        );
+    }
+
+    #[test]
+    fn rejects_nats_config_without_store_dir() {
+        let error = nats_store_dir_from_config(r#"{"jetstream":{}}"#)
+            .expect_err("missing NATS store_dir must not silently select a fallback");
+        assert!(error.to_string().contains("store_dir"));
+    }
+
+    #[test]
+    fn rejects_relative_nats_store_dir() {
+        let error =
+            nats_store_dir_from_config(r#"{"jetstream":{"store_dir":"relative/jetstream"}}"#)
+                .expect_err("NATS store paths must be absolute deployment paths");
+        assert!(error.to_string().contains("not absolute"));
+    }
+
+    #[test]
+    fn discovers_an_explicit_alternate_nats_store_without_state_root_assumption() {
+        let topology = SnapshotTopology::discover(
+            Some(std::path::Path::new("/var/lib/sinex/state")),
+            Some(std::path::Path::new("/var/lib/nats/jetstream")),
+            true,
+            false,
+        )
+        .expect("explicit topology overrides should not need systemd");
+        assert_eq!(
+            topology.nats_store_dir,
+            Some(std::path::PathBuf::from("/var/lib/nats/jetstream"))
+        );
+    }
+
+    #[test]
+    fn runtime_inventory_discovers_renamed_writer_units_without_unit_literals() {
+        let surfaces = BTreeMap::from([
+            (
+                "daemon".to_string(),
+                RuntimeSurface {
+                    unit: "capture-daemon.service".to_string(),
+                    resource_class: "capture-runtime".to_string(),
+                },
+            ),
+            (
+                "broker".to_string(),
+                RuntimeSurface {
+                    unit: "message-broker.service".to_string(),
+                    resource_class: "capture-substrate".to_string(),
+                },
+            ),
+            (
+                "database".to_string(),
+                RuntimeSurface {
+                    unit: "database.service".to_string(),
+                    resource_class: "capture-substrate".to_string(),
+                },
+            ),
+            (
+                "sinex-desktop-target-access".to_string(),
+                RuntimeSurface {
+                    unit: "access.service".to_string(),
+                    resource_class: "capture-runtime".to_string(),
+                },
+            ),
+        ]);
+        let inventory = RuntimeInventory { surfaces };
+        assert_eq!(
+            inventory_snapshot_writer_units(&inventory),
+            Vec::<String>::new(),
+            "only explicitly named Sinex/NATS logical surfaces are writers"
+        );
+
+        let mut inventory = inventory;
+        inventory.surfaces.insert(
+            "sinex-daemon".to_string(),
+            RuntimeSurface {
+                unit: "capture-daemon.service".to_string(),
+                resource_class: "capture-runtime".to_string(),
+            },
+        );
+        inventory.surfaces.insert(
+            "nats".to_string(),
+            RuntimeSurface {
+                unit: "message-broker.service".to_string(),
+                resource_class: "capture-substrate".to_string(),
+            },
+        );
+        inventory.surfaces.insert(
+            "sinex-postgres-dump-timer".to_string(),
+            RuntimeSurface {
+                unit: "sinex-postgres-dump.timer".to_string(),
+                resource_class: "backup-maintenance".to_string(),
+            },
+        );
+        let mut writers = inventory_snapshot_writer_units(&inventory);
+        writers.sort();
+        assert_eq!(
+            writers,
+            vec![
+                "capture-daemon.service".to_string(),
+                "message-broker.service".to_string(),
+            ],
+            "active timers do not write; their paired services must be separately discovered"
+        );
+    }
+
+    #[test]
+    fn restore_target_validation_accepts_disposable_database_names() {
+        for url in [
+            "postgresql:///sinex_restore_drill?host=/run/postgresql",
+            "postgres://localhost/sinex_dev",
+            "postgresql://localhost/sinex_test",
+        ] {
+            validate_restore_database_url(url)
+                .unwrap_or_else(|error| panic!("{url} should be accepted: {error:#}"));
+        }
+    }
+
+    #[test]
+    fn restore_target_validation_rejects_production_shaped_database_names() {
+        let error = validate_restore_database_url("postgresql:///sinex_prod")
+            .expect_err("production-shaped restore targets must be rejected");
+        assert!(error.to_string().contains("disposable rehearsal target"));
     }
 }

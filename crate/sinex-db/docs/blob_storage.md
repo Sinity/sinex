@@ -1,19 +1,20 @@
 # Blob Storage & Content Deduplication
 
-Sinex uses the SDK content store for source-material and blob bytes. Metadata is
-stored in PostgreSQL, while bytes are stored in a hybrid content-addressed
-backend: small finalized materials use a local BLAKE3 CAS, and larger objects
-use the large-object backend currently implemented with git-annex.
+Sinex stores source-material metadata and provenance in PostgreSQL and exact
+encoded bytes in the Sinex-owned local BLAKE3 CAS. The canonical authority is
+the pair of an immutable `MaterialManifestV1` and its exact-byte CAS object.
+Third-party stores, including git-annex, are subordinate compatibility,
+migration, replication, or backup adapters. They do not define replay identity.
+
+The architecture decision and its proof requirements are recorded in
+[`CAS architecture decision`](../../sinexd/docs/content_store/cas-architecture-decision.md).
 
 ## Content-Addressable Design
 
-Every blob is uniquely identified by a combination of three properties:
-1. **Storage Backend**: The backend identifier used in the content-store key (for example `SINEXBLAKE3` or `SHA256E`).
-2. **Content Hash**: The backend digest fragment.
-3. **Size**: The total bytes of the object.
-
-This triple forms a natural key that maps directly to content-store keys such as
-`SINEXBLAKE3-s123--hash` or `SHA256E-s123--hash`.
+Every canonical source-material object is identified by its BLAKE3 digest and
+encoded byte count. Backend-specific keys may exist in adapters, but they are
+not authoritative identities and must retain the canonical digest and manifest
+alongside the copied bytes.
 
 ## Deduplication Logic
 
@@ -40,7 +41,7 @@ Even when content is deduplicated, the system preserves the provenance of every 
 ## Backend Integration
 
 While PostgreSQL manages metadata, the SDK content store owns byte placement:
-- **Local CAS**: Small materials are retrieved directly from the local BLAKE3 CAS path.
-- **Large-object backend**: Larger objects are retrieved and verified through the backend implementation.
+- **Local CAS**: Finalized materials are retrieved from the canonical local BLAKE3 CAS path.
+- **Adapters**: A third-party backend may provide packing, chunking, compression, replication, or backup, provided the exact-byte and manifest round trip is verified.
 - **Verification**: The `verification_status` and `last_verified_at` fields are updated after content-store verification.
 - **Retrieval**: Retrieval is performed by resolving a Blob ID to a content-store key, then asking the content store to ensure the content is local.

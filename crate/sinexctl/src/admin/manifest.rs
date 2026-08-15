@@ -21,6 +21,13 @@ pub struct SnapshotManifest {
     pub host: String,
     /// Snapshot mode: `"quiesce"` or `"live"`.
     pub mode: String,
+    /// Evidence that the writer-service preflight made the `quiesce` mode claim true.
+    ///
+    /// Older archives predate this receipt, so its absence is evidence that the
+    /// archive cannot prove its own quiescence rather than evidence of a live
+    /// capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiesce_receipt: Option<QuiesceReceipt>,
     /// Source IDs known at snapshot time.
     #[serde(default)]
     pub source_ids: Vec<String>,
@@ -28,6 +35,20 @@ pub struct SnapshotManifest {
     pub components: Vec<ComponentRecord>,
     /// Aggregate size summary.
     pub totals: Totals,
+}
+
+/// Durable result of the writer-service stop and verification preflight.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QuiesceReceipt {
+    /// Writer services observed active immediately before the snapshot started.
+    pub active_writer_units_before: Vec<String>,
+    /// Writer services this command explicitly stopped. Empty when the
+    /// preflight found the deployment already quiescent.
+    pub stopped_writer_units: Vec<String>,
+    /// Writer services still active after preflight, and after the stop when
+    /// one was required. A successfully produced quiesced archive always
+    /// records an empty list here.
+    pub active_writer_units_after: Vec<String>,
 }
 
 /// Record for a single captured component.
@@ -50,20 +71,30 @@ pub struct ComponentRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ComponentExtras {
-    /// `PostgreSQL` row counts per table.
-    Postgres(PostgresExtras),
     /// NATS `JetStream` state member paths.
+    ///
+    /// Keep this before `Postgres`: `PostgresExtras::row_counts` is optional,
+    /// so serde's untagged matching would otherwise accept every NATS extras
+    /// object as an empty Postgres record and discard `member_paths`.
     Nats(NatsExtras),
-    /// CAS blob count.
-    Cas(CasExtras),
     /// Runtime state metadata.
     State(StateExtras),
+    /// CAS blob count.
+    ///
+    /// Keep this before `Postgres`: `PostgresExtras::row_counts` is optional,
+    /// so serde's untagged matching would otherwise accept the CAS object as
+    /// an empty PostgreSQL record and silently discard `blob_count`.
+    Cas(CasExtras),
+    /// `PostgreSQL` row counts per table.
+    Postgres(PostgresExtras),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostgresExtras {
-    /// Live row count estimates keyed by `schema.table`.
-    pub row_counts: std::collections::BTreeMap<String, i64>,
+    /// Exact row counts keyed by `schema.table`.
+    /// `None` means capture could not obtain evidence.
+    #[serde(default)]
+    pub row_counts: Option<std::collections::BTreeMap<String, i64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

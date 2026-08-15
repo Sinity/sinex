@@ -1,15 +1,15 @@
 use super::*;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
-    CheckpointFamily, ResourceProfile, RuntimeShape, SourceBuildImpact, SubjectRef,
+    CheckpointFamily, ResourceProfile, RuntimeShape, SourceBuildImpact, SourceRecoveryPolicy,
+    SubjectRef,
 };
 use xtask::sandbox::prelude::sinex_test;
 
 #[sinex_test]
 async fn filtered_report_recomputes_package_summary() -> xtask::sandbox::TestResult<()> {
     let rendered =
-        render_filtered_package_completeness_report(Some("terminal.kitty-osc-live"), None)
-            .unwrap();
+        render_filtered_package_completeness_report(Some("terminal.kitty-osc-live"), None).unwrap();
     let report: Value = serde_json::from_str(&rendered).unwrap();
 
     assert_eq!(report["summary"]["package_count"], 1);
@@ -40,10 +40,27 @@ async fn filtered_report_recomputes_package_mode_summary() -> xtask::sandbox::Te
 }
 
 #[sinex_test]
+async fn filtered_report_exposes_binding_recovery_policy() -> xtask::sandbox::TestResult<()> {
+    let rendered = render_filtered_package_completeness_report(
+        Some("terminal.kitty-osc-live"),
+        Some("terminal.kitty-osc-live"),
+    )
+    .unwrap();
+    let report: Value = serde_json::from_str(&rendered).unwrap();
+    let binding = &report["packages"]["terminal.kitty-osc-live"]["modes"]["terminal.kitty-osc-live"]
+        ["sources"]["runtime_binding"];
+
+    assert_eq!(binding["replayability_class"], "live_observation");
+    assert_eq!(binding["catch_up_authority"], "none");
+    assert_eq!(binding["accepted_loss_policy"]["kind"], "accepted");
+    assert_eq!(binding["accepted_loss_policy"]["record"], "sinex-r6d.8");
+    Ok(())
+}
+
+#[sinex_test]
 async fn mode_filter_requires_package_id() -> xtask::sandbox::TestResult<()> {
-    let err =
-        render_filtered_package_completeness_report(None, Some("terminal.kitty-osc-live"))
-            .unwrap_err();
+    let err = render_filtered_package_completeness_report(None, Some("terminal.kitty-osc-live"))
+        .unwrap_err();
 
     assert!(matches!(
         err,
@@ -53,8 +70,8 @@ async fn mode_filter_requires_package_id() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn capability_report_refs_are_filtered_through_typed_parser()
--> xtask::sandbox::TestResult<()> {
+async fn capability_report_refs_are_filtered_through_typed_parser() -> xtask::sandbox::TestResult<()>
+{
     static CAPABILITIES: &[&str] = &[
         "coverage:source-coverage",
         "debt:unified-debt-view",
@@ -76,6 +93,7 @@ async fn capability_report_refs_are_filtered_through_typed_parser()
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build();
 
     assert_eq!(

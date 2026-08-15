@@ -50,6 +50,7 @@ use sinex_primitives::source_contracts::{
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "sqlite", occurrence_anchor: "fish_history_row_id" },
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::MUTABLE_SNAPSHOT,
     baseline_adapter_config = r#"{"query":"fish_history","table":"fish_history"}"#
 )]
 pub struct FishHistoryRecord {

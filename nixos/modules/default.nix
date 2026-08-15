@@ -387,11 +387,11 @@ in
 
           localAuth = mkOption {
             type = enum [ "trust" "scram-sha-256" "md5" ];
-            default = "trust";
+            default = "scram-sha-256";
             description = ''
               Authentication method for loopback TCP connections (127.0.0.1/::1).
-              Use "trust" for local-only deployments where the OS provides access control.
-              Use "scram-sha-256" to require password authentication even on loopback;
+              Use "scram-sha-256" to require password authentication, including on loopback.
+              "trust" is reserved for explicitly configured development deployments;
               requires a database password source (services.sinex.database.passwordFile or
               an agenix secret named sinex-local-db / sinex-remote-db).
             '';
@@ -435,8 +435,8 @@ in
               options = {
                 maxConnections = mkOption {
                   type = positive;
-                  default = 4;
-                  description = "Maximum connections per Sinex process.";
+                  default = 10;
+                  description = "Maximum connections per Sinex runtime pool.";
                 };
                 minConnections = mkOption {
                   type = positive;
@@ -533,9 +533,9 @@ in
                   '';
                 };
                 maxBlobSize = mkOption {
-                  type = signed;
-                  default = 104857600;
-                  description = "Maximum allowed blob size in bytes (default 100 MB). Set to 0 to disable.";
+                  type = types.int;
+                  default = 536870912;
+                  description = "Maximum allowed blob size in bytes (default 512 MiB, matching material assembly). Set to 0 to disable.";
                 };
                 maintenance = mkOption {
                   type = submodule {
@@ -798,6 +798,15 @@ in
                   default = 60;
                   description = "Interval in seconds between event_engine processing telemetry emissions.";
                 };
+                tsOrigLowerBoundUnix = mkOption {
+                  type = nullOr int;
+                  default = null;
+                  description = ''
+                    Optional earliest accepted source timestamp as Unix seconds.
+                    Null (the default) preserves legitimate historical imports;
+                    malformed timestamps and future-skew violations remain rejected.
+                  '';
+                };
                 blobGcIntervalSecs = mkOption {
                   type = nullOr positive;
                   default = null;
@@ -916,7 +925,7 @@ in
                   description = ''
                     sinex-d4qg: the API's own database connection pool size,
                     kept distinct from the shared per-service default
-                    (database.connectionPool.maxConnections, currently 4)
+                    (database.connectionPool.maxConnections, currently 10)
                     that is applied uniformly to the event engine and every
                     automaton. A single long-lived transaction on the API's
                     pool -- e.g. a large replay preview's cascade-expansion
@@ -2470,6 +2479,16 @@ in
               and the API refuses to start only if none of those exist.
             '';
           };
+
+          apiReadonlyTokenFile = mkOption {
+            type = nullOr str;
+            default = null;
+            description = ''
+              Optional path to a separate read-only API token. When set, the gateway
+              accepts it only with the <literal>readonly</literal> role and deployment
+              descriptors expose it to read-only clients such as the MCP server.
+            '';
+          };
         };
       };
       default = { };
@@ -2510,6 +2529,10 @@ in
       apiAdminTokenFile =
         resolveSecretPath cfg.secrets.apiAdminTokenFile [
           "sinex-api-admin-token"
+        ];
+      apiReadonlyTokenFile =
+        resolveSecretPath cfg.secrets.apiReadonlyTokenFile [
+          "sinex-api-readonly-token"
         ];
       effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
         "sinex-local-db"
@@ -2703,6 +2726,7 @@ in
         secrets = {
           database_password_file = effectiveDatabasePasswordFile;
           api_admin_token_file = apiAdminTokenFile;
+          api_readonly_token_file = apiReadonlyTokenFile;
           gateway_tls_cert_file = apiTlsCertFile;
           gateway_tls_key_file = apiTlsKeyFile;
           gateway_tls_trust_anchor_file = apiTlsTrustAnchorFile;
@@ -2739,6 +2763,7 @@ in
         gateway = {
           base_url = apiProbeBaseUrl;
           token_file = apiAdminTokenFile;
+          readonly_token_file = apiReadonlyTokenFile;
           token_role = "admin";
           ca_cert_file = apiTlsTrustAnchorFile;
           client_cert_file = null;

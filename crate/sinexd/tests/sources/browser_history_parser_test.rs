@@ -13,7 +13,9 @@ use sinex_primitives::{
     temporal::Timestamp,
 };
 use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
-use sinexd::sources::source_contracts::browser::history::BrowserHistoryParser;
+use sinexd::sources::source_contracts::browser::history::{
+    BrowserHistoryParser, TakeoutChromeHistoryParser,
+};
 
 fn test_ctx() -> ParserContext {
     ParserContext {
@@ -38,6 +40,13 @@ fn record_for(bytes: &[u8], logical_path: &str) -> SourceRecord {
         logical_path: Some(Utf8PathBuf::from(logical_path)),
         source_ts_hint: None,
         metadata: serde_json::Value::Null,
+    }
+}
+
+fn takeout_ctx() -> ParserContext {
+    ParserContext {
+        source_id: SourceId::from_static("browser.takeout-history"),
+        ..test_ctx()
     }
 }
 
@@ -107,9 +116,8 @@ async fn sqlite_occurrence_key_includes_browser_profile() {
     assert_eq!(
         fields.as_slice(),
         [
-            ("browser".to_string(), "qutebrowser".to_string()),
             (
-                "source_file".to_string(),
+                "browser_profile".to_string(),
                 "primary/var/tmp/qutebrowser/history.sqlite".to_string()
             ),
             ("visit_id".to_string(), "101".to_string()),
@@ -172,4 +180,85 @@ async fn qutebrowser_required_schema_removal_blocks_readiness() {
             && caveat.severity == CaveatSeverity::Blocking
             && caveat.message.contains("History.atime")
     }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn takeout_chrome_array_emits_native_visit_events() {
+    let mut parser = TakeoutChromeHistoryParser;
+    let record = record_for(
+        br#"{
+            "Browser History": [
+                {
+                    "page_transition": "LINK",
+                    "title": "Example",
+                    "url": "https://example.com",
+                    "client_id": "client-a",
+                    "time_usec": 1700000000000000
+                }
+            ]
+        }"#,
+        "/staged/takeout/Takeout/Chrome/BrowserHistory.json",
+    );
+
+    let intents = parser.parse_record(record, &takeout_ctx()).await.unwrap();
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].payload["browser"], "chromium");
+    assert_eq!(intents[0].payload["url"], "https://example.com");
+    assert_eq!(intents[0].payload["time_usec"], "1700000000000000");
+    assert_eq!(intents[0].payload["transition"], "LINK");
+    assert_eq!(intents[0].payload["source_file"], "/staged/takeout/Takeout/Chrome/BrowserHistory.json");
+    assert_eq!(intents[0].anchor, MaterialAnchor::ByteRange { start: 0, len: 1 });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn takeout_chrome_occurrence_key_is_stable_across_extraction_paths() {
+    let bytes = br#"{
+        "Browser History": [{
+            "title": "Example",
+            "url": "https://example.com",
+            "client_id": "client-a",
+            "time_usec": "1700000000000000"
+        }]
+    }"#;
+    let mut first = TakeoutChromeHistoryParser;
+    let mut second = TakeoutChromeHistoryParser;
+
+    let first_intent = first
+        .parse_record(record_for(bytes, "/one/BrowserHistory.json"), &takeout_ctx())
+        .await
+        .unwrap()
+        .remove(0);
+    let second_intent = second
+        .parse_record(record_for(bytes, "/two/BrowserHistory.json"), &takeout_ctx())
+        .await
+        .unwrap()
+        .remove(0);
+
+    assert_eq!(first_intent.occurrence_key, second_intent.occurrence_key);
+    assert_eq!(
+        first_intent
+            .occurrence_key
+            .as_ref()
+            .unwrap()
+            .source_id
+            .as_str(),
+        "browser.takeout-history"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn takeout_chrome_missing_required_timestamp_is_rejected() {
+    let mut parser = TakeoutChromeHistoryParser;
+    let record = record_for(
+        br#"{"Browser History":[{"url":"https://example.com"}]}"#,
+        "/staged/BrowserHistory.json",
+    );
+
+    let error = parser
+        .parse_record(record, &takeout_ctx())
+        .await
+        .expect_err("missing provider timestamp must not be silently dropped");
+
+    assert!(error.to_string().contains("time_usec"));
 }

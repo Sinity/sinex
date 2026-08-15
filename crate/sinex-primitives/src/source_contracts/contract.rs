@@ -3,6 +3,7 @@ use serde::Serialize;
 use crate::source_contracts::{
     AccessScope, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
 };
+use crate::sources::SourceRole;
 
 /// The typed declaration every source fills in.
 ///
@@ -17,6 +18,11 @@ pub struct SourceContract {
     pub id: &'static str,
     pub namespace: &'static str,
     pub event_types: &'static [(&'static str, &'static str)],
+    /// Intended product lane for every declared event source.
+    ///
+    /// Source registration tests compare this declaration with the routing
+    /// classifier that chooses `core.events` or `reflection.events`.
+    pub source_role: SourceRole,
     pub privacy_tier: PrivacyTier,
     pub horizons: &'static [Horizon],
     pub retention: RetentionPolicy,

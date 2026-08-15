@@ -334,6 +334,30 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 ],
             },
             GuideEntry {
+                path: "analytics manifest-projection",
+                fallback_summary: "Project bounded MaterialManifestV1 storage and import measurements",
+                when: "you have a measured fixture and need persistent bytes, duplication, capacity, and ETA projections",
+                examples: &[
+                    "xtask analytics manifest-projection --help",
+                    "xtask analytics manifest-projection --measured-days 30 --target-days 365 --measured-material-bytes 1000 --measured-manifest-bytes 200 --measured-core-event-bytes 3000 --measured-cas-bytes 1500 --measured-staging-bytes 1000 --measured-nats-bytes 4000 --measured-events 600 --copy-events-per-second 2 --available-bytes 100000 --json",
+                ],
+                notes: &[
+                    "Consumes recorded fixture deltas only. It does not start an import, replay, compression job, or provider request.",
+                ],
+            },
+            GuideEntry {
+                path: "analytics replay-cost",
+                fallback_summary: "Report bounded compressed-chunk replay and archive measurements",
+                when: "you have measurements from an isolated compressed-chunk archive probe",
+                examples: &[
+                    "xtask analytics replay-cost --help",
+                    "xtask analytics replay-cost --fixture-events 256 --archived-events 256 --archive-wall-ms 10 --replay-wall-ms 100 --wal-bytes 100000 --compressed-bytes-before 1000 --uncompressed-bytes-before 4000 --compressed-bytes-after 1200 --uncompressed-bytes-after 3000 --json",
+                ],
+                notes: &[
+                    "The report preserves archive-stage timing separately from total replay timing and marks hour-scale replay cost.",
+                ],
+            },
+            GuideEntry {
                 path: "deps impact",
                 fallback_summary: "Analyze rebuild impact",
                 when: "a dependency change might widen the rebuild/test blast radius",

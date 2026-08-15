@@ -207,6 +207,36 @@ async fn readiness_available_completed_with_events(ctx: TestContext) -> TestResu
 }
 
 #[sinex_test]
+async fn readiness_default_liveness_policy_marks_old_success_stale(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!("readiness-stale-default-{}", Uuid::now_v7());
+    let material_id = insert_registry_row_completed(ctx.pool(), &identifier).await?;
+    seed_event(ctx.pool(), "shellreadinessstale", material_id).await?;
+    sqlx::query(
+        "UPDATE raw.source_material_registry SET staged_at = NOW() - INTERVAL '301 seconds' WHERE id = $1::uuid",
+    )
+    .bind(material_id)
+    .execute(ctx.pool())
+    .await?;
+
+    let report = ctx
+        .pool()
+        .source_materials()
+        .get_source_readiness(&identifier, None, None)
+        .await?
+        .expect("completed source must produce a readiness row");
+
+    assert_eq!(report.status, SourceReadinessStatus::Stale);
+    assert!(report.freshness_seconds.unwrap_or_default() >= 301);
+    assert!(report
+        .caveats
+        .iter()
+        .any(|caveat| caveat.code == "material.no_recent_snapshot"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn readiness_tri_state_distinct_in_one_run(ctx: TestContext) -> TestResult<()> {
     // The bundled assertion: stage all three states inside a single
     // database slot and confirm the readiness API distinguishes between

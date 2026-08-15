@@ -5,17 +5,24 @@ sinex runtime state surface — Postgres, NATS JetStream, CAS blob repository,
 and source runtime state — into a single zstd-compressed tar archive.
 
 The default is a **quiesce-mode** backup: services must be stopped before the
-snapshot runs, or `--auto-stop` can stop `sinex-*` services for the command.
+snapshot runs, or `--auto-stop` can stop the active snapshot-writer units for
+the command. On NixOS, `/etc/sinnix/runtime-inventory.json` supplies the
+logical Sinex/NATS surfaces and their generated unit names. The command
+intersects those names with the active systemd inventory; it does not assume a
+unit-name glob. Installations without that inventory use executable-identity
+discovery as a fail-closed fallback.
 `--mode live` is available for urgent forensic capture while services remain
 active; it records `mode: live` in `manifest.json` and should be treated as a
 weaker-consistency artifact. Operator runbooks use the
 `sinexctl ops state ...` surface.
 
+A newly created quiesced archive also records `quiesce_receipt` in its manifest. The receipt names writer services active before capture, the exact services `--auto-stop` stopped, and the active-writer set observed after the stop completed. A successful quiesced archive records an empty post-stop set. Only `.service` units are writer targets. Timers schedule work, but stopping a timer neither stops an in-flight service nor proves that service quiescent. Archives created before this receipt was added remain readable, but their `mode: quiesce` label is not self-proving evidence.
+
 ## Quick start
 
 ```bash
-# Stop sinex services (or let snapshot stop them automatically with --auto-stop)
-sudo systemctl stop 'sinex-*'
+# Let snapshot discover and stop active writers from the deployed inventory.
+sinexctl ops state snapshot --auto-stop --output /var/backup/sinex/check.tar.zst --dry-run
 
 # Create a snapshot (defaults: zstd level 3, all components)
 sinexctl ops state snapshot --output /var/backup/sinex/$(date +%Y-%m-%d).sinex.tar.zst
@@ -37,8 +44,9 @@ sinexctl ops state snapshot --output <path>
   [--mode quiesce|live]            # quiesce default; live does not stop services
   [--dry-run]                      # estimate sizes, no archive
   [--database-url <url>]           # override DATABASE_URL
-  [--state-dir <path>]             # override SINEX_STATE_DIR (default /var/lib/sinex)
-  [--auto-stop]                    # stop sinex-* services automatically
+  [--state-dir <path>]             # override the deployed SINEX_STATE_DIR
+  [--nats-store-dir <path>]        # override the deployed JetStream store root
+  [--auto-stop]                    # stop discovered active writer units automatically
   [--components postgres,nats,cas,state]  # subset, default all
 
 sinexctl ops state restore --archive <path> --target-dir <empty-dir> --dry-run
@@ -54,9 +62,21 @@ sinexctl ops state restore --archive <path> --target-dir <empty-dir>
 | Component  | What is captured                                    |
 |------------|-----------------------------------------------------|
 | `postgres` | Full custom-format `pg_dump` of `DATABASE_URL`      |
-| `nats`     | `$STATE_DIR/nats/jetstream/` directory tree         |
+| `nats`     | The `jetstream.store_dir` from the discovered NATS service config |
 | `cas`      | `$STATE_DIR/blob-repository/` directory tree        |
 | `state`    | Everything else under `$STATE_DIR` (spool, WALs, …) |
+
+These paths are deployment-specific. The command resolves the Sinex daemon and
+NATS unit names from the runtime inventory, then derives `SINEX_STATE_DIR` and
+`SINEX_CONTENT_STORE_PATH` from the daemon environment and
+`jetstream.store_dir` from the NATS config. On the current NixOS deployment
+they resolve to `/var/lib/sinex/state`,
+`/var/lib/sinex/state/blob-repository`, and `/var/lib/nats/jetstream`,
+respectively. `--state-dir` and `--nats-store-dir` are explicit alternate-
+topology overrides; a live NATS capture without a discovered or explicit store
+root fails instead of recording an empty component. Dry-run estimates may use
+the explicit state fixture's `nats/jetstream` child because no live bytes are
+read or archived.
 
 ## Archive layout
 
@@ -65,12 +85,16 @@ manifest.json                   -- JSON metadata + BLAKE3 checksums
 postgres/
   sinex_prod.dump               -- pg_dump custom-format (-Fc -Z9)
 nats/
-  jetstream/                    -- NATS JetStream state tree
+  jetstream/                    -- NATS JetStream state tree from the live store_dir
   streams.summary.json          -- `nats stream ls --json` output (best-effort)
 cas/
   blob-repository/              -- CAS BLAKE3 content store tree
 state/                          -- remaining $STATE_DIR contents
 ```
+
+The NATS component hash covers the JetStream state tree and excludes
+`streams.summary.json` on both capture and restore. The summary is diagnostic
+metadata and may be absent or regenerated without changing the state hash.
 
 ## Archive secrecy and key policy
 
@@ -100,11 +124,13 @@ sinexctl ops state restore \
 The dry-run command does not extract or write restored state. It validates:
 
 - `manifest.json` is readable from the archive.
-- Non-empty component paths declared by the manifest are present in the tar.
+- Component paths declared by the manifest are present in the tar; missing
+  paths are reported as structured coverage evidence.
 - The target path is an empty directory, or does not exist under an existing
   parent directory.
-- Active `sinex-*` services are reported so destructive restore can quiesce
-  them first.
+- Active snapshot-writer units are reported so destructive restore can quiesce
+  them first. Failure to query systemd is an error, not an empty active-unit
+  result.
 - The restore drill comparison plan includes source count, Postgres table
   count, NATS JetStream member count when present, CAS blob count when present,
   and runtime private-mode state presence.
@@ -137,14 +163,42 @@ sinexctl ops state restore \
     --confirm-restore
 ```
 
+The restore database name must identify a disposable rehearsal target. Use a
+name containing `dev`, `test`, `drill`, `restore`, `scratch`, or `tmp`, such as
+`sinex_restore_drill`. This naming check complements the live PostgreSQL
+emptiness query and prevents an empty production-shaped URL such as
+`sinex_prod` from being accepted as a drill target.
+
 Isolated drill execution refuses to run unless:
 
 - `--confirm-restore` is present.
 - The target directory is empty, or does not yet exist under an existing parent.
-- Active `sinex-*` services are stopped, unless `--allow-active-services` is
+- Active snapshot-writer units are stopped, unless `--allow-active-services` is
   explicitly passed for an isolated drill target.
 - Archives with non-empty `postgres` components include
-  `--restore-database-url`, pointing at an empty drill database.
+  `--restore-database-url`, pointing at an empty drill database. The target
+  URL must use a disposable rehearsal database name and the emptiness query
+  must succeed; missing row-count evidence or a failed query makes the restore
+  verdict fail closed.
+
+The deployed-topology round-trip is an executable seam, not evidence that a
+NixOS integration run occurred. Use a dedicated empty drill database and opt
+in explicitly in a live deployment or NixOS VM:
+
+```bash
+SINEX_REAL_TOPOLOGY_TEST=1 \
+DATABASE_URL="$DATABASE_URL" \
+SINEX_REAL_RESTORE_DATABASE_URL="$SINEX_RESTORE_DATABASE_URL" \
+  xtask test -p sinexctl -E 'test(real_deployed_topology_backup_restore_round_trip)'
+```
+
+The test discovers `SINEX_STATE_DIR`, the NATS `jetstream.store_dir`, and
+active writer units from the live NixOS deployment, captures all components,
+then restores the archive into the supplied empty PostgreSQL drill database
+and isolated filesystem target. It is intentionally opt-in because it reads
+live state and requires an operator-provisioned empty database. A focused
+unit/integration test with fake command seams does not establish this
+deployment evidence.
 
 The JSON/YAML result includes `observed_checks` comparing the isolated drill
 target against the manifest: source IDs, NATS JetStream member paths when
@@ -162,7 +216,8 @@ empty drill database.
 ### 1. Stop services (if running)
 
 ```bash
-sudo systemctl stop 'sinex-*'
+sinexctl ops state snapshot --output /var/backup/sinex/check.tar.zst --dry-run
+# Review the active writer list, then stop those exact units with systemctl.
 ```
 
 ### 2. Extract the archive
@@ -190,8 +245,8 @@ sinexctl ops state inspect \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst
 ```
 
-The command reads `manifest.json`, lists the archive, and reports any non-empty
-component paths from the manifest that are missing from the tar member list.
+The command reads `manifest.json`, lists the archive, and reports any manifest
+component paths that are missing from the tar member list.
 
 ```bash
 cat "$RESTORE_DIR/manifest.json" | jq .
@@ -199,6 +254,8 @@ cat "$RESTORE_DIR/manifest.json" | jq .
 
 Check `snapshot_id`, `created_at`, and that all expected components appear with
 non-zero `bytes`.
+
+For a quiesced archive, also inspect `quiesce_receipt`. Its `active_writer_units_after` array must be empty. When `--auto-stop` was used, `stopped_writer_units` must name the writer services that had been active; PostgreSQL must not appear in that list because the logical dump still needs it.
 
 ### 4. Restore Postgres
 
@@ -218,26 +275,26 @@ pg_restore \
 
 ```bash
 sudo systemctl stop nats  # if managed by NixOS
-sudo mkdir -p /var/lib/sinex/nats/jetstream
-sudo cp -a "$RESTORE_DIR/nats/jetstream/." /var/lib/sinex/nats/jetstream/
-sudo chown -R nats:nats /var/lib/sinex/nats/
+sudo mkdir -p /var/lib/nats/jetstream
+sudo cp -a "$RESTORE_DIR/nats/jetstream/." /var/lib/nats/jetstream/
+sudo chown -R nats:nats /var/lib/nats/jetstream
 sudo systemctl start nats
 ```
 
 ### 6. Restore CAS blob repository
 
 ```bash
-sudo mkdir -p /var/lib/sinex/blob-repository
-sudo cp -a "$RESTORE_DIR/cas/blob-repository/." /var/lib/sinex/blob-repository/
-sudo chown -R sinex:sinex /var/lib/sinex/blob-repository/
+sudo mkdir -p /var/lib/sinex/state/blob-repository
+sudo cp -a "$RESTORE_DIR/cas/blob-repository/." /var/lib/sinex/state/blob-repository/
+sudo chown -R sinex:sinex /var/lib/sinex/state/blob-repository/
 ```
 
 ### 7. Restore remaining state
 
 ```bash
 # Merge remaining state files (spool, etc.)
-sudo cp -a "$RESTORE_DIR/state/." /var/lib/sinex/
-sudo chown -R sinex:sinex /var/lib/sinex/
+sudo cp -a "$RESTORE_DIR/state/." /var/lib/sinex/state/
+sudo chown -R sinex:sinex /var/lib/sinex/state/
 ```
 
 ### 8. Apply schema
@@ -253,7 +310,8 @@ sinex-schema apply "$DATABASE_URL"
 ### 9. Start services
 
 ```bash
-sudo systemctl start 'sinex-*'
+# Start the discovered writer units from the runtime inventory.
+sudo systemctl start <sinex-daemon-unit> <nats-unit>
 ```
 
 ### 10. Verify
@@ -290,9 +348,11 @@ For a horizon-3 wipe (complete state replacement):
 
 ## Consistency modes
 
-`--mode quiesce` is the normal backup mode. It refuses to run while `sinex-*`
-services are active unless `--auto-stop` is supplied, then captures Postgres,
-NATS, CAS, and runtime state after quiescence.
+`--mode quiesce` is the normal backup mode. It refuses to run while discovered
+snapshot-writer units are active unless `--auto-stop` is supplied, then
+captures Postgres, NATS, CAS, and runtime state after quiescence. A systemd
+inspection failure also refuses the snapshot, because “no units observed” is
+not evidence that the deployment is quiescent.
 
 `--mode live` is for forensic preservation when stopping services is not
 acceptable. It does not stop services and ignores `--auto-stop`; the archive

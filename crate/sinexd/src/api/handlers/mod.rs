@@ -5,12 +5,14 @@
 pub mod audit;
 pub mod automata;
 pub mod browser;
+pub mod coordination;
 pub mod content;
 pub mod curation;
 pub mod dlq;
 pub mod documents;
 pub mod health;
 pub mod import_progress;
+pub mod import_report;
 pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
@@ -52,6 +54,8 @@ pub use audit::handle_audit_get;
 pub use automata::handle_automata_status;
 pub use browser::handle_browser_capture_batch;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
+pub use import_progress::handle_sources_import_progress;
+pub use import_report::handle_sources_import_report;
 pub use instructions::handle_hyprland_workspace_switch;
 pub use lifecycle::{
     handle_lifecycle_archive,
@@ -65,7 +69,10 @@ pub use lifecycle::{
     handle_tombstone_preview,
     handle_tombstone_status,
 };
-pub use llm::{handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain};
+pub use llm::{
+    handle_llm_budget_report, handle_llm_embedding_estimate, handle_llm_prompts_list,
+    handle_llm_route_explain,
+};
 pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start};
 pub use runtime_registry::{
     handle_runtime_drain, handle_runtime_list, handle_runtime_resume, handle_runtime_set_horizon,
@@ -78,11 +85,14 @@ pub use semantic::{
     handle_semantic_lane_outputs_seed_entity_events, handle_semantic_lane_outputs_write,
     handle_semantic_lane_set_status, handle_semantic_lanes_list,
 };
-pub use import_progress::handle_sources_import_progress;
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 pub use source_status::{handle_sources_status, handle_sources_status_view};
 
 pub use content::{handle_retrieve_blob, handle_store_blob};
+pub use coordination::{
+    handle_coordination_get_leader, handle_coordination_instance_health,
+    handle_coordination_list_instances,
+};
 pub use documents::{
     handle_documents_get, handle_documents_get_chunks, handle_documents_get_chunks_redacted,
     handle_documents_search,
@@ -94,7 +104,7 @@ pub use privacy::{
     handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,
     handle_privacy_policy_list, handle_privacy_policy_rule_add, handle_privacy_policy_rule_remove,
     handle_privacy_policy_rule_set_enabled, handle_privacy_policy_scope_bind,
-    handle_privacy_policy_seed_builtin, handle_private_mode_disable,
+    handle_privacy_policy_seed_builtin, handle_privacy_shadow_audit, handle_private_mode_disable,
     handle_private_mode_disable_service, handle_private_mode_enable,
     handle_private_mode_enable_service, handle_private_mode_status,
     handle_private_mode_status_service,

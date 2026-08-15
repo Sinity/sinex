@@ -468,7 +468,6 @@ async fn test_fk_violation_routes_to_dlq_after_retry_budget() -> TestResult<()> 
         .nats_client
         .subscribe(setup.topology.dlq_publish_subject.clone())
         .await?;
-
     // Publish an event with a source_material_id that does NOT exist in the
     // database. This will cause an FK violation during insert.
     let bogus_material_id = Uuid::now_v7();
@@ -689,10 +688,9 @@ async fn test_fk_violation_with_valid_schema_and_module_run_retries_until_materi
     Ok(())
 }
 
-/// A bogus `payload_schema_id` FK violation is now handled by stripping the
-/// schema ID and retrying — the event is persisted without the schema
-/// annotation rather than being routed to the DLQ.  This test validates that
-/// recovery path: the event lands in DB with `payload_schema_id = NULL`.
+/// A bogus `payload_schema_id` FK violation must never be recovered by
+/// stripping the schema annotation. The admission layer reloads/revalidates
+/// first, then emits an evidence-bearing terminal failure for settlement.
 #[sinex_test]
 async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
@@ -704,6 +702,14 @@ async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
+    let mut confirmed_sub = setup
+        .nats_client
+        .subscribe(setup.topology.confirmed_events_subject.clone())
+        .await?;
 
     let event_id = Uuid::now_v7();
     let bogus_schema_id = Uuid::now_v7();
@@ -731,31 +737,33 @@ async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
     .await?;
     setup.nats_client.flush().await?;
 
-    // The consumer strips the bogus payload_schema_id and retries the INSERT.
-    // The event should be persisted (without schema annotation) rather than DLQ'd.
-    WaitHelpers::wait_for_condition(
-        || {
-            let pool = ctx.pool.clone();
-            async move {
-                let found = pool.events().get_by_id(event_id.into()).await?.is_some();
-                Ok::<bool, SinexError>(found)
-            }
-        },
-        Timeouts::STANDARD,
-    )
-    .await?;
-
-    let persisted = ctx
-        .pool
-        .events()
-        .get_by_id(event_id.into())
-        .await?
-        .ok_or_else(|| {
-            SinexError::not_found("event should have been persisted after schema-id strip")
-        })?;
-    assert_eq!(
-        persisted.payload_schema_id, None,
-        "payload_schema_id should be NULL after schema-FK strip-and-retry"
+    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), dlq_sub.next())
+        .await
+        .map_err(|_| SinexError::network("timed out waiting for payload-schema FK DLQ entry"))?
+        .ok_or_else(|| SinexError::network("payload-schema FK DLQ subscription closed"))?;
+    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    let error_field = entry["error"].as_str().unwrap_or("");
+    assert!(
+        error_field.contains("payload_schema_id FK violation is terminal"),
+        "DLQ error must preserve explicit schema-management evidence, got: {error_field}"
+    );
+    assert!(
+        error_field.contains(&event_id.to_string()) && error_field.contains(&bogus_schema_id_str),
+        "DLQ error must identify the affected event and schema, got: {error_field}"
+    );
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(event_id.into())
+            .await?
+            .is_none(),
+        "schema metadata failure must not commit a row with payload_schema_id stripped"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), confirmed_sub.next())
+            .await
+            .is_err(),
+        "terminal schema metadata failure must not publish a misleading confirmed event"
     );
 
     setup.handle.abort();
@@ -780,6 +788,10 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
         Duration::from_secs(2),
     )
     .await?;
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
 
     let source = format!("batch.isolate.{suffix}");
     let event_type = "batch.isolate";
@@ -817,9 +829,8 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
     }
     setup.nats_client.flush().await?;
 
-    // With the schema-FK strip-and-retry recovery path, the bogus payload_schema_id
-    // event is stripped and retried — all 10 events persist and nothing goes to DLQ.
-    let expected_all = 10i64;
+    // The schema-FK row is isolated and durably DLQ'd; healthy siblings persist.
+    let expected_healthy = 9_i64;
     let readiness = WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
@@ -827,7 +838,7 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
             async move {
                 let event_source: sinex_primitives::EventSource = source.as_str().into();
                 let source_count = pool.events().count_by_source(&event_source).await?;
-                Ok::<bool, SinexError>(source_count >= expected_all)
+                Ok::<bool, SinexError>(source_count >= expected_healthy)
             }
         },
         Timeouts::STANDARD,
@@ -837,7 +848,7 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
         let event_source: sinex_primitives::EventSource = source.as_str().into();
         let source_count = ctx.pool.events().count_by_source(&event_source).await?;
         return Err(color_eyre::eyre::eyre!(
-            "mixed-batch schema-strip recovery never converged: source_count={source_count}, consumer_finished={}, wait_error={error:#}",
+            "mixed-batch schema-FK isolation never converged: source_count={source_count}, consumer_finished={}, wait_error={error:#}",
             setup.handle.is_finished(),
         ));
     }
@@ -854,34 +865,142 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
         );
     }
 
-    // The bad event (index=7) is also persisted, but with payload_schema_id stripped.
+    // The bad event (index=7) is terminally DLQ'd with its schema metadata intact.
     let bad_event_id = bad_event_id.expect("bad event id must be set");
-    let bad_event = ctx
-        .pool
-        .events()
-        .get_by_id(bad_event_id.into())
-        .await?
-        .ok_or_else(|| SinexError::not_found("bad event should persist after schema-id strip"))?;
-    assert_eq!(
-        bad_event.payload_schema_id, None,
-        "schema-FK event must persist with payload_schema_id = NULL after strip-and-retry"
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(bad_event_id.into())
+            .await?
+            .is_none(),
+        "schema-FK event must not persist with its schema metadata stripped"
+    );
+    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), dlq_sub.next())
+        .await
+        .map_err(|_| SinexError::network("timed out waiting for mixed schema-FK DLQ entry"))?
+        .ok_or_else(|| SinexError::network("mixed schema-FK DLQ subscription closed"))?;
+    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    let error_field = entry["error"].as_str().unwrap_or("");
+    assert!(
+        error_field.contains("payload_schema_id FK violation is terminal")
+            && error_field.contains(&bad_event_id.to_string())
+            && error_field.contains(&bogus_schema_id.to_string()),
+        "schema-FK DLQ must preserve terminal evidence, got: {error_field}"
     );
 
-    // DLQ must be empty — nothing was irrecoverably failed.
-    let mut stream = setup
-        .js
-        .get_stream(&setup.topology.dlq_stream)
+    setup.handle.abort();
+    let _ = setup.handle.await;
+    Ok(())
+}
+
+/// sinex-w16e: a row-level validation failure from the admission-to-row
+/// conversion must be bisected out of a mixed persistence batch. The healthy
+/// siblings still travel through the normal confirmation/settlement route.
+#[sinex_test]
+async fn test_mixed_batch_isolates_missing_ts_orig_and_persists_rest() -> TestResult<()> {
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
+    let suffix = format!(
+        "batch-missing-ts-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
+    let hooks = TestHooks::none();
+    let setup = start_consumer_with_hooks_and_batch_config(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::SHORT),
+        &hooks,
+        10,
+        Duration::from_secs(2),
+    )
+    .await?;
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
+        .await?;
+
+    let source = format!("batch.missing-ts.{suffix}");
+    let event_type = "batch.missing_ts_orig";
+    let bad_index = 7_u32;
+    let missing_material_id = Uuid::now_v7();
+    let mut good_event_ids = Vec::new();
+    let mut bad_event_id = None;
+
+    for index in 0..10_u32 {
+        let event_id = Uuid::now_v7();
+        let mut event = json!({
+            "id": event_id.to_string(),
+            "source": source,
+            "event_type": event_type,
+            "payload": { "index": index },
+            "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
+            "host": "test-host",
+            "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+            "anchor_byte": index,
+        });
+        if index == bad_index {
+            event["source_material_id"] = json!(missing_material_id.to_string());
+            event
+                .as_object_mut()
+                .expect("event object")
+                .remove("ts_orig");
+            bad_event_id = Some(event_id);
+        } else {
+            good_event_ids.push(event_id);
+        }
+        publish_custom_event(
+            &setup.nats_client,
+            &setup.namespace,
+            &source,
+            event_type,
+            &event,
+        )
+        .await?;
+    }
+    setup.nats_client.flush().await?;
+
+    let event_source: EventSource = source.as_str().into();
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            let event_source = event_source.clone();
+            async move {
+                Ok::<bool, SinexError>(pool.events().count_by_source(&event_source).await? >= 9)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    for event_id in good_event_ids {
+        assert!(
+            ctx.pool
+                .events()
+                .get_by_id(event_id.into())
+                .await?
+                .is_some(),
+            "healthy sibling {event_id} should persist"
+        );
+    }
+    let bad_event_id = bad_event_id.expect("bad event id must be set");
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(bad_event_id.into())
+            .await?
+            .is_none(),
+        "the missing-ts_orig poison row must not persist"
+    );
+
+    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), dlq_sub.next())
         .await
-        .map_err(|e| SinexError::network(e.to_string()))?;
-    let dlq_messages = stream
-        .info()
-        .await
-        .map_err(|e| SinexError::network(e.to_string()))?
-        .state
-        .messages;
-    assert_eq!(
-        dlq_messages, 0,
-        "DLQ must be empty when schema-FK violations are recovered by strip-and-retry"
+        .map_err(|_| SinexError::network("timed out waiting for missing-ts_orig DLQ entry"))?
+        .ok_or_else(|| SinexError::network("missing-ts_orig DLQ subscription closed"))?;
+    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    let error_field = entry["error"].as_str().unwrap_or("");
+    assert!(
+        error_field.contains("validated event missing ts_orig")
+            && error_field.contains(&bad_event_id.to_string()),
+        "DLQ must identify only the isolated validation failure, got: {error_field}"
     );
 
     setup.handle.abort();

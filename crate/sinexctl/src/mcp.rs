@@ -11,15 +11,19 @@ use color_eyre::eyre::{WrapErr, eyre};
 use color_eyre::{Report, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
 use sinex_primitives::SemanticLaneStatus;
 use sinex_primitives::Uuid;
-use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::domain::{EventSource, EventType, InstanceId, ModuleKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::SourceId;
 use sinex_primitives::query::{EventQuery, EventQueryResult, LineageDirection, LineageQuery};
 use sinex_primitives::query_units::{SinexQueryResultListView, parse_sinex_query};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
+use sinex_primitives::rpc::coordination::{
+    GetLeaderRequest, InstanceHealthRequest, ListInstancesRequest,
+};
 use sinex_primitives::rpc::curation::CurationListProposalsRequest;
 use sinex_primitives::rpc::documents::{
     DocumentsGetChunksRequest, DocumentsGetRequest, DocumentsSearchRequest,
@@ -29,7 +33,7 @@ use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
 use sinex_primitives::rpc::methods;
-use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
+use sinex_primitives::rpc::privacy::{PrivacyShadowAuditRequest, PrivateModeStateResponse};
 use sinex_primitives::rpc::replay::ReplayState;
 use sinex_primitives::rpc::runtime::{
     RuntimeHealthResponse, RuntimeListActiveResponse, RuntimeListResponse,
@@ -40,9 +44,9 @@ use sinex_primitives::rpc::semantic::{
 };
 use sinex_primitives::rpc::source_status::SourcesStatusResponse;
 use sinex_primitives::rpc::sources::{
-    SourcesContinuityRequest, SourcesCoverageRequest, SourcesDriftListRequest, SourcesListRequest,
-    SourcesReadinessGetRequest, SourcesReadinessListRequest, SourcesRemediationPlanRequest,
-    SourcesShowRequest,
+    SourcesContinuityRequest, SourcesCoverageRequest, SourcesDriftListRequest,
+    SourcesImportReportRequest, SourcesListRequest, SourcesReadinessGetRequest,
+    SourcesReadinessListRequest, SourcesRemediationPlanRequest, SourcesShowRequest,
 };
 use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
@@ -194,6 +198,8 @@ struct SourceContinuityArgs {
     source_family: Option<SourceFamily>,
     #[serde(default)]
     since: Option<Timestamp>,
+    #[serde(default = "default_stale_after_secs")]
+    stale_after_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -208,6 +214,8 @@ struct SourceDriftArgs {
 struct SourceGapExplainArgs {
     source_family: SourceFamily,
     at: Timestamp,
+    #[serde(default = "default_stale_after_secs")]
+    stale_after_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -434,12 +442,49 @@ struct ShadowConsumersArgs {
     prefix: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct CoordinationListInstancesArgs {
+    #[serde(default)]
+    module_kind: Option<ModuleKind>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct CoordinationGetLeaderArgs {
+    module_kind: ModuleKind,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct CoordinationInstanceHealthArgs {
+    instance_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PrivacyShadowAuditArgs {
+    #[serde(default)]
+    since: Option<String>,
+    #[serde(default)]
+    until: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    event_type: Option<String>,
+    #[serde(default)]
+    limit_events: Option<i64>,
+    #[serde(default)]
+    limit_rows_per_surface: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SourceImportReportArgs {
+    operation_id: String,
+}
+
 const fn default_true() -> bool {
     true
 }
 
 const fn default_stale_after_secs() -> u64 {
-    300
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS
 }
 
 const fn default_recent_window_secs() -> u64 {
@@ -575,6 +620,14 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
+            name: "sinex_privacy_shadow_audit",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only bounded privacy recognizer audit report.",
+            backing_rpc_methods: &[methods::PRIVACY_SHADOW_AUDIT],
+            read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
+        },
+        McpCatalogEntry {
             name: "sinex_system_health",
             kind: McpSurfaceKind::Tool,
             description: "Read-only gateway and confirmation-path health summary.",
@@ -699,6 +752,30 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only aggregate runtime module health.",
             backing_rpc_methods: &[methods::RUNTIME_HEALTH],
+            read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
+        },
+        McpCatalogEntry {
+            name: "sinex_coordination_instances",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only live coordination instance listing.",
+            backing_rpc_methods: &[methods::COORDINATION_LIST_INSTANCES],
+            read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
+        },
+        McpCatalogEntry {
+            name: "sinex_coordination_leader",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only coordination leader lookup by module kind.",
+            backing_rpc_methods: &[methods::COORDINATION_GET_LEADER],
+            read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
+        },
+        McpCatalogEntry {
+            name: "sinex_coordination_instance_health",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only health lookup for one coordination instance.",
+            backing_rpc_methods: &[methods::COORDINATION_INSTANCE_HEALTH],
             read_only: true,
             output_contract: McpOutputContract::ViewEnvelope,
         },
@@ -943,6 +1020,14 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
+            name: "sinex_source_import_report",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only durable import outcome report.",
+            backing_rpc_methods: &[methods::SOURCES_IMPORT_REPORT],
+            read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
+        },
+        McpCatalogEntry {
             name: "sinex_ops_list",
             kind: McpSurfaceKind::Tool,
             description: "Read-only operations log listing.",
@@ -1133,7 +1218,8 @@ pub fn tools() -> Vec<McpTool> {
                 "type": "object",
                 "properties": {
                     "source_family": { "type": "string" },
-                    "since": { "type": "string", "format": "date-time" }
+                    "since": { "type": "string", "format": "date-time" },
+                    "stale_after_secs": { "type": "integer", "minimum": 1, "default": 300 }
                 },
                 "additionalProperties": false
             }),
@@ -1161,7 +1247,8 @@ pub fn tools() -> Vec<McpTool> {
                 "required": ["source_family", "at"],
                 "properties": {
                     "source_family": { "type": "string" },
-                    "at": { "type": "string", "format": "date-time" }
+                    "at": { "type": "string", "format": "date-time" },
+                    "stale_after_secs": { "type": "integer", "minimum": 1, "default": 300 }
                 },
                 "additionalProperties": false
             }),
@@ -1183,6 +1270,21 @@ pub fn tools() -> Vec<McpTool> {
             json!({
                 "type": "object",
                 "properties": {},
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
+            "sinex_privacy_shadow_audit",
+            json!({
+                "type": "object",
+                "properties": {
+                    "since": { "type": "string" },
+                    "until": { "type": "string" },
+                    "source": { "type": "string" },
+                    "event_type": { "type": "string" },
+                    "limit_events": { "type": "integer", "minimum": 1, "maximum": 10000 },
+                    "limit_rows_per_surface": { "type": "integer", "minimum": 1, "maximum": 1000 }
+                },
                 "additionalProperties": false
             }),
         ),
@@ -1367,6 +1469,38 @@ pub fn tools() -> Vec<McpTool> {
         mcp_tool("sinex_sources_status", status_window_schema()),
         mcp_tool("sinex_sources_status_view", empty_object_schema()),
         mcp_tool("sinex_source_health", stale_after_schema()),
+        mcp_tool(
+            "sinex_coordination_instances",
+            json!({
+                "type": "object",
+                "properties": {
+                    "module_kind": { "type": "string", "enum": ["source", "automaton", "service"] }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
+            "sinex_coordination_leader",
+            json!({
+                "type": "object",
+                "required": ["module_kind"],
+                "properties": {
+                    "module_kind": { "type": "string", "enum": ["source", "automaton", "service"] }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
+            "sinex_coordination_instance_health",
+            json!({
+                "type": "object",
+                "required": ["instance_id"],
+                "properties": {
+                    "instance_id": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        ),
         mcp_tool("sinex_sources_active", stale_after_schema()),
         mcp_tool("sinex_sources_registry", empty_object_schema()),
         mcp_tool("sinex_event_engine_validation", empty_object_schema()),
@@ -1510,6 +1644,17 @@ pub fn tools() -> Vec<McpTool> {
                 "properties": {
                     "source_family": { "type": "string" },
                     "include_disabled": { "type": "boolean", "default": false }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
+            "sinex_source_import_report",
+            json!({
+                "type": "object",
+                "required": ["operation_id"],
+                "properties": {
+                    "operation_id": { "type": "string", "format": "uuid" }
                 },
                 "additionalProperties": false
             }),
@@ -1810,7 +1955,9 @@ async fn call_tool_events_sources(
         }
         "sinex_source_presets" => source_presets(client, arguments).await?,
         "sinex_source_bindings" => source_bindings(client, arguments).await?,
+        "sinex_source_import_report" => source_import_report(client, arguments).await?,
         "sinex_privacy_status" => privacy_status(client, arguments).await?,
+        "sinex_privacy_shadow_audit" => privacy_shadow_audit(client, arguments).await?,
         "sinex_tasks_list" => tasks_list(client, arguments).await?,
         "sinex_task_state" => task_state(client, arguments).await?,
         "sinex_replay_operations" => replay_operations(client, arguments).await?,
@@ -1872,6 +2019,11 @@ async fn call_tool_runtime_analytics(
         "sinex_sources_status" => sources_status(client, arguments.clone()).await,
         "sinex_sources_status_view" => sources_status_view(client, arguments.clone()).await,
         "sinex_source_health" => runtime_health(client, arguments.clone()).await,
+        "sinex_coordination_instances" => coordination_instances(client, arguments.clone()).await,
+        "sinex_coordination_leader" => coordination_leader(client, arguments.clone()).await,
+        "sinex_coordination_instance_health" => {
+            coordination_instance_health(client, arguments.clone()).await
+        }
         "sinex_sources_active" => runtime_active(client, arguments.clone()).await,
         "sinex_sources_registry" => runtime_registry(client, arguments.clone()).await,
         "sinex_event_engine_validation" => event_engine_validation(client, arguments.clone()).await,
@@ -1965,7 +2117,7 @@ async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value
 
     let mut result = serde_json::to_value(client.trace_lineage(query).await?)?;
     redact_raw_samples(&mut result);
-    Ok(mcp_view_envelope(
+    Ok(mcp_view_envelope_redacted(
         "sinex_trace_lineage",
         &json!(args),
         &json!({ "result": result }),
@@ -2031,10 +2183,16 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
                 "sinex_source_continuity `since` is only supported when listing all families"
             ));
         }
-        let request = SourcesContinuityGetRequest { source_family };
+        let request = SourcesContinuityGetRequest {
+            source_family,
+            stale_after_secs: args.stale_after_secs,
+        };
         serde_json::to_value(client.sources_continuity_get(request).await?)?
     } else {
-        let request = SourcesContinuityListRequest { since: args.since };
+        let request = SourcesContinuityListRequest {
+            since: args.since,
+            stale_after_secs: args.stale_after_secs,
+        };
         serde_json::to_value(client.sources_continuity_list(request).await?)?
     };
 
@@ -2066,6 +2224,7 @@ async fn source_gap_explain(client: &GatewayClient, arguments: Value) -> Result<
         .sources_continuity_explain_gap(SourcesExplainGapRequest {
             source_family: args.source_family.clone(),
             at: args.at,
+            stale_after_secs: args.stale_after_secs,
         })
         .await?;
     Ok(mcp_view_envelope(
@@ -2096,6 +2255,28 @@ async fn privacy_status(client: &GatewayClient, arguments: Value) -> Result<Valu
     Ok(envelope(
         "sinex_privacy_status",
         &json!({}),
+        &json!({ "result": response }),
+    ))
+}
+
+async fn privacy_shadow_audit(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: PrivacyShadowAuditArgs = serde_json::from_value(arguments)?;
+    let defaults = PrivacyShadowAuditRequest::default();
+    let response = client
+        .privacy_shadow_audit(PrivacyShadowAuditRequest {
+            since: args.since.clone(),
+            until: args.until.clone(),
+            source: args.source.clone(),
+            event_type: args.event_type.clone(),
+            limit_events: args.limit_events.unwrap_or(defaults.limit_events),
+            limit_rows_per_surface: args
+                .limit_rows_per_surface
+                .unwrap_or(defaults.limit_rows_per_surface),
+        })
+        .await?;
+    Ok(envelope(
+        "sinex_privacy_shadow_audit",
+        &json!(args),
         &json!({ "result": response }),
     ))
 }
@@ -2181,7 +2362,7 @@ async fn documents_search(client: &GatewayClient, arguments: Value) -> Result<Va
     };
     let mut response = serde_json::to_value(client.documents_search(request).await?)?;
     redact_document_text(&mut response);
-    Ok(envelope(
+    Ok(redacted_envelope(
         "sinex_documents_search",
         &json!(args),
         &json!({ "result": response }),
@@ -2195,7 +2376,7 @@ async fn documents_get(client: &GatewayClient, arguments: Value) -> Result<Value
     };
     let mut response = serde_json::to_value(client.documents_get(request).await?)?;
     redact_document_side_data(&mut response);
-    Ok(envelope(
+    Ok(redacted_envelope(
         "sinex_documents_get",
         &json!(args),
         &json!({ "result": response }),
@@ -2210,7 +2391,7 @@ async fn documents_chunks(client: &GatewayClient, arguments: Value) -> Result<Va
         offset: args.offset,
     };
     let response = client.documents_get_chunks_redacted(request).await?;
-    Ok(envelope(
+    Ok(redacted_envelope(
         "sinex_documents_chunks",
         &json!(args),
         &json!({ "result": response }),
@@ -2327,6 +2508,48 @@ async fn runtime_active(client: &GatewayClient, arguments: Value) -> Result<Valu
         client.runtime_list_active(args.stale_after_secs).await?;
     Ok(envelope(
         "sinex_sources_active",
+        &json!(args),
+        &json!({ "result": response }),
+    ))
+}
+
+async fn coordination_instances(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: CoordinationListInstancesArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .coordination_list_instances(ListInstancesRequest {
+            module_kind: args.module_kind,
+        })
+        .await?;
+    Ok(envelope(
+        "sinex_coordination_instances",
+        &json!(args),
+        &json!({ "result": response }),
+    ))
+}
+
+async fn coordination_leader(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: CoordinationGetLeaderArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .coordination_get_leader(GetLeaderRequest {
+            module_kind: args.module_kind,
+        })
+        .await?;
+    Ok(envelope(
+        "sinex_coordination_leader",
+        &json!(args),
+        &json!({ "result": response }),
+    ))
+}
+
+async fn coordination_instance_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: CoordinationInstanceHealthArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .coordination_instance_health(InstanceHealthRequest {
+            instance_id: InstanceId::new(&args.instance_id),
+        })
+        .await?;
+    Ok(envelope(
+        "sinex_coordination_instance_health",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2496,7 +2719,7 @@ async fn llm_prompts(client: &GatewayClient, arguments: Value) -> Result<Value> 
     } else {
         Vec::new()
     };
-    Ok(envelope_with_caveats(
+    Ok(redacted_envelope_with_caveats(
         "sinex_llm_prompts",
         &json!(args),
         &json!({ "result": response }),
@@ -2546,7 +2769,7 @@ async fn curation_proposals(client: &GatewayClient, arguments: Value) -> Result<
     };
     let mut response = serde_json::to_value(&result)?;
     redact_raw_samples(&mut response);
-    Ok(envelope_with_caveats(
+    Ok(redacted_envelope_with_caveats(
         "sinex_curation_proposals",
         &json!(args),
         &json!({ "result": response }),
@@ -2600,7 +2823,7 @@ async fn source_material(client: &GatewayClient, arguments: Value) -> Result<Val
             .await?,
     )?;
     redact_raw_samples(&mut response);
-    Ok(mcp_view_envelope(
+    Ok(mcp_view_envelope_redacted(
         "sinex_source_material",
         &json!(args),
         &json!({ "result": response }),
@@ -2665,6 +2888,20 @@ async fn source_bindings(client: &GatewayClient, arguments: Value) -> Result<Val
         &json!(args),
         &json!({ "result": response }),
     )?)
+}
+
+async fn source_import_report(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceImportReportArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .sources_import_report(SourcesImportReportRequest {
+            operation_id: args.operation_id.clone(),
+        })
+        .await?;
+    Ok(envelope(
+        "sinex_source_import_report",
+        &json!(args),
+        &json!({ "result": response }),
+    ))
 }
 
 async fn ops_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -2895,6 +3132,10 @@ fn envelope(tool: &str, query: &Value, result: &Value) -> Value {
     envelope_with_caveats(tool, query, result, Vec::new())
 }
 
+fn redacted_envelope(tool: &str, query: &Value, result: &Value) -> Value {
+    redacted_envelope_with_caveats(tool, query, result, Vec::new())
+}
+
 fn envelope_with_caveats(
     tool: &str,
     query: &Value,
@@ -2902,6 +3143,24 @@ fn envelope_with_caveats(
     caveats: Vec<CaveatView>,
 ) -> Value {
     mcp_view_envelope_with_caveats(tool, query, result, caveats).unwrap_or_else(|error| {
+        json!({
+            "source_surface": tool,
+            "query_echo": query,
+            "payload": {
+                "error": "mcp_view_envelope_serialization_failed",
+                "detail": error.to_string(),
+            }
+        })
+    })
+}
+
+fn redacted_envelope_with_caveats(
+    tool: &str,
+    query: &Value,
+    result: &Value,
+    caveats: Vec<CaveatView>,
+) -> Value {
+    mcp_view_envelope_redacted_with_caveats(tool, query, result, caveats).unwrap_or_else(|error| {
         json!({
             "source_surface": tool,
             "query_echo": query,
@@ -2937,15 +3196,7 @@ fn gateway_unavailable_envelope(tool: &str, query: &Value, target_url: &str) -> 
         ),
         ref_: None,
     });
-    envelope.caveats.push(CaveatView {
-        id: "mcp.raw_samples_redacted".to_string(),
-        message: "MCP read tools redact raw payload samples and snippets by default".to_string(),
-        ref_: None,
-    });
-    envelope.privacy_state = Some(PrivacyStateView {
-        state: PrivacyStateKind::Redacted,
-        reason: Some("gateway_default raw sample redaction".to_string()),
-    });
+    envelope.privacy_state = Some(PrivacyStateView::transformation_unknown());
     Ok(serde_json::to_value(envelope)?)
 }
 
@@ -2969,26 +3220,66 @@ fn mcp_view_envelope(tool: &str, query: &Value, payload: &Value) -> Result<Value
     mcp_view_envelope_with_caveats(tool, query, payload, Vec::new())
 }
 
+fn mcp_view_envelope_redacted(tool: &str, query: &Value, payload: &Value) -> Result<Value> {
+    mcp_view_envelope_redacted_with_caveats(tool, query, payload, Vec::new())
+}
+
 fn mcp_view_envelope_with_caveats(
     tool: &str,
     query: &Value,
     payload: &Value,
     extra_caveats: Vec<CaveatView>,
 ) -> Result<Value> {
+    mcp_view_envelope_with_privacy(
+        tool,
+        query,
+        payload,
+        extra_caveats,
+        PrivacyStateView::transformation_unknown(),
+        false,
+    )
+}
+
+fn mcp_view_envelope_redacted_with_caveats(
+    tool: &str,
+    query: &Value,
+    payload: &Value,
+    extra_caveats: Vec<CaveatView>,
+) -> Result<Value> {
+    mcp_view_envelope_with_privacy(
+        tool,
+        query,
+        payload,
+        extra_caveats,
+        PrivacyStateView {
+            state: PrivacyStateKind::Redacted,
+            reason: Some("route redacted raw payload samples".to_string()),
+        },
+        true,
+    )
+}
+
+fn mcp_view_envelope_with_privacy(
+    tool: &str,
+    query: &Value,
+    payload: &Value,
+    extra_caveats: Vec<CaveatView>,
+    privacy_state: PrivacyStateView,
+    redacted: bool,
+) -> Result<Value> {
     let mut envelope = ViewEnvelope::new(tool, payload.clone()).with_query_echo(query.clone());
-    envelope.caveats.push(CaveatView {
-        id: "mcp.raw_samples_redacted".to_string(),
-        message: "MCP read tools redact raw payload samples and snippets by default".to_string(),
-        ref_: None,
-    });
+    if redacted {
+        envelope.caveats.push(CaveatView {
+            id: "mcp.raw_samples_redacted".to_string(),
+            message: "this MCP route redacted raw payload samples and snippets".to_string(),
+            ref_: None,
+        });
+    }
     envelope
         .caveats
         .extend(automatic_mcp_readiness_caveats(tool, payload));
     envelope.caveats.extend(extra_caveats);
-    envelope.privacy_state = Some(PrivacyStateView {
-        state: PrivacyStateKind::Redacted,
-        reason: Some("gateway_default raw sample redaction".to_string()),
-    });
+    envelope.privacy_state = Some(privacy_state);
 
     Ok(serde_json::to_value(envelope)?)
 }

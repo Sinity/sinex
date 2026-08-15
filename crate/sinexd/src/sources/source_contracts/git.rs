@@ -145,6 +145,7 @@ pub struct GitCommitHistoryParserConfig;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     // sinex-sn6s: the tracked git repos themselves are authoritative; `git
     // log` is always re-derivable.
     criticality = SourceCriticality::Reconstructable,

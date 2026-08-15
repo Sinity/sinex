@@ -38,6 +38,11 @@ pub trait RuntimeModule: Send + Sync {
         RuntimeCapabilities::default()
     }
 
+    /// Whether this source reports readiness from its continuous-start path.
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        false
+    }
+
     /// Single concrete raw event type this module consumes, if any.
     ///
     /// When `Some(t)`, the raw-event consumer can filter the stream server-side
@@ -81,6 +86,13 @@ pub trait RuntimeModule: Send + Sync {
                 "This runtime actor does not support event batch processing. Only automata should implement this method.".to_string()
             ))
         }
+    }
+
+    fn process_invalidation_message(
+        &mut self,
+        _payload: &[u8],
+    ) -> impl std::future::Future<Output = RuntimeResult<Option<u64>>> + Send {
+        async { Ok(None) }
     }
 
     fn shutdown(&mut self) -> impl std::future::Future<Output = RuntimeResult<()>> + Send {
@@ -152,6 +164,7 @@ pub trait ErasedRuntimeModule: Send + Sync {
     fn module_name(&self) -> &str;
     fn module_kind(&self) -> ModuleKind;
     fn capabilities(&self) -> RuntimeCapabilities;
+    fn defers_service_ready_until_continuous(&self) -> bool;
     fn raw_event_type_filter(&self) -> Option<&'static str>;
     fn event_type_filters(&self) -> Vec<&'static str>;
     fn confirmed_event_provenance_filter(&self) -> InputProvenanceFilter;
@@ -170,6 +183,10 @@ pub trait ErasedRuntimeModule: Send + Sync {
         &'a mut self,
         events: Vec<Event<JsonValue>>,
     ) -> BoxFuture<'a, RuntimeResult<ProcessingStats>>;
+    fn process_invalidation_message<'a>(
+        &'a mut self,
+        payload: &'a [u8],
+    ) -> BoxFuture<'a, RuntimeResult<Option<u64>>>;
     fn shutdown(&mut self) -> BoxFuture<'_, RuntimeResult<()>>;
     fn periodic_flush(&mut self, now: Timestamp) -> BoxFuture<'_, RuntimeResult<u64>>;
     fn estimate_scan_scope<'a>(
@@ -189,6 +206,9 @@ impl<T: RuntimeModule> ErasedRuntimeModule for T {
     }
     fn capabilities(&self) -> RuntimeCapabilities {
         RuntimeModule::capabilities(self)
+    }
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        RuntimeModule::defers_service_ready_until_continuous(self)
     }
     fn raw_event_type_filter(&self) -> Option<&'static str> {
         RuntimeModule::raw_event_type_filter(self)
@@ -247,6 +267,12 @@ impl<T: RuntimeModule> ErasedRuntimeModule for T {
         events: Vec<Event<JsonValue>>,
     ) -> BoxFuture<'a, RuntimeResult<ProcessingStats>> {
         Box::pin(RuntimeModule::process_event_batch(self, events))
+    }
+    fn process_invalidation_message<'a>(
+        &'a mut self,
+        payload: &'a [u8],
+    ) -> BoxFuture<'a, RuntimeResult<Option<u64>>> {
+        Box::pin(RuntimeModule::process_invalidation_message(self, payload))
     }
     fn shutdown(&mut self) -> BoxFuture<'_, RuntimeResult<()>> {
         Box::pin(RuntimeModule::shutdown(self))

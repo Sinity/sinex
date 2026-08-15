@@ -20,7 +20,7 @@ use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventInten
 use sinex_primitives::events::builder::{EventId, Provenance};
 use sinex_primitives::events::schema_registry::{RevisionPolicy, revision_policy_for_event_type};
 use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey, payload_content_hash};
-use sinex_primitives::{Id, JsonValue, Timestamp, Uuid, strip_postgres_jsonb_nul_chars};
+use sinex_primitives::{Id, JsonValue, Timestamp, Uuid, try_strip_postgres_jsonb_nul_chars};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -46,6 +46,10 @@ fn db_write_timeout(batch_size: usize) -> Duration {
 /// SQLSTATE classes that indicate a deterministic row-level persistence fault.
 const SQLSTATE_DATA_EXCEPTION_CLASS: &str = "22";
 const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
+const DETERMINISTIC_ROW_VALIDATION_FRAGMENTS: [&str; 2] = [
+    "validated event missing ts_orig",
+    "failed to serialize event claim_support",
+];
 
 /// Error-class marker for deferred source-material FK violations.
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
@@ -116,6 +120,17 @@ pub struct CandidateEvent {
     pub metadata: CandidateEventMetadata,
 }
 
+/// Candidate identity retained when admission suppresses an event before it
+/// reaches `core.events`. This is the durable reporting context for a rerun.
+#[derive(Debug, Clone)]
+pub struct SuppressedCandidate {
+    pub event_id: Uuid,
+    pub operation_id: Option<Uuid>,
+    pub source_material_id: Option<Uuid>,
+    pub source: String,
+    pub event_type: String,
+}
+
 impl CandidateEvent {
     #[must_use]
     pub fn new(event: Event<JsonValue>, metadata: CandidateEventMetadata) -> Self {
@@ -132,7 +147,7 @@ enum EquivalenceOutcome {
     Fresh,
     /// A live row shares the key and policy says drop this interpretation
     /// (a `SuppressDuplicate` type, or an unchanged `SupersedeOnChange` re-emit).
-    Suppress,
+    Suppress { existing_event_id: Uuid },
     /// A live row shares the key, the type is `SupersedeOnChange`, and the
     /// content changed — archive `superseded_event_id` and admit this revision.
     Supersede { superseded_event_id: Uuid },
@@ -147,11 +162,15 @@ fn classify_live_match(
     live: &LiveEquivalenceRow,
 ) -> EquivalenceOutcome {
     match revision_policy_for_event_type(candidate.event_type.as_str()) {
-        RevisionPolicy::SuppressDuplicate => EquivalenceOutcome::Suppress,
+        RevisionPolicy::SuppressDuplicate => EquivalenceOutcome::Suppress {
+            existing_event_id: live.id,
+        },
         RevisionPolicy::SupersedeOnChange => {
             if payload_content_hash(&candidate.payload) == live_row_content_hash(live) {
                 // Identical re-emit of the same occurrence: idempotent, suppress.
-                EquivalenceOutcome::Suppress
+                EquivalenceOutcome::Suppress {
+                    existing_event_id: live.id,
+                }
             } else {
                 EquivalenceOutcome::Supersede {
                     superseded_event_id: live.id,
@@ -333,6 +352,8 @@ pub struct AdmissionRejection {
     pub kind: AdmissionRejectionKind,
     pub reason: String,
     pub event_id: Option<Uuid>,
+    pub existing_event_id: Option<Uuid>,
+    pub candidate: Option<SuppressedCandidate>,
 }
 
 impl AdmissionRejection {
@@ -341,12 +362,40 @@ impl AdmissionRejection {
             kind,
             reason: reason.into(),
             event_id: None,
+            existing_event_id: None,
+            candidate: None,
         }
     }
 
     #[must_use]
     pub fn with_event_id(mut self, event_id: Uuid) -> Self {
         self.event_id = Some(event_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_existing_event_id(mut self, event_id: Uuid) -> Self {
+        self.existing_event_id = Some(event_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_candidate(mut self, event: &Event<JsonValue>) -> Self {
+        let Some(event_id) = event.id.map(|id| id.to_uuid()) else {
+            return self;
+        };
+        let source_material_id = match &event.provenance {
+            Provenance::Material { id, .. } => Some(id.to_uuid()),
+            Provenance::Derived { .. } => None,
+        };
+        self.event_id = Some(event_id);
+        self.candidate = Some(SuppressedCandidate {
+            event_id,
+            operation_id: event.created_by_operation_id,
+            source_material_id,
+            source: event.source.to_string(),
+            event_type: event.event_type.to_string(),
+        });
         self
     }
 
@@ -491,8 +540,67 @@ pub struct AdmissionService {
     fail_once: Option<Arc<AtomicBool>>,
     db_failures_remaining: Option<Arc<AtomicUsize>>,
     future_ts_skew: time::Duration,
-    ts_orig_lower_bound: Timestamp,
+    ts_orig_lower_bound: Option<Timestamp>,
     storage_lane: EventStorageLane,
+    /// Unit-test-only rendezvous for the narrow window after the original
+    /// schema FK failure and before the fresh registry reload. Production has
+    /// no hook here: this makes the cache-race recovery contract deterministic
+    /// without widening the general fault-injection surface.
+    #[cfg(test)]
+    payload_schema_fk_retry_barrier: Option<Arc<tokio::sync::Barrier>>,
+}
+
+fn parse_intent_bytes(payload: &[u8]) -> Result<EventIntent, AdmissionDecision> {
+    if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
+        return Err(AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::PayloadTooLarge,
+            format!(
+                "Event payload too large: {} bytes (limit: {} bytes)",
+                payload.len(),
+                MAX_EVENT_PAYLOAD_BYTES
+            ),
+        )));
+    }
+    let payload_str = std::str::from_utf8(payload).map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::InvalidUtf8,
+            format!("Event payload is not valid UTF-8: {error}"),
+        ))
+    })?;
+    serde_json::from_slice::<serde_json::Value>(payload).map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::EventDeserialization,
+            format!("Parse error: {error}"),
+        ))
+    })?;
+    sinex_primitives::validation::validate_json(payload_str).map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::StructuralJson,
+            format!("Event payload failed structural validation: {error}"),
+        ))
+    })?;
+    let intent: EventIntent = serde_json::from_slice(payload).map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::EnvelopeDeserialization,
+            format!("Failed to deserialize admission envelope: {error}"),
+        ))
+    })?;
+    intent.validate().map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::EnvelopeValidation,
+            format!("Admission envelope validation failed: {error}"),
+        ))
+    })?;
+    if !ACCEPTED_ENVELOPE_VERSIONS.contains(&intent.envelope_version.as_str()) {
+        return Err(AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::EnvelopeValidation,
+            format!(
+                "Envelope version {} is not accepted. Accepted versions: {:?}",
+                intent.envelope_version, ACCEPTED_ENVELOPE_VERSIONS
+            ),
+        )));
+    }
+    Ok(intent)
 }
 
 impl AdmissionService {
@@ -504,10 +612,10 @@ impl AdmissionService {
             fail_once: None,
             db_failures_remaining: None,
             future_ts_skew: time::Duration::hours(1),
-            ts_orig_lower_bound: Timestamp::from_const(time::macros::datetime!(
-                2000-01-01 00:00:00 UTC
-            )),
+            ts_orig_lower_bound: None,
             storage_lane: EventStorageLane::Activity,
+            #[cfg(test)]
+            payload_schema_fk_retry_barrier: None,
         }
     }
 
@@ -518,7 +626,7 @@ impl AdmissionService {
     }
 
     #[must_use]
-    pub fn with_ts_orig_lower_bound(mut self, lower_bound: Timestamp) -> Self {
+    pub fn with_ts_orig_lower_bound(mut self, lower_bound: Option<Timestamp>) -> Self {
         self.ts_orig_lower_bound = lower_bound;
         self
     }
@@ -539,8 +647,50 @@ impl AdmissionService {
         self.future_ts_skew = skew;
     }
 
-    pub fn set_ts_orig_lower_bound(&mut self, lower_bound: Timestamp) {
+    pub fn set_ts_orig_lower_bound(&mut self, lower_bound: Option<Timestamp>) {
         self.ts_orig_lower_bound = lower_bound;
+    }
+
+    /// Validate a source-native timestamp after it has been resolved from a
+    /// material manifest or temporal ledger. Explicit event timestamps take
+    /// this same path during admission; deferred material timestamps must use
+    /// it after the source-material readiness gate.
+    #[must_use]
+    pub(crate) fn timestamp_rejection(
+        &self,
+        ts_orig: Timestamp,
+        event_id: Uuid,
+    ) -> Option<AdmissionRejection> {
+        if let Some(lower_bound) = self.ts_orig_lower_bound
+            && ts_orig < lower_bound
+        {
+            return Some(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::PastTimestamp,
+                    format!(
+                        "ts_orig {ts_orig} predates lower bound {lower_bound} (implausibly old)"
+                    ),
+                )
+                .with_event_id(event_id),
+            );
+        }
+
+        let now = Timestamp::now();
+        let latest_expected = now + self.future_ts_skew;
+        if ts_orig > latest_expected {
+            return Some(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::FutureTimestamp,
+                    format!(
+                        "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
+                        (ts_orig - now).whole_seconds()
+                    ),
+                )
+                .with_event_id(event_id),
+            );
+        }
+
+        None
     }
 
     pub fn set_storage_lane(&mut self, storage_lane: EventStorageLane) {
@@ -682,17 +832,19 @@ impl AdmissionService {
         };
         let supersede_target = match equivalence {
             EquivalenceOutcome::Fresh => None,
-            EquivalenceOutcome::Suppress => {
+            EquivalenceOutcome::Suppress { existing_event_id } => {
                 let mut rejection = AdmissionRejection::new(
                     AdmissionRejectionKind::OccurrenceDuplicate,
                     match &event.equivalence_key {
-                        Some(key) => format!("live event with equivalence_key {key} already exists"),
+                        Some(key) => {
+                            format!("live event with equivalence_key {key} already exists")
+                        }
                         None => "live event with equivalence_key already exists".to_string(),
                     },
                 );
-                if let Some(id) = event.id {
-                    rejection = rejection.with_event_id(id.to_uuid());
-                }
+                rejection = rejection
+                    .with_existing_event_id(existing_event_id)
+                    .with_candidate(&event);
                 return Ok(AdmissionDecision::Suppressed(rejection));
             }
             EquivalenceOutcome::Supersede {
@@ -721,54 +873,20 @@ impl AdmissionService {
         }
 
         if let Some(ts_orig) = event.ts_orig {
-            let now = Timestamp::now();
-            if ts_orig < self.ts_orig_lower_bound {
+            if let Some(rejection) = self
+                .timestamp_rejection(ts_orig, event.id.map(|id| id.to_uuid()).unwrap_or_default())
+            {
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.admission_rejections_total",
-                    kind = "past_timestamp",
+                    kind = rejection.kind.outcome_code(),
                     event_id = ?event.id,
                     source = %event.source,
                     event_type = %event.event_type,
                     ts_orig = %ts_orig,
-                    lower_bound = %self.ts_orig_lower_bound,
-                    "Event ts_orig predates lower bound"
+                    "Event ts_orig rejected by admission timestamp bounds"
                 );
-                return Ok(AdmissionDecision::Rejected(
-                    AdmissionRejection::new(
-                        AdmissionRejectionKind::PastTimestamp,
-                        format!(
-                            "ts_orig {ts_orig} predates lower bound {} (implausibly old)",
-                            self.ts_orig_lower_bound
-                        ),
-                    )
-                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
-                ));
-            }
-            if ts_orig > now + self.future_ts_skew {
-                let latest_expected = now + self.future_ts_skew;
-                error!(
-                    target: "sinex_metrics",
-                    metric = "event_engine.admission_rejections_total",
-                    kind = "future_timestamp",
-                    event_id = ?event.id,
-                    source = %event.source,
-                    event_type = %event.event_type,
-                    ts_orig = %ts_orig,
-                    latest_expected = %latest_expected,
-                    skew_seconds = (ts_orig - now).whole_seconds(),
-                    "Event ts_orig is implausibly far in the future"
-                );
-                return Ok(AdmissionDecision::Rejected(
-                    AdmissionRejection::new(
-                        AdmissionRejectionKind::FutureTimestamp,
-                        format!(
-                            "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
-                            (ts_orig - now).whole_seconds()
-                        ),
-                    )
-                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
-                ));
+                return Ok(AdmissionDecision::Rejected(rejection));
             }
         }
 
@@ -948,6 +1066,196 @@ impl AdmissionService {
         &self,
         payload: &[u8],
     ) -> EventEngineResult<Vec<AdmissionDecision>> {
+        Ok(self.admit_intent_bytes_batch(&[payload]).await?.remove(0))
+    }
+
+    /// Admit all event-intent envelopes from one fetch batch together.
+    ///
+    /// Equivalence-key reconciliation is scoped to the complete fetch, not
+    /// to one envelope. This keeps an earlier same-key interpretation from
+    /// being classified as fresh merely because its message has not reached
+    /// persistence yet. The returned groups retain the original message
+    /// boundaries so transport settlement remains per raw envelope.
+    pub async fn admit_intent_bytes_batch(
+        &self,
+        payloads: &[&[u8]],
+    ) -> EventEngineResult<Vec<Vec<AdmissionDecision>>> {
+        let mut decisions_by_message: Vec<Vec<AdmissionDecision>> =
+            Vec::with_capacity(payloads.len());
+        let mut events = Vec::new();
+
+        for (message_index, payload) in payloads.iter().enumerate() {
+            match parse_intent_bytes(payload) {
+                Ok(intent) => {
+                    decisions_by_message.push(Vec::new());
+                    events.extend(
+                        intent
+                            .events
+                            .into_iter()
+                            .map(|event| (message_index, event)),
+                    );
+                }
+                Err(decision) => decisions_by_message.push(vec![decision]),
+            }
+        }
+
+        let decisions = self.admit_events_batch(events).await?;
+        for (message_index, decision) in decisions {
+            decisions_by_message[message_index].push(decision);
+        }
+        Ok(decisions_by_message)
+    }
+
+    async fn admit_events_batch(
+        &self,
+        events: Vec<(usize, Event<JsonValue>)>,
+    ) -> EventEngineResult<Vec<(usize, AdmissionDecision)>> {
+        let mut decisions = Vec::with_capacity(events.len());
+
+        // Batch pre-pass (#1637 + sinex-n9a): fetch every live occurrence row
+        // sharing an equivalence_key present in this fetch with a single
+        // round-trip. The in-memory maps below then extend that snapshot over
+        // all messages in the same fetch before persistence begins.
+        let mut seen_equiv_keys = HashSet::new();
+        let equiv_keys: Vec<String> = events
+            .iter()
+            .filter_map(|(_, e)| e.equivalence_key.as_ref().map(|k| k.as_str().to_owned()))
+            .filter(|key| seen_equiv_keys.insert(key.clone()))
+            .collect();
+        let mut live_by_key: HashMap<String, LiveEquivalenceRow> = if equiv_keys.is_empty() {
+            HashMap::new()
+        } else {
+            match self
+                .pool
+                .events()
+                .find_live_by_equivalence_keys(&equiv_keys, self.storage_lane)
+                .await
+            {
+                Ok(rows) => rows
+                    .into_iter()
+                    .map(|row| (row.equivalence_key.clone(), row))
+                    .collect(),
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        equiv_key_count = equiv_keys.len(),
+                        "batch equivalence_key pre-pass failed; admitting this batch fresh (fail-open)"
+                    );
+                    HashMap::new()
+                }
+            }
+        };
+
+        // Track the latest in-memory interpretation and the original external
+        // archive target for each key. A same-key predecessor from this fetch
+        // is demoted instead of archived because it has not been persisted.
+        let mut key_last_index: HashMap<String, usize> = HashMap::new();
+        let mut key_archive_target: HashMap<String, Option<Uuid>> = HashMap::new();
+
+        for (message_index, event) in events {
+            let equiv_key = event.equivalence_key.clone();
+            let outcome = equiv_key
+                .as_deref()
+                .and_then(|key| live_by_key.get(key))
+                .map_or(EquivalenceOutcome::Fresh, |live| {
+                    classify_live_match(&event, live)
+                });
+            let decision = self
+                .admit_event_with_metadata(event, None, Some(outcome))
+                .await?;
+
+            let Some(key) = equiv_key else {
+                decisions.push((message_index, decision));
+                continue;
+            };
+
+            let admitted = match &decision {
+                AdmissionDecision::Admitted(admitted)
+                | AdmissionDecision::Transformed(admitted)
+                | AdmissionDecision::Superseded { admitted, .. } => admitted,
+                AdmissionDecision::Suppressed(_)
+                | AdmissionDecision::QuarantineNeeded(_)
+                | AdmissionDecision::Rejected(_) => {
+                    decisions.push((message_index, decision));
+                    continue;
+                }
+            };
+
+            live_by_key.insert(
+                key.clone(),
+                LiveEquivalenceRow {
+                    equivalence_key: admitted.event.equivalence_key.clone().unwrap_or_default(),
+                    id: admitted.event_id,
+                    payload: admitted.event.payload.clone(),
+                    content_hash: Some(payload_content_hash(&admitted.event.payload).to_vec()),
+                },
+            );
+
+            let idx = decisions.len();
+            match decision {
+                AdmissionDecision::Superseded {
+                    superseded_event_id,
+                    admitted,
+                } if key_last_index.contains_key(&key) => {
+                    let prev_idx = key_last_index[&key];
+                    let _ = superseded_event_id;
+                    let demoted_event_id = match &decisions[prev_idx].1 {
+                        AdmissionDecision::Admitted(admitted)
+                        | AdmissionDecision::Transformed(admitted)
+                        | AdmissionDecision::Superseded { admitted, .. } => Some(admitted.event_id),
+                        AdmissionDecision::Suppressed(_)
+                        | AdmissionDecision::QuarantineNeeded(_)
+                        | AdmissionDecision::Rejected(_) => None,
+                    };
+                    let mut demotion = AdmissionRejection::new(
+                        AdmissionRejectionKind::SupersededWithinBatch,
+                        format!(
+                            "equivalence_key {key} was revised again later in the same fetch \
+                             before this interpretation was ever persisted"
+                        ),
+                    );
+                    if let Some(id) = demoted_event_id {
+                        demotion = demotion.with_event_id(id);
+                    }
+                    let external_target = key_archive_target.get(&key).copied().flatten();
+                    decisions[prev_idx].1 = AdmissionDecision::Suppressed(demotion);
+                    key_last_index.insert(key.clone(), idx);
+                    key_archive_target.insert(key, external_target);
+                    decisions.push((
+                        message_index,
+                        match external_target {
+                            Some(target) => AdmissionDecision::Superseded {
+                                admitted,
+                                superseded_event_id: target,
+                            },
+                            None => AdmissionDecision::Admitted(admitted),
+                        },
+                    ));
+                }
+                AdmissionDecision::Superseded {
+                    superseded_event_id,
+                    ..
+                } => {
+                    key_last_index.insert(key.clone(), idx);
+                    key_archive_target.insert(key, Some(superseded_event_id));
+                    decisions.push((message_index, decision));
+                }
+                AdmissionDecision::Admitted(_) | AdmissionDecision::Transformed(_) => {
+                    key_last_index.insert(key.clone(), idx);
+                    key_archive_target.insert(key, None);
+                    decisions.push((message_index, decision));
+                }
+                _ => unreachable!("filtered to Admitted/Transformed/Superseded above"),
+            }
+        }
+        Ok(decisions)
+    }
+
+    /// Parse and validate one event-intent envelope before admission.
+    async fn legacy_admit_intent_bytes(
+        &self,
+        payload: &[u8],
+    ) -> EventEngineResult<Vec<AdmissionDecision>> {
         if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
             return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
                 AdmissionRejectionKind::PayloadTooLarge,
@@ -1116,11 +1424,7 @@ impl AdmissionService {
             live_by_key.insert(
                 key.clone(),
                 LiveEquivalenceRow {
-                    equivalence_key: admitted
-                        .event
-                        .equivalence_key
-                        .clone()
-                        .unwrap_or_default(),
+                    equivalence_key: admitted.event.equivalence_key.clone().unwrap_or_default(),
                     id: admitted.event_id,
                     payload: admitted.event.payload.clone(),
                     content_hash: Some(payload_content_hash(&admitted.event.payload).to_vec()),
@@ -1282,54 +1586,66 @@ impl AdmissionService {
         )
         .await
         .map_err(|_| {
-                error!(
-                    target: "sinex_metrics",
-                    metric = "event_engine.batch_insert_timeouts_total",
-                    batch_size = to_persist.len(),
-                    timeout_seconds = write_timeout.as_secs_f64(),
-                    "Timed out waiting for batch insert to complete"
-                );
-                SinexError::database(format!(
-                    "Persisting batch timed out after {write_timeout:?}"
-                ))
+            error!(
+                target: "sinex_metrics",
+                metric = "event_engine.batch_insert_timeouts_total",
+                batch_size = to_persist.len(),
+                timeout_seconds = write_timeout.as_secs_f64(),
+                "Timed out waiting for batch insert to complete"
+            );
+            SinexError::database(format!(
+                "Persisting batch timed out after {write_timeout:?}"
+            ))
         })?;
 
-        let insert_result = match insert_result {
-            Err(ref error) if is_payload_schema_fk_violation(error) => {
-                let schema_stripped_count = rows
-                    .iter()
-                    .filter(|row| row.payload_schema_id.is_some())
-                    .count();
-                warn!(
-                    batch_size = to_persist.len(),
-                    schema_stripped_count,
-                    "INSERT hit FK violation on payload_schema_id; retrying without schema IDs on affected rows"
-                );
-                let mut rows_without_schema = rows.clone();
-                for row in &mut rows_without_schema {
-                    if row.payload_schema_id.is_some() {
-                        row.payload_schema_id = None;
-                    }
+        let (insert_result, rows_for_error) = match insert_result {
+            Ok(result) => (Ok(result), rows.clone()),
+            Err(error) if is_payload_schema_fk_violation(&error) => {
+                // A schema FK failure means the validator's metadata and the
+                // database registry may have crossed a commit boundary. Never
+                // null the annotation: that would let the DB row disagree with
+                // the confirmed event. Refresh the validator and retry only if
+                // the exact schema IDs still validate for every affected row.
+                #[cfg(test)]
+                if let Some(barrier) = &self.payload_schema_fk_retry_barrier {
+                    // First rendezvous lets the test restore the schema row;
+                    // the second proves it has committed before the reload.
+                    barrier.wait().await;
+                    barrier.wait().await;
                 }
-                let retry_timeout = db_write_timeout(rows_without_schema.len());
-                timeout(
+                let refreshed_rows = self
+                    .reload_and_revalidate_payload_schema_rows(&to_persist, &rows, &error)
+                    .await?;
+                let retry_timeout = db_write_timeout(refreshed_rows.len());
+                let retry_result = timeout(
                     retry_timeout,
                     self.pool
                         .events()
-                        .insert_stream_batch_into(self.storage_lane, &rows_without_schema),
+                        .insert_stream_batch_into(self.storage_lane, &refreshed_rows),
                 )
                 .await
                 .map_err(|_| {
                     SinexError::database(format!(
-                        "Persisting batch (schema-id-stripped retry) timed out after {retry_timeout:?}"
+                        "Persisting batch after payload-schema reload timed out after {retry_timeout:?}"
                     ))
-                })?
+                })?;
+                let retry_result = match retry_result {
+                    Err(ref retry_error) if is_payload_schema_fk_violation(retry_error) => {
+                        Err(payload_schema_fk_terminal_error(
+                            retry_error,
+                            &refreshed_rows,
+                            "schema FK remained invalid after reload/revalidation",
+                        ))
+                    }
+                    other => other,
+                };
+                (retry_result, refreshed_rows)
             }
-            other => other,
+            Err(error) => (Err(error), rows.clone()),
         };
 
         let result = insert_result.map_err(|error| {
-            if is_source_material_fk_violation_for_stream_batch(&error, &rows) {
+            if is_source_material_fk_violation_for_stream_batch(&error, &rows_for_error) {
                 warn!(
                     batch_size = to_persist.len(),
                     "INSERT hit FK violation (source_material not yet registered); will retry"
@@ -1348,6 +1664,76 @@ impl AdmissionService {
         let inserted_ids = require_inserted_ids(result.inserted_ids, to_persist.len())?;
         self.remember_event_ids(plan.cacheable_event_ids()).await;
         Ok(AdmissionPersistResult::persisted_plan(plan, inserted_ids))
+    }
+
+    async fn reload_and_revalidate_payload_schema_rows(
+        &self,
+        events: &[&AdmittedEvent],
+        rows: &[StreamBatchRow],
+        original_error: &SinexError,
+    ) -> EventEngineResult<Vec<StreamBatchRow>> {
+        let schema_row_count = rows
+            .iter()
+            .filter(|row| row.payload_schema_id.is_some())
+            .count();
+        if schema_row_count == 0 {
+            return Err(payload_schema_fk_terminal_error(
+                original_error,
+                rows,
+                "FK named payload schema but no schema-bearing row was present",
+            ));
+        }
+
+        let validation_enabled = self.validator.read().await.validation_enabled();
+        let fresh_inner = match IngestEventValidator::load_fresh_schemas_with_options(
+            &self.pool,
+            validation_enabled,
+        )
+        .await
+        {
+            Ok(inner) => inner,
+            Err(reload_error) => {
+                return Err(payload_schema_fk_terminal_error(
+                    original_error,
+                    rows,
+                    &format!("schema reload failed: {reload_error}"),
+                ));
+            }
+        };
+        self.validator.write().await.swap_inner(fresh_inner);
+
+        let validator = self.validator.read().await;
+        let mut evidence = Vec::new();
+        for (event, row) in events.iter().zip(rows) {
+            let Some(expected_schema_id) = row.payload_schema_id else {
+                continue;
+            };
+            match validator.validate_event(&event.event) {
+                ValidationResult::Valid { schema_id } if schema_id == expected_schema_id => {}
+                validation => evidence.push(format!(
+                    "event {} expected schema {} but revalidation returned {validation:?}",
+                    row.id, expected_schema_id
+                )),
+            }
+        }
+        drop(validator);
+
+        if !evidence.is_empty() {
+            return Err(payload_schema_fk_terminal_error(
+                original_error,
+                rows,
+                &evidence.join("; "),
+            ));
+        }
+
+        tracing::info!(
+            target: "sinex_metrics",
+            metric = "event_engine.payload_schema_fk_reload_total",
+            batch_size = rows.len(),
+            schema_row_count,
+            "payload-schema FK race recovered after schema reload and exact-ID revalidation"
+        );
+        Ok(rows.to_vec())
     }
 
     #[must_use]
@@ -1374,8 +1760,11 @@ impl AdmissionService {
 
     async fn validate_event(&self, event: &Event<JsonValue>) -> EventEngineResult<Option<Uuid>> {
         let guard = self.validator.read().await;
-        let validation =
-            guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
+        // Structural/plausibility validation is part of the admission boundary,
+        // not a test-only precursor to schema validation. `validate_event`
+        // performs the shared envelope, payload-shape, temporal, ID, and
+        // provenance checks before consulting the registered payload schema.
+        let validation = guard.validate_event(event);
         let strict_mode = guard.is_strict_mode();
         resolve_validation_result(validation, strict_mode, &event.source, &event.event_type)
     }
@@ -1503,7 +1892,14 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
             let content_hash = admitted.content_hash;
 
             let mut payload = event.payload.clone();
-            let stripped_nul_bytes = strip_postgres_jsonb_nul_chars(&mut payload);
+            let stripped_nul_bytes =
+                try_strip_postgres_jsonb_nul_chars(&mut payload).map_err(|error| {
+                    SinexError::validation(
+                        "event payload cannot be represented as PostgreSQL JSONB",
+                    )
+                    .with_context("event_id", admitted.event_id.to_string())
+                    .with_source(error)
+                })?;
             if stripped_nul_bytes > 0 {
                 warn!(
                     event_id = %admitted.event_id,
@@ -1592,9 +1988,19 @@ fn resolve_validation_result(
                 schema_id = %schema_id,
                 source = %source,
                 event_type = %event_type,
-                "Schema referenced by validator lookup is missing from cache; accepting event without payload schema id"
+                strict_mode,
+                "Schema referenced by validator lookup is missing from cache"
             );
-            Ok(None)
+            if strict_mode {
+                Err(SinexError::validation(format!(
+                    "Strict validation enabled: registered schema {schema_id} is unavailable (source={source}, event_type={event_type})"
+                ))
+                .with_operation("admission.validate_event")
+                .with_context("strict_mode", "enabled")
+                .with_context("schema_id", schema_id.to_string()))
+            } else {
+                Ok(None)
+            }
         }
         ValidationResult::Invalid { errors } => Err(SinexError::validation(format!(
             "Schema validation failed: {}",
@@ -1692,7 +2098,7 @@ fn is_isolatable_batch_persistence_failure(error: &SinexError) -> bool {
         return false;
     }
 
-    if is_non_live_derived_parent_validation(error) {
+    if is_non_live_derived_parent_validation(error) || is_deterministic_row_validation(error) {
         return true;
     }
 
@@ -1704,6 +2110,55 @@ fn is_isolatable_batch_persistence_failure(error: &SinexError) -> bool {
         value.starts_with(SQLSTATE_DATA_EXCEPTION_CLASS)
             || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
     })
+}
+
+fn is_deterministic_row_validation(error: &SinexError) -> bool {
+    error.kind() == SinexErrorKind::Validation
+        && DETERMINISTIC_ROW_VALIDATION_FRAGMENTS
+            .iter()
+            .any(|fragment| error.to_string().contains(fragment))
+}
+
+fn payload_schema_fk_terminal_error(
+    original_error: &SinexError,
+    rows: &[StreamBatchRow],
+    revalidation_evidence: &str,
+) -> SinexError {
+    let event_ids = rows
+        .iter()
+        .map(|row| row.id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let schema_ids = rows
+        .iter()
+        .filter_map(|row| row.payload_schema_id)
+        .map(|schema_id| schema_id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut terminal = SinexError::database(format!(
+        "payload_schema_id FK violation is terminal after schema reload/revalidation; refusing to strip metadata for event_ids=[{event_ids}] schema_ids=[{schema_ids}]: {revalidation_evidence}; original={original_error}"
+    ))
+    .with_operation("admission.persist_payload_schema_fk")
+    .with_context("error_class", "payload_schema_fk_terminal")
+    .with_context("schema_revalidation", revalidation_evidence)
+    .with_context("event_ids", &event_ids)
+    .with_context("schema_ids", &schema_ids)
+    .with_source(original_error.to_string());
+    if let Some(sqlstate) = original_error.context_map().get("sqlstate") {
+        terminal = terminal.with_context("sqlstate", sqlstate);
+    }
+    if let Some(constraint) = original_error.context_map().get("constraint") {
+        terminal = terminal.with_context("constraint", constraint);
+    }
+    tracing::error!(
+        target: "sinex_metrics",
+        metric = "event_engine.payload_schema_fk_terminal_total",
+        event_ids = %event_ids,
+        schema_ids = %schema_ids,
+        revalidation_evidence,
+        "payload-schema FK metadata was preserved and routed to terminal settlement"
+    );
+    terminal
 }
 
 fn is_non_live_derived_parent_validation(error: &SinexError) -> bool {

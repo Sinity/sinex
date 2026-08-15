@@ -12,7 +12,12 @@ use sinex_primitives::rpc::{
     JsonRpcError, RpcMethod,
     automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
     content::{CONTENT_STORE_BLOB_METHOD, StoreBlobRequest, StoreBlobResponse},
-    coordination::{InstanceHealthResponse, InstanceInfo},
+    coordination::{
+        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
+        COORDINATION_LIST_INSTANCES_METHOD, GetLeaderRequest, GetLeaderResponse,
+        InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
+        ListInstancesResponse,
+    },
     curation::{
         CURATION_DUPLICATE_CANDIDATES_LIST_METHOD, CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD,
         CURATION_FINALIZE_METHOD, CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
@@ -59,8 +64,9 @@ use sinex_primitives::rpc::{
         TombstoneStatusResponse,
     },
     llm::{
-        LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD,
-        LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest,
+        LLM_BUDGET_REPORT_METHOD, LLM_EMBEDDING_ESTIMATE_METHOD, LLM_PROMPTS_LIST_METHOD,
+        LLM_ROUTE_EXPLAIN_METHOD, LlmBudgetReportRequest, LlmBudgetReportResponse,
+        LlmEmbeddingEstimateRequest, LlmEmbeddingEstimateResponse, LlmPromptsListRequest,
         LlmRouteExplainRequest, LlmRouteExplainResponse,
     },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
@@ -70,6 +76,7 @@ use sinex_primitives::rpc::{
         PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
         PRIVACY_POLICY_RULE_REMOVE_METHOD, PRIVACY_POLICY_RULE_SET_ENABLED_METHOD,
         PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
+        PRIVACY_SHADOW_AUDIT_METHOD,
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
         PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivacyPolicyBackendAddRequest,
         PrivacyPolicyDictionaryAddRequest, PrivacyPolicyFieldBindRequest,
@@ -79,6 +86,7 @@ use sinex_primitives::rpc::{
         PrivacyPolicyRuleRemoveResponse, PrivacyPolicyRuleSetEnabledRequest,
         PrivacyPolicyRuleSetEnabledResponse, PrivacyPolicyScopeBindRequest,
         PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
+        PrivacyShadowAuditRequest, PrivacyShadowAuditResponse,
         PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
         PrivateModeStatusRequest,
     },
@@ -129,19 +137,20 @@ use sinex_primitives::rpc::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PACKAGE_COMPLETENESS_METHOD,
-        SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
+        SOURCES_DRIFT_LIST_METHOD, SOURCES_IMPORT_REPORT_METHOD, SOURCES_LIST_METHOD,
+        SOURCES_PACKAGE_COMPLETENESS_METHOD, SOURCES_PRESETS_LIST_METHOD,
+        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
         SOURCES_REMEDIATION_PLAN_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
         SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
         SourcesArchiveResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
         SourcesContinuityRequest, SourcesContinuityResponse, SourcesCoverageRequest,
         SourcesCoverageResponse, SourcesDriftListRequest, SourcesDriftListResponse,
-        SourcesListRequest, SourcesListResponse, SourcesPackageCompletenessRequest,
-        SourcesPackageCompletenessResponse, SourcesPresetsListRequest, SourcesPresetsListResponse,
-        SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
-        SourcesReadinessListResponse, SourcesRemediationPlanRequest,
-        SourcesRemediationPlanResponse, SourcesShowRequest, SourcesShowResponse,
-        SourcesStageRequest, SourcesStageResponse,
+        SourcesImportReportRequest, SourcesImportReportResponse, SourcesListRequest,
+        SourcesListResponse, SourcesPackageCompletenessRequest, SourcesPackageCompletenessResponse,
+        SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
+        SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
+        SourcesRemediationPlanRequest, SourcesRemediationPlanResponse, SourcesShowRequest,
+        SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
     },
     system::{
         SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD, SystemHealthRequest,
@@ -626,6 +635,7 @@ impl GatewayClient {
                 source,
                 family,
                 exact_counts,
+                stale_after_secs: sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
             },
         )
         .await
@@ -658,7 +668,9 @@ impl GatewayClient {
     /// runtime registry (`runtime_list_active`), not the removed coordination-KV
     /// `instance_health` path. A single daemon is always its own leader.
     pub async fn runtime_status(&self, module_name: &str) -> Result<InstanceHealthResponse> {
-        let active = self.runtime_list_active(31_536_000).await?;
+        let active = self
+            .runtime_list_active(sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
+            .await?;
         let info = active
             .modules
             .into_iter()
@@ -671,7 +683,18 @@ impl GatewayClient {
                     .with_context("module", module_name)
             })?;
         let hostname = info.host.as_deref().and_then(|h| HostName::new(h).ok());
-        let healthy = info.status == "active";
+        let healthy = sinex_primitives::evaluate_runtime_liveness(
+            sinex_primitives::RuntimeLivenessSignals {
+                run_status: Some(info.status.as_str()),
+                health_status: None,
+                last_heartbeat_at: info.last_heartbeat_at,
+                last_output_at: None,
+            },
+            sinex_primitives::RuntimeLivenessPolicy::default(),
+            sinex_primitives::Timestamp::now(),
+        )
+        .status
+        .is_live();
         Ok(InstanceHealthResponse {
             instance: InstanceInfo {
                 instance_id: InstanceId::new(
@@ -687,6 +710,30 @@ impl GatewayClient {
             healthy,
             last_error: None,
         })
+    }
+
+    pub async fn coordination_list_instances(
+        &self,
+        request: ListInstancesRequest,
+    ) -> Result<ListInstancesResponse> {
+        self.call_typed(COORDINATION_LIST_INSTANCES_METHOD, &request)
+            .await
+    }
+
+    pub async fn coordination_get_leader(
+        &self,
+        request: GetLeaderRequest,
+    ) -> Result<GetLeaderResponse> {
+        self.call_typed(COORDINATION_GET_LEADER_METHOD, &request)
+            .await
+    }
+
+    pub async fn coordination_instance_health(
+        &self,
+        request: InstanceHealthRequest,
+    ) -> Result<InstanceHealthResponse> {
+        self.call_typed(COORDINATION_INSTANCE_HEALTH_METHOD, &request)
+            .await
     }
 
     /// Drain a runtime module for maintenance
@@ -1271,6 +1318,13 @@ impl GatewayClient {
         self.call_typed(LLM_BUDGET_REPORT_METHOD, &request).await
     }
 
+    pub async fn llm_embedding_estimate(
+        &self,
+        request: LlmEmbeddingEstimateRequest,
+    ) -> Result<LlmEmbeddingEstimateResponse> {
+        self.call_typed(LLM_EMBEDDING_ESTIMATE_METHOD, &request).await
+    }
+
     // ==================== Source Material Commands ====================
 
     pub async fn sources_stage(
@@ -1305,6 +1359,14 @@ impl GatewayClient {
             &sinex_primitives::rpc::sources::SourcesImportProgressRequest {},
         )
         .await
+    }
+
+    pub async fn sources_import_report(
+        &self,
+        request: SourcesImportReportRequest,
+    ) -> Result<SourcesImportReportResponse> {
+        self.call_typed(SOURCES_IMPORT_REPORT_METHOD, &request)
+            .await
     }
 
     pub async fn sources_remediation_plan(
@@ -1673,6 +1735,13 @@ impl GatewayClient {
             .await
     }
 
+    pub async fn privacy_shadow_audit(
+        &self,
+        req: PrivacyShadowAuditRequest,
+    ) -> Result<PrivacyShadowAuditResponse> {
+        self.call_typed(PRIVACY_SHADOW_AUDIT_METHOD, &req).await
+    }
+
     // ==================== Two-Step Tombstone Commands (SEC-003) ====================
 
     /// Create a tombstone operation (Step 1)
@@ -1710,10 +1779,15 @@ impl GatewayClient {
         &self,
         operation_id: String,
         confirm: bool,
+        purge_manifest_replay_roots: bool,
+        confirm_manifest_replay_authority_purge: bool,
     ) -> Result<TombstoneApproveResponse> {
         let req = TombstoneApproveRequest {
             operation_id,
             yes_i_understand_data_is_gone: confirm,
+            purge_manifest_replay_roots,
+            yes_i_understand_manifest_replay_authority_is_gone:
+                confirm_manifest_replay_authority_purge,
         };
         self.call_typed(LIFECYCLE_TOMBSTONE_APPROVE_METHOD, &req)
             .await

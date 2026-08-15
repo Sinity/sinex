@@ -322,7 +322,7 @@ async fn browser_capture_batch_is_capability_gated_and_acknowledged(
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::from_database_url(db_url).await?;
 
-    let request = serde_json::from_value(json!({
+    let request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",
         "method": methods::BROWSER_CAPTURE_BATCH,
         "params": {
@@ -376,7 +376,7 @@ async fn browser_capture_batch_is_capability_gated_and_acknowledged(
         "capability denial should name the disallowed browser capture method"
     );
 
-    let request = serde_json::from_value(json!({
+    let request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",
         "method": methods::BROWSER_CAPTURE_BATCH,
         "params": {
@@ -424,7 +424,7 @@ async fn browser_capture_batch_is_capability_gated_and_acknowledged(
                 r#"{"chrome-extension://trusted-sinex":"write"}"#,
             );
         },
-        request,
+        request.clone(),
     )
     .await?;
     assert_eq!(
@@ -465,6 +465,38 @@ async fn browser_capture_batch_is_capability_gated_and_acknowledged(
         .collect::<Vec<_>>();
     assert!(contracts.contains(&BROWSER_NAVIGATION_OBSERVED_CONTRACT_ID));
     assert!(contracts.contains(&BROWSER_TAB_ACTIVATED_CONTRACT_ID));
+
+    let retry = run_native_case(
+        services.clone(),
+        &nats_url,
+        |env| {
+            env.set(
+                "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
+                "chrome-extension://trusted-sinex",
+            );
+            env.set(
+                "SINEX_NATIVE_MESSAGING_CAPABILITIES",
+                r#"{"chrome-extension://trusted-sinex":{"allowed_methods":["browser.capture_batch"],"rate_limit_per_minute":null}}"#,
+            );
+            env.set(
+                "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES",
+                r#"{"chrome-extension://trusted-sinex":"write"}"#,
+            );
+        },
+        request,
+    )
+    .await?;
+    let retry_result = response_result(&retry)?;
+    let retry_ids = retry_result["event_ids"]
+        .as_array()
+        .expect("retry event_ids should be an array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        retry_ids, event_ids,
+        "a retried native browser batch must resolve to its existing observations"
+    );
 
     let events = services
         .pool()

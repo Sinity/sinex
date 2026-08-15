@@ -79,6 +79,7 @@ pub struct DocumentStagingParserConfig {}
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     factory = "parser",
     driver = super::runtime::DocumentSourceDriver
 )]

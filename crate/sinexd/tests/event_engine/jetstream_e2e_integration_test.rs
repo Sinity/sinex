@@ -7,12 +7,14 @@ use sinex_primitives::events::builder::EventId;
 use sinex_primitives::events::Event;
 use sinex_primitives::{error::SinexError, temporal};
 use sinexd::runtime::{
-    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, RuntimeResult,
+    ConfirmedEventCompletion, ConfirmedEventHandler, JetStreamEventConsumer,
+    JetStreamEventConsumerConfig, RuntimeResult,
     prelude::async_trait,
 };
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::time::timeout;
 use tracing::info;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
@@ -34,11 +36,37 @@ impl TrackingConfirmedEventHandler {
 
 #[async_trait]
 impl ConfirmedEventHandler for TrackingConfirmedEventHandler {
-    async fn handle_confirmed(&self, event: &Event<JsonValue>) -> RuntimeResult<()> {
+    async fn handle_confirmed(
+        &self,
+        event: &Event<JsonValue>,
+        completion: tokio::sync::oneshot::Sender<ConfirmedEventCompletion>,
+    ) -> RuntimeResult<()> {
         if let Some(event_id) = event.id {
             self.processed_event_ids.write().await.push(event_id);
         }
+        let _ = completion.send(ConfirmedEventCompletion::Safe);
         Ok(())
+    }
+}
+
+struct DeferredCompletionHandler {
+    deliveries: mpsc::Sender<(EventId, oneshot::Sender<ConfirmedEventCompletion>)>,
+}
+
+#[async_trait]
+impl ConfirmedEventHandler for DeferredCompletionHandler {
+    async fn handle_confirmed(
+        &self,
+        event: &Event<JsonValue>,
+        completion: oneshot::Sender<ConfirmedEventCompletion>,
+    ) -> RuntimeResult<()> {
+        let event_id = event.id.ok_or_else(|| {
+            SinexError::validation("confirmed test event unexpectedly had no event id")
+        })?;
+        self.deliveries
+            .send((event_id, completion))
+            .await
+            .map_err(|_| SinexError::lifecycle("ACK-barrier test receiver dropped"))
     }
 }
 
@@ -57,6 +85,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     let automaton_config = JetStreamEventConsumerConfig {
         batch_size: 100,
         consumer_name: format!("test-automaton-{namespace}"),
+        liveness_observer: None,
         ..Default::default()
     };
     // Wait for the confirmed-events stream to exist before starting the automaton consumer.
@@ -144,6 +173,146 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
 
     automaton_handle.abort();
     let _ = automaton_handle.await;
+    scope.shutdown().await?;
+    Ok(())
+}
+
+#[sinex_test(timeout = 60)]
+async fn confirmed_event_ack_waits_for_automaton_completion(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let scope = ctx.pipeline().await?;
+    let sandbox = scope.ctx();
+    let env = sandbox.env().clone();
+    let namespace = scope.namespace().prefix().to_string();
+    let nats_client = sandbox.nats_client();
+    let consumer_name = format!("ack-barrier-{namespace}");
+    let (delivery_tx, mut delivery_rx) = mpsc::channel(1);
+
+    let first_event_id = scope
+        .publish(DynamicPayload::new(
+            "ack-barrier-source",
+            "ack.barrier",
+            json!({"message": "safe prefix waits for automaton completion"}),
+        ))
+        .await?;
+    let retry_event_id = scope
+        .publish(DynamicPayload::new(
+            "ack-barrier-source",
+            "ack.barrier",
+            json!({"message": "retry suffix must redeliver"}),
+        ))
+        .await?;
+
+    let handler = Arc::new(DeferredCompletionHandler {
+        deliveries: delivery_tx,
+    });
+    let consumer = JetStreamEventConsumer::new_with_namespace(
+        nats_client.clone(),
+        env.clone(),
+        JetStreamEventConsumerConfig {
+            consumer_name: consumer_name.clone(),
+            batch_size: 2,
+            ..Default::default()
+        },
+        handler,
+        Some(namespace.clone()),
+    );
+    let mut consumer_handle = tokio::spawn(async move { consumer.run().await });
+
+    let (first_delivered_id, first_completion) = timeout(
+        Duration::from_secs(Timeouts::STANDARD),
+        delivery_rx.recv(),
+    )
+    .await?
+    .ok_or_else(|| eyre!("confirmed consumer stopped before dispatching the first test event"))?;
+    let (second_delivered_id, second_completion) = timeout(
+        Duration::from_secs(Timeouts::STANDARD),
+        delivery_rx.recv(),
+    )
+    .await?
+    .ok_or_else(|| eyre!("confirmed consumer stopped before dispatching the retry test event"))?;
+    assert_eq!(first_delivered_id, first_event_id);
+    assert_eq!(second_delivered_id, retry_event_id);
+
+    let confirmed_stream = format!(
+        "{}_CONFIRMED",
+        env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS")
+    );
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = async_nats::jetstream::new(nats_client.clone());
+            let stream_name = confirmed_stream.clone();
+            let consumer_name = consumer_name.clone();
+            async move {
+                let stream = js.get_stream(&stream_name).await?;
+                let mut consumer = stream
+                    .get_consumer::<async_nats::jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::service(format!("get consumer: {error}")))?;
+                Ok::<bool, SinexError>(consumer.info().await?.num_ack_pending == 2)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    first_completion
+        .send(ConfirmedEventCompletion::Safe)
+        .map_err(|_| eyre!("confirmed consumer dropped the completion receipt"))?;
+    second_completion
+        .send(ConfirmedEventCompletion::Retry)
+        .map_err(|_| eyre!("confirmed consumer dropped the retry receipt"))?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = async_nats::jetstream::new(nats_client.clone());
+            let stream_name = confirmed_stream.clone();
+            let consumer_name = consumer_name.clone();
+            async move {
+                let stream = js.get_stream(&stream_name).await?;
+                let mut consumer = stream
+                    .get_consumer::<async_nats::jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::service(format!("get consumer: {error}")))?;
+                let info = consumer.info().await?;
+                Ok::<bool, SinexError>(info.num_ack_pending == 1 && info.num_redelivered >= 1)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    let (redelivered_id, redelivery_completion) = timeout(
+        Duration::from_secs(Timeouts::STANDARD),
+        delivery_rx.recv(),
+    )
+    .await?
+    .ok_or_else(|| eyre!("retrying confirmed event was not redelivered"))?;
+    assert_eq!(redelivered_id, retry_event_id);
+    redelivery_completion
+        .send(ConfirmedEventCompletion::Safe)
+        .map_err(|_| eyre!("confirmed consumer dropped the redelivery receipt"))?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = async_nats::jetstream::new(nats_client.clone());
+            let stream_name = confirmed_stream.clone();
+            let consumer_name = consumer_name.clone();
+            async move {
+                let stream = js.get_stream(&stream_name).await?;
+                let mut consumer = stream
+                    .get_consumer::<async_nats::jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::service(format!("get consumer: {error}")))?;
+                Ok::<bool, SinexError>(consumer.info().await?.num_ack_pending == 0)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
     scope.shutdown().await?;
     Ok(())
 }

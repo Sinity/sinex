@@ -1320,6 +1320,8 @@ Show exercise run history with pass/fail counts and regression detection
 | `pressure` | Current host pressure snapshot, with Sinnix observability join when available |
 | `store` | Cheap runtime-store backlog and event-mix snapshot from checkout Postgres |
 | `storage-growth` | Bounded storage growth model from source-material and Timescale catalog data |
+| `manifest-projection` | Project MaterialManifestV1, event, CAS, staging, and NATS deltas from a bounded fixture |
+| `replay-cost` | Report bounded compressed-chunk replay/archive measurements |
 | `stages` | Stage-level timing breakdowns aggregated across invocations (J7) |
 
 ### `xtask analytics workspace-health`
@@ -1419,6 +1421,48 @@ Bounded storage growth model from source-material and Timescale catalog data
 | `--projection-days` | yes | no | Number of days to project material growth |
 | `--limit` | yes | no | Maximum source rows to render |
 | `--database-url` | yes | no | Override the runtime database URL |
+
+
+### `xtask analytics manifest-projection`
+
+Project MaterialManifestV1, event, CAS, staging, and NATS deltas from a bounded fixture
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--measured-days` | yes | yes |  |
+| `--target-days` | yes | yes |  |
+| `--measured-material-bytes` | yes | yes |  |
+| `--measured-manifest-bytes` | yes | yes |  |
+| `--measured-core-event-bytes` | yes | yes |  |
+| `--measured-cas-bytes` | yes | yes |  |
+| `--measured-staging-bytes` | yes | yes |  |
+| `--measured-nats-bytes` | yes | yes |  |
+| `--measured-events` | yes | yes |  |
+| `--copy-events-per-second` | yes | yes |  |
+| `--available-bytes` | yes | no |  |
+
+
+### `xtask analytics replay-cost`
+
+Report bounded compressed-chunk replay/archive measurements
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--fixture-events` | yes | yes |  |
+| `--archived-events` | yes | yes |  |
+| `--archive-wall-ms` | yes | yes |  |
+| `--replay-wall-ms` | yes | yes |  |
+| `--operation-duration-ms` | yes | no |  |
+| `--wal-bytes` | yes | yes |  |
+| `--compressed-bytes-before` | yes | yes |  |
+| `--uncompressed-bytes-before` | yes | yes |  |
+| `--compressed-bytes-after` | yes | yes |  |
+| `--uncompressed-bytes-after` | yes | yes |  |
+| `--pathological-threshold-ms` | yes | no |  |
 
 
 ### `xtask analytics stages`

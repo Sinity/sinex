@@ -1,9 +1,9 @@
 //! RuntimeModule operations types
 
-use crate::Timestamp;
 use crate::Uuid;
 use crate::domain::{ModuleKind, ModuleName, ModuleState, OperationStatus};
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+use crate::{DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Timestamp};
 use serde::{Deserialize, Serialize};
 
 pub const RUNTIME_LIST_METHOD: RpcMethod<RuntimeListRequest, RuntimeListResponse> = RpcMethod::new(
@@ -89,7 +89,7 @@ pub struct RuntimeListResponse {
 }
 
 fn default_stale_after_secs() -> u64 {
-    300
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS
 }
 
 // ─────────────────────────────────────────────────────────────

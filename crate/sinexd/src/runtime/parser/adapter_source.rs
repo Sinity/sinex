@@ -102,12 +102,11 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
-use sinex_primitives::parser::{
-    MaterialAnchor, ParsedEventIntent, ParserContext, TimingEvidence,
-};
+use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext, TimingEvidence};
 use sinex_primitives::primitives::Uuid;
 use sinex_primitives::privacy::{
-    RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+    RuntimePrivateModeState, load_private_mode_state, resolve_private_mode_state_dir,
+    save_private_mode_state,
 };
 use sinex_primitives::rpc::sources::SourceCaveat;
 use sinex_primitives::temporal::Timestamp;
@@ -115,16 +114,18 @@ use sinex_primitives::temporal::Timestamp;
 #[cfg(feature = "db")]
 use sinex_db::DbPoolExt;
 
-use crate::runtime::RuntimeResult;
 use crate::runtime::acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy,
 };
 use crate::runtime::checkpoint::{CheckpointManager, CheckpointState};
+#[cfg(feature = "db")]
+use crate::runtime::content_store::{
+    ContentStoreConfig, ContentStoreManager, default_content_store_path,
+};
 use crate::runtime::durable_emission::{
     DurableEmissionRequest, EmissionOrigin, ProgressAtom, ReceiptLevel,
 };
 use crate::runtime::durable_emission_backend::emit_batch_durable;
-use sinex_primitives::commit_frontier::{CommitFrontier, TerminalOutcome};
 use crate::runtime::parser::adapters::{LatestSqliteSnapshotEvidence, SqliteSnapshotLane};
 use crate::runtime::parser::{
     BindingConfig, DriftEvent, InitialStreamPosition, InputShapeAdapter, InputShapeAdapterExt,
@@ -135,7 +136,9 @@ use crate::runtime::stream::{
     Checkpoint, ContinuousStart, MaterialReplayContext, RuntimeCapabilities, RuntimeContext,
     ScanArgs, ScanReport, TimeHorizon,
 };
+use crate::runtime::{RuntimeResult, systemd_notify};
 use camino::Utf8PathBuf;
+use sinex_primitives::commit_frontier::{CommitFrontier, TerminalOutcome};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -151,7 +154,8 @@ const STREAM_IDLE_FINALIZE_REASON: &str = "adapter-stream-idle";
 /// records / `ADAPTER_MATERIAL_BATCH_MAX_BYTES` bytes, so this is a per-item
 /// timeout inside `SettlementRegistry::await_batch`'s concurrent wait, not a
 /// per-batch serialization cost.
-const ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration = Duration::from_secs(30);
+const ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration =
+    crate::event_engine::jetstream_consumer::settings::DURABLE_EMISSION_SETTLEMENT_TIMEOUT;
 
 // =============================================================================
 // Typed runtime config — wraps adapter config + optional binding flags
@@ -185,6 +189,12 @@ const ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration = Duration::from_secs(
 ///   "private_mode_fail_closed": true
 /// }
 /// ```
+///
+/// When `private_mode_state_dir` is omitted, the source resolves the shared
+/// daemon state root from `SINEX_STATE_DIR` (the production NixOS service
+/// supplies this for every hosted binding). An explicit path is useful for
+/// isolated runtimes and tests, but is not required for adapter-backed
+/// sources to participate in private-mode suppression.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AdapterSourceConfig {
     /// Adapter-specific config fields. Flattened so they live at the top
@@ -221,7 +231,8 @@ pub struct AdapterSourceConfig {
     pub private_mode_source_class: Option<String>,
 
     /// Whether unreadable or malformed private-mode state should suppress
-    /// acquisition. Defaults to fail-closed when `private_mode_state_dir` is set.
+    /// acquisition. Defaults to fail-closed for the resolved state directory,
+    /// including the shared `SINEX_STATE_DIR` fallback.
     ///
     /// Lower-sensitivity source contracts may set this to `false` deliberately, but
     /// the unavailable-state caveat still reaches binding-aware parsers through
@@ -270,11 +281,16 @@ impl AdapterSourceConfig {
         source_id: &str,
     ) -> Result<BindingConfig, crate::runtime::SinexError> {
         let mut bc = self.to_binding_config();
-        let Some(state_dir) = &self.private_mode_state_dir else {
-            return Ok(bc);
-        };
+        // The daemon already exposes SINEX_STATE_DIR to every source process.
+        // Use it as the default here so adapter-backed sources participate in
+        // the same private-mode contract as the dedicated media drivers even
+        // when their per-binding JSON does not repeat the state path.
+        let state_dir = self
+            .private_mode_state_dir
+            .clone()
+            .unwrap_or_else(|| resolve_private_mode_state_dir(None));
 
-        let state = match load_private_mode_state(state_dir) {
+        let state = match load_private_mode_state(&state_dir) {
             Ok(state) => state,
             Err(error) => {
                 tracing::warn!(
@@ -686,44 +702,219 @@ where
         Ok(true)
     }
 
-    async fn replay_file_drop_materials(
+    async fn finalize_file_drop_record_material(&mut self) -> RuntimeResult<()> {
+        if A::KIND != InputShapeKind::FileDrop {
+            return Ok(());
+        }
+
+        let Some(acquirer) = self.stream_acquirer.as_mut() else {
+            return Ok(());
+        };
+        if acquirer.current_material_id().is_some() {
+            acquirer.finalize("file-drop-record-complete").await?;
+        }
+        Ok(())
+    }
+
+    async fn replay_materials_from_cas(
         &mut self,
         replay: MaterialReplayContext,
     ) -> RuntimeResult<ScanReport> {
+        #[cfg(feature = "db")]
+        let content_store = {
+            let pool = self
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.handles().db_pool().cloned())
+                .ok_or_else(|| {
+                    crate::runtime::SinexError::configuration(
+                        "material replay requires a database-backed source-material CAS route",
+                    )
+                })?;
+            Arc::new(
+                ContentStoreManager::new(
+                    ContentStoreConfig {
+                        root_path: default_content_store_path(),
+                        ..Default::default()
+                    },
+                    pool,
+                    None,
+                )
+                .map_err(|error| {
+                    crate::runtime::SinexError::configuration(
+                        "material replay could not initialize the shared source-material CAS",
+                    )
+                    .with_source(error.to_string())
+                })?,
+            )
+        };
+        #[cfg(not(feature = "db"))]
+        return Err(crate::runtime::SinexError::configuration(
+            "material replay requires the database-backed source-material CAS route",
+        ));
+
         let start = Instant::now();
         let mut emitted: u64 = 0;
         let mut skipped: u64 = 0;
 
         for material in &replay.materials {
-            let metadata = material.material_metadata.clone();
-            if !self.replay_material_matches_event_type_filter(&metadata, &replay) {
+            if replay
+                .replay_scope
+                .material_ids
+                .as_ref()
+                .is_some_and(|material_ids| !material_ids.contains(&material.source_material_id))
+            {
                 skipped = skipped.saturating_add(1);
                 continue;
             }
 
-            let logical_path = metadata
-                .get("path")
-                .and_then(JsonValue::as_str)
-                .map(Utf8PathBuf::from);
-            let bytes = logical_path
-                .as_ref()
-                .map_or_else(Vec::new, |path| path.as_str().as_bytes().to_vec());
-            let anchor =
-                file_drop_replay_anchor(&metadata, logical_path.as_ref(), bytes.len() as u64);
-
-            let record = SourceRecord {
-                material_id: Id::from_uuid(material.source_material_id),
-                anchor,
-                bytes,
-                logical_path,
-                source_ts_hint: None,
-                metadata,
+            let material_authority = {
+                #[cfg(feature = "db")]
+                {
+                    let pool = self
+                        .runtime
+                        .as_ref()
+                        .and_then(|runtime| runtime.handles().db_pool())
+                        .ok_or_else(|| {
+                            crate::runtime::SinexError::configuration(
+                                "material replay requires a database-backed source-material CAS route",
+                            )
+                        })?;
+                    crate::sources::parse_listener::load_material_authority(
+                        pool,
+                        &content_store,
+                        material.source_material_id,
+                    )
+                    .await
+                    .map_err(|reason| {
+                        crate::runtime::SinexError::processing(
+                            "material replay could not load authoritative source-material bytes",
+                        )
+                        .with_context(
+                            "source_material_id",
+                            material.source_material_id.to_string(),
+                        )
+                        .with_context("reason", reason)
+                    })?
+                }
+                #[cfg(not(feature = "db"))]
+                {
+                    unreachable!("database-backed replay returned early above")
+                }
             };
-
-            emitted = emitted.saturating_add(
-                self.process_materialized_record(record, replay.operation_id)
-                    .await?,
+            info!(
+                source = self.source_id,
+                operation_id = %replay.operation_id,
+                material_id = %material.source_material_id,
+                occurrences = replay
+                    .occurrences
+                    .iter()
+                    .filter(|occurrence| occurrence.source_material_id == material.source_material_id)
+                    .count(),
+                "loaded authoritative material for replay"
             );
+            let material_bytes = &material_authority.bytes;
+            let occurrences = replay
+                .occurrences
+                .iter()
+                .filter(|occurrence| occurrence.source_material_id == material.source_material_id);
+            let mut found_occurrence = false;
+
+            for occurrence in occurrences {
+                found_occurrence = true;
+                let metadata = if occurrence.record_metadata.is_null() {
+                    // Non-filesystem FileDrop adapters may not have a
+                    // filesystem-shaped root payload. Preserve their existing
+                    // material-level metadata path until they gain an
+                    // adapter-specific occurrence carrier.
+                    material.material_metadata.clone()
+                } else {
+                    occurrence.record_metadata.clone()
+                };
+                if !self.replay_material_matches_event_type_filter(&metadata, &replay) {
+                    skipped = skipped.saturating_add(1);
+                    continue;
+                }
+                let (anchor, range) =
+                    material_replay_range(material_bytes.len() as u64, occurrence)?;
+                let bytes = material_authority
+                    .exact_range(
+                        material.source_material_id,
+                        sinex_primitives::ByteRange {
+                            start: range.start as u64,
+                            end: range.end as u64,
+                        },
+                    )
+                    .map_err(|reason| {
+                        crate::runtime::SinexError::processing(
+                            "material replay could not load the exact authoritative CAS range",
+                        )
+                        .with_context(
+                            "source_material_id",
+                            material.source_material_id.to_string(),
+                        )
+                        .with_context("reason", reason)
+                    })?;
+                if bytes.is_empty() {
+                    return Err(crate::runtime::SinexError::invalid_state(
+                        "material replay occurrence range must not be empty",
+                    ));
+                }
+                /*
+                 * Keep the original range check in the route even though the
+                 * CAS helper validates it against the manifest.  This catches
+                 * a stale occurrence envelope before a DB-backed range read
+                 * and makes the anti-vacuity contract visible at the caller.
+                 */
+                if material_bytes.get(range.clone()).is_none() {
+                    return Err(crate::runtime::SinexError::invalid_state(
+                        "material replay occurrence range falls outside authoritative source-material bytes",
+                    )
+                    .with_context(
+                        "source_material_id",
+                        material.source_material_id.to_string(),
+                    )
+                    .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
+                }
+                /*
+                 * The bytes above are intentionally sourced from CAS.  The
+                 * in-memory slice is only a bounds witness, never the replay
+                 * payload.
+                 */
+                let _ = &bytes;
+                let logical_path = metadata
+                    .get("path")
+                    .and_then(JsonValue::as_str)
+                    .map(Utf8PathBuf::from);
+
+                let record = SourceRecord {
+                    material_id: Id::from_uuid(material.source_material_id),
+                    anchor,
+                    bytes,
+                    logical_path,
+                    source_ts_hint: None,
+                    metadata: metadata.clone(),
+                };
+
+                info!(
+                    source = self.source_id,
+                    operation_id = %replay.operation_id,
+                    material_id = %material.source_material_id,
+                    anchor_byte = occurrence.anchor_byte,
+                    "replaying authoritative material occurrence"
+                );
+                emitted = emitted.saturating_add(
+                    self.process_materialized_record(record, replay.operation_id)
+                        .await?,
+                );
+            }
+
+            if !found_occurrence {
+                return Err(crate::runtime::SinexError::invalid_state(
+                    "material replay context is missing the original material occurrence coordinates",
+                )
+                .with_context("source_material_id", material.source_material_id.to_string()));
+            }
         }
 
         Ok(ScanReport {
@@ -786,7 +977,9 @@ where
         let material_id = record.material_id;
         let (anchor_byte, offset_start, offset_end) =
             anchor_offsets_for_materialized_record(&record.anchor);
-        let anchor_payload_hash = blake3::hash(record.bytes.as_slice()).as_bytes().to_owned();
+        let anchor_payload_hash = self
+            .anchor_payload_hash_for_materialized_record(&record)
+            .await?;
         self.link_latest_sqlite_snapshot_backing_material(material_id)
             .await;
 
@@ -821,37 +1014,97 @@ where
             }
         };
 
-        let mut emitted = 0u64;
-        for intent in intents {
-            match intent_to_event_with_anchor(
+        let mut events = Vec::with_capacity(intents.len());
+        for (sibling_index, intent) in intents.into_iter().enumerate() {
+            let event = intent_to_event_with_anchor(
                 intent,
                 material_id,
                 anchor_byte,
                 offset_start,
                 offset_end,
                 Some(anchor_payload_hash),
-            ) {
-                Ok(event) => {
-                    if let Err(e) = event_emitter.emit(event).await {
-                        warn!(
-                            source = self.source_id,
-                            error = %e,
-                            "emit failed during replay material processing — event dropped"
-                        );
-                    } else {
-                        emitted = emitted.saturating_add(1);
+                sibling_index,
+            )
+            .map_err(|error| {
+                crate::runtime::SinexError::processing(
+                    "replay intent conversion failed before emission",
+                )
+                .with_context("source_id", self.source_id)
+                .with_context("error", error)
+            })?;
+            events.push(event);
+        }
+
+        if events.is_empty() {
+            return Ok(0);
+        }
+
+        // The source host and event engine are separate processes in the real
+        // topology, so their in-memory SettlementRegistry instances cannot
+        // resolve one another. Replay therefore emits with stable candidate
+        // IDs and waits on the database authority: either the candidate row
+        // is visible in core.events or audit.import_outcomes records its
+        // terminal suppression. This is bounded by the same configured
+        // operation timeout and never treats a bare mpsc handoff as success.
+        let candidate_ids: Vec<_> = events
+            .iter_mut()
+            .map(|event| *event.id.get_or_insert_with(Id::new))
+            .collect();
+        for event in events {
+            event_emitter.emit(event).await?;
+        }
+
+        #[cfg(feature = "db")]
+        {
+            let pool = self
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.handles().db_pool())
+                .ok_or_else(|| {
+                    crate::runtime::SinexError::configuration(
+                        "replay settlement requires a database-backed runtime",
+                    )
+                })?;
+            let deadline = tokio::time::Instant::now() + self.durable_emission_timeout;
+            loop {
+                let mut settled = 0;
+                for candidate_id in &candidate_ids {
+                    if pool.events().get_by_id(*candidate_id).await?.is_some() {
+                        settled += 1;
+                        continue;
+                    }
+                    if let Some(report) = pool.import_outcomes().report(operation_id).await?
+                        && report
+                            .outcomes
+                            .iter()
+                            .any(|outcome| outcome.candidate_event_id == candidate_id.to_uuid())
+                    {
+                        settled += 1;
                     }
                 }
-                Err(e) => {
-                    warn!(
-                        source = self.source_id,
-                        error = %e,
-                        "intent_to_event_with_anchor conversion failed during replay material processing — skipping"
-                    );
+                if settled == candidate_ids.len() {
+                    return Ok(settled as u64);
                 }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(crate::runtime::SinexError::processing(
+                        "replay material occurrence did not reach a durable database settlement",
+                    )
+                    .with_context("source_id", self.source_id)
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("anchor_byte", anchor_byte.to_string())
+                    .with_context("settled", settled.to_string())
+                    .with_context("total", candidate_ids.len().to_string()));
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
             }
         }
-        Ok(emitted)
+        #[cfg(not(feature = "db"))]
+        {
+            let _ = (candidate_ids, operation_id);
+            Err(crate::runtime::SinexError::configuration(
+                "replay settlement requires the database-backed runtime",
+            ))
+        }
     }
 
     /// Observe adapter-level input shape before draining records.
@@ -987,13 +1240,12 @@ where
             let (anchor_byte, offset_start, offset_end) =
                 anchor_offsets_for_materialized_record(&record.anchor);
             // Pre-materialized adapter records (file-drop content staging,
-            // SQLite row snapshots) already own their anchor; hash the record
-            // payload bytes as the integrity witness. Records with non-byte
-            // anchors (directory entries, git objects) carry only a logical
-            // identifier in `bytes`, so we still hash whatever the adapter
-            // chose to emit — verify just re-runs the same hashing on the
-            // same byte range and confirms consistency, not authenticity.
-            let anchor_payload_hash = blake3::hash(record.bytes.as_slice()).as_bytes().to_owned();
+            // SQLite row snapshots) already own their anchor. For byte-range
+            // authorities, hash the exact CAS range rather than the adapter's
+            // descriptor bytes (which may only contain a path or row key).
+            let anchor_payload_hash = self
+                .anchor_payload_hash_for_materialized_record(&record)
+                .await?;
             return Ok(MaterializedAdapterRecord {
                 material_id: record.material_id,
                 record,
@@ -1320,6 +1572,14 @@ where
             }
         };
 
+        // FileDrop's `open` call has completed its native `watch()` setup at
+        // this point. Its service route intentionally defers READY=1 until
+        // that subscription is armed, so a caller cannot create a file in the
+        // gap between process readiness and watcher registration.
+        if A::KIND == InputShapeKind::FileDrop {
+            systemd_notify::notify_ready("sinex-runtime");
+        }
+
         let mut emitted: u64 = 0;
         let mut deferred_pending_record: Option<PendingAdapterRecord<A::Cursor>> = None;
         // sinex-r6d.11 reference caller: one commit frontier per drain call.
@@ -1377,12 +1637,12 @@ where
                 let record = match record_result {
                     Ok(r) => r,
                     Err(e) => {
-                        warn!(
-                            source = self.source_id,
-                            error = %e,
-                            "Adapter stream error — skipping record"
-                        );
-                        continue;
+                        return Err(crate::runtime::SinexError::processing(
+                            "adapter stream yielded an error",
+                        )
+                        .with_context("source_id", self.source_id)
+                        .with_context("adapter_kind", A::KIND.as_str())
+                        .with_context("error", e.to_string()));
                     }
                 };
 
@@ -1435,12 +1695,12 @@ where
                 let next_record = match next_record_result {
                     Ok(record) => record,
                     Err(e) => {
-                        warn!(
-                            source = self.source_id,
-                            error = %e,
-                            "Adapter stream error while batching — skipping record"
-                        );
-                        continue;
+                        return Err(crate::runtime::SinexError::processing(
+                            "adapter stream yielded an error while batching",
+                        )
+                        .with_context("source_id", self.source_id)
+                        .with_context("adapter_kind", A::KIND.as_str())
+                        .with_context("error", e.to_string()));
                     }
                 };
 
@@ -1540,7 +1800,10 @@ where
 
                 let parser_checkpoint_before = self.snapshot_parser_checkpoint_state();
                 let record_timing_hint = materialized.record.source_ts_hint.clone();
-                if let Some(ts) = record_timing_hint.as_ref().and_then(TimingEvidence::timestamp_value) {
+                if let Some(ts) = record_timing_hint
+                    .as_ref()
+                    .and_then(TimingEvidence::timestamp_value)
+                {
                     batch_position = Some(ts);
                 }
                 let intents = match self
@@ -1554,9 +1817,11 @@ where
                             parser_checkpoint_before,
                         );
                         warn!(
+                            target: "sinex_metrics",
+                            metric = "source_parser_rejections_total",
                             source = self.source_id,
                             error = %e,
-                            "parse_record error — skipping"
+                            "source parser rejected record"
                         );
                         continue;
                     }
@@ -1565,7 +1830,7 @@ where
                 let anchor_payload_hash = materialized.anchor_payload_hash;
                 let mut record_processed = true;
                 let record_events_start = batch_events.len();
-                for intent in intents {
+                for (sibling_index, intent) in intents.into_iter().enumerate() {
                     // Use the materialization anchor so events reference their real
                     // material location, whether the record came from the default
                     // append stream or from an adapter-staged content material.
@@ -1576,6 +1841,7 @@ where
                         materialized.offset_start,
                         materialized.offset_end,
                         anchor_payload_hash,
+                        sibling_index,
                     ) {
                         Ok(event) => {
                             batch_events.push(event);
@@ -1602,7 +1868,8 @@ where
                     // parsing of the rest of the batch); only the
                     // externally-persisted snapshot is deferred.
                     if let Some(cursor) = next_cursor {
-                        let merged_cursor = merge_cursor_update(latest_known_cursor.clone(), cursor);
+                        let merged_cursor =
+                            merge_cursor_update(latest_known_cursor.clone(), cursor);
                         latest_known_cursor = Some(merged_cursor.clone());
                         let ticket = cursor_frontier.submit();
                         record_plan.push(PendingRecordEmission {
@@ -1702,8 +1969,9 @@ where
                 if unlocked {
                     emitted = emitted.saturating_add(entry.event_count as u64);
                     batch_emitted = batch_emitted.saturating_add(entry.event_count as u64);
-                    state.total_events_emitted =
-                        state.total_events_emitted.saturating_add(entry.event_count as u64);
+                    state.total_events_emitted = state
+                        .total_events_emitted
+                        .saturating_add(entry.event_count as u64);
                     cursor_frontier.complete(
                         entry.ticket,
                         TerminalOutcome::PersistedConfirmed,
@@ -1727,6 +1995,14 @@ where
                 self.restore_parser_checkpoint_after_failed_record(rollback_to);
             }
             self.refresh_parser_checkpoint_state(state);
+
+            // FileDrop is an open-ended watcher, so its drain future does not
+            // return at a logical record boundary. Complete each accepted
+            // record material after its durable-emission receipt settles;
+            // otherwise the material assembler cannot publish a completed
+            // authority until age rotation or source shutdown, making a live
+            // source-removal replay impossible in the normal running state.
+            self.finalize_file_drop_record_material().await?;
 
             let (_, committed_checkpoint) = cursor_frontier.frontier();
             if let Some(checkpoint) = committed_checkpoint {
@@ -1761,6 +2037,28 @@ where
             "drain_adapter complete"
         );
         Ok(emitted)
+    }
+
+    async fn anchor_payload_hash_for_materialized_record(
+        &self,
+        record: &SourceRecord,
+    ) -> RuntimeResult<[u8; 32]> {
+        if let Some(content_hash) = record
+            .metadata
+            .get("content_hash")
+            .and_then(JsonValue::as_str)
+        {
+            let hash = blake3::Hash::from_hex(content_hash).map_err(|error| {
+                crate::runtime::SinexError::validation(
+                    "pre-materialized adapter record has an invalid content_hash",
+                )
+                .with_context("content_hash", content_hash)
+                .with_std_error(&error)
+            })?;
+            return Ok(*hash.as_bytes());
+        }
+
+        Ok(*blake3::hash(record.bytes.as_slice()).as_bytes())
     }
 
     async fn persist_stream_checkpoint_if_due(
@@ -1943,7 +2241,11 @@ where
 
     fn capabilities(&self) -> RuntimeCapabilities {
         RuntimeCapabilities {
-            supports_snapshot: true,
+            // File-drop opens a native watcher whose stream remains open for
+            // the lifetime of the source. Treating that stream as a finite
+            // startup snapshot prevents the service route from ever reaching
+            // its post-snapshot READY=1 notification.
+            supports_snapshot: A::KIND != InputShapeKind::FileDrop,
             supports_historical: true,
             // Continuous mode is poll-based for adapters that don't stream.
             supports_continuous: true,
@@ -1953,6 +2255,10 @@ where
             manages_own_continuous_loop: true,
             manages_own_checkpoints: false,
         }
+    }
+
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        A::KIND == InputShapeKind::FileDrop
     }
 
     async fn initialize(
@@ -1978,9 +2284,12 @@ where
         self.poll_interval = config.continuous_poll_interval()?;
         self.runtime_config = Some(config.clone());
         #[cfg(feature = "messaging")]
-        if let Some(state_dir) = config.private_mode_state_dir.clone()
-            && let Some(nats_client) = runtime.nats_client()
-        {
+        let state_dir = config
+            .private_mode_state_dir
+            .clone()
+            .unwrap_or_else(|| resolve_private_mode_state_dir(None));
+        #[cfg(feature = "messaging")]
+        if let Some(nats_client) = runtime.nats_client() {
             self.private_mode_control_task = Some(spawn_private_mode_control_listener(
                 nats_client,
                 state_dir,
@@ -2087,10 +2396,22 @@ where
         args: ScanArgs,
     ) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
-        if A::KIND == InputShapeKind::FileDrop
-            && let Some(replay) = args.replay
-        {
-            return self.replay_file_drop_materials(replay).await;
+        if let Some(replay) = args.replay.clone() {
+            if A::KIND == InputShapeKind::DirectoryWalk {
+                // DirectoryWalkAdapter's native occurrence is a DirectoryEntry,
+                // but the replay envelope does not carry its logical path or
+                // native anchor. Reopening it would enumerate the configured
+                // roots from the beginning and could reinterpret out-of-scope
+                // files, so reject before touching CAS or the adapter.
+                return Err(crate::runtime::SinexError::configuration(
+                    "scoped replay is not supported for DirectoryWalkAdapter because the replay context lacks the original logical path and native DirectoryEntry anchor",
+                )
+                .with_context("source_id", self.source_id)
+                .with_context("adapter_kind", A::KIND.as_str()));
+            }
+            // Never silently widen a scoped replay into a fresh-source scan.
+            // Byte-range-capable adapters enter the bounded CAS-backed route.
+            return self.replay_materials_from_cas(replay).await;
         }
 
         // sinex-2n9: historical/catch-up scans are paced by default. See
@@ -2098,10 +2419,13 @@ where
         // binding config > default_paced).
         let rate_budget = self.resolve_rate_budget(args.rate_budget);
         let nats_client = self.runtime.as_ref().and_then(RuntimeContext::nats_client);
-        // Matches how `RuntimeCli`/`NatsPublisher` resolve namespace elsewhere
-        // in the runtime (`--namespace` / `SINEX_NAMESPACE`); `RuntimeContext`
-        // does not currently expose the resolved namespace to source drivers.
-        let namespace = std::env::var("SINEX_NAMESPACE").ok();
+        // Reuse the namespace resolved for this runtime's publisher. Reading
+        // `SINEX_NAMESPACE` here would ignore a `--namespace` CLI override and
+        // split pacing/progress from the event stream it is meant to observe.
+        let namespace = self
+            .runtime
+            .as_ref()
+            .and_then(RuntimeContext::nats_namespace);
         let horizon = match &until {
             TimeHorizon::Historical { end_time } => Some(*end_time),
             TimeHorizon::Snapshot | TimeHorizon::Continuous => None,
@@ -2556,45 +2880,92 @@ fn hash_anchor_key_to_i64(digest: &blake3::Hash) -> i64 {
     i64::from_le_bytes(buf)
 }
 
-/// Reconstruct the `MaterialAnchor` a file-drop record originally captured,
-/// from its persisted `raw.source_material_registry` metadata.
-///
-/// `sinex-audit-anchor-byte-degenerate`: replay must derive the SAME anchor
-/// (and therefore the same `anchor_byte`, via [`anchor_offsets_for_materialized_record`])
-/// that the original capture produced, or every replayed record collapses to
-/// a shared degenerate key. Content-materialized records (regular file bytes
-/// staged into their own dedicated material — see
-/// `materialize_file_content_record_with_cache`) captured `ByteRange { start: 0, .. }`.
-/// Everything else (deleted/moved/oversized-skipped files, which share one
-/// append-stream material across many occurrences) captured
-/// `DirectoryEntry { path, content_hash: None }`.
-fn file_drop_replay_anchor(
-    metadata: &JsonValue,
-    logical_path: Option<&Utf8PathBuf>,
-    bytes_len: u64,
-) -> MaterialAnchor {
-    let content_materialized = metadata
-        .get("content_materialized")
-        .and_then(JsonValue::as_bool)
-        .unwrap_or(false);
-
-    if !content_materialized
-        && let Some(path) = logical_path
-    {
-        return MaterialAnchor::DirectoryEntry {
-            path: path.clone(),
-            content_hash: None,
-        };
+/// Reconstruct the physical anchor from the original durable occurrence
+/// coordinates. FileDrop captures append several records into one material,
+/// so a directory path is not a substitute for the append-stream offset.
+fn material_replay_anchor(
+    material_len: u64,
+    occurrence: &crate::runtime::stream::ReplayMaterialOccurrence,
+) -> RuntimeResult<MaterialAnchor> {
+    let start = u64::try_from(occurrence.anchor_byte).map_err(|_| {
+        crate::runtime::SinexError::invalid_state(
+            "material replay occurrence anchor_byte must be non-negative",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+    })?;
+    let offset_start = occurrence.offset_start.ok_or_else(|| {
+        crate::runtime::SinexError::invalid_state(
+            "material replay occurrence is missing offset_start; cannot safely recover bytes",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+    })?;
+    if offset_start != occurrence.anchor_byte {
+        return Err(crate::runtime::SinexError::invalid_state(
+            "material replay occurrence offset_start disagrees with anchor_byte",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+        .with_context("offset_start", offset_start.to_string()));
     }
 
-    let content_len = metadata
-        .get("content_size_bytes")
-        .and_then(JsonValue::as_u64)
-        .unwrap_or(bytes_len);
-    MaterialAnchor::ByteRange {
-        start: 0,
-        len: content_len,
+    let end = occurrence.offset_end.ok_or_else(|| {
+        crate::runtime::SinexError::invalid_state(
+            "material replay occurrence is missing offset_end; cannot safely recover bytes",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+    })?;
+    let end = u64::try_from(end).map_err(|_| {
+        crate::runtime::SinexError::invalid_state(
+            "material replay occurrence offset_end must be non-negative",
+        )
+    })?;
+    let len = end.checked_sub(start).ok_or_else(|| {
+        crate::runtime::SinexError::invalid_state(
+            "material replay occurrence offset_end precedes anchor_byte",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+        .with_context("offset_end", end.to_string())
+    })?;
+    if end > material_len {
+        return Err(crate::runtime::SinexError::invalid_state(
+            "material replay occurrence range exceeds authoritative source-material bytes",
+        )
+        .with_context("offset_end", end.to_string())
+        .with_context("material_len", material_len.to_string()));
     }
+
+    Ok(MaterialAnchor::ByteRange { start, len })
+}
+
+fn material_replay_range(
+    material_len: u64,
+    occurrence: &crate::runtime::stream::ReplayMaterialOccurrence,
+) -> RuntimeResult<(MaterialAnchor, std::ops::Range<usize>)> {
+    if occurrence.offset_kind != sinex_primitives::events::OffsetKind::Byte {
+        return Err(crate::runtime::SinexError::invalid_state(
+            "material replay occurrence uses a non-byte coordinate",
+        )
+        .with_context("offset_kind", occurrence.offset_kind.as_wire_str()));
+    }
+    let anchor = material_replay_anchor(material_len, occurrence)?;
+    let MaterialAnchor::ByteRange { start, len } = anchor else {
+        return Err(crate::runtime::SinexError::invalid_state(
+            "material replay produced a non-byte anchor for a material-backed occurrence",
+        ));
+    };
+    let range_start = usize::try_from(start).map_err(|_| {
+        crate::runtime::SinexError::invalid_state(
+            "material replay occurrence start does not fit the host slice index",
+        )
+    })?;
+    let range_end = start.checked_add(len).ok_or_else(|| {
+        crate::runtime::SinexError::invalid_state("FileDrop replay occurrence range overflows")
+    })?;
+    let range_end = usize::try_from(range_end).map_err(|_| {
+        crate::runtime::SinexError::invalid_state(
+            "material replay occurrence end does not fit the host slice index",
+        )
+    })?;
+    Ok((anchor, range_start..range_end))
 }
 
 /// Convert a `ParsedEventIntent` to an `Event<JsonValue>`, overriding `anchor_byte`
@@ -2611,7 +2982,18 @@ fn intent_to_event_with_anchor(
     offset_start: Option<i64>,
     offset_end: Option<i64>,
     anchor_payload_hash: Option<[u8; 32]>,
+    sibling_index: usize,
 ) -> Result<Event<JsonValue>, String> {
+    let fallback_equivalence_key = if intent.is_material() {
+        Some(material_occurrence_equivalence_key(
+            &intent,
+            material_id,
+            anchor_byte_override,
+            sibling_index,
+        ))
+    } else {
+        None
+    };
     let builder: EventBuilder<JsonValue, NoProvenance> =
         EventBuilder::new_internal(intent.event_source, intent.event_type, intent.payload);
 
@@ -2645,9 +3027,31 @@ fn intent_to_event_with_anchor(
     // suppression (#1637): the event_engine will suppress a new event if a live
     // row with the same equivalence_key already exists in core.events.
     built.equivalence_key =
-        sinex_primitives::parser::maybe_occurrence_key_string(intent.occurrence_key.as_ref());
+        sinex_primitives::parser::maybe_occurrence_key_string(intent.occurrence_key.as_ref())
+            .or(fallback_equivalence_key);
 
     Ok(built)
+}
+
+/// Give keyless sibling intents a retry-stable identity. A single source
+/// record may intentionally produce multiple events, so `(material, anchor)`
+/// alone is not enough; the parser's deterministic output ordinal identifies
+/// the sibling slot while the material coordinates identify the occurrence.
+fn material_occurrence_equivalence_key(
+    intent: &ParsedEventIntent,
+    material_id: Id<SourceMaterial>,
+    anchor_byte: i64,
+    sibling_index: usize,
+) -> String {
+    sinex_primitives::parser::occurrence_key_string(&sinex_primitives::parser::OccurrenceKey {
+        source_id: intent.source_id.clone(),
+        fields: vec![
+            ("material_id".to_string(), material_id.to_string()),
+            ("anchor_byte".to_string(), anchor_byte.to_string()),
+            ("event_type".to_string(), intent.event_type.to_string()),
+            ("sibling_index".to_string(), sibling_index.to_string()),
+        ],
+    })
 }
 
 fn apply_record_timing_hint_to_intents(

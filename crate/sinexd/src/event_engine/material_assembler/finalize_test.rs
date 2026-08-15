@@ -5,12 +5,13 @@ use crate::event_engine::material_assembler::finalization_transaction::{
 };
 use crate::event_engine::material_assembler::{io, state};
 use crate::runtime::content_store::ContentStoreKey;
+use crate::runtime::{FaultInjector, FaultPoint};
 use serde_json::json;
 use sinex_db::{
     models::blob::Blob,
     repositories::{DbPoolExt, TemporalLedgerEntry},
 };
-use sinex_primitives::MaterialStatus;
+use sinex_primitives::{MaterialManifestV1, MaterialStatus, MetadataAvailability};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use xtask::sandbox::prelude::*;
@@ -46,7 +47,7 @@ async fn finalize_failed_material_skips_material_already_finalizing(
 
     assembler
         .finalize_failed_material(material_id, "slice_arrival_timeout")
-        .await;
+        .await?;
 
     let material = ctx
         .pool
@@ -56,6 +57,64 @@ async fn finalize_failed_material_skips_material_already_finalizing(
         .expect("material should exist");
     assert_eq!(material.status, MaterialStatus::Sensing);
     assert!(assembler.assembler_state.contains_key(&material_id));
+    Ok(())
+}
+
+#[sinex_test]
+async fn finalize_worker_termination_reverts_phase_and_emits_dlq(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
+    let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
+
+    let mut state = assembler.create_placeholder_state(material_id).await?;
+    state.phase = AssemblyPhase::Finalizing;
+    let state_handle = assembler.insert_state_handle(material_id, state);
+
+    let panicked_worker = tokio::spawn(async {
+        panic!("test-only finalization worker panic");
+        #[allow(unreachable_code)]
+        Ok::<(), SinexError>(())
+    });
+    assembler
+        .observe_finalize_worker(material_id, state_handle.clone(), panicked_worker)
+        .await;
+
+    assert_eq!(
+        state_handle.lock().await.phase,
+        AssemblyPhase::Accumulating,
+        "anti-vacuity: removing worker-termination recovery leaves a panicked finalizer stuck in Finalizing"
+    );
+    let panic_dlq = timeout(std::time::Duration::from_secs(1), dlq_sub.next())
+        .await?
+        .expect("panicked finalizer must publish visible recovery evidence");
+    assert!(
+        std::str::from_utf8(&panic_dlq.payload)?.contains("material_finalize_worker_terminated"),
+        "anti-vacuity: bypassing the worker JoinError branch removes the panic recovery record"
+    );
+
+    state_handle.lock().await.phase = AssemblyPhase::Finalizing;
+    let aborted_worker = tokio::spawn(std::future::pending::<EventEngineResult<()>>());
+    aborted_worker.abort();
+    assembler
+        .observe_finalize_worker(material_id, state_handle.clone(), aborted_worker)
+        .await;
+
+    assert_eq!(
+        state_handle.lock().await.phase,
+        AssemblyPhase::Accumulating,
+        "anti-vacuity: removing worker-termination recovery leaves an aborted finalizer stuck in Finalizing"
+    );
+    let abort_dlq = timeout(std::time::Duration::from_secs(1), dlq_sub.next())
+        .await?
+        .expect("aborted finalizer must publish visible recovery evidence");
+    assert!(
+        std::str::from_utf8(&abort_dlq.payload)?.contains("material_finalize_worker_terminated"),
+        "anti-vacuity: bypassing the worker JoinError branch removes the abort recovery record"
+    );
     Ok(())
 }
 
@@ -85,7 +144,7 @@ async fn finalize_failed_material_skips_terminal_material_without_state(
 
     assembler
         .finalize_failed_material(material_id, "slice_arrival_timeout")
-        .await;
+        .await?;
 
     let material = ctx
         .pool
@@ -125,7 +184,7 @@ async fn finalize_failed_material_recovers_timeout_when_events_were_admitted(
 
     assembler
         .finalize_failed_material(material_id, "slice_arrival_timeout")
-        .await;
+        .await?;
 
     let material = ctx
         .pool
@@ -189,6 +248,82 @@ async fn finalize_failed_material_preserves_retry_state_when_failure_mark_is_not
         "staged material should remain on disk for retry"
     );
     assert_eq!(state_handle.lock().await.phase, AssemblyPhase::Accumulating);
+    Ok(())
+}
+
+#[sinex_test]
+async fn route_material_error_propagates_terminal_settlement_failure(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
+    let dlq_stream_name = ctx.env().nats_stream_name_with_namespace(
+        Some(ctx.pipeline_namespace().prefix()),
+        "SINEX_RAW_EVENTS_DLQ",
+    );
+    async_nats::jetstream::new(ctx.nats_client())
+        .create_or_update_stream(async_nats::jetstream::stream::Config {
+            name: dlq_stream_name,
+            subjects: vec![dlq_subject.clone()],
+            retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
+            storage: async_nats::jetstream::stream::StorageType::Memory,
+            max_age: tokio::time::Duration::from_secs(300),
+            ..Default::default()
+        })
+        .await?;
+    let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "test",
+            Some("test://terminal-settlement-failure"),
+            json!({}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    // Hold the per-material lock so the route cannot enter terminal settlement
+    // until this test has observed the successful DLQ publication.
+    let state = assembler.create_placeholder_state(material_id).await?;
+    let state_handle = assembler.insert_state_handle(material_id, state);
+    let state_guard = state_handle.lock().await;
+    let mut route = Box::pin(assembler.route_material_error_then_finalize_failed(
+        material_id,
+        "material_persist_failed",
+        json!({"fault_injection": "closed_database_pool"}),
+    ));
+
+    let dlq_message = tokio::select! {
+        result = &mut route => panic!(
+            "route must not settle before its DLQ publication is observed; result={result:?}"
+        ),
+        message = timeout(Duration::from_secs(1), dlq_sub.next()) => {
+            message?
+                .ok_or_else(|| SinexError::processing("terminal material failure did not publish a DLQ record"))?
+        },
+    };
+    assert!(
+        std::str::from_utf8(&dlq_message.payload)?.contains("material_persist_failed"),
+        "the settlement failure must be observed after a successful DLQ publication"
+    );
+
+    ctx.pool.close().await;
+    drop(state_guard);
+
+    let error = route
+        .await
+        .expect_err("DLQ success must not hide terminal settlement failure");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to mark material as failed in database"),
+        "unexpected settlement error: {error}"
+    );
     Ok(())
 }
 
@@ -625,6 +760,397 @@ async fn pending_end_ignores_late_slice_beyond_contract_before_completion(
 }
 
 #[sinex_test]
+async fn finalization_persists_canonical_manifest_and_registry_reference(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let material_id_typed = Id::from_uuid(material_id);
+    let started_at = Timestamp::now();
+    let ended_at = Timestamp::now();
+    let payload = b"finalizer manifest route".to_vec();
+
+    state::handle_begin(
+        &assembler,
+        material_id,
+        state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "test-material".to_string(),
+            source_identifier: "test://manifest-route".to_string(),
+            metadata: json!({
+                "mime_type": "text/plain",
+                "charset": null,
+                "explicit_unknown": { "availability": "unknown" }
+            }),
+            started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+        },
+    )
+    .await?;
+    io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+    let staged_material_path = state_dir
+        .path()
+        .join(material_id.to_string())
+        .join("material.bin");
+
+    let state_handle = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing assembler state"))?;
+    {
+        let mut state = state_handle.lock().await;
+        state.pending_end = Some(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: sinex_primitives::temporal::format_rfc3339(ended_at),
+            content_hash: blake3::hash(&payload).to_hex().to_string(),
+            total_slices: 1,
+            total_size_bytes: payload.len() as i64,
+            metadata: json!({}),
+        });
+    }
+
+    assembler
+        .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
+        .await?;
+
+    assert!(
+        !staged_material_path.exists(),
+        "the finalized authority must not depend on the assembler source path"
+    );
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id_typed)
+        .await?
+        .expect("finalized material should exist");
+    let manifest_reference = material.metadata["material_manifest"]["content_key"]
+        .as_str()
+        .expect("finalization must attach a manifest CAS key");
+    let manifest_key = ContentStoreKey::parse(manifest_reference)?;
+    assert!(
+        manifest_key.is_local_blake3_cas(),
+        "manifest must be stored in the local BLAKE3 CAS"
+    );
+    let manifest_path = assembler
+        .content_store
+        .path_if_local(manifest_reference)?
+        .expect("manifest CAS key must resolve to a local path");
+    let manifest_bytes = tokio::fs::read(manifest_path).await?;
+    let manifest = match MaterialManifestV1::decode(&manifest_bytes)
+        .map_err(|error| {
+            color_eyre::eyre::eyre!("finalizer manifest decode failed: {error}")
+        })?
+    {
+        sinex_primitives::DecodedMaterialManifest::V1(manifest) => manifest,
+        decoded => panic!("finalizer must emit a V1 manifest, got {decoded:?}"),
+    };
+    manifest
+        .validate()
+        .expect("finalizer must emit a valid manifest");
+    assert_eq!(
+        manifest.canonical_bytes()?,
+        manifest_bytes,
+        "registry metadata must point to the canonical manifest encoding"
+    );
+    assert_eq!(
+        manifest_key,
+        ContentStoreKey::local_blake3(
+            manifest_bytes.len() as u64,
+            blake3::hash(&manifest_bytes).to_hex().to_string(),
+        )?,
+        "registry metadata must point to the manifest's exact CAS object"
+    );
+    assert_eq!(manifest.source_material_id, material_id);
+    assert_eq!(manifest.bytes.encoded_size, payload.len() as u64);
+    assert_eq!(
+        manifest.bytes.encoded.value_hex,
+        blake3::hash(&payload).to_hex().to_string()
+    );
+    let encoded_content_key = ContentStoreKey::parse(
+        &manifest
+            .encoded_content_store_key()
+            .map_err(|error| {
+                color_eyre::eyre::eyre!("finalizer encoded CAS key derivation failed: {error}")
+            })?,
+    )?;
+    let expected_content_key = ContentStoreKey::local_blake3(
+        payload.len() as u64,
+        blake3::hash(&payload).to_hex().to_string(),
+    )?;
+    assert_eq!(
+        encoded_content_key, expected_content_key,
+        "the V1 manifest must name the exact encoded material CAS authority"
+    );
+    let encoded_content_path = assembler
+        .content_store
+        .path_if_local(&encoded_content_key.key)?
+        .expect("manifest encoded authority must resolve to a local CAS path");
+    assert_eq!(
+        tokio::fs::read(encoded_content_path).await?,
+        payload,
+        "the manifest encoded authority must contain the ingested bytes"
+    );
+    assert_eq!(
+        manifest.interpretation.charset.availability,
+        MetadataAvailability::Unknown
+    );
+    assert_eq!(
+        manifest.extensions["capture_metadata"]["explicit_unknown"]["availability"],
+        json!("unknown")
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn post_commit_response_failure_reconciles_real_cas_finalization(
+    ctx: TestContext,
+) -> TestResult<()> {
+    Box::pin(post_commit_response_failure_reconciles_real_cas_finalization_inner(ctx)).await
+}
+
+async fn post_commit_response_failure_reconciles_real_cas_finalization_inner(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::MaterialCommitPostCommitResponse);
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("post-commit-response-recovery")
+            .fault_injector(injector)
+            .build(&ctx)
+            .await?;
+    let material_id = Uuid::now_v7();
+    let material_id_typed = Id::from_uuid(material_id);
+    let started_at = Timestamp::now();
+    let ended_at = Timestamp::now();
+    let payload = b"post-commit response recovery bytes".to_vec();
+    let content_hash = blake3::hash(&payload).to_hex().to_string();
+    let content_key = ContentStoreKey::local_blake3(payload.len() as u64, content_hash.clone())?;
+
+    state::handle_begin(
+        &assembler,
+        material_id,
+        state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "test-material".to_string(),
+            source_identifier: "test://post-commit-response-recovery".to_string(),
+            metadata: json!({}),
+            started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+        },
+    )
+    .await?;
+    io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+
+    let state_handle = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing assembler state"))?;
+    {
+        let mut state = state_handle.lock().await;
+        state.pending_end = Some(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: sinex_primitives::temporal::format_rfc3339(ended_at),
+            content_hash: content_hash.clone(),
+            total_slices: 1,
+            total_size_bytes: payload.len() as i64,
+            metadata: json!({}),
+        });
+    }
+
+    let first_error = assembler
+        .try_finalize_pending_end(material_id, state_handle.clone(), PendingEndBehavior::Error)
+        .await
+        .expect_err("the injected response loss must reach the caller as an error");
+    assert_eq!(
+        first_error.context_map().get("commit_outcome"),
+        Some(&"unknown".to_string()),
+        "post-commit response loss must not be mistaken for a pre-commit failure: {first_error}"
+    );
+    assert_eq!(
+        first_error.context_map().get("commit_landed"),
+        Some(&"true".to_string())
+    );
+    assert_eq!(
+        first_error.context_map().get("response_failure"),
+        Some(&"post_commit".to_string())
+    );
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id_typed)
+        .await?
+        .expect("the PostgreSQL commit must have landed before the response error");
+    assert_eq!(material.status, MaterialStatus::Completed);
+    assert!(material.optional_blob_id.is_some());
+    assert_eq!(
+        assembler.content_store.list_write_leases().await?.len(),
+        0,
+        "the landed commit path must clean its CAS lease even when the caller receives an error"
+    );
+    let cas_path = assembler
+        .content_store
+        .path_if_local(&content_key.key)?
+        .expect("the published CAS object must remain addressable");
+    assert_eq!(tokio::fs::read(cas_path).await?, payload);
+    {
+        let state = state_handle.lock().await;
+        assert_eq!(state.phase, AssemblyPhase::Accumulating);
+        assert!(state.pending_end.is_some());
+    }
+
+    // Re-drive the ordinary finalization route. It must observe the already
+    // landed material and release the retry's newly created lease instead of
+    // inserting another blob or material authority.
+    assembler
+        .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
+        .await?;
+
+    assert!(
+        assembler
+            .content_store
+            .list_write_leases()
+            .await?
+            .is_empty()
+    );
+    let material_after_retry = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id_typed)
+        .await?
+        .expect("reconciled material should remain authoritative");
+    assert_eq!(material_after_retry.status, MaterialStatus::Completed);
+    assert_eq!(
+        material_after_retry.optional_blob_id,
+        material.optional_blob_id
+    );
+    assert_eq!(
+        material_after_retry.metadata["material_manifest"], material.metadata["material_manifest"],
+        "reconciliation must not replace the already committed material authority"
+    );
+
+    let material_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "count!: i64" FROM raw.source_material_registry WHERE id = $1"#,
+        material_id,
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(material_count, 1);
+    let blob_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "count!: i64" FROM core.blobs
+           WHERE annex_backend = $1 AND content_hash = $2 AND size_bytes = $3"#,
+        content_key.storage_backend(),
+        content_key.digest,
+        content_key.size as i64,
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(blob_count, 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn database_commit_failure_after_cas_publish_is_redeliverable(
+    ctx: TestContext,
+) -> TestResult<()> {
+    // Run this on a larger worker stack: the manifest finalization route can
+    // be deep enough to overflow the default test-thread stack.
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("material-commit-failure-recovery".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            runtime.block_on(async move {
+                database_commit_failure_after_cas_publish_is_redeliverable_inner(ctx).await
+            })
+        })
+        .map_err(|error| color_eyre::eyre::eyre!(error))?
+        .join()
+        .map_err(|_| color_eyre::eyre::eyre!("commit failure recovery test thread panicked"))??;
+    Ok(())
+}
+
+async fn database_commit_failure_after_cas_publish_is_redeliverable_inner(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::MaterialCommitConnectionTermination);
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("commit-failure-recovery")
+            .fault_injector(injector)
+            .build(&ctx)
+            .await?;
+    let material_id = Uuid::now_v7();
+    let started_at = Timestamp::now();
+    let ended_at = Timestamp::now();
+    let payload = b"database commit failure recovery bytes".to_vec();
+    let content_hash = blake3::hash(&payload).to_hex().to_string();
+
+    state::handle_begin(
+        &assembler,
+        material_id,
+        state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "test-material".to_string(),
+            source_identifier: "test://commit-failure-recovery".to_string(),
+            metadata: json!({}),
+            started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+        },
+    )
+    .await?;
+    io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+
+    let state_handle = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing assembler state"))?;
+    {
+        let mut state = state_handle.lock().await;
+        state.pending_end = Some(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: sinex_primitives::temporal::format_rfc3339(ended_at),
+            content_hash,
+            total_slices: 1,
+            total_size_bytes: payload.len() as i64,
+            metadata: json!({}),
+        });
+    }
+
+    let first_error = assembler
+        .try_finalize_pending_end(material_id, state_handle.clone(), PendingEndBehavior::Error)
+        .await
+        .expect_err("the real commit failure must reach the redelivery path");
+    assert!(
+        !first_error.context_map().contains_key("commit_outcome"),
+        "a definite rollback must not be mislabeled unknown: {first_error}"
+    );
+    assert!(
+        first_error.to_string().contains("Failed to commit material finalization transaction"),
+        "the failure must be classified at the commit boundary: {first_error}"
+    );
+    assert!(
+        assembler.content_store.list_write_leases().await?.is_empty(),
+        "failed commit cleanup must release the CAS lease"
+    );
+
+    // The assembler retains the immutable End record and restores its phase;
+    // the next ordinary delivery re-reads/re-publishes the staged bytes and
+    // completes against a fresh database connection.
+    assembler
+        .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
+        .await?;
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(material_id))
+        .await?
+        .expect("redelivery must eventually finalize the material");
+    assert_eq!(material.status, MaterialStatus::Completed);
+    assert!(material.optional_blob_id.is_some());
+    Ok(())
+}
+
+#[sinex_test]
 async fn finalization_transaction_is_idempotent_after_commit_lands(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -714,6 +1240,9 @@ async fn finalization_transaction_is_idempotent_after_commit_lands(
             total_size_bytes: end.total_size_bytes,
             metadata: json!({}),
             final_status: MaterialStatus::Completed,
+            write_lease: None,
+            manifest_key: None,
+            manifest_lease: None,
         })
         .await?;
     assert_eq!(*handle.blob_id.as_uuid(), *blob.id.as_uuid());
@@ -787,6 +1316,9 @@ async fn finalization_transaction_rolls_back_blob_material_and_ledger_on_finaliz
             total_size_bytes: -1,
             metadata: json!({ "finalized": true }),
             final_status: MaterialStatus::Completed,
+            write_lease: None,
+            manifest_key: None,
+            manifest_lease: None,
         })
         .await
         .expect_err("negative total_bytes should fail source-material finalization");
@@ -906,6 +1438,9 @@ async fn finalization_transaction_reuses_existing_blob_inside_transaction(
             total_size_bytes: end.total_size_bytes,
             metadata: json!({}),
             final_status: MaterialStatus::Completed,
+            write_lease: None,
+            manifest_key: None,
+            manifest_lease: None,
         })
         .await?;
     assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());
@@ -1010,6 +1545,9 @@ async fn finalization_transaction_reuses_existing_blob_by_blake3_inside_transact
             total_size_bytes: end.total_size_bytes,
             metadata: json!({}),
             final_status: MaterialStatus::Completed,
+            write_lease: None,
+            manifest_key: None,
+            manifest_lease: None,
         })
         .await?;
     assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());

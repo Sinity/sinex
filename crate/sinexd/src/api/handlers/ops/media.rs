@@ -4,9 +4,11 @@ use sinex_primitives::domain::{
     OperationStatus, SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
 use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::privacy::resolve_private_mode_state_dir;
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
 use sinex_primitives::{Id, SinexError};
 use sqlx::PgPool;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -24,21 +26,21 @@ use super::{Result, elapsed_millis, parsed_material_intent_to_event};
 pub(super) struct MediaWorkerOutputResult {
     pub(super) status: OperationStatus,
     pub(super) message: String,
-    pub(super) duration_ms: Option<i32>,
+    pub(super) duration_ms: Option<i64>,
 }
 
 struct MediaWorkerOutput {
     bytes: Vec<u8>,
     source_identifier: String,
     executor_state: &'static str,
-    duration_ms: Option<i32>,
+    duration_ms: Option<i64>,
 }
 
 struct MediaWorkerCommandOutcome {
     output: Option<MediaWorkerOutput>,
     summary: serde_json::Value,
     failure_message: Option<String>,
-    duration_ms: Option<i32>,
+    duration_ms: Option<i64>,
     /// Structured capture-debt entry recorded on failure/timeout/model-missing
     /// so the local-model-batch outcome is visible as operator debt rather than
     /// an opaque error.
@@ -291,12 +293,47 @@ pub(super) async fn execute_media_operation(
     preview_summary: &mut serde_json::Value,
     is_admin: bool,
 ) -> Result<Option<MediaWorkerOutputResult>> {
+    let private_mode_state_dir = resolve_private_mode_state_dir(None);
+    execute_media_operation_with_state_dir(
+        pool,
+        spec,
+        mode_id,
+        actor,
+        scope,
+        preview_summary,
+        is_admin,
+        &private_mode_state_dir,
+    )
+    .await
+}
+
+async fn execute_media_operation_with_state_dir(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    actor: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+    is_admin: bool,
+    private_mode_state_dir: &Path,
+) -> Result<Option<MediaWorkerOutputResult>> {
     match spec.action {
         "enable_session" | "disable_session" | "pause" | "resume" => {
             execute_session_control(pool, spec, mode_id, actor, scope, preview_summary).await
         }
         "inspect" => execute_session_inspect(pool, spec, mode_id, scope, preview_summary).await,
-        _ => execute_worker_output(pool, spec, mode_id, scope, preview_summary, is_admin).await,
+        _ => {
+            execute_worker_output(
+                pool,
+                spec,
+                mode_id,
+                scope,
+                preview_summary,
+                is_admin,
+                private_mode_state_dir,
+            )
+            .await
+        }
     }
 }
 
@@ -307,7 +344,52 @@ pub(super) async fn execute_worker_output(
     scope: &mut serde_json::Map<String, serde_json::Value>,
     preview_summary: &mut serde_json::Value,
     is_admin: bool,
+    private_mode_state_dir: &Path,
 ) -> Result<Option<MediaWorkerOutputResult>> {
+    let session_scope = scope
+        .get("session_scope")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("default");
+    let gate = crate::sources::session_gate::evaluate_capture_gate(
+        Some(pool),
+        private_mode_state_dir,
+        spec.source_id,
+        mode_id,
+        session_scope,
+    )
+    .await;
+    if gate.is_suspended() {
+        let executor_state = "media_capture_blocked_private_mode";
+        let detail = serde_json::json!({
+            "reason": gate.reason_label(),
+            "source_id": spec.source_id,
+            "mode_id": mode_id,
+            "session_scope": session_scope,
+        });
+        scope.insert(
+            "executor_state".to_string(),
+            serde_json::json!(executor_state),
+        );
+        scope.insert("capture_gate".to_string(), detail.clone());
+        let preview = preview_summary
+            .as_object_mut()
+            .expect("package operation preview is an object");
+        preview.insert(
+            "executor_state".to_string(),
+            serde_json::json!(executor_state),
+        );
+        preview.insert("capture_gate".to_string(), detail);
+        return Ok(Some(MediaWorkerOutputResult {
+            status: OperationStatus::Cancelled,
+            message: format!(
+                "{}; on-demand capture blocked by {}",
+                spec.surface,
+                gate.reason_label()
+            ),
+            duration_ms: Some(0),
+        }));
+    }
+
     let Some(worker_output) = resolve_media_worker_output(scope, preview_summary, is_admin).await?
     else {
         return Ok(None);
@@ -385,24 +467,15 @@ pub(super) async fn execute_worker_output(
                     "material_class": package.material_class().as_str()
                 }
             }));
-    let mut material_record = pool.source_materials().register_material(material).await?;
     let total_bytes = i64::try_from(worker_output.bytes.len()).map_err(|error| {
         SinexError::validation("media worker output is too large to record")
             .with_std_error(&error)
             .with_operation("ops.start")
     })?;
-    // finalize_in_flight, not a bare total_bytes-only UPDATE (sinex-k22c): the
-    // raw UPDATE left the material permanently at status='sensing' with no
-    // Completed transition/end_time.
-    pool.source_materials()
-        .finalize_in_flight(material_record.id.into(), None, None, None, Some(total_bytes))
-        .await
-        .map_err(|error| {
-            SinexError::database("Failed to finalize media worker output material")
-                .with_context("material_id", material_record.id.to_string())
-                .with_std_error(&error)
-        })?;
-    material_record.total_bytes = Some(total_bytes);
+    let material_record = pool
+        .source_materials()
+        .register_material_with_total_bytes(material, total_bytes)
+        .await?;
 
     let dispatch = crate::sources::dispatch::default_parser_dispatch();
     let outcome = dispatch(
@@ -418,17 +491,26 @@ pub(super) async fn execute_worker_output(
             .with_operation("ops.start")
     })?;
 
-    let mut admitted_event_ids = Vec::new();
-    for intent in outcome.events {
-        let event = parsed_material_intent_to_event(
-            intent,
-            Id::<SourceMaterial>::from_uuid(material_record.id),
-        )?;
-        let persisted = pool.events().insert(event).await?;
-        if let Some(id) = persisted.id {
-            admitted_event_ids.push(id.to_string());
-        }
-    }
+    let events = outcome
+        .events
+        .into_iter()
+        .map(|intent| {
+            parsed_material_intent_to_event(
+                intent,
+                Id::<SourceMaterial>::from_uuid(material_record.id),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let persisted_events = super::redact_and_persist_events(pool, events).await?;
+    let admitted_event_ids: Vec<String> = persisted_events
+        .iter()
+        .map(|event| {
+            event
+                .id
+                .map(|id| id.to_uuid().to_string())
+                .ok_or_else(|| SinexError::invalid_state("persisted media event missing identity"))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     scope.insert(
         "executor_state".to_string(),
@@ -717,7 +799,7 @@ async fn execute_media_worker_command(
 /// local-model-batch coverage.
 fn worker_budget_block(
     request: &MediaWorkerCommandRequest,
-    duration_ms: i32,
+    duration_ms: i64,
     timed_out: bool,
 ) -> serde_json::Value {
     let timeout_ms = request.timeout().as_millis();
@@ -830,3 +912,7 @@ fn validate_media_worker_output_size(byte_len: usize) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "media_test.rs"]
+mod tests;

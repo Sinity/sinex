@@ -8,6 +8,10 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, evaluate_runtime_liveness,
+};
 
 use crate::client::GatewayClient;
 use crate::fmt::{format_heartbeat_age, print_finite_envelope};
@@ -36,21 +40,27 @@ pub struct RuntimePresenceCommand {
 
 impl RuntimePresenceCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let modules = client.runtime_list_active(300).await?.modules;
+        let stale_after_secs = DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
+        let modules = client.runtime_list_active(stale_after_secs).await?.modules;
 
         let enriched: Vec<EnrichedRuntimeInfo> = modules
             .into_iter()
             .filter(|info| role_matches(info.module_kind, self.role))
             .map(|info| {
                 let now = Timestamp::now();
-                let healthy = info
-                    .last_heartbeat_at
-                    .is_some_and(|hb| (now - hb).whole_seconds() < 60);
-                let stale = info.last_heartbeat_at.is_some() && !healthy;
+                let liveness = evaluate_runtime_liveness(
+                    RuntimeLivenessSignals {
+                        run_status: Some(info.status.as_str()),
+                        health_status: None,
+                        last_heartbeat_at: info.last_heartbeat_at,
+                        last_output_at: None,
+                    },
+                    RuntimeLivenessPolicy::new(stale_after_secs),
+                    now,
+                );
                 EnrichedRuntimeInfo {
                     info,
-                    healthy,
-                    stale,
+                    liveness: liveness.status,
                 }
             })
             .collect();
@@ -80,8 +90,7 @@ fn role_matches(kind: ModuleKind, role: Option<RuntimeModuleRole>) -> bool {
 
 pub(crate) struct EnrichedRuntimeInfo {
     pub(crate) info: RuntimeInfo,
-    pub(crate) healthy: bool,
-    pub(crate) stale: bool,
+    pub(crate) liveness: RuntimeLivenessStatus,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +109,7 @@ struct RuntimeModulePresenceRow {
     module_run_id: Option<String>,
     host: Option<String>,
     status: String,
+    liveness: RuntimeLivenessStatus,
     healthy: bool,
     stale: bool,
     last_heartbeat: Option<String>,
@@ -115,9 +125,7 @@ enum RuntimeHeartbeatSourceView {
     Output,
 }
 
-impl From<sinex_primitives::rpc::runtime::RuntimeHeartbeatSource>
-    for RuntimeHeartbeatSourceView
-{
+impl From<sinex_primitives::rpc::runtime::RuntimeHeartbeatSource> for RuntimeHeartbeatSourceView {
     fn from(value: sinex_primitives::rpc::runtime::RuntimeHeartbeatSource) -> Self {
         match value {
             sinex_primitives::rpc::runtime::RuntimeHeartbeatSource::Run => Self::Run,
@@ -145,7 +153,7 @@ pub(crate) fn runtime_modules_envelope(
     )
     .with_query_echo(serde_json::json!({
         "role": role.map(|role| role.to_string()),
-        "stale_after_seconds": 60,
+        "stale_after_seconds": DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
     }));
     envelope.caveats = runtime_modules_caveats(modules, role);
     envelope
@@ -160,12 +168,10 @@ fn runtime_module_presence_row(module: &EnrichedRuntimeInfo) -> RuntimeModulePre
         module_run_id: module.info.module_run_id.map(|id| id.to_string()),
         host: module.info.host.clone(),
         status: module.info.status.clone(),
-        healthy: module.healthy,
-        stale: module.stale,
-        last_heartbeat: module
-            .info
-            .last_heartbeat_at
-            .map(|hb| hb.format_rfc3339()),
+        liveness: module.liveness,
+        healthy: module.liveness.is_live(),
+        stale: matches!(module.liveness, RuntimeLivenessStatus::Stale),
+        last_heartbeat: module.info.last_heartbeat_at.map(|hb| hb.format_rfc3339()),
         started_at: module.info.started_at.map(|ts| ts.format_rfc3339()),
         heartbeat_source: module.info.heartbeat_source.into(),
     }
@@ -196,7 +202,7 @@ fn runtime_modules_caveats(
             .as_deref()
             .or(module.info.instance_id.as_deref())
             .unwrap_or_else(|| module.info.module_name.as_str());
-        if module.stale {
+        if matches!(module.liveness, RuntimeLivenessStatus::Stale) {
             caveats.push(runtime_module_caveat(
                 ReadinessCaveatId::WindowPartial,
                 format!(
@@ -205,14 +211,33 @@ fn runtime_modules_caveats(
                 id,
                 &format!("sinexctl runtime modules --role {}", role_hint(module.info.module_kind)),
             ));
-        } else if module.info.last_heartbeat_at.is_none() {
+        } else if matches!(
+            module.liveness,
+            RuntimeLivenessStatus::Unhealthy | RuntimeLivenessStatus::Stopped
+        ) {
+            caveats.push(runtime_module_caveat(
+                ReadinessCaveatId::WindowPartial,
+                format!(
+                    "runtime module `{id}` reports terminal liveness status {:?}",
+                    module.liveness
+                ),
+                id,
+                &format!(
+                    "sinexctl runtime modules --role {}",
+                    role_hint(module.info.module_kind)
+                ),
+            ));
+        } else if matches!(module.liveness, RuntimeLivenessStatus::Unknown) {
             caveats.push(runtime_module_caveat(
                 ReadinessCaveatId::CoverageUnmeasurable,
                 format!(
                     "runtime module `{id}` has no heartbeat timestamp; freshness cannot be measured"
                 ),
                 id,
-                &format!("sinexctl runtime modules --role {}", role_hint(module.info.module_kind)),
+                &format!(
+                    "sinexctl runtime modules --role {}",
+                    role_hint(module.info.module_kind)
+                ),
             ));
         }
     }
@@ -257,9 +282,18 @@ fn render_modules_table(modules: &[EnrichedRuntimeInfo]) {
     }
 
     let total = modules.len();
-    let healthy_count = modules.iter().filter(|module| module.healthy).count();
-    let stale_count = modules.iter().filter(|module| module.stale).count();
-    let unknown_count = total - healthy_count - stale_count;
+    let healthy_count = modules
+        .iter()
+        .filter(|module| module.liveness.is_live())
+        .count();
+    let stale_count = modules
+        .iter()
+        .filter(|module| matches!(module.liveness, RuntimeLivenessStatus::Stale))
+        .count();
+    let unknown_count = modules
+        .iter()
+        .filter(|module| matches!(module.liveness, RuntimeLivenessStatus::Unknown))
+        .count();
 
     // Summary header
     let mut summary_parts = Vec::new();
@@ -300,10 +334,15 @@ fn render_modules_table(modules: &[EnrichedRuntimeInfo]) {
             .unwrap_or_else(|| module.info.module_name.as_str());
         let module_kind = module.info.module_kind.to_string().to_lowercase();
 
-        let health = if module.healthy {
+        let health = if module.liveness.is_live() {
             style("healthy").green()
-        } else if module.stale {
+        } else if matches!(module.liveness, RuntimeLivenessStatus::Stale) {
             style("stale").yellow()
+        } else if matches!(
+            module.liveness,
+            RuntimeLivenessStatus::Unhealthy | RuntimeLivenessStatus::Stopped
+        ) {
+            style("unhealthy").red()
         } else {
             style("unknown").dim()
         };

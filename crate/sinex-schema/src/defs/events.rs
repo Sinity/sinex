@@ -662,6 +662,12 @@ impl Events {
                 Self::schema_name(),
                 Self::table_name()
             ),
+            // Blob tombstone checks use array containment on every live event.
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_events_associated_blob_ids ON {}.{} USING GIN (associated_blob_ids) WHERE associated_blob_ids IS NOT NULL",
+                Self::schema_name(),
+                Self::table_name()
+            ),
             // GIN index for JSONB payload with jsonb_path_ops for efficient path queries
             format!(
                 "CREATE INDEX IF NOT EXISTS ix_events_payload_gin ON {}.{} USING GIN (payload jsonb_path_ops)",
@@ -1071,6 +1077,11 @@ impl ArchivedEvents {
             // Cascade traversal from archive parents to live/archive descendants.
             format!(
                 "CREATE INDEX IF NOT EXISTS ix_archived_events_source_event_ids ON {}.{} USING GIN (source_event_ids) WHERE source_event_ids IS NOT NULL",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_associated_blob_ids ON {}.{} USING GIN (associated_blob_ids) WHERE associated_blob_ids IS NOT NULL",
                 Self::schema_name(),
                 Self::table_name()
             ),

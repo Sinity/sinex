@@ -9,6 +9,7 @@
 use super::control_protocol::{ControlCommandKind, RuntimeDrainComplete, control_command_kind};
 use super::listener::{
     CONFIRMED_EVENT_CHANNEL_CAPACITY, LISTENER_RETRY_DELAY, RunnerConfirmedEventHandler,
+    RunnerConfirmedEvent,
     TASK_SHUTDOWN_GRACE_PERIOD, create_checkpoint_kv, maybe_start_schema_listener,
     run_resubscribing_listener,
 };
@@ -21,7 +22,6 @@ use super::{
 use crate::runtime::{
     RuntimeResult, SinexError,
     checkpoint::CheckpointManager,
-    confirmation_handler::ProcessingModel,
     event_transport::{EventBatcherConfig, EventTransport, spawn_event_batcher},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     systemd_notify,
@@ -50,6 +50,14 @@ type SourceFactory<T> = Arc<dyn Fn() -> T + Send + Sync>;
 /// modules for replay-worker dispatch without the runner being generic.
 type ErasedSourceFactory = Arc<dyn Fn() -> Box<dyn ErasedRuntimeModule> + Send + Sync>;
 
+/// Shared cancellation state for the one replay worker a source runner may
+/// execute at a time.
+type ActiveScanCancel = Arc<std::sync::Mutex<Option<(Uuid, watch::Sender<bool>)>>>;
+
+/// The dispatched replay worker belongs to its parent runner, even though the
+/// command listener is the component that spawns it.
+type ReplayWorkerHandle = Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>;
+
 /// Unified runner for source drivers and automata.
 ///
 /// The runner is deliberately NON-generic over the module: it drives every
@@ -73,12 +81,12 @@ pub struct RuntimeRunner {
     consumer_handle: Option<tokio::task::JoinHandle<()>>,
     command_listener_shutdown: Option<watch::Sender<bool>>,
     command_listener_handle: Option<tokio::task::JoinHandle<()>>,
+    replay_worker_cancel: ActiveScanCancel,
+    replay_worker_handle: ReplayWorkerHandle,
     /// Per-source parse listener join handle (#1780). Started in service mode for
     /// source modules; aborted on shutdown. No shutdown channel: the listener
     /// holds a NATS subscription and is aborted directly (like `consumer_handle`).
     parse_listener_handle: Option<tokio::task::JoinHandle<()>>,
-    processing_model: ProcessingModel,
-    leader_state: Option<LeaderState>,
     /// sinex-li78 test/harness-only hook, paired with `confirmed_consumer_ready_tx`
     /// below: exposed to callers (via `take_confirmed_consumer_ready`) so a
     /// test can deterministically wait for the automaton bridge's
@@ -92,13 +100,6 @@ pub struct RuntimeRunner {
     /// bridge and handed to `JetStreamEventConsumer::run_with_ready_signal`.
     #[cfg(any(test, feature = "testing"))]
     confirmed_consumer_ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
-}
-
-struct LeaderState {
-    kv_client: sinex_primitives::coordination::CoordinationKvClient,
-    instance_id: String,
-    heartbeat_shutdown: tokio::sync::oneshot::Sender<()>,
-    heartbeat_handle: tokio::task::JoinHandle<()>,
 }
 
 #[cfg(feature = "messaging")]

@@ -1,5 +1,9 @@
 //! Schema verification commands.
 
+#[cfg(test)]
+#[path = "schema_test.rs"]
+mod schema_test;
+
 use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::json;
 use sinex_db::schema::backfill::{
@@ -58,10 +62,10 @@ pub enum SchemaBackfillSubcommand {
         /// Rows to scan before persisting progress
         #[arg(long, default_value_t = 50_000)]
         batch_size: i64,
-        /// Acknowledge that writers are quiesced for this first implementation slice
+        /// Confirm event writers are stopped; active writer transactions are rejected before the horizon is frozen
         #[arg(long)]
         assume_quiescent: bool,
-        /// Clear persisted progress and recompute from the current event horizon
+        /// Clear persisted progress and recompute from a fresh horizon (required after failure)
         #[arg(long)]
         restart: bool,
     },
@@ -77,9 +81,7 @@ impl XtaskCommand for SchemaCommand {
             SchemaSubcommand::StrictDiff { database_url } => {
                 execute_strict_diff(database_url.as_deref(), ctx).await
             }
-            SchemaSubcommand::Backfill { subcommand } => {
-                execute_backfill(subcommand, ctx).await
-            }
+            SchemaSubcommand::Backfill { subcommand } => execute_backfill(subcommand, ctx).await,
         }
     }
 
@@ -167,7 +169,7 @@ async fn execute_backfill_run(
                 format!("schema backfill `{key}` requires quiescent writers"),
             )
             .with_suggestion(format!(
-                "Stop or quiesce event writers, then rerun `xtask schema backfill run {key} --assume-quiescent`."
+                "Stop replay and ingest writers, wait for their transactions to finish, then rerun `xtask schema backfill run {key} --assume-quiescent`."
             )),
         )
         .with_duration(ctx.elapsed()));
@@ -190,8 +192,8 @@ async fn execute_backfill_run(
 
     Ok(CommandResult::success()
         .with_message(format!(
-            "schema backfill `{}` is {} ({})",
-            status.backfill_key, status.status, status.phase
+            "schema backfill `{}` is {:?} ({})",
+            status.backfill_key, status.execution_state, status.phase
         ))
         .with_data(json!({ "backfill": status }))
         .with_duration(ctx.elapsed()))

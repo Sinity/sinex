@@ -24,6 +24,10 @@ pub(super) const SQLSTATE_PROGRAM_LIMIT_EXCEEDED_CLASS: &str = "54";
 pub(super) const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
 pub(super) const EVENTS_SOURCE_MATERIAL_ID_FKEY: &str = "events_source_material_id_fkey";
 const NON_LIVE_DERIVED_PARENT_ERROR_FRAGMENT: &str = "non-live source_event_ids";
+const DETERMINISTIC_ROW_VALIDATION_FRAGMENTS: [&str; 2] = [
+    "validated event missing ts_orig",
+    "failed to serialize event claim_support",
+];
 
 pub(super) fn is_source_material_fk_constraint_name(value: &str) -> bool {
     value == EVENTS_SOURCE_MATERIAL_ID_FKEY
@@ -90,7 +94,7 @@ pub(super) fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool 
         return false;
     }
 
-    if is_non_live_derived_parent_validation(err) {
+    if is_non_live_derived_parent_validation(err) || is_deterministic_row_validation(err) {
         return true;
     }
 
@@ -103,6 +107,13 @@ pub(super) fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool 
             || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
             || value.starts_with(SQLSTATE_PROGRAM_LIMIT_EXCEEDED_CLASS)
     })
+}
+
+fn is_deterministic_row_validation(err: &SinexError) -> bool {
+    err.kind() == SinexErrorKind::Validation
+        && DETERMINISTIC_ROW_VALIDATION_FRAGMENTS
+            .iter()
+            .any(|fragment| err.to_string().contains(fragment))
 }
 
 #[derive(Debug)]
@@ -188,7 +199,10 @@ impl RawEnvelopeSettlement {
     /// `child_count` of 0 must never reach here; callers ack an empty-intent
     /// message directly instead of constructing a settlement for it.
     pub(super) fn new(message: jetstream::Message, child_count: usize) -> Arc<Self> {
-        debug_assert!(child_count > 0, "RawEnvelopeSettlement requires at least one child");
+        debug_assert!(
+            child_count > 0,
+            "RawEnvelopeSettlement requires at least one child"
+        );
         Arc::new(Self {
             message,
             remaining: AtomicUsize::new(child_count),
@@ -212,9 +226,9 @@ impl RawEnvelopeSettlement {
             }
         }
 
-        let prev = self.remaining.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-            n.checked_sub(1)
-        });
+        let prev = self
+            .remaining
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
         let Ok(prev) = prev else {
             debug_assert!(false, "settle_child called more times than child_count");
             return Ok(());

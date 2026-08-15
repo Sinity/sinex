@@ -11,9 +11,10 @@ use sinex_primitives::views::{
 };
 use sinexd::runtime::content_store::{
     CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
-    cas_fsck::check_cas,
+    cas_fsck::{CasFsckOptions, check_cas_with_options},
     gc::{BlobGcReport, sweep_orphans_detailed},
 };
+use std::num::NonZeroUsize;
 
 use crate::Result;
 use crate::fmt::{CommandOutput, format_bytes, print_finite_envelope};
@@ -71,6 +72,12 @@ struct BlobSweepSummary {
     db_backed_entries: usize,
     orphaned_entries: usize,
     dropped_entries: usize,
+    staged_entries: usize,
+    protected_recent_entries: usize,
+    recheck_protected_entries: usize,
+    quarantined_entries: usize,
+    pending_delete_entries: usize,
+    restored_entries: usize,
     orphaned_keys: Vec<BlobOrphanEntry>,
 }
 
@@ -109,6 +116,12 @@ impl BlobSweepOrphansCommand {
             db_backed,
             orphaned,
             dropped,
+            staged,
+            protected_recent,
+            recheck_protected,
+            quarantined,
+            pending_deletes,
+            restored,
         } = report;
 
         let summary = BlobSweepSummary {
@@ -118,6 +131,12 @@ impl BlobSweepOrphansCommand {
             db_backed_entries: db_backed,
             orphaned_entries: orphaned,
             dropped_entries: dropped,
+            staged_entries: staged,
+            protected_recent_entries: protected_recent,
+            recheck_protected_entries: recheck_protected,
+            quarantined_entries: quarantined,
+            pending_delete_entries: pending_deletes,
+            restored_entries: restored,
             orphaned_keys: orphan_entries.into_iter().map(blob_orphan_entry).collect(),
         };
 
@@ -158,6 +177,30 @@ fn format_blob_sweep_summary(summary: &BlobSweepSummary) -> String {
         summary.orphaned_entries
     ));
     output.push_str(&format!("  Dropped Entries: {}\n", summary.dropped_entries));
+    output.push_str(&format!(
+        "  Staged Entries (retained): {}\n",
+        summary.staged_entries
+    ));
+    output.push_str(&format!(
+        "  Protected Recent Entries: {}\n",
+        summary.protected_recent_entries
+    ));
+    output.push_str(&format!(
+        "  Recheck-Protected Entries: {}\n",
+        summary.recheck_protected_entries
+    ));
+    output.push_str(&format!(
+        "  Quarantined Entries: {}\n",
+        summary.quarantined_entries
+    ));
+    output.push_str(&format!(
+        "  Pending Deletes: {}\n",
+        summary.pending_delete_entries
+    ));
+    output.push_str(&format!(
+        "  Restored Entries: {}\n",
+        summary.restored_entries
+    ));
     if !summary.orphaned_keys.is_empty() {
         output.push_str("  Orphaned Keys:\n");
         for orphan in &summary.orphaned_keys {
@@ -191,6 +234,18 @@ pub struct BlobFsckCommand {
     /// Remove orphaned CAS files instead of only reporting them.
     #[arg(long)]
     pub apply: bool,
+
+    /// Optional maximum wall-clock duration for one pass. Apply mode refuses a partial pass.
+    #[arg(long)]
+    pub max_seconds: Option<u64>,
+
+    /// Optional maximum aggregate bytes/sec read for cryptographic verification.
+    #[arg(long)]
+    pub verify_bytes_per_second: Option<u64>,
+
+    /// Inspect at most this many CAS entries. Sampled scans are incomplete.
+    #[arg(long)]
+    pub sample: Option<NonZeroUsize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -204,6 +259,17 @@ struct BlobFsckSummary {
     missing: usize,
     removed: usize,
     orphaned_bytes: u64,
+    protected_recent: usize,
+    staged: usize,
+    recheck_protected: usize,
+    quarantined: usize,
+    pending_deletes: usize,
+    restored: usize,
+    entries_scanned: usize,
+    bytes_verified: u64,
+    sample: Option<usize>,
+    incomplete: bool,
+    stop_reason: Option<String>,
     details: Vec<CasFileDetail>,
 }
 
@@ -217,6 +283,18 @@ struct CasFileDetail {
 }
 
 impl BlobFsckCommand {
+    fn cas_fsck_options(&self) -> CasFsckOptions {
+        CasFsckOptions {
+            max_runtime: self
+                .max_seconds
+                .map(|seconds| std::time::Duration::from_secs(seconds.max(1))),
+            max_entries: self.sample.map(NonZeroUsize::get),
+            verify_bytes_per_sec: self
+                .verify_bytes_per_second
+                .map(|bytes| bytes.max(1) as f64),
+        }
+    }
+
     pub async fn execute(&self, format: OutputFormat) -> Result<()> {
         let database_url = std::env::var("DATABASE_URL").map_err(|_| {
             eyre!("DATABASE_URL not set. Set it in your environment before running blob fsck.")
@@ -231,9 +309,10 @@ impl BlobFsckCommand {
         })
         .wrap_err_with(|| format!("open content-store root {}", self.content_store_path))?;
 
-        let (report, file_statuses) = check_cas(&pool, &content_store, self.apply)
-            .await
-            .wrap_err("CAS filesystem check")?;
+        let (report, file_statuses) =
+            check_cas_with_options(&pool, &content_store, self.apply, self.cas_fsck_options())
+                .await
+                .wrap_err("CAS filesystem check")?;
 
         let CasFsckReport {
             referenced,
@@ -243,6 +322,17 @@ impl BlobFsckCommand {
             missing,
             removed,
             orphaned_bytes,
+            protected_recent,
+            staged,
+            recheck_protected,
+            quarantined,
+            pending_deletes,
+            restored,
+            entries_scanned,
+            bytes_verified,
+            incomplete,
+            stop_reason,
+            ..
         } = report;
 
         let details: Vec<CasFileDetail> = file_statuses
@@ -266,6 +356,17 @@ impl BlobFsckCommand {
             missing,
             removed,
             orphaned_bytes,
+            protected_recent,
+            staged,
+            recheck_protected,
+            quarantined,
+            pending_deletes,
+            restored,
+            entries_scanned,
+            bytes_verified,
+            sample: self.sample.map(NonZeroUsize::get),
+            incomplete,
+            stop_reason: stop_reason.map(|reason| format!("{reason:?}")),
             details,
         };
 
@@ -291,10 +392,35 @@ fn format_blob_fsck_summary(summary: &BlobFsckSummary) -> String {
         "  Orphaned bytes: {}\n",
         format_bytes(summary.orphaned_bytes)
     ));
+    output.push_str(&format!(
+        "  Protected recent: {}\n",
+        summary.protected_recent
+    ));
+    output.push_str(&format!("  Staged (retained): {}\n", summary.staged));
+    output.push_str(&format!(
+        "  Recheck-protected: {}\n",
+        summary.recheck_protected
+    ));
+    output.push_str(&format!("  Quarantined: {}\n", summary.quarantined));
+    output.push_str(&format!("  Pending deletes: {}\n", summary.pending_deletes));
+    output.push_str(&format!("  Restored: {}\n", summary.restored));
     output.push_str(&format!("  Corrupt: {}\n", summary.corrupt));
     output.push_str(&format!("  Malformed: {}\n", summary.malformed));
     output.push_str(&format!("  Missing (DB, not disk): {}\n", summary.missing));
     output.push_str(&format!("  Removed: {}\n", summary.removed));
+    output.push_str(&format!("  Entries scanned: {}\n", summary.entries_scanned));
+    output.push_str(&format!(
+        "  Bytes verified: {}\n",
+        format_bytes(summary.bytes_verified)
+    ));
+    match summary.sample {
+        Some(sample) => output.push_str(&format!("  Sample entries: {sample}\n")),
+        None => output.push_str("  Sample entries: unlimited\n"),
+    }
+    output.push_str(&format!("  Incomplete: {}\n", summary.incomplete));
+    if let Some(reason) = &summary.stop_reason {
+        output.push_str(&format!("  Stop reason: {reason}\n"));
+    }
     for d in &summary.details {
         output.push_str(&format!(
             "    [{}] {}  {}  ({})\n",
@@ -747,12 +873,13 @@ fn blob_sweep_envelope(summary: BlobSweepSummary) -> ViewEnvelope<BlobSweepSumma
 fn blob_fsck_envelope(summary: BlobFsckSummary) -> ViewEnvelope<BlobFsckSummary> {
     let mode = summary.mode;
     let content_store_path = summary.content_store_path.clone();
-    let mut envelope = ViewEnvelope::new("sinexctl.ops.blob.fsck", summary).with_query_echo(
-        serde_json::json!({
+    let sample = summary.sample;
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.ops.blob.fsck", summary).with_query_echo(serde_json::json!({
             "mode": mode,
             "content_store_path": content_store_path,
-        }),
-    );
+            "sample": sample,
+        }));
     if envelope.payload.referenced == 0 && envelope.payload.details.is_empty() {
         envelope.caveats.push(blob_caveat(
             ReadinessCaveatId::CoverageUnmeasurable,
@@ -791,6 +918,21 @@ fn blob_fsck_envelope(summary: BlobFsckSummary) -> ViewEnvelope<BlobFsckSummary>
                 envelope.payload.corrupt, envelope.payload.malformed
             ),
             "blob.fsck.invalid",
+            "sinexctl ops blob fsck",
+        ));
+    }
+    if envelope.payload.incomplete {
+        let stop_reason = envelope
+            .payload
+            .stop_reason
+            .as_deref()
+            .unwrap_or("unspecified");
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::WindowPartial,
+            format!(
+                "blob fsck coverage is incomplete; the CAS scan stopped before complete coverage (stop reason: {stop_reason})"
+            ),
+            "blob.fsck.incomplete",
             "sinexctl ops blob fsck",
         ));
     }

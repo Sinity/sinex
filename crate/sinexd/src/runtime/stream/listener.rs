@@ -2,7 +2,7 @@
 //! loop, schema-broadcast cache hookup, and checkpoint KV bootstrap.
 
 use super::{SchemaBroadcastCache, SchemaBroadcastEntry};
-use crate::runtime::confirmation_handler::ConfirmedEventHandler;
+use crate::runtime::confirmation_handler::{ConfirmedEventCompletion, ConfirmedEventHandler};
 use crate::runtime::event_transport::EventTransport;
 use crate::runtime::{RuntimeResult, SinexError};
 use async_nats::jetstream::kv;
@@ -108,19 +108,43 @@ pub(super) async fn run_resubscribing_listener<S, E, Subscribe, SubscribeFut, Ha
 }
 
 pub(super) struct RunnerConfirmedEventHandler {
-    sender: mpsc::Sender<Event<JsonValue>>,
+    sender: mpsc::Sender<RunnerConfirmedEvent>,
+}
+
+pub(super) struct RunnerConfirmedEvent {
+    pub(super) event: Event<JsonValue>,
+    completion: oneshot::Sender<ConfirmedEventCompletion>,
+}
+
+impl RunnerConfirmedEvent {
+    pub(super) fn complete(self, outcome: ConfirmedEventCompletion) {
+        // The consumer can stop while the runner finishes a batch. Its dropped
+        // receipt is harmless: the message remains unacknowledged and is safe
+        // to redeliver on the next consumer run.
+        let _ = self.completion.send(outcome);
+    }
 }
 
 impl RunnerConfirmedEventHandler {
-    pub(super) fn new(sender: mpsc::Sender<Event<JsonValue>>) -> Self {
+    pub(super) fn new(sender: mpsc::Sender<RunnerConfirmedEvent>) -> Self {
         Self { sender }
     }
 }
 
 #[async_trait]
 impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
-    async fn handle_confirmed(&self, event: &Event<JsonValue>) -> RuntimeResult<()> {
-        self.sender.send(event.clone()).await.map_err(|_| {
+    async fn handle_confirmed(
+        &self,
+        event: &Event<JsonValue>,
+        completion: oneshot::Sender<ConfirmedEventCompletion>,
+    ) -> RuntimeResult<()> {
+        self.sender
+            .send(RunnerConfirmedEvent {
+                event: event.clone(),
+                completion,
+            })
+            .await
+            .map_err(|_| {
             // Channel closed = receiver dropped = shutdown in progress.
             // Return a shutdown-specific error so callers can distinguish
             // normal shutdown from unexpected processing failures.

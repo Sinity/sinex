@@ -19,7 +19,7 @@ fn make_context(ts_orig: Timestamp) -> AutomatonContext {
         source: ActivityWindowSummaryPayload::SOURCE,
         event_type: ActivityWindowSummaryPayload::EVENT_TYPE,
         ts_orig: Some(ts_orig),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Replay,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
@@ -95,7 +95,9 @@ async fn session_closes_on_quiet_via_flush() -> TestResult<()> {
         ActivityWindowCloseReason::MaxDuration,
         ActivitySourceKind::Terminal,
     );
-    detector.accumulate(&mut state, w1, &make_context(start)).await?;
+    detector
+        .accumulate(&mut state, w1, &make_context(start))
+        .await?;
     let w2_end = start + Duration::seconds(120);
     let w2 = make_window(
         2,

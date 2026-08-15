@@ -15,7 +15,7 @@ where
         source: P::SOURCE,
         event_type: P::EVENT_TYPE,
         ts_orig: Some(ts_orig),
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

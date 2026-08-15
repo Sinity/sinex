@@ -2,14 +2,19 @@
 
 use crate::api::config::GatewayConfig;
 use crate::api::content_service::ContentService;
-use crate::api::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
+use crate::api::handlers::dlq::recover_stale_dlq_requeue_operations;
+use crate::api::replay_control::{
+    ReplayControlClient, ReplayControlError, spawn_replay_control_with_material_authority,
+};
 use crate::event_engine::policy::PolicyEngine;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
-use sinex_db::create_pool_with_config;
+use sinex_db::validation::{EventValidator, SchemaCompilationFailure};
+use sinex_db::{DbPoolExt, create_pool_with_config};
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_primitives::{
     Result as SinexResult,
+    RuntimeLivenessAggregate, RuntimeLivenessPolicy, Timestamp,
     coordination::CoordinationKvClient,
     environment as sinex_environment,
     error::SinexError,
@@ -64,10 +69,14 @@ const REPLAY_CONTROL_CONNECT_BACKOFF_BASE: Duration = Duration::from_millis(100)
 const REPLAY_CONTROL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(1);
 
 async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> SinexResult<()> {
-    const STALE_EXECUTING_THRESHOLD: Duration = Duration::from_mins(10);
+    // ServiceContainer is constructed once per process start, before any
+    // replay can be executing in this process. A restart immediately after a
+    // committed archive, including the configured RestartSec window, must
+    // therefore recover every running replay journal.
+    const STARTUP_RECOVERY_THRESHOLD: Duration = Duration::ZERO;
 
     match replay
-        .recover_stale_executing(STALE_EXECUTING_THRESHOLD)
+        .recover_stale_executing(STARTUP_RECOVERY_THRESHOLD)
         .await
     {
         Ok(0) => Ok(()),
@@ -83,7 +92,46 @@ async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> SinexRe
         )
         .with_operation("gateway.recover_stale_replay_operations")
         .with_source(error.to_string())),
+    }?;
+
+    // A compensation failure can leave a terminal Failed replay with durable
+    // archive rows. It is not covered by stale-state recovery because there
+    // is no live executor to classify as stale. Reconcile this debt in bounded
+    // pages before the gateway starts serving requests.
+    const ARCHIVE_RECOVERY_PAGE_SIZE: i64 = 32;
+    loop {
+        let debt = replay
+            .pool()
+            .state()
+            .list_failed_replay_archive_debt(ARCHIVE_RECOVERY_PAGE_SIZE)
+            .await
+            .map_err(|error| {
+                SinexError::service(
+                    "Failed to census terminal replay archive recovery debt on startup",
+                )
+                .with_operation("gateway.recover_failed_replay_archive_debt")
+                .with_source(error.to_string())
+            })?;
+        if debt.is_empty() {
+            break;
+        }
+        for replay_operation_id in debt {
+            replay
+                .pool()
+                .state()
+                .recover_replay_archive("system:sinexd-startup-recovery", replay_operation_id)
+                .await
+                .map_err(|error| {
+                    SinexError::service(
+                        "Failed to recover terminal replay archive debt on startup",
+                    )
+                    .with_operation("gateway.recover_failed_replay_archive_debt")
+                    .with_id("replay_operation_id", replay_operation_id.to_string())
+                    .with_source(error.to_string())
+                })?;
+        }
     }
+    Ok(())
 }
 
 impl ServiceContainer {
@@ -166,6 +214,7 @@ impl ServiceContainer {
                 &nats_config,
                 replay.clone(),
                 config.replay_control_timeout(),
+                content_store.clone(),
             )
             .await?,
         );
@@ -192,7 +241,7 @@ impl ServiceContainer {
         // Get environment for handler operations
         let env = sinex_environment::environment();
 
-        Ok(Self {
+        let services = Self {
             config: Arc::new(config.clone()),
             pool_max_connections: [
                 content_pool.options().get_max_connections(),
@@ -209,13 +258,22 @@ impl ServiceContainer {
             nats_client,
             env,
             sse_bus: Arc::new(OnceLock::new()),
-        })
+        };
+
+        recover_stale_dlq_requeue_operations(&services).await?;
+        Ok(services)
     }
 
     /// Get NATS client if available
     #[must_use]
     pub fn nats_client(&self) -> Option<&async_nats::Client> {
         self.nats_client.as_ref()
+    }
+
+    /// Resolved namespace shared by gateway NATS read surfaces.
+    #[must_use]
+    pub fn nats_namespace(&self) -> Option<&str> {
+        self.config.namespace.as_deref()
     }
 
     /// Get Sinex environment
@@ -500,49 +558,18 @@ impl ServiceContainer {
         let raw_ingest_dlq = self.probe_raw_ingest_dlq_pressure().await;
         let replay = self.replay_control_status();
         let sse_confirmation = self.sse_confirmation_status();
-        let mut degradation_reasons = Vec::new();
-
-        if !db_ok {
-            degradation_reasons.push("database unreachable".to_string());
-        }
-        if !nats.connected {
-            degradation_reasons.push("NATS unavailable".to_string());
-        }
-        if !replay.connected {
-            degradation_reasons.push(if replay.enabled {
-                "replay control disconnected".to_string()
-            } else {
-                "replay control unavailable".to_string()
-            });
-        }
-        if raw_ingest_dlq.status == GatewayHealthStatus::Degraded {
-            degradation_reasons.push(raw_ingest_dlq.detail.clone());
-        }
-        if !sse_confirmation.running {
-            degradation_reasons.push("SSE confirmation bus not running".to_string());
-        } else if sse_confirmation.degraded {
-            degradation_reasons.push("SSE confirmation fan-out degraded".to_string());
-        }
-
-        let healthy = db_ok
-            && nats.connected
-            && raw_ingest_dlq.status != GatewayHealthStatus::Degraded
-            && replay.connected
-            && !sse_confirmation.degraded;
-        // Gateway is ready to serve end-to-end RPC traffic only when both
-        // the database (query/write path) and NATS (event publishing path)
-        // are reachable. Replay control is coordination-only and does not
-        // gate serving.
-        let serving = db_ok && nats.connected;
-        let status = if !db_ok {
-            GatewayHealthStatus::Unhealthy
-        } else if healthy {
-            GatewayHealthStatus::Healthy
-        } else {
-            GatewayHealthStatus::Degraded
+        let runtime_liveness = match self.pool().state().list_runtime_liveness_evidence().await {
+            Ok(evidence) => RuntimeLivenessAggregate::evaluate(
+                evidence,
+                RuntimeLivenessPolicy::default(),
+                Timestamp::now(),
+            ),
+            Err(error) => RuntimeLivenessAggregate::unavailable(format!(
+                "runtime liveness query failed: {error}"
+            )),
         };
-        GatewayHealthReport {
-            status,
+
+        let mut report = aggregate_gateway_health_report(
             db_ok,
             db_latency_ms,
             db_detail,
@@ -550,10 +577,127 @@ impl ServiceContainer {
             raw_ingest_dlq,
             replay,
             sse_confirmation,
-            healthy,
-            serving,
-            degradation_reasons,
+            runtime_liveness,
+        );
+
+        if db_ok {
+            let probe = match tokio::time::timeout(
+                Duration::from_secs(5),
+                EventValidator::load_from_db_with_options(self.pool(), true),
+            )
+            .await
+            {
+                Ok(Ok(validator)) => Ok(validator.get_schema_compilation_failures()),
+                Ok(Err(error)) => Err(format!("schema validation health probe failed: {error}")),
+                Err(_) => Err("schema validation health probe timed out (>5s)".to_string()),
+            };
+            apply_schema_compilation_health(&mut report, probe);
         }
+        report
+    }
+}
+
+fn apply_schema_compilation_health(
+    report: &mut GatewayHealthReport,
+    probe: Result<Vec<SchemaCompilationFailure>, String>,
+) {
+    match probe {
+        Ok(failures) => report
+            .degradation_reasons
+            .extend(failures.into_iter().map(|failure| {
+                format!(
+                    "schema compilation failure: {} version {} (schema_id={}): {}",
+                    failure.name, failure.schema_version, failure.schema_id, failure.error
+                )
+            })),
+        Err(error) => report.degradation_reasons.push(error),
+    }
+    if !report.degradation_reasons.is_empty() {
+        report.healthy = false;
+        if report.status == GatewayHealthStatus::Healthy {
+            report.status = GatewayHealthStatus::Degraded;
+        }
+    }
+}
+
+pub(crate) fn aggregate_gateway_health_report(
+    db_ok: bool,
+    db_latency_ms: Option<u64>,
+    db_detail: String,
+    nats: NatsHealthProbe,
+    raw_ingest_dlq: RawIngestDlqHealth,
+    replay: ReplayControlStatus,
+    sse_confirmation: SseConfirmationStatus,
+    runtime_liveness: RuntimeLivenessAggregate,
+) -> GatewayHealthReport {
+    let mut degradation_reasons = Vec::new();
+
+    if !db_ok {
+        degradation_reasons.push("database unreachable".to_string());
+    }
+    if !nats.connected {
+        degradation_reasons.push("NATS unavailable".to_string());
+    }
+    if !replay.connected {
+        degradation_reasons.push(if replay.enabled {
+            "replay control disconnected".to_string()
+        } else {
+            "replay control unavailable".to_string()
+        });
+    }
+    if raw_ingest_dlq.status == GatewayHealthStatus::Degraded {
+        degradation_reasons.push(raw_ingest_dlq.detail.clone());
+    }
+    if !sse_confirmation.running {
+        degradation_reasons.push("SSE confirmation bus not running".to_string());
+    } else if sse_confirmation.degraded {
+        degradation_reasons.push("SSE confirmation fan-out degraded".to_string());
+    }
+    if !runtime_liveness.healthy {
+        degradation_reasons.push(
+            runtime_liveness.observation_error.clone().unwrap_or_else(|| {
+                format!(
+                    "runtime liveness: {} unhealthy, {} stale, {} degraded, {} unknown",
+                    runtime_liveness.unhealthy_count,
+                    runtime_liveness.stale_count,
+                    runtime_liveness.degraded_count,
+                    runtime_liveness.unknown_count,
+                )
+            }),
+        );
+    }
+
+    let healthy = db_ok
+        && nats.connected
+        && raw_ingest_dlq.status != GatewayHealthStatus::Degraded
+        && replay.connected
+        && !sse_confirmation.degraded
+        && runtime_liveness.healthy;
+    // Gateway is ready to serve end-to-end RPC traffic only when both
+    // the database (query/write path) and NATS (event publishing path)
+    // are reachable. Replay control is coordination-only and does not
+    // gate serving.
+    let serving = db_ok && nats.connected;
+    let status = if !db_ok || runtime_liveness.status == GatewayHealthStatus::Unhealthy {
+        GatewayHealthStatus::Unhealthy
+    } else if healthy {
+        GatewayHealthStatus::Healthy
+    } else {
+        GatewayHealthStatus::Degraded
+    };
+    GatewayHealthReport {
+        status,
+        db_ok,
+        db_latency_ms,
+        db_detail,
+        nats,
+        raw_ingest_dlq,
+        replay,
+        sse_confirmation,
+        runtime_liveness,
+        healthy,
+        serving,
+        degradation_reasons,
     }
 }
 
@@ -587,6 +731,9 @@ pub struct GatewayHealthReport {
     pub replay: ReplayControlStatus,
     /// SSE confirmation fan-out status
     pub sse_confirmation: SseConfirmationStatus,
+    /// Canonically evaluated runtime evidence. This affects overall health but
+    /// not infrastructure-only readiness.
+    pub runtime_liveness: RuntimeLivenessAggregate,
     /// True only when the gateway and its coordination dependencies are fully healthy.
     pub healthy: bool,
     /// Whether the gateway is ready to serve end-to-end RPC traffic.
@@ -603,6 +750,7 @@ async fn connect_replay_control_with_backoff(
     nats_config: &sinex_primitives::nats::NatsConnectionConfig,
     replay: Arc<ReplayStateMachine>,
     request_timeout: Duration,
+    material_authority: Arc<ContentStoreManager>,
 ) -> SinexResult<ReplayControlClient> {
     let mut attempt = 0usize;
     let mut backoff = REPLAY_CONTROL_CONNECT_BACKOFF_BASE;
@@ -615,7 +763,12 @@ async fn connect_replay_control_with_backoff(
                     .with_operation("gateway.connect_nats")
                     .with_source(err.to_string())
             })?;
-            spawn_replay_control(replay.clone(), nats_client, request_timeout)
+            spawn_replay_control_with_material_authority(
+                replay.clone(),
+                nats_client,
+                request_timeout,
+                material_authority.clone(),
+            )
                 .await
                 .map_err(|err| {
                     SinexError::service("Failed to initialize replay control")

@@ -1,11 +1,15 @@
 use super::*;
 use crate::client::ClientConfig;
+use crate::client::RetryConfig;
 use ratatui::backend::TestBackend;
-use sinex_primitives::domain::OperationStatus;
+use sinex_primitives::domain::{ModuleKind, ModuleName, OperationStatus};
+use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPressureSignal};
+use sinex_primitives::rpc::runtime::RuntimeHeartbeatSource;
 use sinex_primitives::views::{
     CaveatView, CoverageGapView, EventSourceView, EventTimestampView, PrivacyStateView,
     SinexObjectRef, SourcePrivacyPosture,
 };
+use sinex_primitives::{RuntimePressureAction, RuntimePressureLevel};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -152,6 +156,8 @@ async fn source_detail_renders_shared_coverage_actions() -> TestResult<()> {
         loading: false,
         last_refresh: Instant::now(),
         error: None,
+        refresh_errors: Vec::new(),
+        refresh_state: RefreshState::default(),
         selected_index: 0,
         show_help: false,
         copy_menu_open: false,
@@ -392,7 +398,10 @@ fn mode_fixture() -> SourceModeStatusView {
         transport: "direct".to_string(),
         delivery: "synchronous".to_string(),
         ordering: "input_order".to_string(),
-        replayable: true,
+        replayability_class: "retained_material".to_string(),
+        catch_up_authority: "source_material".to_string(),
+        accepted_loss_policy: serde_json::json!("none"),
+        transport_replayable: true,
         dlq: false,
         backpressure: false,
         privacy_context: "metadata".to_string(),
@@ -601,4 +610,174 @@ fn buffer_to_text(buffer: &ratatui::buffer::Buffer) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[sinex_test]
+async fn tui_module_liveness_uses_canonical_policy_and_run_status() -> TestResult<()> {
+    let now = Timestamp::now();
+    let mut module = RuntimeInfo {
+        module_name: ModuleName::new("fixture-module"),
+        module_kind: ModuleKind::Source,
+        version: "test".to_string(),
+        description: None,
+        service_name: None,
+        instance_id: None,
+        module_run_id: None,
+        host: None,
+        status: "running".to_string(),
+        last_heartbeat_at: Some(now),
+        started_at: Some(now),
+        heartbeat_source: RuntimeHeartbeatSource::Run,
+    };
+    assert_eq!(module_liveness(&module, now), RuntimeLivenessStatus::Healthy);
+
+    module.status = "draining".to_string();
+    assert_eq!(module_liveness(&module, now), RuntimeLivenessStatus::Degraded);
+
+    module.status = "running".to_string();
+    module.last_heartbeat_at = Some(now - time::Duration::seconds(301));
+    assert_eq!(module_liveness(&module, now), RuntimeLivenessStatus::Stale);
+
+    module.last_heartbeat_at = Some(now);
+    module.status = "failed".to_string();
+    assert_eq!(module_liveness(&module, now), RuntimeLivenessStatus::Unhealthy);
+    Ok(())
+}
+
+#[sinex_test]
+async fn tui_refresh_marks_gateway_up_and_down_differently() -> TestResult<()> {
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = match serde_json::from_slice(&request.body) {
+                Ok(body) => body,
+                Err(error) => {
+                    return ResponseTemplate::new(400).set_body_string(error.to_string());
+                }
+            };
+            ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "result": if body["method"] == "system.version" { json!("fixture-up") } else { json!({}) }
+            }))
+        })
+        .mount(&server)
+        .await;
+
+    let config = ClientConfig {
+        url: server.uri(),
+        token: Some("fixture-token".to_string()),
+        insecure: true,
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
+        ..ClientConfig::default()
+    };
+    let mut up = App::new(GatewayClient::new(config)?, Tab::Dashboard, 0);
+    up.refresh().await;
+    assert_eq!(up.gateway_version, "fixture-up");
+    assert!(
+        up.refresh_state.panels[&RefreshPanel::Gateway]
+            .last_success
+            .is_some()
+    );
+    assert!(!up.refresh_state.is_unavailable(RefreshPanel::Gateway));
+
+    let down_config = ClientConfig {
+        url: "http://127.0.0.1:9".to_string(),
+        token: Some("fixture-token".to_string()),
+        insecure: true,
+        timeout: 1,
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
+        ..ClientConfig::default()
+    };
+    let mut down = App::new(GatewayClient::new(down_config)?, Tab::Dashboard, 0);
+    down.refresh().await;
+    assert_eq!(down.gateway_version, "unknown");
+    assert!(down.refresh_state.is_unavailable(RefreshPanel::Gateway));
+    assert!(down.refresh_state.is_unavailable(RefreshPanel::Modules));
+    assert!(
+        down.error
+            .as_deref()
+            .is_some_and(|error| error.contains("Failed to connect"))
+    );
+    assert_ne!(up.gateway_version, down.gateway_version);
+    Ok(())
+}
+
+#[sinex_test]
+async fn tui_surfaces_multiple_panel_failures_and_stale_titles() -> TestResult<()> {
+    let mut app = App::new(
+        GatewayClient::new(ClientConfig {
+            token: Some("fixture-token".to_string()),
+            ..ClientConfig::default()
+        })?,
+        Tab::Dashboard,
+        0,
+    );
+    app.modules.push(RuntimeInfo {
+        module_name: ModuleName::new("fixture-module"),
+        module_kind: ModuleKind::Source,
+        version: "test".to_string(),
+        description: None,
+        service_name: None,
+        instance_id: None,
+        module_run_id: None,
+        host: None,
+        status: "running".to_string(),
+        last_heartbeat_at: Some(Timestamp::now()),
+        started_at: Some(Timestamp::now()),
+        heartbeat_source: RuntimeHeartbeatSource::Run,
+    });
+    app.refresh_state.mark_success(RefreshPanel::Modules);
+    app.refresh_state.mark_success(RefreshPanel::Dlq);
+    app.refresh_state.mark_failure(RefreshPanel::Modules);
+    app.refresh_state.mark_failure(RefreshPanel::Dlq);
+    app.record_refresh_error("modules failed".to_string());
+    app.record_refresh_error("dlq failed".to_string());
+    app.error = Some(app.refresh_errors.join("; "));
+    assert!(
+        app.error.as_deref().is_some_and(|error| {
+            error.contains("modules failed") && error.contains("dlq failed")
+        })
+    );
+    assert_eq!(
+        app.panel_title("Modules", RefreshPanel::Modules),
+        "Modules [STALE]"
+    );
+    assert_eq!(
+        app.panel_title("Raw Ingest DLQ", RefreshPanel::Dlq),
+        "Raw Ingest DLQ [STALE]"
+    );
+
+    let dlq = DlqListResponse {
+        total_messages: 11,
+        total_bytes: 1024,
+        first_seq: 4,
+        last_seq: 14,
+        pressure_level: RuntimePressureLevel::Critical,
+        resource_pressure: DlqPressureSignal {
+            pressure_level: RuntimePressureLevel::Critical,
+            runtime_action: RuntimePressureAction::Throttle,
+            pending_messages: 11,
+            pending_bytes: 1024,
+            retry_batch_size: 10,
+            recommended_action: "ops dlq triage --tail 20".to_string(),
+            reason: "pressure requires paced triage".to_string(),
+        },
+        pending_sequence_span: 11,
+        recommended_action: "ops dlq triage --tail 20".to_string(),
+        action_reason: "pressure requires paced triage".to_string(),
+    };
+    app.dlq_stats = Some(dlq);
+    let mut terminal = Terminal::new(TestBackend::new(96, 24))?;
+    terminal.draw(|f| render_dlq(f, f.area(), &app))?;
+    let rendered = buffer_to_text(terminal.backend().buffer());
+    assert!(rendered.contains("Pressure: critical"));
+    assert!(rendered.contains("Recommended action: ops dlq triage --tail 20"));
+    assert!(rendered.contains("Action reason: pressure requires paced triage"));
+    Ok(())
 }

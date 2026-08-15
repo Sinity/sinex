@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
+use sinex_db::repositories::SourceDedupExampleRow;
 use sinex_primitives::Id;
 use sinex_primitives::domain::{HealthStatus, ModuleName, SourceIdentifier};
 use sinex_primitives::events::SourceMaterial;
@@ -8,7 +9,8 @@ use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::rpc::{method_catalog, methods};
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SubjectRef,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceRecoveryPolicy, SubjectRef,
+    all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, SourceCoverageListView,
@@ -39,6 +41,69 @@ fn session_record(
         observed_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     }
+}
+
+#[sinex_test]
+async fn source_status_dedup_summary_aggregates_durable_outcomes() -> xtask::TestResult<()> {
+    let breakdown = source_dedup_breakdown(vec![
+        SourceDedupBreakdownRow {
+            source: "fixture".to_string(),
+            event_type: "event.created".to_string(),
+            admitted: 4,
+            suppressed: 12,
+            superseded: 1,
+            failed: 0,
+            dlq: 0,
+            examples: vec![SourceDedupExampleRow {
+                source: "fixture".to_string(),
+                event_type: "event.created".to_string(),
+                outcome: "suppressed".to_string(),
+                candidate_event_id: uuid::Uuid::from_u128(1),
+                existing_event_id: Some(uuid::Uuid::from_u128(2)),
+            }],
+        },
+        SourceDedupBreakdownRow {
+            source: "other".to_string(),
+            event_type: "event.updated".to_string(),
+            admitted: 2,
+            suppressed: 1,
+            superseded: 3,
+            failed: 1,
+            dlq: 2,
+            examples: vec![SourceDedupExampleRow {
+                source: "other".to_string(),
+                event_type: "event.updated".to_string(),
+                outcome: "admitted".to_string(),
+                candidate_event_id: uuid::Uuid::from_u128(3),
+                existing_event_id: None,
+            }],
+        },
+    ]);
+    let summary = source_dedup_summary(&breakdown);
+
+    assert_eq!(breakdown.len(), 2);
+    assert_eq!(breakdown[0].source, "fixture");
+    assert_eq!(breakdown[0].event_type, "event.created");
+    assert_eq!(
+        breakdown[0].examples[0].candidate_event_ref,
+        uuid::Uuid::from_u128(1).to_string()
+    );
+    assert_eq!(breakdown[1].source, "other");
+    assert_eq!(breakdown[1].event_type, "event.updated");
+    assert_eq!(
+        breakdown[1].examples[0].candidate_event_ref,
+        uuid::Uuid::from_u128(3).to_string()
+    );
+    assert_eq!(summary.admitted, 6);
+    assert_eq!(summary.suppressed, 13);
+    assert_eq!(summary.superseded, 4);
+    assert_eq!(summary.failed, 1);
+    assert_eq!(summary.dlq, 2);
+    assert_eq!(summary.attempted(), 26);
+    let caveat = source_dedup_caveat(&summary).expect("abnormal suppression caveat");
+    assert_eq!(caveat.id, "import.abnormal_suppression_rate");
+    assert!(caveat.message.contains("13 suppressed of 26"));
+    Ok(())
 }
 
 #[sinex_test]
@@ -75,6 +140,7 @@ static CONTRACT: SourceContract = SourceContract {
     id: "fixture.source",
     namespace: "fixture",
     event_types: &[("fixture", "fixture.event")],
+    source_role: sinex_primitives::sources::SourceRole::Activity,
     privacy_tier: PrivacyTier::Sensitive,
     horizons: &[Horizon::Historical],
     retention: RetentionPolicy::Forever,
@@ -97,6 +163,7 @@ static BINDING: SourceRuntimeBinding = SourceRuntimeBinding::builder(
 .checkpoint_family(CheckpointFamily::AppendStream)
 .runtime_shape(RuntimeShape::OnDemand)
 .build_impact(SourceBuildImpact::ZERO)
+.recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
 .build();
 
 fn assert_action_rpc_methods_are_cataloged(
@@ -179,29 +246,17 @@ async fn source_coverage_view_marks_ready_when_catalog_material_and_events_exist
             .iter()
             .any(|action| action.id == "sources.readiness")
     );
+    let mode = view.modes.first().expect("fixture binding mode");
+    assert_eq!(mode.replayability_class, "append_stream");
+    assert_eq!(mode.catch_up_authority, "backing_store");
+    assert_eq!(mode.accepted_loss_policy["kind"], "no_silent_loss");
+    assert!(mode.transport_replayable);
     assert_action_rpc_methods_are_cataloged(CONTRACT.id, &view.actions)?;
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// sinex-hdnv finding #1 (CRITICAL, still open): readiness/continuity gap
-// detection is lifetime-count>0, never time-bounded. `source_coverage_view`
-// takes a `now: Timestamp` parameter, but tracing every use of `now` in the
-// function shows it is consulted ONLY inside `classify_emit_stall` (which
-// requires a live `runtime_observations` entry to exist at all) -- it is
-// NEVER compared against `last_event_at`/`last_material_at` in the
-// readiness/continuity/gap computation. A source with real historical
-// material and events from months/years ago, and zero current runtime
-// observation, is indistinguishable from a healthy currently-active source.
-//
-// This test is a CHARACTERIZATION test: it pins the CURRENT (buggy) behavior
-// so the bug is documented and won't regress silently, and so a future fix
-// has a concrete assertion to flip. It is not asserting desired behavior.
-// ---------------------------------------------------------------------------
-
 #[sinex_test]
-async fn source_coverage_view_reports_ready_for_stale_year_old_events_bug_pinned()
--> xtask::sandbox::TestResult<()> {
+async fn source_coverage_view_marks_historical_coverage_stale() -> xtask::sandbox::TestResult<()> {
     let long_ago = OffsetDateTime::now_utc() - time::Duration::days(400);
     let mut events = HashMap::new();
     events.insert(
@@ -235,75 +290,181 @@ async fn source_coverage_view_reports_ready_for_stale_year_old_events_bug_pinned
         Timestamp::now(),
     );
 
-    // BUG (sinex-hdnv #1): a source dead for 400+ days, with no current
-    // runtime observation, is reported identically to a healthy active one --
-    // Ready/Active with zero gaps. Once #1 is fixed (e.g. by comparing
-    // last_event_at/last_material_at against `now` with a staleness
-    // threshold), this test's assertions should be INVERTED to expect
-    // Stale/Gapped with a real gap entry, not Ready/Active/empty-gaps.
     assert_eq!(
         view.readiness,
-        SourceCoverageReadiness::Ready,
-        "documents sinex-hdnv #1: stale-but-historically-present source reports Ready"
+        SourceCoverageReadiness::Stale,
+        "historical coverage without a recent observation must not report Ready"
     );
     assert_eq!(
         view.continuity,
-        SourceCoverageContinuity::Active,
-        "documents sinex-hdnv #1: stale-but-historically-present source reports Active"
+        SourceCoverageContinuity::Stale,
+        "historical coverage without a recent observation must not report Active"
     );
     assert!(
-        view.gaps.is_empty(),
-        "documents sinex-hdnv #1: no trailing-gap is raised for a 400-day-dead source"
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_liveness_stale"),
+        "stale runtime liveness must be represented as a concrete coverage gap"
     );
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// The remaining sinex-hdnv findings (#3, #4, #5, #6, #7) are drafted as
-// scoped-but-not-implemented test shapes below, per the same
-// characterization-test approach as #1 above. Each names the exact function
-// to target and what fixture setup would prove/disprove the finding. Left
-// as #[ignore] rather than deleted, so a future pass can un-ignore and fill
-// in the body without re-deriving the investigation from scratch.
-// ---------------------------------------------------------------------------
-
 #[sinex_test]
-#[ignore = "sinex-hdnv #3: draft shape, not implemented -- see body for what's needed"]
-async fn gap_explain_false_all_clear_for_zero_material_family() -> xtask::sandbox::TestResult<()> {
-    // Target: sinex_source_gap_explain (crate/sinexd/src/api/handlers/sources.rs
-    // per the bead's citation -- confirm exact fn name/location first, this
-    // file only covers source_status.rs's own surface).
-    // Setup needed: a source FAMILY (per split_part(source,'.',1), e.g.
-    // "activitywatch") with literally zero materials and zero events -- no
-    // row at all in either aggregate, not just an old one.
-    // Assertion to characterize the bug: the explain response claims
-    // "coverage was present (no gap to explain)" for that family, i.e. total
-    // absence produces the strongest possible false all-clear.
-    // Also worth a second case: querying a namespace that's never existed
-    // (e.g. "desktop.activitywatch" vs the family-derived "activitywatch")
-    // per the bead's note that families are derived from split_part rather
-    // than contract namespaces.
-    unimplemented!("draft shape only -- see comment above for required setup")
+async fn source_coverage_view_uses_failed_run_status_with_fresh_evidence()
+-> xtask::sandbox::TestResult<()> {
+    let now = Timestamp::now();
+    let mut failed = terminal_bridge_status(now);
+    failed.module_name = ModuleName::new(CONTRACT.id);
+    failed.run_status = Some("failed".to_string());
+    failed.last_heartbeat_at = Some(now - time::Duration::seconds(5));
+    failed.last_output_at = Some(now - time::Duration::seconds(5));
+    let runtime = HashMap::from([(CONTRACT.id.to_string(), failed)]);
+
+    let view = source_coverage_view(
+        &CONTRACT,
+        &[&BINDING],
+        &HashMap::from([(
+            ("fixture".to_string(), "fixture.event".to_string()),
+            SourceEventAggregateRow {
+                source: "fixture".to_string(),
+                event_type: "fixture.event".to_string(),
+                event_count: 1,
+                last_event_at: Some(now.into()),
+            },
+        )]),
+        &HashMap::from([(
+            "fixture.source".to_string(),
+            SourceMaterialAggregateRow {
+                source_identifier: "fixture.source".to_string(),
+                material_count: 1,
+                last_material_at: Some(now.into()),
+            },
+        )]),
+        &runtime,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        now,
+    );
+
+    assert_eq!(view.readiness, SourceCoverageReadiness::Stale);
+    assert_eq!(
+        view.continuity,
+        SourceCoverageContinuity::Stale,
+        "failed run status must demote current continuity even with fresh evidence"
+    );
+    assert!(
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_liveness_unhealthy"),
+        "a failed run must remain unhealthy even when its last output is fresh"
+    );
+    Ok(())
 }
 
 #[sinex_test]
-#[ignore = "sinex-hdnv #4: draft shape, not implemented -- see body for what's needed"]
-async fn trailing_gap_after_last_material_chunk_is_not_detected() -> xtask::sandbox::TestResult<()>
-{
-    // Target: continuity.rs's gap/seam detection (build_report /
-    // classify_seam per CLAUDE.md's continuity.rs summary -- this file does
-    // not cover continuity.rs directly, a sibling continuity_test.rs would
-    // need to be created, none currently exists in this crate).
-    // Setup needed: two or more historical material chunks with a real
-    // internal seam BETWEEN them (already covered by existing gap logic per
-    // the bead), PLUS the last chunk's end-time set far in the past relative
-    // to "now" with nothing after it.
-    // Assertion to characterize the bug: gaps list only contains the
-    // between-chunk seam, nothing flags the trailing period from the last
-    // chunk's end to "now" as a gap, even though the source has clearly been
-    // silent for a long time since.
-    unimplemented!("draft shape only -- see comment above for required setup")
+async fn source_coverage_view_demotes_emit_stalled_live_source() -> xtask::sandbox::TestResult<()> {
+    let now = Timestamp::now();
+    let mut stalled = terminal_bridge_status(now);
+    stalled.module_name = ModuleName::new(CONTRACT.id);
+    stalled.current_health = Some(HealthStatus::Degraded);
+    stalled.health_reason = Some("emit rate stalled".to_string());
+    stalled.last_output_at = Some(now - time::Duration::seconds(1200));
+    stalled.recent_output_count = 0;
+    let runtime = HashMap::from([(CONTRACT.id.to_string(), stalled)]);
+
+    let view = source_coverage_view(
+        &CONTRACT,
+        &[&BINDING],
+        &HashMap::from([(
+            ("fixture".to_string(), "fixture.event".to_string()),
+            SourceEventAggregateRow {
+                source: "fixture".to_string(),
+                event_type: "fixture.event".to_string(),
+                event_count: 1,
+                last_event_at: Some(now.into()),
+            },
+        )]),
+        &HashMap::from([(
+            "fixture.source".to_string(),
+            SourceMaterialAggregateRow {
+                source_identifier: "fixture.source".to_string(),
+                material_count: 1,
+                last_material_at: Some(now.into()),
+            },
+        )]),
+        &runtime,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        now,
+    );
+
+    assert_eq!(view.readiness, SourceCoverageReadiness::Stale);
+    assert_eq!(view.continuity, SourceCoverageContinuity::Stale);
+    assert!(
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_binding_stalled")
+    );
+    Ok(())
 }
+
+#[sinex_test]
+async fn source_coverage_view_marks_dead_runtime_after_historical_output_stale()
+-> xtask::sandbox::TestResult<()> {
+    let now = Timestamp::now();
+    let mut dead = terminal_bridge_status(now);
+    dead.module_name = ModuleName::new(CONTRACT.id);
+    dead.current_health = None;
+    dead.health_changed_at = None;
+    dead.health_reason = None;
+    dead.last_heartbeat_at = None;
+    dead.last_output_at = Some(now - time::Duration::minutes(10));
+    dead.recent_output_count = 0;
+    let runtime = HashMap::from([(CONTRACT.id.to_string(), dead)]);
+
+    let view = source_coverage_view(
+        &CONTRACT,
+        &[&BINDING],
+        &HashMap::from([(
+            ("fixture".to_string(), "fixture.event".to_string()),
+            SourceEventAggregateRow {
+                source: "fixture".to_string(),
+                event_type: "fixture.event".to_string(),
+                event_count: 1,
+                last_event_at: Some(now.into()),
+            },
+        )]),
+        &HashMap::from([(
+            "fixture.source".to_string(),
+            SourceMaterialAggregateRow {
+                source_identifier: "fixture.source".to_string(),
+                material_count: 1,
+                last_material_at: Some(now.into()),
+            },
+        )]),
+        &runtime,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        now,
+    );
+
+    assert_eq!(view.readiness, SourceCoverageReadiness::Stale);
+    assert_eq!(view.continuity, SourceCoverageContinuity::Stale);
+    assert!(
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_liveness_stale")
+    );
+    Ok(())
+}
+
+// sinex-hdnv's zero-coverage and trailing-gap proofs live beside the helpers
+// they exercise: `sources_test.rs` and the DB continuity tests respectively.
+// The remaining cadence/readiness findings below are intentionally tracked as
+// drafts because they need source-contract-specific policy decisions.
 
 #[sinex_test]
 #[ignore = "sinex-hdnv #5: draft shape, not implemented -- see body for what's needed"]
@@ -323,8 +484,8 @@ async fn periodic_dump_classification_explains_away_real_outage() -> xtask::sand
 
 #[sinex_test]
 #[ignore = "sinex-hdnv #6: draft shape, not implemented -- see body for what's needed"]
-async fn continuous_capturer_reads_available_for_a_week_after_death() -> xtask::sandbox::TestResult<()>
-{
+async fn continuous_capturer_reads_available_for_a_week_after_death()
+-> xtask::sandbox::TestResult<()> {
     // Target: source_materials.rs's readiness computation (the "only real
     // recency check in the whole surface", per the bead -- a 7-day default
     // staleness window). Two related bugs to characterize in one test:
@@ -396,6 +557,7 @@ async fn status_view_request_filters_contracts_by_source_and_family() -> xtask::
         source: Some("browser.history".to_string()),
         family: None,
         exact_counts: false,
+        stale_after_secs: 300,
     });
     assert_eq!(by_source.len(), 1);
     assert_eq!(by_source[0].id, "browser.history");
@@ -404,6 +566,7 @@ async fn status_view_request_filters_contracts_by_source_and_family() -> xtask::
         source: None,
         family: Some("browser".to_string()),
         exact_counts: false,
+        stale_after_secs: 300,
     });
     let source_ids = by_family
         .iter()
@@ -417,10 +580,12 @@ async fn status_view_request_filters_contracts_by_source_and_family() -> xtask::
 
 #[sinex_test]
 async fn source_event_pairs_deduplicates_declared_event_pairs() -> xtask::TestResult<()> {
-    let (sources, event_types) = source_event_pairs(&[&CONTRACT, &CONTRACT]);
+    let pairs = source_event_pairs(&[&CONTRACT, &CONTRACT]);
 
-    assert_eq!(sources, vec!["fixture".to_string()]);
-    assert_eq!(event_types, vec!["fixture.event".to_string()]);
+    assert_eq!(
+        pairs,
+        vec![("fixture".to_string(), "fixture.event".to_string())]
+    );
     Ok(())
 }
 
@@ -430,6 +595,7 @@ async fn source_status_module_names_include_runtime_aliases() -> xtask::TestResu
         source: Some("browser.history".to_string()),
         family: None,
         exact_counts: false,
+        stale_after_secs: 300,
     });
 
     let module_names = source_status_module_names(&contracts);
@@ -462,18 +628,68 @@ async fn source_coverage_view_surfaces_missing_material_caveat() -> xtask::TestR
     assert_eq!(view.readiness, SourceCoverageReadiness::MissingMaterial);
     assert_eq!(view.continuity, SourceCoverageContinuity::Gapped);
     assert!(view.gaps.iter().any(|gap| gap.kind == "missing_material"));
+    assert!(view.caveats.iter().any(|caveat| caveat.id
+        == ReadinessCaveatId::SourceAbsent.as_str()
+        && caveat.message.contains("no source material")));
+    Ok(())
+}
+
+#[sinex_test]
+async fn registered_eventless_contract_with_no_evidence_is_explicitly_uncovered()
+-> xtask::TestResult<()> {
+    // Use the production inventory rather than a test-local descriptor: noop
+    // is an authoritative registered contract whose event_types are empty by
+    // design. Empty aggregate maps model the real zero-material,
+    // zero-event, zero-runtime-row case.
+    let contract = all_source_contracts()
+        .find(|contract| contract.id == "noop")
+        .expect("the production eventless noop contract must be registered");
+    assert!(contract.event_types.is_empty());
+    let bindings = source_runtime_bindings()
+        .filter(|binding| binding.source_id == contract.id)
+        .collect::<Vec<_>>();
+    assert!(
+        bindings.iter().any(|binding| !binding.proposed),
+        "the eventless contract should exercise the accepted-binding path"
+    );
+
+    let view = source_coverage_view_with_stale_after(
+        contract,
+        &bindings,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        300,
+        Timestamp::now(),
+    );
+
+    assert_eq!(view.source_id, "noop");
+    assert_eq!(view.material_count, 0);
+    assert_eq!(view.event_count, 0);
+    assert_eq!(view.readiness, SourceCoverageReadiness::MissingMaterial);
+    assert_eq!(view.continuity, SourceCoverageContinuity::Gapped);
+    assert_ne!(view.readiness, SourceCoverageReadiness::Ready);
+    assert_ne!(view.continuity, SourceCoverageContinuity::Active);
+    assert!(view.gaps.iter().any(|gap| gap.kind == "missing_material"));
+    assert!(view.gaps.iter().any(|gap| gap.kind == "missing_events"));
+    assert!(view.caveats.iter().any(|caveat| {
+        caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
+            && caveat.message.contains("no source material")
+    }));
     assert!(
         view.caveats
             .iter()
-            .any(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
-                && caveat.message.contains("no source material"))
+            .all(|caveat| !caveat.message.contains("coverage was present"))
     );
     Ok(())
 }
 
 #[sinex_test]
-async fn source_coverage_view_surfaces_missing_events_with_standard_caveat()
--> xtask::TestResult<()> {
+async fn source_coverage_view_surfaces_missing_events_with_standard_caveat() -> xtask::TestResult<()>
+{
     let now = OffsetDateTime::now_utc();
     let events = HashMap::new();
     let mut materials = HashMap::new();
@@ -501,12 +717,9 @@ async fn source_coverage_view_surfaces_missing_events_with_standard_caveat()
     assert_eq!(view.readiness, SourceCoverageReadiness::MissingEvents);
     assert_eq!(view.continuity, SourceCoverageContinuity::MaterialOnly);
     assert!(view.gaps.iter().any(|gap| gap.kind == "missing_events"));
-    assert!(
-        view.caveats
-            .iter()
-            .any(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
-                && caveat.message.contains("no live events"))
-    );
+    assert!(view.caveats.iter().any(|caveat| caveat.id
+        == ReadinessCaveatId::SourceAbsent.as_str()
+        && caveat.message.contains("no live events")));
     Ok(())
 }
 
@@ -526,6 +739,7 @@ async fn runtime_bridge_coverage_surfaces_unobserved_bridge_and_declared_actions
         id: "terminal.kitty-osc-live",
         namespace: "terminal",
         event_types: &[("shell.kitty", "command.executed")],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         privacy_tier: PrivacyTier::Sensitive,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
@@ -550,6 +764,10 @@ async fn runtime_bridge_coverage_surfaces_unobserved_bridge_and_declared_actions
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::live_observation(
+        "test bridge has no recoverable source history",
+        "sinex-r6d.8",
+    ))
     .build();
 
     let view = source_coverage_view(
@@ -1632,6 +1850,7 @@ async fn source_runtime_observation_requires_health_heartbeat_or_output() -> xta
     let now = Timestamp::now();
     let mut manifest_only = terminal_bridge_status(now);
     manifest_only.live = false;
+    manifest_only.run_status = None;
     manifest_only.last_heartbeat_at = None;
     manifest_only.current_health = None;
     manifest_only.health_changed_at = None;
@@ -1648,8 +1867,14 @@ async fn source_runtime_observation_requires_health_heartbeat_or_output() -> xta
     heartbeat.last_heartbeat_at = Some(now - time::Duration::seconds(5));
     assert!(source_status_has_runtime_evidence(&heartbeat));
 
-    let output = manifest_only.with_recent_output(now - time::Duration::seconds(30), 7);
+    let output = manifest_only
+        .clone()
+        .with_recent_output(now - time::Duration::seconds(30), 7);
     assert!(source_status_has_runtime_evidence(&output));
+
+    let mut failed = manifest_only;
+    failed.run_status = Some("failed".to_string());
+    assert!(source_status_has_runtime_evidence(&failed));
 
     Ok(())
 }
@@ -1918,6 +2143,7 @@ fn terminal_bridge_contract() -> SourceContract {
         id: "terminal.kitty-osc-live",
         namespace: "terminal",
         event_types: &[("shell.kitty", "command.executed")],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         privacy_tier: PrivacyTier::Sensitive,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
@@ -1954,6 +2180,10 @@ fn terminal_bridge_binding() -> SourceRuntimeBinding {
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::live_observation(
+        "test bridge has no recoverable source history",
+        "sinex-r6d.8",
+    ))
     .build()
 }
 
@@ -1962,6 +2192,7 @@ fn fs_contract() -> SourceContract {
         id: "fs",
         namespace: "filesystem",
         event_types: &[("fs-watcher", "file.created")],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         privacy_tier: PrivacyTier::Secret,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
@@ -1982,6 +2213,7 @@ fn fs_binding() -> SourceRuntimeBinding {
         .checkpoint_family(CheckpointFamily::AppendStream)
         .runtime_shape(RuntimeShape::Continuous)
         .build_impact(SourceBuildImpact::ZERO)
+        .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
         .build()
 }
 

@@ -29,7 +29,8 @@ pub use runtime_state::RuntimeContext;
 pub use stats::ProcessingStats;
 pub use time_horizon::TimeHorizon;
 pub use wire_types::{
-    ContinuousStart, MaterialReplayContext, ModuleKind, ReplayScopeFilters, ResolvedReplayMaterial,
+    ContinuousStart, MaterialReplayContext, ModuleKind, ReplayMaterialOccurrence,
+    ReplayScopeFilters, ResolvedReplayMaterial,
     RunnerLifecycle, RuntimeCapabilities, ScanArgs, ScanEstimate, ScanReport, SchemaBroadcastCache,
     SchemaBroadcastEntry, SourceScanAck, SourceScanCancel, SourceScanCommand, SourceScanProgress,
 };

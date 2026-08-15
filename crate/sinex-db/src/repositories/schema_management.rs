@@ -122,12 +122,7 @@ impl<'a> SchemaManagementRepository<'a> {
         for candidate in candidates {
             let key = candidate.key();
             if let Some(record) = existing.get(&key) {
-                if record
-                    .content_hash
-                    .as_ref()
-                    .is_some_and(|hash| hash == &candidate.content_hash)
-                    && record.is_active
-                {
+                if record.is_unchanged_for(&candidate) {
                     unchanged += 1;
                 } else {
                     self.converge_existing_schema(&candidate).await?;
@@ -847,6 +842,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 event_type,
                 schema_version,
                 content_hash,
+                schema_content,
                 is_active
             FROM sinex_schemas.event_payload_schemas
             "#
@@ -857,10 +853,23 @@ impl<'a> SchemaManagementRepository<'a> {
 
         let mut map = std::collections::HashMap::with_capacity(rows.len());
         for row in rows {
+            let live_content_hash = calculate_schema_content_hash(
+                &row.source,
+                &row.event_type,
+                &row.schema_version,
+                &row.schema_content,
+            )
+            .map_err(|error| {
+                SinexError::database(format!(
+                    "failed to calculate live schema content hash for {}/{}@{}: {error}",
+                    row.source, row.event_type, row.schema_version
+                ))
+            })?;
             map.insert(
                 (row.source, row.event_type, row.schema_version),
                 SchemaRecord {
-                    content_hash: Some(row.content_hash),
+                    content_hash: row.content_hash,
+                    live_content_hash,
                     is_active: row.is_active,
                 },
             );
@@ -979,6 +988,15 @@ impl SchemaCandidate {
 
 #[derive(Debug, Clone)]
 struct SchemaRecord {
-    content_hash: Option<String>,
+    content_hash: String,
+    live_content_hash: String,
     is_active: bool,
+}
+
+impl SchemaRecord {
+    fn is_unchanged_for(&self, candidate: &SchemaCandidate) -> bool {
+        self.is_active
+            && self.live_content_hash == candidate.content_hash
+            && self.content_hash == candidate.content_hash
+    }
 }

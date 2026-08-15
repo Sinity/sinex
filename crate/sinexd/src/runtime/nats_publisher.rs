@@ -190,7 +190,7 @@ impl NatsPublisher {
             nats_client,
             js,
             env,
-            namespace,
+            namespace: resolve_nats_namespace(namespace),
             semaphores: PublishSemaphores::new(
                 raw_event_concurrency,
                 telemetry_concurrency,
@@ -779,6 +779,16 @@ impl NatsPublisher {
             .store(true, Ordering::Release);
         Ok(())
     }
+}
+
+/// Canonical optional NATS namespace semantics.
+///
+/// An unset namespace and a blank CLI/environment value both select the
+/// un-namespaced topology. Keep this at the publisher boundary so every
+/// consumer can inherit the exact namespace used for event publication.
+#[must_use]
+pub fn resolve_nats_namespace(namespace: Option<String>) -> Option<String> {
+    namespace.filter(|value| !value.trim().is_empty())
 }
 
 async fn acquire_lane_permit(

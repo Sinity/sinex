@@ -1,5 +1,5 @@
 use sinex_primitives::{
-    source_contracts::{CheckpointFamily, RuntimeShape, SourceRuntimeBinding, SourceBuildImpact},
+    source_contracts::{CheckpointFamily, RuntimeShape, SourceRecoveryPolicy, SourceRuntimeBinding, SourceBuildImpact},
     subject_ref,
 };
 
@@ -14,5 +14,6 @@ fn main() {
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build();
 }

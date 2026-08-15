@@ -19,13 +19,33 @@ impl JetStreamConsumer {
         })
     }
 
-    #[instrument(skip(self, msg))]
-    pub(super) async fn prepare_events(
+    /// Admit and prepare every message returned by one pull in a shared
+    /// equivalence-key scope. Settlement remains per raw envelope, while the
+    /// admission classification sees sibling messages before persistence.
+    pub(super) async fn prepare_events_batch(
+        &self,
+        messages: Vec<jetstream::Message>,
+    ) -> EventEngineResult<Vec<PreparedEvent>> {
+        let payloads = messages
+            .iter()
+            .map(|message| message.payload.as_ref())
+            .collect::<Vec<_>>();
+        let decisions = self.admission.admit_intent_bytes_batch(&payloads).await?;
+        let mut prepared = Vec::new();
+        for (message, decisions) in messages.into_iter().zip(decisions) {
+            prepared.extend(
+                self.prepare_events_from_decisions(message, decisions)
+                    .await?,
+            );
+        }
+        Ok(prepared)
+    }
+
+    async fn prepare_events_from_decisions(
         &self,
         msg: jetstream::Message,
+        decisions: Vec<AdmissionDecision>,
     ) -> EventEngineResult<Vec<PreparedEvent>> {
-        let decisions = self.admission.admit_intent_bytes(&msg.payload).await?;
-
         // sinex-r6d.12: an intent with zero decisions (empty EventIntent.events)
         // has no children to settle through — ack it directly. Every other
         // path below goes through the shared RawEnvelopeSettlement so no
@@ -95,7 +115,10 @@ impl JetStreamConsumer {
                                  kept existing live interpretation and suppressed this revision"
                             ),
                             event_id: Some(admitted.event_id),
-                        };
+                            existing_event_id: Some(superseded_event_id),
+                            candidate: None,
+                        }
+                        .with_candidate(&admitted.event);
                         self.record_admission_suppression(&rejection).await;
                         self.settlement_registry.resolve(
                             admitted.event_id.into(),
@@ -172,7 +195,7 @@ impl JetStreamConsumer {
         &self,
         batch: &mut [PreparedEvent],
         ready_indices: &[usize],
-    ) -> EventEngineResult<()> {
+    ) -> EventEngineResult<Vec<usize>> {
         // Collect distinct materials that actually need resolution.
         let mut needed: Vec<Uuid> = Vec::new();
         for &idx in ready_indices {
@@ -188,7 +211,7 @@ impl JetStreamConsumer {
             }
         }
         if needed.is_empty() {
-            return Ok(());
+            return Ok(ready_indices.to_vec());
         }
 
         // Fetch timing + ledger once per material into a batch-local cache.
@@ -247,25 +270,54 @@ impl JetStreamConsumer {
             );
         }
 
-        // Assign the resolved value per event.
+        // Assign the resolved value per event. Material timing is source-native
+        // input, so it must pass the same lower-bound/future checks as an
+        // explicit parser timestamp after the readiness-gated lookup.
+        let mut valid_indices = Vec::with_capacity(ready_indices.len());
+        let mut rejected = Vec::new();
         for &idx in ready_indices {
+            let parsed_id = batch[idx].parsed_id;
             let event = &mut batch[idx].event;
             if event.ts_orig.is_some() {
+                valid_indices.push(idx);
                 continue;
             }
             let (material_id, anchor_byte) = match &event.provenance {
                 Provenance::Material {
                     id, anchor_byte, ..
                 } => (*id.as_uuid(), *anchor_byte),
-                Provenance::Derived { .. } => continue,
+                Provenance::Derived { .. } => {
+                    // Preserve the pre-existing persistence path for derived
+                    // events; this resolver only owns material timestamps.
+                    valid_indices.push(idx);
+                    continue;
+                }
             };
             if let Some((timing, reader)) = cache.get(&material_id) {
                 let (ts_orig, rung) = reader.derive_ts_orig(anchor_byte, timing);
                 event.ts_orig = Some(ts_orig);
                 event.ts_quality = Some(rung);
+                if let Some(rejection) = self.admission.timestamp_rejection(ts_orig, parsed_id) {
+                    rejected.push((idx, rejection));
+                } else {
+                    valid_indices.push(idx);
+                }
+            } else {
+                // Readiness guarantees this should be unreachable. Keep the
+                // event in the existing persistence path if the guarantee is
+                // violated, so the normal missing-timestamp/error handling
+                // settles the source message instead of dropping the child.
+                valid_indices.push(idx);
             }
         }
-        Ok(())
+        for (idx, rejection) in rejected {
+            self.record_admission_rejection(&rejection).await;
+            let prepared = &batch[idx];
+            self.route_validation_failure(&prepared.message, rejection, &prepared.settlement)
+                .await?;
+        }
+
+        Ok(valid_indices)
     }
 
     /// sinex-r6d.12: writes the DLQ record, then reports this child's
@@ -296,13 +348,13 @@ impl JetStreamConsumer {
         let event_id = rejection.event_id;
         let reason = rejection.reason;
         match self.route_to_dlq(msg, reason.clone()).await {
-            Ok(()) => {
+            Ok(durable_failure_id) => {
                 self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
                 if let Some(event_id) = event_id {
                     self.settlement_registry.resolve(
                         event_id.into(),
                         EmissionReceiptState::DurableDebt {
-                            debt_id: event_id,
+                            debt_id: durable_failure_id,
                             reason: format!("admission rejection DLQ'd: {reason}"),
                         },
                     );
@@ -412,6 +464,30 @@ impl JetStreamConsumer {
     }
 
     pub(super) async fn record_admission_suppression(&self, rejection: &AdmissionRejection) {
+        if let Some(candidate) = &rejection.candidate
+            && let Err(error) = self
+                .pool
+                .import_outcomes()
+                .record_suppressed(
+                    candidate.operation_id,
+                    candidate.event_id,
+                    candidate.source_material_id,
+                    &candidate.source,
+                    &candidate.event_type,
+                    &rejection.reason,
+                    rejection.existing_event_id,
+                )
+                .await
+        {
+            tracing::error!(
+                target: "sinex_metrics",
+                operation_id = ?candidate.operation_id,
+                candidate_event_id = %candidate.event_id,
+                error = %error,
+                "failed to persist suppressed import outcome"
+            );
+        }
+
         let kind_label = match rejection.kind {
             AdmissionRejectionKind::OccurrenceDuplicate => "occurrence_duplicate",
             AdmissionRejectionKind::PayloadTooLarge => "payload_too_large",
@@ -695,9 +771,19 @@ impl JetStreamConsumer {
                     schema_id = %schema_id,
                     source = %source,
                     event_type = %event_type,
-                    "Schema referenced by validator lookup is missing from cache; accepting event without payload schema id"
+                    strict_mode,
+                    "Schema referenced by validator lookup is missing from cache"
                 );
-                Ok(None)
+                if strict_mode {
+                    Err(SinexError::validation(format!(
+                        "Strict validation enabled: registered schema {schema_id} is unavailable (source={source}, event_type={event_type})"
+                    ))
+                    .with_operation("jetstream_consumer.validate_event")
+                    .with_context("strict_mode", "enabled")
+                    .with_context("schema_id", schema_id.to_string()))
+                } else {
+                    Ok(None)
+                }
             }
             ValidationResult::Invalid { errors } => Err(SinexError::validation(format!(
                 "Schema validation failed: {}",

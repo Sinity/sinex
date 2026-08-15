@@ -3,20 +3,25 @@
 //! This repository handles registration and tracking of source materials
 //! (files, streams, etc.) that contain events to be processed.
 use super::common::{DbResult, EnhancedRepository, Repository, db_error};
+use crate::repositories::DbPoolExt;
 use crate::schema::SourceMaterialRegistry;
 pub use crate::schema::defs::records::SourceMaterialLinkRecord;
 use crate::schema::defs::records::SourceMaterialRecord;
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use sinex_primitives::domain::{
-    MaterialStatus, SourceMaterialTimingInfoType, TemporalClock, TemporalPrecision,
-    TemporalSourceType,
+    MaterialStatus, ModuleKind, SourceIdentifier, SourceMaterialTimingInfoType, TemporalClock,
+    TemporalPrecision, TemporalSourceType,
 };
 use sinex_primitives::rpc::sources::{
     CaveatSeverity, SourceCaveat, SourceMaterialMetadataContract, SourceReadiness,
     SourceReadinessCost, SourceReadinessStatus, caveat_codes,
 };
-use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Id, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, SinexError, Timestamp, evaluate_runtime_liveness, events::OffsetKind,
+};
 use sqlx::PgPool;
+use std::collections::HashMap;
 use time::format_description;
 use uuid::Uuid;
 
@@ -35,6 +40,13 @@ pub use types::{
 /// Source material repository
 pub struct SourceMaterialRepository<'a> {
     pool: &'a PgPool,
+}
+
+/// A source-material registry row removed by the age-gated orphan sweep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeletedStaleMaterial {
+    pub id: Uuid,
+    pub optional_blob_id: Option<Uuid>,
 }
 impl<'a> Repository<'a> for SourceMaterialRepository<'a> {
     fn new(pool: &'a PgPool) -> Self {
@@ -199,7 +211,6 @@ impl SourceMaterialRepository<'_> {
     }
 
     async fn update_material_state<'e, E>(
-        &self,
         executor: E,
         id: Id<SourceMaterialRecord>,
         status: MaterialStatus,
@@ -257,10 +268,83 @@ impl SourceMaterialRepository<'_> {
         Ok(())
     }
 
+    async fn insert_material_with_id_with_executor<'e, E>(
+        executor: E,
+        id: Id<SourceMaterial>,
+        material: &SourceMaterial,
+    ) -> DbResult<SourceMaterialRecord>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let start_time_offset = material.start_time;
+        let end_time_offset = material.end_time;
+        sqlx::query_as!(
+            SourceMaterialRecord,
+            r#"
+            INSERT INTO raw.source_material_registry (
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id
+            ) VALUES (
+                $1::uuid,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                $11::uuid
+            )
+            RETURNING
+                id as "id!: Uuid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at as "staged_at: Timestamp",
+                start_time as "start_time: Timestamp",
+                end_time as "end_time: Timestamp",
+                staged_by,
+                staged_on_host,
+                optional_blob_id as "optional_blob_id: Uuid",
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
+            "#,
+            id.to_uuid(),
+            material.material_kind.as_str(),
+            material.source_identifier,
+            material.status.as_str(),
+            material.timing_info_type,
+            material.metadata,
+            start_time_offset.map(|t| *t),
+            end_time_offset.map(|t| *t),
+            material.staged_by,
+            material.staged_on_host,
+            material.optional_blob_id.map(|id| id.to_uuid())
+        )
+        .fetch_one(executor)
+        .await
+        .map_err(|e| db_error(e, "register material"))
+    }
+
     async fn insert_material_with_id(
         &self,
         id: Id<SourceMaterial>,
         material: SourceMaterial,
+        total_bytes: Option<i64>,
     ) -> DbResult<SourceMaterialRecord> {
         use crate::query_helpers::{
             IdempotentTransaction, RetryConfig, set_repeatable_read,
@@ -275,70 +359,30 @@ impl SourceMaterialRepository<'_> {
             move |tx| {
                 let id = id;
                 let material = material.clone();
-                let start_time_offset = material.start_time;
-                let end_time_offset = material.end_time;
                 Box::pin(async move {
                     set_repeatable_read(tx).await?;
-                    sqlx::query_as!(
-                        SourceMaterialRecord,
-                        r#"
-                INSERT INTO raw.source_material_registry (
-                    id,
-                    material_kind,
-                            source_identifier,
-                            status,
-                            timing_info_type,
-                            metadata,
-                            start_time,
-                            end_time,
-                            staged_by,
-                            staged_on_host,
-                            optional_blob_id
-                        ) VALUES (
-                            $1::uuid,
-                            $2,
-                            $3,
-                            $4,
-                            $5,
-                            $6,
-                            $7,
-                            $8,
-                            $9,
-                            $10,
-                            $11::uuid
+                    let record =
+                        Self::insert_material_with_id_with_executor(&mut **tx, id, &material)
+                            .await?;
+                    if let Some(total_bytes) = total_bytes {
+                        Self::update_material_state(
+                            &mut **tx,
+                            record.id.into(),
+                            material.status,
+                            None,
+                            json!({ "file_size_bytes": total_bytes }),
+                            Some(total_bytes),
                         )
-                        RETURNING
-                            id as "id!: Uuid",
-                            material_kind,
-                            source_identifier,
-                            status,
-                            timing_info_type,
-                            metadata,
-                            staged_at as "staged_at: Timestamp",
-                            start_time as "start_time: Timestamp",
-                            end_time as "end_time: Timestamp",
-                            staged_by,
-                            staged_on_host,
-                            optional_blob_id as "optional_blob_id: Uuid",
-                            total_bytes as "total_bytes?: i64",
-                coverage_contract as "coverage_contract!: JsonValue",
-                privacy_class as "privacy_class!: String"
-                        "#,
-                        id.to_uuid(),
-                        material.material_kind.as_str(),
-                        material.source_identifier,
-                        material.status.as_str(),
-                        material.timing_info_type,
-                        material.metadata,
-                        start_time_offset.map(|t| *t),
-                        end_time_offset.map(|t| *t),
-                        material.staged_by,
-                        material.staged_on_host,
-                        material.optional_blob_id.map(|id| id.to_uuid())
-                    )
-                    .fetch_one(&mut **tx)
-                    .await
-                    .map_err(|e| db_error(e, "register material"))
+                        .await?;
+                        return Self::fetch_by_id_with_executor(&mut **tx, record.id.into())
+                            .await?
+                            .ok_or_else(|| {
+                                SinexError::invalid_state(
+                                    "source material disappeared during byte finalization",
+                                )
+                            });
+                    }
+                    Ok(record)
                 })
             },
         )
@@ -351,7 +395,22 @@ impl SourceMaterialRepository<'_> {
         material: SourceMaterial,
     ) -> DbResult<SourceMaterialRecord> {
         let id = Id::<SourceMaterial>::new();
-        self.insert_material_with_id(id, material).await
+        self.insert_material_with_id(id, material, None).await
+    }
+
+    /// Register a completed source material and final byte size atomically.
+    ///
+    /// The registry row and its byte-bound finalization share one retrying
+    /// transaction, so a finalization failure cannot leave a committed
+    /// `completed` material with `total_bytes = NULL`.
+    pub async fn register_material_with_total_bytes(
+        &self,
+        material: SourceMaterial,
+        total_bytes: i64,
+    ) -> DbResult<SourceMaterialRecord> {
+        let id = Id::<SourceMaterial>::new();
+        self.insert_material_with_id(id, material, Some(total_bytes))
+            .await
     }
 
     /// Register a completed source material with a caller-provided identifier.
@@ -363,7 +422,7 @@ impl SourceMaterialRepository<'_> {
         material_id: uuid::Uuid,
         material: SourceMaterial,
     ) -> DbResult<SourceMaterialRecord> {
-        self.insert_material_with_id(Id::<SourceMaterial>::from_uuid(material_id), material)
+        self.insert_material_with_id(Id::<SourceMaterial>::from_uuid(material_id), material, None)
             .await
     }
     /// Get source material by ID
@@ -376,6 +435,16 @@ impl SourceMaterialRepository<'_> {
 
     pub async fn get_by_id_with_executor<'e, E>(
         &self,
+        executor: E,
+        id: Id<SourceMaterialRecord>,
+    ) -> DbResult<Option<SourceMaterialRecord>>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        Self::fetch_by_id_with_executor(executor, id).await
+    }
+
+    async fn fetch_by_id_with_executor<'e, E>(
         executor: E,
         id: Id<SourceMaterialRecord>,
     ) -> DbResult<Option<SourceMaterialRecord>>
@@ -1155,7 +1224,7 @@ impl SourceMaterialRepository<'_> {
             );
             JsonValue::Object(map)
         };
-        self.update_material_state(
+        Self::update_material_state(
             self.pool,
             id,
             MaterialStatus::Failed,
@@ -1193,7 +1262,7 @@ impl SourceMaterialRepository<'_> {
                 update.insert("_meta".to_string(), other);
             }
         }
-        self.update_material_state(
+        Self::update_material_state(
             self.pool,
             id,
             MaterialStatus::RecoveredPartial,
@@ -1279,7 +1348,7 @@ impl SourceMaterialRepository<'_> {
             }
             JsonValue::Object(map)
         };
-        self.update_material_state(
+        Self::update_material_state(
             executor,
             id,
             final_status,
@@ -1316,7 +1385,7 @@ impl SourceMaterialRepository<'_> {
     /// pretend to be a full job monitor.
     ///
     /// `stale_after_seconds` controls when a recent-success source flips to
-    /// `Stale`. Defaults to 7 days when `None`.
+    /// `Stale`. Defaults to the canonical runtime liveness policy when `None`.
     pub async fn list_source_readiness(
         &self,
         source_family: Option<&str>,
@@ -1336,7 +1405,18 @@ impl SourceMaterialRepository<'_> {
         source_family: Option<&str>,
         stale_after_seconds: Option<i64>,
     ) -> DbResult<Vec<SourceReadiness>> {
-        let stale_after = stale_after_seconds.unwrap_or(7 * 24 * 3600);
+        let stale_after =
+            stale_after_seconds.unwrap_or(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS as i64);
+        let liveness_policy = RuntimeLivenessPolicy::new(stale_after.max(0) as u64);
+        let runtime_evidence = self
+            .pool
+            .state()
+            .list_runtime_liveness_evidence()
+            .await?
+            .into_iter()
+            .filter(|evidence| evidence.module_kind == ModuleKind::Source)
+            .map(|evidence| (evidence.module_name.to_string(), evidence))
+            .collect::<HashMap<_, _>>();
 
         let rows = sqlx::query!(
             r#"
@@ -1379,6 +1459,24 @@ impl SourceMaterialRepository<'_> {
             }
 
             let freshness_seconds = row.last_success_at.map(|ts| (now - ts).whole_seconds());
+            let logical_source_identifier = SourceIdentifier::from_wire(&row.source_identifier)
+                .map(|identifier| identifier.logical_id)
+                .unwrap_or_else(|_| row.source_identifier.clone());
+            let runtime = runtime_evidence
+                .get(&logical_source_identifier)
+                .or_else(|| runtime_evidence.get(&row.source_identifier));
+            let liveness = runtime.map(|evidence| {
+                evaluate_runtime_liveness(
+                    RuntimeLivenessSignals {
+                        run_status: evidence.run_status.as_deref(),
+                        health_status: evidence.health_status,
+                        last_heartbeat_at: evidence.last_heartbeat_at,
+                        last_output_at: evidence.last_output_at,
+                    },
+                    liveness_policy,
+                    now.into(),
+                )
+            });
 
             let display_identifier = redact_identifier_for_display(&row.source_identifier);
 
@@ -1396,13 +1494,13 @@ impl SourceMaterialRepository<'_> {
                 code: caveat_codes::PARSER_OPERATION_EVIDENCE_UNJOINED.to_string(),
                 severity: CaveatSeverity::Info,
                 message:
-                    "Readiness is derived from raw material and admitted events; parser/source-worker operation evidence is reported by operation and debt surfaces."
+                    "Readiness joins canonical runtime run/health/heartbeat/output evidence; parser/source-worker operation details remain in operation and debt surfaces."
                         .to_string(),
                 evidence_ref: None,
             });
 
             // Status classification.
-            let status = if row.completed_count == 0 && row.failed_count > 0 {
+            let material_status = if row.completed_count == 0 && row.failed_count > 0 {
                 caveats.push(SourceCaveat {
                     code: caveat_codes::PARSER_FAILED_RECENTLY.to_string(),
                     severity: CaveatSeverity::Degraded,
@@ -1431,7 +1529,7 @@ impl SourceMaterialRepository<'_> {
                 });
                 SourceReadinessStatus::Partial
             } else if let Some(secs) = freshness_seconds {
-                if secs > stale_after {
+                if liveness_policy.considers_stale(secs) {
                     caveats.push(SourceCaveat {
                         code: caveat_codes::MATERIAL_NO_RECENT_SNAPSHOT.to_string(),
                         severity: CaveatSeverity::Warning,
@@ -1448,6 +1546,19 @@ impl SourceMaterialRepository<'_> {
                 SourceReadinessStatus::Unknown
             };
 
+            let status = match liveness.as_ref().map(|assessment| assessment.status) {
+                Some(RuntimeLivenessStatus::Unhealthy | RuntimeLivenessStatus::Stopped) => {
+                    SourceReadinessStatus::Error
+                }
+                Some(RuntimeLivenessStatus::Stale) => SourceReadinessStatus::Stale,
+                Some(RuntimeLivenessStatus::Degraded)
+                    if material_status != SourceReadinessStatus::Error =>
+                {
+                    SourceReadinessStatus::Partial
+                }
+                _ => material_status,
+            };
+
             // Cost: registry-only data is local and cheap. Replay/refresh of an
             // archive_kind material would be local-heavy; we don't have that
             // signal here so we report local_fast and let consumers escalate.
@@ -1461,6 +1572,16 @@ impl SourceMaterialRepository<'_> {
                 "failed_count": row.failed_count,
                 "cancelled_count": row.cancelled_count,
                 "recovered_partial_count": row.partial_count,
+                "runtime": runtime.map(|evidence| {
+                    json!({
+                        "run_status": evidence.run_status,
+                        "health_status": evidence.health_status.map(|status| format!("{status:?}")),
+                        "last_heartbeat_at": evidence.last_heartbeat_at.map(|ts| ts.to_string()),
+                        "last_output_at": evidence.last_output_at.map(|ts| ts.to_string()),
+                        "liveness_status": liveness.as_ref().map(|assessment| format!("{:?}", assessment.status)),
+                        "liveness_evidence": liveness.as_ref().map(|assessment| &assessment.evidence),
+                    })
+                }),
             });
 
             out.push(SourceReadiness {
@@ -1649,30 +1770,24 @@ impl SourceMaterialRepository<'_> {
         Ok(ids)
     }
 
-    /// Delete a source material registry row by ID. Returns `true` if a row was
-    /// actually removed. Caller is responsible for dropping the associated
-    /// blob from the content store separately — this only removes the DB row.
+    /// Delete an unreferenced source-material registry row by ID. Returns
+    /// `true` if a row was actually removed. The orphan check is part of the
+    /// delete statement, so a concurrent live or archived event keeps the
+    /// registry row available for replay recovery. Caller is responsible for
+    /// dropping associated content-store objects separately.
     pub async fn delete_material(&self, id: Id<SourceMaterialRecord>) -> DbResult<bool> {
-        let result = sqlx::query!(
-            r#"
-            DELETE FROM raw.source_material_registry
-            WHERE id = $1
-            "#,
-            id.to_uuid()
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "delete material"))?;
-        Ok(result.rows_affected() > 0)
+        Ok(self.delete_material_if_orphan(id).await?.is_some())
     }
 
     /// Atomically delete a source material registry row, but ONLY if it is
     /// still orphaned (no live `core.events` or `audit.archived_events` row
-    /// references it) at the moment of the delete.
+    /// references it) at the moment of the delete. Manifest-backed materials
+    /// are replay roots and are never removed by this ordinary cleanup path;
+    /// an explicit reviewed purge must own that authority transition.
     ///
     /// This closes the delete-on-tombstone TOCTOU race (sinex-audit-tombstonerace):
-    /// `find_orphan_materials` followed later by an unconditional `delete_material`
-    /// call and an unconditional `content_store.drop_content` call left a window
+    /// `find_orphan_materials` followed later by an unconditional registry delete
+    /// and an unconditional `content_store.drop_content` call left a window
     /// where a new/redelivered event landing between the two could reference a
     /// material whose CAS content was already dropped. Baking the orphan recheck
     /// into the same statement as the delete means a caller only needs to gate
@@ -1693,6 +1808,7 @@ impl SourceMaterialRepository<'_> {
             r#"
             DELETE FROM raw.source_material_registry sm
             WHERE sm.id = $1
+              AND NOT (sm.metadata ? 'material_manifest')
               AND NOT EXISTS (
                 SELECT 1 FROM core.events e
                 WHERE e.source_material_id = sm.id
@@ -1709,6 +1825,105 @@ impl SourceMaterialRepository<'_> {
         .await
         .map_err(|e| db_error(e, "delete material if orphan"))?;
         Ok(deleted.map(|row| row.optional_blob_id))
+    }
+
+    /// Atomically purge a manifest-backed replay root only after the caller
+    /// has completed the reviewed operator authorization flow. This is not a
+    /// cleanup primitive: ordinary cleanup must use
+    /// [`Self::delete_material_if_orphan`], which retains manifest authority.
+    ///
+    /// As with ordinary deletion, the orphan recheck is part of the DELETE so
+    /// a concurrently admitted live or archived event keeps the material and
+    /// its exact CAS authority available.
+    pub async fn purge_manifest_material_if_orphan(
+        &self,
+        id: Id<SourceMaterialRecord>,
+    ) -> DbResult<Option<Option<uuid::Uuid>>> {
+        let id_uuid = id.to_uuid();
+        let deleted = sqlx::query!(
+            r#"
+            DELETE FROM raw.source_material_registry sm
+            WHERE sm.id = $1
+              AND sm.metadata ? 'material_manifest'
+              AND NOT EXISTS (
+                SELECT 1 FROM core.events e
+                WHERE e.source_material_id = sm.id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM audit.archived_events ae
+                WHERE ae.source_material_id = sm.id
+              )
+            RETURNING optional_blob_id as "optional_blob_id: uuid::Uuid"
+            "#,
+            id_uuid
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "purge manifest material if orphan"))?;
+        Ok(deleted.map(|row| row.optional_blob_id))
+    }
+
+    /// Delete a bounded batch of registry rows that have outlived the material
+    /// recovery window, remain in a disposable lifecycle state, and have never
+    /// gained a live or archived event reference.
+    ///
+    /// The age/status/reference predicates are repeated in the DELETE itself so
+    /// a concurrent event admission cannot turn a previously selected row into
+    /// an unsafe deletion between selection and mutation. A material manifest
+    /// is also a retention root: it is the replay authority for the exact CAS
+    /// bytes even when parsing produced no event.
+    pub async fn delete_stale_unreferenced_materials(
+        &self,
+        older_than: Timestamp,
+        limit: i64,
+    ) -> DbResult<Vec<DeletedStaleMaterial>> {
+        let deleted = sqlx::query!(
+            r#"
+            WITH candidates AS (
+                SELECT sm.id
+                FROM raw.source_material_registry sm
+                WHERE sm.status IN ('sensing', 'failed', 'recovered_partial', 'cancelled')
+                  AND COALESCE(sm.end_time, sm.start_time, sm.staged_at) < $1
+                  AND NOT (sm.metadata ? 'material_manifest')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM core.events e WHERE e.source_material_id = sm.id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM audit.archived_events ae WHERE ae.source_material_id = sm.id
+                  )
+                ORDER BY COALESCE(sm.end_time, sm.start_time, sm.staged_at) ASC, sm.id ASC
+                LIMIT $2
+            )
+            DELETE FROM raw.source_material_registry sm
+            USING candidates
+            WHERE sm.id = candidates.id
+              AND sm.status IN ('sensing', 'failed', 'recovered_partial', 'cancelled')
+              AND COALESCE(sm.end_time, sm.start_time, sm.staged_at) < $1
+              AND NOT (sm.metadata ? 'material_manifest')
+              AND NOT EXISTS (
+                  SELECT 1 FROM core.events e WHERE e.source_material_id = sm.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM audit.archived_events ae WHERE ae.source_material_id = sm.id
+              )
+            RETURNING
+                sm.id as "id!: Uuid",
+                sm.optional_blob_id as "optional_blob_id?: Uuid"
+            "#,
+            *older_than,
+            limit,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "delete stale unreferenced source materials"))?;
+
+        Ok(deleted
+            .into_iter()
+            .map(|row| DeletedStaleMaterial {
+                id: row.id,
+                optional_blob_id: row.optional_blob_id,
+            })
+            .collect())
     }
 }
 

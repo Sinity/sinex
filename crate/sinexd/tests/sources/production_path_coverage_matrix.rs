@@ -16,6 +16,13 @@ enum SmokeCoverage {
     NoopHarness,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManifestReplayCoverage {
+    Proven,
+    NotApplicable(&'static str),
+    Unresolved(&'static str),
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SmokeMatrixEntry {
     source_id: &'static str,
@@ -232,6 +239,37 @@ const SMOKE_MATRIX: &[SmokeMatrixEntry] = &[
     ),
 ];
 
+/// Route-level fidelity for the `ManifestAndSourceRemoval` obligation.
+///
+/// `fs` is the first route proven through the real source factory, material
+/// assembler, registry, and historical scan. Parser-backed routes remain
+/// explicitly unresolved until their route-specific occurrence carrier and
+/// fixture are proven. Lifecycle monitors and `noop` never produce parser
+/// material, so they are intentionally not applicable.
+fn manifest_replay_coverage(entry: SmokeMatrixEntry) -> ManifestReplayCoverage {
+    match entry.source_id {
+        "fs" => ManifestReplayCoverage::Proven,
+        "noop" => ManifestReplayCoverage::NotApplicable(
+            "noop is eventless and has no parser/material replay route",
+        ),
+        "system.monitor" | "terminal.monitor" => ManifestReplayCoverage::NotApplicable(
+            "monitor routes emit lifecycle events without parser material",
+        ),
+        _ if matches!(
+            entry.coverage,
+            SmokeCoverage::MonitorHarness | SmokeCoverage::NoopHarness
+        ) =>
+        {
+            ManifestReplayCoverage::NotApplicable(
+                "route is parserless by its production-path smoke classification",
+            )
+        }
+        _ => ManifestReplayCoverage::Unresolved(
+            "route-specific manifest/occurrence fixture is not yet proven",
+        ),
+    }
+}
+
 const fn entry(
     source_id: &'static str,
     coverage: SmokeCoverage,
@@ -352,5 +390,44 @@ async fn source_driver_host_drain_obligation_covers_shared_controller() -> TestR
         .await
         .map_err(SinexError::processing)?;
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_driver_host_manifest_replay_matrix_is_explicit() -> TestResult<()> {
+    let mut proven = 0;
+    for entry in SMOKE_MATRIX {
+        match manifest_replay_coverage(*entry) {
+            ManifestReplayCoverage::Proven => {
+                proven += 1;
+                assert_eq!(entry.source_id, "fs");
+            }
+            ManifestReplayCoverage::NotApplicable(reason)
+            | ManifestReplayCoverage::Unresolved(reason) => {
+                assert!(
+                    !reason.trim().is_empty(),
+                    "{} needs a route disposition",
+                    entry.source_id
+                );
+            }
+        }
+    }
+    assert_eq!(
+        proven, 1,
+        "exactly the fs route has the committed production proof"
+    );
+    for source_id in ["noop", "system.monitor", "terminal.monitor"] {
+        let entry = SMOKE_MATRIX
+            .iter()
+            .find(|entry| entry.source_id == source_id)
+            .expect("special route must remain in the smoke matrix");
+        assert!(
+            matches!(
+                manifest_replay_coverage(*entry),
+                ManifestReplayCoverage::NotApplicable(_)
+            ),
+            "{source_id} must be explicitly not-applicable"
+        );
+    }
     Ok(())
 }

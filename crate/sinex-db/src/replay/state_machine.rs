@@ -1,5 +1,7 @@
 use crate::repositories::DbPoolExt;
-use crate::repositories::replay::ReplayRepository;
+use crate::repositories::replay::{
+    REPLAY_ARCHIVE_PAGE_SIZE, ReplayRepository, ReplayScopeRootSnapshot,
+};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{ModuleName, ReplayOutcome};
@@ -310,10 +312,14 @@ pub struct ReplayScopeInvalidationRecovery {
     /// the archive transaction. This is the durable replay journal that makes a
     /// crash between archive-commit and re-ingest recoverable (#2194): on
     /// crash-recovery the events are restored from `audit.archived_events`
-    /// rather than lost permanently. Empty for operations whose marker predates
-    /// this field (recovery then degrades to the prior mark-Failed-only
-    /// behavior).
+    /// Archive reason is the durable, bounded journal key for the complete
+    /// cascade. Older operation metadata can still carry `cascade_ids`; new
+    /// operations never persist a scope-sized UUID array.
     #[serde(default)]
+    pub archive_reason: Option<String>,
+    /// Legacy journal payload, retained only to recover operations created
+    /// before bounded archive journaling landed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cascade_ids: Vec<Uuid>,
 }
 
@@ -323,7 +329,7 @@ impl ReplayScopeInvalidationRecovery {
         bucket_count: usize,
         scope_key_count: usize,
         event_count: usize,
-        cascade_ids: Vec<Uuid>,
+        archive_reason: String,
     ) -> Self {
         Self {
             phase: ReplayScopeInvalidationPhase::Pending,
@@ -333,7 +339,8 @@ impl ReplayScopeInvalidationRecovery {
             event_count,
             recorded_at: temporal::now(),
             published_at: None,
-            cascade_ids,
+            archive_reason: Some(archive_reason),
+            cascade_ids: Vec::new(),
         }
     }
 
@@ -409,12 +416,12 @@ fn state_json_label(state: ReplayState) -> &'static str {
     }
 }
 
-fn duration_ms(created_at: Timestamp, finished_at: Timestamp) -> i32 {
+fn duration_ms(created_at: Timestamp, finished_at: Timestamp) -> i64 {
     let elapsed_ms = (finished_at - created_at).whole_milliseconds();
-    elapsed_ms.clamp(0, i128::from(i32::MAX)) as i32
+    elapsed_ms.max(0) as i64
 }
 
-fn meta_duration_ms(meta: &MetaJson) -> Option<i32> {
+fn meta_duration_ms(meta: &MetaJson) -> Option<i64> {
     meta.finished_at
         .map(|finished_at| duration_ms(meta.created_at, finished_at))
 }
@@ -437,9 +444,24 @@ impl ReplayStateMachine {
         Self { pool }
     }
 
-    /// Collect the root event IDs that match the given replay scope.
-    pub async fn collect_scope_root_ids(&self, scope: &ReplayScope) -> Result<Vec<Uuid>> {
-        self.repo().collect_scope_root_ids(scope).await
+    /// Build bounded identity evidence for the roots that match a replay scope.
+    pub async fn scope_root_snapshot(
+        &self,
+        scope: &ReplayScope,
+    ) -> Result<ReplayScopeRootSnapshot> {
+        self.repo().scope_root_snapshot(scope).await
+    }
+
+    /// Fetch one bounded keyset page of replay-root IDs for execution internals.
+    pub async fn scope_root_ids_page(
+        &self,
+        scope: &ReplayScope,
+        after_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        self.repo()
+            .collect_scope_root_ids_page(scope, after_id, limit)
+            .await
     }
 
     /// Create a new replay operation.
@@ -646,11 +668,8 @@ impl ReplayStateMachine {
             }
         };
 
-        let mut root_event_ids = repo.collect_scope_root_ids(scope).await?;
-        root_event_ids.sort_unstable();
-        root_event_ids.dedup();
-
-        let total = repo.count_scope_events(scope).await?;
+        let roots = repo.scope_root_snapshot(scope).await?;
+        let total = roots.root_event_count;
         let top_types = repo.get_top_event_types(scope).await?;
         let schema_boundary_crossed_count = repo.count_schema_boundary_crossed(scope).await?;
 
@@ -674,7 +693,9 @@ impl ReplayStateMachine {
                 "end": window.1,
             },
             "total_events": total,
-            "root_event_ids": root_event_ids,
+            "root_event_count": roots.root_event_count,
+            "root_event_id_sample": roots.root_event_id_sample,
+            "root_event_id_fingerprint": roots.root_event_id_fingerprint,
             "anchor_churn_pct": serde_json::Value::Null,
             "anchor_churn_status": "not_measured",
             "time_quality_flip_pct": serde_json::Value::Null,
@@ -701,8 +722,8 @@ impl ReplayStateMachine {
         let cascade_result: std::result::Result<serde_json::Value, SinexError> = async {
             use crate::repositories::EventRepositoryTx;
 
-            let root_ids = self.collect_scope_root_ids(scope).await?;
-            if root_ids.is_empty() {
+            let root_snapshot = self.scope_root_snapshot(scope).await?;
+            if root_snapshot.root_event_count == 0 {
                 return Ok(serde_json::Value::Null);
             }
 
@@ -713,7 +734,7 @@ impl ReplayStateMachine {
                 .map_err(|e| SinexError::database(format!("cascade preview begin: {e}")))?;
 
             // Expand the cascade via repo_tx (borrows &mut tx).
-            let (all_cascade_ids, derived_ids, max_depth) = {
+            let (cascade_total, derived_count, affected_modules, affected_scopes, max_depth) = {
                 let mut repo_tx = EventRepositoryTx::new(&mut tx);
                 let session_id = format!("preview_{}", Uuid::now_v7().simple());
 
@@ -721,48 +742,64 @@ impl ReplayStateMachine {
                     .prepare_cascade_session(&session_id, false)
                     .await
                     .map_err(|e| SinexError::database(format!("prepare cascade: {e}")))?;
-                repo_tx
-                    .populate_cascade_roots(&table_name, &root_ids)
-                    .await
-                    .map_err(|e| SinexError::database(format!("populate roots: {e}")))?;
+                let mut after_id = None;
+                loop {
+                    let page = self.scope_root_ids_page(scope, after_id, 10_000).await?;
+                    let Some(last_id) = page.last().copied() else {
+                        break;
+                    };
+                    repo_tx
+                        .populate_cascade_roots(&table_name, &page)
+                        .await
+                        .map_err(|e| SinexError::database(format!("populate roots: {e}")))?;
+                    after_id = Some(last_id);
+                }
                 let max_depth = repo_tx
                     .expand_cascade(&table_name, 64)
                     .await
                     .map_err(|e| SinexError::database(format!("expand cascade: {e}")))?;
 
-                let deps = repo_tx
-                    .get_event_dependencies(&table_name)
+                let cascade_total = repo_tx
+                    .cascade_node_count(&table_name)
                     .await
-                    .map_err(|e| SinexError::database(format!("get deps: {e}")))?;
-
+                    .map_err(|e| SinexError::database(format!("count cascade members: {e}")))?;
+                let derived_count =
+                    repo_tx
+                        .cascade_derived_count(&table_name)
+                        .await
+                        .map_err(|e| {
+                            SinexError::database(format!("count derived cascade members: {e}"))
+                        })?;
+                let affected_modules = repo_tx
+                    .load_cascade_affected_modules_from_table(&table_name)
+                    .await
+                    .map_err(|e| SinexError::database(format!("load cascade modules: {e}")))?;
+                let affected_scopes = repo_tx
+                    .load_cascade_affected_scopes_from_table(&table_name)
+                    .await
+                    .map_err(|e| SinexError::database(format!("load cascade scopes: {e}")))?;
                 repo_tx
                     .cleanup_cascade_session(&table_name)
                     .await
                     .map_err(|e| SinexError::database(format!("cleanup cascade: {e}")))?;
 
-                let all_ids: Vec<Uuid> = deps.iter().map(|(id, _)| *id).collect();
-                let root_set: HashSet<Uuid> = root_ids.iter().copied().collect();
-                let derived: Vec<Uuid> = all_ids
-                    .iter()
-                    .filter(|id| !root_set.contains(id))
-                    .copied()
-                    .collect();
-                (all_ids, derived, max_depth)
+                (
+                    cascade_total,
+                    derived_count,
+                    affected_modules,
+                    affected_scopes,
+                    max_depth,
+                )
             };
-
-            let affected_modules =
-                ReplayRepository::load_cascade_affected_modules(&mut tx, &derived_ids).await?;
-            let affected_scopes =
-                ReplayRepository::load_cascade_affected_scopes(&mut tx, &derived_ids).await?;
 
             tx.rollback()
                 .await
                 .map_err(|e| SinexError::database(format!("cascade preview rollback: {e}")))?;
 
             Ok(serde_json::json!({
-                "cascade_total": all_cascade_ids.len(),
-                "direct_events": root_ids.len(),
-                "derived_events": derived_ids.len(),
+                "cascade_total": cascade_total,
+                "direct_events": root_snapshot.root_event_count,
+                "derived_events": derived_count,
                 "max_depth": max_depth,
                 "affected_modules": affected_modules,
                 "affected_scopes": affected_scopes.into_iter()
@@ -855,21 +892,21 @@ impl ReplayStateMachine {
             .with_id("operation_id", operation_id.to_string())
             .with_operation("submit_replay_operation"));
         }
-        if preview_summary.root_event_ids.is_empty() {
+        if preview_summary.root_event_count == 0 {
             return Err(SinexError::invalid_state(
-                "Operation preview is missing root_event_ids; refresh preview before submit",
+                "Operation preview is missing replay-root count; refresh preview before submit",
             )
             .with_id("operation_id", operation_id.to_string())
             .with_operation("submit_replay_operation"));
         }
-        if preview_summary.root_event_ids.len() as u64 != preview_summary.total_events {
+        if preview_summary.root_event_count != preview_summary.total_events {
             return Err(SinexError::invalid_state(
                 "Operation preview summary is inconsistent with total_events",
             )
             .with_context("total_events", preview_summary.total_events.to_string())
             .with_context(
-                "root_event_ids",
-                preview_summary.root_event_ids.len().to_string(),
+                "root_event_count",
+                preview_summary.root_event_count.to_string(),
             )
             .with_id("operation_id", operation_id.to_string())
             .with_operation("submit_replay_operation"));
@@ -973,7 +1010,7 @@ impl ReplayStateMachine {
         bucket_count: usize,
         scope_key_count: usize,
         event_count: usize,
-        cascade_ids: &[Uuid],
+        archive_reason: &str,
     ) -> Result<()> {
         let repo = self.repo();
         let existing = repo.fetch_meta_for_update(tx, operation_id).await?;
@@ -983,7 +1020,7 @@ impl ReplayStateMachine {
             bucket_count,
             scope_key_count,
             event_count,
-            cascade_ids.to_vec(),
+            archive_reason.to_string(),
         ));
         let meta_json = serde_json::to_value(&meta)?;
         repo.update_operation_meta_only(tx, operation_id, meta_json)
@@ -1238,7 +1275,58 @@ impl ReplayStateMachine {
         // already live again from re-emission) and idempotent (ON CONFLICT (id)
         // DO NOTHING), so a crash mid-recovery simply re-runs it next sweep.
         let restore_note = if let Some(invalidation) = meta.scope_invalidation.as_ref() {
-            if invalidation.cascade_ids.is_empty() {
+            if let Some(archive_reason) = invalidation.archive_reason.as_deref() {
+                let mut restored = 0_u64;
+                loop {
+                    let ids = repo
+                        .archived_replay_event_ids_page(archive_reason, REPLAY_ARCHIVE_PAGE_SIZE)
+                        .await?;
+                    if ids.is_empty() {
+                        break;
+                    }
+                    let restored_page = self
+                        .pool
+                        .events()
+                        .execute_cascade_restore(&ids, &operation_id.to_string())
+                        .await
+                        .map_err(|e| {
+                            SinexError::database(
+                                "Failed to restore archived replay cascade during crash recovery",
+                            )
+                            .with_source(e.to_string())
+                            .with_id("operation_id", operation_id.to_string())
+                            .with_context("archive_reason", archive_reason)
+                            .with_operation("recover_stale_executing")
+                        })?;
+                    if restored_page == 0 {
+                        return Err(SinexError::service(format!(
+                            "Crash recovery made no progress restoring an archived replay page ({} rows); operator recovery is required",
+                            ids.len()
+                        ))
+                        .with_id("operation_id", operation_id.to_string())
+                        .with_context("archive_reason", archive_reason));
+                    }
+                    restored += restored_page;
+                }
+                if restored != invalidation.archived_count {
+                    return Err(SinexError::service(format!(
+                        "Crash recovery restored only {restored}/{} archived replay events",
+                        invalidation.archived_count
+                    ))
+                    .with_id("operation_id", operation_id.to_string())
+                    .with_context("archive_reason", archive_reason));
+                }
+                warn!(
+                    operation_id = %operation_id,
+                    restored,
+                    archived_count = invalidation.archived_count,
+                    "Restored archived replay cascade during crash recovery (#2194)"
+                );
+                Some(format!(
+                    "restored {restored}/{} archived events from bounded archive journal",
+                    invalidation.archived_count
+                ))
+            } else if invalidation.cascade_ids.is_empty() {
                 // Marker predates the journal, or zero events were archived.
                 // Nothing durable to restore; degrade to mark-Failed only.
                 Some("no archived cascade journal to restore".to_string())
@@ -1466,7 +1554,7 @@ pub fn decode_meta_to_operation(
 struct StoredReplayPreviewSummary {
     total_events: u64,
     #[serde(default)]
-    root_event_ids: Vec<Uuid>,
+    root_event_count: u64,
 }
 
 #[cfg(test)]
@@ -1498,7 +1586,13 @@ mod replay_event_sources_tests {
     fn legacy_umbrella_names_still_resolve_their_existing_aliases() {
         // Regression guard: the fix must not disturb the four pre-existing cases.
         let sources = scope_for("desktop-watcher").replay_event_sources();
-        for expected in ["desktop", "activitywatch", "webhistory", "clipboard", "wm.hyprland"] {
+        for expected in [
+            "desktop",
+            "activitywatch",
+            "webhistory",
+            "clipboard",
+            "wm.hyprland",
+        ] {
             assert!(
                 sources.iter().any(|s| s == expected),
                 "expected {expected:?} among desktop-watcher's resolved replay sources, got: {sources:?}"

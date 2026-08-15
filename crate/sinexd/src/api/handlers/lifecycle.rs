@@ -13,6 +13,9 @@ use sinex_primitives::rpc::lifecycle::{
     TombstoneOperationPhase, TombstoneOperationState, TombstonePreviewRequest,
     TombstonePreviewResponse, TombstoneStatusRequest, TombstoneStatusResponse,
 };
+use sinex_primitives::rpc::privacy::{
+    PrivacyInvalidationReport, PrivacyInvalidationStatus, PrivacyInvalidationSurface,
+};
 use sinex_primitives::temporal::parse_duration;
 use sinex_primitives::{Id, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
@@ -617,15 +620,17 @@ fn matches_requested_tombstone_state(
 fn tombstone_duration_ms(
     operation: &TombstoneOperation,
     finished_at: Timestamp,
-) -> Result<Option<i32>> {
+) -> Result<Option<i64>> {
     let created_at = Timestamp::parse_rfc3339(&operation.created_at).map_err(|error| {
         SinexError::invalid_state("Tombstone operation has invalid created_at timestamp")
             .with_context("created_at", &operation.created_at)
             .with_std_error(&error)
     })?;
     let elapsed_ms = (finished_at - created_at).whole_milliseconds();
-    let clamped = elapsed_ms.clamp(0, i128::from(i32::MAX));
-    Ok(Some(clamped as i32))
+    let duration_ms = i64::try_from(elapsed_ms.max(0)).map_err(|_| {
+        SinexError::invalid_state("Tombstone operation duration overflowed i64 milliseconds")
+    })?;
+    Ok(Some(duration_ms))
 }
 
 fn parse_previewed_event_ids(
@@ -658,6 +663,57 @@ fn parse_previewed_event_ids(
         .collect()
 }
 
+async fn persist_tombstone_completion(
+    pool: &PgPool,
+    operation_id: &str,
+    operation: &mut TombstoneOperation,
+    preview_summary: Option<Value>,
+    recovery: Option<(&str, &str)>,
+) -> Result<()> {
+    let tombstoned_count = operation.tombstoned_count.ok_or_else(|| {
+        SinexError::invalid_state(
+            "Tombstone deletion boundary is missing its authoritative tombstone count",
+        )
+    })?;
+    let finished_at = Timestamp::now();
+    operation.state = TombstoneOperationState::Completed;
+    operation.finished_at = Some(finished_at.format_rfc3339());
+    if let Some((message, _)) = recovery {
+        operation.error_details = Some(message.to_string());
+    }
+    sync_tombstone_phase(operation);
+
+    let message = recovery
+        .map_or("Tombstone operation completed", |(message, _)| message);
+    let mut completion_summary = json!({
+        "message": message,
+        "tombstoned_count": tombstoned_count,
+    });
+    if let Some((_, recovery_source)) = recovery
+        && let Value::Object(fields) = &mut completion_summary
+    {
+        fields.insert(
+            "recovery".to_string(),
+            Value::String(recovery_source.to_string()),
+        );
+    }
+
+    pool.state()
+        .update_tombstone_operation(
+            operation_id,
+            phase_to_result_status(operation.phase),
+            serde_json::to_value(&*operation)?,
+            Some(merge_preview_summary(preview_summary, completion_summary)),
+            Some(message),
+            tombstone_duration_ms(operation, finished_at)?,
+        )
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to finalize tombstone operation")
+                .with_source(e.to_string())
+        })
+}
+
 async fn reconcile_tombstone_expiry(
     pool: &PgPool,
     operation_id: &str,
@@ -665,6 +721,52 @@ async fn reconcile_tombstone_expiry(
     preview_summary: Option<Value>,
 ) -> Result<bool> {
     let now = Timestamp::now();
+
+    // The cascade function writes this receipt in the same transaction as the
+    // tombstone rows and archive deletion. It is therefore safe to complete
+    // from it even when the separate terminal completion write was lost.
+    if operation.state == TombstoneOperationState::Executing {
+        let recovery_count = if operation.deletion_committed_at.is_some() {
+            Some(operation.tombstoned_count.ok_or_else(|| {
+                SinexError::invalid_state(
+                    "Tombstone deletion receipt is missing its tombstone count",
+                )
+            })?)
+        } else {
+            let operation_uuid = parse_operation_uuid(operation_id)?;
+            let count = pool
+                .events()
+                .count_tombstones_for_operation(operation_uuid)
+                .await
+                .map_err(|e| {
+                    SinexError::database("Failed to inspect tombstone witnesses during recovery")
+                        .with_source(e.to_string())
+                })?;
+            u64::try_from(count).ok().filter(|count| *count > 0)
+        };
+
+        if let Some(tombstoned_count) = recovery_count {
+            operation.tombstoned_count = Some(tombstoned_count);
+            let recovery_source = if operation.deletion_committed_at.is_some() {
+                "deletion_boundary"
+            } else {
+                "tombstone_witnesses"
+            };
+            persist_tombstone_completion(
+                pool,
+                operation_id,
+                operation,
+                preview_summary,
+                Some((
+                    "Deletion committed; lifecycle completion state recovered",
+                    recovery_source,
+                )),
+            )
+            .await?;
+            return Ok(false);
+        }
+    }
+
     if !operation.state.is_terminal()
         && let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
         && now > expires_at
@@ -789,6 +891,9 @@ pub async fn handle_tombstone_create(
         started_at: None,
         finished_at: None,
         tombstoned_count: None,
+        manifest_replay_roots_purged: None,
+        deletion_committed_at: None,
+        invalidation_report: None,
         error_details: None,
     };
 
@@ -870,10 +975,10 @@ enum BlobTombstoneOutcome {
     /// A live reference (sibling material or event `associated_blob_ids`)
     /// survived the recheck taken under the row lock; content and row kept.
     StillReferenced,
-    /// CAS content was dropped; `row_deleted` reports whether the
-    /// `core.blobs` row delete itself affected a row (it may already have
-    /// been removed by a concurrent caller that lost the row-lock race).
-    Dropped { row_deleted: bool },
+    /// The `core.blobs` authority row was durably removed. The caller may now
+    /// clean up its CAS bytes, knowing a transaction failure cannot restore a
+    /// committed reference to content it already deleted.
+    AuthorityRemoved { content_key: String },
 }
 
 /// Handle lifecycle.tombstone.approve
@@ -893,6 +998,20 @@ pub async fn handle_tombstone_approve(
     if !request.yes_i_understand_data_is_gone {
         return Err(SinexError::validation(
             "You must set yes_i_understand_data_is_gone=true to confirm permanent deletion",
+        ));
+    }
+    if request.purge_manifest_replay_roots
+        && !request.yes_i_understand_manifest_replay_authority_is_gone
+    {
+        return Err(SinexError::validation(
+            "Manifest replay-root purge requires yes_i_understand_manifest_replay_authority_is_gone=true",
+        ));
+    }
+    if request.yes_i_understand_manifest_replay_authority_is_gone
+        && !request.purge_manifest_replay_roots
+    {
+        return Err(SinexError::validation(
+            "Manifest replay-root acknowledgement requires purge_manifest_replay_roots=true",
         ));
     }
 
@@ -926,6 +1045,13 @@ pub async fn handle_tombstone_approve(
             "Tombstone operation {} has expired. Create a new operation.",
             request.operation_id
         )));
+    }
+
+    // A prior approval may have crossed the deletion boundary but lost its
+    // terminal completion write. Reconciliation above persists the recovered
+    // terminal state; return it as a successful, resumable approval retry.
+    if operation.state == TombstoneOperationState::Completed {
+        return Ok(TombstoneApproveResponse { operation });
     }
 
     if !operation.state.can_approve() {
@@ -1027,7 +1153,7 @@ pub async fn handle_tombstone_approve(
         })?;
 
     // Execute tombstone
-    let tombstoned_count = match repo
+    let cascade_tombstoned_count = match repo
         .execute_cascade_tombstone(&previewed_event_uuids, &operation.reason, operation_uuid)
         .await
     {
@@ -1069,6 +1195,43 @@ pub async fn handle_tombstone_approve(
         }
     };
 
+    // The cascade transaction committed a deletion-boundary receipt before
+    // returning. Carry the exact persisted receipt into the later completion
+    // scope so a successful completion cannot erase the recovery authority.
+    let boundary_record = pool
+        .state()
+        .get_tombstone_operation(&request.operation_id)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to read tombstone deletion receipt")
+                .with_source(e.to_string())
+        })?
+        .ok_or_else(|| {
+            SinexError::invalid_state(
+                "Tombstone operation disappeared after its deletion boundary committed",
+            )
+        })?;
+    let boundary_operation = operation_record_to_tombstone(&boundary_record)?;
+    operation.deletion_committed_at = boundary_operation.deletion_committed_at;
+    if operation.deletion_committed_at.is_none() {
+        return Err(SinexError::invalid_state(
+            "Tombstone deletion completed without a durable deletion-boundary receipt",
+        ));
+    }
+    let tombstoned_count = boundary_operation.tombstoned_count.ok_or_else(|| {
+        SinexError::invalid_state(
+            "Tombstone deletion completed without an authoritative tombstone count",
+        )
+    })?;
+    if tombstoned_count != cascade_tombstoned_count {
+        warn!(
+            operation_id = %request.operation_id,
+            returned_count = cascade_tombstoned_count,
+            receipt_count = tombstoned_count,
+            "Using persisted tombstone receipt count over cascade return value"
+        );
+    }
+
     // Delete-on-tombstone for source materials whose only references were the
     // events we just tombstoned. (#987.) Failures here are logged but do not
     // fail the tombstone operation — the tombstone itself succeeded; orphan
@@ -1090,11 +1253,12 @@ pub async fn handle_tombstone_approve(
         }
     };
 
+    let mut manifest_replay_roots_purged = 0_usize;
+    let mut rows_deleted = 0_usize;
     if !orphan_material_ids.is_empty() {
         let mut blobs_dropped = 0_usize;
         let mut blobs_shared = 0_usize;
         let mut blob_rows_deleted = 0_usize;
-        let mut rows_deleted = 0_usize;
         let mut rows_survived = 0_usize;
         for material_id in &orphan_material_ids {
             // Delete the registry row FIRST, re-verifying orphan status atomically
@@ -1116,9 +1280,34 @@ pub async fn handle_tombstone_approve(
                     rows_deleted += 1;
                     blob_uuid
                 }
+                Ok(None) if request.purge_manifest_replay_roots => match materials_repo
+                    .purge_manifest_material_if_orphan(sinex_primitives::Id::from_uuid(
+                        *material_id,
+                    ))
+                    .await
+                {
+                    Ok(Some(blob_uuid)) => {
+                        rows_deleted += 1;
+                        manifest_replay_roots_purged += 1;
+                        blob_uuid
+                    }
+                    Ok(None) => {
+                        rows_survived += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!(
+                            material_id = %material_id,
+                            error = %e,
+                            "Failed to purge manifest-backed orphan material registry row; retaining replay authority"
+                        );
+                        continue;
+                    }
+                },
                 Ok(None) => {
-                    // Either already gone, or a live event now references it --
-                    // either way its content (if any) must survive untouched.
+                    // Either already gone, a live event now references it, or it
+                    // is a manifest-backed replay root without explicit purge
+                    // authorization. In every case its content must survive.
                     rows_survived += 1;
                     continue;
                 }
@@ -1146,8 +1335,9 @@ pub async fn handle_tombstone_approve(
 
                 // Check-then-delete, atomically with respect to concurrent new
                 // references (sinex-audit-cas-refcheck-toctou): lock the
-                // `core.blobs` row (`FOR UPDATE`), recheck references, drop the
-                // CAS content, and delete the row all inside ONE transaction.
+                // `core.blobs` row (`FOR UPDATE`), recheck references, and
+                // remove the DB authority in ONE transaction. Only after that
+                // transaction commits may we irreversibly remove CAS bytes.
                 // The row lock blocks a concurrent dedup insert into
                 // `raw.source_material_registry` (its `optional_blob_id` FK
                 // takes an implicit `FOR KEY SHARE` lock on this row) until this
@@ -1168,7 +1358,7 @@ pub async fn handle_tombstone_approve(
                             .lock_by_id_for_update(&mut **tx, blob_id)
                             .await?
                         else {
-                            return Ok(BlobTombstoneOutcome::AlreadyGone);
+                            return Ok(Some(BlobTombstoneOutcome::AlreadyGone));
                         };
 
                         if pool
@@ -1183,41 +1373,48 @@ pub async fn handle_tombstone_approve(
                             // Still referenced elsewhere (sibling material or a
                             // derived event's associated_blob_ids) -- keep the
                             // content and the row alive.
-                            return Ok(BlobTombstoneOutcome::StillReferenced);
+                            return Ok(Some(BlobTombstoneOutcome::StillReferenced));
                         }
 
-                        content_store
-                            .drop_content(&blob_row.content_key(), true)
-                            .await?;
-
                         // Zero remaining references: the core.blobs row is now
-                        // dead too. Delete it in the same transaction so it
+                        // dead too. Remove it in the same transaction so it
                         // cannot survive as a zombie row that later fools dedup
                         // on re-ingestion (sinex-audit-cas-zombie-blob-rows).
+                        // Do not call drop_content here: a failed DELETE or
+                        // COMMIT would roll the row back while the previous
+                        // ordering had already destroyed its CAS authority.
                         let row_deleted = pool
                             .blobs()
                             .delete_by_id_with_executor(&mut **tx, blob_id)
                             .await?;
 
-                        Ok(BlobTombstoneOutcome::Dropped { row_deleted })
+                        Ok(row_deleted.then(|| BlobTombstoneOutcome::AuthorityRemoved {
+                            content_key: blob_row.content_key(),
+                        }))
                     })
                     .await;
 
                 match outcome {
-                    Ok(BlobTombstoneOutcome::AlreadyGone) => {}
-                    Ok(BlobTombstoneOutcome::StillReferenced) => blobs_shared += 1,
-                    Ok(BlobTombstoneOutcome::Dropped { row_deleted }) => {
-                        blobs_dropped += 1;
-                        if row_deleted {
-                            blob_rows_deleted += 1;
+                    Ok(Some(BlobTombstoneOutcome::AlreadyGone)) => {}
+                    Ok(Some(BlobTombstoneOutcome::StillReferenced)) => blobs_shared += 1,
+                    Ok(Some(BlobTombstoneOutcome::AuthorityRemoved { content_key })) => {
+                        blob_rows_deleted += 1;
+                        match content_store.drop_content(&content_key, true).await {
+                            Ok(()) => blobs_dropped += 1,
+                            Err(error) => warn!(
+                                material_id = %material_id,
+                                blob_id = %blob_uuid,
+                                error = %error,
+                                "CAS cleanup failed after blob authority committed; fsck can recover the unreferenced content"
+                            ),
                         }
                     }
+                    Ok(None) => {}
                     Err(e) => warn!(
                         material_id = %material_id,
                         blob_id = %blob_uuid,
                         error = %e,
-                        "Failed delete-on-tombstone transaction for blob; \
-                         GC sweeper will recover the orphan blob/row"
+                        "Failed to durably transition delete-on-tombstone blob authority; retaining CAS content"
                     ),
                 }
             }
@@ -1228,6 +1425,7 @@ pub async fn handle_tombstone_approve(
             orphans_found = orphan_material_ids.len(),
             rows_deleted = rows_deleted,
             rows_survived = rows_survived,
+            manifest_replay_roots_purged = manifest_replay_roots_purged,
             blobs_dropped = blobs_dropped,
             blobs_shared = blobs_shared,
             blob_rows_deleted = blob_rows_deleted,
@@ -1235,44 +1433,116 @@ pub async fn handle_tombstone_approve(
         );
     }
 
-    // Mark as completed and persist
-    let finished_at = Timestamp::now();
-    let duration_ms = tombstone_duration_ms(&operation, finished_at)?.unwrap_or(0);
-    operation.state = TombstoneOperationState::Completed;
-    operation.finished_at = Some(finished_at.format_rfc3339());
     operation.tombstoned_count = Some(tombstoned_count);
-    sync_tombstone_phase(&mut operation);
+    operation.manifest_replay_roots_purged = Some(manifest_replay_roots_purged as u64);
 
-    let scope = serde_json::to_value(&operation)?;
-    pool.state()
-        .update_tombstone_operation(
-            &request.operation_id,
-            phase_to_result_status(operation.phase),
-            scope,
-            Some(merge_preview_summary(
-                preview_summary,
-                json!({
-                    "message": "Tombstone operation completed",
-                    "tombstoned_count": tombstoned_count,
-                }),
-            )),
-            Some("Tombstone operation completed"),
-            Some(duration_ms),
-        )
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to finalize tombstone operation")
-                .with_source(e.to_string())
-        })?;
+    let projection_stale = pool
+        .projection_registry()
+        .mark_all_stale(&format!("tombstone operation {}", request.operation_id))
+        .await;
+    let (projection_status, projection_count, projection_detail) = match projection_stale {
+        Ok(count) => (
+            PrivacyInvalidationStatus::StaleMarked,
+            count,
+            Some("all current rebuildable projection registrations marked stale".to_string()),
+        ),
+        Err(error) => (
+            PrivacyInvalidationStatus::Failed,
+            0,
+            Some(format!("projection stale marking failed: {error}")),
+        ),
+    };
+    operation.invalidation_report = Some(PrivacyInvalidationReport {
+        schema_version: "sinex.privacy-invalidation/v1".to_string(),
+        operation_id: Some(request.operation_id.clone()),
+        generated_at: Timestamp::now().format_rfc3339(),
+        surfaces: vec![
+            purged_surface("core.event_tombstones", tombstoned_count),
+            purged_surface("audit.archived_events", tombstoned_count),
+            purged_surface("audit.archived_annotations", tombstoned_count),
+            purged_surface("audit.archived_embeddings", tombstoned_count),
+            purged_surface("audit.archived_tagged_items", tombstoned_count),
+            purged_surface("core.document_chunks", tombstoned_count),
+            purged_surface("core.documents", tombstoned_count),
+            purged_surface("core.email_mailbox_projection", tombstoned_count),
+            purged_surface("derivation.lane_outputs", tombstoned_count),
+            purged_surface("core.entities", tombstoned_count),
+            purged_surface("core.entity_relations", tombstoned_count),
+            purged_surface("core.event_temporal_facts", tombstoned_count),
+            purged_surface("core.model_effects", tombstoned_count),
+            purged_surface("sinex_schemas.dlq_events", tombstoned_count),
+            PrivacyInvalidationSurface {
+                surface: "raw.source_material_registry".to_string(),
+                status: if rows_deleted == candidate_material_ids.len() {
+                    PrivacyInvalidationStatus::Purged
+                } else {
+                    PrivacyInvalidationStatus::RetainedByDesign
+                },
+                before_count: candidate_material_ids.len() as u64,
+                after_count: candidate_material_ids.len().saturating_sub(rows_deleted)
+                    as u64,
+                affected_count: rows_deleted as u64,
+                residual_horizon: Some("shared-material references are retained".to_string()),
+                detail: Some(format!(
+                    "orphan-only material deletion route applied; {manifest_replay_roots_purged} manifest replay roots explicitly purged"
+                )),
+            },
+            PrivacyInvalidationSurface {
+                surface: "derivation.projection_registry".to_string(),
+                status: projection_status,
+                before_count: projection_count,
+                after_count: projection_count,
+                affected_count: projection_count,
+                residual_horizon: Some("rebuild required before ready state".to_string()),
+                detail: projection_detail,
+            },
+            PrivacyInvalidationSurface {
+                surface: "core.embedding_cache".to_string(),
+                status: PrivacyInvalidationStatus::RetainedByDesign,
+                before_count: 0,
+                after_count: 0,
+                affected_count: 0,
+                residual_horizon: Some("cache eviction policy".to_string()),
+                detail: Some(
+                    "cache rows are content-addressed and require independent reference-aware eviction"
+                        .to_string(),
+                ),
+            },
+        ],
+        caveats: vec![
+            "NATS retained frames, recovery spool, journald, xtask history, exports, backups, WAL, and physical database remnants are outside this transaction".to_string(),
+            "A retained shared source material or embedding cache row is reported rather than deleted without an ownership proof".to_string(),
+        ],
+    });
+
+    persist_tombstone_completion(
+        pool,
+        &request.operation_id,
+        &mut operation,
+        preview_summary,
+        None,
+    )
+    .await?;
 
     info!(
         operation_id = %request.operation_id,
         tombstoned_count = tombstoned_count,
-        duration_ms = duration_ms,
         "💀 Tombstone operation completed (PERMANENT)"
     );
 
     Ok(TombstoneApproveResponse { operation })
+}
+
+fn purged_surface(surface: &str, affected_count: u64) -> PrivacyInvalidationSurface {
+    PrivacyInvalidationSurface {
+        surface: surface.to_string(),
+        status: PrivacyInvalidationStatus::Purged,
+        before_count: affected_count,
+        after_count: 0,
+        affected_count,
+        residual_horizon: None,
+        detail: Some("event-linked rows removed by the tombstone transaction".to_string()),
+    }
 }
 
 /// Handle lifecycle.tombstone.cancel

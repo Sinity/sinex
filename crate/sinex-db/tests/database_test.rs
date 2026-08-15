@@ -527,7 +527,12 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
     let after_insert = Timestamp::now();
 
     // Verify ingestion timestamp is recent
-    let ingest_ts = inserted_event.id.as_ref().unwrap().timestamp();
+    let ingest_ts = inserted_event
+        .id
+        .as_ref()
+        .unwrap()
+        .timestamp()
+        .expect("test ID must be UUIDv7");
     let tolerance = Duration::milliseconds(50); // Increased for CI
     let before_ts: Timestamp = (*before_insert - tolerance).into();
     let after_ts: Timestamp = (*after_insert + tolerance).into();
@@ -549,8 +554,18 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
         .unwrap();
 
     assert_eq!(
-        retrieved.id.as_ref().unwrap().timestamp(),
-        inserted_event.id.as_ref().unwrap().timestamp()
+        retrieved
+            .id
+            .as_ref()
+            .unwrap()
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
+        inserted_event
+            .id
+            .as_ref()
+            .unwrap()
+            .timestamp()
+            .expect("test ID must be UUIDv7")
     );
 
     Ok(())

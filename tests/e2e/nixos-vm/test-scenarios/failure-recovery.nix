@@ -7,7 +7,7 @@
 }:
 
 let
-  sinexPackage = if sinex != null then sinex else sinexd;
+  sinexPackage = sinex;
   sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
   # Enhanced query tool with recovery testing support
   sinex-query = pkgs.writeScriptBin "sinex" ''
@@ -294,6 +294,9 @@ pkgs.testers.nixosTest {
         secrets.apiAdminTokenFile = "/etc/sinex/api-admin-token";
         core.api.autoGenerateTls = true;
         database.autoSetup = true;
+        # This disposable VM uses the explicit development trust profile;
+        # production deployments must provide a password source for SCRAM.
+        database.localAuth = "trust";
         database.connectionPool.maxConnections = 20;
         lifecycle.preflight.enable = lib.mkForce false;
         nats.jetstreamMaxStore = "16G";
@@ -304,7 +307,6 @@ pkgs.testers.nixosTest {
           defaults = {
             instances = 1;
             logLevel = "info";
-            env.SINEX_COORDINATION_DISABLED = "0";
           };
         };
 

@@ -297,9 +297,7 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
 - Verification cadence: narrow command for the changed surface while iterating; broad gate
   (`xtask check --full`, `xtask test --impact-mode=off --all`) once per publishable phase.
   Canonical matrix: `TESTING.md`.
-- **PR flow to master, squash-merge, title = permanent history line ending `(#N)`.** PR body
-  needs Summary / Problem / Solution / Verification (exact commands + the line that
-  matters). No resolver keywords next to issue numbers — `Ref #N` only.
+- **PR flow to master, ready for review, squash-merge, title = permanent history line ending `(#N)`.** Do not open draft PRs in this repository. A branch is pushed only after its scoped checks and PR body are ready for review. PR body needs Summary / Problem / Solution / Verification (exact commands + the line that matters). No resolver keywords next to issue numbers — `Ref #N` only.
 - Pre-push drift guard (`.githooks/pre-push`): schema-bundle check + `--changed-strict` when
   Rust changed. Bypass only in emergencies with `SINEX_SKIP_DRIFT_GUARD=1`, documented.
 - **Closure honesty**: Bead `close_reason` text includes a Closure Evidence Manifest;

@@ -342,12 +342,12 @@ impl BlobRepository {
                 OR EXISTS (
                     SELECT 1 FROM core.events e
                     WHERE e.associated_blob_ids IS NOT NULL
-                      AND $1 = ANY(e.associated_blob_ids)
+                      AND e.associated_blob_ids @> ARRAY[$1]::uuid[]
                 )
                 OR EXISTS (
                     SELECT 1 FROM audit.archived_events ae
                     WHERE ae.associated_blob_ids IS NOT NULL
-                      AND $1 = ANY(ae.associated_blob_ids)
+                      AND ae.associated_blob_ids @> ARRAY[$1]::uuid[]
                 )
             ) AS "referenced!"
             "#,
@@ -432,6 +432,42 @@ impl BlobRepository {
             .transpose()
     }
 
+    /// List blob rows with no remaining source-material or event reference.
+    ///
+    /// This is the durable retry input for registry GC: if a process dies after
+    /// removing a stale registry row but before cleaning its CAS/blob row, the
+    /// next sweep rediscovers that orphan instead of leaking it permanently.
+    #[instrument(skip(self))]
+    pub async fn list_unreferenced_ids(&self, limit: i64) -> DbResult<Vec<Id<Blob>>> {
+        let ids = sqlx::query_scalar!(
+            r#"
+            SELECT b.id AS "id!: uuid::Uuid"
+            FROM core.blobs b
+            WHERE NOT EXISTS (
+                SELECT 1 FROM raw.source_material_registry sm
+                WHERE sm.optional_blob_id = b.id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM core.events e
+                WHERE e.associated_blob_ids IS NOT NULL
+                  AND e.associated_blob_ids @> ARRAY[b.id]::uuid[]
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM audit.archived_events ae
+                WHERE ae.associated_blob_ids IS NOT NULL
+                  AND ae.associated_blob_ids @> ARRAY[b.id]::uuid[]
+              )
+            ORDER BY b.created_at ASC, b.id ASC
+            LIMIT $1
+            "#,
+            limit,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| db_error(e, "list unreferenced blob ids"))?;
+        Ok(ids.into_iter().map(Id::from_uuid).collect())
+    }
+
     /// Delete a blob row by ID. Returns `true` if a row was actually removed.
     ///
     /// Caller is responsible for confirming the blob has zero remaining live
@@ -448,7 +484,11 @@ impl BlobRepository {
     /// so it can run inside the same transaction that holds the
     /// [`Self::lock_by_id_for_update`] row lock.
     #[instrument(skip(self, executor))]
-    pub async fn delete_by_id_with_executor<'e, E>(&self, executor: E, id: Id<Blob>) -> DbResult<bool>
+    pub async fn delete_by_id_with_executor<'e, E>(
+        &self,
+        executor: E,
+        id: Id<Blob>,
+    ) -> DbResult<bool>
     where
         E: Executor<'e, Database = Postgres>,
     {

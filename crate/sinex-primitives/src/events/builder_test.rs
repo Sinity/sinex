@@ -19,8 +19,8 @@ async fn resolve_host_identity_falls_back_to_valid_hostname() -> TestResult<()> 
 
 // Inline because these exercise private host-identity resolution helpers directly.
 #[sinex_test]
-async fn resolve_host_identity_derives_deterministic_fallback_from_invalid_inputs()
--> TestResult<()> {
+async fn resolve_host_identity_derives_deterministic_fallback_from_invalid_inputs() -> TestResult<()>
+{
     let host = resolve_host_identity(Some("bad machine id"), Some("bad host"));
     assert_eq!(host.as_str(), "host-887759893f18d0bb");
     Ok(())
@@ -79,6 +79,19 @@ async fn material_event_with_explicit_quality_is_owned_by_parser() -> TestResult
 async fn material_deferral_is_replay_stable() -> TestResult<()> {
     assert_eq!(material_builder().build()?.ts_orig, None);
     assert_eq!(material_builder().build()?.ts_orig, None);
+    Ok(())
+}
+
+#[sinex_test]
+async fn material_builder_preserves_explicit_equivalence_key() -> TestResult<()> {
+    let event = material_builder()
+        .with_equivalence_key("test.source|occurrence|stable")
+        .build()?;
+    assert_eq!(
+        event.equivalence_key.as_deref(),
+        Some("test.source|occurrence|stable"),
+        "the canonical material builder path must carry a producer's stable occurrence key"
+    );
     Ok(())
 }
 

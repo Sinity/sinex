@@ -21,6 +21,7 @@ use crate::runtime::stream::{
     Checkpoint, EventEmitter, RuntimeContext, RuntimeHandles, RuntimeModule, ScanArgs, ServiceInfo,
 };
 use crate::runtime::{AutomatonLogicError, ScopeReconciler, Transducer, Windowed, WindowedWrapper};
+use crate::runtime::automaton::traits::Automaton;
 use crate::runtime::{
     CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError,
 };
@@ -47,7 +48,9 @@ use tokio::sync::mpsc;
 use xtask::sandbox::prelude::*;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct TestDerivedState;
+struct TestDerivedState {
+    processed: usize,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct WildcardMaterialOnlyState {
@@ -202,10 +205,11 @@ impl Transducer for EmittingAutomaton {
 
     async fn process(
         &mut self,
-        _state: &mut Self::State,
+        state: &mut Self::State,
         _input: Self::Input,
         context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
+        state.processed += 1;
         Ok(Some(
             DerivedOutput::transduced(
                 json!({"ok": true}),
@@ -273,6 +277,27 @@ struct ScopeReconcilerOutput {
     count: usize,
 }
 
+const SCOPE_RECONCILER_OUTPUT_DECLARATION: sinex_primitives::derivation::DerivationOutputDeclaration =
+    sinex_primitives::derivation::DerivationOutputDeclaration {
+        declaration_id: "test.derived-adapter-scope-reconciler.measurement.aggregate",
+        owner: "test",
+        product_class: sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: sinex_primitives::derivation::DerivationWriteSurface::DerivedOutput,
+        output_source: Some("adapter-regression-scope-reconciler"),
+        output_event_type: Some("measurement.aggregate"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: sinex_primitives::derivation::InputEligibility::ExplicitOnly,
+        default_support: sinex_primitives::derivation::ClaimSupportTemplate::new(
+            sinex_primitives::derivation::SupportLevel::Convergent,
+            sinex_primitives::derivation::SourceCoverage::Partial,
+            sinex_primitives::derivation::ClaimTemporalQuality::DeclaredEffective,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(scope_reconciler_invalidation)'",
+    };
+
 struct TestScopeReconcilerAutomaton;
 
 impl ScopeReconciler for TestScopeReconcilerAutomaton {
@@ -291,8 +316,14 @@ impl ScopeReconciler for TestScopeReconcilerAutomaton {
     fn output_event_type(&self) -> &'static str {
         "measurement.aggregate"
     }
+    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+        &[SCOPE_RECONCILER_OUTPUT_DECLARATION];
     fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
+    }
+
+    fn supports_scope_invalidation_recompute(&self) -> bool {
+        true
     }
 
     async fn reconcile(
@@ -327,12 +358,18 @@ impl ScopeReconciler for TestScopeReconcilerAutomaton {
         let total = working_set.iter().map(|input| input.value).sum();
         let count = working_set.len();
 
-        Ok(vec![DerivedOutput::reconciled(
-            ScopeReconcilerOutput { total, count },
-            context.ts_orig.unwrap_or_else(Timestamp::now),
-            vec![*context.trigger_event_id.as_uuid()],
-            scope_key.to_string(),
-        )])
+        Ok(vec![
+            DerivedOutput::reconciled(
+                ScopeReconcilerOutput { total, count },
+                context.ts_orig.unwrap_or_else(Timestamp::now),
+                vec![*context.trigger_event_id.as_uuid()],
+                scope_key.to_string(),
+            )
+            .with_declaration_id(SCOPE_RECONCILER_OUTPUT_DECLARATION.declaration_id)
+            .with_product_class(SCOPE_RECONCILER_OUTPUT_DECLARATION.product_class)
+            .with_claim_support(sinex_primitives::derivation::ClaimSupport::unknown())
+            .with_event_type("measurement.aggregate"),
+        ])
     }
 }
 
@@ -341,7 +378,9 @@ struct StatefulInvalidationState {
     invalidations_applied: u64,
 }
 
-struct StatefulInvalidationNode;
+struct StatefulInvalidationNode {
+    allow_scope_recompute: bool,
+}
 
 impl ScopeReconciler for StatefulInvalidationNode {
     type State = StatefulInvalidationState;
@@ -361,6 +400,10 @@ impl ScopeReconciler for StatefulInvalidationNode {
     }
     fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
+    }
+
+    fn supports_scope_invalidation_recompute(&self) -> bool {
+        self.allow_scope_recompute
     }
 
     async fn reconcile(
@@ -541,6 +584,8 @@ async fn make_runtime_state_with_db(
     ));
     let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(32);
     let emitter = EventEmitter::new(event_sender, false);
+    let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let _settler = auto_settle_events(event_receiver, settlement_registry.clone());
     let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
     let handles = RuntimeHandles::new(
         ctx.pool().clone(),
@@ -548,7 +593,8 @@ async fn make_runtime_state_with_db(
         emitter,
         EventTransport::Nats(publisher),
         None,
-    );
+    )
+    .with_settlement_registry(settlement_registry);
     let work_dir = tempdir()?;
     let work_dir_path = work_dir.keep();
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
@@ -570,7 +616,10 @@ async fn make_runtime_state_with_db(
             HashMap::new(),
             work_dir_utf8,
         ),
-        event_receiver,
+        // The helper's returned receiver is retained for API compatibility;
+        // the settlement forwarder above owns the actual emitter receiver so
+        // historical replay tests exercise the production receipt route.
+        mpsc::channel::<Event<JsonValue>>(1).1,
     ))
 }
 
@@ -669,6 +718,47 @@ async fn stale_output_ids_or_fail_scope_surfaces_query_error() -> TestResult<()>
     assert!(rendered.contains("Failed to query stale outputs"));
     assert!(rendered.contains("test-derived"));
     assert!(rendered.contains("scope-a"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn scope_reconciler_invalidation_preserves_output_event_type() -> TestResult<()> {
+    let input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        json!({ "value": 5_i64 }),
+    )
+    .from_material(Uuid::now_v7())
+    .build()?;
+    let context = AutomatonContext {
+        trigger_event_id: Id::new(),
+        source: EventSource::from_static("measurements"),
+        event_type: EventType::from_static("measurement.taken"),
+        ts_orig: None,
+        ts_coided: Timestamp::now(),
+        processing_mode: ProcessingMode::Replay,
+        trigger_kind: TriggerKind::ScopeInvalidation,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    };
+    let mut reconciler = ScopeReconcilerWrapper(TestScopeReconcilerAutomaton);
+    let mut state = TestScopeReconcilerState;
+
+    let outputs = reconciler
+        .process_invalidation_derived(&mut state, "scope:measurements", vec![input], &context)
+        .await?;
+
+    assert_eq!(
+        outputs.len(),
+        1,
+        "recomputation fixture must emit one output"
+    );
+    assert_eq!(
+        outputs[0].event_type,
+        Some("measurement.aggregate"),
+        "the wrapper must preserve an event type selected by recompute_scope"
+    );
     Ok(())
 }
 
@@ -1224,6 +1314,10 @@ async fn process_batch_advances_checkpoint_only_after_durable_emission_settles(
             adapter.persisted_state.events_processed, 0,
             "the checkpoint must not advance while durable emission is still unresolved"
         );
+        assert_eq!(
+            adapter.persisted_state.state.processed, 0,
+            "unsettled output must roll back the automaton state delta as well as input progress"
+        );
         assert_eq!(adapter.current_checkpoint_internal(), Checkpoint::None);
     }
 
@@ -1363,7 +1457,7 @@ impl Windowed for EmittingWindowedAutomaton {
         state.has_pending_window = false;
         let declaration = &FLUSH_BARRIER_OUTPUT_DECLARATIONS[0];
         Ok(Some(
-            DerivedOutput::windowed(json!({"ok": true}), Timestamp::now(), Vec::new())
+            DerivedOutput::windowed(json!({"ok": true}), Timestamp::now(), vec![Uuid::now_v7()])
                 .with_declaration_id(declaration.declaration_id)
                 .with_product_class(declaration.product_class)
                 .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0)),
@@ -1379,10 +1473,6 @@ impl Windowed for EmittingWindowedAutomaton {
 /// resolves the emitted event, so a shutdown/checkpoint-save landing here
 /// would durably lose the window with no receipt ever having unlocked it.
 #[sinex_test]
-#[ignore = "sinex-vxu open: timer_flush has no state-commit barrier -- it mutates \
-            persisted_state.state unconditionally before its emitted output's \
-            durable-emission receipt is known to have settled, unlike process_batch's \
-            commit_prepared_inputs gating"]
 async fn timer_flush_does_not_clear_window_state_before_emission_settles(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -1401,21 +1491,103 @@ async fn timer_flush_does_not_clear_window_state_before_emission_settles(
     adapter.runtime = Some(runtime);
     adapter.persisted_state.state.has_pending_window = true;
 
-    let emitted = adapter.timer_flush(Timestamp::now()).await?;
+    let error = adapter
+        .timer_flush(Timestamp::now())
+        .await
+        .expect_err("unsettled timer output must not be reported as successful");
 
-    // Unlike process_batch (which only counts durably-confirmed events),
-    // timer_flush's emitted count is just `output_events.len()` -- it
-    // reports success the instant the mpsc handoff succeeds, never having
-    // consulted the settlement registry wired above at all.
-    assert_eq!(
-        emitted, 1,
-        "timer_flush reports the mpsc handoff as emitted with no durable-settlement check"
+    assert!(
+        error.to_string().contains("durable settlement"),
+        "timer flush must surface the unsettled receipt: {error}"
     );
     assert!(
         adapter.persisted_state.state.has_pending_window,
         "timer_flush must not clear the window's state past an output whose durable-emission \
          receipt never settled -- doing so unconditionally is exactly sinex-vxu's remaining \
          crash-loss window"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn timer_flush_checkpoints_state_only_after_durable_settlement(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+    let _settler = auto_settle_events(event_receiver, registry.clone());
+    let emitter = EventEmitter::new(event_sender, false);
+    let runtime =
+        make_runtime_state_with_registry(&ctx, "derived-windowed-flush-checkpoint-test", registry)
+            .await?;
+    let checkpoint_manager = runtime.checkpoint_manager();
+
+    let mut adapter = AutomatonRuntime::new(WindowedWrapper(EmittingWindowedAutomaton))
+        .with_durable_emission_timeout(std::time::Duration::from_millis(500));
+    adapter.checkpoint_manager = Some(checkpoint_manager.clone());
+    adapter.event_emitter = Some(emitter);
+    adapter.runtime = Some(runtime);
+    adapter.persisted_state.state.has_pending_window = true;
+
+    assert_eq!(adapter.timer_flush(Timestamp::now()).await?, 1);
+    let checkpoint = checkpoint_manager.load_checkpoint().await?;
+    assert_eq!(
+        checkpoint
+            .data
+            .as_ref()
+            .and_then(|data| data.get("state"))
+            .and_then(|state| state.get("has_pending_window"))
+            .and_then(JsonValue::as_bool),
+        Some(false),
+        "timer checkpoint must contain the post-flush state"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn shutdown_saves_pre_flush_state_after_unsettled_timer_output(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (event_sender, _event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+    let emitter = EventEmitter::new(event_sender, false);
+    let runtime =
+        make_runtime_state_with_registry(&ctx, "derived-windowed-flush-shutdown-test", registry)
+            .await?;
+    let checkpoint_dir = tempdir()?;
+    let checkpoint_path = checkpoint_dir.path().join("shutdown.checkpoint.json");
+    let mut adapter = AutomatonRuntime::with_shutdown_config(
+        WindowedWrapper(EmittingWindowedAutomaton),
+        ShutdownConfig {
+            checkpoint_path: Some(checkpoint_path.clone()),
+            ..ShutdownConfig::default()
+        },
+    )
+    .with_durable_emission_timeout(std::time::Duration::from_millis(100));
+    adapter.event_emitter = Some(emitter);
+    adapter.runtime = Some(runtime);
+    adapter.persisted_state.state.has_pending_window = true;
+
+    adapter
+        .timer_flush(Timestamp::now())
+        .await
+        .expect_err("unsettled timer output must block the flush");
+    RuntimeModule::shutdown(&mut adapter).await?;
+
+    let checkpoint = CheckpointState::load_from_file(&checkpoint_path)
+        .await?
+        .expect("shutdown must leave a checkpoint file");
+    assert_eq!(
+        checkpoint
+            .data
+            .as_ref()
+            .and_then(|data| data.get("state"))
+            .and_then(|state| state.get("has_pending_window"))
+            .and_then(JsonValue::as_bool),
+        Some(true),
+        "shutdown must not persist state past an unsettled timer receipt"
     );
     Ok(())
 }

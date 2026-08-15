@@ -6,8 +6,8 @@
 //! `drain_completion_checkpoint_description`) that only touch `&self` fields.
 
 use super::{
-    Arc, Checkpoint, ErasedRuntimeModule, ErasedSourceFactory, ModuleKind, ProcessingModel,
-    RunnerLifecycle, RuntimeContext, RuntimeModule, RuntimeRunner, SourceFactory,
+    Arc, Checkpoint, ErasedRuntimeModule, ErasedSourceFactory, ModuleKind, RunnerLifecycle,
+    RuntimeContext, RuntimeModule, RuntimeRunner, SourceFactory,
 };
 use std::collections::HashMap;
 
@@ -59,9 +59,9 @@ impl RuntimeRunner {
             consumer_handle: None,
             command_listener_shutdown: None,
             command_listener_handle: None,
+            replay_worker_cancel: Arc::new(std::sync::Mutex::new(None)),
+            replay_worker_handle: Arc::new(std::sync::Mutex::new(None)),
             parse_listener_handle: None,
-            processing_model: ProcessingModel::StatelessWorker,
-            leader_state: None,
             #[cfg(any(test, feature = "testing"))]
             confirmed_consumer_ready_rx: Some(confirmed_consumer_ready_rx),
             #[cfg(any(test, feature = "testing"))]

@@ -4,6 +4,8 @@
 //! logic that executes when a material assembly completes or fails. The durable
 //! source-material/blob/ledger commit boundary lives in `finalization_transaction`.
 
+use camino::Utf8PathBuf;
+use futures::FutureExt as _;
 use serde::Serialize;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
@@ -11,11 +13,15 @@ use sinex_primitives::Timestamp;
 use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
 use sinex_primitives::transport;
 use sinex_primitives::{
-    Id, JsonValue, MaterialStatus, Uuid, sources::is_self_observation_material_source,
+    Id, JsonValue, MaterialManifestV1, MaterialStatus, Uuid,
+    sources::is_self_observation_material_source,
 };
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
+use crate::event_engine::durable_failure::{DURABLE_FAILURE_ID_HEADER, persist_failure_evidence};
 use crate::event_engine::{EventEngineResult, SinexError};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 
@@ -56,7 +62,8 @@ fn final_material_status(metadata: &JsonValue) -> MaterialStatus {
 /// DLQ payload for material failures
 #[derive(Debug, Serialize)]
 struct MaterialDlqPayload {
-    material_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    material_id: Option<String>,
     error: String,
     context: JsonValue,
     failed_at: Timestamp,
@@ -81,7 +88,7 @@ impl MaterialAssembler {
                 return FailureCleanupClaim::Skipped;
             }
             let resume_phase = state.phase;
-            state.phase = AssemblyPhase::Finalizing;
+            state.mark_finalizing();
             return FailureCleanupClaim::Claimed { resume_phase };
         }
 
@@ -115,7 +122,7 @@ impl MaterialAssembler {
         if let Some(state_handle) = self.get_state_handle(&material_id) {
             let mut state = state_handle.lock().await;
             if state.phase == AssemblyPhase::Finalizing {
-                state.phase = resume_phase;
+                state.restore_phase(resume_phase);
             }
         }
     }
@@ -130,9 +137,61 @@ impl MaterialAssembler {
         end: MaterialEndMessage,
     ) {
         let mut state = state_handle.lock().await;
-        state.phase = AssemblyPhase::Accumulating;
+        state.restore_phase(AssemblyPhase::Accumulating);
         state.pending_end = Some(end);
         // WAL is immutable — End message remains. In-memory state reverted.
+    }
+
+    async fn recover_finalization_worker_panic(
+        state_handle: &Arc<Mutex<super::state::AssemblerState>>,
+    ) {
+        let mut state = state_handle.lock().await;
+        if state.phase == AssemblyPhase::Finalizing {
+            // `pending_end` remains retained throughout the worker attempt, so
+            // returning to Accumulating makes the maintenance re-drive route
+            // immediately usable after a detached worker panic.
+            state.phase = AssemblyPhase::Accumulating;
+        }
+    }
+
+    async fn observe_finalize_worker(
+        &self,
+        material_id: Uuid,
+        state_handle: Arc<Mutex<super::state::AssemblerState>>,
+        worker: JoinHandle<EventEngineResult<()>>,
+    ) {
+        match worker.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!(
+                material_id = %material_id,
+                error = %error,
+                "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
+            ),
+            Err(error) => {
+                warn!(
+                    material_id = %material_id,
+                    error = ?error,
+                    "Decoupled material finalize worker panicked or was aborted; restoring maintenance recovery state"
+                );
+                Self::recover_finalization_worker_panic(&state_handle).await;
+                // Keep the recovery action observable even if the worker
+                // vanished before it could emit its own error.
+                if let Err(dlq_error) = self
+                    .route_material_error(
+                        material_id,
+                        "material_finalize_worker_terminated",
+                        serde_json::json!({ "join_error": error.to_string() }),
+                    )
+                    .await
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %dlq_error,
+                        "Failed to publish material finalize worker termination evidence"
+                    );
+                }
+            }
+        }
     }
 
     /// Route material failure to DLQ.
@@ -146,24 +205,63 @@ impl MaterialAssembler {
         material_id: Uuid,
         error: impl Into<String>,
         context: JsonValue,
-    ) -> EventEngineResult<()> {
+    ) -> EventEngineResult<Uuid> {
+        self.route_material_frame_error(Some(material_id), error, context)
+            .await
+    }
+
+    /// Route a material frame failure when decoding may not have produced a
+    /// material ID. A generated witness ID keeps the malformed frame
+    /// operator-visible and lets the caller settle it only after the confirmed
+    /// JetStream publish succeeds.
+    pub(super) async fn route_material_frame_error(
+        &self,
+        material_id: Option<Uuid>,
+        error: impl Into<String>,
+        context: JsonValue,
+    ) -> EventEngineResult<Uuid> {
+        let failure_event_id = material_id.unwrap_or_else(Uuid::now_v7);
         let payload = MaterialDlqPayload {
-            material_id: material_id.to_string(),
+            material_id: material_id.map(|id| id.to_string()),
             error: error.into(),
             context,
             failed_at: Timestamp::now(),
         };
 
+        let payload_json = serde_json::to_value(&payload).map_err(|error| {
+            SinexError::serialization("Failed to encode material DLQ evidence").with_source(error)
+        })?;
+        let durable_failure_id = persist_failure_evidence(
+            &self.pool,
+            failure_event_id,
+            "event-engine.material-assembler",
+            "source-material",
+            "material.assembly",
+            "permanent",
+            &payload.error,
+            payload_json,
+            serde_json::json!({
+                "durability_source": "postgres_pre_material_dlq_settlement",
+                "material_id": material_id,
+                "failure_event_id": failure_event_id,
+            }),
+            0,
+        )
+        .await?;
+
         let bytes = serde_json::to_vec(&payload).map_err(|e| {
             error!(
                 target: "sinex_metrics",
                 metric = "event_engine.material_dlq_publish_failures_total",
-                material_id = %material_id,
+                material_id = ?material_id,
                 error = %e,
                 "Failed to encode DLQ payload"
             );
             SinexError::serialization(format!("Failed to encode material DLQ payload: {e}"))
-                .with_context("material_id", material_id.to_string())
+                .with_context(
+                    "material_id",
+                    material_id.map(|id| id.to_string()).unwrap_or_default(),
+                )
         })?;
 
         let mut headers = async_nats::HeaderMap::new();
@@ -175,35 +273,62 @@ impl MaterialAssembler {
 
         ensure_nats_payload_fits("source-material DLQ entry", &self.dlq_subject, bytes.len())
             .map_err(|error| {
-                let error = error.with_context("material_id", material_id.to_string());
+                let error = error.with_context(
+                    "material_id",
+                    material_id.map(|id| id.to_string()).unwrap_or_default(),
+                );
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.material_dlq_publish_failures_total",
-                    material_id = %material_id,
+                    material_id = ?material_id,
                     error = %error,
                     "Failed to publish material DLQ entry"
                 );
                 error
             })?;
 
-        self.nats_client
+        let durable_failure_id_header = durable_failure_id.to_string();
+        headers.insert(
+            DURABLE_FAILURE_ID_HEADER,
+            durable_failure_id_header.as_str(),
+        );
+        self.js
             .publish_with_headers(self.dlq_subject.clone(), headers, bytes.into())
             .await
             .map_err(|e| {
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.material_dlq_publish_failures_total",
-                    material_id = %material_id,
+                    material_id = ?material_id,
                     error = %e,
                     "Failed to publish material DLQ entry"
                 );
                 SinexError::network("Failed to publish material DLQ entry")
-                    .with_context("material_id", material_id.to_string())
+                    .with_context(
+                        "material_id",
+                        material_id.map(|id| id.to_string()).unwrap_or_default(),
+                    )
+                    .with_source(e)
+            })?
+            .await
+            .map_err(|e| {
+                error!(
+                    target: "sinex_metrics",
+                    metric = "event_engine.material_dlq_publish_failures_total",
+                    material_id = ?material_id,
+                    error = %e,
+                    "Failed to confirm material DLQ entry"
+                );
+                SinexError::network("Failed to confirm material DLQ entry")
+                    .with_context(
+                        "material_id",
+                        material_id.map(|id| id.to_string()).unwrap_or_default(),
+                    )
                     .with_source(e)
             })?;
 
-        debug!(material_id = %material_id, "Routed to DLQ");
-        Ok(())
+        debug!(material_id = ?material_id, failure_event_id = %failure_event_id, "Routed to DLQ");
+        Ok(durable_failure_id)
     }
 
     /// Route a material failure to DLQ, then durably settle it as terminal-failed —
@@ -223,7 +348,10 @@ impl MaterialAssembler {
         context: JsonValue,
         resume_phase: AssemblyPhase,
     ) -> EventEngineResult<()> {
-        if let Err(error) = self.route_material_error(material_id, reason, context).await {
+        if let Err(error) = self
+            .route_material_error(material_id, reason, context)
+            .await
+        {
             warn!(
                 material_id = %material_id,
                 failure_reason = reason,
@@ -254,8 +382,7 @@ impl MaterialAssembler {
         let reason = reason.into();
         self.route_material_error(material_id, reason.clone(), context)
             .await?;
-        self.finalize_failed_material(material_id, &reason).await;
-        Ok(())
+        self.finalize_failed_material(material_id, &reason).await
     }
 
     /// Mark material as failed in the database to prevent reprocessing.
@@ -370,8 +497,7 @@ impl MaterialAssembler {
             return Ok(false);
         }
 
-        let is_self_observation =
-            is_self_observation_material_source(&material.source_identifier);
+        let is_self_observation = is_self_observation_material_source(&material.source_identifier);
         let (recovery_reason, metadata_key, dlq_policy) = if is_self_observation {
             (
                 ZERO_EVENT_SELF_OBSERVATION_TIMEOUT_RECOVERY_REASON,
@@ -404,12 +530,10 @@ impl MaterialAssembler {
             )
             .await
             .map_err(|error| {
-                SinexError::database(
-                    "Failed to mark zero-event timeout recovered_partial",
-                )
-                .with_context("material_id", material_id.to_string())
-                .with_context("parsed_event_count", parsed_event_count.to_string())
-                .with_source(error)
+                SinexError::database("Failed to mark zero-event timeout recovered_partial")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("parsed_event_count", parsed_event_count.to_string())
+                    .with_source(error)
             })?;
 
         info!(
@@ -422,24 +546,19 @@ impl MaterialAssembler {
     }
 
     /// Finalize a failed material: mark as failed, clean up state, and remove from active map
-    pub(super) async fn finalize_failed_material(&self, material_id: Uuid, reason: &str) {
+    pub(super) async fn finalize_failed_material(
+        &self,
+        material_id: Uuid,
+        reason: &str,
+    ) -> EventEngineResult<()> {
         let FailureCleanupClaim::Claimed { resume_phase } =
             self.begin_failure_cleanup(material_id, reason).await
         else {
-            return;
+            return Ok(());
         };
 
-        if let Err(error) = self
-            .finalize_failed_material_claimed_checked(material_id, reason, resume_phase)
+        self.finalize_failed_material_claimed_checked(material_id, reason, resume_phase)
             .await
-        {
-            warn!(
-                material_id = %material_id,
-                failure_reason = reason,
-                error = %error,
-                "Failed-material cleanup could not durably land; preserving retry state"
-            );
-        }
     }
 
     pub(super) async fn finalize_failed_material_claimed_checked(
@@ -498,7 +617,10 @@ impl MaterialAssembler {
         state_handle: &Arc<Mutex<super::state::AssemblerState>>,
         end: MaterialEndMessage,
     ) -> EventEngineResult<()> {
-        if let Err(error) = self.route_material_error(material_id, reason, context).await {
+        if let Err(error) = self
+            .route_material_error(material_id, reason, context)
+            .await
+        {
             warn!(
                 material_id = %material_id,
                 failure_reason = reason,
@@ -545,6 +667,7 @@ impl MaterialAssembler {
         let assembler = self.clone_for_task();
         let semaphore = self.finalize_semaphore.clone();
         let in_flight = self.finalize_in_flight.clone();
+        let recovery_state_handle = state_handle.clone();
         tokio::spawn(async move {
             // Decrement exactly once when the worker finishes, even on panic or
             // early return, so the backpressure gate cannot leak permits.
@@ -556,21 +679,57 @@ impl MaterialAssembler {
             }
             let _guard = InFlightGuard(in_flight);
 
-            let _permit = match semaphore.acquire().await {
-                Ok(permit) => permit,
-                Err(_) => return,
-            };
-            if let Err(error) = assembler
-                .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Ignore)
-                .await
-            {
-                warn!(
+            let outcome = std::panic::AssertUnwindSafe(async {
+                let _permit = match semaphore.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => return,
+                };
+                if let Err(error) = assembler
+                    .try_finalize_pending_end(
+                        material_id,
+                        state_handle,
+                        PendingEndBehavior::Ignore,
+                    )
+                    .await
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %error,
+                        "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
+                    );
+                }
+            })
+            .catch_unwind()
+            .await;
+
+            if outcome.is_err() {
+                error!(
+                    target: "sinex_metrics",
+                    metric = "assembly_finalization_worker_panics_total",
                     material_id = %material_id,
-                    error = %error,
-                    "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
+                    "Detached material finalization worker panicked; restoring retry state"
                 );
+                assembler
+                    .recover_panicked_finalize(material_id, recovery_state_handle)
+                    .await;
             }
         });
+    }
+
+    async fn recover_panicked_finalize(
+        &self,
+        material_id: Uuid,
+        state_handle: Arc<Mutex<super::state::AssemblerState>>,
+    ) {
+        let mut state = state_handle.lock().await;
+        if state.phase == AssemblyPhase::Finalizing {
+            state.restore_phase(AssemblyPhase::Accumulating);
+            warn!(
+                material_id = %material_id,
+                pending_end = state.pending_end.is_some(),
+                "Recovered panicked material finalization into retryable assembly state"
+            );
+        }
     }
 
     pub(super) async fn try_finalize_pending_end(
@@ -617,7 +776,7 @@ impl MaterialAssembler {
                         "error": error.to_string(),
                     });
                     let resume_phase = state.phase;
-                    state.phase = AssemblyPhase::Finalizing;
+                    state.mark_finalizing();
                     drop(state);
                     self.route_material_error_and_finalize_failed_claimed(
                         material_id,
@@ -691,7 +850,7 @@ impl MaterialAssembler {
                 });
 
                 let resume_phase = state.phase;
-                state.phase = AssemblyPhase::Finalizing;
+                state.mark_finalizing();
                 drop(state);
                 self.route_material_error_and_finalize_failed_claimed(
                     material_id,
@@ -736,8 +895,8 @@ impl MaterialAssembler {
                 transition = ?transition,
                 "Assembly state machine accepted finalization start"
             );
-            state.phase = AssemblyPhase::Finalizing;
-            let end = state.pending_end.take().ok_or_else(|| {
+            state.mark_finalizing();
+            let end = state.pending_end.clone().ok_or_else(|| {
                 SinexError::service(format!(
                     "State corruption: pending_end missing during finalization for material {material_id}"
                 ))
@@ -904,7 +1063,7 @@ impl MaterialAssembler {
             return Ok(());
         }
 
-        let finalize_metadata = match build_finalize_metadata(
+        let mut finalize_metadata = match build_finalize_metadata(
             &final_state,
             &end.metadata,
             ended_at,
@@ -933,7 +1092,7 @@ impl MaterialAssembler {
         };
         let final_status = final_material_status(&finalize_metadata);
 
-        let content_key = match self.import_into_content_store(&final_state).await {
+        let (content_key, write_lease) = match self.import_into_content_store(&final_state).await {
             Ok(result) => result,
             Err(e) => {
                 let e = e.with_context(
@@ -959,6 +1118,51 @@ impl MaterialAssembler {
             }
         };
 
+        // Persist a canonical manifest beside the exact material bytes before the
+        // registry transaction. The registry reference is committed atomically
+        // with the blob/material rows below; an interrupted transaction leaves a
+        // recoverable CAS object for the lifecycle reconciler rather than losing
+        // the only copy of its metadata.
+        let (manifest_key, manifest_lease) = match self
+            .persist_material_manifest(
+                &final_state,
+                &end.content_hash,
+                end.total_size_bytes,
+                &finalize_metadata,
+                ended_at,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                if let Err(dlq_error) = self
+                    .route_material_error(
+                        material_id,
+                        "material_manifest_store_failed",
+                        serde_json::json!({ "error": error.to_string() }),
+                    )
+                    .await
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %dlq_error,
+                        "Failed to publish manifest-store DLQ entry; preserving retry state"
+                    );
+                }
+                Self::revert_finalization_start(&state_handle, end).await;
+                return Err(error);
+            }
+        };
+        if let Some(object) = finalize_metadata.as_object_mut() {
+            object.insert(
+                "material_manifest".to_string(),
+                serde_json::json!({
+                    "manifest_type": sinex_primitives::MATERIAL_MANIFEST_V1,
+                    "content_key": manifest_key.key,
+                }),
+            );
+        }
+
         let finalized = match tokio::time::timeout(
             self.finalize_timeout,
             FinalizationTransaction::new(self).finalize(FinalizationRequest {
@@ -968,6 +1172,9 @@ impl MaterialAssembler {
                 total_size_bytes: end.total_size_bytes,
                 metadata: finalize_metadata,
                 final_status,
+                write_lease: Some(&write_lease),
+                manifest_key: Some(&manifest_key),
+                manifest_lease: Some(&manifest_lease),
             }),
         )
         .await
@@ -986,10 +1193,12 @@ impl MaterialAssembler {
                     "Material finalization exceeded timeout; preserving retry state and NAKing for redelivery"
                 );
                 Self::revert_finalization_start(&state_handle, end).await;
-                return Err(SinexError::processing("material finalization exceeded timeout")
-                    .with_context("material_id", material_id.to_string())
-                    .with_context("timeout_secs", self.finalize_timeout.as_secs().to_string())
-                    .with_context("finalization_stage", "commit_outcome_unknown"));
+                return Err(
+                    SinexError::processing("material finalization exceeded timeout")
+                        .with_context("material_id", material_id.to_string())
+                        .with_context("timeout_secs", self.finalize_timeout.as_secs().to_string())
+                        .with_context("finalization_stage", "commit_outcome_unknown"),
+                );
             }
             Ok(Err(e)) => {
                 let commit_outcome_unknown = e.is_commit_outcome_unknown();
@@ -1083,6 +1292,85 @@ impl MaterialAssembler {
         }
 
         Ok(())
+    }
+
+    async fn persist_material_manifest(
+        &self,
+        final_state: &super::state::FinalizationState,
+        content_hash: &str,
+        total_size_bytes: i64,
+        metadata: &JsonValue,
+        ended_at: Timestamp,
+    ) -> EventEngineResult<(
+        crate::runtime::content_store::ContentStoreKey,
+        crate::runtime::content_store::CasWriteLease,
+    )> {
+        let total_size_bytes = u64::try_from(total_size_bytes).map_err(|error| {
+            SinexError::validation("material size cannot be represented in a manifest")
+                .with_std_error(&error)
+        })?;
+        let manifest = MaterialManifestV1::from_capture(
+            final_state.material_id,
+            final_state.source_identifier.clone(),
+            final_state.material_kind.clone(),
+            content_hash,
+            total_size_bytes,
+            metadata.clone(),
+            final_state.started_at.format_rfc3339(),
+            ended_at.format_rfc3339(),
+        );
+        manifest.validate().map_err(|error| {
+            SinexError::validation("generated material manifest failed validation")
+                .with_context("reason", error)
+        })?;
+        let bytes = manifest.canonical_bytes().map_err(|error| {
+            SinexError::serialization("failed to encode material manifest").with_std_error(&error)
+        })?;
+
+        let parent = final_state.temp_path.parent().ok_or_else(|| {
+            SinexError::io("material staging path has no parent for manifest staging")
+        })?;
+        let manifest_path = parent.join(format!(
+            "material-manifest-{}.json",
+            final_state.material_id
+        ));
+        let result = async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&manifest_path)
+                .await
+                .map_err(SinexError::io)?;
+            file.write_all(&bytes).await.map_err(SinexError::io)?;
+            file.sync_all().await.map_err(SinexError::io)?;
+            drop(file);
+
+            let utf8_path = Utf8PathBuf::from_path_buf(manifest_path.clone()).map_err(|path| {
+                SinexError::io(format!(
+                    "manifest staging path is not valid UTF-8: {}",
+                    path.display()
+                ))
+            })?;
+            // This is process-owned assembler staging, not an external source
+            // file. It intentionally lives outside the configured CAS root;
+            // retain its lease until the registry transaction confirms the
+            // metadata reference, just like the material bytes lease.
+            self.content_store
+                .store_owned_temp_file_with_lease(&utf8_path)
+                .await
+        }
+        .await;
+        if let Err(error) = tokio::fs::remove_file(&manifest_path).await {
+            warn!(
+                path = %manifest_path.display(),
+                error = %error,
+                "Failed to remove temporary material manifest after CAS import"
+            );
+        }
+        result.map_err(|error| {
+            SinexError::io("material manifest CAS import failed").with_source(error)
+        })
     }
 
     /// Handle material finalization (end message)

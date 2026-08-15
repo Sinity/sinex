@@ -5,7 +5,8 @@ use serde::Serialize;
 use crate::privacy::ProcessingContext;
 use crate::source_contracts::{
     CheckpointFamily, MaterialLifecyclePolicy, ResourceBudgetSpec, ResourceProfile, RunnerPack,
-    RuntimeShape, SourceCapabilityRef, SourceCriticality, SubjectRef, TransportSemantics,
+    RuntimeShape, SourceCapabilityRef, SourceCriticality, SourceRecoveryPolicy, SubjectRef,
+    TransportSemantics,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -49,6 +50,11 @@ pub struct SourceRuntimeBinding {
     pub material_lifecycle: MaterialLifecyclePolicy,
     /// Transport, delivery, replay, DLQ, and backpressure semantics.
     pub transport_semantics: TransportSemantics,
+    /// Declared source-level replay, catch-up, and accepted-loss authority.
+    ///
+    /// This is independent from transport semantics. Every binding must
+    /// declare its recovery authority before it can register.
+    pub recovery_policy: SourceRecoveryPolicy,
     /// Whether wiping Sinex's own copy of this source's data is safe
     /// (sinex-sn6s). `None` means undeclared; startup validation
     /// (`sinexd::sources::bindings::validate_bindings`) refuses to enable a
@@ -76,11 +82,14 @@ pub struct HasRuntimeShape;
 pub struct MissingBuildImpact;
 #[derive(Debug, Clone, Copy)]
 pub struct HasBuildImpact;
-
 #[derive(Debug, Clone, Copy)]
-pub struct SourceRuntimeBindingBuilder<Output, Privacy, CheckpointFam, Runtime, Build> {
+pub struct MissingRecoveryPolicy;
+#[derive(Debug, Clone, Copy)]
+pub struct HasRecoveryPolicy;
+#[derive(Debug, Clone, Copy)]
+pub struct SourceRuntimeBindingBuilder<Output, Privacy, CheckpointFam, Runtime, Build, Recovery> {
     descriptor: SourceRuntimeBinding,
-    _state: PhantomData<(Output, Privacy, CheckpointFam, Runtime, Build)>,
+    _state: PhantomData<(Output, Privacy, CheckpointFam, Runtime, Build, Recovery)>,
 }
 
 impl SourceRuntimeBinding {
@@ -95,6 +104,7 @@ impl SourceRuntimeBinding {
         MissingCheckpointFamily,
         MissingRuntimeShape,
         MissingBuildImpact,
+        MissingRecoveryPolicy,
     > {
         SourceRuntimeBindingBuilder {
             descriptor: SourceRuntimeBinding {
@@ -115,6 +125,7 @@ impl SourceRuntimeBinding {
                 build_impact: SourceBuildImpact::ZERO,
                 material_lifecycle: MaterialLifecyclePolicy::RetainRaw,
                 transport_semantics: TransportSemantics::DIRECT_APPEND_STREAM,
+                recovery_policy: SourceRecoveryPolicy::APPEND_STREAM,
                 criticality: None,
             },
             _state: PhantomData,
@@ -134,7 +145,7 @@ impl SourceRuntimeBinding {
     }
 }
 
-impl<O, P, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, CF, RS, BI> {
+impl<O, P, CF, RS, BI, RP> SourceRuntimeBindingBuilder<O, P, CF, RS, BI, RP> {
     #[must_use]
     pub const fn implementation(mut self, implementation: &'static str) -> Self {
         self.descriptor.implementation = implementation;
@@ -209,12 +220,29 @@ impl<O, P, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, CF, RS, BI> {
     }
 }
 
-impl<P, CF, RS, BI> SourceRuntimeBindingBuilder<MissingOutput, P, CF, RS, BI> {
+impl<O, P, CF, RS, BI>
+    SourceRuntimeBindingBuilder<O, P, CF, RS, BI, MissingRecoveryPolicy>
+{
+    /// Declare source-level replay, catch-up, and accepted-loss authority.
+    #[must_use]
+    pub const fn recovery_policy(
+        mut self,
+        recovery_policy: SourceRecoveryPolicy,
+    ) -> SourceRuntimeBindingBuilder<O, P, CF, RS, BI, HasRecoveryPolicy> {
+        self.descriptor.recovery_policy = recovery_policy;
+        SourceRuntimeBindingBuilder {
+            descriptor: self.descriptor,
+            _state: PhantomData,
+        }
+    }
+}
+
+impl<P, CF, RS, BI, RP> SourceRuntimeBindingBuilder<MissingOutput, P, CF, RS, BI, RP> {
     #[must_use]
     pub const fn output_event_type(
         mut self,
         output_event_type: &'static str,
-    ) -> SourceRuntimeBindingBuilder<HasOutput, P, CF, RS, BI> {
+    ) -> SourceRuntimeBindingBuilder<HasOutput, P, CF, RS, BI, RP> {
         self.descriptor.output_event_type = output_event_type;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -223,12 +251,12 @@ impl<P, CF, RS, BI> SourceRuntimeBindingBuilder<MissingOutput, P, CF, RS, BI> {
     }
 }
 
-impl<O, CF, RS, BI> SourceRuntimeBindingBuilder<O, MissingPrivacy, CF, RS, BI> {
+impl<O, CF, RS, BI, RP> SourceRuntimeBindingBuilder<O, MissingPrivacy, CF, RS, BI, RP> {
     #[must_use]
     pub const fn privacy_context(
         mut self,
         privacy_context: ProcessingContext,
-    ) -> SourceRuntimeBindingBuilder<O, HasPrivacy, CF, RS, BI> {
+    ) -> SourceRuntimeBindingBuilder<O, HasPrivacy, CF, RS, BI, RP> {
         self.descriptor.privacy_context = privacy_context;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -237,7 +265,7 @@ impl<O, CF, RS, BI> SourceRuntimeBindingBuilder<O, MissingPrivacy, CF, RS, BI> {
     }
 }
 
-impl<O, P, RS, BI> SourceRuntimeBindingBuilder<O, P, MissingCheckpointFamily, RS, BI> {
+impl<O, P, RS, BI, RP> SourceRuntimeBindingBuilder<O, P, MissingCheckpointFamily, RS, BI, RP> {
     /// Shape of the source's checkpoint state machine. Concrete defaults once
     /// passed descriptor validation silently for new bindings that forgot to set
     /// this field; typestate now forces every binding to declare the family
@@ -246,7 +274,7 @@ impl<O, P, RS, BI> SourceRuntimeBindingBuilder<O, P, MissingCheckpointFamily, RS
     pub const fn checkpoint_family(
         mut self,
         family: CheckpointFamily,
-    ) -> SourceRuntimeBindingBuilder<O, P, HasCheckpointFamily, RS, BI> {
+    ) -> SourceRuntimeBindingBuilder<O, P, HasCheckpointFamily, RS, BI, RP> {
         self.descriptor.checkpoint_family = family;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -255,14 +283,14 @@ impl<O, P, RS, BI> SourceRuntimeBindingBuilder<O, P, MissingCheckpointFamily, RS
     }
 }
 
-impl<O, P, CF, BI> SourceRuntimeBindingBuilder<O, P, CF, MissingRuntimeShape, BI> {
+impl<O, P, CF, BI, RP> SourceRuntimeBindingBuilder<O, P, CF, MissingRuntimeShape, BI, RP> {
     /// Runtime invocation shape (continuous, scheduled, on-demand). Required:
     /// see `checkpoint_family` for the same rationale.
     #[must_use]
     pub const fn runtime_shape(
         mut self,
         shape: RuntimeShape,
-    ) -> SourceRuntimeBindingBuilder<O, P, CF, HasRuntimeShape, BI> {
+    ) -> SourceRuntimeBindingBuilder<O, P, CF, HasRuntimeShape, BI, RP> {
         self.descriptor.runtime_shape = shape;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -271,7 +299,7 @@ impl<O, P, CF, BI> SourceRuntimeBindingBuilder<O, P, CF, MissingRuntimeShape, BI
     }
 }
 
-impl<O, P, CF, RS> SourceRuntimeBindingBuilder<O, P, CF, RS, MissingBuildImpact> {
+impl<O, P, CF, RS, RP> SourceRuntimeBindingBuilder<O, P, CF, RS, MissingBuildImpact, RP> {
     /// Physical/build footprint declared by this binding. Required: see
     /// `checkpoint_family` for the same rationale. `SourceBuildImpact::ZERO`
     /// is a perfectly fine value to set explicitly — typestate only requires
@@ -280,7 +308,7 @@ impl<O, P, CF, RS> SourceRuntimeBindingBuilder<O, P, CF, RS, MissingBuildImpact>
     pub const fn build_impact(
         mut self,
         build_impact: SourceBuildImpact,
-    ) -> SourceRuntimeBindingBuilder<O, P, CF, RS, HasBuildImpact> {
+    ) -> SourceRuntimeBindingBuilder<O, P, CF, RS, HasBuildImpact, RP> {
         self.descriptor.build_impact = build_impact;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -296,6 +324,7 @@ impl
         HasCheckpointFamily,
         HasRuntimeShape,
         HasBuildImpact,
+        HasRecoveryPolicy,
     >
 {
     #[must_use]

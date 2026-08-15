@@ -25,7 +25,7 @@ fn make_context_with_optional_ts(
         source: source.into(),
         event_type: event_type.into(),
         ts_orig,
-        ts_coided: event_id.timestamp(),
+        ts_coided: event_id.timestamp().expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

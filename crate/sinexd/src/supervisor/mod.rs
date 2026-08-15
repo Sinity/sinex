@@ -12,6 +12,9 @@ use std::time::Duration;
 
 use crate::runtime::service_runtime;
 use crate::runtime::systemd_notify;
+use crate::runtime::systemd_notify::{
+    HostedReadiness, HostedReadinessStatus, HostedWorker, HostedWorkerId,
+};
 use sinex_primitives::error::{Result, SinexError};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -27,8 +30,17 @@ use crate::sources::bindings::{self as source_bindings, SourceBinding};
 /// Environment variable selecting which automata `sinexd` hosts.
 ///
 /// Comma-separated list of automaton names, or the literal `all`. Unknown
-/// names fail startup. Unset / empty disables every automaton.
+/// names fail startup. Unset selects the ratified default portfolio; an empty
+/// value disables every automaton explicitly.
 const ENV_AUTOMATA_ENABLED: &str = "SINEX_AUTOMATA_ENABLED";
+
+/// The automata hosted by a standalone `sinexd` when the selector is unset.
+///
+/// This is the ratified default portfolio. Deployment configuration may pass
+/// an explicit selector to add a profile-gated automaton or otherwise tailor
+/// the hosted set for a particular machine.
+const DEFAULT_AUTOMATA_ENABLED: &str =
+    "canonicalizer,health,analytics,attention-stream,interval-lift,session,hourly,daily";
 
 /// Environment variable pointing at the source-bindings manifest JSON.
 ///
@@ -193,11 +205,27 @@ impl Supervisor {
 
         // Hosted automata. Each runs as an independent supervisor task so a
         // single automaton crash does not take down siblings or the daemon.
-        let automaton_handles = start_automata(shutdown_rx.clone())?;
+        let selected_automata = selected_automata()?;
+        let source_bindings = load_source_bindings()?;
+        let worker_ids = selected_automata
+            .iter()
+            .map(|spec| HostedWorkerId::new(format!("automaton:{}", spec.name)))
+            .chain(source_bindings.iter().map(|binding| {
+                HostedWorkerId::new(format!(
+                    "source:{}-{}",
+                    binding.source_id, binding.instance_idx
+                ))
+            }))
+            .collect::<Vec<_>>();
+        let hosted_readiness = HostedReadiness::configured(worker_ids)
+            .map_err(SinexError::configuration)?;
+        let automaton_handles =
+            start_automata(selected_automata, shutdown_rx.clone(), hosted_readiness.clone())?;
 
         // Hosted source bindings. Same isolation property: one
         // binding crash is logged and contained, sibling captures continue.
-        let source_binding_handles = start_source_bindings(shutdown_rx.clone())?;
+        let source_binding_handles =
+            start_source_bindings(source_bindings, shutdown_rx.clone(), hosted_readiness.clone())?;
 
         info!(
             automata = automaton_handles.len(),
@@ -205,10 +233,33 @@ impl Supervisor {
             "sinexd running"
         );
 
+        // Hosted runners report readiness only after their snapshot/gap-fill
+        // or automaton catch-up completes. Turn those runner-level signals into
+        // the top-level systemd barrier instead of announcing READY merely
+        // because the tasks were spawned.
+        let mut hosted_status_rx = hosted_readiness.subscribe();
+        let hosted_status = hosted_readiness.wait(shutdown_rx.clone()).await;
+
         // Use the unhosted variant — `enter_hosted_mode` set the latch so
         // in-process bindings stop calling sd_notify, but the supervisor
         // itself still needs to talk to systemd.
-        systemd_notify::notify_ready_unhosted("sinexd");
+        match hosted_status {
+            HostedReadinessStatus::Ready => {
+                systemd_notify::notify_ready_unhosted("sinexd");
+            }
+            HostedReadinessStatus::Failed { worker_id, reason }
+            | HostedReadinessStatus::Degraded { worker_id, reason } => {
+                error!(%worker_id, %reason, "hosted worker failed before sinexd became ready");
+                hosted_readiness.cancel();
+                let _ = escalate_tx.send(true);
+            }
+            HostedReadinessStatus::Cancelled => {
+                info!("sinexd shutdown began before hosted workers warmed; READY not sent");
+            }
+            HostedReadinessStatus::Warming => {
+                unreachable!("hosted readiness wait cannot return while still warming")
+            }
+        }
         let watchdog = systemd_notify::spawn_watchdog_unhosted("sinexd");
 
         // Monitor the event engine for unexpected exits. If the engine
@@ -238,12 +289,28 @@ impl Supervisor {
 
         let mut os_shutdown_rx = os_shutdown_rx;
         let mut escalate_rx = escalate_rx;
-        tokio::select! {
-            _ = os_shutdown_rx.changed() => {
-                info!("shutdown requested (OS signal)");
-            }
-            _ = escalate_rx.changed() => {
-                error!("shutdown requested (core module crashed — escalated)");
+        loop {
+            tokio::select! {
+                _ = os_shutdown_rx.changed() => {
+                    info!("shutdown requested (OS signal)");
+                    break;
+                }
+                _ = escalate_rx.changed() => {
+                    error!("shutdown requested (core module crashed — escalated)");
+                    break;
+                }
+                changed = hosted_status_rx.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    if let HostedReadinessStatus::Degraded { worker_id, reason } =
+                        hosted_status_rx.borrow().clone()
+                    {
+                        let status = format!("degraded hosted worker {worker_id}: {reason}");
+                        warn!(%worker_id, %reason, "hosted worker degraded after sinexd READY");
+                        systemd_notify::notify_status_unhosted("sinexd", &status);
+                    }
+                }
             }
         }
         systemd_notify::notify_stopping_unhosted("sinexd");
@@ -523,15 +590,10 @@ async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig)
 /// off the OS shutdown signal directly, but holding a clone keeps the
 /// channel alive for the duration of the task).
 fn start_automata(
+    selected: Vec<&'static AutomatonSpec>,
     shutdown_rx: watch::Receiver<bool>,
+    readiness: HostedReadiness,
 ) -> Result<Vec<(&'static str, JoinHandle<()>)>> {
-    let raw = std::env::var(ENV_AUTOMATA_ENABLED).ok();
-    // Default to all automata when unset — the entity/relation/document
-    // automata are implemented and should activate by default (#1087).
-    // Set SINEX_AUTOMATA_ENABLED= (empty) to explicitly disable.
-    let effective = automata_enabled_arg(raw.as_deref());
-    let selected = automata_registry::parse_enabled(effective)?;
-
     if selected.is_empty() {
         info!("no automata enabled (SINEX_AUTOMATA_ENABLED set to empty)");
         return Ok(Vec::new());
@@ -545,15 +607,27 @@ fn start_automata(
 
     let mut handles = Vec::with_capacity(selected.len());
     for spec in selected {
-        let handle = spawn_automaton(spec, shutdown_rx.clone());
+        let worker_id = HostedWorkerId::new(format!("automaton:{}", spec.name));
+        let worker = readiness.worker(worker_id).ok_or_else(|| {
+            SinexError::configuration(format!("missing lifecycle identity for {}", spec.name))
+        })?;
+        let handle = spawn_automaton(spec, shutdown_rx.clone(), worker);
         handles.push((spec.name, handle));
     }
     Ok(handles)
 }
 
+fn selected_automata() -> Result<Vec<&'static AutomatonSpec>> {
+    let raw = std::env::var(ENV_AUTOMATA_ENABLED).ok();
+    // The Nix deployment normally supplies an explicit selector. Preserve the
+    // ratified portfolio for direct supervisor startup where that environment
+    // assembly is absent. An empty value explicitly disables every automaton.
+    automata_registry::parse_enabled(automata_enabled_arg(raw.as_deref()))
+}
+
 fn automata_enabled_arg(raw: Option<&str>) -> Option<&str> {
     match raw {
-        None => Some("all"),
+        None => Some(DEFAULT_AUTOMATA_ENABLED),
         Some(value) if value.trim().is_empty() => None,
         Some(value) => Some(value),
     }
@@ -562,61 +636,114 @@ fn automata_enabled_arg(raw: Option<&str>) -> Option<&str> {
 fn spawn_automaton(
     spec: &'static AutomatonSpec,
     shutdown_rx: watch::Receiver<bool>,
+    worker: HostedWorker,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut backoff = Duration::from_secs(1);
-        const MAX_BACKOFF: Duration = Duration::from_secs(30);
-        // Reset backoff to 1 s if the automaton ran for at least this long
-        // before failing — indicates a stable start followed by a transient
-        // runtime error rather than a crash-loop.
-        const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
+        let worker_loop = worker.clone();
+        worker
+            .run(async move {
+                let startup_delay = runtime_startup_delay(random_jitter_entropy());
+                if !startup_delay.is_zero() {
+                    tokio::time::sleep(startup_delay).await;
+                }
+                let mut retry_schedule = RuntimeRetrySchedule::default();
 
-        loop {
-            if *shutdown_rx.borrow() {
-                break;
-            }
+                loop {
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
 
-            let started = std::time::Instant::now();
-            match (spec.run)().await {
-                Ok(()) => {
-                    // Clean exit: drain completed or historical batch done.
-                    info!(automaton = %spec.name, "automaton exited cleanly");
-                    break;
-                }
-                Err(error) if *shutdown_rx.borrow() => {
-                    debug!(automaton = %spec.name, ?error, "automaton exited during shutdown");
-                    break;
-                }
-                Err(error) => {
-                    if started.elapsed() >= STABLE_THRESHOLD {
-                        backoff = Duration::from_secs(1);
+                    let started = std::time::Instant::now();
+                    match (spec.run)().await {
+                        Ok(()) => {
+                            info!(automaton = %spec.name, "automaton exited cleanly");
+                            break;
+                        }
+                        Err(error) if *shutdown_rx.borrow() => {
+                            debug!(automaton = %spec.name, ?error, "automaton exited during shutdown");
+                            break;
+                        }
+                        Err(error) => {
+                            if worker_loop.mark_failure(format!("{error}")) {
+                                error!(
+                                    automaton = %spec.name,
+                                    ?error,
+                                    "automaton failed before readiness; stopping retries"
+                                );
+                                break;
+                            }
+                            let retry_delay =
+                                retry_schedule.next_delay(started.elapsed(), random_jitter_entropy());
+                            warn!(
+                                automaton = %spec.name,
+                                backoff_ms = retry_delay.as_millis(),
+                                ?error,
+                                "automaton exited with error; restarting after backoff"
+                            );
+                            tokio::select! {
+                                () = tokio::time::sleep(retry_delay) => {}
+                                _ = {
+                                    let mut rx = shutdown_rx.clone();
+                                    async move { let _ = rx.wait_for(|&v| v).await; }
+                                } => { break; }
+                            }
+                        }
                     }
-                    warn!(
-                        automaton = %spec.name,
-                        backoff_ms = backoff.as_millis(),
-                        ?error,
-                        "automaton exited with error; restarting after backoff"
-                    );
-                    // Wait for backoff, but abort early if shutdown is signaled.
-                    tokio::select! {
-                        () = tokio::time::sleep(backoff) => {}
-                        _ = {
-                            let mut rx = shutdown_rx.clone();
-                            async move { let _ = rx.wait_for(|&v| v).await; }
-                        } => { break; }
-                    }
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
-            }
-        }
+            })
+            .await;
     })
+}
+
+const RUNTIME_STARTUP_STAGGER_MAX: Duration = Duration::from_secs(2);
+
+fn random_jitter_entropy() -> u64 {
+    sinex_primitives::Uuid::now_v7().as_u128() as u64
+}
+
+fn runtime_startup_delay(entropy: u64) -> Duration {
+    Duration::from_millis(entropy % RUNTIME_STARTUP_STAGGER_MAX.as_millis() as u64)
+}
+
+fn jittered_runtime_backoff(base: Duration, entropy: u64) -> Duration {
+    let base_ms = base.as_millis() as u64;
+    let jitter_ms = (base_ms / 2).max(1);
+    let lower_ms = base_ms.saturating_sub(jitter_ms).max(1);
+    let upper_ms = base_ms.saturating_add(jitter_ms);
+    let span_ms = upper_ms.saturating_sub(lower_ms).saturating_add(1);
+    Duration::from_millis(lower_ms + entropy % span_ms)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimeRetrySchedule {
+    delay: Duration,
+}
+
+impl Default for RuntimeRetrySchedule {
+    fn default() -> Self {
+        Self {
+            delay: Duration::from_secs(1),
+        }
+    }
+}
+
+impl RuntimeRetrySchedule {
+    const MAX_DELAY: Duration = Duration::from_secs(30);
+    const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
+
+    fn next_delay(&mut self, run_duration: Duration, entropy: u64) -> Duration {
+        if run_duration >= Self::STABLE_THRESHOLD {
+            self.delay = Duration::from_secs(1);
+        }
+        let delay = jittered_runtime_backoff(self.delay, entropy).min(Self::MAX_DELAY);
+        self.delay = (self.delay * 2).min(Self::MAX_DELAY);
+        delay
+    }
 }
 
 /// Load `SINEX_SOURCE_BINDINGS_PATH` and spawn one supervisor task per
 /// enabled binding.
-fn start_source_bindings(
-    shutdown_rx: watch::Receiver<bool>,
-) -> Result<Vec<(String, JoinHandle<()>)>> {
+fn load_source_bindings() -> Result<Vec<SourceBinding>> {
     let Some(manifest) = source_bindings::load_from_env(ENV_SOURCE_BINDINGS_PATH)? else {
         info!("no source bindings configured (SINEX_SOURCE_BINDINGS_PATH unset)");
         return Ok(Vec::new());
@@ -627,19 +754,28 @@ fn start_source_bindings(
         return Ok(Vec::new());
     }
 
-    // Validate every binding up front so a misconfigured deployment fails
-    // immediately rather than after the first partial spawn.
     source_bindings::validate_bindings(&manifest.bindings)?;
+    Ok(manifest.bindings)
+}
 
+fn start_source_bindings(
+    bindings: Vec<SourceBinding>,
+    shutdown_rx: watch::Receiver<bool>,
+    readiness: HostedReadiness,
+) -> Result<Vec<(String, JoinHandle<()>)>> {
     info!(
-        count = manifest.bindings.len(),
+        count = bindings.len(),
         "starting hosted source bindings"
     );
 
-    let mut handles = Vec::with_capacity(manifest.bindings.len());
-    for binding in manifest.bindings {
+    let mut handles = Vec::with_capacity(bindings.len());
+    for binding in bindings {
         let label = format!("{}-{}", binding.source_id, binding.instance_idx);
-        let handle = spawn_source_binding(binding, shutdown_rx.clone());
+        let worker_id = HostedWorkerId::new(format!("source:{label}"));
+        let worker = readiness.worker(worker_id).ok_or_else(|| {
+            SinexError::configuration(format!("missing lifecycle identity for {label}"))
+        })?;
+        let handle = spawn_source_binding(binding, shutdown_rx.clone(), worker);
         handles.push((label, handle));
     }
     Ok(handles)
@@ -648,53 +784,67 @@ fn start_source_bindings(
 fn spawn_source_binding(
     binding: SourceBinding,
     shutdown_rx: watch::Receiver<bool>,
+    worker: HostedWorker,
 ) -> JoinHandle<()> {
     let label = format!("{}-{}", binding.source_id, binding.instance_idx);
     tokio::spawn(async move {
-        let mut backoff = Duration::from_secs(1);
-        const MAX_BACKOFF: Duration = Duration::from_secs(30);
-        const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
+        let worker_loop = worker.clone();
+        worker
+            .run(async move {
+                let startup_delay = runtime_startup_delay(random_jitter_entropy());
+                if !startup_delay.is_zero() {
+                    tokio::time::sleep(startup_delay).await;
+                }
+                let mut retry_schedule = RuntimeRetrySchedule::default();
 
-        loop {
-            if *shutdown_rx.borrow() {
-                break;
-            }
+                loop {
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
 
-            let started = std::time::Instant::now();
-            match source_bindings::run_binding(binding.clone()).await {
-                Ok(()) => {
-                    info!(source_binding = %label, "source host exited cleanly");
-                    break;
-                }
-                Err(error) if *shutdown_rx.borrow() => {
-                    debug!(
-                        source_binding = %label,
-                        ?error,
-                        "source host exited during shutdown"
-                    );
-                    break;
-                }
-                Err(error) => {
-                    if started.elapsed() >= STABLE_THRESHOLD {
-                        backoff = Duration::from_secs(1);
+                    let started = std::time::Instant::now();
+                    match source_bindings::run_binding(binding.clone()).await {
+                        Ok(()) => {
+                            info!(source_binding = %label, "source host exited cleanly");
+                            break;
+                        }
+                        Err(error) if *shutdown_rx.borrow() => {
+                            debug!(
+                                source_binding = %label,
+                                ?error,
+                                "source host exited during shutdown"
+                            );
+                            break;
+                        }
+                        Err(error) => {
+                            if worker_loop.mark_failure(format!("{error}")) {
+                                error!(
+                                    source_binding = %label,
+                                    ?error,
+                                    "source binding failed before readiness; stopping retries"
+                                );
+                                break;
+                            }
+                            let retry_delay =
+                                retry_schedule.next_delay(started.elapsed(), random_jitter_entropy());
+                            warn!(
+                                source_binding = %label,
+                                backoff_ms = retry_delay.as_millis(),
+                                ?error,
+                                "source host exited with error; restarting after backoff"
+                            );
+                            tokio::select! {
+                                () = tokio::time::sleep(retry_delay) => {}
+                                _ = {
+                                    let mut rx = shutdown_rx.clone();
+                                    async move { let _ = rx.wait_for(|&v| v).await; }
+                                } => { break; }
+                            }
+                        }
                     }
-                    warn!(
-                        source_binding = %label,
-                        backoff_ms = backoff.as_millis(),
-                        ?error,
-                        "source host exited with error; restarting after backoff"
-                    );
-                    tokio::select! {
-                        () = tokio::time::sleep(backoff) => {}
-                        _ = {
-                            let mut rx = shutdown_rx.clone();
-                            async move { let _ = rx.wait_for(|&v| v).await; }
-                        } => { break; }
-                    }
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
-            }
-        }
+            })
+            .await;
     })
 }
 

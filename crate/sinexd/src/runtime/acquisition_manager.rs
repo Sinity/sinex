@@ -29,8 +29,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use tokio::fs::{File, OpenOptions};
-use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
@@ -149,19 +147,18 @@ pub struct AcquisitionManager {
     streams_ready: Arc<AtomicBool>,
     streams_bootstrap_lock: Arc<Mutex<()>>,
     work_dir: Option<PathBuf>,
+    #[cfg(test)]
+    fail_next_finalize: Arc<AtomicBool>,
 }
 
 /// Handle to an active source material being captured
 pub struct SourceMaterialHandle {
     pub material_id: Uuid,
-    temp_file: Option<File>,
-    temp_path: PathBuf,
     hasher: blake3::Hasher,
     slice_count: usize,
     bytes_written: i64,
     started_at: Timestamp,
     pending_begin: Option<PendingMaterialBegin>,
-    pending_published_slice: Option<PendingPublishedSlice>,
 }
 
 /// Byte anchor returned after appending one logical source record to a stream material.
@@ -177,17 +174,7 @@ struct PendingMaterialBegin {
     metadata: JsonValue,
 }
 
-struct PendingPublishedSlice {
-    offset: i64,
-    slice_index: usize,
-    data: Vec<u8>,
-}
-
 impl SourceMaterialHandle {
-    pub fn temp_path(&self) -> &Path {
-        &self.temp_path
-    }
-
     pub fn bytes_written(&self) -> i64 {
         self.bytes_written
     }
@@ -201,23 +188,6 @@ impl SourceMaterialHandle {
     /// because it traces back to a persisted ledger row.
     pub fn started_at(&self) -> Timestamp {
         self.started_at
-    }
-}
-
-impl Drop for SourceMaterialHandle {
-    fn drop(&mut self) {
-        // Clean up temp file to prevent disk leaks on panic or forgotten finalize()
-        drop(self.temp_file.take());
-        if self.temp_path.exists()
-            && let Err(e) = std::fs::remove_file(&self.temp_path)
-        {
-            tracing::warn!(
-                path = %self.temp_path.display(),
-                material_id = %self.material_id,
-                error = %e,
-                "Failed to clean up temp file in SourceMaterialHandle Drop"
-            );
-        }
     }
 }
 
@@ -404,6 +374,8 @@ impl AcquisitionManager {
             streams_ready: Arc::new(AtomicBool::new(false)),
             streams_bootstrap_lock: Arc::new(Mutex::new(())),
             work_dir,
+            #[cfg(test)]
+            fail_next_finalize: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -550,55 +522,10 @@ impl AcquisitionManager {
         Ok(())
     }
 
-    async fn mirror_slice_to_local_stage(
-        handle: &mut SourceMaterialHandle,
-        data: &[u8],
-        offset_start: i64,
-    ) -> RuntimeResult<()> {
-        if let Some(ref mut file) = handle.temp_file {
-            file.write_all(data).await.map_err(|error| {
-                SinexError::io("Failed to mirror published slice into the local staging file")
-                    .with_context("material_id", handle.material_id.to_string())
-                    .with_context("slice_index", handle.slice_count.to_string())
-                    .with_context("offset", offset_start.to_string())
-                    .with_context("bytes", data.len().to_string())
-                    .with_std_error(&error)
-            })?;
-        }
-
+    fn record_published_slice(handle: &mut SourceMaterialHandle, data: &[u8], offset_start: i64) {
         handle.hasher.update(data);
         handle.bytes_written = offset_start + data.len() as i64;
         handle.slice_count += 1;
-        Ok(())
-    }
-
-    async fn ensure_pending_slice_mirrored(
-        &self,
-        handle: &mut SourceMaterialHandle,
-    ) -> RuntimeResult<()> {
-        let Some(pending) = handle.pending_published_slice.take() else {
-            return Ok(());
-        };
-
-        if pending.offset != handle.bytes_written || pending.slice_index != handle.slice_count {
-            return Err(SinexError::invalid_state(
-                "pending published slice is inconsistent with local acquisition progress",
-            )
-            .with_context("material_id", handle.material_id.to_string())
-            .with_context("pending_offset", pending.offset.to_string())
-            .with_context("pending_slice_index", pending.slice_index.to_string())
-            .with_context("bytes_written", handle.bytes_written.to_string())
-            .with_context("slice_count", handle.slice_count.to_string()));
-        }
-
-        if let Err(error) =
-            Self::mirror_slice_to_local_stage(handle, &pending.data, pending.offset).await
-        {
-            handle.pending_published_slice = Some(pending);
-            return Err(error);
-        }
-
-        Ok(())
     }
 
     /// Append data slice to material
@@ -628,7 +555,6 @@ impl AcquisitionManager {
         T: AsRef<[u8]>,
     {
         self.ensure_begin_published(handle).await?;
-        self.ensure_pending_slice_mirrored(handle).await?;
 
         let material_id = handle.material_id;
         let offset_start = handle.bytes_written;
@@ -721,19 +647,11 @@ impl AcquisitionManager {
         self.publish_slice(handle.material_id, slice_index, &data, offset_start)
             .await?;
 
-        if let Err(error) = Self::mirror_slice_to_local_stage(handle, &data, offset_start).await {
-            handle.pending_published_slice = Some(PendingPublishedSlice {
-                offset: offset_start,
-                slice_index,
-                data,
-            });
-            return Err(error
-                .with_context("pending_local_mirror", "true")
-                .with_context(
-                    "recovery",
-                    "retry the acquisition operation before finalizing",
-                ));
-        }
+        // JetStream is the durable material witness. Keep acquisition progress in
+        // memory immediately after its acknowledged publish; there is deliberately
+        // no secondary local mirror to fail after that durable write and make a
+        // caller retry/re-publish the same source bytes at a fresh offset.
+        Self::record_published_slice(handle, &data, offset_start);
 
         Ok(())
     }
@@ -815,6 +733,36 @@ impl AcquisitionManager {
             .await
     }
 
+    /// Finalize an owned stream handle without consuming it on failure.
+    ///
+    /// The handle contains the material identity, pending BEGIN/slice state,
+    /// and the local staging file. Keeping it borrowed lets a caller retry a
+    /// transient publication failure against the same material instead of
+    /// silently cutting over to a new occurrence.
+    pub async fn finalize_in_place(
+        &self,
+        handle: &mut SourceMaterialHandle,
+        reason: &str,
+    ) -> RuntimeResult<()> {
+        #[cfg(test)]
+        if self
+            .fail_next_finalize
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(SinexError::messaging(
+                "injected source material finalization failure",
+            ));
+        }
+        self.finalize_with_metadata(handle, reason, json!({}))
+            .await
+    }
+
+    #[cfg(test)]
+    fn fail_next_finalize_for_test(&self) {
+        self.fail_next_finalize
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
     /// Cancel a material capture and finalize with cancellation metadata.
     pub async fn cancel(
         &self,
@@ -839,12 +787,6 @@ impl AcquisitionManager {
         metadata: JsonValue,
     ) -> RuntimeResult<()> {
         self.ensure_begin_published(handle).await?;
-        self.ensure_pending_slice_mirrored(handle).await?;
-
-        // Close temp file
-        if let Some(mut file) = handle.temp_file.take() {
-            file.flush().await?;
-        }
 
         // Compute final hash
         let content_hash = handle.hasher.clone().finalize();
@@ -859,11 +801,6 @@ impl AcquisitionManager {
             metadata,
         )
         .await?;
-
-        // Clean up temp file
-        if let Err(e) = tokio::fs::remove_file(&handle.temp_path).await {
-            warn!("Failed to remove temp file: {e}");
-        }
 
         info!(
             material_id = %handle.material_id,
@@ -1007,33 +944,15 @@ impl<'a> MaterialBuilder<'a> {
         let metadata =
             annotate_material_metadata(self.metadata, &logical_source_identifier, material_id);
 
-        // Create temporary file for local buffering
-        let temp_dir = self
-            .manager
-            .work_dir
-            .clone()
-            .unwrap_or_else(|| self.manager.env.temp_dir());
-        tokio::fs::create_dir_all(&temp_dir).await?;
-        let temp_path = temp_dir.join(format!("sinex_material_{}.tmp", Uuid::new_v4()));
-        let temp_file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temp_path)
-            .await
-            .map_err(SinexError::io)?;
-
         info!(
             material_id = %material_id,
             source_identifier = %logical_source_identifier,
             registry_source_identifier = %registry_source_identifier,
-            temp_path = %temp_path.display(),
-            "Created new source material"
+            "Created new source material acquisition handle"
         );
 
         let mut handle = SourceMaterialHandle {
             material_id,
-            temp_file: Some(temp_file),
-            temp_path,
             hasher: blake3::Hasher::new(),
             slice_count: 0,
             bytes_written: 0,
@@ -1042,7 +961,6 @@ impl<'a> MaterialBuilder<'a> {
                 source_identifier: registry_source_identifier,
                 metadata,
             }),
-            pending_published_slice: None,
         };
 
         if self.publish_begin_before_return {
@@ -1137,15 +1055,7 @@ impl AppendStreamAcquirer {
                 source_identifier,
                 "Rotating material due to source identifier change"
             );
-            let old_handle = self.current_handle.take().ok_or_else(|| {
-                SinexError::invalid_state(
-                    "current_handle should exist for source identifier rotation",
-                )
-            })?;
-            self.manager
-                .finalize(old_handle, "source-identifier-change")
-                .await?;
-            self.current_source_identifier = None;
+            self.finalize_current("source-identifier-change").await?;
             self.begin_stream_material(source_identifier).await?;
         }
 
@@ -1160,11 +1070,7 @@ impl AppendStreamAcquirer {
         // Check rotation
         if self.should_rotate_before_append_len(total_bytes)? {
             info!("Rotating material due to size/age limits");
-            let old_handle = self.current_handle.take().ok_or_else(|| {
-                SinexError::invalid_state("current_handle should exist for rotation")
-            })?;
-            self.manager.finalize(old_handle, "rotation").await?;
-            self.current_source_identifier = None;
+            self.finalize_current("rotation").await?;
             self.begin_stream_material(source_identifier).await?;
         }
 
@@ -1187,15 +1093,7 @@ impl AppendStreamAcquirer {
         match self.current_handle {
             None => self.begin_stream_material(source_identifier).await,
             Some(_) if self.current_source_identifier.as_deref() != Some(source_identifier) => {
-                let old_handle = self.current_handle.take().ok_or_else(|| {
-                    SinexError::invalid_state(
-                        "current_handle should exist for source identifier rotation",
-                    )
-                })?;
-                self.manager
-                    .finalize(old_handle, "source-identifier-change")
-                    .await?;
-                self.current_source_identifier = None;
+                self.finalize_current("source-identifier-change").await?;
                 self.begin_stream_material(source_identifier).await
             }
             Some(_) => Ok(()),
@@ -1316,8 +1214,14 @@ impl AppendStreamAcquirer {
 
     /// Finalize current material
     pub async fn finalize(&mut self, reason: &str) -> RuntimeResult<()> {
-        if let Some(handle) = self.current_handle.take() {
-            self.manager.finalize(handle, reason).await?;
+        self.finalize_current(reason).await?;
+        Ok(())
+    }
+
+    async fn finalize_current(&mut self, reason: &str) -> RuntimeResult<()> {
+        if let Some(handle) = self.current_handle.as_mut() {
+            self.manager.finalize_in_place(handle, reason).await?;
+            self.current_handle = None;
         }
         self.current_source_identifier = None;
         Ok(())
@@ -1610,9 +1514,9 @@ impl BufferedAppendStreamWriter {
             })
             .await;
 
-        if send_result.is_err() {
-            return Ok(());
-        }
+        send_result.map_err(|_| {
+            SinexError::processing("buffered append writer has shut down".to_string())
+        })?;
 
         response
             .await
@@ -1635,9 +1539,9 @@ impl BufferedAppendStreamWriter {
             })
             .await;
 
-        if send_result.is_err() {
-            return Ok(());
-        }
+        send_result.map_err(|_| {
+            SinexError::processing("buffered append writer has shut down".to_string())
+        })?;
 
         response
             .await
@@ -1662,9 +1566,9 @@ impl BufferedAppendStreamWriter {
             })
             .await;
 
-        if send_result.is_err() {
-            return Ok(());
-        }
+        send_result.map_err(|_| {
+            SinexError::processing("buffered append writer has shut down".to_string())
+        })?;
 
         response
             .await

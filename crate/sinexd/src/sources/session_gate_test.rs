@@ -1,7 +1,7 @@
 use super::*;
 use sinex_db::repositories::SourceSessionStateUpsert;
 use sinex_primitives::domain::OperationStatus;
-use sinex_primitives::privacy::{save_private_mode_state, RuntimePrivateModeState};
+use sinex_primitives::privacy::{RuntimePrivateModeState, save_private_mode_state};
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 
@@ -35,8 +35,12 @@ fn empty_state_dir() -> tempfile::TempDir {
 #[sinex_test]
 async fn no_control_row_fails_open(ctx: TestContext) -> TestResult<()> {
     let dir = empty_state_dir();
-    let decision = evaluate_capture_gate(ctx.pool(), dir.path(), SOURCE, MODE, "default").await;
-    assert!(!decision.is_suspended(), "deployment-enabled capture proceeds");
+    let decision =
+        evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default").await;
+    assert!(
+        !decision.is_suspended(),
+        "deployment-enabled capture proceeds"
+    );
     Ok(())
 }
 
@@ -47,18 +51,18 @@ async fn lifecycle_paused_and_disabled_suspend(ctx: TestContext) -> TestResult<(
 
     repo.upsert(upsert("enabled", false)).await?;
     assert!(
-        !evaluate_capture_gate(ctx.pool(), dir.path(), SOURCE, MODE, "default")
+        !evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default")
             .await
             .is_suspended()
     );
 
     repo.upsert(upsert("paused", false)).await?;
-    let paused = evaluate_capture_gate(ctx.pool(), dir.path(), SOURCE, MODE, "default").await;
+    let paused = evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default").await;
     assert_eq!(paused.reason_label(), "operator_lifecycle");
 
     repo.upsert(upsert("disabled", false)).await?;
     assert!(
-        evaluate_capture_gate(ctx.pool(), dir.path(), SOURCE, MODE, "default")
+        evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default")
             .await
             .is_suspended()
     );
@@ -72,7 +76,8 @@ async fn per_session_private_flag_suspends(ctx: TestContext) -> TestResult<()> {
         .source_session_states()
         .upsert(upsert("enabled", true))
         .await?;
-    let decision = evaluate_capture_gate(ctx.pool(), dir.path(), SOURCE, MODE, "default").await;
+    let decision =
+        evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default").await;
     assert_eq!(decision.reason_label(), "private_mode_session_flag");
     Ok(())
 }
@@ -90,15 +95,14 @@ async fn global_private_mode_suspends_even_when_enabled(ctx: TestContext) -> Tes
         dir.path(),
         &RuntimePrivateModeState::enabled_by("operator", Vec::new(), Timestamp::now()),
     )?;
-    let decision = evaluate_capture_gate(ctx.pool(), dir.path(), SOURCE, MODE, "default").await;
+    let decision =
+        evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default").await;
     assert_eq!(decision.reason_label(), "private_mode");
     Ok(())
 }
 
 #[sinex_test]
-async fn private_mode_scoped_to_other_class_does_not_suspend(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn private_mode_scoped_to_other_class_does_not_suspend(ctx: TestContext) -> TestResult<()> {
     let dir = empty_state_dir();
     ctx.pool()
         .source_session_states()
@@ -114,7 +118,7 @@ async fn private_mode_scoped_to_other_class_does_not_suspend(
         ),
     )?;
     assert!(
-        !evaluate_capture_gate(ctx.pool(), dir.path(), SOURCE, MODE, "default")
+        !evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default")
             .await
             .is_suspended(),
         "private mode scoped to another class leaves media capture running"
@@ -130,7 +134,56 @@ async fn unreadable_private_mode_state_fails_closed(ctx: TestContext) -> TestRes
     std::fs::create_dir_all(path.parent().expect("state path has a parent"))
         .expect("create state dir");
     std::fs::write(&path, b"{ not valid json").expect("write corrupt state");
-    let decision = evaluate_capture_gate(ctx.pool(), dir.path(), SOURCE, MODE, "default").await;
+    let decision =
+        evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default").await;
     assert_eq!(decision.reason_label(), "private_mode_unavailable");
+    Ok(())
+}
+
+#[sinex_test]
+async fn no_database_pool_fails_closed() -> TestResult<()> {
+    let dir = empty_state_dir();
+    let decision = evaluate_capture_gate(None, dir.path(), SOURCE, MODE, "default").await;
+    assert_eq!(decision.reason_label(), "session_state_unavailable");
+    Ok(())
+}
+
+#[sinex_test]
+async fn global_private_mode_records_and_clears_gate_owned_session_flag(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let dir = empty_state_dir();
+    ctx.pool()
+        .source_session_states()
+        .upsert(upsert("enabled", false))
+        .await?;
+    save_private_mode_state(
+        dir.path(),
+        &RuntimePrivateModeState::enabled_by("operator", Vec::new(), Timestamp::now()),
+    )?;
+
+    let blocked =
+        evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default").await;
+    assert_eq!(blocked.reason_label(), "private_mode");
+    let state = ctx
+        .pool()
+        .source_session_states()
+        .current_for_scope(SOURCE, MODE, "default")
+        .await?
+        .expect("session state should record the gate block");
+    assert!(state.private_mode_blocked);
+    assert_eq!(state.detail["private_mode_gate_blocked"], true);
+
+    save_private_mode_state(dir.path(), &RuntimePrivateModeState::disabled())?;
+    let active = evaluate_capture_gate(Some(ctx.pool()), dir.path(), SOURCE, MODE, "default").await;
+    assert_eq!(active.reason_label(), "active");
+    let state = ctx
+        .pool()
+        .source_session_states()
+        .current_for_scope(SOURCE, MODE, "default")
+        .await?
+        .expect("session state should remain present");
+    assert!(!state.private_mode_blocked);
+    assert!(state.detail.get("private_mode_gate_blocked").is_none());
     Ok(())
 }

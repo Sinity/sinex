@@ -191,6 +191,10 @@ let
       maxAge = "72h"; # matches Duration::from_secs(72 * 60 * 60) for the Activity lane
       maxMsgs = 2000000;
       maxBytes = natsCliMaxBytes;
+      # Requeue republishes use a stable generation-scoped Nats-Msg-Id. Keep
+      # a bounded dedup window on the target so a request timeout between
+      # publish and DLQ settlement cannot inject the same raw message twice.
+      dupeWindow = "1h";
       discard = "old";
     };
     SINEX_RAW_EVENTS_CONFIRMED = {
@@ -206,6 +210,11 @@ let
     SOURCE_MATERIAL = {
       subjects = [ "source_material.frames.>" ];
       retention = "work";
+      # Source-material frames are the durable raw-byte ingress witness.  At
+      # capacity, reject new publishes so producers backpressure; silently
+      # discarding the oldest unacked frame would make a later material hash
+      # failure look like an ordinary missing slice and lose the only copy.
+      discard = "new";
       maxAge = "72h";
       maxBytes = natsCliMaxBytes;
     };
@@ -623,6 +632,8 @@ in
   };
 
   config = mkIf (cfg.enable || cfg.autoSetup) {
+    services.sinex.nats.authorization.sharedClient.enable = mkDefault (cfg.environment != "dev");
+
     # Ship the canonical topology with every field at mkDefault priority so
     # downstream flakes override individual streams field-by-field (attrsOf
     # submodule per-field merge) and inherit the rest — see
@@ -658,6 +669,14 @@ in
       {
         assertion = !(cfg.tls.verifyClients && cfg.tls.verifyAndMap);
         message = "Choose either services.sinex.nats.tls.verifyClients or verifyAndMap, not both.";
+      }
+      {
+        assertion = cfg.environment == "dev" || serverAuthorizationEnabled;
+        message = ''
+          Managed NATS deployments outside the "dev" environment require server-side
+          authorization. Configure the shared Sinex client NKey and seed, or provide
+          an equivalent authenticated server configuration.
+        '';
       }
       {
         assertion = (!cfg.authorization.sharedClient.enable) || cfg.authorization.sharedClient.nkey != null;

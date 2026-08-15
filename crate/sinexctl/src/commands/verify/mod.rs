@@ -1325,7 +1325,7 @@ async fn run_demo_walkthrough(client: &GatewayClient, format: OutputFormat) -> R
         }
         let exe = std::env::current_exe()?;
         let mut cmd = Command::new(exe);
-        cmd.args(["ops", "demo"]);
+        cmd.args(["ops", "demo", "--confirm"]);
         let status = cmd.status().await?;
         if !status.success() {
             return Err(eyre!(

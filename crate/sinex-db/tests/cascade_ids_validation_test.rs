@@ -9,9 +9,6 @@ use sinex_db::DbPoolExt;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore = "sinex-gnsy open: get_cascade_ids (non-Tx) skips validate_cascade_table_name that its \
-            Tx sibling enforces -- a malformed table_name reaches raw SQL interpolation \
-            unvalidated instead of being rejected up front"]
 async fn get_cascade_ids_validates_table_name_like_its_tx_sibling(
     ctx: TestContext,
 ) -> TestResult<()> {

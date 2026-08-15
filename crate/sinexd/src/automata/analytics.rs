@@ -483,6 +483,7 @@ register_source_contract! {
         event_types: &[
             ("derived.activity-window", "activity.window.summary"),
         ],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         // Inherits the privacy tier of its inputs (window titles, commands).
         privacy_tier: ContractPrivacyTier::Sensitive,
         horizons: &[ContractHorizon::Continuous],
@@ -510,6 +511,7 @@ register_source_runtime_binding! {
     .checkpoint_family(ContractCheckpointFamily::AppendStream)
     .runtime_shape(ContractRuntimeShape::Continuous)
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
+    .recovery_policy(sinex_primitives::source_contracts::SourceRecoveryPolicy::DERIVED_INTERNAL)
     .build()
 }
 

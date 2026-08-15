@@ -47,3 +47,38 @@ async fn pool_config_from_env_ignores_invalid_overrides() -> xtask::sandbox::Tes
     );
     Ok(())
 }
+
+#[sinex_serial_test]
+async fn runtime_pool_config_uses_explicit_default_and_documented_aliases()
+-> xtask::sandbox::TestResult<()> {
+    let mut env = EnvGuard::with_keys(&[
+        "SINEX_DB_MAX_CONNECTIONS",
+        "SINEX_DB_POOL_SIZE",
+        "SINEX_DATABASE_POOL_SIZE",
+    ]);
+    env.remove("SINEX_DB_MAX_CONNECTIONS");
+    env.remove("SINEX_DB_POOL_SIZE");
+    env.remove("SINEX_DATABASE_POOL_SIZE");
+
+    let defaulted = PoolConfig::from_env_with_default_max_connections(10);
+    assert_eq!(defaulted.max_connections, 10);
+
+    env.set("SINEX_DATABASE_POOL_SIZE", "7");
+    assert_eq!(
+        PoolConfig::from_env_with_default_max_connections(10).max_connections,
+        7
+    );
+
+    env.set("SINEX_DB_POOL_SIZE", "8");
+    assert_eq!(
+        PoolConfig::from_env_with_default_max_connections(10).max_connections,
+        8
+    );
+
+    env.set("SINEX_DB_MAX_CONNECTIONS", "9");
+    assert_eq!(
+        PoolConfig::from_env_with_default_max_connections(10).max_connections,
+        9
+    );
+    Ok(())
+}

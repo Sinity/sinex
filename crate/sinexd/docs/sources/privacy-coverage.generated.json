@@ -638,7 +638,7 @@
       },
       "parser_manifest": {
         "parser_id": "browser-history",
-        "parser_version": "1.0.0",
+        "parser_version": "1.0.1",
         "accepted_input_shapes": [
           "sqlite_query",
           "append_only_file",
@@ -662,6 +662,108 @@
           "scope": "target_home"
         },
         "resource_profile": "bounded_stream",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
+        "privacy_export": "metadata_only_export_source_level_only",
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "browser.takeout-history",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "webhistory",
+            "page.visited"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "browser.takeout-history",
+        "namespace": "web",
+        "occurrence_identity": {
+          "key": "(takeout_client_id, record_hash)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "secret",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "criticality": "reconstructable",
+        "domain": "web",
+        "id": "browser.takeout-history",
+        "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
+        "output_event_type": "page.visited",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "browser.takeout-history",
+        "subject": "source:browser.takeout-history",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
+      },
+      "parser_manifest": {
+        "parser_id": "browser-takeout-history",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "browser.takeout-history",
+        "declared_event_types": [
+          [
+            "webhistory",
+            "page.visited"
+          ]
+        ],
+        "privacy_contexts": [
+          "metadata"
+        ],
+        "description": "Parses extracted Google Takeout Chrome BrowserHistory.json files."
+      },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2628,7 +2730,7 @@
         "id": "hledger-journal",
         "namespace": "finance",
         "occurrence_identity": {
-          "key": "(date, description, first_explicit_posting_amount)",
+          "key": "(date, description, first_explicit_posting_amount_or_anchor)",
           "kind": "uuid5_from"
         },
         "privacy_tier": "sensitive",
@@ -3218,7 +3320,7 @@
         "checkpoint_family": {
           "kind": "append_stream"
         },
-        "criticality": null,
+        "criticality": "reconstructable",
         "domain": "media",
         "id": "media.audio-transcript",
         "implementation": "staged-audio-bundle",

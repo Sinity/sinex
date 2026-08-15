@@ -26,7 +26,7 @@ Sinex partitions its relational surface across seven namespaces, each with a dis
 | `core` | `events`, `blobs`, `manifests`, `runs`, `entities`, `entity_relations`, `event_annotations`, `tags` | Primary storage + knowledge graph |
 | `raw` | `source_material_registry`, `temporal_ledger` | Provenance roots + observation timestamps |
 | `audit` | `archived_events` | Immutable archive (replay target) |
-| `sinex_schemas` | `event_payload_schemas`, `validation_cache`, `dlq_events` | Schema registry + DLQ |
+| `sinex_schemas` | `event_payload_schemas`, `validation_cache`, `dlq_events` | Schema registry + Postgres DLQ evidence authority |
 | `sinex_telemetry` | hourly operator views, activity/status views, one materialized device-state view | Self-observation |
 | `metrics` | via schema registry | Operational metrics |
 | `public` | default | `PostgreSQL` default schema |
@@ -63,6 +63,11 @@ Event provenance is explicit and enforced.
 - destructive operations are limited to explicit retention/archive workflows
 - declarative schema changes are validated through repository tooling before deploy
 
+`sinex_schemas.dlq_events` is the durable authority for terminal DLQ and
+`DurableDebt` evidence. The NATS DLQ stream is a bounded delivery and operator
+replay surface, so its retention expiry must not remove the corresponding
+Postgres witness. Event-engine writes go through `DlqEventRepository`.
+
 ### Operations Log
 
 `core.operations_log` records every significant data-altering action (replay, restore, stage) with parameters, timing, and links to affected events. Replay on its own is not inspectable from event state alone — the operations log is the separate audit trail that makes "how did this state change over time" a queryable question. It complements the append-only discipline of `core.events` rather than weakening it.
@@ -72,3 +77,9 @@ Event provenance is explicit and enforced.
 - bind UUID parameters directly (`$1::uuid`, `$1::uuid[]`)
 - keep ordering explicit for deterministic replay (`ORDER BY ts_coided DESC, id DESC`)
 - prefer index-aligned predicates for source/type/time paths
+- `core.events.associated_blob_ids` and `audit.archived_events.associated_blob_ids`
+  are protected by required partial GIN indexes; blob-reference checks must use
+  array containment (`associated_blob_ids @> ARRAY[$1]::uuid[]`) so PostgreSQL
+  can use those indexes.
+- COPY serialization is checked at daemon boot against the authoritative
+  `core.events` definition, with the per-batch guard retained as defense in depth.

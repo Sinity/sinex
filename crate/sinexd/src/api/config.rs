@@ -12,6 +12,12 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub(crate) struct ConfiguredAuthToken {
+    pub(crate) value: String,
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) required_role: Option<crate::api::auth::Role>,
+}
+
 /// Gateway configuration.
 ///
 /// Loaded as: struct defaults → environment variables → CLI args.
@@ -102,9 +108,14 @@ pub struct GatewayConfig {
     #[sinex_config(env = "SINEX_API_ADMIN_TOKEN_FILE")]
     pub admin_token_file: Option<String>,
 
+    /// Separate read-only bearer token file for least-privilege consumers.
+    #[serde(default)]
+    #[sinex_config(env = "SINEX_API_READONLY_TOKEN_FILE")]
+    pub readonly_token_file: Option<String>,
+
     /// Shared NATS connection configuration used by replay control and coordination.
     #[serde(default)]
-    #[sinex_config(nested)]
+    #[sinex_config(nested_fallible)]
     pub nats: NatsConnectionConfig,
 
     /// TLS certificate path for the RPC server.
@@ -304,7 +315,7 @@ fn default_content_store_path() -> String {
     // is handled by the macro (it reads SINEX_API_CONTENT_STORE_PATH and
     // overrides this default). Source runtimes resolve from the same shared
     // resolver so gateway and sources address one CAS.
-    crate::runtime::content_store::default_content_store_path()
+    crate::runtime::content_store::default_content_store_path().to_string()
 }
 
 fn default_state_dir() -> PathBuf {
@@ -409,6 +420,7 @@ impl Default for GatewayConfig {
             rpc_token: None,
             rpc_token_file: None,
             admin_token_file: None,
+            readonly_token_file: None,
             nats: NatsConnectionConfig::default(),
             tls_cert: None,
             tls_key: None,
@@ -461,6 +473,7 @@ impl GatewayConfig {
     /// Load configuration from defaults and environment variables.
     pub fn load() -> Result<Self, SinexError> {
         let mut config = Self::from_env()?;
+        config.namespace = crate::runtime::resolve_nats_namespace(config.namespace);
         if config.database_url.trim().is_empty() {
             return Err(SinexError::configuration(
                 "Database URL not provided — set DATABASE_URL or pass --database-url",
@@ -476,6 +489,7 @@ impl GatewayConfig {
     /// (NATS, TLS, content store, auth) but provide the database URL out-of-band.
     pub fn load_with_database_url(database_url: impl Into<String>) -> Result<Self, SinexError> {
         let mut config = Self::from_env()?;
+        config.namespace = crate::runtime::resolve_nats_namespace(config.namespace);
         config.database_url = database_url.into();
         if config.database_url.trim().is_empty() {
             return Err(SinexError::configuration(
@@ -502,6 +516,18 @@ impl GatewayConfig {
         }
         if let Some(origins) = cors_origins {
             self.cors_origins = origins;
+        }
+        self
+    }
+
+    /// Apply the daemon's global NATS namespace override.
+    ///
+    /// `None` means no CLI flag was supplied and preserves the environment
+    /// configuration; a blank explicit value resolves to the default topology.
+    #[must_use]
+    pub fn with_nats_namespace(mut self, namespace: Option<String>) -> Self {
+        if namespace.is_some() {
+            self.namespace = crate::runtime::resolve_nats_namespace(namespace);
         }
         self
     }
@@ -545,7 +571,8 @@ impl GatewayConfig {
             .or_else(|| self.admin_token_file.as_ref().map(PathBuf::from))
     }
 
-    pub fn auth_token_from_config(&self) -> Result<(Option<String>, Option<PathBuf>), SinexError> {
+    pub(crate) fn auth_tokens_from_config(&self) -> Result<Vec<ConfiguredAuthToken>, SinexError> {
+        let mut tokens = Vec::new();
         if let Some(path_str) = &self.admin_token_file {
             let path = PathBuf::from(path_str);
             let contents = std::fs::read_to_string(&path).map_err(|e| {
@@ -553,25 +580,50 @@ impl GatewayConfig {
                     .with_path(path.display().to_string())
                     .with_source(e.to_string())
             })?;
-            return Ok((Some(contents.trim().to_string()), Some(path)));
+            tokens.push(ConfiguredAuthToken {
+                value: contents.trim().to_string(),
+                path: Some(path),
+                required_role: Some(crate::api::auth::Role::Admin),
+            });
         }
 
-        if let Some(path_str) = &self.rpc_token_file {
+        if let Some(path_str) = &self.readonly_token_file {
             let path = PathBuf::from(path_str);
             let contents = std::fs::read_to_string(&path).map_err(|e| {
-                SinexError::configuration("Failed to read RPC token file")
+                SinexError::configuration("Failed to read read-only token file")
                     .with_path(path.display().to_string())
                     .with_source(e.to_string())
             })?;
-            return Ok((Some(contents.trim().to_string()), Some(path)));
+            tokens.push(ConfiguredAuthToken {
+                value: contents.trim().to_string(),
+                path: Some(path),
+                required_role: Some(crate::api::auth::Role::ReadOnly),
+            });
         }
 
-        Ok((
-            self.rpc_token
-                .as_ref()
-                .map(|token| token.trim().to_string()),
-            None,
-        ))
+        if tokens.is_empty() {
+            if let Some(path_str) = &self.rpc_token_file {
+                let path = PathBuf::from(path_str);
+                let contents = std::fs::read_to_string(&path).map_err(|e| {
+                    SinexError::configuration("Failed to read RPC token file")
+                        .with_path(path.display().to_string())
+                        .with_source(e.to_string())
+                })?;
+                tokens.push(ConfiguredAuthToken {
+                    value: contents.trim().to_string(),
+                    path: Some(path),
+                    required_role: None,
+                });
+            } else if let Some(token) = &self.rpc_token {
+                tokens.push(ConfiguredAuthToken {
+                    value: token.trim().to_string(),
+                    path: None,
+                    required_role: None,
+                });
+            }
+        }
+
+        Ok(tokens)
     }
 
     #[must_use]

@@ -95,6 +95,10 @@ let
     resolveSecretPath cfg.secrets.apiAdminTokenFile [
       "sinex-api-admin-token"
     ];
+  apiReadonlyTokenFile =
+    resolveSecretPath cfg.secrets.apiReadonlyTokenFile [
+      "sinex-api-readonly-token"
+    ];
   effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
     "sinex-local-db"
     "sinex-remote-db"
@@ -298,9 +302,15 @@ let
     "SINEX_LOG_DIR=${logDir}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString runtimeCfg.nats.monitoringPort}"
+    # The backup/restore CLI must use the NATS service's resolved JetStream
+    # root, which may intentionally live outside SINEX_STATE_DIR.
+    "SINEX_NATS_JETSTREAM_STORE_DIR=${toString cfg.nats.storeDir}"
     # Both event_engine and API access the same content-store root; set here
     # so all core services share a consistent path without per-service repetition.
     "SINEX_CONTENT_STORE_PATH=${blobDir}"
+    "SINEX_CONTENT_STORE_MAX_BLOB_SIZE=${toString cfg.storage.blob.maxBlobSize}"
+    # Material assembly and CAS retrieval must share one write/read ceiling.
+    "SINEX_EVENT_ENGINE_MAX_MATERIAL_SIZE_BYTES=${toString cfg.storage.blob.maxBlobSize}"
     # Return freed heap to the OS eagerly. sinexd uses mimalloc (main.rs); by
     # default it retains freed segments in its arenas, so a burst of large
     # short-lived allocations during a backlog drain (512 KiB frame payloads ×
@@ -496,6 +506,7 @@ let
       ] ++ coreCfg.event_engine.extraArgs);
       apiLimits = coreCfg.api.limits;
       apiAdminTokenRuntimeFile = "${runtimeDir}/api-admin-token";
+      apiReadonlyTokenRuntimeFile = "${runtimeDir}/api-readonly-token";
       apiTlsCertRuntimeFile = "${runtimeDir}/api-server.pem";
       apiTlsKeyRuntimeFile = "${runtimeDir}/api-server-key.pem";
       apiTlsClientCaRuntimeFile = "${runtimeDir}/api-client-ca.pem";
@@ -507,6 +518,7 @@ let
           null;
       apiRuntimeInputStageScript =
         if apiAdminTokenFile == null
+          && apiReadonlyTokenFile == null
           && cfg.core.api.tlsCertFile == null
           && cfg.core.api.tlsKeyFile == null
           && apiTlsTrustAnchorSourceFile == null
@@ -579,9 +591,50 @@ let
               ${pkgs.coreutils}/bin/mv "$tmp_path" "$dest_path"
             }
 
+            stage_api_readonly_token() {
+              local source_path="$1"
+              local dest_path="$2"
+              local tmp_path
+              local raw_token
+              local staged_token
+
+              if [ -z "$source_path" ]; then
+                return 0
+              fi
+              if [ ! -r "$source_path" ]; then
+                echo "[sinex] API read-only token $source_path is not readable" >&2
+                exit 1
+              fi
+              raw_token="$(${pkgs.coreutils}/bin/cat "$source_path")"
+              raw_token="$(${pkgs.coreutils}/bin/printf '%s' "$raw_token" | ${pkgs.gnused}/bin/sed -e 's/[[:space:]]*$//')"
+              if [ -z "$raw_token" ]; then
+                echo "[sinex] API read-only token $source_path is empty" >&2
+                exit 1
+              fi
+              case "$raw_token" in
+                *:readonly|*:read|*:ro)
+                  staged_token="$raw_token"
+                  ;;
+                *:admin|*:write|*:rw)
+                  echo "[sinex] API read-only token $source_path must be raw or already end with :readonly" >&2
+                  exit 1
+                  ;;
+                *)
+                  staged_token="$raw_token:readonly"
+                  ;;
+              esac
+              tmp_path="$(mktemp "$runtime_dir/api-readonly-token.XXXXXX")"
+              ${pkgs.coreutils}/bin/chmod 0600 "$tmp_path"
+              ${pkgs.coreutils}/bin/printf '%s\n' "$staged_token" > "$tmp_path"
+              ${pkgs.coreutils}/bin/chown ${serviceUser}:${serviceUser} "$tmp_path"
+              ${pkgs.coreutils}/bin/chmod 0400 "$tmp_path"
+              ${pkgs.coreutils}/bin/mv "$tmp_path" "$dest_path"
+            }
+
             "$INSTALL" -d -m 0750 -o ${serviceUser} -g ${serviceUser} "$runtime_dir"
 
             stage_api_admin_token ${escapeShellArg (if apiAdminTokenFile == null then "" else toString apiAdminTokenFile)} ${escapeShellArg apiAdminTokenRuntimeFile}
+            stage_api_readonly_token ${escapeShellArg (if apiReadonlyTokenFile == null then "" else toString apiReadonlyTokenFile)} ${escapeShellArg apiReadonlyTokenRuntimeFile}
             stage_file ${escapeShellArg (if cfg.core.api.tlsCertFile == null then "" else toString cfg.core.api.tlsCertFile)} ${escapeShellArg apiTlsCertRuntimeFile} 0440
             stage_file ${escapeShellArg (if cfg.core.api.tlsKeyFile == null then "" else toString cfg.core.api.tlsKeyFile)} ${escapeShellArg apiTlsKeyRuntimeFile} 0400
             stage_file ${escapeShellArg (if apiTlsTrustAnchorSourceFile == null then "" else toString apiTlsTrustAnchorSourceFile)} ${escapeShellArg apiTlsTrustAnchorRuntimeFile} 0444
@@ -620,6 +673,7 @@ let
             mkServiceEnv (
               [
                 "RUST_LOG=${coreCfg.event_engine.logLevel}"
+                "SINEX_DB_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
                 # Event engine pool size and timeouts.
                 "SINEX_EVENT_ENGINE_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
                 "SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
@@ -641,6 +695,12 @@ let
                 # Operational intervals.
                 "SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.event_engine.schemaReloadIntervalSecs}"
                 "SINEX_EVENT_ENGINE_TELEMETRY_INTERVAL_SECS=${toString coreCfg.event_engine.telemetryIntervalSecs}"
+                # Historical imports must not inherit an implicit 2000-01-01 floor.
+                # Set the option explicitly when a deployment needs an older-data bound.
+                ]
+              ++ lib.optional (coreCfg.event_engine.tsOrigLowerBoundUnix != null)
+                "SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX=${toString coreCfg.event_engine.tsOrigLowerBoundUnix}"
+              ++ [
                 # API config.
                 "SINEX_API_MAX_CONCURRENCY=${toString apiLimits.maxConcurrency}"
                 "SINEX_API_REQUEST_TIMEOUT_SECS=${toString apiLimits.requestTimeoutSec}"
@@ -667,6 +727,7 @@ let
                 (coreCfg.event_engine.blobGcIntervalSecs != null)
                 "SINEX_EVENT_ENGINE_BLOB_GC_INTERVAL_SECS=${toString coreCfg.event_engine.blobGcIntervalSecs}"
               ++ optional (apiAdminTokenFile != null) "SINEX_API_ADMIN_TOKEN_FILE=${apiAdminTokenRuntimeFile}"
+              ++ optional (apiReadonlyTokenFile != null) "SINEX_API_READONLY_TOKEN_FILE=${apiReadonlyTokenRuntimeFile}"
               ++ optional (cfg.core.api.tlsCertFile != null) "SINEX_API_TLS_CERT=${apiTlsCertRuntimeFile}"
               ++ optional (cfg.core.api.tlsKeyFile != null) "SINEX_API_TLS_KEY=${apiTlsKeyRuntimeFile}"
               ++ optional (cfg.core.api.tlsClientCAFile != null) "SINEX_API_TLS_CLIENT_CA=${apiTlsClientCaRuntimeFile}"
@@ -1979,6 +2040,7 @@ let
                 service_name = "source-driver-${id}-${toString idx}";
                 runtime_config = runtimeConfig;
                 extra_args = extraArgs;
+                extra_env = binding.extraEnv or { };
                 catalog_metadata = catalogMetadata;
               })
               instanceList

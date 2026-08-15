@@ -74,6 +74,22 @@ async fn strict_mode_still_rejects_missing_schema_bindings() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn strict_mode_rejects_missing_schema_cache_entries() -> TestResult<()> {
+    let err = JetStreamConsumer::resolve_validation_result(
+        ValidationResult::SchemaNotFound {
+            schema_id: Uuid::now_v7(),
+        },
+        true,
+        &sinex_primitives::domain::EventSource::from_static("test"),
+        &sinex_primitives::domain::EventType::from_static("schema.missing"),
+    )
+    .expect_err("strict mode must reject registered schemas unavailable in the cache");
+
+    assert!(err.to_string().contains("Strict validation enabled"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn require_inserted_ids_accepts_present_repository_ids() -> TestResult<()> {
     let ids = vec![Uuid::now_v7()];
     let accepted = JetStreamConsumer::require_inserted_ids(Some(ids.clone()), 1)?;
@@ -103,21 +119,11 @@ async fn suspicious_future_ts_orig_default_one_hour_skew() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn implausibly_old_ts_orig_default_year_2000() -> TestResult<()> {
-    let lower_bound = Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC));
-    let before_2000 = Timestamp::from_const(time::macros::datetime!(1999-12-31 23:59:59 UTC));
-    let after_2000 = Timestamp::from_const(time::macros::datetime!(2000-01-02 00:00:00 UTC));
-    assert!(
-        before_2000 < lower_bound,
-        "1999-12-31 should be before lower bound"
-    );
-    assert!(
-        (lower_bound >= lower_bound),
-        "2000-01-01 itself should not be flagged"
-    );
-    assert!(
-        (after_2000 >= lower_bound),
-        "2000-01-02 should not be flagged"
+async fn historical_ts_orig_default_has_no_lower_bound() -> TestResult<()> {
+    let config = crate::event_engine::EventEngineConfig::default();
+    assert_eq!(
+        config.ts_orig_lower_bound_unix, None,
+        "the deployed default must not DLQ legitimate pre-2000 imports"
     );
     Ok(())
 }
@@ -239,6 +245,21 @@ async fn generic_validation_error_is_not_isolatable() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn deterministic_row_validation_errors_are_isolatable() -> TestResult<()> {
+    for message in [
+        "validated event missing ts_orig",
+        "failed to serialize event claim_support",
+    ] {
+        let error = SinexError::validation(message);
+        assert!(
+            is_isolatable_batch_persistence_failure(&error),
+            "deterministic row-level validation error {message:?} must be bisected"
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
 async fn uuid_v7_guard_rejects_other_uuid_versions() -> TestResult<()> {
     // Random UUIDv7 minted by Id::new() must pass the admission guard.
     assert!(is_uuid_v7(&Uuid::now_v7()));
@@ -260,6 +281,13 @@ async fn persistence_failure_routing_short_circuits_when_dlq_is_forced() -> Test
 }
 
 #[sinex_test]
+async fn nats_delivery_ceiling_exceeds_every_application_terminal_threshold() -> TestResult<()> {
+    assert!(MAIN_CONSUMER_JETSTREAM_MAX_DELIVER > MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD);
+    assert!(MAIN_CONSUMER_JETSTREAM_MAX_DELIVER > SOURCE_MATERIAL_READY_DLQ_THRESHOLD);
+    Ok(())
+}
+
+#[sinex_test]
 async fn persistence_failure_routing_uses_delivery_attempts_for_non_retryable_errors()
 -> TestResult<()> {
     assert!(!JetStreamConsumer::should_route_persistence_failure(
@@ -276,9 +304,14 @@ async fn persistence_failure_routing_uses_delivery_attempts_for_non_retryable_er
 }
 
 #[sinex_test]
-async fn persistence_failure_routing_never_dlqs_retryable_db_errors() -> TestResult<()> {
+async fn persistence_failure_routing_terminally_dlqs_retryable_db_errors() -> TestResult<()> {
     let retryable = SinexError::database("serialization failure").with_context("sqlstate", "40001");
     assert!(!JetStreamConsumer::should_route_persistence_failure(
+        false,
+        Ok(MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD - 1),
+        &retryable,
+    )?);
+    assert!(JetStreamConsumer::should_route_persistence_failure(
         false,
         Ok(MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD),
         &retryable,

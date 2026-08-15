@@ -4,7 +4,7 @@ use super::{
     hypertable_chunk_interval_drift, hypertable_retention_policy_drift, inline_check_drift,
     orphan_column_drifts_for_table,
 };
-use xtask::sandbox::prelude::sinex_test;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn drift_category_display_round_trip() -> xtask::sandbox::TestResult<()> {
@@ -280,20 +280,106 @@ async fn hypertable_setting_drift_reports_retention_policy() -> xtask::sandbox::
 }
 
 #[sinex_test]
-#[ignore = "sinex-3p1l open: DECLARED_INLINE_CHECKS only declares expectations for \
-            core.events -- reflection.events inherits the same LIKE-created CHECK \
-            constraints (including xor_provenance) but strict_diff never verifies them, \
-            so drift there is invisible to `xtask schema strict-diff`"]
-async fn declared_inline_checks_cover_reflection_events() -> xtask::sandbox::TestResult<()> {
-    let covers_reflection_xor_provenance = DECLARED_INLINE_CHECKS.iter().any(|check| {
-        check.schema == "reflection" && check.table == "events" && check.label == "xor_provenance"
-    });
+async fn declared_inline_checks_cover_all_event_provenance_xor_tables() -> TestResult<()> {
+    for (schema, table) in [
+        ("core", "events"),
+        ("reflection", "events"),
+        ("audit", "archived_events"),
+    ] {
+        assert!(
+            DECLARED_INLINE_CHECKS.iter().any(|check| {
+                check.schema == schema && check.table == table && check.label == "xor_provenance"
+            }),
+            "DECLARED_INLINE_CHECKS has no {schema}.{table} provenance XOR expectation"
+        );
+    }
 
-    assert!(
-        covers_reflection_xor_provenance,
-        "DECLARED_INLINE_CHECKS has no reflection.events entry for xor_provenance -- \
-         strict_diff only ever checks core.events, so a dropped/rewritten CHECK on \
-         reflection.events (self-observation lane) goes completely undetected"
-    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn provenance_xor_constraints_restore_after_drop(ctx: TestContext) -> TestResult<()> {
+    const CONSTRAINTS: &[(&str, &str, &str)] = &[
+        ("core", "events", "events_provenance_xor"),
+        ("reflection", "events", "reflection_events_provenance_xor"),
+        ("audit", "archived_events", "archived_events_provenance_xor"),
+    ];
+
+    crate::apply::apply(ctx.pool()).await?;
+
+    for (schema, table, constraint) in CONSTRAINTS {
+        let present: bool = sqlx::query_scalar(
+            r"
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_constraint c
+                JOIN pg_class r ON r.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = r.relnamespace
+                WHERE n.nspname = $1 AND r.relname = $2 AND c.conname = $3
+            )
+            ",
+        )
+        .bind(schema)
+        .bind(table)
+        .bind(constraint)
+        .fetch_one(ctx.pool())
+        .await?;
+        assert!(
+            present,
+            "schema apply must establish {schema}.{table} {constraint}"
+        );
+
+        sqlx::query(&format!(
+            "ALTER TABLE {schema}.{table} DROP CONSTRAINT {constraint}"
+        ))
+        .execute(ctx.pool())
+        .await?;
+    }
+
+    let dropped_drifts = super::check_strict(ctx.pool()).await?;
+    for (schema, table, _) in CONSTRAINTS {
+        let location = format!("{schema}.{table}::xor_provenance");
+        assert!(
+            dropped_drifts
+                .iter()
+                .any(|drift| drift.location == location),
+            "strict diff must detect a dropped provenance XOR check at {location}: {dropped_drifts:?}"
+        );
+    }
+
+    crate::apply::apply(ctx.pool()).await?;
+
+    let restored_drifts = super::check_strict(ctx.pool()).await?;
+    for (schema, table, constraint) in CONSTRAINTS {
+        let present: bool = sqlx::query_scalar(
+            r"
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_constraint c
+                JOIN pg_class r ON r.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = r.relnamespace
+                WHERE n.nspname = $1 AND r.relname = $2 AND c.conname = $3
+            )
+            ",
+        )
+        .bind(schema)
+        .bind(table)
+        .bind(constraint)
+        .fetch_one(ctx.pool())
+        .await?;
+        assert!(
+            present,
+            "schema apply must restore {schema}.{table} {constraint}"
+        );
+
+        let location = format!("{schema}.{table}::xor_provenance");
+        assert!(
+            !restored_drifts
+                .iter()
+                .any(|drift| drift.location == location),
+            "strict diff must clear restored provenance XOR drift at {location}: {restored_drifts:?}"
+        );
+    }
+
     Ok(())
 }

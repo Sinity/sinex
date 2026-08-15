@@ -217,8 +217,8 @@ sinex_proptest! {
         prop_assert_eq!(event.id.as_ref(), deserialized.id.as_ref());
         prop_assert_eq!(event.source, deserialized.source);
         prop_assert_eq!(event.event_type, deserialized.event_type);
-        let a = event.id.as_ref().map(sinex_primitives::Id::timestamp);
-        let b = deserialized.id.as_ref().map(sinex_primitives::Id::timestamp);
+        let a = event.id.as_ref().and_then(sinex_primitives::Id::timestamp);
+        let b = deserialized.id.as_ref().and_then(sinex_primitives::Id::timestamp);
         prop_assert_eq!(a, b);
         prop_assert_eq!(event.ts_orig, deserialized.ts_orig);
         prop_assert_eq!(event.host, deserialized.host);
@@ -257,8 +257,8 @@ sinex_proptest! {
         );
 
         let now = Timestamp::now();
-        let t1 = event1.id.as_ref().unwrap().timestamp();
-        let t2 = event2.id.as_ref().unwrap().timestamp();
+        let t1 = event1.id.as_ref().unwrap().timestamp().expect("test ID must be UUIDv7");
+        let t2 = event2.id.as_ref().unwrap().timestamp().expect("test ID must be UUIDv7");
         prop_assert!(t1 <= now);
         prop_assert!(t2 <= now);
         prop_assert!(now - t1 < TimeDuration::seconds(10));
@@ -274,7 +274,7 @@ sinex_proptest! {
         prop_assert!(!event.host.is_empty());
 
         let now = Timestamp::now();
-        let t = event.id.as_ref().unwrap().timestamp();
+        let t = event.id.as_ref().unwrap().timestamp().expect("test ID must be UUIDv7");
         prop_assert!(t <= now);
         prop_assert!(now - t < TimeDuration::hours(1));
 
@@ -330,8 +330,8 @@ sinex_proptest! {
         }
 
         for window in events.windows(2) {
-            let a = window[0].id.as_ref().unwrap().timestamp();
-            let b = window[1].id.as_ref().unwrap().timestamp();
+            let a = window[0].id.as_ref().unwrap().timestamp().expect("test ID must be UUIDv7");
+            let b = window[1].id.as_ref().unwrap().timestamp().expect("test ID must be UUIDv7");
             prop_assert!(a <= b);
         }
         Ok(())

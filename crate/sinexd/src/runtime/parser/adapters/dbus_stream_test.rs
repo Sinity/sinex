@@ -17,6 +17,24 @@ fn make_msg(interface: &str, member: &str) -> DbusMessage {
 }
 
 #[sinex_test]
+async fn injected_dbus_backend_cannot_fall_back_to_live_backend_on_reopen()
+-> xtask::sandbox::TestResult<()> {
+    let adapter = DbusStreamAdapter::with_backend(MockDbusBackend::new(vec![]));
+    let config = DbusStreamConfig {
+        bus: DbusBus::Session,
+        match_rules: vec!["type='signal',interface='org.example'".into()],
+    };
+
+    let _first = adapter.open(dummy_material_id(), &config, None).await?;
+    let error = match adapter.open(dummy_material_id(), &config, None).await {
+        Ok(_) => panic!("a consumed injected backend must not fall back to a live bus"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("already consumed"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_mock_backend_yields_messages() -> xtask::sandbox::TestResult<()> {
     let msgs = vec![
         make_msg("org.test.Iface", "Signal1"),
@@ -158,25 +176,21 @@ async fn test_dbus_match_rule_parses_keys() -> xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
-/// sinex-xtmp bug 5: `open_with_backend` filter_maps away any match-rule
-/// string that fails to parse (`ParsedMatchRule::from_str(r).ok()`). If
-/// EVERY configured rule is malformed, `parsed_rules` ends up empty, and
-/// `matches_any_rule` treats an empty list as "match everything" -- the
-/// same code path used for a genuinely unconfigured (no rules at all)
-/// operator setup. A restrictive-looking but malformed rule should result
-/// in matching NOTHING, not everything -- silently leaking broad traffic
-/// is worse than silently dropping it. Fails until zero successfully-
-/// parsed rules is distinguished from zero configured rules.
+/// sinex-xtmp bug 5: a configured D-Bus rule that parses into an unconstrained
+/// `ParsedMatchRule` would make `matches_any_rule` admit every signal. A
+/// restrictive-looking but unsupported rule must result in matching NOTHING,
+/// not everything. This uses a syntactically shaped unknown key so the proof
+/// exercises the production parser's fail-closed guard, rather than only the
+/// already-safe missing-`=` error path.
 #[sinex_test]
-#[ignore = "sinex-xtmp open (dbus rule matching): all-malformed rules fall back to matching everything -- fails until fixed"]
 async fn test_dbus_all_malformed_rules_match_nothing_not_everything()
 -> xtask::sandbox::TestResult<()> {
     let msgs = vec![make_msg("org.example.Forbidden", "Nope")];
     let config = DbusStreamConfig {
         bus: DbusBus::Session,
-        // No `=` in this clause -- ParsedMatchRule::from_str returns Err,
-        // so this is the only configured rule and it fails to parse.
-        match_rules: vec!["totallynotarule".into()],
+        // This has the shape of a key/value clause, but the key is not
+        // supported by the post-filter and must not become a match-all rule.
+        match_rules: vec!["unknown_key='value'".into()],
     };
 
     let stream = DbusStreamAdapter::open_with_backend(

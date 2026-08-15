@@ -1,4 +1,5 @@
 use super::*;
+use crate::client::{ClientConfig, GatewayClient};
 use crate::fmt::render_finite_envelope;
 use serde_json::json;
 use sinex_primitives::domain::HostName;
@@ -6,6 +7,8 @@ use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::ReadinessCaveatId;
 use sinex_primitives::{Id, Uuid};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask::sandbox::prelude::sinex_test;
 
 #[sinex_test]
@@ -92,6 +95,13 @@ async fn privacy_audit_summarizes_posture_without_source_identifier_leak()
                 evidence: json!({"raw_path": "/home/sinity/private/window.log"}),
             }],
         },
+        &PrivacyPolicyListResponse {
+            rules: Vec::new(),
+            field_scopes: Vec::new(),
+            key_namespaces: Vec::new(),
+            recognizer_backends: Vec::new(),
+            dictionaries: Vec::new(),
+        },
     );
 
     assert!(report.private_mode.enabled);
@@ -99,13 +109,89 @@ async fn privacy_audit_summarizes_posture_without_source_identifier_leak()
     assert_eq!(report.sources.blocked, 1);
     assert_eq!(report.sources.privacy_caveats, 1);
     assert_eq!(report.sources.blocking_caveats, 1);
-    assert_eq!(report.findings.len(), 3);
+    assert_eq!(report.findings.len(), 4);
 
     let table = format_privacy_audit_report(&report);
     assert!(table.contains("privacy.private_mode_enabled"));
     assert!(table.contains("privacy.dlq_backlog"));
+    assert!(table.contains("privacy.policy_catalog_empty"));
     assert!(table.contains("policy.raw_material_blocked"));
     assert!(!table.contains("/home/sinity/private/window.log"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn privacy_audit_collects_empty_policy_catalog_from_gateway()
+-> xtask::sandbox::TestResult<()> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value =
+                serde_json::from_slice(&request.body).expect("valid JSON-RPC request body");
+            let result = match body["method"].as_str() {
+                Some("privacy.private_mode.status") => {
+                    json!({"state": RuntimePrivateModeState::disabled()})
+                }
+                Some("dlq.list") => json!({
+                    "total_messages": 0,
+                    "total_bytes": 0,
+                    "first_seq": 0,
+                    "last_seq": 0,
+                    "pressure_level": "nominal",
+                    "resource_pressure": {
+                        "pressure_level": "nominal",
+                        "runtime_action": "none",
+                        "pending_messages": 0,
+                        "pending_bytes": 0,
+                        "retry_batch_size": 10,
+                        "recommended_action": "none",
+                        "reason": "no backlog"
+                    },
+                    "pending_sequence_span": 0,
+                    "recommended_action": "none",
+                    "action_reason": "no backlog"
+                }),
+                Some("sources.readiness.list") => json!({"sources": []}),
+                Some("privacy.policy.list") => {
+                    assert_eq!(body["params"]["include_disabled"], true);
+                    json!({
+                        "rules": [],
+                        "field_scopes": [],
+                        "key_namespaces": [],
+                        "recognizer_backends": [],
+                        "dictionaries": []
+                    })
+                }
+                method => panic!("unexpected privacy audit RPC: {method:?}"),
+            };
+            ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "result": result,
+            }))
+        })
+        .expect(4)
+        .mount(&server)
+        .await;
+    let client = GatewayClient::new(ClientConfig {
+        url: server.uri(),
+        token: Some("test-token".to_string()),
+        insecure: true,
+        ..Default::default()
+    })?;
+    let args = PrivacyAuditArgs {
+        source_family: None,
+        stale_after_seconds: None,
+    };
+
+    let report = collect_privacy_audit_report(&client, &args).await?;
+
+    assert_eq!(report.findings.len(), 1);
+    assert_eq!(report.findings[0].code, "privacy.policy_catalog_empty");
+    assert_eq!(report.findings[0].severity, "blocking");
+    assert_eq!(report.findings[0].message, EMPTY_PRIVACY_POLICY_CATALOG_MESSAGE);
+    server.verify().await;
     Ok(())
 }
 

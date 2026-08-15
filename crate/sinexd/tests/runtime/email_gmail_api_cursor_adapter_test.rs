@@ -173,6 +173,45 @@ async fn gmail_api_cursor_advances_page_token_and_history_id() -> xtask::sandbox
 }
 
 #[sinex_test]
+async fn gmail_api_cursor_resume_preserves_page_index_in_anchor() -> xtask::sandbox::TestResult<()>
+{
+    let client = FakeGmailClient::new(vec![
+        GmailApiPage {
+            records: Vec::new(),
+            next_page_token: None,
+            history_id: Some("100".to_string()),
+        },
+        GmailApiPage {
+            records: vec![message_record("gmail-resumed", "thread-resumed", "101")],
+            next_page_token: None,
+            history_id: Some("101".to_string()),
+        },
+    ]);
+    let adapter = GmailApiCursorAdapter::new(client);
+    let checkpoint = sinexd::runtime::parser::GmailApiCursor {
+        page_token: Some("page-2".to_string()),
+        history_id: Some("100".to_string()),
+        page_index: 1,
+    };
+
+    let mut stream = adapter
+        .open(dummy_material_id(), &config(), Some(checkpoint))
+        .await?;
+    let record = stream.next().await.expect("resumed Gmail record")?;
+    assert!(stream.next().await.is_none());
+    assert!(matches!(
+        record.anchor,
+        MaterialAnchor::StreamFrame {
+            material_offset: 1,
+            frame_index: 0
+        }
+    ));
+    let cursor_after = adapter.cursor_after(&record)?;
+    assert_eq!(cursor_after.page_index, 2);
+    Ok(())
+}
+
+#[sinex_test]
 async fn gmail_api_empty_history_page_emits_cursor_checkpoint() -> xtask::sandbox::TestResult<()> {
     let client = FakeGmailClient::new(vec![GmailApiPage {
         records: Vec::new(),

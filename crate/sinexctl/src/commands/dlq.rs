@@ -199,6 +199,7 @@ impl DlqCommands {
                     )
                 };
 
+                eprintln!("WARNING: {DLQ_REQUEUE_DUPLICATE_WINDOW_CAVEAT}");
                 let response = with_spinner_result(
                     msg,
                     "Messages requeued",
@@ -206,10 +207,17 @@ impl DlqCommands {
                 )
                 .await?;
 
-                println!(
-                    "{}: {} messages requeued (operation {})",
-                    response.status, response.requeued_count, response.operation_id
-                );
+                if response.status == "accepted" {
+                    println!(
+                        "DLQ requeue accepted; operation {} is running. Poll with `sinexctl ops get --operation-id {}`.",
+                        response.operation_id, response.operation_id
+                    );
+                } else {
+                    println!(
+                        "{}: {} messages requeued (operation {})",
+                        response.status, response.requeued_count, response.operation_id
+                    );
+                }
             }
             Self::Purge {
                 start_sequence,
@@ -271,6 +279,7 @@ use sinex_primitives::rpc::sources::{SourceMaterialDetail, SourcesShowRequest};
 
 const DEFAULT_DLQ_PREVIEW_CHARS: usize = 200;
 const TRIAGE_DLQ_PREVIEW_CHARS: usize = 1200;
+const DLQ_REQUEUE_DUPLICATE_WINDOW_CAVEAT: &str = "DLQ requeue can collide with JetStream's duplicate window; a deduplicated publish is retained for operator review instead of being treated as a fresh retry. Ref sinex-3kqx.";
 
 fn dlq_list_envelope(stats: DlqListResponse) -> ViewEnvelope<DlqListResponse> {
     let mut envelope = ViewEnvelope::new("sinexctl.ops.dlq.list", stats);
@@ -410,6 +419,20 @@ fn dlq_cleanup_plan_caveats(plan: &DlqCleanupPlanView) -> Vec<CaveatView> {
                 plan.candidate_count
             ),
             ref_: Some(dlq_ref_with_command("raw_ingest_dlq.cleanup.candidates", "sinexctl ops dlq cleanup-plan", "dlq.peek")),
+        });
+    }
+    if plan.requeue_candidate_messages > 0 {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::WindowPartial.as_str().to_string(),
+            message: format!(
+                "{} {} requeue candidate message(s) are in this cleanup plan",
+                DLQ_REQUEUE_DUPLICATE_WINDOW_CAVEAT, plan.requeue_candidate_messages
+            ),
+            ref_: Some(dlq_ref_with_command(
+                "raw_ingest_dlq.requeue_duplicate_window",
+                "sinexctl ops dlq requeue",
+                "dlq.requeue",
+            )),
         });
     }
     caveats
@@ -990,6 +1013,9 @@ fn is_uuid_like(candidate: &str) -> bool {
 
 fn dlq_triage_caveat(reason_bucket: &str) -> &'static str {
     match reason_bucket {
+        reason_bucket if dlq_cleanup_is_requeue_candidate(reason_bucket) => {
+            DLQ_REQUEUE_DUPLICATE_WINDOW_CAVEAT
+        }
         "error_payload.slice_arrival_timeout" => {
             "Usually source-material assembly residue; verify newer materials for the same source complete before purge."
         }
@@ -1261,6 +1287,12 @@ fn format_dlq_cleanup_plan_table(plan: &DlqCleanupPlanView) -> String {
         plan.requeue_candidate_messages
     ));
     output.push_str(&format!("  Next: {}\n", plan.recommended_next));
+
+    if plan.requeue_candidate_messages > 0 {
+        output.push_str(&format!(
+            "\nWARNING: {DLQ_REQUEUE_DUPLICATE_WINDOW_CAVEAT}\n"
+        ));
+    }
 
     if plan.items.is_empty() {
         output.push_str("\nNo sampled DLQ groups.\n");

@@ -1,6 +1,12 @@
 use super::*;
+use sinex_db::DbPoolExt;
+use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_primitives::Id;
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::DynamicPayload;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use xtask::sandbox::prelude::*;
 
 /// `activity.window.summary` is a real production payload registered with
 /// `revision_policy = "supersede_on_change"` (`sinex_primitives::events::
@@ -15,6 +21,210 @@ fn candidate(payload: serde_json::Value) -> Event<JsonValue> {
         .from_material(Id::new())
         .build()
         .expect("test candidate should build")
+}
+
+fn payload_schema_test_content() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": { "value": { "type": "string" } },
+        "required": ["value"],
+        "additionalProperties": false
+    })
+}
+
+async fn delete_payload_schema_row(ctx: &TestContext, schema_id: Uuid) -> TestResult<()> {
+    sqlx::query("DELETE FROM sinex_schemas.event_payload_schemas WHERE id = $1::uuid")
+        .bind(schema_id)
+        .execute(&ctx.pool)
+        .await?;
+    Ok(())
+}
+
+async fn restore_payload_schema_row(
+    pool: &sinex_db::DbPool,
+    schema_id: Uuid,
+    source: String,
+    event_type: String,
+    schema_version: String,
+    schema_content: serde_json::Value,
+    content_hash: String,
+) -> TestResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO sinex_schemas.event_payload_schemas (
+            id, source, event_type, schema_version, schema_content,
+            content_hash, is_active
+        ) VALUES ($1::uuid, $2, $3, $4, $5, $6, true)
+        "#,
+    )
+    .bind(schema_id)
+    .bind(source)
+    .bind(event_type)
+    .bind(schema_version)
+    .bind(schema_content)
+    .bind(content_hash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn admit_payload_schema_test_event(
+    ctx: &TestContext,
+    service: &AdmissionService,
+    source: &str,
+    event_type: &str,
+) -> TestResult<AdmittedEvent> {
+    let material_id = ctx
+        .create_source_material(Some("admission-payload-schema-fk"))
+        .await?;
+    let mut event = DynamicPayload::new(
+        source,
+        event_type,
+        serde_json::json!({ "value": "schema-fk" }),
+    )
+    .from_material_at(material_id, 0)
+    .build()?
+    .to_json_event()?;
+    event.id = Some(Id::from_uuid(Uuid::now_v7()));
+    event.ts_orig = Some(Timestamp::now());
+    match service.admit_event(event).await? {
+        AdmissionDecision::Admitted(admitted) => Ok(admitted),
+        other => panic!("payload-schema test event should be admitted: {other:?}"),
+    }
+}
+
+/// sinex-4pm: a schema ID can be valid in the admission validator and absent
+/// from the database by persistence time. This must produce an explicit,
+/// evidence-bearing schema-management failure, never a committed NULL ID.
+#[sinex_test]
+async fn stale_payload_schema_id_is_terminal_without_metadata_stripping(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let suffix = Uuid::now_v7().to_string().to_lowercase();
+    let source = format!("admission.schema-race.{suffix}");
+    let event_type = "payload.schema.stale";
+    let schema = ctx
+        .pool
+        .schemas()
+        .register_schema(NewEventSchema {
+            source: EventSource::new(source.clone())?,
+            event_type: EventType::from_static(event_type),
+            schema_version: "1.0.0".to_string(),
+            schema_content: payload_schema_test_content(),
+        })
+        .await?;
+    let validator = IngestEventValidator::load_schemas_from_db(&ctx.pool, true).await?;
+    let service = AdmissionService::new(ctx.pool.clone(), Arc::new(RwLock::new(validator)));
+    let admitted = admit_payload_schema_test_event(&ctx, &service, &source, event_type).await?;
+    let event_id = admitted.event_id;
+    let schema_id = *schema.id.as_uuid();
+    let schema_id_text = schema_id.to_string();
+    assert_eq!(admitted.event.payload_schema_id, Some(schema_id));
+
+    delete_payload_schema_row(&ctx, schema_id).await?;
+
+    let error = service
+        .persist_batch(&[admitted])
+        .await
+        .expect_err("a vanished schema row must be terminal after reload/revalidation");
+    assert_eq!(
+        error.context_map().get("error_class").map(String::as_str),
+        Some("payload_schema_fk_terminal"),
+        "the terminal error is the observable schema-cache-race audit signal"
+    );
+    assert_eq!(
+        error.context_map().get("schema_ids").map(String::as_str),
+        Some(schema_id_text.as_str())
+    );
+    assert!(
+        error
+            .context_map()
+            .get("schema_revalidation")
+            .is_some_and(|evidence| evidence.contains("revalidation returned")),
+        "the error must say what the freshly reloaded validator observed: {error}"
+    );
+    assert!(
+        ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+        "a stale schema id must never be persisted by stripping payload_schema_id"
+    );
+    Ok(())
+}
+
+/// sinex-4pm: when the registry row becomes visible after the first FK error,
+/// the retry reloads and revalidates the *same* schema ID before committing.
+#[sinex_test]
+async fn payload_schema_fk_retry_reloads_revalidates_and_preserves_schema_id(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let suffix = Uuid::now_v7().to_string().to_lowercase();
+    let source = format!("admission.schema-race.{suffix}");
+    let event_type = "payload.schema.recovered";
+    let schema = ctx
+        .pool
+        .schemas()
+        .register_schema(NewEventSchema {
+            source: EventSource::new(source.clone())?,
+            event_type: EventType::from_static(event_type),
+            schema_version: "1.0.0".to_string(),
+            schema_content: payload_schema_test_content(),
+        })
+        .await?;
+    let validator = IngestEventValidator::load_schemas_from_db(&ctx.pool, true).await?;
+    let retry_barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let mut service = AdmissionService::new(ctx.pool.clone(), Arc::new(RwLock::new(validator)));
+    service.payload_schema_fk_retry_barrier = Some(Arc::clone(&retry_barrier));
+    let admitted = admit_payload_schema_test_event(&ctx, &service, &source, event_type).await?;
+    let event_id = admitted.event_id;
+    let schema_id = *schema.id.as_uuid();
+    assert_eq!(admitted.event.payload_schema_id, Some(schema_id));
+
+    delete_payload_schema_row(&ctx, schema_id).await?;
+    let restore_pool = ctx.pool.clone();
+    let restore_barrier = Arc::clone(&retry_barrier);
+    let schema_source = schema.source.as_str().to_owned();
+    let schema_event_type = schema.event_type.as_str().to_owned();
+    let schema_version = schema.schema_version.as_str().to_owned();
+    let schema_content = schema.schema_content.clone();
+    let content_hash = schema.content_hash.clone();
+    let restore = tokio::spawn(async move {
+        restore_barrier.wait().await;
+        restore_payload_schema_row(
+            &restore_pool,
+            schema_id,
+            schema_source,
+            schema_event_type,
+            schema_version,
+            schema_content,
+            content_hash,
+        )
+        .await?;
+        restore_barrier.wait().await;
+        Ok::<(), color_eyre::Report>(())
+    });
+
+    let result = service.persist_batch(&[admitted]).await?;
+    restore
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("schema restore task panicked: {error}"))??;
+
+    assert_eq!(result.inserted_ids.as_deref(), Some(&[event_id][..]));
+    let persisted = ctx
+        .pool
+        .events()
+        .get_by_id(event_id.into())
+        .await?
+        .expect("reload/revalidate retry must persist the event");
+    assert_eq!(
+        persisted.payload_schema_id,
+        Some(schema_id),
+        "the retry must preserve the schema ID advertised by the admitted/confirmed event"
+    );
+    let validation = service.validator.read().await.validate_event(&persisted);
+    assert!(
+        matches!(&validation, ValidationResult::Valid { schema_id: reloaded_id } if *reloaded_id == schema_id),
+        "the service must retain the freshly reloaded validator after recovery: {validation:?}"
+    );
+    Ok(())
 }
 
 /// sinex-w1w7: proves the actual bug and its fix, through the real
@@ -60,7 +270,9 @@ fn supersede_on_change_prefers_stored_hash_over_mutated_live_payload() {
     let outcome = classify_live_match(&fresh_candidate, &live);
     assert_eq!(
         outcome,
-        EquivalenceOutcome::Suppress,
+        EquivalenceOutcome::Suppress {
+            existing_event_id: live.id,
+        },
         "an identical re-emit of the live row's ORIGINAL content must suppress, \
          even though the live row's current persisted payload was mutated since \
          its own admission — comparing stored hash to stored hash sidesteps the \
@@ -115,7 +327,9 @@ fn supersede_on_change_falls_back_to_recomputed_hash_when_stored_hash_is_null() 
     let outcome = classify_live_match(&identical_candidate, &live);
     assert_eq!(
         outcome,
-        EquivalenceOutcome::Suppress,
+        EquivalenceOutcome::Suppress {
+            existing_event_id: live.id,
+        },
         "NULL content_hash must fall back to recomputing from live.payload, \
          and an identical re-emit against an unmutated live row must suppress"
     );
@@ -128,10 +342,11 @@ fn supersede_on_change_falls_back_to_recomputed_hash_when_stored_hash_is_null() 
 #[test]
 fn supersede_on_change_falls_back_when_stored_hash_is_malformed() {
     let payload = serde_json::json!({ "value": "unmutated since admission" });
+    let live_id = Uuid::now_v7();
 
     let live = LiveEquivalenceRow {
         equivalence_key: "test-key".to_string(),
-        id: Uuid::now_v7(),
+        id: live_id,
         payload: payload.clone(),
         content_hash: Some(vec![1, 2, 3]), // wrong length, not a real 32-byte digest
     };
@@ -141,7 +356,9 @@ fn supersede_on_change_falls_back_when_stored_hash_is_malformed() {
     let outcome = classify_live_match(&identical_candidate, &live);
     assert_eq!(
         outcome,
-        EquivalenceOutcome::Suppress,
+        EquivalenceOutcome::Suppress {
+            existing_event_id: live_id,
+        },
         "a malformed stored hash must fall back to recomputing from live.payload, \
          not silently mismatch every candidate"
     );
@@ -294,23 +511,19 @@ fn is_isolatable_batch_persistence_failure_covers_program_limit_exceeded_class()
     );
 }
 
-/// sinex-w16e: a row-level deterministic validation error (e.g. "validated
-/// event missing ts_orig", admission.rs's own `admitted_to_stream_rows`
-/// path) is NOT classified isolatable -- it carries no sqlstate and its text
-/// doesn't match the one hardcoded "non-live source_event_ids" fragment
-/// `is_non_live_derived_parent_validation` checks for. One bad event with a
-/// missing ts_orig currently DLQs its whole batch, including healthy
-/// siblings, instead of being bisected out on its own.
+/// sinex-w16e: deterministic row-level validation failures from the real
+/// `admitted_to_stream_rows` conversion must be isolated during persistence
+/// bisection so healthy siblings can still commit.
 #[test]
-#[ignore = "sinex-w16e open: is_isolatable_batch_persistence_failure does not classify a \
-            deterministic row-level Validation error (missing ts_orig / claim_support \
-            serialize failure) as isolatable -- only the single 'non-live source_event_ids' \
-            text fragment qualifies, so one bad row DLQs the whole batch"]
 fn is_isolatable_batch_persistence_failure_covers_deterministic_row_validation_errors() {
-    let err = SinexError::validation("validated event missing ts_orig");
-    assert!(
-        is_isolatable_batch_persistence_failure(&err),
-        "a deterministic row-level validation error (no sqlstate, not a transient DB \
-         condition) should isolate its own row rather than DLQing the entire batch"
-    );
+    for message in [
+        "validated event missing ts_orig",
+        "failed to serialize event claim_support",
+    ] {
+        let err = SinexError::validation(message);
+        assert!(
+            is_isolatable_batch_persistence_failure(&err),
+            "deterministic row-level validation error {message:?} must isolate its own row"
+        );
+    }
 }

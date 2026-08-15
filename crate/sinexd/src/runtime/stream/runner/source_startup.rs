@@ -19,18 +19,6 @@ impl RuntimeRunner {
             .handles()
             .runtime_drain();
 
-        // Tell systemd we're ready BEFORE the heavy startup phases run.
-        // Adapter-backed sources do heavy work in snapshot/gap-fill
-        // (e.g. desktop.activitywatch loads its full event table into
-        // memory; system.journald imports 24h of journal cursors); some
-        // hosts have TimeoutStartSec=90s and systemd kills the service
-        // mid-phase if it hasn't received READY=1. The daemon IS ready
-        // once init has built the runtime + connected NATS — snapshot
-        // and gap-fill are work it performs AFTER readiness, not part
-        // of becoming ready. Mirrors the automaton path which already
-        // notifies before lease handoff (see automaton_runtime.rs).
-        systemd_notify::notify_ready("sinex-runtime");
-
         // Phase 1: Snapshot (if supported)
         if self.module.capabilities().supports_snapshot {
             info!("Phase 1: Taking initial snapshot");
@@ -78,14 +66,18 @@ impl RuntimeRunner {
             }
         }
 
+        // Only advertise this runtime as ready after snapshot and gap-fill
+        // have completed. Those phases establish the initial checkpoint and
+        // durable coverage baseline. Sources with an asynchronous continuous
+        // subscription defer the signal until that subscription is armed.
+        if !self.module.defers_service_ready_until_continuous() {
+            systemd_notify::notify_ready("sinex-runtime");
+        }
+
         // Phase 3: Continuous processing (traditional scan method)
         if self.module.capabilities().supports_continuous {
             info!("Phase 3: Starting continuous processing");
             let current_checkpoint = self.module.current_checkpoint().await?;
-            // notify_ready was called at the top of this function — adapter-
-            // backed sources can spend minutes in snapshot/gap-fill, so we
-            // must signal readiness before those phases or systemd kills us.
-
             // This should run indefinitely until shutdown
             let continuous_report = self
                 .module

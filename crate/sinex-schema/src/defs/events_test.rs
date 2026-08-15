@@ -13,8 +13,7 @@ async fn archived_events_schema_omits_direct_supersession_column() -> TestResult
     assert!(!trigger_sql.contains("sinex.superseded_by_id"));
     assert!(!trigger_sql.contains("sup_id"));
     assert!(
-        trigger_sql
-            .contains("INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why;")
+        trigger_sql.contains("INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why;")
     );
 
     Ok(())

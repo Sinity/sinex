@@ -15,20 +15,21 @@
 //!
 //! - `is_ready()`: ~100ns for hot entries
 //! - `mark_ready()`: ~100ns + `Notify::notify_waiters()` (no heap allocation)
-//! - Memory: bounded by TTL-based eviction rather than monotonic growth
+//! - Memory: bounded by an expiration index rather than monotonic growth
 //!
-//! In the event_engine service path, boundedness comes from two layers:
-//! opportunistic eviction on `mark_ready()`/`is_ready()` and a background
-//! maintenance task that calls `purge_stale()` even when the process goes idle
-//! after a burst.
+//! The background maintenance task calls `purge_stale()` even when the process
+//! goes idle after a burst. Expiration maintenance is ordered by deadline, so
+//! cleanup does not scan every ready material on each tick.
 
 use dashmap::DashMap;
+use serde::Serialize;
 use sinex_db::DbPoolExt;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Id;
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -41,8 +42,6 @@ const SEED_WINDOW_HOURS: f64 = 1.0;
 /// Retain ready material IDs for long enough to cover cross-stream lag and short restarts,
 /// then evict them so the coordination set does not grow forever.
 const READY_RETENTION: Duration = Duration::from_hours(6);
-/// Opportunistic sweep cadence. Eviction is O(n), so keep it infrequent.
-const SWEEP_INTERVAL: u64 = 1024;
 /// Background maintenance cadence used by event_engine to keep the ready-set bounded
 /// even when the process goes quiet after a burst.
 const MAINTENANCE_INTERVAL: Duration = Duration::from_mins(5);
@@ -54,26 +53,70 @@ const MAINTENANCE_INTERVAL: Duration = Duration::from_mins(5);
 #[derive(Clone)]
 pub struct MaterialReadySet {
     entries: Arc<DashMap<Uuid, Instant>>,
+    expirations: Arc<Mutex<BTreeSet<(Instant, Instant, Uuid)>>>,
     notify: Arc<tokio::sync::Notify>,
-    sweep_counter: Arc<AtomicU64>,
     retention: Duration,
-    sweep_interval: u64,
+    metrics: Arc<MaterialReadySetMetrics>,
+}
+
+#[derive(Debug, Default)]
+struct MaterialReadySetMetrics {
+    mark_ready_calls: AtomicU64,
+    mark_ready_total_ns: AtomicU64,
+    mark_ready_max_ns: AtomicU64,
+    seed_calls: AtomicU64,
+    seed_total_ns: AtomicU64,
+    seed_max_ns: AtomicU64,
+    purge_calls: AtomicU64,
+    purge_total_ns: AtomicU64,
+    purge_max_ns: AtomicU64,
+    purged_entries: AtomicU64,
+    peak_len: AtomicU64,
+}
+
+/// Bounded operational measurements for the material readiness coordination set.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct MaterialReadySetMetricsSnapshot {
+    pub current_len: u64,
+    pub peak_len: u64,
+    pub mark_ready_calls: u64,
+    pub mark_ready_total_ns: u64,
+    pub mark_ready_max_ns: u64,
+    pub seed_calls: u64,
+    pub seed_total_ns: u64,
+    pub seed_max_ns: u64,
+    pub purge_calls: u64,
+    pub purge_total_ns: u64,
+    pub purge_max_ns: u64,
+    pub purged_entries: u64,
+}
+
+fn record_duration(total: &AtomicU64, maximum: &AtomicU64, elapsed: Duration) {
+    let nanos = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+    total.fetch_add(nanos, Ordering::Relaxed);
+    let mut current = maximum.load(Ordering::Relaxed);
+    while nanos > current {
+        match maximum.compare_exchange_weak(current, nanos, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 impl MaterialReadySet {
     /// Create an empty ready set.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_policy(READY_RETENTION, SWEEP_INTERVAL)
+        Self::with_policy(READY_RETENTION, 1)
     }
 
-    fn with_policy(retention: Duration, sweep_interval: u64) -> Self {
+    fn with_policy(retention: Duration, _sweep_interval: u64) -> Self {
         Self {
             entries: Arc::new(DashMap::new()),
+            expirations: Arc::new(Mutex::new(BTreeSet::new())),
             notify: Arc::new(tokio::sync::Notify::new()),
-            sweep_counter: Arc::new(AtomicU64::new(0)),
             retention,
-            sweep_interval: sweep_interval.max(1),
+            metrics: Arc::new(MaterialReadySetMetrics::default()),
         }
     }
 
@@ -86,9 +129,17 @@ impl MaterialReadySet {
     ///
     /// Called by `MaterialAssembler` after a successful `register_material_record()`.
     pub fn mark_ready(&self, material_id: Uuid) {
-        self.entries.insert(material_id, Instant::now());
+        let started = Instant::now();
+        self.insert_ready(material_id, Instant::now());
         self.notify.notify_waiters();
-        self.maybe_evict_stale();
+        self.metrics
+            .mark_ready_calls
+            .fetch_add(1, Ordering::Relaxed);
+        record_duration(
+            &self.metrics.mark_ready_total_ns,
+            &self.metrics.mark_ready_max_ns,
+            started.elapsed(),
+        );
     }
 
     /// Check whether a material has been registered.
@@ -100,11 +151,18 @@ impl MaterialReadySet {
             return false;
         };
 
-        let expired = entry.value().elapsed() > self.retention;
+        let ready_at = *entry.value();
+        let expired = ready_at.elapsed() > self.retention;
         drop(entry);
 
         if expired {
-            self.entries.remove(material_id);
+            if self
+                .entries
+                .remove_if(material_id, |_, current| *current == ready_at)
+                .is_some()
+            {
+                self.remove_expiration(ready_at + self.retention, ready_at, *material_id);
+            }
             return false;
         }
 
@@ -145,6 +203,25 @@ impl MaterialReadySet {
         self.entries.len()
     }
 
+    /// Return the current and cumulative readiness-set measurements.
+    #[must_use]
+    pub fn metrics_snapshot(&self) -> MaterialReadySetMetricsSnapshot {
+        MaterialReadySetMetricsSnapshot {
+            current_len: self.len() as u64,
+            peak_len: self.metrics.peak_len.load(Ordering::Relaxed),
+            mark_ready_calls: self.metrics.mark_ready_calls.load(Ordering::Relaxed),
+            mark_ready_total_ns: self.metrics.mark_ready_total_ns.load(Ordering::Relaxed),
+            mark_ready_max_ns: self.metrics.mark_ready_max_ns.load(Ordering::Relaxed),
+            seed_calls: self.metrics.seed_calls.load(Ordering::Relaxed),
+            seed_total_ns: self.metrics.seed_total_ns.load(Ordering::Relaxed),
+            seed_max_ns: self.metrics.seed_max_ns.load(Ordering::Relaxed),
+            purge_calls: self.metrics.purge_calls.load(Ordering::Relaxed),
+            purge_total_ns: self.metrics.purge_total_ns.load(Ordering::Relaxed),
+            purge_max_ns: self.metrics.purge_max_ns.load(Ordering::Relaxed),
+            purged_entries: self.metrics.purged_entries.load(Ordering::Relaxed),
+        }
+    }
+
     /// Whether the set is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -163,6 +240,7 @@ impl MaterialReadySet {
     /// events referencing recently-registered materials don't get unnecessarily deferred
     /// after an event_engine restart.
     pub async fn seed_from_db(&self, pool: &PgPool) -> EventEngineResult<()> {
+        let started = Instant::now();
         let rows = sqlx::query_scalar!(
             r#"
             SELECT id AS "id: uuid::Uuid"
@@ -182,8 +260,14 @@ impl MaterialReadySet {
         let count = rows.len();
         let now = Instant::now();
         for uuid in rows {
-            self.entries.insert(uuid, now);
+            self.insert_ready(uuid, now);
         }
+        self.metrics.seed_calls.fetch_add(1, Ordering::Relaxed);
+        record_duration(
+            &self.metrics.seed_total_ns,
+            &self.metrics.seed_max_ns,
+            started.elapsed(),
+        );
 
         if count > 0 {
             info!(
@@ -201,37 +285,74 @@ impl MaterialReadySet {
         Ok(())
     }
 
-    fn maybe_evict_stale(&self) {
-        let count = self.sweep_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        if count.is_multiple_of(self.sweep_interval) {
-            let removed = self.purge_stale();
-            if removed > 0 {
-                debug!(
-                    removed,
-                    retained = self.entries.len(),
-                    "Evicted stale materials from MaterialReadySet"
-                );
+    fn insert_ready(&self, material_id: Uuid, ready_at: Instant) {
+        let previous = self.entries.insert(material_id, ready_at);
+        let mut expirations = self.expirations.lock().expect("expiration index poisoned");
+        if let Some(previous) = previous {
+            expirations.remove(&(previous + self.retention, previous, material_id));
+        }
+        expirations.insert((ready_at + self.retention, ready_at, material_id));
+        let len = self.entries.len() as u64;
+        let mut peak = self.metrics.peak_len.load(Ordering::Relaxed);
+        while len > peak {
+            match self.metrics.peak_len.compare_exchange_weak(
+                peak,
+                len,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => peak = observed,
             }
         }
+    }
+
+    fn remove_expiration(&self, expires_at: Instant, ready_at: Instant, material_id: Uuid) {
+        self.expirations
+            .lock()
+            .expect("expiration index poisoned")
+            .remove(&(expires_at, ready_at, material_id));
     }
 
     /// Remove all expired entries immediately.
     #[must_use]
     pub fn purge_stale(&self) -> usize {
+        let started = Instant::now();
         let now = Instant::now();
-        let expired: Vec<Uuid> = self
-            .entries
-            .iter()
-            .filter_map(|entry| {
-                (now.saturating_duration_since(*entry.value()) > self.retention)
-                    .then_some(*entry.key())
-            })
-            .collect();
+        let due: Vec<(Instant, Instant, Uuid)> = {
+            let mut expirations = self.expirations.lock().expect("expiration index poisoned");
+            let mut due = Vec::new();
+            while expirations
+                .first()
+                .is_some_and(|(expires_at, _, _)| *expires_at <= now)
+            {
+                due.push(
+                    expirations
+                        .pop_first()
+                        .expect("expiration index was non-empty"),
+                );
+            }
+            due
+        };
 
-        expired
+        let removed = due
             .into_iter()
-            .filter(|material_id| self.entries.remove(material_id).is_some())
-            .count()
+            .filter(|(_, ready_at, material_id)| {
+                self.entries
+                    .remove_if(material_id, |_, current| *current == *ready_at)
+                    .is_some()
+            })
+            .count();
+        self.metrics.purge_calls.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .purged_entries
+            .fetch_add(removed as u64, Ordering::Relaxed);
+        record_duration(
+            &self.metrics.purge_total_ns,
+            &self.metrics.purge_max_ns,
+            started.elapsed(),
+        );
+        removed
     }
 }
 

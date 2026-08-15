@@ -26,6 +26,17 @@ fn continuity_report(source_family: &str) -> SourceContinuityReport {
     }
 }
 
+#[sinex_test]
+async fn continuity_explanation_does_not_turn_absence_into_coverage()
+-> xtask::sandbox::TestResult<()> {
+    let family = SourceFamily::new("never-observed")?;
+    let explanation = continuity_gap_explanation(&family, Timestamp::UNIX_EPOCH, None);
+
+    assert!(!explanation.contains("coverage was present"));
+    assert!(explanation.contains("does not establish that the family had coverage"));
+    Ok(())
+}
+
 fn readiness(source_family: &str, source_identifier: &str) -> SourceReadiness {
     SourceReadiness {
         binding_id: None,
@@ -98,8 +109,8 @@ async fn coverage_source_identifier_normalizer_collapses_material_suffixes()
 }
 
 #[sinex_test]
-async fn remediation_candidates_sort_by_event_count_before_page()
--> xtask::sandbox::TestResult<()> {
+async fn remediation_candidates_sort_by_event_count_before_page() -> xtask::sandbox::TestResult<()>
+{
     let mut candidates = vec![
         remediation_candidate(
             "low-recent",
@@ -192,10 +203,12 @@ async fn remediation_summary_counts_global_candidate_set() -> xtask::sandbox::Te
 }
 
 #[sinex_test]
-async fn remediation_decision_recovers_eventful_slice_timeout()
--> xtask::sandbox::TestResult<()> {
-    let (decision, severity, suggested_action) =
-        remediation_decision(MaterialStatus::Failed, 206_899, Some("slice_arrival_timeout"));
+async fn remediation_decision_recovers_eventful_slice_timeout() -> xtask::sandbox::TestResult<()> {
+    let (decision, severity, suggested_action) = remediation_decision(
+        MaterialStatus::Failed,
+        206_899,
+        Some("slice_arrival_timeout"),
+    );
 
     assert_eq!(decision, "recover_timeout_partial");
     assert_eq!(severity, "high");
@@ -311,10 +324,7 @@ async fn remediation_candidate_flags_zero_event_source_material_timeout()
 
     let candidate = remediation_candidate_from_row(row)?;
 
-    assert_eq!(
-        candidate.decision,
-        "inspect_empty_source_material_timeout"
-    );
+    assert_eq!(candidate.decision, "inspect_empty_source_material_timeout");
     assert_eq!(candidate.severity, "medium");
     assert_eq!(
         candidate.recovery_reason.as_deref(),
@@ -324,8 +334,7 @@ async fn remediation_candidate_flags_zero_event_source_material_timeout()
 }
 
 #[sinex_test]
-async fn stage_material_contract_records_package_mode_binding() -> xtask::sandbox::TestResult<()>
-{
+async fn stage_material_contract_records_package_mode_binding() -> xtask::sandbox::TestResult<()> {
     let request = SourcesStageRequest {
         file_path: "/tmp/sinex-fixtures/screenshot/session.json".to_string(),
         format: Some(SourceMaterialFormat::Json),
@@ -365,8 +374,7 @@ async fn stage_material_contract_records_package_mode_binding() -> xtask::sandbo
 }
 
 #[sinex_test]
-async fn private_mode_readiness_overlay_blocks_matching_family()
--> xtask::sandbox::TestResult<()> {
+async fn private_mode_readiness_overlay_blocks_matching_family() -> xtask::sandbox::TestResult<()> {
     let mut sources = vec![
         readiness("desktop", "/capture/desktop"),
         readiness("terminal", "/capture/terminal"),
@@ -398,8 +406,7 @@ async fn private_mode_readiness_overlay_blocks_all_when_scope_empty()
         readiness("desktop", "/capture/desktop"),
         readiness("terminal", "/capture/terminal"),
     ];
-    let state =
-        RuntimePrivateModeState::enabled_by("operator", Vec::new(), Timestamp::UNIX_EPOCH);
+    let state = RuntimePrivateModeState::enabled_by("operator", Vec::new(), Timestamp::UNIX_EPOCH);
 
     apply_private_mode_state_readiness_overlay(&mut sources, &state);
 
@@ -456,8 +463,7 @@ async fn private_mode_continuity_get_synthesizes_no_material_report()
 -> xtask::sandbox::TestResult<()> {
     let now = Timestamp::UNIX_EPOCH;
     let source_family = SourceFamily::new("clipboard")?;
-    let state =
-        RuntimePrivateModeState::enabled_by("operator", vec!["clipboard".to_string()], now);
+    let state = RuntimePrivateModeState::enabled_by("operator", vec!["clipboard".to_string()], now);
     let mut report = None;
 
     apply_private_mode_state_continuity_get_overlay(&mut report, &source_family, &state, now);
@@ -717,12 +723,10 @@ async fn source_shape_drift_readiness_overlay_blocks_required_input_removal()
 }
 
 #[sinex_test]
-async fn private_mode_explain_gap_overlay_uses_active_window() -> xtask::sandbox::TestResult<()>
-{
+async fn private_mode_explain_gap_overlay_uses_active_window() -> xtask::sandbox::TestResult<()> {
     let now = Timestamp::UNIX_EPOCH;
     let source_family = SourceFamily::new("desktop")?;
-    let state =
-        RuntimePrivateModeState::enabled_by("operator", vec!["desktop".to_string()], now);
+    let state = RuntimePrivateModeState::enabled_by("operator", vec!["desktop".to_string()], now);
     let mut gap = None;
 
     if gap.is_none()

@@ -50,6 +50,7 @@ const PARSER_VERSION: &str = "1.0.0";
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
     // sinex-sn6s: filesystem change events themselves (create/modify/delete)
     // have no external durable store; Sinex's row is the only record that
     // the change happened (content-drop bytes are separate and short-lived).

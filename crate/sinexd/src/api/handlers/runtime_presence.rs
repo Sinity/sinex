@@ -4,12 +4,17 @@
 
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
+use sinex_primitives::{
+    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus,
+    evaluate_runtime_liveness,
+};
 use sinex_primitives::rpc::runtime::{
     RuntimeHealthRequest, RuntimeHealthResponse, RuntimeHeartbeatSource, RuntimeInfo,
     RuntimeListActiveRequest, RuntimeListActiveResponse,
 };
 use sqlx::PgPool;
 use std::time::Duration;
+use sinex_primitives::Timestamp;
 
 type Result<T> = std::result::Result<T, SinexError>;
 
@@ -35,6 +40,7 @@ pub async fn handle_runtime_list_active(
     request: RuntimeListActiveRequest,
 ) -> Result<RuntimeListActiveResponse> {
     let stale_after = Duration::from_secs(request.stale_after_secs);
+    let now = Timestamp::now();
 
     let live_modules = pool
         .state()
@@ -46,6 +52,22 @@ pub async fn handle_runtime_list_active(
 
     let modules = live_modules
         .into_iter()
+        .filter(|module| {
+            matches!(
+                evaluate_runtime_liveness(
+                    RuntimeLivenessSignals {
+                        run_status: Some(module.status.as_str()),
+                        health_status: None,
+                        last_heartbeat_at: module.last_heartbeat_at,
+                        last_output_at: None,
+                    },
+                    RuntimeLivenessPolicy::new(request.stale_after_secs),
+                    now,
+                )
+                .status,
+                RuntimeLivenessStatus::Healthy | RuntimeLivenessStatus::Degraded
+            )
+        })
         .filter_map(
             |module| match parse_runtime_heartbeat_source(&module.heartbeat_source) {
                 Ok(heartbeat_source) => Some(RuntimeInfo {

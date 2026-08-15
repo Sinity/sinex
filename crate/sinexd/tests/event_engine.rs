@@ -27,6 +27,7 @@ mod event_engine {
     mod material_assembler_concurrency_test;
     mod material_assembler_test;
     mod material_ready_set_inline_test;
+    mod material_ready_set_soak_test;
     mod migration_lock_test;
     mod pipeline_integration_test;
     mod pipeline_resilience_test;

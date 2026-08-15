@@ -388,6 +388,8 @@ fn export_source_skeleton(
 }
 
 async fn serve(cli: &Cli) -> color_eyre::Result<()> {
+    sinexd::runtime::preflight::resources::verify_startup_storage()?;
+
     // The event engine and API are enabled by default. Focused module-local
     // development runs opt out via environment flags so a selected automaton
     // does not also start a duplicate admission/persistence pipeline.
@@ -415,6 +417,11 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
             sinex_db::apply_schema_for_url(&config.database_url).await?;
         }
 
+        // Validate the serializer/schema contract before any sources or
+        // consumers can start. The COPY path retains its lazy OnceLock check
+        // as defense in depth, but startup must fail before the first large
+        // batch can reach PostgreSQL.
+        sinex_db::verify_event_copy_contract();
         config.validate().await?;
         Some(config)
     } else {
@@ -425,7 +432,8 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
         Some(match cli.database_url.as_ref() {
             Some(url) => GatewayConfig::load_with_database_url(url.clone()),
             None => GatewayConfig::load(),
-        }?)
+        }?
+        .with_nats_namespace(cli.namespace.clone()))
     } else {
         None
     };
@@ -474,7 +482,8 @@ async fn rpc_server_serve(
         Some(url) => GatewayConfig::load_with_database_url(url.clone()),
         None => GatewayConfig::load(),
     }?
-    .with_cli_overrides(None, tcp_listen, cors_origins);
+    .with_cli_overrides(None, tcp_listen, cors_origins)
+    .with_nats_namespace(cli.namespace.clone());
 
     let services = ServiceContainer::new(&config).await?;
     let shutdown_rx = spawn_shutdown_task("sinexd-rpc-server");

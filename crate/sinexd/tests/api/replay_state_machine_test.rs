@@ -304,7 +304,7 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
                     "start": preview_start.format_rfc3339(),
                     "end": preview_end.format_rfc3339(),
                 },
-                "root_event_ids": [root_event_id],
+                "root_event_count": 1,
             }),
         )
         .await?;
@@ -358,7 +358,7 @@ async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) ->
                     "start": (Timestamp::now() - time::Duration::minutes(1)).format_rfc3339(),
                     "end": Timestamp::now().format_rfc3339(),
                 },
-                "root_event_ids": [Uuid::now_v7()],
+                "root_event_count": 1,
             }),
         )
         .await?;
@@ -715,19 +715,10 @@ async fn recover_stale_executing_clears_executor_module(ctx: TestContext) -> Res
     Ok(())
 }
 
-/// sinex-1u9c: `recover_stale_replay_operations` runs exactly once, at
-/// `ServiceContainer::new`, with a 10-minute staleness threshold
-/// (service_container.rs `STALE_EXECUTING_THRESHOLD`). At that exact call
-/// site no replay can possibly be in flight yet (single-daemon deployment,
-/// execution runs inside sinexd itself) -- so the threshold guards a
-/// scenario that cannot exist there, while a real crash-then-fast-systemd-
-/// restart (RestartSec=10) leaves the operation permanently stranded because
-/// it is nowhere near 10 minutes old on the very next startup.
+/// sinex-1u9c: startup recovery must include an operation stranded only
+/// seconds before the next daemon start, matching systemd's fast restart path.
 #[sinex_test]
-#[ignore = "sinex-1u9c open: the real recover_stale_replay_operations threshold (10 minutes) never \
-            recovers an operation stranded moments before a fast systemd restart; un-ignore once \
-            the guard runs unconditionally (or with a much shorter threshold) at startup"]
-async fn recover_stale_executing_at_the_real_startup_threshold_misses_a_just_crashed_operation(
+async fn recover_stale_executing_recovers_a_just_crashed_operation(
     ctx: TestContext,
 ) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
@@ -777,12 +768,12 @@ async fn recover_stale_executing_at_the_real_startup_threshold_misses_a_just_cra
     .execute(&ctx.pool)
     .await?;
 
-    // This is the REAL production threshold used at ServiceContainer::new
-    // (service_container.rs STALE_EXECUTING_THRESHOLD), not a shortened
-    // test value.
-    const REAL_STARTUP_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(600);
+    // This is the production startup recovery policy: no age threshold is
+    // applied because no replay can be in flight before the new container is
+    // constructed.
+    const STARTUP_RECOVERY_THRESHOLD: std::time::Duration = std::time::Duration::ZERO;
     let recovered = replay
-        .recover_stale_executing(REAL_STARTUP_THRESHOLD)
+        .recover_stale_executing(STARTUP_RECOVERY_THRESHOLD)
         .await?;
 
     assert_eq!(
@@ -853,7 +844,7 @@ async fn recover_stale_executing_restores_archived_cascade(ctx: TestContext) -> 
     let event_id = event.id.expect("inserted event should have an id");
 
     // Simulate the committed archive step: events leave core.events, and the
-    // durable journal (cascade_ids) is recorded in the operation marker.
+    // durable archive key is recorded in the operation marker.
     ctx.pool()
         .events()
         .execute_cascade_archive(
@@ -872,7 +863,7 @@ async fn recover_stale_executing_restores_archived_cascade(ctx: TestContext) -> 
             0,
             0,
             1,
-            &[*event_id.as_uuid()],
+            "superseded by replay re-execution",
         )
         .await?;
     tx.commit().await?;
@@ -903,7 +894,7 @@ async fn recover_stale_executing_restores_archived_cascade(ctx: TestContext) -> 
     .await?;
 
     let recovered = replay
-        .recover_stale_executing(std::time::Duration::from_secs(1))
+        .recover_stale_executing(std::time::Duration::ZERO)
         .await?;
     assert_eq!(recovered, 1);
 

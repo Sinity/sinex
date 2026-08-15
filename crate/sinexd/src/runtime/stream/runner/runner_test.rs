@@ -5,14 +5,18 @@
 use super::*;
 use crate::runtime::checkpoint::CheckpointManager;
 use crate::runtime::stream::{ContinuousStart, ProcessingStats, RuntimeInitContext};
-use crate::runtime::{NatsPublisher, SourceDriver, SourceDriverRuntime};
+use crate::runtime::{
+    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, NatsPublisher,
+    SourceDriver, SourceDriverRuntime,
+};
 use async_nats::jetstream;
+use async_trait::async_trait;
 use serde::Serialize;
 use serde::ser::Error as _;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;
 use tempfile::tempdir;
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, Notify, oneshot};
 use xtask::sandbox::prelude::*;
 
 #[derive(Default)]
@@ -31,6 +35,39 @@ struct FailingInitModule;
 #[derive(Default)]
 struct FailingBatchModule;
 
+#[cfg(feature = "messaging")]
+struct RecordingConfirmedEventHandler {
+    received: Notify,
+    events: Mutex<Vec<Event<JsonValue>>>,
+}
+
+#[cfg(feature = "messaging")]
+impl RecordingConfirmedEventHandler {
+    fn new() -> Self {
+        Self {
+            received: Notify::new(),
+            events: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[cfg(feature = "messaging")]
+#[async_trait]
+impl ConfirmedEventHandler for RecordingConfirmedEventHandler {
+    async fn handle_confirmed(
+        &self,
+        event: &Event<JsonValue>,
+        completion: oneshot::Sender<crate::runtime::ConfirmedEventCompletion>,
+    ) -> RuntimeResult<()> {
+        self.events.lock().await.push(event.clone());
+        self.received.notify_one();
+        completion
+            .send(crate::runtime::ConfirmedEventCompletion::Safe)
+            .map_err(|_| crate::runtime::SinexError::lifecycle("completion receiver dropped"))?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct RecordedScan {
     from: Checkpoint,
@@ -42,6 +79,8 @@ struct StartupSequenceTestModule {
     scans: std::sync::Arc<tokio::sync::Mutex<Vec<RecordedScan>>>,
     snapshot_checkpoint: Checkpoint,
     capabilities: RuntimeCapabilities,
+    snapshot_started: Option<Arc<Notify>>,
+    snapshot_release: Option<Arc<Notify>>,
 }
 
 #[cfg(feature = "messaging")]
@@ -90,7 +129,18 @@ impl StartupSequenceTestModule {
                 supports_snapshot: true,
                 ..RuntimeCapabilities::default()
             },
+            snapshot_started: None,
+            snapshot_release: None,
         }
+    }
+
+    fn with_snapshot_gate() -> (Self, Arc<Notify>, Arc<Notify>) {
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let mut module = Self::new(Checkpoint::None, Checkpoint::None);
+        module.snapshot_started = Some(started.clone());
+        module.snapshot_release = Some(release.clone());
+        (module, started, release)
     }
 }
 
@@ -374,6 +424,123 @@ async fn summarizer_confirmed_consumers_stay_narrowed_to_declared_input_types() 
     Ok(())
 }
 
+/// sinex-i41y.1: prove that an event published during historical catch-up is
+/// retained by the real `DeliverPolicy::New` durable consumer and delivered
+/// once the production start gate opens. This deliberately exercises the
+/// consumer API directly instead of `RuntimeRunner`'s cfg(test) readiness
+/// hook, so moving consumer creation after catch-up or bypassing the start
+/// gate makes the test fail.
+#[cfg(feature = "messaging")]
+#[sinex_test(timeout = 30)]
+async fn confirmed_consumer_start_gate_captures_concurrent_publication(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    let env = sinex_primitives::environment::environment().clone();
+    let namespace = format!("i41y-start-gate-{}", Uuid::now_v7());
+    let raw_stream = env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS");
+    let confirmed_stream = format!("{raw_stream}_CONFIRMED");
+    let confirmed_subject = env.nats_subject_with_namespace(
+        Some(&namespace),
+        "events.confirmed.>",
+    );
+    let js = jetstream::new(client.clone());
+
+    js.create_stream(jetstream::stream::Config {
+        name: confirmed_stream.clone(),
+        subjects: vec![confirmed_subject],
+        storage: jetstream::stream::StorageType::Memory,
+        ..Default::default()
+    })
+    .await?;
+
+    let handler = Arc::new(RecordingConfirmedEventHandler::new());
+    let consumer_name = format!("i41y-start-gate-consumer-{}", Uuid::now_v7());
+    let consumer = Arc::new(JetStreamEventConsumer::new_with_namespace(
+        client.clone(),
+        env.clone(),
+        JetStreamEventConsumerConfig {
+            batch_size: 1,
+            consumer_name: consumer_name.clone(),
+            deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
+            ..Default::default()
+        },
+        handler.clone(),
+        Some(namespace.clone()),
+    ));
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let (start_tx, start_rx) = oneshot::channel();
+    let consumer_task = tokio::spawn({
+        let consumer = consumer.clone();
+        async move {
+            consumer
+                .run_with_ready_and_start_gate(Some(ready_tx), start_rx)
+                .await
+        }
+    });
+
+    tokio::time::timeout(Duration::from_secs(3), ready_rx)
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("confirmed consumer did not become ready"))??;
+
+    let stream = js.get_stream(&confirmed_stream).await?;
+    let consumer_info = stream.consumer_info(&consumer_name).await?;
+    assert_eq!(
+        consumer_info.config.deliver_policy,
+        async_nats::jetstream::consumer::DeliverPolicy::New,
+        "the test must observe the actual durable New consumer before catch-up release"
+    );
+
+    let event = runtime_test_material_event(
+        Uuid::now_v7(),
+        "i41y-start-gate-source",
+        "i41y.start.gate",
+        serde_json::json!({"published": "during-catch-up"}),
+    )?;
+    let publish_subject = env.nats_subject_with_namespace(
+        Some(&namespace),
+        &format!(
+            "events.confirmed.material.{}.{}",
+            sinex_primitives::environment::SinexEnvironment::nats_subject_token(
+                event.source.as_str()
+            ),
+            sinex_primitives::environment::SinexEnvironment::nats_subject_token(
+                event.event_type.as_str()
+            ),
+        ),
+    );
+    js.publish(publish_subject, serde_json::to_vec(&event)?.into())
+        .await?
+        .await?;
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), handler.received.notified())
+            .await
+            .is_err(),
+        "consumer must not process publication while the historical catch-up gate is held"
+    );
+
+    start_tx
+        .send(())
+        .map_err(|_| color_eyre::eyre::eyre!("consumer start gate receiver was dropped"))?;
+    tokio::time::timeout(Duration::from_secs(3), handler.received.notified())
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("confirmed event was not delivered after gate release"))?;
+
+    let received_events = handler.events.lock().await;
+    assert_eq!(received_events.len(), 1);
+    assert_eq!(received_events[0].id, event.id);
+    drop(received_events);
+
+    consumer.stop().await;
+    tokio::time::timeout(Duration::from_secs(3), consumer_task)
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("confirmed consumer did not shut down"))???;
+    js.delete_stream(&confirmed_stream).await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn checkpoint_consumer_name_is_stable_for_sources() -> TestResult<()> {
     let raw_config = HashMap::new();
@@ -562,6 +729,12 @@ impl RuntimeModule for StartupSequenceTestModule {
     ) -> RuntimeResult<ScanReport> {
         let phase = match until {
             TimeHorizon::Snapshot => {
+                if let Some(started) = &self.snapshot_started {
+                    started.notify_one();
+                }
+                if let Some(release) = &self.snapshot_release {
+                    release.notified().await;
+                }
                 *self.checkpoint.lock().await = self.snapshot_checkpoint.clone();
                 "snapshot"
             }

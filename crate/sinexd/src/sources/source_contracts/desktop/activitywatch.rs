@@ -45,8 +45,8 @@ use serde::{Deserialize, Serialize};
 use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
-    InputShapeKind, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-    SourceId, TimingConfidence, TimingEvidence,
+    InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
+    ParserManifest, SourceId, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_primitives::source_contracts::{
@@ -127,6 +127,16 @@ fn activitywatch_data_object(row: &serde_json::Value) -> serde_json::Value {
     }
 }
 
+fn occurrence_timestamp_key(timestamp: Option<Timestamp>, anchor: &MaterialAnchor) -> String {
+    timestamp.map_or_else(
+        || match anchor {
+            MaterialAnchor::SqliteRow { table, rowid } => format!("anchor:{table}:{rowid}"),
+            other => format!("anchor:{other:?}"),
+        },
+        |timestamp| timestamp.format_rfc3339(),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
@@ -158,6 +168,7 @@ fn activitywatch_data_object(row: &serde_json::Value) -> serde_json::Value {
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "sqlite", occurrence_anchor: "bucket_event_timestamp" },
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::MUTABLE_SNAPSHOT,
     // sinex-sn6s: ActivityWatch owns its own SQLite store; Sinex is a
     // downstream reader, never the sole copy.
     criticality = SourceCriticality::Reconstructable,
@@ -221,12 +232,12 @@ impl MaterialParser for ActivityWatchParser {
         }
 
         // Extract common fields. `parsed_started_at` tracks whether the row
-        // actually carried a usable timestamp; `ts_orig` always holds a
-        // concrete value (needed for the occurrence key below) but is only
-        // trusted downstream when `parsed_started_at` is `Some` — see the
-        // `TimingEvidence` branch below.
+        // actually carried a usable timestamp. Missing timestamps use the
+        // material acquisition time only as an in-memory placeholder; the
+        // Atemporal evidence below leaves persisted ts_orig for material-tier
+        // resolution.
         let parsed_started_at = row.get("started_at").and_then(parse_aw_timestamp);
-        let ts_orig = parsed_started_at.unwrap_or_else(Timestamp::now);
+        let ts_orig = parsed_started_at.unwrap_or(ctx.acquisition_time);
 
         let data = activitywatch_data_object(&row);
 
@@ -297,7 +308,10 @@ impl MaterialParser for ActivityWatchParser {
             source_id: ctx.source_id.clone(),
             fields: vec![
                 ("bucket_id".into(), bucket_id.to_string()),
-                ("event_timestamp".into(), ts_orig.format_rfc3339()),
+                (
+                    "event_timestamp".into(),
+                    occurrence_timestamp_key(parsed_started_at, &record.anchor),
+                ),
             ],
         };
 
@@ -318,8 +332,8 @@ impl MaterialParser for ActivityWatchParser {
                 }
             } else {
                 // `started_at` was missing/unparseable: `ts_orig` above is a
-                // wall-clock placeholder used only for occurrence-key
-                // uniqueness. `Atemporal` tells `intent_to_event_with_anchor`
+                // material-acquisition placeholder. `Atemporal` tells
+                // `intent_to_event_with_anchor`
                 // (via `TimingEvidence::resolved_quality() == None`) to leave
                 // the event's real ts_orig unresolved, so persistence derives
                 // it from the source material's own timing tier instead of

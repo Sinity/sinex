@@ -121,6 +121,10 @@ pub struct DurableEmissionRequest {
 pub enum EmissionOrigin {
     SourceAdapter,
     AutomatonBridge,
+    /// Historical replay/catch-up output. It uses the same admission receipt
+    /// barrier as the live bridge but is labeled separately for replay
+    /// accounting and failure diagnosis.
+    HistoricalReplay,
     Invalidation,
     WindowedTimer,
     Reflection,
@@ -213,7 +217,11 @@ impl DurableEmissionReceipt {
     /// function.
     #[must_use]
     pub fn unlocks_progress(&self) -> bool {
-        !self.items.is_empty() && self.items.iter().all(|item| item.state.is_progress_unlocking())
+        !self.items.is_empty()
+            && self
+                .items
+                .iter()
+                .all(|item| item.state.is_progress_unlocking())
     }
 
     /// Diagnostic accessor: the first item, if any, that did NOT reach a
@@ -221,7 +229,9 @@ impl DurableEmissionReceipt {
     /// context when `unlocks_progress()` is false.
     #[must_use]
     pub fn first_non_progress(&self) -> Option<&EmissionItemReceipt> {
-        self.items.iter().find(|item| !item.state.is_progress_unlocking())
+        self.items
+            .iter()
+            .find(|item| !item.state.is_progress_unlocking())
     }
 }
 
@@ -284,6 +294,11 @@ pub enum EmissionReceiptState {
     /// recoverable in raw JetStream, but progress must wait for terminal
     /// settlement or a durable pending-debt policy.
     Deferred { reason: String },
+    /// The caller's wait budget elapsed before the event engine reported a
+    /// terminal outcome. This is not a terminal event-engine failure.
+    TimedOut { timeout: Duration },
+    /// The settlement owner stopped before reporting an outcome.
+    Cancelled { reason: String },
     /// No cursor/checkpoint/ack movement is permitted on this outcome.
     FailedTransient { error: String },
 }
@@ -390,11 +405,12 @@ impl SettlementRegistry {
     /// `register()`-ing every event in a [`DurableEmissionRequest`] and
     /// submitting them to a backend.
     ///
-    /// A receiver that does not resolve within `per_item_timeout`, or whose
-    /// sender was dropped without resolving (e.g. the registry's owner shut
-    /// down), maps to [`EmissionReceiptState::FailedTransient`] — never
-    /// silently treated as success, so [`DurableEmissionReceipt::unlocks_progress`]
-    /// correctly stays `false` for a receipt containing it. Every such case
+    /// A receiver that does not resolve within `per_item_timeout` maps to
+    /// [`EmissionReceiptState::TimedOut`]. A sender dropped without resolving
+    /// (e.g. the registry's owner shut down) maps to
+    /// [`EmissionReceiptState::Cancelled`]. Neither is silently treated as
+    /// success, so [`DurableEmissionReceipt::unlocks_progress`] correctly stays
+    /// `false` for a receipt containing it. Every such case
     /// also removes the id's registry entry (see this module's cleanup
     /// invariant), so a caller that always awaits through this method never
     /// leaks a `DashMap` entry.
@@ -420,8 +436,8 @@ impl SettlementRegistry {
                     self.cancel(event_id);
                     EmissionItemReceipt {
                         event_id: Some(event_id),
-                        state: EmissionReceiptState::FailedTransient {
-                            error: "settlement registry dropped before resolving".to_string(),
+                        state: EmissionReceiptState::Cancelled {
+                            reason: "settlement registry dropped before resolving".to_string(),
                         },
                     }
                 }
@@ -429,8 +445,8 @@ impl SettlementRegistry {
                     self.cancel(event_id);
                     EmissionItemReceipt {
                         event_id: Some(event_id),
-                        state: EmissionReceiptState::FailedTransient {
-                            error: "settlement wait timed out".to_string(),
+                        state: EmissionReceiptState::TimedOut {
+                            timeout: per_item_timeout,
                         },
                     }
                 }
@@ -526,7 +542,10 @@ mod tests {
             EmissionReceiptState::NoOutputSettled,
         ];
         for state in progress_unlocking {
-            assert!(state.is_progress_unlocking(), "{state:?} must be progress-unlocking");
+            assert!(
+                state.is_progress_unlocking(),
+                "{state:?} must be progress-unlocking"
+            );
         }
 
         let non_progress = [
@@ -539,12 +558,21 @@ mod tests {
             EmissionReceiptState::Deferred {
                 reason: "not ready".to_string(),
             },
+            EmissionReceiptState::TimedOut {
+                timeout: Duration::from_secs(1),
+            },
+            EmissionReceiptState::Cancelled {
+                reason: "shutdown".to_string(),
+            },
             EmissionReceiptState::FailedTransient {
                 error: "boom".to_string(),
             },
         ];
         for state in non_progress {
-            assert!(!state.is_progress_unlocking(), "{state:?} must NOT be progress-unlocking");
+            assert!(
+                !state.is_progress_unlocking(),
+                "{state:?} must NOT be progress-unlocking"
+            );
         }
     }
 }
@@ -615,7 +643,10 @@ mod settlement_registry_tests {
 
         assert!(registry.resolve(event_id, EmissionReceiptState::NoOutputSettled));
         assert!(!registry.resolve(event_id, debt("second-call-should-be-ignored")));
-        assert!(registry.is_empty(), "entry must be removed after the first resolve");
+        assert!(
+            registry.is_empty(),
+            "entry must be removed after the first resolve"
+        );
     }
 
     #[test]
@@ -664,7 +695,10 @@ mod settlement_registry_tests {
                 state: EmissionReceiptState::DurableDebt { reason, .. },
             } if *id == id_b && reason == "b-debt"
         ));
-        assert!(registry.is_empty(), "await_batch must not leave entries behind");
+        assert!(
+            registry.is_empty(),
+            "await_batch must not leave entries behind"
+        );
         Ok(())
     }
 
@@ -694,8 +728,8 @@ mod settlement_registry_tests {
             items[0]
         );
         assert!(
-            matches!(items[1].state, EmissionReceiptState::FailedTransient { .. }),
-            "the stuck item must be FailedTransient, not silently dropped: {:?}",
+            matches!(items[1].state, EmissionReceiptState::TimedOut { .. }),
+            "the stuck item must be TimedOut, not silently dropped: {:?}",
             items[1]
         );
         assert!(
@@ -719,8 +753,11 @@ mod settlement_registry_tests {
             "one non-progress (timed-out) item must block the whole receipt"
         );
         assert!(matches!(
-            receipt.first_non_progress().expect("one non-progress item").state,
-            EmissionReceiptState::FailedTransient { .. }
+            receipt
+                .first_non_progress()
+                .expect("one non-progress item")
+                .state,
+            EmissionReceiptState::TimedOut { .. }
         ));
         Ok(())
     }
@@ -744,6 +781,24 @@ mod settlement_registry_tests {
         // after the caller gave up) must not panic and must report "nobody was
         // waiting" honestly, since await_batch already removed the registration.
         assert!(!registry.resolve(event_id, EmissionReceiptState::NoOutputSettled));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dropped_settlement_owner_is_cancelled_not_timed_out() -> TestResult<()> {
+        let registry = SettlementRegistry::new();
+        let event_id = Id::new();
+        let rx = registry.register(event_id);
+        registry.cancel(event_id);
+
+        let items = registry
+            .await_batch(vec![(event_id, rx)], Duration::from_millis(50))
+            .await;
+
+        assert!(matches!(
+            items[0].state,
+            EmissionReceiptState::Cancelled { .. }
+        ));
         Ok(())
     }
 }

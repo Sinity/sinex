@@ -17,7 +17,7 @@ pub struct OperationRecord {
     pub result_status: OperationStatus,
     pub result_message: Option<String>,
     pub preview_summary: Option<JsonValue>,
-    pub duration_ms: Option<i32>,
+    pub duration_ms: Option<i64>,
 }
 
 /// Operation log entry for creating operations
@@ -34,7 +34,7 @@ pub struct Operation {
     pub result_status: OperationStatus,
     pub result_message: Option<String>,
     pub preview_summary: Option<JsonValue>,
-    pub duration_ms: Option<i32>,
+    pub duration_ms: Option<i64>,
 }
 
 /// Manifest row returned by `register_module` — lightweight projection of `core.manifests`.
@@ -94,6 +94,19 @@ pub struct LiveModulePresence {
     pub last_heartbeat_at: Option<Timestamp>,
     pub started_at: Option<Timestamp>,
     pub heartbeat_source: String,
+}
+
+/// Unfiltered runtime evidence for gateway system health.
+#[derive(Debug, sqlx::FromRow)]
+pub struct RuntimeLivenessEvidenceRow {
+    pub module_name: ModuleName,
+    pub module_kind: ModuleKind,
+    pub run_status: Option<String>,
+    pub health_status: Option<HealthStatus>,
+    pub last_heartbeat_at: Option<Timestamp>,
+    pub last_output_at: Option<Timestamp>,
+    pub has_concrete_run: bool,
+    pub historical_stopped: bool,
 }
 
 /// Runtime module health summary

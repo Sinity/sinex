@@ -210,11 +210,24 @@ pub struct SchemaInfo {
     pub version: Arc<str>,
     pub schema_id: Uuid,
 }
+
+/// A registered schema that could not be compiled for payload validation.
+///
+/// This diagnostic remains available after a cache reload so operators can
+/// distinguish a corrupt schema from an event family that has no schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaCompilationFailure {
+    pub name: String,
+    pub schema_version: String,
+    pub schema_id: Uuid,
+    pub error: String,
+}
 /// Lightweight event validator used everywhere in Sinex.
 #[derive(Clone)]
 pub struct EventValidator {
     schema_cache: SchemaCache,
     schema_lookup: SchemaLookup,
+    schema_compilation_failures: Arc<RwLock<Vec<SchemaCompilationFailure>>>,
     validation_enabled: bool,
     max_payload_bytes: usize,
 }
@@ -230,6 +243,7 @@ impl EventValidator {
         Self {
             schema_cache: SchemaCache::new(),
             schema_lookup: SchemaLookup::new(),
+            schema_compilation_failures: Arc::new(RwLock::new(Vec::new())),
             validation_enabled: true,
             max_payload_bytes: DEFAULT_MAX_PAYLOAD_BYTES,
         }
@@ -263,18 +277,22 @@ impl EventValidator {
     /// Reload latest active schemas from the database, replacing the cache.
     pub async fn reload_schemas(&mut self, pool: &DbPool) -> SinexResult<usize> {
         let schemas = fetch_latest_active_schemas(pool).await?;
-        let (cache, lookup, compiled, failed) = compile_schemas(schemas);
+        let (cache, lookup, failures, compiled) = compile_schemas(schemas);
         self.schema_cache.bulk_update(cache);
         self.schema_lookup.bulk_update(lookup);
+        let failed = failures.len();
+        *self.schema_compilation_failures.write() = failures;
         info!(compiled, failed, "Loaded schema cache into validator");
         Ok(compiled)
     }
     /// Load all schema versions (not just latest) into the cache.
     pub async fn load_all_schema_versions(&mut self, pool: &DbPool) -> SinexResult<()> {
         let schemas = fetch_all_active_schemas(pool).await?;
-        let (cache, lookup, compiled, failed) = compile_schemas(schemas);
+        let (cache, lookup, failures, compiled) = compile_schemas(schemas);
         self.schema_cache.bulk_update(cache);
         self.schema_lookup.bulk_update(lookup);
+        let failed = failures.len();
+        *self.schema_compilation_failures.write() = failures;
         info!(compiled, failed, "Loaded all schema versions into cache");
         Ok(())
     }
@@ -291,6 +309,13 @@ impl EventValidator {
             version: entry.version.clone(),
             schema_id: entry.schema_id,
         })
+    }
+    /// Return registered schemas that failed JSON Schema compilation during
+    /// the most recent load. The entries are intentionally retained instead
+    /// of being treated as an absent schema.
+    #[must_use]
+    pub fn get_schema_compilation_failures(&self) -> Vec<SchemaCompilationFailure> {
+        self.schema_compilation_failures.read().clone()
     }
     /// Lookup schema ID for a `source/event_type` pair.
     #[must_use]
@@ -407,12 +432,13 @@ impl EventValidator {
     }
     fn validate_id_timestamp(&self, event: &Event<JsonValue>) -> ValidationResult {
         if let (Some(id), Some(ts_orig)) = (&event.id, event.ts_orig) {
-            let id_ts = id.timestamp().unix_timestamp();
-            let drift = (id_ts - ts_orig.unix_timestamp()).abs();
-            if drift > MAX_ID_DRIFT_SECS {
-                return Err(ValidationError::SecurityValidation(format!(
-                    "ID timestamp drift {drift}s exceeds allowed threshold of {MAX_ID_DRIFT_SECS}s"
-                )));
+            if let Some(id_ts) = id.timestamp() {
+                let drift = (id_ts.unix_timestamp() - ts_orig.unix_timestamp()).abs();
+                if drift > MAX_ID_DRIFT_SECS {
+                    return Err(ValidationError::SecurityValidation(format!(
+                        "ID timestamp drift {drift}s exceeds allowed threshold of {MAX_ID_DRIFT_SECS}s"
+                    )));
+                }
             }
         }
         Ok(())
@@ -581,8 +607,12 @@ impl EventValidator {
     }
     fn check_payload_size(&self, payload: &JsonValue) -> ValidationResult {
         let payload_bytes = serde_json::to_vec(payload)
-            .map(|v| v.len())
-            .unwrap_or_default();
+            .map_err(|error| {
+                ValidationError::SecurityValidation(format!(
+                    "payload serialization failed while enforcing size limit: {error}"
+                ))
+            })?
+            .len();
         if payload_bytes > self.max_payload_bytes {
             return Err(ValidationError::PayloadTooLarge {
                 size: payload_bytes,
@@ -660,16 +690,21 @@ async fn fetch_all_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRecord
 }
 fn compile_schemas(
     schemas: Vec<SchemaRecord>,
-) -> (AHashMap<Uuid, SchemaCacheEntry>, LookupMap, usize, usize) {
+) -> (
+    AHashMap<Uuid, SchemaCacheEntry>,
+    LookupMap,
+    Vec<SchemaCompilationFailure>,
+    usize,
+) {
     let mut cache = AHashMap::new();
     let mut lookup = AHashMap::new();
+    let mut failures = Vec::new();
     let mut compiled = 0;
-    let mut failed = 0;
     for schema in schemas {
+        let source: Arc<str> = Arc::from(schema.source.as_str());
+        let event_type: Arc<str> = Arc::from(schema.event_type.as_str());
         match jsonschema::validator_for(&schema.schema_content) {
             Ok(compiled_schema) => {
-                let source: Arc<str> = Arc::from(schema.source.as_str());
-                let event_type: Arc<str> = Arc::from(schema.event_type.as_str());
                 let version: Arc<str> = Arc::from(schema.schema_version.as_str());
                 let entry = SchemaCacheEntry {
                     schema_id: schema.id,
@@ -683,12 +718,48 @@ fn compile_schemas(
                 compiled += 1;
             }
             Err(err) => {
-                failed += 1;
+                // Keep the lookup entry even though no compiled validator is
+                // available. This preserves the distinction between a
+                // corrupt registered schema and an unregistered event pair.
+                lookup.insert((source.clone(), event_type.clone()), schema.id);
+                failures.push(SchemaCompilationFailure {
+                    name: format!("{}.{}", source, event_type),
+                    schema_version: schema.schema_version.clone(),
+                    schema_id: schema.id,
+                    error: err.to_string(),
+                });
                 warn!(schema_id = %schema.id, error = %err, "Failed to compile schema");
             }
         }
     }
-    (cache, lookup, compiled, failed)
+    (cache, lookup, failures, compiled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compile_failure_remains_a_registered_schema_diagnostic() {
+        let schema_id = Uuid::now_v7();
+        let (cache, lookup, failures, compiled) = compile_schemas(vec![SchemaRecord {
+            id: schema_id,
+            source: "test.source".to_string(),
+            event_type: "test.event".to_string(),
+            schema_version: "1".to_string(),
+            schema_content: serde_json::json!({"type": "not-a-json-schema-type"}),
+        }]);
+
+        assert_eq!(compiled, 0);
+        assert!(cache.is_empty());
+        assert_eq!(
+            lookup.get(&(Arc::from("test.source"), Arc::from("test.event"))),
+            Some(&schema_id)
+        );
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].schema_id, schema_id);
+        assert_eq!(failures[0].name, "test.source.test.event");
+    }
 }
 
 fn json_type_name(value: &JsonValue) -> &'static str {

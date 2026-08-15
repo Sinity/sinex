@@ -179,6 +179,8 @@ struct SourceDefinitionAttrs {
     material_lifecycle: Option<proc_macro2::TokenStream>,
     /// Typed enum-expression token (`TransportSemantics::DIRECT_APPEND_STREAM`), verbatim.
     transport_semantics: Option<proc_macro2::TokenStream>,
+    /// Typed `SourceRecoveryPolicy` expression, required for the binding.
+    recovery_policy: Option<proc_macro2::TokenStream>,
     /// Typed enum path token (`SourceCriticality::Reconstructable` or
     /// `SourceCriticality::NotReconstructable`), emitted verbatim.
     criticality: Option<proc_macro2::TokenStream>,
@@ -228,6 +230,7 @@ impl SourceDefinitionAttrs {
             runtime_shape: self.runtime_shape.clone(),
             material_lifecycle: self.material_lifecycle.clone(),
             transport_semantics: self.transport_semantics.clone(),
+            recovery_policy: self.recovery_policy.clone(),
             criticality: self.criticality.clone(),
             capabilities: self.capabilities.clone(),
             proposed: false,
@@ -279,6 +282,10 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
                 }
                 "transport_semantics" => {
                     out.transport_semantics = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "recovery_policy" => {
+                    out.recovery_policy = Some(parse_enum_expr_attr(&meta)?);
                     return Ok(());
                 }
                 "criticality" => {

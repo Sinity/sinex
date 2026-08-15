@@ -5,16 +5,11 @@
 //! with the `messaging` feature.
 
 use super::{
-    Arc, AtomicBool, ControlCommandKind, LISTENER_RETRY_DELAY, ModuleKind, Ordering, RuntimeRunner,
-    SinexError, SourceScanAck, SourceScanCancel, SourceScanCommand, SourceScanProgress, StreamExt,
-    Uuid, control_command_kind, debug, error, info, run_resubscribing_listener, warn, watch,
+    ActiveScanCancel, Arc, AtomicBool, ControlCommandKind, LISTENER_RETRY_DELAY, ModuleKind,
+    Ordering, RuntimeRunner, SinexError, SourceScanAck, SourceScanCancel, SourceScanCommand,
+    SourceScanProgress, StreamExt, Uuid, control_command_kind, debug, error, info,
+    run_resubscribing_listener, warn, watch,
 };
-
-/// Shared per-runner state tracking the cancel channel for whatever scan is
-/// currently in flight (there is at most one, gated by `active_scan`).
-/// `None` when no scan is running. Guarded by a plain `std::sync::Mutex`
-/// since it is only ever held briefly, synchronously, inside async code.
-type ActiveScanCancel = Arc<std::sync::Mutex<Option<(Uuid, watch::Sender<bool>)>>>;
 
 impl RuntimeRunner {
     /// Start the NATS command listener for source-dispatch replay.
@@ -64,6 +59,8 @@ impl RuntimeRunner {
         let dry_run = service_info.dry_run();
         let source_factory = self.source_factory.clone();
         let drain_controller = handles.runtime_drain();
+        let replay_worker_cancel = self.replay_worker_cancel.clone();
+        let replay_worker_handle = self.replay_worker_handle.clone();
         #[cfg(feature = "db")]
         let db_pool = handles.db_pool().cloned();
 
@@ -71,7 +68,7 @@ impl RuntimeRunner {
         let handle = tokio::spawn(async move {
             let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.*"));
             let active_scan = Arc::new(AtomicBool::new(false));
-            let active_scan_cancel: ActiveScanCancel = Arc::new(std::sync::Mutex::new(None));
+            let active_scan_cancel = replay_worker_cancel;
             let subscribe_client = nats_client.clone();
             let subscribe_subject = subject.clone();
             let helper_shutdown_rx = shutdown_rx.clone();
@@ -98,6 +95,7 @@ impl RuntimeRunner {
                     let loop_source_factory = source_factory.clone();
                     let loop_active_scan = active_scan.clone();
                     let loop_active_scan_cancel = active_scan_cancel.clone();
+                    let loop_replay_worker_handle = replay_worker_handle.clone();
                     let loop_drain_controller = drain_controller.clone();
                     #[cfg(feature = "db")]
                     let loop_db_pool = db_pool.clone();
@@ -355,7 +353,7 @@ impl RuntimeRunner {
                                         .unwrap_or_else(std::sync::PoisonError::into_inner) =
                                         Some((operation_id, scan_cancel_tx));
 
-                                    tokio::spawn(async move {
+                                    let worker_handle = tokio::spawn(async move {
                                         struct ActiveScanGuard(Arc<AtomicBool>, ActiveScanCancel);
 
                                         impl Drop for ActiveScanGuard {
@@ -467,6 +465,20 @@ impl RuntimeRunner {
                                             );
                                         }
                                     });
+                                    let replaced_worker = loop_replay_worker_handle
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                        .replace(worker_handle);
+                                    if let Some(replaced_worker) = replaced_worker
+                                        && !replaced_worker.is_finished()
+                                    {
+                                        warn!(
+                                            operation_id = %operation_id,
+                                            module = %loop_module_name,
+                                            "Replacing an unfinished replay worker; aborting stale task"
+                                        );
+                                        replaced_worker.abort();
+                                    }
                                 }
                                 Some(ControlCommandKind::Parse) => {
                                     // Parse replay is owned by the dedicated
@@ -613,9 +625,7 @@ impl RuntimeRunner {
         // Resolve the SHARED content store (same SINEX_CONTENT_STORE_PATH the
         // gateway uses) so parse replay reads the CAS that ingestion wrote.
         let content_store_config = crate::runtime::content_store::ContentStoreConfig {
-            root_path: camino::Utf8PathBuf::from(
-                crate::runtime::content_store::default_content_store_path(),
-            ),
+            root_path: crate::runtime::content_store::default_content_store_path(),
             ..Default::default()
         };
         let content_store = match crate::runtime::content_store::ContentStoreManager::new(

@@ -1,5 +1,6 @@
 //! LLM prompt/router/budget read RPC handlers.
 
+use crate::automata::embedding_producer::EmbeddingWorker;
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType};
@@ -7,7 +8,8 @@ use sinex_primitives::events::payloads::LlmBudgetLedgerPayload;
 use sinex_primitives::llm::{BudgetLedgerStatus, decide_route};
 use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter};
 use sinex_primitives::rpc::llm::{
-    LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest, LlmRouteExplainRequest,
+    LlmBudgetReportRequest, LlmBudgetReportResponse, LlmEmbeddingEstimateRequest,
+    LlmEmbeddingEstimateResponse, LlmPromptsListRequest, LlmRouteExplainRequest,
     LlmRouteExplainResponse,
 };
 use sinex_primitives::views::{CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef};
@@ -70,6 +72,27 @@ pub async fn handle_llm_budget_report(
     };
 
     Ok(summarize_budget_rows(rows))
+}
+
+pub async fn handle_llm_embedding_estimate(
+    pool: &PgPool,
+    _req: LlmEmbeddingEstimateRequest,
+) -> Result<LlmEmbeddingEstimateResponse> {
+    let worker = EmbeddingWorker::from_env()?;
+    let estimate = worker.estimate(pool).await?;
+    Ok(LlmEmbeddingEstimateResponse {
+        scanned_events: estimate.scanned_events,
+        scanned_materials: estimate.scanned_materials,
+        eligible_events: estimate.eligible_events,
+        quarantined_events: estimate.quarantined_events,
+        skipped_events: estimate.skipped_events,
+        estimated_tokens: estimate.estimated_tokens,
+        estimated_cost_microusd: estimate.estimated_cost_microusd,
+        selected_event_types: estimate.selected_event_types,
+        quarantined_by_reason: estimate.quarantined_by_reason,
+        model: estimate.model,
+        model_allowed: estimate.model_allowed,
+    })
 }
 
 fn summarize_budget_rows(rows: Vec<LlmBudgetLedgerPayload>) -> LlmBudgetReportResponse {

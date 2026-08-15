@@ -1,6 +1,7 @@
 use super::*;
 use crate::models::SourceMaterial;
 use crate::repositories::DbPoolExt;
+use serde_json::json;
 use std::sync::Arc;
 use xtask::sandbox::sinex_test;
 
@@ -13,6 +14,118 @@ fn race_test_blob(checksum: &str) -> Blob {
         .mime_type("application/octet-stream".to_string())
         .checksum_blake3(checksum.to_string())
         .build()
+}
+
+#[sinex_test]
+async fn associated_blob_reference_uses_indexed_containment(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("blob-reference-index-test"))
+        .await?;
+    let blob = ctx
+        .pool
+        .blobs()
+        .insert(race_test_blob(&format!("index-{}", uuid::Uuid::now_v7())))
+        .await?;
+    let blob_uuid = blob.id.to_uuid();
+
+    let mut insert = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte, associated_blob_ids) ",
+    );
+    insert.push_values(0..200, |mut row, offset| {
+        row.push_bind(uuid::Uuid::now_v7())
+            .push_bind("blob-reference-test")
+            .push_bind("blob.reference")
+            .push_bind("test-host")
+            .push_bind(json!({"offset": offset}))
+            .push_bind(sinex_primitives::Timestamp::now())
+            .push_bind(material_id.to_uuid())
+            .push_bind(i64::from(offset))
+            .push_bind(vec![blob_uuid]);
+    });
+    insert.build().execute(&ctx.pool).await?;
+    sqlx::query("ANALYZE core.events")
+        .execute(&ctx.pool)
+        .await?;
+
+    let mut conn = ctx.pool.acquire().await?;
+    sqlx::query("SET enable_seqscan = OFF")
+        .execute(&mut *conn)
+        .await?;
+    let plan = sqlx::query(
+        "EXPLAIN (FORMAT JSON) SELECT id FROM core.events \
+         WHERE associated_blob_ids IS NOT NULL
+           AND associated_blob_ids @> ARRAY[$1]::uuid[]",
+    )
+    .bind(blob_uuid)
+    .fetch_one(&mut *conn)
+    .await?;
+    sqlx::query("RESET enable_seqscan")
+        .execute(&mut *conn)
+        .await?;
+    let plan_json: serde_json::Value = sqlx::Row::try_get(&plan, 0)?;
+    assert!(
+        plan_json
+            .to_string()
+            .contains("ix_events_associated_blob_ids"),
+        "the production containment predicate must use the associated-blob GIN index: {plan_json}"
+    );
+
+    assert!(
+        ctx.pool
+            .blobs()
+            .is_referenced_excluding_material(blob.id, uuid::Uuid::now_v7())
+            .await?,
+        "a live event's associated blob must prevent deletion"
+    );
+
+    sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
+        .bind(uuid::Uuid::now_v7().to_string())
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "DELETE FROM core.events \
+         WHERE associated_blob_ids @> ARRAY[$1]::uuid[]",
+    )
+    .bind(blob_uuid)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("ANALYZE audit.archived_events")
+        .execute(&ctx.pool)
+        .await?;
+
+    sqlx::query("SET enable_seqscan = OFF")
+        .execute(&mut *conn)
+        .await?;
+    let archive_plan = sqlx::query(
+        "EXPLAIN (FORMAT JSON) SELECT id FROM audit.archived_events \
+         WHERE associated_blob_ids IS NOT NULL \
+           AND associated_blob_ids @> ARRAY[$1]::uuid[]",
+    )
+    .bind(blob_uuid)
+    .fetch_one(&mut *conn)
+    .await?;
+    sqlx::query("RESET enable_seqscan")
+        .execute(&mut *conn)
+        .await?;
+    let archive_plan_json: serde_json::Value = sqlx::Row::try_get(&archive_plan, 0)?;
+    assert!(
+        archive_plan_json
+            .to_string()
+            .contains("ix_archived_events_associated_blob_ids"),
+        "the archive containment predicate must use the associated-blob GIN index: {archive_plan_json}"
+    );
+
+    assert!(
+        ctx.pool
+            .blobs()
+            .is_referenced_excluding_material(blob.id, uuid::Uuid::now_v7())
+            .await?,
+        "an archived event's associated blob must prevent deletion after its live reference is gone"
+    );
+
+    Ok(())
 }
 
 /// Reproduces the delete-on-tombstone TOCTOU race (sinex-audit-cas-refcheck-toctou)

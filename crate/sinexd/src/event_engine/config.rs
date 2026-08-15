@@ -163,16 +163,15 @@ pub struct EventEngineConfig {
     #[validate(range(min = 1, max = 86400))]
     pub ts_orig_future_skew_secs: u64,
 
-    /// Earliest accepted `ts_orig` expressed as a Unix timestamp (seconds since epoch).
+    /// Optional earliest accepted `ts_orig` expressed as a Unix timestamp (seconds since epoch).
     /// Events with `ts_orig` before this date are considered implausibly old and routed to the DLQ.
     ///
-    /// Default: `946684800` (2000-01-01 00:00:00 UTC).
+    /// The default is unset so legitimate historical imports are not silently lost. RFC3339
+    /// parsing and the future-skew bound remain enforced independently.
     ///
-    /// Set via: `SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX=946684800`
+    /// Set via: `SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX=946684800`.
     #[serde(default = "default_ts_orig_lower_bound_unix")]
-    #[builder(default = default_ts_orig_lower_bound_unix())]
-    #[validate(range(min = 0))]
-    pub ts_orig_lower_bound_unix: i64,
+    pub ts_orig_lower_bound_unix: Option<i64>,
 
     /// Maximum buffered out-of-order slices per material assembly.
     ///
@@ -385,13 +384,14 @@ impl EventEngineConfig {
         let ts_orig_future_skew_secs: u64 =
             shared_env::strict_parsed("SINEX_EVENT_ENGINE_TS_ORIG_FUTURE_SKEW_SECS")?
                 .unwrap_or_else(default_ts_orig_future_skew_secs);
-        let ts_orig_lower_bound_unix: i64 =
-            shared_env::strict_parsed("SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX")?
-                .unwrap_or_else(default_ts_orig_lower_bound_unix);
+        let ts_orig_lower_bound_unix = shared_env::strict_parsed::<i64>(
+            "SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX",
+        )?
+        .or_else(default_ts_orig_lower_bound_unix);
 
         // Construct NatsConnectionConfig from args/environment.
         // Full auth/TLS detail is still supplied via the shared env-first NATS config.
-        let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
+        let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env()?;
         nats_config.url = nats_url;
         nats_config.require_tls = nats_require_tls;
         let nats_config_clone = nats_config;
@@ -416,7 +416,7 @@ impl EventEngineConfig {
         config.ts_orig_future_skew_secs = ts_orig_future_skew_secs;
         config.ts_orig_lower_bound_unix = ts_orig_lower_bound_unix;
         config.nats = nats_config_clone;
-        config.nats_namespace = namespace;
+        config.nats_namespace = crate::runtime::resolve_nats_namespace(namespace);
         if let Some(path) = work_dir_override {
             config.work_dir = path;
         }
@@ -749,7 +749,7 @@ impl Default for EventEngineConfig {
             database_pool_size: 16,
             pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
             pool_idle_timeout_secs: default_pool_idle_timeout_secs(),
-            nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
+            nats: sinex_primitives::nats::NatsConnectionConfig::default(),
             consumer_fetch_max_messages: default_consumer_fetch_max_messages(),
             consumer_fetch_timeout_ms: default_consumer_fetch_timeout_ms(),
             consumer_max_ack_pending: default_consumer_max_ack_pending(),
@@ -954,16 +954,7 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
 }
 
 fn default_content_store_path() -> Utf8PathBuf {
-    if let Some(validated) = env_validated_path("SINEX_CONTENT_STORE_PATH", "content-store path") {
-        return validated;
-    }
-
-    let content_store = default_work_dir().join("content-store");
-    validated_path_or_fallback(
-        &content_store,
-        Utf8PathBuf::from("/tmp/sinex/event_engine/content-store"),
-        "content-store path",
-    )
+    crate::runtime::content_store::default_content_store_path()
 }
 
 fn default_assembler_state_dir() -> Utf8PathBuf {
@@ -1005,7 +996,9 @@ fn validate_max_message_size(value: &Bytes) -> Result<(), ValidationError> {
 
 fn validate_material_size_limit(value: &Bytes) -> Result<(), ValidationError> {
     let bytes = value.as_u64();
-    if !(1024..=1_073_741_824).contains(&bytes) {
+    if !(1024..=sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES as u64)
+        .contains(&bytes)
+    {
         return Err(ValidationError::new("range"));
     }
     Ok(())
@@ -1130,7 +1123,9 @@ fn default_disk_min_available_bytes() -> Bytes {
 fn default_max_material_size_bytes() -> Bytes {
     match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MAX_MATERIAL_SIZE_BYTES") {
         Ok(Some(value)) => Bytes::from_bytes(value),
-        Ok(None) => Bytes::from_mebibytes(512),
+        Ok(None) => Bytes::from_bytes(
+            sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES as u64,
+        ),
         Err(error) => {
             error!(
                 target: "sinex_metrics",
@@ -1139,7 +1134,9 @@ fn default_max_material_size_bytes() -> Bytes {
                 %error,
                 "Invalid env override for max material size; using default"
             );
-            Bytes::from_mebibytes(512)
+            Bytes::from_bytes(
+                sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES as u64,
+            )
         }
     }
 }
@@ -1286,8 +1283,8 @@ fn default_ts_orig_future_skew_secs() -> u64 {
     3600 // 1 hour
 }
 
-fn default_ts_orig_lower_bound_unix() -> i64 {
-    946_684_800 // 2000-01-01 00:00:00 UTC
+fn default_ts_orig_lower_bound_unix() -> Option<i64> {
+    None
 }
 
 #[cfg(test)]

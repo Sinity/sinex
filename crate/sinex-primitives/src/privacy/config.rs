@@ -49,7 +49,10 @@ impl Default for PrivacyConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            builtin_categories: CategorySet::None,
+            // The documented environment default is `all`; keep the direct
+            // Rust default aligned with it so config-file/env fallback paths
+            // do not silently disable the built-in detectors.
+            builtin_categories: CategorySet::All,
             extra_rules: Vec::new(),
             overrides: HashMap::new(),
             default_strategy: Strategy::Redact { label: None },

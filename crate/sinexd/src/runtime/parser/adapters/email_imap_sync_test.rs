@@ -46,3 +46,14 @@ async fn debug_marks_absent_access_token_without_leaking_none_as_secret() -> xta
     assert!(rendered.contains("access_token"));
     Ok(())
 }
+
+#[test]
+fn sparse_uid_window_advances_past_empty_range_without_skipping_live_mail() {
+    assert_eq!(next_uid_after_window(100, Some(201)), 101);
+    assert_eq!(next_uid_after_window(200, Some(201)), 201);
+}
+
+#[test]
+fn uid_window_without_server_uidnext_keeps_progress_boundary() {
+    assert_eq!(next_uid_after_window(100, None), 101);
+}

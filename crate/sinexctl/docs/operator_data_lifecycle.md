@@ -192,6 +192,21 @@ the past existence of an event:
 Tombstones do not retain payloads, source-material references, or lineage
 details. Once tombstoned, content is irrecoverable. This is by design.
 
+### Manifest-backed source material
+
+Manifest-backed source material is a replay root. Ordinary tombstone cleanup and periodic registry GC retain its registry row, manifest, and exact encoded-byte CAS authority even when no live or archived event still references it.
+
+Removing that authority requires the existing reviewed tombstone approval flow with both acknowledgements:
+
+```bash
+sinexctl ops lifecycle tombstone approve <operation-id> \
+  --yes-i-understand-data-is-gone \
+  --purge-manifest-replay-roots \
+  --yes-i-understand-manifest-replay-authority-is-gone
+```
+
+The approval RPC is Admin-only, records the approving actor and operation scope, expires if not approved promptly, and reports the count of manifest replay roots purged. Supplying the purge request without its distinct acknowledgement fails before tombstoning begins.
+
 ## Audit Trail
 
 Every verb above writes a `core.operations_log` row that captures actor,

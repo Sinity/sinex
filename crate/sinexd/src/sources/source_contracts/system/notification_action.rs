@@ -8,14 +8,13 @@ use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-    SourceId, SourceRecord, TimingConfidence, TimingEvidence,
+    SourceId, SourceRecord, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
     RetentionPolicy, RunnerPack, RuntimeShape,
 };
-use sinex_primitives::temporal::Timestamp;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NotificationActionParserConfig;
@@ -38,6 +37,7 @@ pub struct NotificationActionParserConfig;
     runner_pack = RunnerPack::Live,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("live source has no recoverable history", "sinex-r6d.8"),
 )]
 pub struct NotificationActionParser;
 
@@ -64,12 +64,12 @@ impl MaterialParser for NotificationActionParser {
     async fn parse_record(
         &mut self,
         record: SourceRecord,
-        _ctx: &ParserContext,
+        ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
         let payload: serde_json::Value = serde_json::from_slice(&record.bytes)
             .map_err(|e| ParserError::Parse(format!("notification-action JSON: {e}")))?;
 
-        let ts_orig = Timestamp::now();
+        let ts_orig = ctx.acquisition_time;
         let notification_id = payload["notification_id"].as_u64().unwrap_or_default() as u32;
         let action_key = payload["action_key"].as_str().unwrap_or("").to_owned();
 
@@ -86,10 +86,7 @@ impl MaterialParser for NotificationActionParser {
                     "timestamp": ts_orig,
                 }))
                 .ts_orig(ts_orig)
-                .timing(TimingEvidence::Intrinsic {
-                    field: "timestamp".into(),
-                    confidence: TimingConfidence::Intrinsic,
-                })
+                .timing(TimingEvidence::Atemporal)
                 .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
                 .occurrence_key(OccurrenceKey {
                     source_id: SourceId::from_static("desktop.notification.action"),

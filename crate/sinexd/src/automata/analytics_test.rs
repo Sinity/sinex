@@ -93,7 +93,9 @@ fn trusted_window_context(event_time: Timestamp) -> AutomatonContext {
         source: EventSource::from_static("wm.hyprland"),
         event_type: EventType::from_static("window.focused"),
         ts_orig: Some(event_time),
-        ts_coided: trigger_event_id.timestamp(),
+        ts_coided: trigger_event_id
+            .timestamp()
+            .expect("test ID must be UUIDv7"),
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,

@@ -6,7 +6,9 @@ use crate::runtime::SinexError;
 use crate::runtime::content_store::ContentStoreConfig;
 use camino::{Utf8Path, Utf8PathBuf};
 use sinex_db::models::Blob;
+use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
 use sinex_primitives::domain::BlobVerificationStatus;
+use sinex_primitives::{ByteRange, MaterialManifestV1, Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
 
 // Inline because these cover private blob verification error helpers only.
@@ -93,8 +95,7 @@ async fn git_annex_content_hash_is_verified_as_annex_digest() -> TestResult<()> 
 async fn require_ingest_filename_prefers_explicit_filename() -> TestResult<()> {
     let path = Utf8Path::new("/tmp/example.txt");
 
-    let filename =
-        require_ingest_filename(path, Some("provided.txt")).expect("explicit filename");
+    let filename = require_ingest_filename(path, Some("provided.txt")).expect("explicit filename");
 
     assert_eq!(filename, "provided.txt");
     Ok(())
@@ -111,6 +112,115 @@ async fn require_ingest_filename_rejects_paths_without_final_component() -> Test
             .contains("Blob ingestion requires a file name"),
         "unexpected error: {error}"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn temporary_blob_path_guard_removes_upload_on_scope_exit() -> TestResult<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = Utf8PathBuf::from_path_buf(temp_dir.path().join("upload.tmp"))
+        .map_err(|_| color_eyre::eyre::eyre!("temporary path must be UTF-8"))?;
+    tokio::fs::write(&path, b"transient upload").await?;
+
+    {
+        let guard = super::TemporaryBlobPath::new(path.clone());
+        assert!(guard.as_path().exists());
+    }
+
+    assert!(
+        !path.exists(),
+        "anti-vacuity: an upload temp path must be removed when ingest exits through any path"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn material_replay_range_uses_manifest_cas_after_source_removal(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let temp_dir = tempfile::TempDir::new()?;
+    let root_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("content-store"))
+        .map_err(|_| color_eyre::eyre::eyre!("content-store path must be UTF-8"))?;
+    let raw_store = super::super::MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let payload = b"manifest-backed replay range from durable bytes";
+    let source_path = root_path.join("source.log");
+    tokio::fs::write(&source_path, payload).await?;
+    let payload_key = raw_store.store_file(&source_path).await?;
+    let material_id = Uuid::now_v7();
+    let manifest = MaterialManifestV1::from_capture(
+        material_id,
+        "source.log",
+        "test",
+        payload_key.digest.clone(),
+        payload.len() as u64,
+        serde_json::json!({"logical_source_identifier": "test.manifest-replay"}),
+        "2026-08-13T00:00:00Z",
+        "2026-08-13T00:00:01Z",
+    );
+    let manifest_path = root_path.join("manifest.json");
+    tokio::fs::write(&manifest_path, manifest.canonical_bytes()?).await?;
+    let manifest_key = raw_store.store_file(&manifest_path).await?;
+    tokio::fs::remove_file(&source_path).await?;
+    tokio::fs::remove_file(&manifest_path).await?;
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "test",
+            Some("test://manifest-replay/source.log"),
+            serde_json::json!({
+                "material_manifest": {"content_key": manifest_key.key}
+            }),
+            Timestamp::now(),
+        )
+        .await?;
+
+    let manager = ContentStoreManager::new(
+        ContentStoreConfig {
+            root_path,
+            ..Default::default()
+        },
+        ctx.pool().clone(),
+        None,
+    )?;
+    let resolved = manager
+        .retrieve_material_replay_range(material_id, ByteRange { start: 9, end: 25 })
+        .await?;
+    assert_eq!(
+        resolved.authority,
+        super::MaterialReplayAuthority::ManifestV1
+    );
+    assert_eq!(&resolved.bytes, &payload[9..25]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn material_replay_range_classifies_legacy_blob_fallback(ctx: TestContext) -> TestResult<()> {
+    let (manager, _tmp) = manager_fixture(&ctx)?;
+    let payload = b"legacy replay fallback bytes";
+    let blob = manager
+        .ingest_from_bytes(payload, "legacy.log", "text/plain")
+        .await?;
+    let material = ctx
+        .pool()
+        .source_materials()
+        .register_material(
+            SourceMaterialRegistration::blob_text("legacy.log").with_blob_id(blob.id),
+        )
+        .await?;
+
+    let resolved = manager
+        .retrieve_material_replay_range(material.id, ByteRange { start: 0, end: 6 })
+        .await?;
+    assert_eq!(
+        resolved.authority,
+        super::MaterialReplayAuthority::LegacyBlobFallback
+    );
+    assert_eq!(&resolved.bytes, b"legacy");
     Ok(())
 }
 
@@ -155,9 +265,15 @@ async fn ingest_repairs_zombie_blob_row_by_rewriting_missing_content(
         .content_store
         .path_if_local(&content_key)?
         .expect("payload is stored via the local BLAKE3 CAS backend");
-    assert!(local_path.exists(), "fixture sanity: file must exist after ingest");
+    assert!(
+        local_path.exists(),
+        "fixture sanity: file must exist after ingest"
+    );
     tokio::fs::remove_file(&local_path).await?;
-    assert!(!local_path.exists(), "fixture sanity: file must be gone before re-ingest");
+    assert!(
+        !local_path.exists(),
+        "fixture sanity: file must be gone before re-ingest"
+    );
 
     // Re-ingesting identical content must detect the zombie row and re-write
     // the file rather than short-circuiting on the stale dedup hit.

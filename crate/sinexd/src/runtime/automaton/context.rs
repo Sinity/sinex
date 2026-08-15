@@ -52,12 +52,21 @@ pub struct AutomatonContext {
 /// occurrence and yield `(None, None)`.
 fn trigger_material_occurrence(event: &Event<JsonValue>) -> (Option<Uuid>, Option<i64>) {
     match &event.provenance {
-        Provenance::Material { id, anchor_byte, .. } => (Some(*id.as_uuid()), Some(*anchor_byte)),
+        Provenance::Material {
+            id, anchor_byte, ..
+        } => (Some(*id.as_uuid()), Some(*anchor_byte)),
         Provenance::Derived { .. } => (None, None),
     }
 }
 
 impl AutomatonContext {
+    pub(crate) fn require_ts_coided(event_id: Id<Event<JsonValue>>) -> RuntimeResult<Timestamp> {
+        event_id.timestamp().ok_or_else(|| {
+            SinexError::validation("automaton trigger event ID has no embedded timestamp")
+                .with_context("event_id", event_id.to_string())
+        })
+    }
+
     /// Operation lineage, if this processing call belongs to a replay/operation.
     #[must_use]
     pub fn operation_id(&self) -> Option<Id<OperationMarker>> {
@@ -97,7 +106,7 @@ impl AutomatonContext {
             source: event.source.clone(),
             event_type: event.event_type.clone(),
             ts_orig: event.ts_orig,
-            ts_coided: trigger_event_id.timestamp(),
+            ts_coided: Self::require_ts_coided(trigger_event_id)?,
             processing_mode: ProcessingMode::Live,
             trigger_kind: TriggerKind::NewEvent,
             created_by_operation_id: event
@@ -120,7 +129,7 @@ impl AutomatonContext {
             source: EventSource::from_static("derived.timer"),
             event_type: EventType::from_static("system.timer_flush"),
             ts_orig: Some(now),
-            ts_coided: synthetic_id.timestamp(),
+            ts_coided: Self::require_ts_coided(synthetic_id)?,
             processing_mode: ProcessingMode::Live,
             trigger_kind: TriggerKind::NewEvent,
             created_by_operation_id: None,
@@ -146,7 +155,7 @@ impl AutomatonContext {
             source: event.source.clone(),
             event_type: event.event_type.clone(),
             ts_orig: event.ts_orig,
-            ts_coided: trigger_event_id.timestamp(),
+            ts_coided: Self::require_ts_coided(trigger_event_id)?,
             processing_mode: ProcessingMode::Replay,
             trigger_kind: TriggerKind::ReplayRecompute,
             created_by_operation_id: operation_id.or_else(|| {

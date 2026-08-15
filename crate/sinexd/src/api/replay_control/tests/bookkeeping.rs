@@ -116,7 +116,8 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
     let target_ts = inserted
         .id
         .expect("inserted replay target must have id")
-        .timestamp();
+        .timestamp()
+        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();

@@ -1,9 +1,11 @@
-    const RAINDROP_CSV: &[u8] = b"\
+use xtask::sandbox::prelude::*;
+
+const RAINDROP_CSV: &[u8] = b"\
 id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
 100,Page Alpha,,Short note on alpha,https://example.com/alpha,Folder A,\"rust,async\",2026-01-01T09:00:00.000Z,https://cdn.example.com/a.jpg,,false
 ";
 
-    const SPOTIFY_JSON: &[u8] = br#"[
+const SPOTIFY_JSON: &[u8] = br#"[
       {
         "ts": "2024-06-01T10:00:00Z",
         "ms_played": 240000,
@@ -22,14 +24,14 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
       }
     ]"#;
 
-    const HLEDGER_JOURNAL: &[u8] = b"\
+const HLEDGER_JOURNAL: &[u8] = b"\
 2030-01-05 Example Fuel Station|sample fuel
     \tAssets:Checking:ExampleBank
     \tExpenses:Transport:Fuel                              40.00 TEST
 
 ";
 
-    const MESSENGER_THREAD: &[u8] = br#"{
+const MESSENGER_THREAD: &[u8] = br#"{
       "participants": ["Alice", "Bob"],
       "threadName": "Alice_Bob_thread",
       "messages": [
@@ -45,39 +47,67 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
       ]
     }"#;
 
-    const RAINDROP_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
-        "raindrop-bookmarks",
-        "raindrop-bookmarks",
-        crate::AdapterKind::StaticFile,
-        RAINDROP_CSV,
-        &["bookmark.created"],
-    );
+const RAINDROP_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+    "raindrop-bookmarks",
+    "raindrop-bookmarks",
+    crate::AdapterKind::StaticFile,
+    RAINDROP_CSV,
+    &["bookmark.created"],
+);
 
-    const SPOTIFY_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
-        "spotify-extended-history",
-        "spotify-extended-history",
-        crate::AdapterKind::StaticFile,
-        SPOTIFY_JSON,
-        &["track.played"],
-    );
+const SPOTIFY_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+    "spotify-extended-history",
+    "spotify-extended-history",
+    crate::AdapterKind::StaticFile,
+    SPOTIFY_JSON,
+    &["track.played"],
+);
 
-    const HLEDGER_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
-        "hledger-journal",
-        "hledger-journal",
-        crate::AdapterKind::StaticFile,
-        HLEDGER_JOURNAL,
-        &["transaction.posted"],
-    );
+const HLEDGER_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+    "hledger-journal",
+    "hledger-journal",
+    crate::AdapterKind::StaticFile,
+    HLEDGER_JOURNAL,
+    &["transaction.posted"],
+);
 
-    const MESSENGER_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
-        "facebook-messenger-thread",
-        "facebook-messenger-thread",
-        crate::AdapterKind::StaticFile,
-        MESSENGER_THREAD,
-        &["message.sent"],
-    );
+const MESSENGER_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+    "facebook-messenger-thread",
+    "facebook-messenger-thread",
+    crate::AdapterKind::StaticFile,
+    MESSENGER_THREAD,
+    &["message.sent"],
+);
 
-    crate::production_path_case_test!(raindrop_bookmarks_obligations, RAINDROP_CASE);
-    crate::production_path_case_test!(spotify_extended_history_obligations, SPOTIFY_CASE);
-    crate::production_path_case_test!(hledger_journal_obligations, HLEDGER_CASE);
-    crate::production_path_case_test!(facebook_messenger_thread_obligations, MESSENGER_CASE);
+crate::production_path_case_test!(raindrop_bookmarks_obligations, RAINDROP_CASE);
+crate::production_path_case_test!(spotify_extended_history_obligations, SPOTIFY_CASE);
+crate::production_path_case_test!(hledger_journal_obligations, HLEDGER_CASE);
+crate::production_path_case_test!(facebook_messenger_thread_obligations, MESSENGER_CASE);
+
+#[sinex_test]
+async fn hledger_production_route_occurrence_key_matches_declared_fields() -> TestResult<()> {
+    let dispatch = sinexd::sources::dispatch::default_parser_dispatch();
+    let outcome = dispatch("hledger-journal", HLEDGER_JOURNAL, None)
+        .map_err(|error| color_eyre::eyre::eyre!(error))?;
+    let event = outcome.events.first().expect("hledger event");
+    let key = event
+        .occurrence_key
+        .as_ref()
+        .expect("hledger occurrence key");
+
+    assert_eq!(
+        key.fields,
+        vec![
+            ("date".to_string(), "2030-01-05".to_string()),
+            (
+                "description".to_string(),
+                "Example Fuel Station".to_string()
+            ),
+            (
+                "first_explicit_posting_amount_or_anchor".to_string(),
+                "40.00".to_string()
+            ),
+        ]
+    );
+    Ok(())
+}

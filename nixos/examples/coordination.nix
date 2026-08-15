@@ -17,6 +17,7 @@
       host = "127.0.0.1";
       name = "sinex_prod";
       user = "sinex";
+      passwordFile = "/etc/sinex/db-password";
     };
 
     lifecycle.maintenance.enable = true;
@@ -26,10 +27,14 @@
       api.autoGenerateTls = true;
     };
 
-    nats.environment = "prod";
+    nats = {
+      environment = "prod";
+      authorization.sharedClient.nkey = "UCEXAMPLESHAREDCLIENTNKEY";
+    };
 
     runtime = {
       enable = true;
+      nats.auth.nkeySeedFile = "/etc/sinex/nats-client.nk";
       defaults.logLevel = "info";
 
       coordination = {
@@ -123,6 +128,8 @@
 
   # Ensure the monitored operator account exists
   environment.etc."sinex/api-admin-token".text = "coordination-admin:admin";
+  environment.etc."sinex/db-password".text = "replace-with-secret-managed-db-password";
+  environment.etc."sinex/nats-client.nk".text = "SUEXAMPLECLIENTNKEYSEED";
 
   users.users."sinex-prod" = {
     isNormalUser = true;

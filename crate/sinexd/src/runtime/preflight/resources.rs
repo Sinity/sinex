@@ -14,6 +14,8 @@ use libc::{gid_t, uid_t};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sinex_primitives::env as shared_env;
+use sinex_primitives::environment::environment;
+use sinex_primitives::privacy::resolve_private_mode_state_dir;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
 use std::os::unix::fs::MetadataExt;
@@ -22,17 +24,25 @@ use tracing::info;
 use super::VerificationStatus;
 
 fn configured_state_dir() -> RuntimeResult<String> {
-    if let Some(state_dir) = shared_env::strict_var("SINEX_STATE_DIR")? {
-        return Ok(state_dir);
-    }
-    if let Some(state_home) = shared_env::strict_var("XDG_STATE_HOME")? {
-        return Ok(format!("{state_home}/sinex"));
-    }
-    Ok("/var/lib/sinex".to_string())
+    resolve_private_mode_state_dir(None)
+        .into_os_string()
+        .into_string()
+        .map_err(|path| {
+            SinexError::configuration(format!(
+                "Runtime state directory is not valid UTF-8: {}",
+                path.to_string_lossy()
+            ))
+        })
 }
 
 fn configured_data_dir() -> RuntimeResult<String> {
-    shared_env::strict_var("SINEX_DATA_DIR")?.map_or_else(configured_state_dir, Ok)
+    if let Some(content_store_path) = shared_env::strict_var("SINEX_CONTENT_STORE_PATH")? {
+        return Ok(content_store_path);
+    }
+    if let Some(data_dir) = shared_env::strict_var("SINEX_DATA_DIR")? {
+        return Ok(data_dir);
+    }
+    Ok(crate::runtime::content_store::default_content_store_path().to_string())
 }
 
 fn configured_log_dir() -> RuntimeResult<String> {
@@ -63,7 +73,16 @@ fn configured_work_dir() -> RuntimeResult<String> {
 }
 
 fn configured_tmp_dir() -> RuntimeResult<String> {
-    Ok(shared_env::strict_var("TMPDIR")?.unwrap_or_else(|| "/tmp".to_string()))
+    environment()
+        .temp_dir()
+        .into_os_string()
+        .into_string()
+        .map_err(|path| {
+            SinexError::configuration(format!(
+                "Runtime temporary directory is not valid UTF-8: {}",
+                path.to_string_lossy()
+            ))
+        })
 }
 
 fn nearest_existing_ancestor(path: &Utf8Path) -> RuntimeResult<Utf8PathBuf> {
@@ -167,6 +186,25 @@ pub async fn verify_system_resources() -> RuntimeResult<(VerificationStatus, Val
     Ok((status, json!(details), messages))
 }
 
+/// Run the disk-space portion of resource preflight on the real daemon paths.
+///
+/// This is intentionally fail-closed: historical re-imports amplify a low
+/// storage condition into PostgreSQL/CAS failure, so startup must stop before
+/// the event engine begins materializing new data.
+pub fn verify_startup_storage() -> RuntimeResult<()> {
+    let mut messages = Vec::new();
+    if let Err(error) = verify_disk_space(&mut messages) {
+        return Err(SinexError::processing(format!(
+            "{error}; storage checks: {}",
+            messages.join("; ")
+        )));
+    }
+    for message in messages {
+        info!("{message}");
+    }
+    Ok(())
+}
+
 fn verify_memory_availability(messages: &mut Vec<String>) -> RuntimeResult<Value> {
     use sysinfo::System;
 
@@ -220,15 +258,23 @@ fn verify_disk_space(messages: &mut Vec<String>) -> RuntimeResult<Value> {
         (work_dir, "Sinex work directory".to_string(), 5.0),
     ];
 
+    verify_disk_space_for_paths(&paths_to_check, messages, get_disk_space)
+}
+
+fn verify_disk_space_for_paths(
+    paths_to_check: &[(String, String, f64)],
+    messages: &mut Vec<String>,
+    probe: impl Fn(&str) -> RuntimeResult<(f64, f64)>,
+) -> RuntimeResult<Value> {
     let mut disk_info = HashMap::new();
     let mut total_required = 0.0;
     let mut has_issues = false;
 
-    for (path, description, min_gb) in &paths_to_check {
+    for (path, description, min_gb) in paths_to_check {
         let min_gb = *min_gb;
         total_required += min_gb;
 
-        match get_disk_space(path.as_str()) {
+        match probe(path.as_str()) {
             Ok((total_gb, available_gb)) => {
                 let usage_percent = ((total_gb - available_gb) / total_gb) * 100.0;
 

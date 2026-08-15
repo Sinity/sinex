@@ -32,6 +32,7 @@ pub mod history;
 pub mod impact;
 pub mod infra;
 pub mod jobs;
+pub mod measurement;
 pub mod orchestrator;
 pub mod output;
 pub mod planner;

@@ -6,7 +6,12 @@ use super::{
 use crate::automata::canonicalizer::TerminalCommandCanonicalizerRuntime;
 use crate::runtime::SinexError;
 use crate::runtime::stream::Checkpoint;
+use clap::Parser;
 use sinex_primitives::SanitizedPath;
+use sinex_primitives::rpc::sources::{
+    ImportReportBreakdown, SourcesImportReportResponse,
+};
+use sinex_primitives::JsonValue;
 use std::str::FromStr;
 use xtask::sandbox::sinex_serial_test;
 use xtask::sandbox::sinex_test;
@@ -36,6 +41,96 @@ async fn render_cli_value_is_explicit_on_format_failure() -> TestResult<()> {
 #[sinex_test]
 async fn render_optional_cli_timestamp_is_explicit_when_unknown() -> TestResult<()> {
     assert_eq!(render_optional_cli_timestamp(None), "unknown");
+    Ok(())
+}
+
+#[sinex_test]
+async fn direct_scan_import_receipt_includes_all_durable_outcomes_and_adjudication() -> TestResult<()>
+{
+    let report = SourcesImportReportResponse {
+        operation_id: "018f0d0b-4f07-7f02-87d3-b8d221a5d6b2".to_string(),
+        operation_type: "import".to_string(),
+        operation_status: "success".to_string(),
+        scope: JsonValue::Null,
+        source: Some("documents.library".to_string()),
+        source_material_ids: Vec::new(),
+        attempted: 15,
+        new: 7,
+        suppressed: 3,
+        superseded: 2,
+        failures: 1,
+        dlq: 1,
+        unresolved: 1,
+        breakdown: Vec::new(),
+        examples: Vec::new(),
+    };
+
+    let line = RuntimeCliRunner::<TerminalCommandCanonicalizerRuntime>::format_direct_scan_import_receipt(
+        &report,
+        Some(4),
+    );
+
+    assert!(line.starts_with(
+        "Import idempotence: 7 new, 3 suppressed, 2 superseded, 1 failures, 1 DLQ, 1 unresolved, 4 adjudication candidates"
+    ));
+    assert!(line.contains(
+        "Import breakdown: unavailable (the durable report contains no source/event-type outcome rows)"
+    ));
+    Ok(())
+}
+
+#[sinex_test]
+async fn direct_scan_import_receipt_prints_durable_breakdown_rows() -> TestResult<()> {
+    let report = SourcesImportReportResponse {
+        operation_id: "018f0d0b-4f07-7f02-87d3-b8d221a5d6b2".to_string(),
+        operation_type: "import".to_string(),
+        operation_status: "success".to_string(),
+        scope: JsonValue::Null,
+        source: Some("documents.library".to_string()),
+        source_material_ids: vec!["material-1".to_string()],
+        attempted: 2,
+        new: 1,
+        suppressed: 1,
+        superseded: 0,
+        failures: 0,
+        dlq: 0,
+        unresolved: 0,
+        breakdown: vec![ImportReportBreakdown {
+            source: "documents.library".to_string(),
+            event_type: "document.indexed".to_string(),
+            source_material_id: Some("material-1".to_string()),
+            new: 1,
+            suppressed: 1,
+            superseded: 0,
+            failures: 0,
+            dlq: 0,
+        }],
+        examples: Vec::new(),
+    };
+
+    let line = RuntimeCliRunner::<TerminalCommandCanonicalizerRuntime>::format_direct_scan_import_receipt(
+        &report,
+        Some(0),
+    );
+
+    assert!(line.contains("Import breakdown:"));
+    assert!(line.contains(
+        "source=documents.library event_type=document.indexed material=material-1 new=1 suppressed=1 superseded=0 failures=0 dlq=0"
+    ));
+    Ok(())
+}
+
+#[sinex_test]
+async fn namespace_flag_is_parsed_without_environment_fallback() -> TestResult<()> {
+    let cli = RuntimeCli::try_parse_from([
+        "sinex-runtime",
+        "--namespace",
+        "flag-only",
+        "service",
+        "--dry-run",
+    ])?;
+
+    assert_eq!(cli.namespace.as_deref(), Some("flag-only"));
     Ok(())
 }
 
@@ -157,14 +252,11 @@ async fn edge_mode_requires_truthy_boolean_override() -> xtask::sandbox::TestRes
     Ok(())
 }
 
-/// sinex-mi2y: `RuntimeCliRunner::connect_primary_db` calls bare
-/// `PgPool::connect(&database_url)`, bypassing `sinex_db::create_pool_with_config`
-/// entirely -- so the runtime/automaton lane never gets `statement_timeout`
-/// configured, unlike every other pool in the system that goes through the
-/// shared config path. A runaway query on this lane runs with Postgres'
-/// default statement_timeout (0 = unlimited).
+/// Runtime/automaton connections must use the shared pool policy rather than
+/// sqlx's raw `PgPool::connect`, so a runaway query cannot inherit
+/// `statement_timeout=0`.
 #[sinex_test]
-async fn connect_primary_db_leaves_statement_timeout_unbounded() -> TestResult<()> {
+async fn connect_primary_db_applies_shared_pool_policy() -> TestResult<()> {
     let database_url =
         std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for this test");
     let cli = test_cli_with_database_url(Some(&database_url));
@@ -179,12 +271,10 @@ async fn connect_primary_db_leaves_statement_timeout_unbounded() -> TestResult<(
         .expect("SHOW statement_timeout should succeed");
 
     assert_ne!(
-        effective_timeout, "0",
-        "connect_primary_db's pool has statement_timeout=0 (unlimited) -- it bypasses \
-         sinex_db::create_pool_with_config, which is the only path that installs the \
-         session hook setting a bounded statement_timeout. Every automaton/source-binding \
-         connection on this lane can run a runaway query forever (the exact class of \
-         incident sinex-o1mg was)."
+        effective_timeout,
+        "0",
+        "runtime pool must set a bounded statement_timeout"
     );
+    assert_eq!(pool.options().get_max_connections(), 10);
     Ok(())
 }

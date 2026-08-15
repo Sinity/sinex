@@ -5,20 +5,12 @@
 use super::*;
 use crate::runtime::stream::control_protocol::encode_control_message;
 use crate::runtime::stream::{ProcessingStats, RuntimeInitContext};
+use tokio::net::UnixDatagram;
 
 #[cfg(feature = "messaging")]
 mod lk67_invalidation_reachability {
-    //! sinex-lk67: the replay cascade publishes scope invalidations on
-    //! `INVALIDATION_SUBJECT` (execution/collect.rs), but the ONLY live
-    //! dispatch path for every registered automaton is
-    //! `RuntimeRunner::run_automaton_event_bridge` (every automaton has
-    //! `manages_own_continuous_loop == false`, asserted for all of them in
-    //! `automata/registry_test.rs`). The bridge's `AutomatonRuntime::process_event_batch`
-    //! never calls `process_invalidation`/`handle_invalidation_message` --
-    //! those only exist on the `run_continuous` path, which the bridge never
-    //! takes. This proves the consumer is unreachable in production: publish
-    //! a real invalidation on the real subject while the bridge is running,
-    //! and observe it is never applied.
+    //! sinex-lk67: the production bridge consumes replay-cascade invalidations
+    //! on the real subject and dispatches them to the automaton adapter.
     use super::*;
     use crate::runtime::{
         AutomatonContext, AutomatonLogicError, AutomatonRuntime, DerivedOutput,
@@ -87,15 +79,14 @@ mod lk67_invalidation_reachability {
             self.invalidations_applied.fetch_add(1, Ordering::SeqCst);
             Ok(Vec::new())
         }
+
+        fn supports_scope_invalidation_recompute(&self) -> bool {
+            true
+        }
     }
 
     #[sinex_test]
-    #[ignore = "sinex-lk67 open: the replay-cascade-published scope invalidation is never consumed \
-                by the live bridge dispatch path (run_automaton_event_bridge); \
-                un-ignore once F1 (invalidation consumer wiring) lands"]
-    async fn bridge_never_consumes_a_published_scope_invalidation(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn bridge_consumes_a_published_scope_invalidation(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let invalidations_applied = Arc::new(AtomicU64::new(0));
         let automaton = InvalidationSpyAutomaton {
@@ -108,7 +99,7 @@ mod lk67_invalidation_reachability {
             .initialize_with_transport(
                 "lk67-invalidation-reachability".to_string(),
                 HashMap::new(),
-                None,
+                Some(ctx.pool().clone()),
                 EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
                     ctx.nats_client(),
                 ))),
@@ -123,6 +114,12 @@ mod lk67_invalidation_reachability {
         let js = ctx.jetstream().await?;
         let env = sinex_primitives::environment::environment().clone();
         let invalidation_subject = env.nats_subject(INVALIDATION_SUBJECT);
+        js.get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS"),
+            subjects: vec![invalidation_subject.clone()],
+            ..Default::default()
+        })
+        .await?;
         let invalidation = DerivedScopeInvalidation::archived(
             vec![Uuid::now_v7()],
             EventSource::new("test-source")?,
@@ -135,9 +132,8 @@ mod lk67_invalidation_reachability {
         js.publish_with_headers(invalidation_subject, headers, payload.into())
             .await?;
 
-        // Run the real bridge briefly. It has no confirmed events to
-        // process, so it just sits polling the confirmed-events consumer --
-        // proving it never even glances at the invalidation subject.
+        // Run the real bridge briefly. It has no confirmed events to process,
+        // so invalidation delivery is the only route to the spy.
         let bridge_result = tokio::time::timeout(
             Duration::from_secs(3),
             runner.run_automaton_event_bridge(Checkpoint::None),
@@ -145,16 +141,13 @@ mod lk67_invalidation_reachability {
         .await;
         assert!(
             bridge_result.is_err(),
-            "bridge should still be idly polling confirmed events after 3s (no confirmed events \
-             were published), not have exited for any reason"
+            "bridge should remain live while the invalidation is delivered"
         );
 
         assert_eq!(
             invalidations_applied.load(Ordering::SeqCst),
-            0,
-            "sinex-lk67: a scope invalidation published on the real INVALIDATION_SUBJECT, while \
-             the real production bridge was running, was never consumed -- recompute_scope was \
-             never called. This is the F1 reachability gap: fix it and this must become 1."
+            1,
+            "the real bridge must dispatch the published invalidation to recompute_scope"
         );
         Ok(())
     }
@@ -401,7 +394,7 @@ async fn confirmed_event_handler_forwards_full_event_to_bridge() -> TestResult<(
     // forward the event verbatim.
     use crate::runtime::ConfirmedEventHandler;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Event<JsonValue>>(8);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let handler = RunnerConfirmedEventHandler::new(tx);
 
     let event = sinex_primitives::events::DynamicPayload::new(
@@ -413,15 +406,132 @@ async fn confirmed_event_handler_forwards_full_event_to_bridge() -> TestResult<(
     .build()?;
     let expected_id = event.id;
 
-    handler.handle_confirmed(&event).await?;
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+    handler.handle_confirmed(&event, completion_tx).await?;
 
     let received = rx
         .recv()
         .await
         .expect("bridge channel must receive the confirmed event");
-    assert_eq!(received.id, expected_id);
-    assert_eq!(received.event_type.as_str(), "runtime.test");
-    assert_eq!(received.payload, serde_json::json!({"ok": true}));
+    assert_eq!(received.event.id, expected_id);
+    assert_eq!(received.event.event_type.as_str(), "runtime.test");
+    assert_eq!(received.event.payload, serde_json::json!({"ok": true}));
+    received.complete(crate::runtime::ConfirmedEventCompletion::Safe);
+    assert_eq!(
+        completion_rx.await?,
+        crate::runtime::ConfirmedEventCompletion::Safe
+    );
+    Ok(())
+}
+
+/// sinex-f11x: the production automaton service route must not wait for an
+/// impossible second-process leader. A pre-seeded coordination lease makes the
+/// old `LeaderStandby` path block; the real `run_service` route must still enter
+/// its historical catch-up scan immediately.
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn automaton_service_route_does_not_wait_for_coordination_leader(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    ensure_default_bridge_streams(&client).await?;
+
+    let service_name = format!("automaton-no-election-{}", Uuid::now_v7());
+    let coordination = sinex_primitives::coordination::CoordinationKvClient::new(
+        async_nats::jetstream::new(client.clone()),
+        service_name.clone(),
+    );
+    assert!(coordination.acquire_leadership("other-process").await?);
+
+    let mut runner = RuntimeRunner::new(HistoricalCatchupTestAutomaton::new(true));
+    let work_dir = tempdir()?;
+    runner
+        .initialize_with_transport(
+            service_name,
+            HashMap::new(),
+            None,
+            EventTransport::Nats(Arc::new(NatsPublisher::new(client))),
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await?;
+
+    let run_handle = tokio::spawn(async move { runner.run_service().await });
+    let run_result = tokio::time::timeout(Duration::from_secs(3), run_handle)
+        .await
+        .map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "automaton service route waited for a coordination leader instead of entering catch-up"
+            )
+        })??;
+    let error = run_result.expect_err("historical catch-up fixture must stop the route");
+    assert!(
+        error.to_string().contains("intentional historical catch-up stop"),
+        "the production route must reach the historical scan: {error:#}"
+    );
+    Ok(())
+}
+
+/// sinex-srn8: source readiness is a post-snapshot signal on the production
+/// `run_service` route. The gated snapshot proves no READY=1 is emitted while
+/// the source is still warming, then proves the signal is sent after release.
+#[sinex_test]
+async fn source_service_route_defers_ready_until_snapshot_finishes(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (module, snapshot_started, snapshot_release) =
+        StartupSequenceTestModule::with_snapshot_gate();
+    let mut runner = RuntimeRunner::new(module);
+    let work_dir = tempdir()?;
+
+    // Unix-domain socket paths have a small platform limit.  The checkout and
+    // xtask artifact paths can already consume most of it, so keep this test
+    // socket explicitly short while retaining per-process isolation.
+    let socket_path = std::env::temp_dir().join(format!(
+        "sx-ready-{}.sock",
+        std::process::id()
+    ));
+    let listener = UnixDatagram::bind(&socket_path)?;
+    let mut env_guard = EnvGuard::with_keys(&["NOTIFY_SOCKET", "SINEX_SD_NOTIFY_HOSTED"]);
+    env_guard.set("NOTIFY_SOCKET", &socket_path);
+    env_guard.clear("SINEX_SD_NOTIFY_HOSTED");
+
+    runner
+        .initialize_with_transport(
+            "source-readiness-after-snapshot".to_string(),
+            HashMap::new(),
+            None,
+            EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await?;
+
+    let run_handle = tokio::spawn(async move { runner.run_service().await });
+    tokio::time::timeout(Duration::from_secs(3), snapshot_started.notified())
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("source snapshot did not start"))?;
+
+    let mut buf = [0_u8; 128];
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), listener.recv(&mut buf))
+            .await
+            .is_err(),
+        "source service advertised ready before its snapshot phase finished"
+    );
+
+    snapshot_release.notify_one();
+    let ready_len = tokio::time::timeout(Duration::from_secs(3), listener.recv(&mut buf))
+        .await??;
+    let ready_message = std::str::from_utf8(&buf[..ready_len])?;
+    assert!(ready_message.contains("READY=1"));
+
+    let run_result = tokio::time::timeout(Duration::from_secs(3), run_handle)
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("source service route did not finish"))??;
+    run_result?;
     Ok(())
 }
 

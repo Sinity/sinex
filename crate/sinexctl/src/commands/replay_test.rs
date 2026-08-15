@@ -1,5 +1,5 @@
 use super::{
-    MaterialReplayabilityScorecard, Replayability, execute_watch,
+    MaterialReplayabilityScorecard, Replayability, execute_run, execute_watch,
     format_per_material_scorecard_table, format_replay_preview_table, preview_total_events,
     replay_list_envelope, replay_operation_caveats, replay_preview_envelope,
     replay_status_envelope, truncate_head_chars, truncate_tail_chars, weakness_dimensions,
@@ -8,8 +8,15 @@ use crate::client::{ClientConfig, GatewayClient};
 use crate::fmt::render_finite_envelope;
 use crate::model::OutputFormat;
 use serde_json::json;
-use sinex_primitives::rpc::replay::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
+use sinex_primitives::rpc::replay::{
+    ReplayCheckpoint, ReplayGateOverrides, ReplayOperation, ReplayScope, ReplayState,
+};
+use sinex_primitives::rpc::sources::SourcesImportReportResponse;
 use sinex_primitives::views::{ReadinessCaveatId, VIEW_ENVELOPE_SCHEMA_VERSION};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask::sandbox::prelude::*;
@@ -338,24 +345,41 @@ async fn per_material_scorecard_table_contains_aggregate_row() -> TestResult<()>
     Ok(())
 }
 
-async fn mount_failed_replay_status_fixture(operation: &ReplayOperation) -> MockServer {
+async fn mount_replay_watch_fixture(
+    statuses: Vec<ReplayOperation>,
+) -> (MockServer, Arc<AtomicUsize>) {
+    assert!(
+        !statuses.is_empty(),
+        "a replay watch fixture must provide at least one status"
+    );
     let server = MockServer::start().await;
-    let operation = operation.clone();
+    let terminal = statuses.last().expect("checked non-empty statuses").clone();
+    let report = fixture_import_report(&terminal.operation_id);
+    let status_requests = Arc::new(AtomicUsize::new(0));
+    let status_requests_for_response = Arc::clone(&status_requests);
     Mock::given(method("POST"))
         .and(path("/"))
         .respond_with(move |request: &wiremock::Request| {
             let body: serde_json::Value =
                 serde_json::from_slice(&request.body).expect("valid JSON-RPC request body");
-            assert_eq!(body["method"], "replay.operation_status");
+            let result = match body["method"].as_str() {
+                Some("replay.operation_status") => {
+                    let index = status_requests_for_response.fetch_add(1, Ordering::SeqCst);
+                    let operation = statuses.get(index).unwrap_or(&terminal);
+                    json!({ "operation": operation })
+                }
+                Some("sources.import_report") => json!(report),
+                method => panic!("unexpected replay-watch RPC method: {method:?}"),
+            };
             ResponseTemplate::new(200).set_body_json(json!({
                 "jsonrpc": "2.0",
                 "id": body["id"],
-                "result": { "operation": operation }
+                "result": result
             }))
         })
         .mount(&server)
         .await;
-    server
+    (server, status_requests)
 }
 
 fn fixture_gateway_client(server: &MockServer) -> color_eyre::Result<GatewayClient> {
@@ -367,47 +391,134 @@ fn fixture_gateway_client(server: &MockServer) -> color_eyre::Result<GatewayClie
     })
 }
 
-// sinex-2bti: JSON/Ndjson/Dot output formats for `sinexctl ops replay watch`
-// must detect ReplayState::Failed and return an error (non-zero exit),
-// matching the Table format's existing behavior — a CI/cron script parsing
-// only the exit code (the overwhelmingly common case) must not see success
-// (0) for a replay that failed server-side.
+fn fixture_import_report(operation_id: &str) -> SourcesImportReportResponse {
+    SourcesImportReportResponse {
+        operation_id: operation_id.to_string(),
+        operation_type: "replay".to_string(),
+        operation_status: "success".to_string(),
+        scope: json!({"source_name": "terminal.zsh-history"}),
+        source: Some("terminal.zsh-history".to_string()),
+        source_material_ids: vec!["material-fixture".to_string()],
+        attempted: 11,
+        new: 2,
+        suppressed: 3,
+        superseded: 1,
+        failures: 1,
+        dlq: 1,
+        unresolved: 3,
+        breakdown: Vec::new(),
+        examples: Vec::new(),
+    }
+}
+
 #[sinex_test]
-#[ignore = "sinex-2bti open: JSON watch format doesn't check ReplayState::Failed; \
-            un-ignore once the bead is fixed"]
+async fn ordinary_replay_run_fetches_the_durable_idempotence_report() -> TestResult<()> {
+    let operation = fixture_replay_operation("op-completed-report", ReplayState::Completed, 11);
+    let mut planning = operation.clone();
+    planning.state = ReplayState::Planning;
+    let mut previewed = operation.clone();
+    previewed.state = ReplayState::Previewed;
+    let mut approved = operation.clone();
+    approved.state = ReplayState::Approved;
+    let mut executing = operation.clone();
+    executing.state = ReplayState::Executing;
+    let report = fixture_import_report(&operation.operation_id);
+    let server = MockServer::start().await;
+    let planning_for_response = planning.clone();
+    let previewed_for_response = previewed.clone();
+    let approved_for_response = approved.clone();
+    let executing_for_response = executing.clone();
+    let operation_for_response = operation.clone();
+    let report_for_response = report.clone();
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(move |request: &wiremock::Request| {
+            let body: serde_json::Value =
+                serde_json::from_slice(&request.body).expect("valid JSON-RPC request body");
+            let result = match body["method"].as_str() {
+                Some("replay.create_operation") => json!({
+                    "operation": planning_for_response,
+                }),
+                Some("replay.preview_operation") => json!({
+                    "operation": previewed_for_response,
+                    "preview": {"total_events": 11},
+                }),
+                Some("replay.approve_operation") => json!({
+                    "operation": approved_for_response,
+                }),
+                Some("replay.execute_operation") => json!({
+                    "operation": executing_for_response,
+                }),
+                Some("replay.operation_status") => json!({
+                    "operation": operation_for_response,
+                }),
+                Some("sources.import_report") => json!(report_for_response),
+                Some("curation.duplicate_candidates.list") => json!({"clusters": []}),
+                method => panic!("unexpected method in completion fixture: {method:?}"),
+            };
+            ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "result": result,
+            }))
+        })
+        .mount(&server)
+        .await;
+    let client = fixture_gateway_client(&server)?;
+
+    execute_run(
+        &client,
+        "terminal.zsh-history",
+        None,
+        None,
+        &[],
+        &[],
+        false,
+        ReplayGateOverrides::default(),
+        &OutputFormat::Table,
+    )
+    .await?;
+
+    Ok(())
+}
+
+// sinex-2bti: every machine-readable watch format must preserve the server's
+// failed terminal state as a CLI error after it renders the terminal report.
+#[sinex_test]
 async fn execute_watch_json_format_errors_on_replay_failed() -> TestResult<()> {
     let mut operation = fixture_replay_operation("op-failed-json", ReplayState::Failed, 0);
     operation.error_details = Some("source adapter failed".to_string());
-    let server = mount_failed_replay_status_fixture(&operation).await;
+    let (server, status_requests) = mount_replay_watch_fixture(vec![operation]).await;
     let client = fixture_gateway_client(&server)?;
 
-    let result = execute_watch(&client, "op-failed-json", 0, &OutputFormat::Json).await;
+    let error = execute_watch(&client, "op-failed-json", 0, &OutputFormat::Json)
+        .await
+        .expect_err("failed JSON replay watch must return an error");
 
     assert!(
-        result.is_err(),
-        "execute_watch with --format json must return Err on ReplayState::Failed, \
-         matching the Table format's behavior (sinex-2bti)"
+        error.to_string().contains("Failed: source adapter failed"),
+        "the replay failure, not a wiremock or report error, must reach the caller: {error:?}"
     );
+    assert_eq!(status_requests.load(Ordering::SeqCst), 1);
     Ok(())
 }
 
 #[sinex_test]
-#[ignore = "sinex-2bti open: Dot watch format doesn't check ReplayState::Failed; \
-            un-ignore once the bead is fixed"]
 async fn execute_watch_dot_format_errors_on_replay_failed() -> TestResult<()> {
     let mut operation = fixture_replay_operation("op-failed-dot", ReplayState::Failed, 0);
     operation.error_details = Some("source adapter failed".to_string());
-    let server = mount_failed_replay_status_fixture(&operation).await;
+    let (server, status_requests) = mount_replay_watch_fixture(vec![operation]).await;
     let client = fixture_gateway_client(&server)?;
 
-    let result = execute_watch(&client, "op-failed-dot", 0, &OutputFormat::Dot).await;
+    let error = execute_watch(&client, "op-failed-dot", 0, &OutputFormat::Dot)
+        .await
+        .expect_err("failed Dot replay watch must return an error");
 
     assert!(
-        result.is_err(),
-        "execute_watch with --format dot must return Err on ReplayState::Failed, matching the \
-         Table format's behavior (sinex-2bti) -- Dot shares the exact same match arm as JSON/Ndjson \
-         (replay.rs:575) so it has the identical bug, it was just untested"
+        error.to_string().contains("Failed: source adapter failed"),
+        "the replay failure, not a format error, must reach the caller: {error:?}"
     );
+    assert_eq!(status_requests.load(Ordering::SeqCst), 1);
     Ok(())
 }
 
@@ -433,39 +544,44 @@ async fn completed_replay_operation_caveats_never_disclose_non_idempotence() -> 
 }
 
 #[sinex_test]
-#[ignore = "sinex-2bti open: Ndjson watch format doesn't check ReplayState::Failed; \
-            un-ignore once the bead is fixed"]
 async fn execute_watch_ndjson_format_errors_on_replay_failed() -> TestResult<()> {
     let mut operation = fixture_replay_operation("op-failed-ndjson", ReplayState::Failed, 0);
     operation.error_details = Some("source adapter failed".to_string());
-    let server = mount_failed_replay_status_fixture(&operation).await;
+    let (server, status_requests) = mount_replay_watch_fixture(vec![operation]).await;
     let client = fixture_gateway_client(&server)?;
 
-    let result = execute_watch(&client, "op-failed-ndjson", 0, &OutputFormat::Ndjson).await;
+    let error = execute_watch(&client, "op-failed-ndjson", 0, &OutputFormat::Ndjson)
+        .await
+        .expect_err("failed NDJSON replay watch must return an error");
 
     assert!(
-        result.is_err(),
-        "execute_watch with --format ndjson must return Err on ReplayState::Failed (sinex-2bti)"
+        error.to_string().contains("Failed: source adapter failed"),
+        "the replay failure, not a wiremock or report error, must reach the caller: {error:?}"
     );
+    assert_eq!(status_requests.load(Ordering::SeqCst), 1);
     Ok(())
 }
 
 #[sinex_test]
-#[ignore = "sinex-2bti open: Yaml watch format doesn't poll or check ReplayState::Failed; \
-            un-ignore once the bead is fixed"]
 async fn execute_watch_yaml_format_errors_on_replay_failed() -> TestResult<()> {
+    let executing = fixture_replay_operation("op-failed-yaml", ReplayState::Executing, 0);
     let mut operation = fixture_replay_operation("op-failed-yaml", ReplayState::Failed, 0);
     operation.error_details = Some("source adapter failed".to_string());
-    let server = mount_failed_replay_status_fixture(&operation).await;
+    let (server, status_requests) = mount_replay_watch_fixture(vec![executing, operation]).await;
     let client = fixture_gateway_client(&server)?;
 
-    let result = execute_watch(&client, "op-failed-yaml", 0, &OutputFormat::Yaml).await;
+    let error = execute_watch(&client, "op-failed-yaml", 0, &OutputFormat::Yaml)
+        .await
+        .expect_err("failed YAML replay watch must return an error");
 
     assert!(
-        result.is_err(),
-        "execute_watch with --format yaml must return Err on ReplayState::Failed, matching \
-         the other formats (sinex-2bti) — the Yaml branch currently does a single unpolled \
-         status fetch and never inspects state at all"
+        error.to_string().contains("Failed: source adapter failed"),
+        "the replay failure, not a wiremock or report error, must reach the caller: {error:?}"
+    );
+    assert_eq!(
+        status_requests.load(Ordering::SeqCst),
+        2,
+        "YAML watch must poll past a non-terminal status before observing failure"
     );
     Ok(())
 }
@@ -476,7 +592,7 @@ async fn execute_watch_json_format_succeeds_on_replay_completed() -> TestResult<
     // successful terminal state must NOT be turned into an error by
     // whatever fix closes sinex-2bti.
     let operation = fixture_replay_operation("op-completed-json", ReplayState::Completed, 5);
-    let server = mount_failed_replay_status_fixture(&operation).await;
+    let (server, _) = mount_replay_watch_fixture(vec![operation]).await;
     let client = fixture_gateway_client(&server)?;
 
     let result = execute_watch(&client, "op-completed-json", 0, &OutputFormat::Json).await;

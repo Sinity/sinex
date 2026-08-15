@@ -1,13 +1,12 @@
 //! Automaton runtime loop for `RuntimeRunner`.
 //!
-//! Runs the automaton continuous mode entry point, drives leader-standby
-//! coordination over the NATS coordination KV, and operates the
+//! Runs the automaton continuous mode entry point and operates the
 //! confirmation-event bridge that resolves provisional events to fully
 //! materialized inputs and feeds them into the module implementation.
 
 use super::{
     Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, Event, JetStreamEventConsumer,
-    JetStreamEventConsumerConfig, JsonValue, LeaderState, ProcessingModel,
+    JetStreamEventConsumerConfig, JsonValue,
     RunnerConfirmedEventHandler, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon,
     Uuid, debug, info, mpsc, systemd_notify, warn,
 };
@@ -30,20 +29,10 @@ impl RuntimeRunner {
         if capabilities.supports_continuous {
             info!("Starting continuous event processing for automaton");
 
-            // A standby automaton is still a healthy, ready service. Satisfy
-            // the systemd notify contract before waiting on lease handoff or
-            // expiry so host activation does not fail on a legitimate standby.
-            systemd_notify::notify_ready("sinex-runtime");
-
-            if self.processing_model == ProcessingModel::LeaderStandby {
-                let leader_acquired = self.acquire_leader_standby().await?;
-                if !leader_acquired {
-                    info!("Drain requested while waiting in leader standby; exiting cleanly");
-                    return Ok(());
-                }
-            }
-
             if capabilities.manages_own_continuous_loop {
+                // This path owns its continuous loop; advertise readiness
+                // before entering the long-running scan.
+                systemd_notify::notify_ready("sinex-runtime");
                 let _continuous_report = self
                     .module
                     .scan(
@@ -85,101 +74,6 @@ impl RuntimeRunner {
         }
 
         Ok(())
-    }
-
-    /// Acquire leadership for `LeaderStandby` processing model.
-    ///
-    /// If another instance currently holds the lease, remain in standby and
-    /// retry until the lease is handed off or expires.
-    pub(super) async fn acquire_leader_standby(&mut self) -> RuntimeResult<bool> {
-        #[cfg(feature = "messaging")]
-        {
-            let rs = self
-                .runtime_state()
-                .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
-            let drain_controller = rs.handles().runtime_drain();
-            let nc = rs
-                .nats_client()
-                .ok_or_else(|| SinexError::lifecycle("NATS client missing".to_string()))?;
-            let service = rs.service_info().service_name().to_string();
-            let host = rs.service_info().host().as_str().to_string();
-            let pid = std::process::id();
-            let instance_id = format!("{host}-{pid}");
-
-            let js = async_nats::jetstream::new(nc);
-            let kv_client =
-                sinex_primitives::coordination::CoordinationKvClient::new(js, service.clone());
-            let heartbeat_interval = kv_client.heartbeat_interval();
-            let mut announced_standby = false;
-
-            loop {
-                if drain_controller.is_requested() {
-                    return Ok(false);
-                }
-
-                let is_leader = kv_client
-                    .acquire_leadership(&instance_id)
-                    .await
-                    .map_err(|e| {
-                        SinexError::processing(format!("Failed to acquire leadership: {e}"))
-                    })?;
-
-                if is_leader {
-                    break;
-                }
-
-                if !announced_standby {
-                    info!(
-                        service = %service,
-                        heartbeat_interval_ms = heartbeat_interval.as_millis(),
-                        "Not leader; entering standby and waiting for lease handoff or expiry"
-                    );
-                    announced_standby = true;
-                }
-
-                tokio::time::sleep(heartbeat_interval).await;
-            }
-
-            info!("Confirmed as leader, proceeding with processing");
-
-            // Reuse the configured coordination heartbeat interval so stream-mode
-            // leader/standby timing matches the main coordination runtime.
-            let kv_clone = kv_client.clone();
-            let instance_id_clone = instance_id.clone();
-            let (heartbeat_shutdown, heartbeat_shutdown_rx) = tokio::sync::oneshot::channel();
-            let heartbeat_handle = tokio::spawn(async move {
-                let mut interval = tokio::time::interval(heartbeat_interval);
-                let mut heartbeat_shutdown_rx = heartbeat_shutdown_rx;
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
-                                warn!("Heartbeat failed: {e}");
-                            }
-                        }
-                        _ = &mut heartbeat_shutdown_rx => {
-                            break;
-                        }
-                    }
-                }
-            });
-
-            self.leader_state = Some(LeaderState {
-                kv_client,
-                instance_id,
-                heartbeat_shutdown,
-                heartbeat_handle,
-            });
-        }
-
-        #[cfg(not(feature = "messaging"))]
-        {
-            self.runtime_state()
-                .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
-            warn!("LeaderStandby mode requires messaging feature. Skipping leadership check.");
-        }
-
-        Ok(true)
     }
 
     #[cfg(feature = "messaging")]
@@ -224,8 +118,7 @@ impl RuntimeRunner {
             |info| info.service_name().to_string(),
         );
 
-        let (sender, mut receiver) =
-            mpsc::channel::<Event<JsonValue>>(CONFIRMED_EVENT_CHANNEL_CAPACITY);
+        let (sender, mut receiver) = mpsc::channel(CONFIRMED_EVENT_CHANNEL_CAPACITY);
         let handler = Arc::new(RunnerConfirmedEventHandler::new(sender));
 
         let env = sinex_primitives::environment::environment().clone();
@@ -237,13 +130,58 @@ impl RuntimeRunner {
             self.module.confirmed_event_provenance_filter(),
             self.module.event_type_filters(),
         );
+        let liveness_observer = Arc::new(crate::runtime::SelfObserver::new(
+            nats_client.clone(),
+            crate::runtime::SelfObserverConfig::from_env(&format!(
+                "{}.confirmed-stream",
+                service_name
+            )),
+        ));
+        let mut consumer_config = consumer_config;
+        consumer_config.liveness_observer = Some(liveness_observer);
 
         let consumer = Arc::new(JetStreamEventConsumer::new(
-            nats_client,
-            env,
+            nats_client.clone(),
+            env.clone(),
             consumer_config,
             handler,
         ));
+
+        let mut invalidation_sub = {
+            let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS");
+            let queue_group = format!("derived.invalidation.{}", self.module.module_name());
+            let deliver_subject = nats_client.new_inbox();
+            let js = async_nats::jetstream::new(nats_client.clone());
+            match js.get_stream(&stream_name).await {
+                Ok(stream) => {
+                    let config = async_nats::jetstream::consumer::push::Config {
+                        deliver_subject,
+                        deliver_group: Some(queue_group.clone()),
+                        ..Default::default()
+                    };
+                    match stream.create_consumer(config).await {
+                        Ok(consumer) => match consumer.messages().await {
+                            Ok(messages) => Some(messages),
+                            Err(error) => {
+                                warn!(automaton = %self.module.module_name(), error = %error,
+                                    "Failed to start bridge invalidation consumer");
+                                None
+                            }
+                        },
+                        Err(error) => {
+                            warn!(automaton = %self.module.module_name(), error = %error,
+                                "Failed to create bridge invalidation consumer");
+                            None
+                        }
+                    }
+                }
+                Err(error) => {
+                    warn!(automaton = %self.module.module_name(), error = %error,
+                        "Failed to get bridge invalidation stream");
+                    None
+                }
+            }
+        };
 
         // sinex-li78: hand the test/harness-only consumer-ready sender (see
         // `RuntimeRunner::confirmed_consumer_ready_tx` field doc) to the
@@ -254,18 +192,59 @@ impl RuntimeRunner {
         // behavior change (`run_with_ready_signal(None)` is exactly `run()`).
         #[cfg(any(test, feature = "testing"))]
         let ready_tx = self.confirmed_consumer_ready_tx.take();
-        #[cfg(not(any(test, feature = "testing")))]
-        let ready_tx = None;
 
-        // Process historical backlog BEFORE starting the JetStream consumer.
-        // The confirmed-event consumer ACKs after enqueueing into this bridge,
-        // before the automaton finishes processing the batch. A restart is safe
-        // only because every bridge-backed automaton can replay from its
-        // durable bridge checkpoint through the DB before it subscribes with
-        // DeliverPolicy::New. Load that checkpoint before catch-up: generic
-        // bridge-managed automata may report Checkpoint::None from
-        // module.current_checkpoint(), while the bridge KV holds the last
-        // successfully processed event.
+        let consumer_failure = Arc::new(tokio::sync::Mutex::new(None));
+        let consumer_runner = consumer.clone();
+        let consumer_failure_reporter = Arc::clone(&consumer_failure);
+
+        // Production must bind the durable consumer before the historical scan.
+        // With DeliverPolicy::New, creating it after catch-up leaves a permanent
+        // hole for events committed after the scan's query snapshot but before
+        // the consumer exists. The test-only hook remains externally awaited by
+        // harnesses whose scan implementation has no durable backing store.
+        #[cfg(not(any(test, feature = "testing")))]
+        let (startup_ready_tx, startup_ready_rx) = tokio::sync::oneshot::channel();
+        #[cfg(not(any(test, feature = "testing")))]
+        let startup_ready_rx = Some(startup_ready_rx);
+        #[cfg(not(any(test, feature = "testing")))]
+        let (startup_start_tx, startup_start_rx) = tokio::sync::oneshot::channel();
+
+        let consumer_handle = tokio::spawn(async move {
+            #[cfg(not(any(test, feature = "testing")))]
+            let ready_signal = Some(startup_ready_tx);
+            #[cfg(any(test, feature = "testing"))]
+            let ready_signal = ready_tx;
+
+            #[cfg(not(any(test, feature = "testing")))]
+            let result = consumer_runner
+                .run_with_ready_and_start_gate(ready_signal, startup_start_rx)
+                .await;
+            #[cfg(any(test, feature = "testing"))]
+            let result = consumer_runner.run_with_ready_signal(ready_signal).await;
+
+            if let Err(err) = result {
+                warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
+                let mut guard = consumer_failure_reporter.lock().await;
+                *guard = Some(err);
+            }
+        });
+        drain_controller.register_runtime_abort(consumer_handle.abort_handle());
+        self.consumer_handle = Some(consumer_handle);
+
+        #[cfg(not(any(test, feature = "testing")))]
+        startup_ready_rx
+            .expect("production automaton startup readiness receiver")
+            .await
+            .map_err(|_| {
+                SinexError::lifecycle(
+                    "Automaton confirmed-event consumer stopped before startup readiness"
+                        .to_string(),
+                )
+            })?;
+
+        // Load the checkpoint before catch-up: generic bridge-managed automata
+        // may report Checkpoint::None from module.current_checkpoint(), while
+        // the bridge KV holds the last successfully processed event.
         info!("Processing historical backlog before entering continuous mode");
         let _ = self
             .module
@@ -278,18 +257,19 @@ impl RuntimeRunner {
             )
             .await?;
 
-        let consumer_failure = Arc::new(tokio::sync::Mutex::new(None));
-        let consumer_runner = consumer.clone();
-        let consumer_failure_reporter = Arc::clone(&consumer_failure);
-        let consumer_handle = tokio::spawn(async move {
-            if let Err(err) = consumer_runner.run_with_ready_signal(ready_tx).await {
-                warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
-                let mut guard = consumer_failure_reporter.lock().await;
-                *guard = Some(err);
-            }
-        });
-        drain_controller.register_runtime_abort(consumer_handle.abort_handle());
-        self.consumer_handle = Some(consumer_handle);
+        #[cfg(not(any(test, feature = "testing")))]
+        startup_start_tx.send(()).map_err(|_| {
+            SinexError::lifecycle(
+                "Confirmed-event consumer stopped before catch-up released its start gate"
+                    .to_string(),
+            )
+        })?;
+
+        // A bridge-backed automaton is not warmed until its historical scan
+        // completed and the live durable consumer is bound. Readiness before
+        // this point lets re-import health checks mistake a catch-up storm for
+        // a serving automaton.
+        systemd_notify::notify_ready("sinex-runtime");
 
         if drain_controller.is_requested() {
             let _ = drain_controller.abort_runtime_work();
@@ -329,8 +309,9 @@ impl RuntimeRunner {
             // Once drain is requested the consumer is aborted; switch to draining
             // whatever is still buffered before exiting cleanly.
             enum LoopAction {
-                Event(Option<Event<JsonValue>>),
+                Event(Option<super::RunnerConfirmedEvent>),
                 FlushTick,
+                Invalidation(Option<Vec<u8>>),
             }
 
             let action = if drain_controller.is_requested() {
@@ -339,6 +320,9 @@ impl RuntimeRunner {
                 tokio::select! {
                     event = receiver.recv() => LoopAction::Event(event),
                     _ = flush_ticker.tick() => LoopAction::FlushTick,
+                    payload = crate::runtime::automaton::recv_invalidation(
+                        &mut invalidation_sub, None,
+                    ) => LoopAction::Invalidation(payload),
                 }
             };
 
@@ -353,6 +337,12 @@ impl RuntimeRunner {
                         );
                     }
                 }
+                LoopAction::Invalidation(Some(payload)) => {
+                    self.module.process_invalidation_message(&payload).await?;
+                }
+                LoopAction::Invalidation(None) => {
+                    invalidation_sub = None;
+                }
                 LoopAction::Event(next_event) => {
                     let Some(first) = next_event else {
                         if let Some(error) = consumer_failure.lock().await.take() {
@@ -365,25 +355,41 @@ impl RuntimeRunner {
                     // Confirmed events arrive as fully materialized
                     // `Event<JsonValue>` from the confirmed-events stream — no DB
                     // refetch, no provisional resolution (#2187 / #2202).
-                    let mut events = vec![first];
-                    while events.len() < BATCH_SIZE {
+                    let mut deliveries = vec![first];
+                    while deliveries.len() < BATCH_SIZE {
                         match receiver.try_recv() {
-                            Ok(e) => events.push(e),
+                            Ok(delivery) => deliveries.push(delivery),
                             Err(_) => break,
                         }
                     }
+
+                    let events = deliveries
+                        .iter()
+                        .map(|delivery| delivery.event.clone())
+                        .collect::<Vec<_>>();
 
                     let batch_last_event_id = events
                         .last()
                         .and_then(|event| event.id)
                         .map(|id| *id.as_uuid());
 
-                    let batch_count = Self::process_batch_with_dlq_fallback(
+                    let batch_result = Self::process_batch_with_dlq_fallback(
                         self.module.as_mut(),
                         &transport,
                         events,
                     )
-                    .await?;
+                    .await;
+
+                    let completion = if batch_result.is_ok() {
+                        crate::runtime::ConfirmedEventCompletion::Safe
+                    } else {
+                        crate::runtime::ConfirmedEventCompletion::Retry
+                    };
+                    for delivery in deliveries {
+                        delivery.complete(completion);
+                    }
+
+                    let batch_count = batch_result?;
 
                     processed_events += batch_count;
                     events_since_checkpoint += batch_count;
@@ -537,6 +543,7 @@ impl RuntimeRunner {
             // delivery therefore only needs new confirmed events and does not
             // re-deliver the whole retained confirmed stream on startup.
             deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
+            ..Default::default()
         }
     }
 }

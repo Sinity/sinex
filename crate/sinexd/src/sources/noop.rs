@@ -29,6 +29,7 @@ register_source_contract! {
         id: "noop",
         namespace: "sinex",
         event_types: &[],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         privacy_tier: PrivacyTier::Public,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
@@ -53,6 +54,10 @@ register_source_runtime_binding! {
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation(
+        "noop source has no recoverable observation history",
+        "sinex-r6d.8",
+    ))
     .build()
 }
 

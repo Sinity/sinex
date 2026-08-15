@@ -71,60 +71,28 @@ async fn test_records_skips_empty_lines() -> xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
-/// sinex-1mdu bugs #1 and #3: `records_from_journal_lines` filters out empty
-/// lines via `.filter(|(_, l)| !l.is_empty())` *before* `bytes_read` is
-/// incremented for them, so a blank line's consumed newline byte is never
-/// accounted for -- every subsequent record's `material_offset` is too
-/// small by 1 per skipped blank line. `.enumerate()` also runs before the
-/// filter, so `frame_index` reflects the pre-filter array position (sparse,
-/// with gaps for skipped blanks) rather than the dense 0,1,2,... sequence
-/// the real streaming `open()` path actually emits (its `frame_index`
-/// counter only increments on yielded records, via `continue` skipping
-/// blanks entirely). Both invariants fail against current code.
 #[sinex_test]
-#[ignore = "sinex-1mdu open: journalctl blank-line offset corruption -- fails until fixed"]
-async fn test_records_from_lines_blank_line_offset_and_frame_index_are_correct()
+async fn records_from_lines_accounts_for_blank_and_multibyte_bytes()
 -> xtask::sandbox::TestResult<()> {
     let mid = dummy_material_id();
-    // line0 (5 bytes), "" (blank, 0 bytes), line2 (5 bytes) -- each line
-    // consumes len+1 bytes from the stream including the stripped newline.
-    let records = records_from_journal_lines(mid, &["line0", "", "line2"]);
-    assert_eq!(records.len(), 2, "the blank line yields no record");
+    // "é" occupies two UTF-8 bytes, the blank line consumes one newline byte,
+    // and "猫" occupies three bytes. The final "x" is adjacent to "猫".
+    let records = records_from_journal_lines(mid, &["é", "", "猫", "x"]);
+    let anchors: Vec<(u64, u64)> = records
+        .iter()
+        .map(|record| match &record.as_ref().unwrap().anchor {
+            MaterialAnchor::StreamFrame {
+                material_offset,
+                frame_index,
+            } => (*material_offset, *frame_index),
+            _ => panic!("unexpected anchor"),
+        })
+        .collect();
 
-    let (offset0, frame0) = match &records[0].as_ref().unwrap().anchor {
-        MaterialAnchor::StreamFrame {
-            material_offset,
-            frame_index,
-        } => (*material_offset, *frame_index),
-        _ => panic!("unexpected anchor"),
-    };
-    let (offset1, frame1) = match &records[1].as_ref().unwrap().anchor {
-        MaterialAnchor::StreamFrame {
-            material_offset,
-            frame_index,
-        } => (*material_offset, *frame_index),
-        _ => panic!("unexpected anchor"),
-    };
-
-    assert_eq!(offset0, 0, "first record always starts at offset 0");
     assert_eq!(
-        offset1, 7,
-        "second emitted record (\"line2\") must account for ALL consumed \
-         bytes since the start, including the blank line's byte: \
-         offset(record_n) = sum of (len+1) for every line before it \
-         INCLUDING blanks. \"line0\" consumes 5+1=6 bytes, the blank line \
-         consumes 0+1=1 byte, so line2 starts at byte 7 -- not the 6 it \
-         gets today (the blank line's newline byte never counted)."
-    );
-    assert_eq!(
-        frame0, 0,
-        "first emitted record must have frame_index 0 (dense sequence)"
-    );
-    assert_eq!(
-        frame1, 1,
-        "second emitted record must have frame_index 1 (dense sequence, \
-         matching the real open() stream's `continue`-then-increment \
-         behavior), not 2 (the blank line's pre-filter array position)"
+        anchors,
+        vec![(0, 0), (4, 1), (8, 2)],
+        "offsets count UTF-8 bytes and every consumed newline; frame indices stay dense"
     );
     Ok(())
 }

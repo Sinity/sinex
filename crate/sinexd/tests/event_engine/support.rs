@@ -91,9 +91,22 @@ pub async fn spawn_consumer_and_wait_ready(
         .await?;
     nats.wait_for_stream(js, &topology.dlq_stream, stream_timeout)
         .await?;
-    timeout(stream_timeout, ready_rx)
-        .await?
-        .map_err(|_| eyre!("jetstream consumer exited before signalling readiness"))?;
+    match timeout(stream_timeout, ready_rx).await {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) | Err(_) => {
+            if handle.is_finished() {
+                let result = handle
+                    .await
+                    .map_err(|error| eyre!("jetstream consumer task panicked: {error}"))?;
+                return Err(eyre!(
+                    "jetstream consumer exited before signalling readiness: {result:?}"
+                ));
+            }
+            return Err(eyre!(
+                "jetstream consumer exited before signalling readiness"
+            ));
+        }
+    }
 
     Ok(handle)
 }

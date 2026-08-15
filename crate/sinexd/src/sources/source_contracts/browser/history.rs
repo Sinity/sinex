@@ -45,8 +45,8 @@ use sinex_primitives::source_contracts::{
 use sinex_primitives::{
     domain::{EventSource, EventType},
     parser::{
-        InputShapeKind, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-        SourceId, SourceRecord, TimingConfidence, TimingEvidence,
+        InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
+        ParserManifest, SourceId, SourceRecord, TimingConfidence, TimingEvidence,
     },
     privacy::ProcessingContext,
     temporal::Timestamp,
@@ -192,6 +192,7 @@ pub struct BrowserHistoryParserConfig {}
         occurrence_anchor: "visit_id",
     },
     runtime_shape = RuntimeShape::Continuous,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::MUTABLE_SNAPSHOT,
     factory_adapter = BrowserHistoryAdapter,
     // sinex-sn6s: qutebrowser/Chrome own their own history SQLite stores;
     // Sinex is a downstream reader, never the sole copy.
@@ -199,8 +200,45 @@ pub struct BrowserHistoryParserConfig {}
 )]
 pub struct BrowserHistoryParser;
 
+/// Configuration for [`TakeoutChromeHistoryParser`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TakeoutChromeHistoryConfig;
+
+/// Parser for an extracted Google Takeout `Chrome/BrowserHistory.json` member.
+///
+/// The archive itself remains the operator-owned raw authority. This parser
+/// deliberately consumes an extracted member through `StaticFileAdapter` so
+/// the archive extraction step can be audited independently. Takeout rows do
+/// not carry Chromium's SQLite visit id, so their occurrence key is scoped to
+/// the Takeout client id and a deterministic row fingerprint. That makes
+/// overlapping Takeout exports idempotent while keeping them distinct from
+/// live or historical SQLite visits, which remain candidates for downstream
+/// adjudication rather than silent merges.
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "browser.takeout-history",
+    namespace = "web",
+    event_type = "page.visited",
+    event_source = "webhistory",
+    adapter = "StaticFileAdapter",
+    implementation = "sinexd",
+    privacy_tier = PrivacyTier::Secret,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(takeout_client_id, record_hash)"),
+    access_scope = AccessScope::StagedExport,
+    privacy_context = ProcessingContext::Metadata,
+    resource_profile = ResourceProfile::BoundedFile,
+    runner_pack = RunnerPack::SinexdSource,
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
+    recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::APPEND_STREAM,
+    criticality = SourceCriticality::Reconstructable,
+)]
+pub struct TakeoutChromeHistoryParser;
+
 const PARSER_ID: &str = "browser-history";
-const PARSER_VERSION: &str = "1.0.0";
+const PARSER_VERSION: &str = "1.0.1";
 
 #[async_trait]
 impl MaterialParser for BrowserHistoryParser {
@@ -281,6 +319,191 @@ impl MaterialParser for BrowserHistoryParser {
     }
 }
 
+#[async_trait]
+impl MaterialParser for TakeoutChromeHistoryParser {
+    type Config = TakeoutChromeHistoryConfig;
+
+    fn manifest(&self) -> ParserManifest {
+        ParserManifest {
+            parser_id: ParserId::from_static("browser-takeout-history"),
+            parser_version: "1.0.0".into(),
+            accepted_input_shapes: vec![InputShapeKind::StaticFile],
+            source_id: SourceId::from_static("browser.takeout-history"),
+            declared_event_types: vec![(
+                EventSource::from_static("webhistory"),
+                EventType::from_static("page.visited"),
+            )],
+            privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
+            description: "Parses extracted Google Takeout Chrome BrowserHistory.json files."
+                .into(),
+        }
+    }
+
+    async fn parse_record(
+        &mut self,
+        record: SourceRecord,
+        ctx: &ParserContext,
+    ) -> ParserResult<Vec<ParsedEventIntent>> {
+        let root: serde_json::Value = serde_json::from_slice(&record.bytes)
+            .map_err(|e| ParserError::Parse(format!("Takeout Chrome JSON parse failed: {e}")))?;
+        let rows = root
+            .get("Browser History")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| {
+                ParserError::Parse(
+                    "Takeout Chrome JSON must contain a 'Browser History' array".into(),
+                )
+            })?;
+        let source_file = record
+            .logical_path
+            .as_deref()
+            .map_or_else(String::new, |path| path.as_str().to_owned());
+        let mut intents = Vec::with_capacity(rows.len());
+
+        for (index, row) in rows.iter().enumerate() {
+            let object = row.as_object().ok_or_else(|| {
+                ParserError::Parse(format!("Takeout Chrome row {index} is not an object"))
+            })?;
+            let url = object
+                .get("url")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    ParserError::Parse(format!("Takeout Chrome row {index} has no url"))
+                })?;
+            let title = object
+                .get("title")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let time_value = object.get("time_usec").ok_or_else(|| {
+                ParserError::Parse(format!("Takeout Chrome row {index} has no time_usec"))
+            })?;
+            let (time_usec, visit_time) = parse_takeout_time_usec(time_value, index)?;
+            let client_id = object
+                .get("client_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            let page_transition = object
+                .get("page_transition")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            let favicon_url = object
+                .get("favicon_url")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+
+            let record_hash = takeout_record_hash(
+                client_id.as_deref(),
+                &time_usec,
+                url,
+                title,
+                page_transition.as_deref(),
+            );
+            let client_scope = client_id
+                .clone()
+                .unwrap_or_else(|| format!("path:{source_file}"));
+            let mut payload = serde_json::Map::new();
+            payload.insert("browser".into(), serde_json::json!("chromium"));
+            payload.insert("title".into(), serde_json::json!(title));
+            payload.insert("url".into(), serde_json::json!(url));
+            payload.insert(
+                "visit_time".into(),
+                serde_json::json!(visit_time.format_rfc3339()),
+            );
+            payload.insert("time_usec".into(), serde_json::json!(time_usec));
+            payload.insert("source_file".into(), serde_json::json!(source_file));
+            payload.insert("takeout_record_hash".into(), serde_json::json!(record_hash));
+            if let Some(client_id) = client_id {
+                payload.insert("client_id".into(), serde_json::json!(client_id));
+            }
+            if let Some(page_transition) = page_transition {
+                payload.insert("transition".into(), serde_json::json!(page_transition));
+            }
+            if let Some(favicon_url) = favicon_url {
+                payload.insert("favicon_url".into(), serde_json::json!(favicon_url));
+            }
+
+            let intent = ParsedEventIntent::builder()
+                .source_id(ctx.source_id.clone())
+                .parser_id(ParserId::from_static("browser-takeout-history"))
+                .parser_version("1.0.0")
+                .event_type(EventType::from_static("page.visited"))
+                .event_source(EventSource::from_static("webhistory"))
+                .payload(serde_json::Value::Object(payload))
+                .ts_orig(visit_time)
+                .timing(TimingEvidence::Intrinsic {
+                    field: "time_usec".into(),
+                    confidence: TimingConfidence::Intrinsic,
+                })
+                // Static JSON-array imports use the stable provider-array
+                // ordinal as their per-entry material anchor. The
+                // record_hash above is the cross-export identity key.
+                .anchor(MaterialAnchor::ByteRange {
+                    start: index as u64,
+                    len: 1,
+                })
+                .occurrence_key(OccurrenceKey {
+                    source_id: SourceId::from_static("browser.takeout-history"),
+                    fields: vec![
+                        ("takeout_client_id".into(), client_scope),
+                        ("record_hash".into(), record_hash),
+                    ],
+                })
+                .privacy_context(ProcessingContext::Metadata)
+                .build();
+            intents.push(intent);
+        }
+
+        Ok(intents)
+    }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        vec!["/Browser History/[]/time_usec".into(), "/Browser History/[]/url".into()]
+    }
+}
+
+fn parse_takeout_time_usec(
+    value: &serde_json::Value,
+    row_index: usize,
+) -> ParserResult<(String, Timestamp)> {
+    let raw = match value {
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::String(string) => string.clone(),
+        _ => {
+            return Err(ParserError::Parse(format!(
+                "Takeout Chrome row {row_index} time_usec is not numeric"
+            )));
+        }
+    };
+    let micros = raw.parse::<i64>().map_err(|error| {
+        ParserError::Parse(format!("Takeout Chrome row {row_index} invalid time_usec: {error}"))
+    })?;
+    let timestamp = Timestamp::from_unix_timestamp_nanos(i128::from(micros) * 1_000)
+        .ok_or_else(|| ParserError::Parse(format!("Takeout Chrome row {row_index} timestamp out of range")))?;
+    Ok((raw, timestamp))
+}
+
+fn takeout_record_hash(
+    client_id: Option<&str>,
+    time_usec: &str,
+    url: &str,
+    title: &str,
+    page_transition: Option<&str>,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for field in [
+        client_id.unwrap_or(""),
+        time_usec,
+        url,
+        title,
+        page_transition.unwrap_or(""),
+    ] {
+        hasher.update(field.as_bytes());
+        hasher.update(&[0]);
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
 // ---------------------------------------------------------------------------
 // SQLite leg
 // ---------------------------------------------------------------------------
@@ -357,8 +580,7 @@ fn parse_qutebrowser_row(
 ) -> ParserResult<VisitData> {
     let row_id = obj
         .get("rowid")
-        .and_then(sinex_primitives::JsonValue::as_i64)
-        .unwrap_or(0);
+        .and_then(sinex_primitives::JsonValue::as_i64);
     let url = obj
         .get("url")
         .and_then(|v| v.as_str())
@@ -386,19 +608,18 @@ fn parse_qutebrowser_row(
         visit_time,
         referrer: None,
         transition: (redirect != 0).then(|| "redirect".to_string()),
-        visit_id: Some(row_id.to_string()),
+        visit_id: row_id.map(|id| id.to_string()),
         visit_duration_ms: None,
         source_file: String::new(),
         line_number: None,
-        db_row_id: Some(row_id as u64),
+        db_row_id: row_id.and_then(|id| u64::try_from(id).ok()),
     })
 }
 
 fn parse_chromium_row(obj: &serde_json::Map<String, serde_json::Value>) -> ParserResult<VisitData> {
     let row_id = obj
         .get("rowid")
-        .and_then(sinex_primitives::JsonValue::as_i64)
-        .unwrap_or(0);
+        .and_then(sinex_primitives::JsonValue::as_i64);
     let url = obj
         .get("url")
         .and_then(|v| v.as_str())
@@ -436,11 +657,11 @@ fn parse_chromium_row(obj: &serde_json::Map<String, serde_json::Value>) -> Parse
         visit_time,
         referrer,
         transition: Some(transition_raw.to_string()),
-        visit_id: Some(row_id.to_string()),
+        visit_id: row_id.map(|id| id.to_string()),
         visit_duration_ms: (visit_duration >= 0).then_some((visit_duration as u64) / 1_000),
         source_file: String::new(),
         line_number: None,
-        db_row_id: Some(row_id as u64),
+        db_row_id: row_id.and_then(|id| u64::try_from(id).ok()),
     })
 }
 
@@ -572,12 +793,30 @@ fn build_intent(
         payload.insert("db_row_id".into(), serde_json::json!(rid));
     }
 
-    let occurrence_key = visit.visit_id.as_ref().map(|vid| OccurrenceKey {
+    // Provider visit ids are stable across mutable SQLite re-reads. Keep the
+    // profile coordinate separate from the payload's source_file so the
+    // occurrence contract remains explicit. Records without a provider id
+    // still receive a replay-stable, source-scoped key, but it includes the
+    // physical record anchor and bytes. That prevents the old rowid=0
+    // collision while avoiding a silent cross-artifact merge of id-less
+    // Takeout rows with database visits.
+    let browser_profile = if visit.source_file.is_empty() {
+        visit.browser.clone()
+    } else {
+        visit.source_file.clone()
+    };
+    let visit_id = visit.visit_id.clone().unwrap_or_else(|| {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(browser_profile.as_bytes());
+        hasher.update(format!("{:?}", record.anchor).as_bytes());
+        hasher.update(&record.bytes);
+        format!("anonymous:{}", hasher.finalize().to_hex())
+    });
+    let occurrence_key = Some(OccurrenceKey {
         source_id: ctx.source_id.clone(),
         fields: vec![
-            ("browser".to_string(), visit.browser.clone()),
-            ("source_file".to_string(), visit.source_file.clone()),
-            ("visit_id".to_string(), vid.clone()),
+            ("browser_profile".to_string(), browser_profile),
+            ("visit_id".to_string(), visit_id),
         ],
     });
 

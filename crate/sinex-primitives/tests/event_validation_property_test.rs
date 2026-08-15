@@ -75,7 +75,8 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
                 let ingest_ts = event
                     .id
                     .as_ref()
-                    .map_or_else(Timestamp::now, sinex_db::Id::timestamp);
+                    .and_then(sinex_db::Id::timestamp)
+                    .expect("test event ID must be UUIDv7");
                 event.ts_orig = Some(ingest_ts - Duration::seconds(60));
             }
 
@@ -194,7 +195,10 @@ fn performance_characteristic_events() -> impl Strategy<Value = Vec<RawEvent>> {
     })
 }
 
-/// Production validation wrapper for events (avoid mock-only checks).
+/// Shared structural-validation wrapper for property tests. Schema validation
+/// is disabled here because these properties exercise the envelope and domain
+/// invariants independently of the production schema registry; the real
+/// admission route is covered by sinexd's `AdmissionService` tests.
 fn validate_event(event: &RawEvent) -> std::result::Result<(), String> {
     let validator = EventValidator::with_validation_enabled(false);
     validator.validate(event).map_err(|err| err.to_string())
@@ -299,7 +303,7 @@ sinex_proptest! {
         event in arbitrary_event()
     ) -> TestResult<()> {
         if let (Some(id), Some(ts_orig)) = (event.id, event.ts_orig) {
-            let ingest_ts = id.timestamp();
+            let ingest_ts = id.timestamp().expect("test ID must be UUIDv7");
             prop_assert!(
                 ingest_ts + Duration::hours(1) >= Timestamp::from(*ts_orig),
                 "UUIDv7 timestamp should not significantly precede origin time"

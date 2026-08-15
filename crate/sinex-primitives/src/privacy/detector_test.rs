@@ -46,6 +46,13 @@ async fn cc_rejects_random_digits() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn cc_finds_dot_separated_number() -> ::xtask::sandbox::TestResult<()> {
+    let matches = find_credit_cards("card: 4111.1111.1111.1111");
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+
 // ── Email ──
 
 #[sinex_test]
@@ -67,6 +74,20 @@ async fn email_rejects_version() -> ::xtask::sandbox::TestResult<()> {
 #[sinex_test]
 async fn phone_finds_international() -> ::xtask::sandbox::TestResult<()> {
     let matches = find_phones("call +1-555-867-5309 now");
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn phone_finds_us_country_code_without_plus() -> ::xtask::sandbox::TestResult<()> {
+    let matches = find_phones("call 1-555-867-5309 now");
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn phone_finds_polish_local_number() -> ::xtask::sandbox::TestResult<()> {
+    let matches = find_phones("call 501234567 now");
     assert_eq!(matches.len(), 1);
     Ok(())
 }
@@ -296,6 +317,13 @@ async fn ssn_rejects_serial_0000() -> ::xtask::sandbox::TestResult<()> {
 #[sinex_test]
 async fn ssn_finds_in_text() -> ::xtask::sandbox::TestResult<()> {
     let matches = find_ssns("my SSN is 123-45-6789 ok");
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ssn_finds_dot_separated_number() -> ::xtask::sandbox::TestResult<()> {
+    let matches = find_ssns("my SSN is 123.45.6789 ok");
     assert_eq!(matches.len(), 1);
     Ok(())
 }
