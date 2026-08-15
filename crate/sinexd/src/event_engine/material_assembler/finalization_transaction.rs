@@ -231,6 +231,32 @@ impl<'a> FinalizationTransaction<'a> {
         // The temporal ledger is reserved for genuine sub-material wrapped-stream
         // entries.
 
+        #[cfg(test)]
+        if self
+            .assembler
+            .fault_injector
+            .inject(FaultPoint::MaterialCommitConnectionTermination)
+            .is_err()
+        {
+            // Kill the exact backend holding this transaction from a separate
+            // pool connection. The subsequent `tx.commit()` must therefore
+            // exercise SQLx's real commit-error path, rather than a synthetic
+            // error before the transaction boundary.
+            let backend_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await
+                .expect("test transaction backend pid must be queryable");
+            let terminated: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+                .bind(backend_pid)
+                .fetch_one(&self.assembler.pool)
+                .await
+                .expect("test transaction backend must be terminable");
+            assert!(
+                terminated,
+                "test transaction backend must be terminated before commit"
+            );
+        }
+
         match tx.commit().await {
             Ok(()) => {
                 self.release_landed_write_leases(

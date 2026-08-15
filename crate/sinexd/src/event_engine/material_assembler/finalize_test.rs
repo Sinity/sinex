@@ -1050,6 +1050,107 @@ async fn post_commit_response_failure_reconciles_real_cas_finalization_inner(
 }
 
 #[sinex_test]
+async fn database_commit_failure_after_cas_publish_is_redeliverable(
+    ctx: TestContext,
+) -> TestResult<()> {
+    // Run this on a larger worker stack: the manifest finalization route can
+    // be deep enough to overflow the default test-thread stack.
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("material-commit-failure-recovery".to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            runtime.block_on(async move {
+                database_commit_failure_after_cas_publish_is_redeliverable_inner(ctx).await
+            })
+        })
+        .map_err(|error| color_eyre::eyre::eyre!(error))?
+        .join()
+        .map_err(|_| color_eyre::eyre::eyre!("commit failure recovery test thread panicked"))??;
+    Ok(())
+}
+
+async fn database_commit_failure_after_cas_publish_is_redeliverable_inner(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::MaterialCommitConnectionTermination);
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("commit-failure-recovery")
+            .fault_injector(injector)
+            .build(&ctx)
+            .await?;
+    let material_id = Uuid::now_v7();
+    let started_at = Timestamp::now();
+    let ended_at = Timestamp::now();
+    let payload = b"database commit failure recovery bytes".to_vec();
+    let content_hash = blake3::hash(&payload).to_hex().to_string();
+
+    state::handle_begin(
+        &assembler,
+        material_id,
+        state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "test-material".to_string(),
+            source_identifier: "test://commit-failure-recovery".to_string(),
+            metadata: json!({}),
+            started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+        },
+    )
+    .await?;
+    io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+
+    let state_handle = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing assembler state"))?;
+    {
+        let mut state = state_handle.lock().await;
+        state.pending_end = Some(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: sinex_primitives::temporal::format_rfc3339(ended_at),
+            content_hash,
+            total_slices: 1,
+            total_size_bytes: payload.len() as i64,
+            metadata: json!({}),
+        });
+    }
+
+    let first_error = assembler
+        .try_finalize_pending_end(material_id, state_handle.clone(), PendingEndBehavior::Error)
+        .await
+        .expect_err("the real commit failure must reach the redelivery path");
+    assert!(
+        !first_error.context_map().contains_key("commit_outcome"),
+        "a definite rollback must not be mislabeled unknown: {first_error}"
+    );
+    assert!(
+        first_error.to_string().contains("Failed to commit material finalization transaction"),
+        "the failure must be classified at the commit boundary: {first_error}"
+    );
+    assert!(
+        assembler.content_store.list_write_leases().await?.is_empty(),
+        "failed commit cleanup must release the CAS lease"
+    );
+
+    // The assembler retains the immutable End record and restores its phase;
+    // the next ordinary delivery re-reads/re-publishes the staged bytes and
+    // completes against a fresh database connection.
+    assembler
+        .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
+        .await?;
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(material_id))
+        .await?
+        .expect("redelivery must eventually finalize the material");
+    assert_eq!(material.status, MaterialStatus::Completed);
+    assert!(material.optional_blob_id.is_some());
+    Ok(())
+}
+
+#[sinex_test]
 async fn finalization_transaction_is_idempotent_after_commit_lands(
     ctx: TestContext,
 ) -> TestResult<()> {

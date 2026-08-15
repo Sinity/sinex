@@ -26,6 +26,10 @@ pub enum FaultPoint {
     /// production fault-injection surface.
     #[cfg(test)]
     MaterialCommitPostCommitResponse,
+    /// Test-only termination of the PostgreSQL backend immediately before
+    /// commit. This exercises the real `Transaction::commit` error path.
+    #[cfg(test)]
+    MaterialCommitConnectionTermination,
 }
 
 impl FaultPoint {
@@ -41,6 +45,8 @@ impl FaultPoint {
             Self::MaterialWal => "material-wal",
             #[cfg(test)]
             Self::MaterialCommitPostCommitResponse => "material-commit-post-commit-response",
+            #[cfg(test)]
+            Self::MaterialCommitConnectionTermination => "material-commit-connection-termination",
         }
     }
 }
@@ -66,6 +72,8 @@ impl FromStr for FaultPoint {
             "material-wal" => Ok(Self::MaterialWal),
             #[cfg(test)]
             "material-commit-post-commit-response" => Ok(Self::MaterialCommitPostCommitResponse),
+            #[cfg(test)]
+            "material-commit-connection-termination" => Ok(Self::MaterialCommitConnectionTermination),
             other => Err(SinexError::validation(format!(
                 "unknown deterministic fault point: {other}"
             ))),
@@ -191,6 +199,7 @@ mod tests {
             FaultPoint::MaterialStagedFile,
             FaultPoint::MaterialWal,
             FaultPoint::MaterialCommitPostCommitResponse,
+            FaultPoint::MaterialCommitConnectionTermination,
         ] {
             assert_eq!(point.to_string().parse::<FaultPoint>().unwrap(), point);
         }
