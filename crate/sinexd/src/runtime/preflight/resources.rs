@@ -193,7 +193,12 @@ pub async fn verify_system_resources() -> RuntimeResult<(VerificationStatus, Val
 /// the event engine begins materializing new data.
 pub fn verify_startup_storage() -> RuntimeResult<()> {
     let mut messages = Vec::new();
-    verify_disk_space(&mut messages)?;
+    if let Err(error) = verify_disk_space(&mut messages) {
+        return Err(SinexError::processing(format!(
+            "{error}; storage checks: {}",
+            messages.join("; ")
+        )));
+    }
     for message in messages {
         info!("{message}");
     }

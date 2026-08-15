@@ -1156,6 +1156,10 @@ pub async fn start_test_event_engine_with_config(
         // surface is SINEX_MATERIAL_ASSEMBLER_DIR plus SINEX_CONTENT_STORE_PATH.
         cmd.env("SINEX_MATERIAL_ASSEMBLER_DIR", wd.join("assembler_state"));
         cmd.env("SINEX_CONTENT_STORE_PATH", wd.join("content-store"));
+        // Keep the daemon's startup storage preflight on the same workspace-backed
+        // filesystem as the rest of this isolated test instance.  The host /tmp
+        // may be a small tmpfs and is not a valid authority for a large-store test.
+        cmd.env("SINEX_TMP_DIR", wd.join("runtime-tmp"));
         cmd.env(
             "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH",
             wd.join("content-store-process-counters.json"),

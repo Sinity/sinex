@@ -537,7 +537,10 @@ impl SinexEnvironment {
     /// Get environment-specific temporary directory
     #[must_use]
     pub fn temp_dir(&self) -> PathBuf {
-        self.work_directory("/tmp/sinex")
+        let base = env::var_os("SINEX_TMP_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp/sinex"));
+        self.work_directory(base)
     }
 
     /// Get environment-specific runtime directory

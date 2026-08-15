@@ -19,6 +19,7 @@ use sinexd::runtime::{
     TimeHorizon,
 };
 use sinexd::sources::dispatch::default_parser_dispatch;
+use xtask::sandbox::fs::temp_dir;
 use xtask::sandbox::prelude::*;
 
 const MANIFEST_REPLAY_SOURCE_ID: &str = "fs";
@@ -170,18 +171,26 @@ async fn find_material_events(
 #[sinex_test(timeout = 180)]
 async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let source_dir = tempfile::tempdir()?;
+    // The daemon's startup storage preflight requires 10 GiB for the data
+    // path.  Use the workspace-backed test root (on the large workspace
+    // filesystem) rather than the host's small /tmp tmpfs, so this route
+    // exercises the real preflight instead of failing before startup.
+    let source_dir = temp_dir()?;
     let source_path = source_dir.path().join("production-path-proof.txt");
     let source_path_string = source_path.to_string_lossy().into_owned();
     let payload = b"production path manifest proof: exact CAS bytes";
 
-    let event_engine_work_dir = tempfile::tempdir()?;
+    let event_engine_work_dir = temp_dir()?;
     // start_test_event_engine_with_config resolves the canonical CAS root as
     // <work_dir>/content-store for the spawned event-engine process. Inspect
     // that same root below; an unrelated process-wide env override would not
     // control the child and would make this authority assertion meaningless.
     let cas_dir = event_engine_work_dir.path().join("content-store");
     let mut env = EnvGuard::new();
+    env.set(
+        "SINEX_TMP_DIR",
+        event_engine_work_dir.path().join("runtime-tmp"),
+    );
     env.set("SINEX_CONTENT_STORE_PATH", &cas_dir);
     let mut event_engine = start_test_event_engine_with_config(
         TestEventEngineConfig {
