@@ -10,16 +10,82 @@ async fn test_config_from_env() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_history_db_path() -> TestResult<()> {
+async fn test_history_db_path_ignores_checkout_state_dir() -> TestResult<()> {
+    // The history DB is deliberately NOT under SINEX_STATE_DIR: state_dir is
+    // per-checkout runtime scratch, while the ledger is shared machine-wide.
     let dir = tempfile::tempdir()?;
     let mut env = EnvGuard::with_keys(&["SINEX_STATE_DIR", "XTASK_HISTORY_DB"]);
     env.set("SINEX_STATE_DIR", dir.path());
     env.clear("XTASK_HISTORY_DB");
 
     let config = Config::from_env();
-    let path = config.history_db_path();
-    assert_eq!(path, dir.path().join("xtask-history.db"));
+    assert_ne!(config.history_db_path(), dir.path().join("xtask-history.db"));
+    assert_eq!(
+        config.history_db_path(),
+        canonical_history_db_path(&config.workspace_root)
+    );
     Ok(())
+}
+
+#[sinex_test]
+async fn test_canonical_history_db_path_falls_back_outside_git() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    assert_eq!(
+        canonical_history_db_path(dir.path()),
+        dir.path().join(".sinex/state/xtask-history.db")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_linked_worktree_shares_the_main_checkout_ledger() -> TestResult<()> {
+    let Some(main) = git_workspace_fixture()? else {
+        return Ok(()); // git unavailable; the fallback path is covered above
+    };
+    let worktree = main.path().join("linked");
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(main.path())
+        .args(["worktree", "add", "-b", "lane"])
+        .arg(&worktree)
+        .output()?;
+    assert!(status.status.success(), "git worktree add failed: {status:?}");
+    std::fs::create_dir_all(worktree.join("xtask"))?;
+    std::fs::write(worktree.join("xtask/Cargo.toml"), "")?;
+
+    assert_eq!(
+        canonical_history_db_path(&worktree),
+        canonical_history_db_path(main.path()),
+        "a linked worktree must resolve to the main checkout's ledger"
+    );
+    Ok(())
+}
+
+/// Build a throwaway git checkout carrying the sinex workspace markers.
+/// Returns `None` when git is unavailable or refuses to initialize.
+fn git_workspace_fixture() -> color_eyre::Result<Option<tempfile::TempDir>> {
+    let dir = tempfile::tempdir()?;
+    std::fs::write(dir.path().join("Cargo.toml"), "")?;
+    std::fs::create_dir_all(dir.path().join("xtask"))?;
+    std::fs::write(dir.path().join("xtask/Cargo.toml"), "")?;
+    for args in [
+        vec!["init", "--initial-branch=main"],
+        vec!["config", "user.email", "xtask@example.invalid"],
+        vec!["config", "user.name", "xtask test"],
+        vec!["add", "."],
+        vec!["commit", "-m", "fixture", "--no-gpg-sign"],
+    ] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(&args)
+            .output();
+        match output {
+            Ok(output) if output.status.success() => {}
+            _ => return Ok(None),
+        }
+    }
+    Ok(Some(dir))
 }
 
 #[sinex_test]

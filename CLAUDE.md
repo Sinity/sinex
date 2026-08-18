@@ -288,9 +288,25 @@ shell background (duplicate runs collide on the target lock). Read the printed j
 code at `.sinex/state/jobs/<id>/exit_code`. Never pipe xtask through `head`/`tail` (hook
 blocks it). Never combine `--workspace` with `-p`.
 
-`$SINEX_STATE_DIR` = durable checkout state (`<checkout>/.sinex/state`, holds
-`xtask-history.db` — evidence, never delete); `$SINEX_CACHE_DIR`/`CARGO_TARGET_DIR` =
-disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
+`$SINEX_STATE_DIR` = durable checkout state (`<checkout>/.sinex/state`, holds jobs
+and preflight); `$SINEX_CACHE_DIR`/`CARGO_TARGET_DIR` = disposable, relocated to
+`/var/cache/sinex/<user>/<hash>/` by the devshell.
+
+**The history DB is machine-wide, not per checkout.** Every checkout and linked
+worktree records into the MAIN checkout's `.sinex/state/xtask-history.db`,
+resolved through `git rev-parse --git-common-dir` — evidence, never delete.
+`XTASK_HISTORY_DB` overrides the location outright; nothing else moves it, and
+in particular `SINEX_STATE_DIR` no longer does. Every row names its
+`workspace_root` / `workspace_name` / `git_branch`, and that is load-bearing
+rather than decorative: the freshness key is a *content* fingerprint (HEAD +
+dirty content), so two worktrees on the same commit produce the same
+fingerprint. Freshness/proof reuse, the diagnostics supersession CTE, the
+stale-PID sweep and `xtask jobs` are all scoped to the running workspace;
+`InvocationQuery`/`DiagnosticQuery`/`TestResultQuery` scope by default and
+widen with `.all_workspaces()`. A worktree running an xtask built before this
+still writes a private ledger — `xtask history unify` absorbs those (and
+`--remove-sources` deletes each one only after every row is accounted for);
+`xtask history import <db>` absorbs a single named file.
 
 ## Verification & Git
 

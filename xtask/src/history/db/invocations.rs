@@ -12,7 +12,11 @@ impl HistoryDb {
         let git_snapshot = current_git_snapshot();
         let git_commit = git_snapshot.commit.clone();
         let git_dirty = git_snapshot.dirty;
-        let host = crate::config::config().hostname.clone();
+        let git_branch = git_snapshot.branch.clone();
+        let cfg = crate::config::config();
+        let host = cfg.hostname.clone();
+        let workspace_root = cfg.workspace_root.display().to_string();
+        let workspace_name = cfg.workspace_name.clone();
         let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
 
@@ -37,10 +41,10 @@ impl HistoryDb {
             }
             let result = self.conn.execute(
                 r"
-                INSERT INTO invocations (command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd, status)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'running')
+                INSERT INTO invocations (command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd, status, workspace_root, workspace_name, git_branch)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'running', ?10, ?11, ?12)
                 ",
-                params![command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd],
+                params![command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd, workspace_root, workspace_name, git_branch],
             );
             match result {
                 Ok(_) => {
@@ -533,13 +537,13 @@ impl HistoryDb {
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
                    started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
             FROM invocations
-            WHERE command = ?1
+            WHERE command = ?1 AND workspace_root = ?2
             ORDER BY started_at DESC
             LIMIT 1
             ",
         )?;
 
-        stmt.query_row(params![command], row_to_invocation)
+        stmt.query_row(params![command, self.workspace_root], row_to_invocation)
             .optional()
             .context("failed to get last invocation")
     }
@@ -562,10 +566,11 @@ impl HistoryDb {
                 AVG(duration_secs) as avg_duration
             FROM invocations
             WHERE command = ?1 AND started_at >= ?2 AND status IN ('success', 'failed')
+              AND workspace_root = ?3
             ",
         )?;
 
-        let stats = stmt.query_row(params![command, since_str], |row| {
+        let stats = stmt.query_row(params![command, since_str, self.workspace_root], |row| {
             Ok(CommandStats {
                 total: row.get(0)?,
                 successes: row.get(1)?,
@@ -590,12 +595,13 @@ impl HistoryDb {
                 SELECT id, status, duration_secs, tree_fingerprint, scope_key
                 FROM invocations
                 WHERE command = ?1
+                  AND workspace_root = ?2
                   AND status IN ('success', 'failed')
                   AND tree_fingerprint IS NOT NULL
                 ORDER BY started_at DESC
                 LIMIT 1
                 ",
-                params![command],
+                params![command, self.workspace_root],
                 |row| {
                     let status_str: String = row.get(1)?;
                     Ok(InvocationWithFingerprint {
@@ -631,10 +637,11 @@ impl HistoryDb {
                   AND status = 'success'
                   AND tree_fingerprint = ?2
                   AND scope_key = ?3
+                  AND workspace_root = ?4
                 ORDER BY started_at DESC
                 LIMIT 1
                 ",
-                params![command, tree_fingerprint, scope_key],
+                params![command, tree_fingerprint, scope_key, self.workspace_root],
                 |row| {
                     let status_str: String = row.get(1)?;
                     Ok(InvocationWithFingerprint {
@@ -680,10 +687,13 @@ impl HistoryDb {
                   AND input_fingerprint = ?3
                   AND scope_key = ?4
                   AND status = 'success'
+                  AND invocation_id IN (
+                      SELECT id FROM invocations WHERE workspace_root = ?5
+                  )
                 ORDER BY finished_at DESC, id DESC
                 LIMIT 1
                 ",
-                params![command, proof_kind, input_fingerprint, scope_key],
+                params![command, proof_kind, input_fingerprint, scope_key, self.workspace_root],
                 row_to_proof_evidence,
             )
             .optional()
@@ -719,10 +729,13 @@ impl HistoryDb {
                   AND scope_key = ?3
                   AND reusable = 1
                   AND status = 'success'
+                  AND invocation_id IN (
+                      SELECT id FROM invocations WHERE workspace_root = ?4
+                  )
                 ORDER BY finished_at DESC, id DESC
                 LIMIT 1
                 ",
-                params![proof_kind, input_fingerprint, scope_key],
+                params![proof_kind, input_fingerprint, scope_key, self.workspace_root],
                 row_to_test_proof_unit,
             )
             .optional()
@@ -759,10 +772,13 @@ impl HistoryDb {
                   AND scope_key = ?2
                   AND reusable = 1
                   AND status = 'success'
+                  AND invocation_id IN (
+                      SELECT id FROM invocations WHERE workspace_root = ?3
+                  )
                 ORDER BY finished_at DESC, id DESC
                 LIMIT 1
                 ",
-                params![proof_kind, scope_key],
+                params![proof_kind, scope_key, self.workspace_root],
                 row_to_test_proof_unit,
             )
             .optional()

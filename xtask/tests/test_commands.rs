@@ -220,6 +220,7 @@ async fn test_jobs_status_json_surfaces_running_vm_progress_summary()
 
     let output = xtask_command()?
         .env("SINEX_STATE_DIR", state_dir.path())
+        .env("XTASK_HISTORY_DB", history_db_path(state_dir.path()))
         .env("NO_COLOR", "1")
         .args(["jobs", "status", &job_id.to_string(), "--json"])
         .output()?;
@@ -256,6 +257,7 @@ async fn test_jobs_status_human_surfaces_failed_vm_summary() -> ::xtask::sandbox
 
     let output = xtask_command()?
         .env("SINEX_STATE_DIR", state_dir.path())
+        .env("XTASK_HISTORY_DB", history_db_path(state_dir.path()))
         .env("NO_COLOR", "1")
         .args(["--format", "human", "jobs", "status", &job_id.to_string()])
         .output()?;
@@ -282,6 +284,7 @@ async fn test_jobs_output_json_surfaces_failed_vm_progress_summary()
 
     let output = xtask_command()?
         .env("SINEX_STATE_DIR", state_dir.path())
+        .env("XTASK_HISTORY_DB", history_db_path(state_dir.path()))
         .env("NO_COLOR", "1")
         .args(["jobs", "output", &job_id.to_string(), "--json"])
         .output()?;
@@ -327,6 +330,7 @@ async fn test_jobs_output_human_prints_failed_vm_summary_footer() -> ::xtask::sa
 
     let output = xtask_command()?
         .env("SINEX_STATE_DIR", state_dir.path())
+        .env("XTASK_HISTORY_DB", history_db_path(state_dir.path()))
         .env("NO_COLOR", "1")
         .args(["--format", "human", "jobs", "output", &job_id.to_string()])
         .output()?;
@@ -409,8 +413,13 @@ async fn test_analytics_all_subcommands_empty_db() -> ::xtask::sandbox::TestResu
     Ok(())
 }
 
+/// The ledger follows `XTASK_HISTORY_DB`, never `SINEX_STATE_DIR`.
+///
+/// `SINEX_STATE_DIR` is per-checkout runtime scratch. Letting it select the
+/// history database is what allowed each checkout and worktree to fork the
+/// ledger, so a state dir pointing elsewhere must not move history with it.
 #[sinex_serial_test]
-async fn test_xtask_command_prefers_state_dir_history_over_parent_override()
+async fn test_history_follows_the_explicit_override_not_the_state_dir()
 -> ::xtask::sandbox::TestResult<()> {
     let state_dir = tempfile::tempdir()?;
     let seeded_history = state_dir.path().join("xtask-history.db");
@@ -423,19 +432,20 @@ async fn test_xtask_command_prefers_state_dir_history_over_parent_override()
         },
     )?;
 
-    let poison_dir = tempfile::tempdir()?;
-    let poison_history = poison_dir.path().join("poison-history.db");
-    let _parent_history_override = EnvGuard::set_single("XTASK_HISTORY_DB", &poison_history);
+    // A different state dir, so a resolution that still followed it would read
+    // an empty database and return no rows.
+    let unrelated_state_dir = tempfile::tempdir()?;
 
     let output = xtask_command()?
-        .env("SINEX_STATE_DIR", state_dir.path())
+        .env("SINEX_STATE_DIR", unrelated_state_dir.path())
+        .env("XTASK_HISTORY_DB", &seeded_history)
         .env("NO_COLOR", "1")
         .args(["history", "list", "--json", "--limit", "1"])
         .output()?;
 
     assert!(
         output.status.success(),
-        "history list should succeed with explicit SINEX_STATE_DIR; stderr: {}",
+        "history list should succeed with an explicit XTASK_HISTORY_DB; stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -454,7 +464,7 @@ async fn test_xtask_command_prefers_state_dir_history_over_parent_override()
     assert_eq!(
         rows.len(),
         1,
-        "history list should read the seeded state-dir DB instead of the parent XTASK_HISTORY_DB override"
+        "history list should read the database named by XTASK_HISTORY_DB, not one derived from SINEX_STATE_DIR"
     );
 
     Ok(())
