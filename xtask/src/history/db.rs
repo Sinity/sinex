@@ -5,15 +5,22 @@ use color_eyre::eyre::{Result, WrapErr};
 
 /// Opening half of the package-scoped supersession CTE used by diagnostic queries.
 ///
-/// Finds the most recent successful/failed invocation that compiled each package.
-/// An optional `AND i.command = ?N` clause may be injected before appending
-/// `LATEST_PER_PACKAGE_CTE_CLOSE`.
+/// Finds the most recent successful/failed invocation **in this workspace** that
+/// compiled each package. The workspace predicate is not optional: every
+/// checkout shares one ledger, so without it another lane's newer build of the
+/// same package would supersede this one's, and `xtask fix` would act on
+/// diagnostics produced from a source tree that is not the one on disk here.
+///
+/// `?1` is bound to the workspace root, so callers appending further clauses
+/// number their own parameters from `?2`. An optional `AND i.command = ?N`
+/// clause may be injected before appending `LATEST_PER_PACKAGE_CTE_CLOSE`.
 const LATEST_PER_PACKAGE_CTE_OPEN: &str = "
     WITH latest_per_package AS (
         SELECT ip.package, MAX(i.id) as latest_inv_id
         FROM invocation_packages ip
         JOIN invocations i ON ip.invocation_id = i.id
         WHERE i.status IN ('success', 'failed')
+          AND i.workspace_root = ?1
 ";
 
 /// Closing half of the package-scoped supersession CTE (GROUP BY + closing paren).
@@ -189,6 +196,13 @@ pub struct HistoryDb {
     pub(super) conn: Connection,
     /// True if the database contains synthetic (seeded) data.
     pub is_synthetic: bool,
+    /// Absolute root of the workspace this handle belongs to.
+    ///
+    /// Every checkout and linked worktree shares one ledger, so this is both
+    /// the value written onto new rows and the predicate that keeps freshness
+    /// reuse, diagnostics and job listings from reading another workspace's
+    /// runs. See [`crate::config::canonical_history_db_path`].
+    pub(super) workspace_root: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,6 +221,30 @@ enum InvocationSelector {
 }
 
 impl HistoryDb {
+    fn new_handle(conn: Connection) -> Self {
+        Self {
+            conn,
+            is_synthetic: false,
+            workspace_root: crate::config::config().workspace_root.display().to_string(),
+        }
+    }
+
+    /// Absolute root of the workspace this handle scopes reads and writes to.
+    #[must_use]
+    pub fn workspace_root(&self) -> &str {
+        &self.workspace_root
+    }
+
+    /// Return a handle scoped to a different workspace.
+    ///
+    /// Used by `xtask history import`, which writes rows on behalf of the
+    /// workspace that produced them rather than the one running the command.
+    #[must_use]
+    pub fn scoped_to_workspace(mut self, workspace_root: String) -> Self {
+        self.workspace_root = workspace_root;
+        self
+    }
+
     /// Open or create the history database at the given path.
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_with_schema_version_probe(
@@ -233,10 +271,7 @@ impl HistoryDb {
             })?;
         Self::configure_connection(&conn, HistoryDbOpenMode::Query)?;
 
-        let mut db = Self {
-            conn,
-            is_synthetic: false,
-        };
+        let mut db = Self::new_handle(conn);
         let current_version = db
             .schema_version()
             .context("failed to read history DB schema version for query")?;
@@ -257,10 +292,7 @@ impl HistoryDb {
         let conn =
             Connection::open_in_memory().context("failed to open in-memory history database")?;
         Self::configure_connection(&conn, HistoryDbOpenMode::Ephemeral)?;
-        let db = Self {
-            conn,
-            is_synthetic: false,
-        };
+        let db = Self::new_handle(conn);
         db.init_schema()?;
         db.ensure_compat_schema()?;
         db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
@@ -312,10 +344,7 @@ impl HistoryDb {
         // or stale-invocation cleanup. This fast path keeps temp/ephemeral
         // history stores cheap and deterministic.
         if !db_existed {
-            let db = Self {
-                conn,
-                is_synthetic: false,
-            };
+            let db = Self::new_handle(conn);
             db.init_schema()?;
             db.ensure_compat_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
@@ -343,10 +372,7 @@ impl HistoryDb {
                     format!("failed to recreate history database: {}", path.display())
                 })?;
                 Self::configure_connection(&conn, mode)?;
-                let db = Self {
-                    conn,
-                    is_synthetic: false,
-                };
+                let db = Self::new_handle(conn);
                 db.init_schema()?;
                 db.ensure_compat_schema()?;
                 db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
@@ -356,10 +382,7 @@ impl HistoryDb {
             refresh_history_integrity_stamp(path, now);
         }
 
-        let mut db = Self {
-            conn,
-            is_synthetic: false,
-        };
+        let mut db = Self::new_handle(conn);
         let current_version = match schema_version_probe(&db) {
             Ok(version) => version,
             Err(error) if is_recoverable_history_schema_version_error(&error) => {
@@ -378,10 +401,7 @@ impl HistoryDb {
                     )
                 })?;
                 Self::configure_connection(&conn, mode)?;
-                let recreated = Self {
-                    conn,
-                    is_synthetic: false,
-                };
+                let recreated = Self::new_handle(conn);
                 recreated.init_schema()?;
                 recreated.ensure_compat_schema()?;
                 recreated.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
@@ -437,10 +457,7 @@ impl HistoryDb {
                     )
                 })?;
                 Self::configure_connection(&conn, mode)?;
-                let recreated = Self {
-                    conn,
-                    is_synthetic: false,
-                };
+                let recreated = Self::new_handle(conn);
                 recreated.init_schema()?;
                 recreated.ensure_compat_schema()?;
                 recreated.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
