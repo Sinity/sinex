@@ -10,12 +10,23 @@ fn attribution(name: &str) -> WorkspaceAttribution {
 }
 
 /// Build a source ledger holding one finished invocation with child rows.
-fn seed_source(path: &Path) -> color_eyre::Result<i64> {
+///
+/// `carries_provenance` distinguishes the two shapes actually on disk: a ledger
+/// written before the workspace columns existed (NULL, so the import supplies
+/// attribution) and one written after (already attributed, so the import must
+/// leave it alone).
+fn seed_source(path: &Path, carries_provenance: bool) -> color_eyre::Result<i64> {
     let db = HistoryDb::open(path)?;
     let id = db.start_invocation("test", Some("unit"), None, Some("[]"))?;
     db.record_stage_timing(id, "compile", "2026-08-18T10:00:00Z", 1.5, true, StagePressure::default())?;
     db.record_compiled_packages(id, &std::collections::HashSet::from(["sinex-db".to_string()]))?;
     db.finish_invocation(id, InvocationStatus::Success, Some(0), 2.0)?;
+    if !carries_provenance {
+        db.conn.execute(
+            "UPDATE invocations SET workspace_root = NULL, workspace_name = NULL",
+            [],
+        )?;
+    }
     Ok(id)
 }
 
@@ -23,7 +34,7 @@ fn seed_source(path: &Path) -> color_eyre::Result<i64> {
 async fn import_remaps_ids_and_attributes_the_workspace() -> TestResult<()> {
     let dir = tempfile::tempdir()?;
     let source_path = dir.path().join("source.db");
-    seed_source(&source_path)?;
+    seed_source(&source_path, false)?;
 
     let dest = HistoryDb::open(&dir.path().join("canonical.db"))?;
     // A row already present so the imported invocation cannot land on id 1 and
@@ -61,7 +72,7 @@ async fn import_remaps_ids_and_attributes_the_workspace() -> TestResult<()> {
 async fn reimporting_the_same_ledger_inserts_nothing() -> TestResult<()> {
     let dir = tempfile::tempdir()?;
     let source_path = dir.path().join("source.db");
-    seed_source(&source_path)?;
+    seed_source(&source_path, false)?;
     let dest = HistoryDb::open(&dir.path().join("canonical.db"))?;
 
     let first = import_history(&dest, &source_path, &attribution("lane-a"))?;
@@ -89,7 +100,7 @@ async fn a_preserved_copy_of_an_absorbed_ledger_is_a_no_op() -> TestResult<()> {
     // live ledger and then its copy must not duplicate the shared runs.
     let dir = tempfile::tempdir()?;
     let source_path = dir.path().join("source.db");
-    seed_source(&source_path)?;
+    seed_source(&source_path, false)?;
     let copy_path = dir.path().join("preserved.db");
     copy_sqlite_snapshot(&source_path, &copy_path)?;
 
@@ -106,7 +117,7 @@ async fn a_preserved_copy_of_an_absorbed_ledger_is_a_no_op() -> TestResult<()> {
 async fn rows_keep_workspace_provenance_they_already_carry() -> TestResult<()> {
     let dir = tempfile::tempdir()?;
     let source_path = dir.path().join("source.db");
-    seed_source(&source_path)?;
+    seed_source(&source_path, true)?;
     {
         let source = HistoryDb::open(&source_path)?;
         source.conn.execute(
