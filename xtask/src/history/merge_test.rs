@@ -149,3 +149,36 @@ async fn attribution_is_derived_from_a_workspace_state_path() -> TestResult<()> 
     assert_eq!(derived.name, "sinex-q102");
     Ok(())
 }
+
+#[sinex_test]
+async fn a_ledger_without_workspace_columns_is_still_attributed() -> TestResult<()> {
+    // The worktree ledgers absorbed during the 2026-08-18 migration were
+    // written by an xtask that had no workspace columns at all, so those names
+    // are missing from the source/destination column intersection. Attribution
+    // has to be applied on top of that intersection, not through it.
+    let dir = tempfile::tempdir()?;
+    let source_path = dir.path().join("legacy.db");
+    seed_source(&source_path, false)?;
+    {
+        let source = HistoryDb::open(&source_path)?;
+        source.conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_invocations_workspace_started;
+             DROP INDEX IF EXISTS idx_invocations_workspace_fingerprint;
+             ALTER TABLE invocations DROP COLUMN workspace_root;
+             ALTER TABLE invocations DROP COLUMN workspace_name;",
+        )?;
+    }
+
+    let dest = HistoryDb::open(&dir.path().join("canonical.db"))?;
+    let report = import_history(&dest, &source_path, &attribution("lane-legacy"))?;
+    assert_eq!(report.invocations_inserted, 1);
+
+    let (root, name): (Option<String>, Option<String>) = dest.conn.query_row(
+        "SELECT workspace_root, workspace_name FROM invocations WHERE command = 'test'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(root.as_deref(), Some("/realm/worktrees/lane-legacy"));
+    assert_eq!(name.as_deref(), Some("lane-legacy"));
+    Ok(())
+}

@@ -272,12 +272,23 @@ fn import_invocations(
         .iter()
         .position(|column| column == "id")
         .ok_or_else(|| color_eyre::eyre::eyre!("source invocations table has no id column"))?;
-    let insert_columns: Vec<&String> = columns
+    // A ledger written before the workspace columns existed has nothing for
+    // them in its own schema, so they are absent from the shared-column
+    // intersection. Append them anyway when the destination has them:
+    // otherwise the rows land unattributed and the attribution argument is
+    // silently ignored for exactly the ledgers that most need it.
+    let attribution_columns = destination_attribution_columns(dest)?;
+    let mut insert_columns: Vec<&String> = columns
         .iter()
         .enumerate()
         .filter(|(index, _)| *index != id_index)
         .map(|(_, column)| column)
         .collect();
+    for column in &attribution_columns {
+        if !insert_columns.iter().any(|existing| *existing == column) {
+            insert_columns.push(column);
+        }
+    }
 
     let select_sql = format!(
         "SELECT {} FROM src.invocations ORDER BY id",
@@ -311,6 +322,8 @@ fn import_invocations(
                 values.push(row.get::<_, Value>(index)?);
             }
         }
+        // Placeholders for the appended attribution columns; filled below.
+        values.resize(insert_columns.len(), Value::Null);
         apply_attribution(&insert_columns, &mut values, attribution);
 
         let key = row_invocation_key(&insert_columns, &values);
@@ -327,6 +340,21 @@ fn import_invocations(
     }
 
     Ok(id_map)
+}
+
+/// Workspace-provenance columns the destination ledger carries.
+///
+/// Returned as owned names because they may not exist in the source's column
+/// list at all, which is precisely the case they exist to handle.
+fn destination_attribution_columns(dest: &HistoryDb) -> Result<Vec<String>> {
+    let present: HashSet<String> = table_columns(dest, "main", "invocations")?
+        .into_iter()
+        .collect();
+    Ok(["workspace_root", "workspace_name"]
+        .into_iter()
+        .filter(|column| present.contains(*column))
+        .map(ToOwned::to_owned)
+        .collect())
 }
 
 /// Fill workspace provenance for a row whose source database predates it.
