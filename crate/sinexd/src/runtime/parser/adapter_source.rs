@@ -720,6 +720,14 @@ where
         &mut self,
         replay: MaterialReplayContext,
     ) -> RuntimeResult<ScanReport> {
+        // Validate the complete replay envelope before opening the CAS or
+        // processing the first occurrence.  Per-occurrence checks below are
+        // still required because they also prove the range against the
+        // authoritative material length, but they must not be the first
+        // place a malformed/non-byte replay is discovered: the coordinator
+        // may already have archived the old interpretation by then.
+        validate_material_replay_context(&replay)?;
+
         #[cfg(feature = "db")]
         let content_store = {
             let pool = self
@@ -2966,6 +2974,77 @@ fn material_replay_range(
         )
     })?;
     Ok((anchor, range_start..range_end))
+}
+
+/// Validate replay coordinates before any CAS read, parser invocation, or
+/// event emission.  The replay wire format is shared by adapters whose native
+/// occurrence identity is not a byte range; silently treating those anchors
+/// as byte offsets would be an unsafe widening of scope.
+fn validate_material_replay_context(
+    replay: &crate::runtime::stream::MaterialReplayContext,
+) -> RuntimeResult<()> {
+    for material in &replay.materials {
+        if replay
+            .replay_scope
+            .material_ids
+            .as_ref()
+            .is_some_and(|material_ids| !material_ids.contains(&material.source_material_id))
+        {
+            continue;
+        }
+
+        let mut found = false;
+        for occurrence in replay
+            .occurrences
+            .iter()
+            .filter(|occurrence| occurrence.source_material_id == material.source_material_id)
+        {
+            found = true;
+            if occurrence.offset_kind != sinex_primitives::events::OffsetKind::Byte {
+                return Err(crate::runtime::SinexError::invalid_state(
+                    "material replay context contains a non-byte occurrence coordinate",
+                )
+                .with_context("source_material_id", material.source_material_id.to_string())
+                .with_context("offset_kind", occurrence.offset_kind.as_wire_str()));
+            }
+            if occurrence.anchor_byte < 0 {
+                return Err(crate::runtime::SinexError::invalid_state(
+                    "material replay context contains a negative anchor_byte",
+                )
+                .with_context("source_material_id", material.source_material_id.to_string())
+                .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
+            }
+            let start = occurrence.offset_start.ok_or_else(|| {
+                crate::runtime::SinexError::invalid_state(
+                    "material replay context is missing offset_start before archive/replay",
+                )
+                .with_context("source_material_id", material.source_material_id.to_string())
+            })?;
+            let end = occurrence.offset_end.ok_or_else(|| {
+                crate::runtime::SinexError::invalid_state(
+                    "material replay context is missing offset_end before archive/replay",
+                )
+                .with_context("source_material_id", material.source_material_id.to_string())
+            })?;
+            if start < 0 || end <= start || start != occurrence.anchor_byte {
+                return Err(crate::runtime::SinexError::invalid_state(
+                    "material replay context contains an invalid byte range",
+                )
+                .with_context("source_material_id", material.source_material_id.to_string())
+                .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+                .with_context("offset_start", start.to_string())
+                .with_context("offset_end", end.to_string()));
+            }
+        }
+
+        if !found {
+            return Err(crate::runtime::SinexError::invalid_state(
+                "material replay context is missing the original material occurrence coordinates",
+            )
+            .with_context("source_material_id", material.source_material_id.to_string()));
+        }
+    }
+    Ok(())
 }
 
 /// Convert a `ParsedEventIntent` to an `Event<JsonValue>`, overriding `anchor_byte`
