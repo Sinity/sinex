@@ -18,10 +18,10 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeAdapter, MaterialAnchor};
 use sinexd::runtime::parser::{
-    AppendOnlyFileAdapter, AppendOnlyFileConfig, ClipboardPollingAdapter,
-    ClipboardPollingConfig, DbusBus, DbusStreamAdapter, DbusStreamConfig, FileDropAdapter,
-    FileDropConfig, MockClipboardBackend, MockDbusBackend, SqliteRowAdapter, SqliteRowConfig,
-    StaticFileAdapter, StaticFileConfig, UnixSocketStreamAdapter, UnixSocketStreamConfig,
+    AppendOnlyFileAdapter, AppendOnlyFileConfig, ClipboardPollingAdapter, ClipboardPollingConfig,
+    DbusBus, DbusStreamAdapter, DbusStreamConfig, FileDropAdapter, FileDropConfig,
+    MockClipboardBackend, MockDbusBackend, SqliteRowAdapter, SqliteRowConfig, StaticFileAdapter,
+    StaticFileConfig, UnixSocketStreamAdapter, UnixSocketStreamConfig,
 };
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -175,7 +175,10 @@ pub async fn exercise_adapter_binding(
                 .map_err(|error| format!("SQLite-row adapter open failed: {error}"))?;
             let record = expect_record(&mut stream, "SQLite-row").await?;
             if !matches!(record.anchor, MaterialAnchor::SqliteRow { .. }) {
-                return Err(format!("SQLite-row adapter emitted wrong anchor: {:?}", record.anchor));
+                return Err(format!(
+                    "SQLite-row adapter emitted wrong anchor: {:?}",
+                    record.anchor
+                ));
             }
         }
         crate::AdapterKind::Clipboard => {
@@ -186,7 +189,8 @@ pub async fn exercise_adapter_binding(
                 .next()
                 .cloned()
                 .ok_or_else(|| "clipboard fixture contains no text snapshot".to_string())?;
-            let adapter = ClipboardPollingAdapter::from_backend(MockClipboardBackend::new(snapshots));
+            let adapter =
+                ClipboardPollingAdapter::from_backend(MockClipboardBackend::new(snapshots));
             let mut stream = adapter
                 .open(
                     material_id,
@@ -240,8 +244,9 @@ pub async fn exercise_adapter_binding(
                 .open(
                     material_id,
                     &UnixSocketStreamConfig {
-                        socket_path: camino::Utf8PathBuf::from_path_buf(path)
-                            .map_err(|path| format!("unix socket fixture path is not UTF-8: {path:?}"))?,
+                        socket_path: camino::Utf8PathBuf::from_path_buf(path).map_err(|path| {
+                            format!("unix socket fixture path is not UTF-8: {path:?}")
+                        })?,
                         mode: Default::default(),
                         reconnect_on_eof: false,
                     },
@@ -258,8 +263,11 @@ pub async fn exercise_adapter_binding(
                 .open(
                     material_id,
                     &FileDropConfig {
-                        watch_paths: vec![camino::Utf8PathBuf::from_path_buf(watched_dir.clone())
-                            .map_err(|path| format!("file-drop fixture path is not UTF-8: {path:?}"))?],
+                        watch_paths: vec![
+                            camino::Utf8PathBuf::from_path_buf(watched_dir.clone()).map_err(
+                                |path| format!("file-drop fixture path is not UTF-8: {path:?}"),
+                            )?,
+                        ],
                         recursive: false,
                         max_depth: None,
                         ignored_directory_names: Vec::new(),
@@ -308,12 +316,17 @@ fn unix_socket_path(fixture: &FixtureHandle) -> Result<PathBuf, String> {
 }
 
 async fn expect_record(
-    stream: &mut futures::stream::BoxStream<'static, sinex_primitives::parser::ParserResult<sinex_primitives::parser::SourceRecord>>,
+    stream: &mut futures::stream::BoxStream<
+        'static,
+        sinex_primitives::parser::ParserResult<sinex_primitives::parser::SourceRecord>,
+    >,
     adapter: &str,
 ) -> Result<sinex_primitives::parser::SourceRecord, String> {
     match stream.next().await {
         Some(Ok(record)) => Ok(record),
         Some(Err(error)) => Err(format!("{adapter} adapter yielded an error: {error}")),
-        None => Err(format!("{adapter} adapter yielded no records for its fixture")),
+        None => Err(format!(
+            "{adapter} adapter yielded no records for its fixture"
+        )),
     }
 }

@@ -47,8 +47,7 @@ pub fn messages_from_bytes(data: &[u8]) -> Result<Vec<DbusMessage>, String> {
     let text = std::str::from_utf8(data)
         .map_err(|e| format!("dbus fixture data is not valid UTF-8: {e}"))?;
 
-    text
-        .lines()
+    text.lines()
         .filter(|l| !l.trim().is_empty())
         .enumerate()
         .map(|(i, line)| -> Result<DbusMessage, String> {

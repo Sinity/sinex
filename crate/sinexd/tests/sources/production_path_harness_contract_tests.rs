@@ -26,7 +26,9 @@ async fn adapter_kind_bindings_are_not_parser_only_metadata() -> TestResult<()> 
     for (kind, data) in cases {
         super::fixtures::exercise_adapter_binding(kind, data)
             .await
-            .map_err(|error| color_eyre::eyre::eyre!("{} fixture binding: {error}", kind.as_str()))?;
+            .map_err(|error| {
+                color_eyre::eyre::eyre!("{} fixture binding: {error}", kind.as_str())
+            })?;
     }
     Ok(())
 }
@@ -50,8 +52,7 @@ async fn production_path_case_with_no_obligations_is_not_green() -> TestResult<(
 }
 
 #[sinex_test]
-async fn production_path_logical_path_case_with_no_obligations_is_not_green() -> TestResult<()>
-{
+async fn production_path_logical_path_case_with_no_obligations_is_not_green() -> TestResult<()> {
     let failures = _run_case_with_logical_path(
         "weechat.message",
         AdapterKind::AppendOnlyFile,
@@ -70,8 +71,7 @@ async fn production_path_logical_path_case_with_no_obligations_is_not_green() ->
 }
 
 #[sinex_test]
-async fn production_path_directory_entry_case_with_no_obligations_is_not_green()
--> TestResult<()> {
+async fn production_path_directory_entry_case_with_no_obligations_is_not_green() -> TestResult<()> {
     let failures = _run_case_with_directory_entry(
         "fs.created",
         AdapterKind::FileDrop,

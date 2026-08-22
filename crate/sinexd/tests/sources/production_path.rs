@@ -319,7 +319,8 @@ async fn _run_case_with_record_fixture(
     }
 
     let mut failures = Vec::new();
-    if let Err(error) = fixtures::exercise_adapter_binding(adapter_kind, fixture.fixture_data).await {
+    if let Err(error) = fixtures::exercise_adapter_binding(adapter_kind, fixture.fixture_data).await
+    {
         failures.push(format!(
             "[{source_id}] adapter binding '{}': {error}",
             adapter_kind.as_str()
