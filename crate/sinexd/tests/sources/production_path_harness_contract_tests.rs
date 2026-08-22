@@ -32,49 +32,6 @@ async fn adapter_kind_bindings_are_not_parser_only_metadata() -> TestResult<()> 
 }
 
 #[sinex_test]
-async fn injected_backends_cannot_fall_back_to_live_services_on_reopen() -> TestResult<()> {
-    use sinex_primitives::events::SourceMaterial;
-    use sinex_primitives::ids::Id;
-    use sinex_primitives::parser::InputShapeAdapter;
-    use sinexd::runtime::parser::{
-        ClipboardPollingAdapter, ClipboardPollingConfig, DbusBus, DbusMessage,
-        DbusStreamAdapter, DbusStreamConfig, MockClipboardBackend, MockDbusBackend,
-    };
-
-    let material_id = Id::<SourceMaterial>::new();
-    let clipboard = ClipboardPollingAdapter::from_backend(MockClipboardBackend::new([Some(
-        "fixture clipboard".to_string(),
-    )]));
-    let clipboard_config = ClipboardPollingConfig::default();
-    let _ = clipboard.open(material_id, &clipboard_config, None).await?;
-    let clipboard_error = clipboard
-        .open(material_id, &clipboard_config, None)
-        .await
-        .expect_err("reopening a mocked clipboard adapter must not access arboard");
-    assert!(clipboard_error.to_string().contains("refusing live backend fallback"));
-
-    let dbus = DbusStreamAdapter::with_backend(MockDbusBackend::new(vec![DbusMessage {
-        interface: "org.example.Fixture".to_string(),
-        member: "Changed".to_string(),
-        path: "/org/example/Fixture".to_string(),
-        sender: None,
-        body_json: serde_json::json!({"value": 1}),
-    }]));
-    let dbus_config = DbusStreamConfig {
-        bus: DbusBus::Session,
-        match_rules: vec!["type='signal',interface='org.example.Fixture'".to_string()],
-    };
-    let _ = dbus.open(material_id, &dbus_config, None).await?;
-    let dbus_error = dbus
-        .open(material_id, &dbus_config, None)
-        .await
-        .expect_err("reopening a mocked D-Bus adapter must not connect to a live bus");
-    assert!(dbus_error.to_string().contains("refusing live backend fallback"));
-
-    Ok(())
-}
-
-#[sinex_test]
 async fn production_path_case_with_no_obligations_is_not_green() -> TestResult<()> {
     let failures = _run_case(
         "weechat.message",

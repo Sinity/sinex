@@ -19,10 +19,11 @@ use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeAdapter, MaterialAnchor};
 use sinexd::runtime::parser::{
     AppendOnlyFileAdapter, AppendOnlyFileConfig, ClipboardPollingAdapter,
-    ClipboardPollingConfig, DbusBus, DbusStreamAdapter, DbusStreamConfig, MockClipboardBackend,
-    MockDbusBackend, SqliteRowAdapter, SqliteRowConfig, StaticFileAdapter, StaticFileConfig,
-    UnixSocketStreamAdapter, UnixSocketStreamConfig,
+    ClipboardPollingConfig, DbusBus, DbusStreamAdapter, DbusStreamConfig, FileDropAdapter,
+    FileDropConfig, MockClipboardBackend, MockDbusBackend, SqliteRowAdapter, SqliteRowConfig,
+    StaticFileAdapter, StaticFileConfig, UnixSocketStreamAdapter, UnixSocketStreamConfig,
 };
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::{fmt, io::Write};
 
@@ -183,6 +184,7 @@ pub async fn exercise_adapter_binding(
                 .iter()
                 .flatten()
                 .next()
+                .cloned()
                 .ok_or_else(|| "clipboard fixture contains no text snapshot".to_string())?;
             let adapter = ClipboardPollingAdapter::from_backend(MockClipboardBackend::new(snapshots));
             let mut stream = adapter
@@ -211,20 +213,23 @@ pub async fn exercise_adapter_binding(
             let first = messages
                 .first()
                 .ok_or_else(|| "D-Bus fixture contains no messages".to_string())?;
+            let interface = first.interface.clone();
+            let expected_body =
+                serde_json::to_vec(&first.body_json).map_err(|error| error.to_string())?;
             let adapter = DbusStreamAdapter::with_backend(MockDbusBackend::new(messages));
             let mut stream = adapter
                 .open(
                     material_id,
                     &DbusStreamConfig {
                         bus: DbusBus::Session,
-                        match_rules: vec![format!("type='signal',interface='{}'", first.interface)],
+                        match_rules: vec![format!("type='signal',interface='{interface}'")],
                     },
                     None,
                 )
                 .await
                 .map_err(|error| format!("D-Bus adapter open failed: {error}"))?;
             let record = expect_record(&mut stream, "D-Bus").await?;
-            if record.bytes != serde_json::to_vec(&first.body_json).map_err(|e| e.to_string())? {
+            if record.bytes != expected_body {
                 return Err("D-Bus adapter did not preserve the synthetic message body".to_string());
             }
         }
@@ -248,7 +253,32 @@ pub async fn exercise_adapter_binding(
         }
         crate::AdapterKind::FileDrop => {
             let fixture = file_drop::build(data)?;
-            let _ = file_path(&fixture)?;
+            let watched_dir = file_path(&fixture)?;
+            let mut stream = FileDropAdapter
+                .open(
+                    material_id,
+                    &FileDropConfig {
+                        watch_paths: vec![camino::Utf8PathBuf::from_path_buf(watched_dir.clone())
+                            .map_err(|path| format!("file-drop fixture path is not UTF-8: {path:?}"))?],
+                        recursive: false,
+                        max_depth: None,
+                        ignored_directory_names: Vec::new(),
+                        ignored_file_suffixes: Vec::new(),
+                        max_watches: NonZeroUsize::MIN,
+                        events: Vec::new(),
+                    },
+                    None,
+                )
+                .await
+                .map_err(|error| format!("file-drop adapter open failed: {error}"))?;
+            std::fs::write(watched_dir.join("after-watch.dat"), data)
+                .map_err(|error| format!("file-drop fixture write failed: {error}"))?;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                expect_record(&mut stream, "file-drop"),
+            )
+            .await
+            .map_err(|_| "file-drop adapter did not observe a synthetic write".to_string())??;
         }
         crate::AdapterKind::Journal => {
             let fixture = journal::build(data)?;
