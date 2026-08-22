@@ -44,7 +44,7 @@ It follows the scenario registry in `tests/e2e/nixos-vm/default.nix`.
 - `--list` shows the currently exported checks.
 - `--category smoke|integration|performance|chaos|all` selects from the built-in
   catalogue.
-- `--validate` syntax-checks the scenario files without running them.
+- `--validate` evaluates scenario contracts against fixture packages without booting them.
 - Positional test names run individual exported checks, for example `xtask test vm basic`.
 
 ## Test Structure

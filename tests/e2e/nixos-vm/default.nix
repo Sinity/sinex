@@ -92,7 +92,11 @@
     inherit pkgs pg_jsonschema sinex sinexCli;
   };
 
-  # ─── Production-shape proof (#1135) ──────────────────────────────────────
+  # ─── Production-shape proofs ──────────────────────────────────────────────
+
+  "postgres-local-auth" = import ./test-scenarios/postgres-local-auth.nix {
+    inherit pkgs pg_jsonschema sinex sinexCli;
+  };
 
   "production-shape" = import ./test-scenarios/production-shape.nix {
     inherit pkgs pg_jsonschema sinex sinexCli;

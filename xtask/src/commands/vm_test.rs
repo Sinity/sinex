@@ -357,6 +357,24 @@ error: Cannot build '/nix/store/a1ya883515vqnfs96g9pwphbv6kq588f-sinex-vm-runtim
 }
 
 #[sinex_test]
+async fn test_summarize_vm_failure_output_prefers_assertion_over_later_success()
+-> ::xtask::sandbox::TestResult<()> {
+    let output = "\
+vm-test-run-sinex-postgres-local-auth> !!! RequestedAssertionFailed: application socket required no password
+sinex-vm-runtime> SUCCESS: unrelated checked derivation is valid
+error: Cannot build '/nix/store/example-vm-test.drv'.
+";
+
+    let summary = summarize_vm_failure_output(output).expect("summary should be extracted");
+
+    assert_eq!(
+        summary,
+        "RequestedAssertionFailed: application socket required no password"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_update_vm_progress_summary_records_terminal_summary()
 -> ::xtask::sandbox::TestResult<()> {
     let dir = tempdir()?;

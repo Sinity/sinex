@@ -5,6 +5,7 @@
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
+, postgresAuth ? "trust"
 , ...
 }:
 let
@@ -24,10 +25,10 @@ let
       name = lib.mkDefault databaseName;
       extraDatabases = lib.mkDefault [ "sinex" ];
       user = lib.mkDefault "sinex";
-      # VM databases are disposable and intentionally use the development
-      # trust profile; production-shaped deployments must provide a password
-      # source and retain the module's SCRAM default.
-      localAuth = lib.mkDefault "trust";
+      # VM databases are disposable and normally use the development trust
+      # profile. Authentication-boundary scenarios select SCRAM explicitly so
+      # they exercise the module's production HBA rendering.
+      localAuth = lib.mkDefault postgresAuth;
     };
 
     lifecycle.preflight.enable = lib.mkDefault false;
@@ -92,12 +93,14 @@ in
   # sinexd applies schema at startup in the NixOS deployment shape.
   # Ordering dependencies are merged near the annex setup service below.
   systemd.services.sinexd.path = [ pkgs.git pkgs.git-annex ];
-  # Relax Postgres authentication for disposable VM tests.
-  services.postgresql.authentication = lib.mkForce ''
+  # Normal VM scenarios use trust to keep unrelated integration tests cheap.
+  # Production authentication cases leave this unset and exercise the Sinex
+  # module's generated HBA policy instead.
+  services.postgresql.authentication = lib.mkIf (postgresAuth == "trust") (lib.mkForce ''
 local   all             all                                     trust
 host    all             all             127.0.0.1/32            trust
 host    all             all             ::1/128                 trust
-'';
+'');
 
   # Test user
   users.users.test = {
