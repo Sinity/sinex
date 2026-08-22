@@ -182,6 +182,7 @@ pub async fn exercise_adapter_binding(
             }
         }
         crate::AdapterKind::Clipboard => {
+            let fixture = clipboard::build(data)?;
             let snapshots = clipboard::snapshots_from_bytes(data)?;
             let expected = snapshots
                 .iter()
@@ -189,6 +190,7 @@ pub async fn exercise_adapter_binding(
                 .next()
                 .cloned()
                 .ok_or_else(|| "clipboard fixture contains no text snapshot".to_string())?;
+            expect_in_memory_record(&fixture, expected.as_bytes(), "clipboard")?;
             let adapter =
                 ClipboardPollingAdapter::from_backend(MockClipboardBackend::new(snapshots));
             let mut stream = adapter
@@ -213,6 +215,7 @@ pub async fn exercise_adapter_binding(
             }
         }
         crate::AdapterKind::Dbus => {
+            let fixture = dbus::build(data)?;
             let messages = dbus::messages_from_bytes(data)?;
             let first = messages
                 .first()
@@ -220,6 +223,7 @@ pub async fn exercise_adapter_binding(
             let interface = first.interface.clone();
             let expected_body =
                 serde_json::to_vec(&first.body_json).map_err(|error| error.to_string())?;
+            expect_in_memory_record(&fixture, &expected_body, "D-Bus")?;
             let adapter = DbusStreamAdapter::with_backend(MockDbusBackend::new(messages));
             let mut stream = adapter
                 .open(
@@ -297,6 +301,24 @@ pub async fn exercise_adapter_binding(
                 return Err("journal fixture produced no synthetic records".to_string());
             }
         }
+    }
+    Ok(())
+}
+
+fn expect_in_memory_record(
+    fixture: &FixtureHandle,
+    expected: &[u8],
+    adapter: &str,
+) -> Result<(), String> {
+    let FixtureBinding::InMemoryRecords(records) = &fixture.binding else {
+        return Err(format!(
+            "{adapter} fixture did not produce in-memory records"
+        ));
+    };
+    if records.first().map(Vec::as_slice) != Some(expected) {
+        return Err(format!(
+            "{adapter} fixture binding did not preserve its first synthetic record"
+        ));
     }
     Ok(())
 }
