@@ -240,8 +240,10 @@ impl HistoryDb {
         // The CTE prefix is extracted as a const (shared with get_current_diagnostic_counts).
         let mut query = String::from(LATEST_PER_PACKAGE_CTE_OPEN);
 
-        // Command filter in CTE
+        // Command filter in CTE. The CTE binds ?1 to the workspace root, so it
+        // must be pushed first for the positional numbering below to line up.
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params_vec.push(Box::new(self.workspace_root.clone()));
 
         if let Some(cmd) = command_filter {
             query.push_str(&format!(" AND i.command = ?{}", params_vec.len() + 1));
@@ -320,7 +322,7 @@ impl HistoryDb {
         );
 
         let mut stmt = self.conn.prepare(&query)?;
-        let counts = stmt.query_row([], |row| {
+        let counts = stmt.query_row(params![self.workspace_root], |row| {
             Ok(DiagnosticCounts {
                 errors: row.get::<_, i64>(0)? as usize,
                 warnings: row.get::<_, i64>(1)? as usize,

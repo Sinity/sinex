@@ -84,12 +84,17 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
         let finished_at = format_ts(current_ts + duration as i64);
         let host = "devhost";
         let cwd = "/realm/project/sinex";
+        // Seeded rows belong to the workspace that asked for them; reads are
+        // workspace-scoped, so an unattributed synthetic ledger looks empty.
+        let workspace_root = db.workspace_root();
+        let workspace_name = crate::config::workspace_name_for(std::path::Path::new(workspace_root));
 
         db.conn.execute(
             r"
             INSERT INTO invocations (
-                command, started_at, finished_at, duration_secs, status, host, cwd, git_dirty
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)
+                command, started_at, finished_at, duration_secs, status, host, cwd, git_dirty,
+                workspace_root, workspace_name
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)
             ",
             params![
                 command,
@@ -98,7 +103,9 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
                 duration,
                 status,
                 host,
-                cwd
+                cwd,
+                workspace_root,
+                workspace_name
             ],
         )?;
 

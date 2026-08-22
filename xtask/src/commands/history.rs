@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 #[cfg(test)]
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
@@ -25,6 +26,7 @@ mod diagnostics_command;
 mod inspect;
 mod listing;
 mod test_commands;
+mod unify;
 mod views_command;
 mod wrapper_events;
 #[cfg(test)]
@@ -56,6 +58,7 @@ use listing::{
     parse_history_time, secs_to_hours, sql_string_literal,
 };
 use test_commands::{HistoryTestsSubcommand, execute_tests};
+use unify::{execute_import, execute_unify};
 #[cfg(test)]
 use test_commands::{execute_tests_analyze, execute_tests_slowest, infra_timing_probe_from_result};
 use views_command::{
@@ -416,6 +419,33 @@ pub enum HistorySubcommand {
         #[arg(long, default_value = "20")]
         window: usize,
     },
+    /// Absorb every linked worktree's private history database into the shared ledger
+    ///
+    /// A worktree running an xtask built before the ledger was unified still
+    /// writes its own `.sinex/state/xtask-history.db`, which is deleted along
+    /// with the worktree. This folds those rows in, workspace provenance intact.
+    Unify {
+        /// Delete each source database once every row is accounted for
+        #[arg(long)]
+        remove_sources: bool,
+        /// List the databases that would be absorbed without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Absorb one named history database into the shared ledger
+    Import {
+        /// Path to the history database to absorb
+        source: PathBuf,
+        /// Workspace root to attribute rows to; inferred from the source path when omitted
+        #[arg(long)]
+        workspace_root: Option<String>,
+        /// Workspace label to attribute rows to; defaults to the root's directory name
+        #[arg(long)]
+        workspace_name: Option<String>,
+        /// Delete the source database once every row is accounted for
+        #[arg(long)]
+        remove_source: bool,
+    },
     /// Show exercise run history with pass/fail counts and regression detection
     Exercise {
         /// Number of recent exercise runs to show (default: 10)
@@ -441,6 +471,29 @@ impl XtaskCommand for HistoryCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         use color_eyre::eyre::eyre;
+        // Absorbing a ledger writes; everything else below reads. Handle the
+        // write-mode subcommands before entering the query-only connection.
+        match &self.subcommand {
+            HistorySubcommand::Unify {
+                remove_sources,
+                dry_run,
+            } => return execute_unify(ctx, *remove_sources, *dry_run),
+            HistorySubcommand::Import {
+                source,
+                workspace_root,
+                workspace_name,
+                remove_source,
+            } => {
+                return execute_import(
+                    ctx,
+                    source,
+                    workspace_root.as_deref(),
+                    workspace_name.as_deref(),
+                    *remove_source,
+                );
+            }
+            _ => {}
+        }
         ctx.try_with_history_db_query(|db| {
             db.warn_if_synthetic(ctx.history_db_path());
             match &self.subcommand {
@@ -714,6 +767,9 @@ impl XtaskCommand for HistoryCommand {
                 } => execute_eta(db, command, phase.as_deref(), *window, ctx),
                 HistorySubcommand::Exercise { limit, verbose } => {
                     execute_exercise_history(db, *limit, *verbose, ctx)
+                }
+                HistorySubcommand::Unify { .. } | HistorySubcommand::Import { .. } => {
+                    unreachable!("write-mode subcommands are dispatched before this closure")
                 }
             }
         })

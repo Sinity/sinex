@@ -5,6 +5,35 @@ use super::{
 use xtask::sandbox::prelude::sinex_test;
 
 #[sinex_test]
+async fn adapter_kind_bindings_are_not_parser_only_metadata() -> TestResult<()> {
+    let cases = [
+        (AdapterKind::AppendOnlyFile, b"fixture line\n".as_slice()),
+        (AdapterKind::SqliteRow, b"fixture row".as_slice()),
+        (AdapterKind::StaticFile, b"fixture document".as_slice()),
+        (AdapterKind::FileDrop, b"fixture drop".as_slice()),
+        (
+            AdapterKind::Journal,
+            b"{\"__CURSOR\":\"fixture\",\"MESSAGE\":\"fixture journal\"}\n".as_slice(),
+        ),
+        (
+            AdapterKind::Dbus,
+            b"{\"interface\":\"org.example.Fixture\",\"member\":\"Changed\",\"path\":\"/org/example/Fixture\",\"body_json\":{\"value\":1}}\n".as_slice(),
+        ),
+        (AdapterKind::Clipboard, b"fixture clipboard\n".as_slice()),
+        (AdapterKind::UnixSocket, b"fixture socket\n".as_slice()),
+    ];
+
+    for (kind, data) in cases {
+        super::fixtures::exercise_adapter_binding(kind, data)
+            .await
+            .map_err(|error| {
+                color_eyre::eyre::eyre!("{} fixture binding: {error}", kind.as_str())
+            })?;
+    }
+    Ok(())
+}
+
+#[sinex_test]
 async fn production_path_case_with_no_obligations_is_not_green() -> TestResult<()> {
     let failures = _run_case(
         "weechat.message",
@@ -23,8 +52,7 @@ async fn production_path_case_with_no_obligations_is_not_green() -> TestResult<(
 }
 
 #[sinex_test]
-async fn production_path_logical_path_case_with_no_obligations_is_not_green() -> TestResult<()>
-{
+async fn production_path_logical_path_case_with_no_obligations_is_not_green() -> TestResult<()> {
     let failures = _run_case_with_logical_path(
         "weechat.message",
         AdapterKind::AppendOnlyFile,
@@ -43,8 +71,7 @@ async fn production_path_logical_path_case_with_no_obligations_is_not_green() ->
 }
 
 #[sinex_test]
-async fn production_path_directory_entry_case_with_no_obligations_is_not_green()
--> TestResult<()> {
+async fn production_path_directory_entry_case_with_no_obligations_is_not_green() -> TestResult<()> {
     let failures = _run_case_with_directory_entry(
         "fs.created",
         AdapterKind::FileDrop,
