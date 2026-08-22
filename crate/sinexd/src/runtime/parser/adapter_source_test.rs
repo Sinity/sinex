@@ -9,8 +9,7 @@ use crate::runtime::parser::adapters::{
 use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, EventEmitter, MaterialReplayContext, ReplayMaterialOccurrence,
-    ReplayScopeFilters, ResolvedReplayMaterial, RuntimeHandles, ScanArgs, ServiceInfo,
-    TimeHorizon,
+    ReplayScopeFilters, ResolvedReplayMaterial, RuntimeHandles, ScanArgs, ServiceInfo, TimeHorizon,
 };
 use crate::runtime::{EventTransport, NatsPublisher, SOURCE_MATERIAL_STREAM};
 use crate::sources::source_contracts::library::DocsLibraryParser;
@@ -2267,9 +2266,7 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
     });
 
     let emitted_1 = source1.drain_adapter(None, &mut state, None, None).await?;
-    let attempt1 = settler1
-        .await
-        .expect("settler1 did not panic")?;
+    let attempt1 = settler1.await.expect("settler1 did not panic")?;
 
     assert_eq!(
         attempt1.len(),
@@ -2322,9 +2319,7 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
     });
 
     let emitted_2 = source2.drain_adapter(None, &mut state, None, None).await?;
-    let attempt2_outcomes = settler2
-        .await
-        .expect("settler2 did not panic")?;
+    let attempt2_outcomes = settler2.await.expect("settler2 did not panic")?;
 
     assert_eq!(
         attempt2_outcomes.len(),

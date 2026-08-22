@@ -214,7 +214,7 @@ pub use source_contracts::{SourceRuntimeBinding, SubjectQuery, SubjectRef};
 pub use source_material_manifest::{
     ByteRange, ByteRange as MaterialByteRange, Captured as CapturedMetadata, ContainerEnvelope,
     ContentDigest, ContinuityEnvelope, DecodedMaterialManifest, FilesystemEnvelope,
-    InterpretationEnvelope, LEGACY_MANIFEST_V0, MATERIAL_MANIFEST_V1, LegacyManifestV0,
+    InterpretationEnvelope, LEGACY_MANIFEST_V0, LegacyManifestV0, MATERIAL_MANIFEST_V1,
     ManifestFidelity, ManifestPrivacyClass, MaterialBytes, MaterialManifestType,
     MaterialManifestV1, MetadataAvailability, ProvenanceEnvelope, TransportEnvelope,
     UnknownMaterialManifest,

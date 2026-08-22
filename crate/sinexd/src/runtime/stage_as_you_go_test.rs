@@ -145,7 +145,11 @@ async fn emit_event_rejects_missing_material_started_at_instead_of_fabricating_n
         .emit_event_with_provenance(event, material_id, Some(12), None)
         .await
         .expect_err("missing material timing must not synthesize a provenance clock");
-    assert!(error.to_string().contains("no durable started_at timestamp"));
+    assert!(
+        error
+            .to_string()
+            .contains("no durable started_at timestamp")
+    );
     assert!(rx.try_recv().is_err(), "failed event must not be emitted");
     Ok(())
 }

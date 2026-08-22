@@ -14,8 +14,7 @@ use xtask::sandbox::sinex_serial_test;
 use xtask::sandbox::EnvGuard;
 
 #[sinex_serial_test]
-async fn material_durability_thresholds_match_policy_defaults() -> xtask::sandbox::TestResult<()>
-{
+async fn material_durability_thresholds_match_policy_defaults() -> xtask::sandbox::TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_BYTES", "1048576");
     env.set(
@@ -67,8 +66,7 @@ async fn default_work_dir_ignores_invalid_override() -> xtask::sandbox::TestResu
     env.set("XDG_CACHE_HOME", "/tmp/sinexd-config-cache");
 
     let expected = Utf8PathBuf::from_path_buf(
-        environment()
-            .work_directory(default_path_base_dir().join("sinex").join("event_engine")),
+        environment().work_directory(default_path_base_dir().join("sinex").join("event_engine")),
     )
     .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/event_engine"));
 
@@ -90,8 +88,8 @@ async fn default_config_uses_namespaced_fallback_not_database_url_env()
 
 #[cfg(unix)]
 #[sinex_serial_test]
-async fn default_config_does_not_hide_non_utf8_database_url_env()
--> xtask::sandbox::TestResult<()> {
+async fn default_config_does_not_hide_non_utf8_database_url_env() -> xtask::sandbox::TestResult<()>
+{
     let mut env = EnvGuard::new();
     env.set("DATABASE_URL", OsString::from_vec(vec![0x70, 0x80]));
 

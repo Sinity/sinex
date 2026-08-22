@@ -220,9 +220,7 @@ impl<O, P, CF, RS, BI, RP> SourceRuntimeBindingBuilder<O, P, CF, RS, BI, RP> {
     }
 }
 
-impl<O, P, CF, RS, BI>
-    SourceRuntimeBindingBuilder<O, P, CF, RS, BI, MissingRecoveryPolicy>
-{
+impl<O, P, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, CF, RS, BI, MissingRecoveryPolicy> {
     /// Declare source-level replay, catch-up, and accepted-loss authority.
     #[must_use]
     pub const fn recovery_policy(

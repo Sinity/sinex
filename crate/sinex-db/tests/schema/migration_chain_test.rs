@@ -401,7 +401,9 @@ async fn declarative_table_registry_is_non_empty() -> TestResult<()> {
         "core.events must be in declarative table metadata"
     );
     assert!(
-        tables.iter().any(|t| t.qualified_name == "reflection.events"),
+        tables
+            .iter()
+            .any(|t| t.qualified_name == "reflection.events"),
         "reflection.events must be in declarative table metadata"
     );
     Ok(())

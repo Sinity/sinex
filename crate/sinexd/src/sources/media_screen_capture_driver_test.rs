@@ -39,8 +39,7 @@ async fn parse_region_reads_x_y_w_h() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn build_screenshot_event_anchors_material_and_geometry()
--> xtask::sandbox::TestResult<()> {
+async fn build_screenshot_event_anchors_material_and_geometry() -> xtask::sandbox::TestResult<()> {
     let captured = CapturedImage {
         bytes: fake_png(800, 600),
         width_px: 800,

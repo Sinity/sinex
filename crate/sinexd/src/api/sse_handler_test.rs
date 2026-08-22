@@ -1,6 +1,5 @@
 use super::{
-    LAST_EVENT_ID_HEADER, disclose_and_match_sse_event, parse_last_event_id,
-    serialize_sse_payload,
+    LAST_EVENT_ID_HEADER, disclose_and_match_sse_event, parse_last_event_id, serialize_sse_payload,
 };
 use crate::event_engine::policy::PolicyEngine;
 use axum::http::{HeaderMap, HeaderValue};

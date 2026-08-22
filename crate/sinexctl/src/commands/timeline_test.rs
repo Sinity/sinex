@@ -24,8 +24,7 @@ async fn timeline_machine_output_uses_view_envelope_json() -> xtask::sandbox::Te
 #[sinex_test]
 async fn timeline_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
     let timeline = EventCardListView::from_query_events(&[]);
-    let result =
-        render_timeline_machine_output(&timeline, 100, None, None, OutputFormat::Ndjson);
+    let result = render_timeline_machine_output(&timeline, 100, None, None, OutputFormat::Ndjson);
     assert!(result.is_err(), "timeline is a finite view");
     Ok(())
 }

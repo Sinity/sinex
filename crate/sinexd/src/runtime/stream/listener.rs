@@ -145,13 +145,13 @@ impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
             })
             .await
             .map_err(|_| {
-            // Channel closed = receiver dropped = shutdown in progress.
-            // Return a shutdown-specific error so callers can distinguish
-            // normal shutdown from unexpected processing failures.
-            SinexError::lifecycle(
-                "Confirmed event channel closed (runtime module is shutting down)".to_string(),
-            )
-        })
+                // Channel closed = receiver dropped = shutdown in progress.
+                // Return a shutdown-specific error so callers can distinguish
+                // normal shutdown from unexpected processing failures.
+                SinexError::lifecycle(
+                    "Confirmed event channel closed (runtime module is shutting down)".to_string(),
+                )
+            })
     }
 }
 

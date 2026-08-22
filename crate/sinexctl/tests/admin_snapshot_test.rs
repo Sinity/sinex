@@ -1377,7 +1377,10 @@ async fn quiesced_snapshot_auto_stop_targets_real_writer_units() -> xtask::sandb
     assert_eq!(
         manifest.manifest.quiesce_receipt,
         Some(QuiesceReceipt {
-            active_writer_units_before: vec!["sinexd.service".to_string(), "nats.service".to_string()],
+            active_writer_units_before: vec![
+                "sinexd.service".to_string(),
+                "nats.service".to_string()
+            ],
             stopped_writer_units: vec!["sinexd.service".to_string(), "nats.service".to_string()],
             active_writer_units_after: Vec::new(),
         }),
@@ -1397,7 +1400,10 @@ async fn quiesced_snapshot_auto_stop_targets_real_writer_units() -> xtask::sandb
         "auto-stop must leave writer units inactive"
     );
     assert!(timer_marker.exists(), "a timer is not a writer stop target");
-    assert!(postgres_marker.exists(), "PostgreSQL must remain available for pg_dump");
+    assert!(
+        postgres_marker.exists(),
+        "PostgreSQL must remain available for pg_dump"
+    );
     Ok(())
 }
 

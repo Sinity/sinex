@@ -89,8 +89,7 @@ const SEMANTIC_ENTITY_RELATION_DECLARATION: DerivationOutputDeclaration =
             SourceCoverage::Partial,
             ClaimTemporalQuality::Unknown,
         ),
-        verification_command:
-            "xtask test -p sinexd -E 'test(semantic_handlers_generic_lane)'",
+        verification_command: "xtask test -p sinexd -E 'test(semantic_handlers_generic_lane)'",
     };
 
 pub async fn handle_semantic_epoch_create(
@@ -326,7 +325,9 @@ pub async fn handle_semantic_lane_diff_record_entity_relation(
         .with_context("candidate_lane_id", req.candidate_lane_id.to_string()));
     }
 
-    let baseline_outputs = repo.read_entity_relation_outputs(req.baseline_lane_id).await?;
+    let baseline_outputs = repo
+        .read_entity_relation_outputs(req.baseline_lane_id)
+        .await?;
     let candidate_outputs = repo
         .read_entity_relation_outputs(req.candidate_lane_id)
         .await?;

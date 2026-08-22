@@ -24,8 +24,7 @@ async fn no_regressions_when_identical() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn regression_detected_when_passing_becomes_failing() -> ::xtask::sandbox::TestResult<()>
-{
+async fn regression_detected_when_passing_becomes_failing() -> ::xtask::sandbox::TestResult<()> {
     let baseline = make_manifest(&[("t1.a", "T1", true), ("t1.b", "T1", true)]);
     let current = make_manifest(&[("t1.a", "T1", false), ("t1.b", "T1", true)]);
     let regressions = current.regressions(&baseline);

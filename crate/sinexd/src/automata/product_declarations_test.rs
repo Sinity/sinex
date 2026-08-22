@@ -20,9 +20,7 @@ use xtask::sandbox::prelude::*;
 /// in `registry_test.rs` independently pins the registry shape this test
 /// depends on.
 #[sinex_test]
-async fn reconcile_allows_real_canonicalizer_output_insert(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn reconcile_allows_real_canonicalizer_output_insert(ctx: TestContext) -> TestResult<()> {
     let inserted = reconcile_product_declarations(ctx.pool(), AUTOMATA).await?;
     assert!(
         inserted > 0,
@@ -81,7 +79,9 @@ async fn reconcile_allows_real_canonicalizer_output_insert(
         adjudication_event_id: None,
     };
     let parent_event = ctx.pool().events().insert(parent_event).await?;
-    let parent_id = parent_event.id.expect("inserted parent event should have id");
+    let parent_id = parent_event
+        .id
+        .expect("inserted parent event should have id");
 
     let event = Event {
         id: Some(Id::new()),
@@ -120,7 +120,10 @@ async fn reconcile_allows_real_canonicalizer_output_insert(
     // `EventRepository::insert` directly exercises the same DB trigger
     // without needing a full `AutomatonContext`.
     let inserted_event = ctx.pool().events().insert(event).await?;
-    assert_eq!(inserted_event.product_class, Some(declaration.product_class));
+    assert_eq!(
+        inserted_event.product_class,
+        Some(declaration.product_class)
+    );
     assert_eq!(
         inserted_event.derivation_declaration_id.as_deref(),
         Some(declaration.declaration_id)
@@ -181,7 +184,10 @@ async fn product_declaration_startup_diff(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn reconcile_rejects_conflicting_existing_row(ctx: TestContext) -> TestResult<()> {
     let declaration = &CANONICALIZER_OUTPUT_DECLARATIONS[0];
-    assert_eq!(declaration.product_class, DerivedProductClass::CanonicalDerivedEvent);
+    assert_eq!(
+        declaration.product_class,
+        DerivedProductClass::CanonicalDerivedEvent
+    );
 
     let conflicting = sinex_primitives::derivation::DerivationOutputDeclaration {
         product_class: DerivedProductClass::AnalysisClaim,
@@ -191,7 +197,10 @@ async fn reconcile_rejects_conflicting_existing_row(ctx: TestContext) -> TestRes
     // Seed the conflicting row directly through the repository, bypassing
     // the reconciler entirely — this simulates a DB that drifted from the
     // code (e.g. an older binary's declaration, or a manual edit).
-    ctx.pool().product_declarations().insert(&conflicting).await?;
+    ctx.pool()
+        .product_declarations()
+        .insert(&conflicting)
+        .await?;
 
     let error = reconcile_product_declarations(ctx.pool(), AUTOMATA)
         .await

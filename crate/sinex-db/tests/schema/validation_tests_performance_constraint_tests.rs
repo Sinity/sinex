@@ -86,12 +86,10 @@ async fn test_index_constraint_interaction() -> TestResult<()> {
         .await?;
 
     // Create source material
-    sqlx::query(
-        &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query(&SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder))
+        .execute(pool)
+        .await
+        .unwrap();
 
     let material = insert_sample_material(&ctx).await?;
 

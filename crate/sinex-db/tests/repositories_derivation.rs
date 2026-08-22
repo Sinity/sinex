@@ -20,7 +20,9 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::events::{EntityRelatedPayload, EntityResolvedPayload};
 use sinex_primitives::session_lane::SessionLaneOutputs;
-use sinex_primitives::{EntityRelationLaneOutputs, SemanticEntityOutput, SemanticRelationOutput, Uuid};
+use sinex_primitives::{
+    EntityRelationLaneOutputs, SemanticEntityOutput, SemanticRelationOutput, Uuid,
+};
 use std::collections::BTreeMap;
 use xtask::sandbox::prelude::*;
 
@@ -89,7 +91,13 @@ fn epoch(
     }
 }
 
-fn lane(id: u128, name: &str, kind: &str, base_epoch_id: Option<Uuid>, candidate_epoch_id: Uuid) -> CreateDerivationLane {
+fn lane(
+    id: u128,
+    name: &str,
+    kind: &str,
+    base_epoch_id: Option<Uuid>,
+    candidate_epoch_id: Uuid,
+) -> CreateDerivationLane {
     CreateDerivationLane {
         id: Some(Uuid::from_u128(id)),
         declaration_id: TEST_DECLARATION_ID.to_string(),
@@ -137,7 +145,12 @@ async fn derivation_lane_repository_keeps_shadow_outputs_out_of_canonical_entiti
         .create_epoch(epoch(1, "baseline", "baseline-hash", None))
         .await?;
     let candidate_epoch = repo
-        .create_epoch(epoch(2, "candidate", "candidate-hash", Some(baseline_epoch.id)))
+        .create_epoch(epoch(
+            2,
+            "candidate",
+            "candidate-hash",
+            Some(baseline_epoch.id),
+        ))
         .await?;
     let baseline_lane = repo
         .create_lane(lane(3, "canonical", "canonical", None, baseline_epoch.id))
@@ -189,9 +202,7 @@ async fn derivation_lane_repository_keeps_shadow_outputs_out_of_canonical_entiti
         10,
     )
     .expect("compute lane diff report");
-    let diff = repo
-        .record_lane_diff(Uuid::from_u128(5), &report)
-        .await?;
+    let diff = repo.record_lane_diff(Uuid::from_u128(5), &report).await?;
     assert_eq!(diff.diff_kind, "entity_relation");
     assert_eq!(diff.product_class, product_class);
     assert_eq!(diff.baseline_lane_id, baseline_lane.id);
@@ -529,7 +540,12 @@ async fn derivation_lane_repository_seeds_session_lane_from_window_scope(
     let epoch_row = repo
         .create_epoch(CreateDerivationEpoch {
             scope: event_scope.clone(),
-            ..epoch(31, "session-window-scope", "session-window-scope-hash", None)
+            ..epoch(
+                31,
+                "session-window-scope",
+                "session-window-scope-hash",
+                None,
+            )
         })
         .await?;
     let lane_row = repo
@@ -542,7 +558,10 @@ async fn derivation_lane_repository_seeds_session_lane_from_window_scope(
     let written = repo
         .seed_session_lane_outputs_from_window_scope(lane_row.id, product_class)
         .await?;
-    assert_eq!(written, 1, "the two windows must collapse into exactly one session");
+    assert_eq!(
+        written, 1,
+        "the two windows must collapse into exactly one session"
+    );
 
     let outputs = repo.read_session_lane_outputs(lane_row.id).await?;
     assert_eq!(outputs.boundaries.len(), 1);
@@ -605,10 +624,21 @@ async fn derivation_lane_repository_seeds_session_lane_from_canonical_events(
         .await?;
 
     let epoch_row = repo
-        .create_epoch(epoch(33, "session-canonical", "session-canonical-hash", None))
+        .create_epoch(epoch(
+            33,
+            "session-canonical",
+            "session-canonical-hash",
+            None,
+        ))
         .await?;
     let lane_row = repo
-        .create_lane(lane(34, "session-canonical", "canonical", None, epoch_row.id))
+        .create_lane(lane(
+            34,
+            "session-canonical",
+            "canonical",
+            None,
+            epoch_row.id,
+        ))
         .await?;
 
     let written = repo
@@ -618,7 +648,10 @@ async fn derivation_lane_repository_seeds_session_lane_from_canonical_events(
 
     let outputs = repo.read_session_lane_outputs(lane_row.id).await?;
     assert_eq!(outputs.boundaries.len(), 1);
-    assert_eq!(outputs.boundaries[0].session_key, "activity-session:canonical-w1");
+    assert_eq!(
+        outputs.boundaries[0].session_key,
+        "activity-session:canonical-w1"
+    );
     assert_eq!(outputs.boundaries[0].duration_secs, 90);
 
     Ok(())
@@ -698,10 +731,21 @@ async fn derivation_lane_repository_diffs_session_lane_shadow_against_baseline(
         .as_uuid();
 
     let baseline_epoch = repo
-        .create_epoch(epoch(41, "session-diff-baseline", "session-diff-baseline-hash", None))
+        .create_epoch(epoch(
+            41,
+            "session-diff-baseline",
+            "session-diff-baseline-hash",
+            None,
+        ))
         .await?;
     let baseline_lane = repo
-        .create_lane(lane(42, "session-diff-baseline", "canonical", None, baseline_epoch.id))
+        .create_lane(lane(
+            42,
+            "session-diff-baseline",
+            "canonical",
+            None,
+            baseline_epoch.id,
+        ))
         .await?;
     repo.seed_session_lane_outputs_from_canonical_events(baseline_lane.id, product_class)
         .await?;
@@ -722,7 +766,13 @@ async fn derivation_lane_repository_diffs_session_lane_shadow_against_baseline(
         .create_lane(CreateDerivationLane {
             scope: shadow_scope,
             base_epoch_id: Some(baseline_epoch.id),
-            ..lane(44, "session-diff-shadow", "shadow", None, candidate_epoch.id)
+            ..lane(
+                44,
+                "session-diff-shadow",
+                "shadow",
+                None,
+                candidate_epoch.id,
+            )
         })
         .await?;
     repo.seed_session_lane_outputs_from_window_scope(shadow_lane.id, product_class)

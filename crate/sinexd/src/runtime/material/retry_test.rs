@@ -53,8 +53,7 @@ async fn test_retries_on_transient_and_succeeds() -> xtask::sandbox::TestResult<
             Box::pin(async move {
                 let n = a.fetch_add(1, Ordering::SeqCst) + 1;
                 if n < 2 {
-                    let err =
-                        SinexError::io("test error").with_context("io_kind", "Interrupted");
+                    let err = SinexError::io("test error").with_context("io_kind", "Interrupted");
                     Err(err)
                 } else {
                     Ok::<i32, SinexError>(42)
@@ -78,8 +77,7 @@ async fn test_retries_exhaustion() -> xtask::sandbox::TestResult<()> {
             let a = attempts_clone.clone();
             Box::pin(async move {
                 a.fetch_add(1, Ordering::SeqCst);
-                let err =
-                    SinexError::io("persistent error").with_context("io_kind", "Interrupted");
+                let err = SinexError::io("persistent error").with_context("io_kind", "Interrupted");
                 Err::<i32, _>(err)
             })
         })
@@ -126,8 +124,7 @@ async fn test_backoff_increases_exponentially() -> xtask::sandbox::TestResult<()
             Box::pin(async move {
                 let n = a.fetch_add(1, Ordering::SeqCst) + 1;
                 if n < 3 {
-                    let err =
-                        SinexError::io("test error").with_context("io_kind", "Interrupted");
+                    let err = SinexError::io("test error").with_context("io_kind", "Interrupted");
                     Err(err)
                 } else {
                     Ok::<i32, SinexError>(42)

@@ -1,7 +1,7 @@
 use sinex_primitives::{
-    DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID, DESKTOP_FOCUS_SESSION_DERIVATION_ID,
-    DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID, DESKTOP_PROJECT_CONTEXT_DERIVATION_ID,
-    DERIVATION_SPECS, DerivationInputScope, DerivationOperationHook,
+    DERIVATION_SPECS, DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID,
+    DESKTOP_FOCUS_SESSION_DERIVATION_ID, DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID,
+    DESKTOP_PROJECT_CONTEXT_DERIVATION_ID, DerivationInputScope, DerivationOperationHook,
     EMAIL_ATTACHMENT_INDEX_DERIVATION_ID, EMAIL_BODY_TEXT_PROJECTION_DERIVATION_ID,
     EMAIL_THREAD_PROJECTION_DERIVATION_ID, FreshnessPolicy, InvalidationTrigger,
     MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION_ID, MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION_ID,
@@ -60,7 +60,9 @@ async fn derivation_registry_invariants_hold_across_all_specs() -> TestResult<()
     // an unrelated spec.
     assert!(find_derivation_spec("derivation:does.not.exist@v1").is_none());
     assert_eq!(
-        derivations_for_output("does.not.exist").collect::<Vec<_>>().len(),
+        derivations_for_output("does.not.exist")
+            .collect::<Vec<_>>()
+            .len(),
         0
     );
     Ok(())
@@ -81,10 +83,7 @@ async fn desktop_derivations_declare_ephemeral_and_projection_outputs() -> TestR
     );
 
     let projection_specs = [
-        (
-            DESKTOP_FOCUS_SESSION_DERIVATION_ID,
-            "desktop.focus_session",
-        ),
+        (DESKTOP_FOCUS_SESSION_DERIVATION_ID, "desktop.focus_session"),
         (
             DESKTOP_PROJECT_CONTEXT_DERIVATION_ID,
             "desktop.project_context",

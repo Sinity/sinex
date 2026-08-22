@@ -261,9 +261,7 @@ fn canonicalize_schema_json(value: &Value) -> Value {
             }
             Value::Object(canonical)
         }
-        Value::Array(items) => {
-            Value::Array(items.iter().map(canonicalize_schema_json).collect())
-        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_schema_json).collect()),
         scalar => scalar.clone(),
     }
 }

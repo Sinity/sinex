@@ -207,8 +207,14 @@ async fn takeout_chrome_array_emits_native_visit_events() {
     assert_eq!(intents[0].payload["url"], "https://example.com");
     assert_eq!(intents[0].payload["time_usec"], "1700000000000000");
     assert_eq!(intents[0].payload["transition"], "LINK");
-    assert_eq!(intents[0].payload["source_file"], "/staged/takeout/Takeout/Chrome/BrowserHistory.json");
-    assert_eq!(intents[0].anchor, MaterialAnchor::ByteRange { start: 0, len: 1 });
+    assert_eq!(
+        intents[0].payload["source_file"],
+        "/staged/takeout/Takeout/Chrome/BrowserHistory.json"
+    );
+    assert_eq!(
+        intents[0].anchor,
+        MaterialAnchor::ByteRange { start: 0, len: 1 }
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -225,12 +231,18 @@ async fn takeout_chrome_occurrence_key_is_stable_across_extraction_paths() {
     let mut second = TakeoutChromeHistoryParser;
 
     let first_intent = first
-        .parse_record(record_for(bytes, "/one/BrowserHistory.json"), &takeout_ctx())
+        .parse_record(
+            record_for(bytes, "/one/BrowserHistory.json"),
+            &takeout_ctx(),
+        )
         .await
         .unwrap()
         .remove(0);
     let second_intent = second
-        .parse_record(record_for(bytes, "/two/BrowserHistory.json"), &takeout_ctx())
+        .parse_record(
+            record_for(bytes, "/two/BrowserHistory.json"),
+            &takeout_ctx(),
+        )
         .await
         .unwrap()
         .remove(0);

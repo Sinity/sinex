@@ -104,8 +104,8 @@ async fn phase_observer_fires_once_at_first_suite_start() -> ::xtask::sandbox::T
 }
 
 #[sinex_test]
-async fn pre_suite_sigterm_reports_compile_signal_not_no_tests(
-) -> ::xtask::sandbox::TestResult<()> {
+async fn pre_suite_sigterm_reports_compile_signal_not_no_tests() -> ::xtask::sandbox::TestResult<()>
+{
     let stdout = Cursor::new(Vec::<u8>::new());
     let stderr = Cursor::new(
         concat!(
@@ -133,8 +133,8 @@ async fn pre_suite_sigterm_reports_compile_signal_not_no_tests(
 }
 
 #[sinex_test]
-async fn pre_suite_compile_error_reports_compile_not_no_tests(
-) -> ::xtask::sandbox::TestResult<()> {
+async fn pre_suite_compile_error_reports_compile_not_no_tests() -> ::xtask::sandbox::TestResult<()>
+{
     let stdout = Cursor::new(Vec::<u8>::new());
     let stderr = Cursor::new(
         concat!(

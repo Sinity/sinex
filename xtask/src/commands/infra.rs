@@ -707,7 +707,10 @@ fn default_hyprland_event_socket_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SINEX_HYPRLAND_EVENT_SOCKET")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .filter(|path| path.metadata().is_ok_and(|metadata| metadata.file_type().is_socket()))
+        .filter(|path| {
+            path.metadata()
+                .is_ok_and(|metadata| metadata.file_type().is_socket())
+        })
     {
         return Some(path);
     }
@@ -1449,9 +1452,8 @@ fn execute_smoke(
                 name: "preserve existing infra at exit".to_string(),
                 command: vec!["xtask".into(), "infra".into(), "status".into()],
                 status: if dry_run { "planned" } else { "passed" }.to_string(),
-                detail:
-                    "smoke completed without stopping the pre-existing current-checkout infra"
-                        .to_string(),
+                detail: "smoke completed without stopping the pre-existing current-checkout infra"
+                    .to_string(),
             });
         } else {
             steps.push(InfraSmokeStep {

@@ -38,8 +38,7 @@ async fn test_reset_hot_reload_checkpoints_removes_only_checkpoint_json() -> Tes
 }
 
 #[sinex_test]
-async fn test_reset_runtime_material_tmpfiles_removes_only_material_fragments() -> TestResult<()>
-{
+async fn test_reset_runtime_material_tmpfiles_removes_only_material_fragments() -> TestResult<()> {
     let temp = tempfile::tempdir()?;
     std::fs::write(temp.path().join("sinex_material_abc.tmp"), "fragment")?;
     std::fs::write(temp.path().join("sinex_material_abc.txt"), "keep")?;
@@ -110,8 +109,7 @@ async fn test_stale_build_classifier_requires_age_orphan_tool_and_target() -> Te
         ..probe.clone()
     };
     assert!(
-        classify_stale_build_process(&fresh, &[target], STALE_BUILD_PROCESS_MIN_AGE_SECS)
-            .is_none()
+        classify_stale_build_process(&fresh, &[target], STALE_BUILD_PROCESS_MIN_AGE_SECS).is_none()
     );
     Ok(())
 }
@@ -128,8 +126,7 @@ async fn test_stale_build_classifier_rejects_live_parent() -> TestResult<()> {
     };
 
     assert!(
-        classify_stale_build_process(&probe, &[target], STALE_BUILD_PROCESS_MIN_AGE_SECS)
-            .is_none()
+        classify_stale_build_process(&probe, &[target], STALE_BUILD_PROCESS_MIN_AGE_SECS).is_none()
     );
     Ok(())
 }
@@ -178,8 +175,7 @@ async fn test_stale_test_postgres_classifier_accepts_orphaned_test_cluster() -> 
         parent_command: Some("/nix/store/systemd/lib/systemd/systemd --user".to_string()),
     };
 
-    let classified =
-        classify_stale_test_postgres_process(&probe, STALE_TEST_POSTGRES_MIN_AGE_SECS);
+    let classified = classify_stale_test_postgres_process(&probe, STALE_TEST_POSTGRES_MIN_AGE_SECS);
 
     assert_eq!(
         classified,
@@ -207,8 +203,7 @@ async fn test_stale_test_postgres_classifier_rejects_checkout_dev_postgres() -> 
     };
 
     assert!(
-        classify_stale_test_postgres_process(&probe, STALE_TEST_POSTGRES_MIN_AGE_SECS)
-            .is_none()
+        classify_stale_test_postgres_process(&probe, STALE_TEST_POSTGRES_MIN_AGE_SECS).is_none()
     );
     Ok(())
 }
@@ -224,8 +219,7 @@ async fn test_stale_test_postgres_classifier_rejects_live_parent() -> TestResult
     };
 
     assert!(
-        classify_stale_test_postgres_process(&probe, STALE_TEST_POSTGRES_MIN_AGE_SECS)
-            .is_none()
+        classify_stale_test_postgres_process(&probe, STALE_TEST_POSTGRES_MIN_AGE_SECS).is_none()
     );
     Ok(())
 }

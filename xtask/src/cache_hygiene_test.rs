@@ -33,8 +33,7 @@ async fn prune_keeps_newest_n_per_crate() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn prune_deps_variants_keeps_newest_hashed_artifacts()
--> xtask::sandbox::TestResult<()> {
+async fn prune_deps_variants_keeps_newest_hashed_artifacts() -> xtask::sandbox::TestResult<()> {
     let temp = tempfile::tempdir()?;
     let deps = temp.path().join("deps");
     std::fs::create_dir(&deps)?;
@@ -60,7 +59,11 @@ async fn prune_deps_variants_keeps_newest_hashed_artifacts()
         .map(|entry| entry.file_name().to_string_lossy().to_string())
         .collect();
     assert_eq!(remaining.len(), 3);
-    assert!(remaining.iter().any(|name| name == "libsinexd-current.rlib"));
+    assert!(
+        remaining
+            .iter()
+            .any(|name| name == "libsinexd-current.rlib")
+    );
     assert!(
         remaining
             .iter()

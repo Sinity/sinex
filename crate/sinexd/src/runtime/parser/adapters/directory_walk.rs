@@ -447,13 +447,12 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
         // `modified_ms: 0` sentinel here would make every previously-seen
         // file's checkpoint permanently disagree with its live mtime, so
         // every file would be re-read/re-parsed on every subsequent poll.
-        let fp: FileFingerprint = serde_json::from_value(record.metadata.clone())
-            .map_err(|e| {
-                ParserError::Cursor(format!(
-                    "DirectoryWalkAdapter: record metadata does not carry a \
+        let fp: FileFingerprint = serde_json::from_value(record.metadata.clone()).map_err(|e| {
+            ParserError::Cursor(format!(
+                "DirectoryWalkAdapter: record metadata does not carry a \
                      FileFingerprint ({e}); cursor_after cannot be computed for {path}"
-                ))
-            })?;
+            ))
+        })?;
         let mut cursor = DirectoryWalkCursor::default();
         cursor.insert(path, fp);
         Ok(cursor)

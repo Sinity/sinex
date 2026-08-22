@@ -750,7 +750,9 @@ fn format_tombstone_approve_table(response: &TombstoneApproveResponse) -> String
         output.push_str(&format!("  Tombstoned:    {count} events\n"));
     }
     if let Some(count) = response.operation.manifest_replay_roots_purged {
-        output.push_str(&format!("  Replay roots:  {count} manifest authorities purged\n"));
+        output.push_str(&format!(
+            "  Replay roots:  {count} manifest authorities purged\n"
+        ));
     }
     output.push('\n');
     output.push_str("Data has been permanently deleted.\n");

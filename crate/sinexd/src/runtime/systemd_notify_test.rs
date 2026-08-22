@@ -12,8 +12,7 @@ use tokio::net::UnixDatagram;
 use tokio::time::{Duration, timeout};
 use xtask::sandbox::sinex_test;
 
-static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(()));
+static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[sinex_test]
 async fn hosted_readiness_handles_zero_workers_and_shutdown() -> xtask::sandbox::TestResult<()> {
@@ -34,13 +33,13 @@ async fn hosted_readiness_handles_zero_workers_and_shutdown() -> xtask::sandbox:
 }
 
 #[sinex_test]
-async fn hosted_readiness_requires_each_explicit_worker_identity()
--> xtask::sandbox::TestResult<()> {
-    let readiness =
-        HostedReadiness::configured([HostedWorkerId::from("automaton:a"), HostedWorkerId::from(
-            "source:b",
-        )])
-        .map_err(|error| color_eyre::eyre::eyre!(error))?;
+async fn hosted_readiness_requires_each_explicit_worker_identity() -> xtask::sandbox::TestResult<()>
+{
+    let readiness = HostedReadiness::configured([
+        HostedWorkerId::from("automaton:a"),
+        HostedWorkerId::from("source:b"),
+    ])
+    .map_err(|error| color_eyre::eyre::eyre!(error))?;
     let first = readiness.worker("automaton:a").expect("first worker");
     let second = readiness.worker("source:b").expect("second worker");
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -161,7 +160,7 @@ async fn notify_preserves_socket_for_followup_messages() -> xtask::sandbox::Test
 
         Ok(())
     }
-        .await;
+    .await;
 
     restore_var("NOTIFY_SOCKET", old_notify_socket);
     restore_var("SINEX_SD_NOTIFY_HOSTED", old_hosted_mode);

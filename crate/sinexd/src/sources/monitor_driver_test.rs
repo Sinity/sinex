@@ -130,9 +130,7 @@ async fn service_start_monitor_drain_wait_stays_resident_until_signal() -> TestR
     let mut shutdown_rx = shutdown_rx;
 
     let mut handle =
-        tokio::spawn(
-            async move { wait_for_monitor_drain("test.monitor", &mut shutdown_rx).await },
-        );
+        tokio::spawn(async move { wait_for_monitor_drain("test.monitor", &mut shutdown_rx).await });
 
     tokio::select! {
         result = &mut handle => {

@@ -195,11 +195,7 @@ impl DocumentParserAutomaton {
         };
 
         if content.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err(oversized_input_error(
-                "document",
-                &file_path,
-                content.len(),
-            ));
+            return Err(oversized_input_error("document", &file_path, content.len()));
         }
 
         let natural_key = file_path.clone();
@@ -256,12 +252,7 @@ impl DocumentParserAutomaton {
             .with_event_type("document.parsed")
             .with_declaration_id(parsed_declaration.declaration_id)
             .with_product_class(parsed_declaration.product_class)
-            .with_claim_support(parsed_declaration.default_support.instantiate(
-                1,
-                1,
-                1,
-                0,
-            ))
+            .with_claim_support(parsed_declaration.default_support.instantiate(1, 1, 1, 0))
             .with_semantics_version(parsed_declaration.semantics_version)
             .with_equivalence_key(format!("document-parser:parsed:{document_id}"));
 
@@ -302,12 +293,7 @@ impl DocumentParserAutomaton {
                 .with_event_type("document.chunked")
                 .with_declaration_id(chunk_declaration.declaration_id)
                 .with_product_class(chunk_declaration.product_class)
-                .with_claim_support(chunk_declaration.default_support.instantiate(
-                    1,
-                    1,
-                    1,
-                    0,
-                ))
+                .with_claim_support(chunk_declaration.default_support.instantiate(1, 1, 1, 0))
                 .with_semantics_version(chunk_declaration.semantics_version)
                 .with_equivalence_key(format!("document-parser:chunk:{document_id}:{i}"));
 
@@ -375,12 +361,7 @@ impl DocumentParserAutomaton {
                 .with_event_type("document.parsed")
                 .with_declaration_id(parsed_declaration.declaration_id)
                 .with_product_class(parsed_declaration.product_class)
-                .with_claim_support(parsed_declaration.default_support.instantiate(
-                    1,
-                    1,
-                    1,
-                    0,
-                ))
+                .with_claim_support(parsed_declaration.default_support.instantiate(1, 1, 1, 0))
                 .with_semantics_version(parsed_declaration.semantics_version)
                 .with_equivalence_key(format!("document-parser:parsed:{document_id}")),
         );
@@ -408,12 +389,7 @@ impl DocumentParserAutomaton {
                     .with_event_type("document.chunked")
                     .with_declaration_id(chunk_declaration.declaration_id)
                     .with_product_class(chunk_declaration.product_class)
-                    .with_claim_support(chunk_declaration.default_support.instantiate(
-                        1,
-                        1,
-                        1,
-                        0,
-                    ))
+                    .with_claim_support(chunk_declaration.default_support.instantiate(1, 1, 1, 0))
                     .with_semantics_version(chunk_declaration.semantics_version)
                     .with_equivalence_key(format!("document-parser:chunk:{document_id}:{i}")),
             );

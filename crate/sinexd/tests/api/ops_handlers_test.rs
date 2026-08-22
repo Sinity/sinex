@@ -2664,9 +2664,7 @@ async fn ops_start_records_gmail_rate_limit_backoff_state(ctx: TestContext) -> T
 }
 
 #[sinex_test]
-async fn ops_start_executes_imap_scheduled_sync_with_xoauth2(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn ops_start_executes_imap_scheduled_sync_with_xoauth2(ctx: TestContext) -> TestResult<()> {
     let server = ImapFixtureServer::start().await?;
     let token_server = OAuthTokenFixtureServer::start_success("imap-access-token").await?;
     let dir = tempfile::tempdir()?;
@@ -3463,9 +3461,7 @@ async fn ops_start_executes_email_mailbox_inspect_reports_projection_posture(
 }
 
 #[sinex_test]
-async fn ops_start_pauses_and_resumes_email_provider_binding(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn ops_start_pauses_and_resumes_email_provider_binding(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
     let mode_id = "source:email.mailbox.gmail-api-scheduled-sync";
     let account_ref = "operator-mailbox:primary";
@@ -3678,7 +3674,11 @@ async fn ops_start_authorizes_email_provider_binding_and_clears_remediation(
     )?;
     assert_eq!(authorized.operation.result_status, OperationStatus::Success);
     assert_eq!(
-        authorized.operation.scope.as_ref().expect("authorize scope")["executor_state"],
+        authorized
+            .operation
+            .scope
+            .as_ref()
+            .expect("authorize scope")["executor_state"],
         "email_mailbox_authorized"
     );
 

@@ -16,11 +16,11 @@ use sinex_primitives::error::{Result, SinexError};
 use tracing::info;
 
 use crate::automata::{
-    AnalyticsAutomatonRuntime, AttentionStreamRuntime, DailySummarizerRuntime, DocumentParserRuntime,
-    EmbeddingProducerRuntime, EntityEnricherRuntime, EntityExtractorRuntime, EntityResolverRuntime,
-    HealthAggregatorRuntime, HourlySummarizerRuntime, InstructionExpectationReconcilerRuntime,
-    IntervalLiftRuntime, RelationExtractorRuntime, SessionDetectorRuntime, TagApplierRuntime,
-    TerminalCommandCanonicalizerRuntime,
+    AnalyticsAutomatonRuntime, AttentionStreamRuntime, DailySummarizerRuntime,
+    DocumentParserRuntime, EmbeddingProducerRuntime, EntityEnricherRuntime, EntityExtractorRuntime,
+    EntityResolverRuntime, HealthAggregatorRuntime, HourlySummarizerRuntime,
+    InstructionExpectationReconcilerRuntime, IntervalLiftRuntime, RelationExtractorRuntime,
+    SessionDetectorRuntime, TagApplierRuntime, TerminalCommandCanonicalizerRuntime,
 };
 use crate::runtime::automaton::DeclaresOutputs;
 

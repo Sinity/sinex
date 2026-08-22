@@ -335,13 +335,11 @@ where
                     "NATS KV checkpoint save failed; attempting file-backed checkpoint fallback"
                 );
                 self.save_state_to_file().await.map_err(|file_error| {
-                    SinexError::checkpoint(
-                        "Failed to save checkpoint to NATS KV and fallback file",
-                    )
-                    .with_context("automaton", self.automaton.name())
-                    .with_context("checkpoint_context", context)
-                    .with_context("kv_error", kv_error.to_string())
-                    .with_std_error(&file_error)
+                    SinexError::checkpoint("Failed to save checkpoint to NATS KV and fallback file")
+                        .with_context("automaton", self.automaton.name())
+                        .with_context("checkpoint_context", context)
+                        .with_context("kv_error", kv_error.to_string())
+                        .with_std_error(&file_error)
                 })?;
                 warn!(
                     automaton = %self.automaton.name(),

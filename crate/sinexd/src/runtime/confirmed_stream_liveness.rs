@@ -172,15 +172,14 @@ impl ConfirmedStreamLiveness {
                 .unwrap_or(u64::MAX)
         };
 
-        let capacity_warning = near_limit(
-            snapshot.retained_messages,
-            snapshot.max_messages,
-        ) || near_limit(
-            snapshot.retained_bytes,
-            snapshot.max_bytes,
-        ) || near_limit(retained_age_secs, snapshot.max_age_secs);
+        let capacity_warning = near_limit(snapshot.retained_messages, snapshot.max_messages)
+            || near_limit(snapshot.retained_bytes, snapshot.max_bytes)
+            || near_limit(retained_age_secs, snapshot.max_age_secs);
         let lag_warning = gap_reference.is_some_and(|last| {
-            near_limit(snapshot.last_sequence.saturating_sub(last), snapshot.max_messages)
+            near_limit(
+                snapshot.last_sequence.saturating_sub(last),
+                snapshot.max_messages,
+            )
         });
 
         let status = if gap_from_sequence.is_some() {
@@ -220,7 +219,12 @@ fn near_limit(value: u64, limit: u64) -> bool {
 mod tests {
     use super::*;
 
-    fn snapshot(first: u64, last: u64, messages: u64, max_messages: u64) -> ConfirmedStreamLivenessSnapshot {
+    fn snapshot(
+        first: u64,
+        last: u64,
+        messages: u64,
+        max_messages: u64,
+    ) -> ConfirmedStreamLivenessSnapshot {
         ConfirmedStreamLivenessSnapshot {
             stream_name: "confirmed".to_string(),
             consumer_name: "automaton".to_string(),
@@ -242,12 +246,12 @@ mod tests {
         let mut liveness = ConfirmedStreamLiveness::new();
         liveness.observe_delivery(10);
 
-        let assessment = liveness.assess(
-            &snapshot(15, 20, 6, 100),
-            OffsetDateTime::now_utc(),
-        );
+        let assessment = liveness.assess(&snapshot(15, 20, 6, 100), OffsetDateTime::now_utc());
 
-        assert_eq!(assessment.status, ConfirmedStreamLivenessStatus::GapDetected);
+        assert_eq!(
+            assessment.status,
+            ConfirmedStreamLivenessStatus::GapDetected
+        );
         assert_eq!(assessment.gap_from_sequence, Some(10));
         assert_eq!(assessment.last_seen_sequence, Some(10));
     }
@@ -255,10 +259,7 @@ mod tests {
     #[test]
     fn warns_before_retention_message_limit_is_exhausted() {
         let liveness = ConfirmedStreamLiveness::new();
-        let assessment = liveness.assess(
-            &snapshot(1, 8, 8, 10),
-            OffsetDateTime::now_utc(),
-        );
+        let assessment = liveness.assess(&snapshot(1, 8, 8, 10), OffsetDateTime::now_utc());
 
         assert_eq!(
             assessment.status,

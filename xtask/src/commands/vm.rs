@@ -1029,7 +1029,8 @@ async fn execute_test(
         return Ok(CommandResult::success().with_message("listed exported VM checks"));
     }
 
-    let tests_to_run = resolve_vm_tests_to_run(&available_tests, category, explicit_tests, &system)?;
+    let tests_to_run =
+        resolve_vm_tests_to_run(&available_tests, category, explicit_tests, &system)?;
 
     if ctx.is_human() {
         println!("\n{}", style("NixOS VM Tests").bold());

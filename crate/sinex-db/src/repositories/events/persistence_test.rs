@@ -418,7 +418,9 @@ async fn seed_product_declaration(
     )
     .execute(pool)
     .await
-    .map_err(|e| sinex_primitives::SinexError::database("seed product declaration").with_source(e))?;
+    .map_err(|e| {
+        sinex_primitives::SinexError::database("seed product declaration").with_source(e)
+    })?;
     Ok(())
 }
 
@@ -567,8 +569,8 @@ async fn batch_product_metadata(
     .await?;
 
     let make_event = |event_type: &str,
-                       product_class: Option<DerivedProductClass>,
-                       declaration_id: Option<&str>|
+                      product_class: Option<DerivedProductClass>,
+                      declaration_id: Option<&str>|
      -> Result<Event<JsonValue>> {
         Ok(Event {
             id: Some(Id::new()),
@@ -616,7 +618,9 @@ async fn batch_product_metadata(
         .map(|e| (e.id.expect("test event has id"), e.product_class))
         .collect();
 
-    let inserted = EventRepository::new(ctx.pool()).insert_batch(events).await?;
+    let inserted = EventRepository::new(ctx.pool())
+        .insert_batch(events)
+        .await?;
     assert_eq!(inserted.len(), expected.len());
 
     for (id, expected_class) in &expected {
@@ -664,8 +668,8 @@ async fn batch_product_metadata(
     .await?;
 
     let make_stream_row = |event_type: &str,
-                            product_class: Option<DerivedProductClass>,
-                            declaration_id: Option<&str>|
+                           product_class: Option<DerivedProductClass>,
+                           declaration_id: Option<&str>|
      -> Result<StreamBatchRow> {
         Ok(StreamBatchRow {
             id: Uuid::now_v7(),
@@ -893,7 +897,10 @@ async fn reflection_lane_equivalence_key_dedupe_is_scoped_to_reflection_events(
         .find_live_by_equivalence_keys(&[key.clone()], EventStorageLane::Reflection)
         .await?;
     assert_eq!(
-        found_via_batch.into_iter().map(|r| r.id).collect::<Vec<_>>(),
+        found_via_batch
+            .into_iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>(),
         vec![row.id],
         "batch form must likewise resolve against reflection.events"
     );
@@ -965,7 +972,10 @@ async fn reflection_derived_insert_accepts_live_reflection_parent(
 
     ctx.pool()
         .events()
-        .insert_stream_batch_into(EventStorageLane::Reflection, std::slice::from_ref(&parent_row))
+        .insert_stream_batch_into(
+            EventStorageLane::Reflection,
+            std::slice::from_ref(&parent_row),
+        )
         .await?;
 
     // Every derived event (source_event_ids set) must declare a
@@ -992,7 +1002,10 @@ async fn reflection_derived_insert_accepts_live_reflection_parent(
     let result = ctx
         .pool()
         .events()
-        .insert_stream_batch_into(EventStorageLane::Reflection, std::slice::from_ref(&derived_row))
+        .insert_stream_batch_into(
+            EventStorageLane::Reflection,
+            std::slice::from_ref(&derived_row),
+        )
         .await?;
     assert_eq!(
         result.inserted_count, 1,
@@ -1035,7 +1048,10 @@ async fn reflection_derived_insert_rejects_core_lane_parent(
     let error = ctx
         .pool()
         .events()
-        .insert_stream_batch_into(EventStorageLane::Reflection, std::slice::from_ref(&derived_row))
+        .insert_stream_batch_into(
+            EventStorageLane::Reflection,
+            std::slice::from_ref(&derived_row),
+        )
         .await
         .expect_err(
             "reflection-derived event referencing an activity-lane-only parent must be rejected",

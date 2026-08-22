@@ -69,14 +69,17 @@ async fn tally_counts_correctly() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn xtask_stderr_summary_truncates_non_ascii_without_panicking() -> xtask::sandbox::TestResult<()>
-{
+async fn xtask_stderr_summary_truncates_non_ascii_without_panicking()
+-> xtask::sandbox::TestResult<()> {
     // Repeat a 3-byte Japanese character so the 500-byte cut point lands
     // mid-codepoint (500 is not a multiple of 3: byte 500 falls inside the
     // character spanning bytes 498..501). A naive `&s[..500]` slice panics;
     // this captures subprocess stderr, which can contain non-ASCII output.
     let stderr: String = "あ".repeat(200); // 600 bytes
-    assert!(stderr.len() > 500, "fixture must exceed the truncation threshold in bytes");
+    assert!(
+        stderr.len() > 500,
+        "fixture must exceed the truncation threshold in bytes"
+    );
     let result = XtaskResult {
         success: false,
         stderr,

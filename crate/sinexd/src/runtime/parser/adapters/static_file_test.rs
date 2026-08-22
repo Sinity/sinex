@@ -69,8 +69,7 @@ async fn test_static_file_already_processed_returns_empty() -> xtask::sandbox::T
 }
 
 #[sinex_test]
-async fn test_static_file_not_processed_cursor_yields_record() -> xtask::sandbox::TestResult<()>
-{
+async fn test_static_file_not_processed_cursor_yields_record() -> xtask::sandbox::TestResult<()> {
     let mut f = NamedTempFile::new().unwrap();
     f.write_all(b"content").unwrap();
     let path = f.path().to_str().unwrap().to_string();
@@ -154,8 +153,7 @@ async fn static_file_bounded_read_rejects_growth_without_partial_material()
 }
 
 #[sinex_test]
-async fn test_static_file_empty_file_yields_one_empty_record() -> xtask::sandbox::TestResult<()>
-{
+async fn test_static_file_empty_file_yields_one_empty_record() -> xtask::sandbox::TestResult<()> {
     let f = NamedTempFile::new().unwrap();
     let path = f.path().to_str().unwrap().to_string();
 
@@ -196,8 +194,7 @@ async fn static_file_directory_yields_path_only_record() -> xtask::sandbox::Test
 }
 
 #[sinex_test]
-async fn static_file_git_directory_reopens_when_head_changes()
--> xtask::sandbox::TestResult<()> {
+async fn static_file_git_directory_reopens_when_head_changes() -> xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir().unwrap();
     write_git_head(dir.path(), "1111111111111111111111111111111111111111")?;
     let path = dir.path().to_str().unwrap().to_string();
@@ -228,8 +225,7 @@ async fn static_file_git_directory_reopens_when_head_changes()
 }
 
 #[sinex_test]
-async fn static_file_legacy_processed_git_cursor_reopens_once()
--> xtask::sandbox::TestResult<()> {
+async fn static_file_legacy_processed_git_cursor_reopens_once() -> xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir().unwrap();
     write_git_head(dir.path(), "3333333333333333333333333333333333333333")?;
     let path = dir.path().to_str().unwrap().to_string();
@@ -264,8 +260,8 @@ async fn static_file_directory_has_no_input_fingerprint() -> xtask::sandbox::Tes
 }
 
 #[sinex_test]
-async fn static_file_csv_input_fingerprint_reports_header_shape()
--> xtask::sandbox::TestResult<()> {
+async fn static_file_csv_input_fingerprint_reports_header_shape() -> xtask::sandbox::TestResult<()>
+{
     let mut f = Builder::new().suffix(".csv").tempfile().unwrap();
     f.write_all(b"id,name\n1,Alice\n").unwrap();
     let path = f.path().to_str().unwrap().to_string();
@@ -285,8 +281,8 @@ async fn static_file_csv_input_fingerprint_reports_header_shape()
 }
 
 #[sinex_test]
-async fn static_file_json_input_fingerprint_reports_nested_shape()
--> xtask::sandbox::TestResult<()> {
+async fn static_file_json_input_fingerprint_reports_nested_shape() -> xtask::sandbox::TestResult<()>
+{
     let mut f = Builder::new().suffix(".json").tempfile().unwrap();
     f.write_all(br#"{"id":1,"profile":{"name":"Alice"}}"#)
         .unwrap();
@@ -308,8 +304,7 @@ async fn static_file_json_input_fingerprint_reports_nested_shape()
 }
 
 #[sinex_test]
-async fn static_file_jsonl_input_fingerprint_reports_row_shape()
--> xtask::sandbox::TestResult<()> {
+async fn static_file_jsonl_input_fingerprint_reports_row_shape() -> xtask::sandbox::TestResult<()> {
     let mut f = Builder::new().suffix(".jsonl").tempfile().unwrap();
     f.write_all(
         br#"{"id":1,"created_at":"2026-01-01"}
@@ -334,8 +329,8 @@ async fn static_file_jsonl_input_fingerprint_reports_row_shape()
 }
 
 #[sinex_test]
-async fn static_file_unknown_extension_has_no_input_fingerprint()
--> xtask::sandbox::TestResult<()> {
+async fn static_file_unknown_extension_has_no_input_fingerprint() -> xtask::sandbox::TestResult<()>
+{
     let mut f = Builder::new().suffix(".txt").tempfile().unwrap();
     f.write_all(b"not a structured export").unwrap();
     let path = f.path().to_str().unwrap().to_string();

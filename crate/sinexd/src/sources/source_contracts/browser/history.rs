@@ -335,8 +335,7 @@ impl MaterialParser for TakeoutChromeHistoryParser {
             )],
             privacy_contexts: vec![ProcessingContext::Metadata],
             sensitivity_hints: Vec::new(),
-            description: "Parses extracted Google Takeout Chrome BrowserHistory.json files."
-                .into(),
+            description: "Parses extracted Google Takeout Chrome BrowserHistory.json files.".into(),
         }
     }
 
@@ -458,7 +457,10 @@ impl MaterialParser for TakeoutChromeHistoryParser {
     }
 
     fn required_input_keys(&self) -> Vec<String> {
-        vec!["/Browser History/[]/time_usec".into(), "/Browser History/[]/url".into()]
+        vec![
+            "/Browser History/[]/time_usec".into(),
+            "/Browser History/[]/url".into(),
+        ]
     }
 }
 
@@ -476,10 +478,16 @@ fn parse_takeout_time_usec(
         }
     };
     let micros = raw.parse::<i64>().map_err(|error| {
-        ParserError::Parse(format!("Takeout Chrome row {row_index} invalid time_usec: {error}"))
+        ParserError::Parse(format!(
+            "Takeout Chrome row {row_index} invalid time_usec: {error}"
+        ))
     })?;
-    let timestamp = Timestamp::from_unix_timestamp_nanos(i128::from(micros) * 1_000)
-        .ok_or_else(|| ParserError::Parse(format!("Takeout Chrome row {row_index} timestamp out of range")))?;
+    let timestamp =
+        Timestamp::from_unix_timestamp_nanos(i128::from(micros) * 1_000).ok_or_else(|| {
+            ParserError::Parse(format!(
+                "Takeout Chrome row {row_index} timestamp out of range"
+            ))
+        })?;
     Ok((raw, timestamp))
 }
 

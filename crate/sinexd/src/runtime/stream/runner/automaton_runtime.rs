@@ -6,9 +6,9 @@
 
 use super::{
     Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, Event, JetStreamEventConsumer,
-    JetStreamEventConsumerConfig, JsonValue,
-    RunnerConfirmedEventHandler, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon,
-    Uuid, debug, info, mpsc, systemd_notify, warn,
+    JetStreamEventConsumerConfig, JsonValue, RunnerConfirmedEventHandler, RuntimeResult,
+    RuntimeRunner, ScanArgs, SinexError, TimeHorizon, Uuid, debug, info, mpsc, systemd_notify,
+    warn,
 };
 
 impl RuntimeRunner {

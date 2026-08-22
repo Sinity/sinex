@@ -69,20 +69,26 @@ impl GatewayAuth {
         let readonly = configured.next();
         for item in [&primary, readonly.as_ref().unwrap_or(&primary)] {
             if item.value.trim().is_empty() {
-                return Err(SinexError::configuration("configured API token file is empty; refusing to start without a token"));
+                return Err(SinexError::configuration(
+                    "configured API token file is empty; refusing to start without a token",
+                ));
             }
             let (_, role) = crate::api::auth::Role::from_token(&item.value)
                 .map_err(|err| SinexError::configuration(err.to_string()))?;
             if let Some(required) = item.required_role
                 && role != required
             {
-                return Err(SinexError::configuration("configured API token has the wrong role suffix"));
+                return Err(SinexError::configuration(
+                    "configured API token has the wrong role suffix",
+                ));
             }
         }
 
         Ok(Self {
             token: Arc::new(RwLock::new(Some(primary.value))),
-            readonly_token: Arc::new(RwLock::new(readonly.as_ref().map(|item| item.value.clone()))),
+            readonly_token: Arc::new(RwLock::new(
+                readonly.as_ref().map(|item| item.value.clone()),
+            )),
             token_path: primary.path,
             readonly_token_path: readonly.and_then(|item| item.path),
         })
@@ -132,14 +138,20 @@ impl GatewayAuth {
                             Ok(event) => {
                                 match event.kind {
                                     EventKind::Modify(_) | EventKind::Create(_) => {
-                                    if event.paths.iter().any(|p| p == &path_for_closure) {
-                                        Self::reload_token_from_path(&token_clone, &path_for_closure);
-                                    }
-                                    if let Some(readonly_path) = &readonly_path_for_closure
-                                        && event.paths.iter().any(|p| p == readonly_path)
-                                    {
-                                        Self::reload_token_from_path(&readonly_token_clone, readonly_path);
-                                    }
+                                        if event.paths.iter().any(|p| p == &path_for_closure) {
+                                            Self::reload_token_from_path(
+                                                &token_clone,
+                                                &path_for_closure,
+                                            );
+                                        }
+                                        if let Some(readonly_path) = &readonly_path_for_closure
+                                            && event.paths.iter().any(|p| p == readonly_path)
+                                        {
+                                            Self::reload_token_from_path(
+                                                &readonly_token_clone,
+                                                readonly_path,
+                                            );
+                                        }
                                     }
                                     EventKind::Remove(_) => {
                                         // File was deleted — keep last valid token (fail-closed).
@@ -211,9 +223,11 @@ impl GatewayAuth {
                 {
                     send_token_watcher_ready(
                         &mut ready_tx,
-                        Err(SinexError::configuration("Failed to watch read-only token file")
-                            .with_context("path", readonly_path.display().to_string())
-                            .with_std_error(&e)),
+                        Err(
+                            SinexError::configuration("Failed to watch read-only token file")
+                                .with_context("path", readonly_path.display().to_string())
+                                .with_std_error(&e),
+                        ),
                         "watch-readonly",
                     );
                     return;
@@ -259,8 +273,12 @@ impl GatewayAuth {
 
         let token_guard = self.token.read();
         let readonly_guard = self.readonly_token.read();
-        if token_guard.as_ref().is_some_and(|expected| constant_time_eq(provided.as_bytes(), expected.as_bytes()))
-            || readonly_guard.as_ref().is_some_and(|expected| constant_time_eq(provided.as_bytes(), expected.as_bytes()))
+        if token_guard
+            .as_ref()
+            .is_some_and(|expected| constant_time_eq(provided.as_bytes(), expected.as_bytes()))
+            || readonly_guard
+                .as_ref()
+                .is_some_and(|expected| constant_time_eq(provided.as_bytes(), expected.as_bytes()))
         {
             Ok(provided)
         } else {

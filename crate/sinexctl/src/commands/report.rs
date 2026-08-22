@@ -211,10 +211,7 @@ struct ActivityCalendarView {
 
 impl ActivityCalendarView {
     fn zero_day_count(&self) -> usize {
-        self.days
-            .iter()
-            .filter(|day| day.total_events == 0)
-            .count()
+        self.days.iter().filter(|day| day.total_events == 0).count()
     }
 }
 

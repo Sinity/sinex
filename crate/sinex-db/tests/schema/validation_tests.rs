@@ -4,8 +4,8 @@
 //! including CHECK constraints, foreign keys, and custom validation logic.
 
 use sea_query::PostgresQueryBuilder;
-use sinex_primitives::temporal::Timestamp;
 use sinex_db::schema::{apply, defs::*};
+use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
 use std::str::FromStr;
 use uuid::Uuid;

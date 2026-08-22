@@ -88,8 +88,8 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
         }
     };
 
-    let destructive_contract = crate::schema::converge::destructive_schema_contract()
-        .map_err(map_apply_error)?;
+    let destructive_contract =
+        crate::schema::converge::destructive_schema_contract().map_err(map_apply_error)?;
     if destructive_contract
         .split('|')
         .nth(1)

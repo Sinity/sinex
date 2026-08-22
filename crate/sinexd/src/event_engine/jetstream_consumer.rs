@@ -24,9 +24,7 @@
 
 use crate::runtime::SelfObserver;
 use crate::runtime::heartbeat::HeartbeatCounterHandle;
-use crate::runtime::stream::{
-    PullConsumerSpec, ensure_pull_consumer, pull_batch_bounded,
-};
+use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch_bounded};
 use async_nats::jetstream::stream::DiscardPolicy;
 use async_nats::{Client as NatsClient, jetstream};
 use futures::future::{BoxFuture, join_all};
@@ -64,7 +62,9 @@ use crate::event_engine::{
     material_ready_set::MaterialReadySet,
     validator::IngestEventValidator,
 };
-use crate::runtime::durable_emission::{EmissionReceiptState, SettlementRegistry, SuppressionReason};
+use crate::runtime::durable_emission::{
+    EmissionReceiptState, SettlementRegistry, SuppressionReason,
+};
 use crate::runtime::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use sinex_primitives::Id;

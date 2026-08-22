@@ -74,7 +74,7 @@ async fn systemd_required_unit_removal_blocks_readiness() -> TestResult<()> {
 
     let drift =
         SourceRecordFingerprint::diff(SourceId::from_static("system.systemd"), &before, &after)
-        .expect("removing UNIT should produce JSON shape drift");
+            .expect("removing UNIT should produce JSON shape drift");
     assert_required_key_blocks_readiness(drift, SystemdParser, "/UNIT");
     Ok(())
 }

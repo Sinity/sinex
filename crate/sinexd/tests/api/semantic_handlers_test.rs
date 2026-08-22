@@ -24,15 +24,14 @@ use xtask::sandbox::prelude::*;
 mod lane_attribution {
     use super::semantic_scope;
     use sinex_primitives::rpc::semantic::{
-        SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_LANES_CREATE_METHOD,
-        SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_SET_STATUS_METHOD,
-        SemanticEpochCreateRequest, SemanticLaneCreateRequest, SemanticLaneDiscardRequest,
-        SemanticLaneSetStatusRequest,
+        SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD,
+        SEMANTIC_LANES_SET_STATUS_METHOD, SemanticEpochCreateRequest, SemanticLaneCreateRequest,
+        SemanticLaneDiscardRequest, SemanticLaneSetStatusRequest,
     };
     use sinex_primitives::temporal::Timestamp;
     use sinex_primitives::{SemanticLaneKind, SemanticLaneStatus, Uuid};
-    use sinexd::api::{ServiceContainer, auth::Role, rpc_registry};
     use sinexd::api::rpc_server::RpcAuthContext;
+    use sinexd::api::{ServiceContainer, auth::Role, rpc_registry};
     use xtask::sandbox::prelude::*;
 
     fn auth_as(actor_id: &str) -> RpcAuthContext {
@@ -44,13 +43,15 @@ mod lane_attribution {
         }
     }
 
-    async fn operations_log_count_for_actor(pool: &sqlx::PgPool, actor_id: &str) -> TestResult<i64> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM core.operations_log WHERE operator = $1",
-        )
-        .bind(actor_id)
-        .fetch_one(pool)
-        .await?;
+    async fn operations_log_count_for_actor(
+        pool: &sqlx::PgPool,
+        actor_id: &str,
+    ) -> TestResult<i64> {
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM core.operations_log WHERE operator = $1")
+                .bind(actor_id)
+                .fetch_one(pool)
+                .await?;
         Ok(count)
     }
 

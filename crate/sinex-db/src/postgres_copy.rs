@@ -327,9 +327,9 @@ fn validate_event_copy_columns(copy_contract: &[EventCopyColumn]) -> Result<(), 
         return Err(format!(
             "COPY contract duplicates core.events columns: {}",
             duplicate_contract_names
-            .into_iter()
-            .collect::<Vec<_>>()
-            .join(", ")
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
 
@@ -621,7 +621,10 @@ impl ToPostgresCopy for Event<JsonValue> {
         )?;
         {
             let derivation_epoch_id_str = self.derivation_epoch_id.map(|id| id.to_string());
-            writer.field(Events::DerivationEpochId, derivation_epoch_id_str.as_deref())?;
+            writer.field(
+                Events::DerivationEpochId,
+                derivation_epoch_id_str.as_deref(),
+            )?;
         }
         {
             let derivation_lane_id_str = self.derivation_lane_id.map(|id| id.to_string());
@@ -734,7 +737,10 @@ impl ToPostgresCopy for StreamBatchRow {
         )?;
         {
             let derivation_epoch_id_str = self.derivation_epoch_id.map(|id| id.to_string());
-            writer.field(Events::DerivationEpochId, derivation_epoch_id_str.as_deref())?;
+            writer.field(
+                Events::DerivationEpochId,
+                derivation_epoch_id_str.as_deref(),
+            )?;
         }
         {
             let derivation_lane_id_str = self.derivation_lane_id.map(|id| id.to_string());

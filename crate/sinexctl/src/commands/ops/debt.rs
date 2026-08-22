@@ -66,11 +66,13 @@ impl DebtCommands {
                 let dlq = client.dlq_list().await?;
                 let mut rows = debt_rows_from_dlq(&dlq);
                 if *include_capture {
-                    rows.extend(debt_rows_from_source_material_remediation(
-                        client,
-                        SOURCE_MATERIAL_REMEDIATION_DEBT_LIMIT,
-                    )
-                    .await?);
+                    rows.extend(
+                        debt_rows_from_source_material_remediation(
+                            client,
+                            SOURCE_MATERIAL_REMEDIATION_DEBT_LIMIT,
+                        )
+                        .await?,
+                    );
                     let coverage = client.sources_coverage(SourcesCoverageRequest {}).await?;
                     rows.extend(debt_rows_from_source_coverage(&coverage.sources));
                 }
@@ -285,9 +287,7 @@ pub(super) fn debt_row_from_source_material_candidate(
     }
 }
 
-pub(super) fn debt_row_from_source_material_detail(
-    material: &SourceMaterialDetail,
-) -> DebtRowView {
+pub(super) fn debt_row_from_source_material_detail(material: &SourceMaterialDetail) -> DebtRowView {
     let event_count = material.event_count.unwrap_or_default();
     let source = logical_source_identifier(&material.source_identifier);
     let failure_reason = material_failure_reason(material);
@@ -632,8 +632,7 @@ pub(super) fn debt_row_from_replay_operation(operation: &OpsOperation) -> Option
         .and_then(Value::as_u64)
         .unwrap_or_default();
     if remaining_archived_events > 0 {
-        let operation_ref =
-            SinexObjectRef::new(SinexObjectKind::Operation, operation.id.clone());
+        let operation_ref = SinexObjectRef::new(SinexObjectKind::Operation, operation.id.clone());
         return Some(DebtRowView {
             id: format!("debt:replay-archive:{}", operation.id),
             kind: DebtKind::Projection,

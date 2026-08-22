@@ -69,7 +69,8 @@ async fn cascade_restore_preserves_synthetic_metadata_columns(ctx: TestContext) 
     derived.equivalence_key = Some("equiv:lifecycle-restore".to_string());
     derived.created_by_operation_id = Some(replay_operation_id);
     derived.automaton_model = Some(AutomatonModel::ScopeReconciler);
-    derived.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    derived.product_class =
+        Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
     derived.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
     derived.derivation_declaration_id = Some("lifecycle-restore-test-decl".to_string());
 

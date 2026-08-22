@@ -216,7 +216,8 @@ async fn sources_archive_scopes_to_requested_material_and_derived_cascade(
     let target_event_id_string = target_event_id.to_string();
 
     let product_class = DerivedProductClass::CanonicalDerivedEvent;
-    let declaration_id = "sinex.test.sources_archive_scopes_to_requested_material_and_derived_cascade";
+    let declaration_id =
+        "sinex.test.sources_archive_scopes_to_requested_material_and_derived_cascade";
     common::seed_product_declaration(
         ctx.pool(),
         declaration_id,
@@ -302,11 +303,16 @@ async fn sources_archive_scopes_to_requested_material_and_derived_cascade(
     assert_eq!(preview_summary["root_event_count"].as_i64(), Some(1));
     assert_eq!(preview_summary["cascade_total"].as_i64(), Some(2));
     assert_eq!(
-        preview_summary["affected_event_ids"].as_array().map(Vec::len),
+        preview_summary["affected_event_ids"]
+            .as_array()
+            .map(Vec::len),
         Some(2)
     );
     assert_eq!(live_event_count(&ctx, &target_event_id_string).await?, 0);
-    assert_eq!(archived_event_count(&ctx, &target_event_id_string).await?, 1);
+    assert_eq!(
+        archived_event_count(&ctx, &target_event_id_string).await?,
+        1
+    );
     assert_eq!(live_event_count(&ctx, &derived_event_id).await?, 0);
     assert_eq!(archived_event_count(&ctx, &derived_event_id).await?, 1);
     assert_eq!(live_event_count(&ctx, &other_event_id).await?, 1);

@@ -110,7 +110,10 @@ async fn session_flush_due_backstops_non_gap_trailing_close() -> xtask::sandbox:
 
     // No windows accumulated yet: never due, regardless of watermark.
     assert!(
-        !detector.flush_due(&state, window_end + threshold + time::Duration::seconds(3600)),
+        !detector.flush_due(
+            &state,
+            window_end + threshold + time::Duration::seconds(3600)
+        ),
         "an empty session must never be flush-due"
     );
 

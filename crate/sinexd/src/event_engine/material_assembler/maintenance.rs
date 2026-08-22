@@ -263,9 +263,7 @@ impl MaterialAssembler {
             let state = state_handle.lock().await;
 
             if state.phase == state::AssemblyPhase::Finalizing {
-                let finalizing_since = state
-                    .finalizing_since
-                    .unwrap_or(state.last_slice_received);
+                let finalizing_since = state.finalizing_since.unwrap_or(state.last_slice_received);
                 let elapsed = (now - finalizing_since).whole_seconds();
                 if elapsed > self.finalize_timeout.as_secs() as i64 {
                     tracing::warn!(
@@ -423,7 +421,11 @@ impl MaterialAssembler {
         }
     }
 
-    async fn recover_stale_finalizing_material(&self, material_id: Uuid, elapsed_secs: i64) -> bool {
+    async fn recover_stale_finalizing_material(
+        &self,
+        material_id: Uuid,
+        elapsed_secs: i64,
+    ) -> bool {
         let Some(state_handle) = self.get_state_handle(&material_id) else {
             return false;
         };

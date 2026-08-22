@@ -229,10 +229,12 @@ async fn readiness_default_liveness_policy_marks_old_success_stale(
 
     assert_eq!(report.status, SourceReadinessStatus::Stale);
     assert!(report.freshness_seconds.unwrap_or_default() >= 301);
-    assert!(report
-        .caveats
-        .iter()
-        .any(|caveat| caveat.code == "material.no_recent_snapshot"));
+    assert!(
+        report
+            .caveats
+            .iter()
+            .any(|caveat| caveat.code == "material.no_recent_snapshot")
+    );
     Ok(())
 }
 

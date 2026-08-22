@@ -31,7 +31,7 @@
 //!    against `pg_constraint`. Missing constraints are added with `NOT VALID` and
 //!    then validated in a second pass (avoids full table scan on large tables).
 //!
-//! 6. **Mirror tables** — `reflection.events` and `audit.archived_events`
+//! 6. **Mirror tables**: `reflection.events` and `audit.archived_events`
 //!    mirror `core.events` via `LIKE … INCLUDING ALL` at creation time. Since
 //!    LIKE is a one-shot, new columns and named checks added to `core.events`
 //!    must be explicitly mirrored. The engine handles this automatically,

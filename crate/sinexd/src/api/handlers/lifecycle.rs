@@ -683,8 +683,7 @@ async fn persist_tombstone_completion(
     }
     sync_tombstone_phase(operation);
 
-    let message = recovery
-        .map_or("Tombstone operation completed", |(message, _)| message);
+    let message = recovery.map_or("Tombstone operation completed", |(message, _)| message);
     let mut completion_summary = json!({
         "message": message,
         "tombstoned_count": tombstoned_count,

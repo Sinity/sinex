@@ -429,11 +429,13 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
     };
 
     let api_config = if api_enabled {
-        Some(match cli.database_url.as_ref() {
-            Some(url) => GatewayConfig::load_with_database_url(url.clone()),
-            None => GatewayConfig::load(),
-        }?
-        .with_nats_namespace(cli.namespace.clone()))
+        Some(
+            match cli.database_url.as_ref() {
+                Some(url) => GatewayConfig::load_with_database_url(url.clone()),
+                None => GatewayConfig::load(),
+            }?
+            .with_nats_namespace(cli.namespace.clone()),
+        )
     } else {
         None
     };

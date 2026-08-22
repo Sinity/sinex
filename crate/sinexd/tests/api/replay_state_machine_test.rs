@@ -718,9 +718,7 @@ async fn recover_stale_executing_clears_executor_module(ctx: TestContext) -> Res
 /// sinex-1u9c: startup recovery must include an operation stranded only
 /// seconds before the next daemon start, matching systemd's fast restart path.
 #[sinex_test]
-async fn recover_stale_executing_recovers_a_just_crashed_operation(
-    ctx: TestContext,
-) -> Result<()> {
+async fn recover_stale_executing_recovers_a_just_crashed_operation(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
         source_name: "test-source".to_string(),

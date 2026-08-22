@@ -37,7 +37,9 @@ async fn seed_product_declaration(
     )
     .execute(pool)
     .await
-    .map_err(|e| sinex_primitives::SinexError::database("seed product declaration").with_source(e))?;
+    .map_err(|e| {
+        sinex_primitives::SinexError::database("seed product declaration").with_source(e)
+    })?;
     Ok(())
 }
 
@@ -127,8 +129,14 @@ async fn cascade_order_detects_cycles(ctx: TestContext) -> TestResult<()> {
     let payload = json!({});
     let product_class = DerivedProductClass::CanonicalDerivedEvent;
     let declaration_id = "sinex.test.cascade_order_detects_cycles";
-    seed_product_declaration(&ctx.pool, declaration_id, product_class, "cascade-test", "cascade.test")
-        .await?;
+    seed_product_declaration(
+        &ctx.pool,
+        declaration_id,
+        product_class,
+        "cascade-test",
+        "cascade.test",
+    )
+    .await?;
 
     let a = Uuid::now_v7();
     let b = Uuid::now_v7();

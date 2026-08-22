@@ -386,7 +386,10 @@ fn storage_growth_assessment_flags_dominant_source_and_one_byte_materials() {
 
     let assessment = assess_storage_growth(&material_summary, &sources, &compression, 365);
 
-    assert_eq!(assessment.top_source_base.as_deref(), Some("browser.history"));
+    assert_eq!(
+        assessment.top_source_base.as_deref(),
+        Some("browser.history")
+    );
     assert_eq!(assessment.top_source_share_basis_points, 8_500);
     assert_eq!(assessment.projected_12_month_bytes, 3_650_000);
     assert!(assessment.compression_configured);

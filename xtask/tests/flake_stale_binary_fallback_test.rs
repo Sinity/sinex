@@ -194,11 +194,7 @@ fn test_help_and_metadata_flags_allow_stale_binary_fallback() {
     let functions = extract_flake_functions();
     for args in [vec!["-h"], vec!["--help"], vec!["--version"], vec![]] {
         assert!(
-            call(
-                &functions,
-                "_sinex_xtask_is_observability_command",
-                &args
-            ),
+            call(&functions, "_sinex_xtask_is_observability_command", &args),
             "help/metadata invocation {args:?} must be treated as observability-safe"
         );
     }

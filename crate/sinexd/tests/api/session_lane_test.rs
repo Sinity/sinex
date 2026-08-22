@@ -12,12 +12,12 @@ use sinex_db::repositories::DbPoolExt;
 use sinex_db::{Event, Provenance};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::derivation::{ClaimSupport, DerivedProductClass, LaneDiffReport};
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     ActivitySessionBoundaryPayload, ActivityWindowCloseReason, ActivityWindowSummaryPayload,
     CurationJudgmentActorKind, CurationJudgmentDecision, CurationProposalPayload,
     CurationProposalStatus,
 };
-use sinex_primitives::events::EventPayload;
 use sinex_primitives::rpc::curation::{CurationFinalizeRequest, CurationRecordJudgmentRequest};
 use sinex_primitives::session_lane::SessionLaneOutputs;
 use sinex_primitives::{Id, Timestamp, Uuid};
@@ -100,8 +100,7 @@ async fn session_lane_shadow_diff_promotion(ctx: TestContext) -> TestResult<()> 
             json!({ "test": true }),
         )
         .await?;
-    let material_id =
-        Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
 
     // Canonical baseline: a real `activity.session.boundary` event, 60s
     // duration, already persisted (as if `SessionDetector` emitted it).
@@ -298,9 +297,9 @@ async fn session_lane_shadow_diff_promotion(ctx: TestContext) -> TestResult<()> 
     };
     let mut proposal_event = proposal
         .clone()
-        .from_parents([Id::<sinex_db::Event<sinex_primitives::JsonValue>>::from_uuid(
-            window_event_id,
-        )])?
+        .from_parents([
+            Id::<sinex_db::Event<sinex_primitives::JsonValue>>::from_uuid(window_event_id),
+        ])?
         .build()?;
     // Same declaration_id `common::seed_rpc_handler_product_declarations`
     // reconciles for `curation.proposal` writes (`curation-rpc.curation.
@@ -309,8 +308,7 @@ async fn session_lane_shadow_diff_promotion(ctx: TestContext) -> TestResult<()> 
     // own fixture-proposal helper reuses/mirrors the real declaration shape.
     proposal_event.product_class = Some(DerivedProductClass::SemanticCandidate);
     proposal_event.claim_support = Some(ClaimSupport::unknown());
-    proposal_event.derivation_declaration_id =
-        Some("curation-rpc.curation.proposal".to_string());
+    proposal_event.derivation_declaration_id = Some("curation-rpc.curation.proposal".to_string());
     let proposal_event = ctx.pool().events().insert(proposal_event).await?;
     let proposal_event_id = proposal_event
         .id
@@ -344,7 +342,10 @@ async fn session_lane_shadow_diff_promotion(ctx: TestContext) -> TestResult<()> 
     )
     .await?;
     assert_eq!(finalization.finalized.output_source, "session-lane");
-    assert_eq!(finalization.finalized.output_event_type, "session.lane_promotion");
+    assert_eq!(
+        finalization.finalized.output_event_type,
+        "session.lane_promotion"
+    );
 
     // The AC's core assertion: the shadow lane is now promoted, through the
     // generic curation finalize bridge -- not a session-specific write.

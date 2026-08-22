@@ -23,8 +23,7 @@ async fn production_path_case_with_no_obligations_is_not_green() -> TestResult<(
 }
 
 #[sinex_test]
-async fn production_path_logical_path_case_with_no_obligations_is_not_green() -> TestResult<()>
-{
+async fn production_path_logical_path_case_with_no_obligations_is_not_green() -> TestResult<()> {
     let failures = _run_case_with_logical_path(
         "weechat.message",
         AdapterKind::AppendOnlyFile,
@@ -43,8 +42,7 @@ async fn production_path_logical_path_case_with_no_obligations_is_not_green() ->
 }
 
 #[sinex_test]
-async fn production_path_directory_entry_case_with_no_obligations_is_not_green()
--> TestResult<()> {
+async fn production_path_directory_entry_case_with_no_obligations_is_not_green() -> TestResult<()> {
     let failures = _run_case_with_directory_entry(
         "fs.created",
         AdapterKind::FileDrop,

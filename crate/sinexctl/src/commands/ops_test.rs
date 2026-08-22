@@ -1,4 +1,3 @@
-
 #![allow(clippy::unwrap_used)]
 
 use super::catchup::material_remediation_signal;
@@ -1427,8 +1426,7 @@ async fn debt_rows_from_replay_operations_reports_pending_invalidation() -> xtas
 }
 
 #[sinex_test]
-async fn debt_rows_from_replay_operations_reports_stranded_archive_rows()
--> xtask::TestResult<()> {
+async fn debt_rows_from_replay_operations_reports_stranded_archive_rows() -> xtask::TestResult<()> {
     let mut operation = fixture_replay_operation_with_invalidation_phase("published");
     operation.result_status = OperationStatus::Failed;
     operation.result_message = Some("replay compensation failed".to_string());

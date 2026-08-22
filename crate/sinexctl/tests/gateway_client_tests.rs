@@ -15,10 +15,10 @@ use xtask::sandbox::prelude::*;
 
 use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
 use sinex_primitives::domain::HealthStatus;
-use sinex_primitives::{RuntimeLivenessAggregate, RuntimeLivenessPolicy, Timestamp};
 use sinex_primitives::rpc::system::{
     ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
 };
+use sinex_primitives::{RuntimeLivenessAggregate, RuntimeLivenessPolicy, Timestamp};
 use sinexctl::client::{ClientConfig, GatewayClient, RetryConfig};
 
 // ============================================================================

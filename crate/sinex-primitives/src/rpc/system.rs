@@ -1,7 +1,7 @@
 //! System types
 
-use crate::domain::HealthStatus;
 use crate::RuntimeLivenessAggregate;
+use crate::domain::HealthStatus;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 

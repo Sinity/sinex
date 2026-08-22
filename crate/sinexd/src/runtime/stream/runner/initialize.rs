@@ -7,9 +7,9 @@
 use super::{
     Arc, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, ErasedInitContext, Event,
     EventBatcherConfig, EventEmitter, EventTransport, HashMap, JsonValue, ModuleKind, ModuleState,
-    PgPool, RunnerLifecycle, RuntimeHandles, RuntimeResult, RuntimeRunner,
-    ServiceInfo, SinexError, Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener,
-    mpsc, spawn_event_batcher, watch,
+    PgPool, RunnerLifecycle, RuntimeHandles, RuntimeResult, RuntimeRunner, ServiceInfo, SinexError,
+    Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener, mpsc,
+    spawn_event_batcher, watch,
 };
 use sinex_primitives::domain::ServiceName;
 
@@ -361,8 +361,9 @@ impl RuntimeRunner {
 
         match Self::collapse_shutdown_errors(cleanup_errors) {
             Ok(()) => error,
-            Err(cleanup_error) => error
-                .with_context("initialization_cleanup_error", cleanup_error.to_string()),
+            Err(cleanup_error) => {
+                error.with_context("initialization_cleanup_error", cleanup_error.to_string())
+            }
         }
     }
 

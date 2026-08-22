@@ -13,14 +13,13 @@
 //! before delivery. Failure isolation is preserved: each automaton runs an
 //! independent durable consumer, so a dead automaton never blocks others.
 
+use crate::runtime::automaton::traits::InputProvenanceFilter;
 use crate::runtime::confirmation_handler::{ConfirmedEventCompletion, ConfirmedEventHandler};
 use crate::runtime::confirmed_stream_liveness::{
-    ConfirmedStreamLiveness, ConfirmedStreamLivenessAssessment,
-    ConfirmedStreamLivenessSnapshot, ConfirmedStreamLivenessStatus,
-    DEFAULT_CHECK_INTERVAL,
+    ConfirmedStreamLiveness, ConfirmedStreamLivenessAssessment, ConfirmedStreamLivenessSnapshot,
+    ConfirmedStreamLivenessStatus, DEFAULT_CHECK_INTERVAL,
 };
 use crate::runtime::self_observation::SelfObserver;
-use crate::runtime::automaton::traits::InputProvenanceFilter;
 use crate::runtime::stream::{
     PullConsumerSpec, delete_consumer, ensure_pull_consumer, list_consumers, pull_batch_bounded,
 };
@@ -350,14 +349,14 @@ impl JetStreamEventConsumer {
                 | ConfirmedConsumerRetirementAction::IgnoreUnrelated => {}
                 ConfirmedConsumerRetirementAction::DeleteStaleSameService => {
                     warn!(
-                    stream = %stream_name,
-                    consumer = %self.config.consumer_name,
-                    stale_consumer = %info.name,
-                    pending = info.num_pending,
-                    ack_pending = info.num_ack_pending,
-                    redelivered = info.num_redelivered,
-                    "Deleting stale confirmed-event durable for this automaton; DB catch-up covers retained history"
-                );
+                        stream = %stream_name,
+                        consumer = %self.config.consumer_name,
+                        stale_consumer = %info.name,
+                        pending = info.num_pending,
+                        ack_pending = info.num_ack_pending,
+                        redelivered = info.num_redelivered,
+                        "Deleting stale confirmed-event durable for this automaton; DB catch-up covers retained history"
+                    );
                     delete_consumer(js, stream_name, &info.name).await?;
                 }
             }
@@ -379,7 +378,8 @@ impl JetStreamEventConsumer {
     ) -> RuntimeResult<()> {
         let mut liveness = ConfirmedStreamLiveness::new();
         let mut previous_liveness_status = None;
-        let mut liveness_interval = tokio::time::interval(liveness_check_interval.max(Duration::from_millis(1)));
+        let mut liveness_interval =
+            tokio::time::interval(liveness_check_interval.max(Duration::from_millis(1)));
         liveness_interval.tick().await;
         let mut batch_future = Box::pin(Self::pull_confirmed_batch(consumer.clone(), batch_size));
 
@@ -569,7 +569,10 @@ impl JetStreamEventConsumer {
 
         let event_id = event.id;
         let (completion_tx, completion_rx) = oneshot::channel();
-        match confirmed_handler.handle_confirmed(&event, completion_tx).await {
+        match confirmed_handler
+            .handle_confirmed(&event, completion_tx)
+            .await
+        {
             Ok(()) => Ok(Some(PendingConfirmedMessage {
                 message: msg,
                 event_id,

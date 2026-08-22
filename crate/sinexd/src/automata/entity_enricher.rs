@@ -179,7 +179,12 @@ impl ScopeReconciler for EntityEnricher {
                 .iter()
                 .filter(|(_, stats)| !dirty.contains(&stats.entity_id))
                 .min_by_key(|(_, stats)| stats.last_seen)
-                .or_else(|| state.entities.iter().min_by_key(|(_, stats)| stats.last_seen))
+                .or_else(|| {
+                    state
+                        .entities
+                        .iter()
+                        .min_by_key(|(_, stats)| stats.last_seen)
+                })
                 .map(|(k, _)| k.clone());
             if let Some(evicted_key) = evict_key {
                 warn!(

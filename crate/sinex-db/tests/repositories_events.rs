@@ -343,14 +343,10 @@ async fn timestamp_regression_scan_keeps_page_predecessor(ctx: TestContext) -> T
     let predecessor_id = ctx.pool.events().insert(predecessor).await?.id.unwrap();
 
     let regression_ts = predecessor_ts - time::Duration::seconds(1);
-    let regression = DynamicPayload::new(
-        source,
-        "timestamp.regression",
-        json!({"position": 2}),
-    )
-    .from_material_at(material_id, 1)
-    .at_time(regression_ts)
-    .build()?;
+    let regression = DynamicPayload::new(source, "timestamp.regression", json!({"position": 2}))
+        .from_material_at(material_id, 1)
+        .at_time(regression_ts)
+        .build()?;
     let regression_id = ctx.pool.events().insert(regression).await?.id.unwrap();
 
     let regressions = ctx.pool.events().find_timestamp_regressions(1).await?;
@@ -361,7 +357,12 @@ async fn timestamp_regression_scan_keeps_page_predecessor(ctx: TestContext) -> T
     let regression_db_ts = Timestamp::new(regression_ts.to_postgres_parts().0);
     assert_eq!(
         regressions,
-        vec![(regression_id, predecessor_id, regression_db_ts, predecessor_db_ts)],
+        vec![(
+            regression_id,
+            predecessor_id,
+            regression_db_ts,
+            predecessor_db_ts
+        )],
         "a one-row page must retain its source predecessor for LAG"
     );
 

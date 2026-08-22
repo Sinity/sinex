@@ -5,8 +5,8 @@
 pub mod audit;
 pub mod automata;
 pub mod browser;
-pub mod coordination;
 pub mod content;
+pub mod coordination;
 pub mod curation;
 pub mod dlq;
 pub mod documents;

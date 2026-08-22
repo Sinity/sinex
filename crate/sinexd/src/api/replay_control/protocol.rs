@@ -135,8 +135,11 @@ impl ReplayControlResponse {
             message: None,
             error_kind: None,
             operation: operation.map(trim_stored_preview_for_client),
-            operations: operations
-                .map(|ops| ops.into_iter().map(trim_stored_preview_for_client).collect()),
+            operations: operations.map(|ops| {
+                ops.into_iter()
+                    .map(trim_stored_preview_for_client)
+                    .collect()
+            }),
             preview,
         }
     }

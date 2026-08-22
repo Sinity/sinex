@@ -14,10 +14,10 @@ use sinex_primitives::rpc::semantic::{
     SemanticLaneOutputsSeedEntityEventsRequest, SemanticLaneOutputsWriteRequest,
     SemanticLaneSetStatusRequest,
 };
-use sinex_primitives::{EntityRelationLaneOutputs, SemanticComponentVersion, SemanticScope, Uuid};
 use sinex_primitives::views::{
     CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
+use sinex_primitives::{EntityRelationLaneOutputs, SemanticComponentVersion, SemanticScope, Uuid};
 use std::path::{Path, PathBuf};
 
 use crate::client::GatewayClient;
@@ -621,20 +621,17 @@ fn semantic_epoch_list_envelope(
     response: SemanticEpochListResponse,
     limit: i64,
 ) -> ViewEnvelope<SemanticEpochListResponse> {
-    let mut envelope =
-        ViewEnvelope::new("sinexctl.semantic.epoch.list", response).with_query_echo(
-            serde_json::json!({
-                "limit": limit,
-            }),
-        );
+    let mut envelope = ViewEnvelope::new("sinexctl.semantic.epoch.list", response).with_query_echo(
+        serde_json::json!({
+            "limit": limit,
+        }),
+    );
     envelope.caveats = semantic_list_caveats(
         envelope.payload.epochs.len(),
         limit,
         SemanticListCaveatSpec {
-            empty_message:
-                "semantic epoch registry returned no epochs; derivation regime coverage is absent",
-            partial_message:
-                "semantic epoch registry reached its limit; additional epochs may exist",
+            empty_message: "semantic epoch registry returned no epochs; derivation regime coverage is absent",
+            partial_message: "semantic epoch registry reached its limit; additional epochs may exist",
             ref_kind: SinexObjectKind::Projection,
             ref_id: "semantic.epochs",
             command_hint: "sinexctl semantic epoch list",
@@ -649,20 +646,18 @@ fn semantic_lane_list_envelope(
     status: Option<&str>,
     limit: i64,
 ) -> ViewEnvelope<SemanticLaneListResponse> {
-    let mut envelope =
-        ViewEnvelope::new("sinexctl.semantic.lane.list", response).with_query_echo(
-            serde_json::json!({
-                "status": status,
-                "limit": limit,
-            }),
-        );
+    let mut envelope = ViewEnvelope::new("sinexctl.semantic.lane.list", response).with_query_echo(
+        serde_json::json!({
+            "status": status,
+            "limit": limit,
+        }),
+    );
     envelope.caveats = semantic_list_caveats(
         envelope.payload.lanes.len(),
         limit,
         SemanticListCaveatSpec {
             empty_message: "semantic lane registry returned no lanes for this bounded query",
-            partial_message:
-                "semantic lane registry reached its limit; additional lanes may exist",
+            partial_message: "semantic lane registry reached its limit; additional lanes may exist",
             ref_kind: SinexObjectKind::SemanticLane,
             ref_id: status.unwrap_or("semantic.lanes"),
             command_hint: "sinexctl semantic lane list",
@@ -677,21 +672,17 @@ fn semantic_lane_outputs_envelope(
     limit: i64,
 ) -> ViewEnvelope<SemanticLaneOutputsListResponse> {
     let lane_id = response.lane_id.to_string();
-    let mut envelope =
-        ViewEnvelope::new("sinexctl.semantic.lane.outputs", response).with_query_echo(
-            serde_json::json!({
-                "lane_id": lane_id,
-                "limit": limit,
-            }),
-        );
+    let mut envelope = ViewEnvelope::new("sinexctl.semantic.lane.outputs", response)
+        .with_query_echo(serde_json::json!({
+            "lane_id": lane_id,
+            "limit": limit,
+        }));
     envelope.caveats = semantic_list_caveats(
         envelope.payload.outputs.len(),
         limit,
         SemanticListCaveatSpec {
-            empty_message:
-                "semantic lane output query returned no outputs; this lane has no inspectable derived records in the bounded view",
-            partial_message:
-                "semantic lane output query reached its limit; additional lane outputs may exist",
+            empty_message: "semantic lane output query returned no outputs; this lane has no inspectable derived records in the bounded view",
+            partial_message: "semantic lane output query reached its limit; additional lane outputs may exist",
             ref_kind: SinexObjectKind::SemanticLane,
             ref_id: &lane_id,
             command_hint: "sinexctl semantic lane outputs",
@@ -706,21 +697,18 @@ fn semantic_lane_diffs_envelope(
     limit: i64,
 ) -> ViewEnvelope<SemanticLaneDiffsListResponse> {
     let lane_id = response.lane_id.to_string();
-    let mut envelope =
-        ViewEnvelope::new("sinexctl.semantic.lane.diffs", response).with_query_echo(
-            serde_json::json!({
-                "lane_id": lane_id,
-                "limit": limit,
-            }),
-        );
+    let mut envelope = ViewEnvelope::new("sinexctl.semantic.lane.diffs", response).with_query_echo(
+        serde_json::json!({
+            "lane_id": lane_id,
+            "limit": limit,
+        }),
+    );
     envelope.caveats = semantic_list_caveats(
         envelope.payload.diffs.len(),
         limit,
         SemanticListCaveatSpec {
-            empty_message:
-                "semantic lane diff query returned no recorded diffs; lane comparison evidence is absent",
-            partial_message:
-                "semantic lane diff query reached its limit; additional lane diffs may exist",
+            empty_message: "semantic lane diff query returned no recorded diffs; lane comparison evidence is absent",
+            partial_message: "semantic lane diff query reached its limit; additional lane diffs may exist",
             ref_kind: SinexObjectKind::SemanticLane,
             ref_id: &lane_id,
             command_hint: "sinexctl semantic lane diffs",

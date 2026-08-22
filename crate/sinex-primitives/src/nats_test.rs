@@ -3,9 +3,9 @@
 use super::*;
 use crate::environment::SinexEnvironment;
 use serde_json::json;
-use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 #[cfg(unix)]
 use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
 #[sinex_test]
 async fn tls_provider_installation_is_idempotent() -> xtask::sandbox::TestResult<()> {
@@ -58,8 +58,7 @@ async fn from_env_rejects_non_unicode_auth_path() -> xtask::sandbox::TestResult<
 }
 
 #[sinex_test]
-async fn kv_bucket_already_exists_matches_stream_name_conflict()
--> xtask::sandbox::TestResult<()> {
+async fn kv_bucket_already_exists_matches_stream_name_conflict() -> xtask::sandbox::TestResult<()> {
     let stream_error = jetstream::context::CreateStreamError::new(
         jetstream::context::CreateStreamErrorKind::JetStream(serde_json::from_value(json!({
             "code": 400,
@@ -96,8 +95,7 @@ async fn kv_bucket_already_exists_rejects_other_bucket_create_errors()
 }
 
 #[sinex_test]
-async fn reflection_topology_uses_separate_event_subject_roots() -> xtask::sandbox::TestResult<()>
-{
+async fn reflection_topology_uses_separate_event_subject_roots() -> xtask::sandbox::TestResult<()> {
     let env = SinexEnvironment::new("dev")?;
     let topology = JetStreamTopology::reflection(
         &env,
@@ -107,8 +105,14 @@ async fn reflection_topology_uses_separate_event_subject_roots() -> xtask::sandb
     );
 
     assert_eq!(topology.lane, JetStreamEventLane::Reflection);
-    assert_eq!(topology.events_stream.as_ref(), "DEV_SINEX_REFLECTION_EVENTS");
-    assert_eq!(topology.events_subject.as_ref(), "dev.events.reflection.raw.>");
+    assert_eq!(
+        topology.events_stream.as_ref(),
+        "DEV_SINEX_REFLECTION_EVENTS"
+    );
+    assert_eq!(
+        topology.events_subject.as_ref(),
+        "dev.events.reflection.raw.>"
+    );
     assert_eq!(
         topology.confirmed_events_stream.as_ref(),
         "DEV_SINEX_REFLECTION_EVENTS_CONFIRMED"
@@ -125,10 +129,7 @@ async fn reflection_topology_uses_separate_event_subject_roots() -> xtask::sandb
         topology.dlq_stream.as_ref(),
         "DEV_SINEX_REFLECTION_EVENTS_DLQ"
     );
-    assert_eq!(
-        topology.dlq_subject.as_ref(),
-        "dev.events.reflection.dlq.>"
-    );
+    assert_eq!(topology.dlq_subject.as_ref(), "dev.events.reflection.dlq.>");
     assert_eq!(
         topology.dlq_publish_subject.as_ref(),
         "dev.events.reflection.dlq.event_engine"

@@ -213,8 +213,14 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
 
     let product_class = DerivedProductClass::CanonicalDerivedEvent;
     let declaration_id = "sinex.test.replay_lifecycle_enforces_reexecution_invariants";
-    common::seed_product_declaration(&ctx.pool, declaration_id, product_class, "automaton", "file.derived")
-        .await?;
+    common::seed_product_declaration(
+        &ctx.pool,
+        declaration_id,
+        product_class,
+        "automaton",
+        "file.derived",
+    )
+    .await?;
     let mut cascade_event = DynamicPayload::new(
         "automaton",
         "file.derived",

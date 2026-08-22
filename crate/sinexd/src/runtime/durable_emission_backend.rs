@@ -101,8 +101,10 @@ pub async fn emit_batch_durable(
     // above). `event_ids` preserves the request's original event order so
     // the final receipt's `items` can be reassembled in that same order.
     let mut event_ids: Vec<Id<Event>> = Vec::with_capacity(request.events.len());
-    let mut waiters: Vec<(Id<Event>, tokio::sync::oneshot::Receiver<EmissionReceiptState>)> =
-        Vec::with_capacity(request.events.len());
+    let mut waiters: Vec<(
+        Id<Event>,
+        tokio::sync::oneshot::Receiver<EmissionReceiptState>,
+    )> = Vec::with_capacity(request.events.len());
     for event in &mut request.events {
         let id = *event.id.get_or_insert_with(Id::new);
         event_ids.push(id);
@@ -113,9 +115,13 @@ pub async fn emit_batch_durable(
     // duration of the join rather than spawning tasks, so no `'static`
     // bound or extra clone is needed.
     let emit_results: Vec<(Id<Event>, Result<(), sinex_primitives::SinexError>)> =
-        futures::future::join_all(request.events.into_iter().zip(event_ids.iter().copied()).map(
-            |(event, event_id)| async move { (event_id, emitter.emit(event).await) },
-        ))
+        futures::future::join_all(
+            request
+                .events
+                .into_iter()
+                .zip(event_ids.iter().copied())
+                .map(|(event, event_id)| async move { (event_id, emitter.emit(event).await) }),
+        )
         .await;
 
     // Events whose emit() call itself failed never reach the event engine,
@@ -142,7 +148,9 @@ pub async fn emit_batch_durable(
         .into_iter()
         .filter(|(event_id, _)| !immediate.contains_key(event_id))
         .collect();
-    let awaited = registry.await_batch(awaited_waiters, per_item_timeout).await;
+    let awaited = registry
+        .await_batch(awaited_waiters, per_item_timeout)
+        .await;
     let mut awaited_by_id: HashMap<Id<Event>, EmissionItemReceipt> = awaited
         .into_iter()
         .filter_map(|item| item.event_id.map(|id| (id, item)))
@@ -151,21 +159,24 @@ pub async fn emit_batch_durable(
     let items: Vec<EmissionItemReceipt> = event_ids
         .into_iter()
         .map(|id| {
-            immediate.remove(&id).or_else(|| awaited_by_id.remove(&id)).unwrap_or_else(|| {
-                // Unreachable in practice: every id in `event_ids` was either
-                // recorded in `immediate` (emit failed) or awaited through
-                // `await_batch` (emit succeeded, so it's in `awaited_by_id`
-                // unconditionally, including the timeout/dropped case which
-                // await_batch itself maps to TimedOut). Kept as an
-                // honest non-panicking fallback rather than an `expect()`.
-                EmissionItemReceipt {
-                    event_id: Some(id),
-                    state: EmissionReceiptState::FailedTransient {
-                        error: "emit_batch_durable lost bookkeeping for this event id"
-                            .to_string(),
-                    },
-                }
-            })
+            immediate
+                .remove(&id)
+                .or_else(|| awaited_by_id.remove(&id))
+                .unwrap_or_else(|| {
+                    // Unreachable in practice: every id in `event_ids` was either
+                    // recorded in `immediate` (emit failed) or awaited through
+                    // `await_batch` (emit succeeded, so it's in `awaited_by_id`
+                    // unconditionally, including the timeout/dropped case which
+                    // await_batch itself maps to TimedOut). Kept as an
+                    // honest non-panicking fallback rather than an `expect()`.
+                    EmissionItemReceipt {
+                        event_id: Some(id),
+                        state: EmissionReceiptState::FailedTransient {
+                            error: "emit_batch_durable lost bookkeeping for this event id"
+                                .to_string(),
+                        },
+                    }
+                })
         })
         .collect();
 
@@ -187,7 +198,9 @@ mod tests {
     use super::*;
     use crate::runtime::durable_emission::{ProgressAtom, SuppressionReason};
 
-    fn material_event(anchor_byte: i64) -> sinex_primitives::events::Event<sinex_primitives::JsonValue> {
+    fn material_event(
+        anchor_byte: i64,
+    ) -> sinex_primitives::events::Event<sinex_primitives::JsonValue> {
         let material_id: sinex_primitives::Id<sinex_primitives::events::SourceMaterial> =
             sinex_primitives::Id::new();
         DynamicPayload::new(
@@ -200,7 +213,9 @@ mod tests {
         .expect("valid material-provenance event")
     }
 
-    fn request(events: Vec<sinex_primitives::events::Event<sinex_primitives::JsonValue>>) -> DurableEmissionRequest {
+    fn request(
+        events: Vec<sinex_primitives::events::Event<sinex_primitives::JsonValue>>,
+    ) -> DurableEmissionRequest {
         DurableEmissionRequest {
             origin: crate::runtime::durable_emission::EmissionOrigin::SourceAdapter,
             required_level: crate::runtime::durable_emission::ReceiptLevel::AdmissionSettled,
@@ -245,7 +260,8 @@ mod tests {
             }
         });
 
-        let receipt = emit_batch_durable(&registry, &emitter, req, Duration::from_millis(500)).await;
+        let receipt =
+            emit_batch_durable(&registry, &emitter, req, Duration::from_millis(500)).await;
         settler.await.expect("settler task did not panic");
 
         assert_eq!(receipt.items.len(), 3);
@@ -295,7 +311,8 @@ mod tests {
             );
         });
 
-        let receipt = emit_batch_durable(&registry, &emitter, req, Duration::from_millis(500)).await;
+        let receipt =
+            emit_batch_durable(&registry, &emitter, req, Duration::from_millis(500)).await;
         settler.await.expect("settler task did not panic");
 
         assert_eq!(receipt.items.len(), 2);
@@ -376,13 +393,16 @@ mod tests {
             elapsed < Duration::from_secs(5),
             "an emit() failure must be reported immediately, not after the 30s per_item_timeout: {elapsed:?}"
         );
-        assert!(registry.is_empty(), "a failed emit must cancel its registration, not leak it");
+        assert!(
+            registry.is_empty(),
+            "a failed emit must cancel its registration, not leak it"
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn real_route_waits_through_lag_boundary_without_retry_classification()
-    -> TestResult<()> {
+    async fn real_route_waits_through_lag_boundary_without_retry_classification() -> TestResult<()>
+    {
         let (tx, mut rx) = mpsc::channel(8);
         let emitter = EventEmitter::new(tx, false);
         let registry = SettlementRegistry::new();
@@ -408,13 +428,8 @@ mod tests {
             );
         });
 
-        let receipt = emit_batch_durable(
-            &registry,
-            &emitter,
-            req,
-            lag + Duration::from_millis(25),
-        )
-        .await;
+        let receipt =
+            emit_batch_durable(&registry, &emitter, req, lag + Duration::from_millis(25)).await;
         settler.await.expect("settler task did not panic");
 
         assert_eq!(receipt.items.len(), 1);
@@ -426,7 +441,10 @@ mod tests {
             receipt.items[0].state,
             EmissionReceiptState::PersistedConfirmed { .. }
         ));
-        assert!(registry.is_empty(), "settled route must not leave a retry waiter");
+        assert!(
+            registry.is_empty(),
+            "settled route must not leave a retry waiter"
+        );
         Ok(())
     }
 }

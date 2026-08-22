@@ -78,7 +78,9 @@ async fn daily_flush_due_respects_dst_shortened_day() -> xtask::sandbox::TestRes
     let true_day_end = crate::automata::civil::civil_day_end(day_start); // 23h after day_start
 
     let ctx = AutomatonContext::timer_flush(noon)?;
-    summarizer.accumulate(&mut state, hourly(noon), &ctx).await?;
+    summarizer
+        .accumulate(&mut state, hourly(noon), &ctx)
+        .await?;
 
     // One hour before the true (23h) day end: not yet due.
     let one_hour_early = true_day_end - time::Duration::seconds(3600);

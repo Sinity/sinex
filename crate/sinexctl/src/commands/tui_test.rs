@@ -527,14 +527,13 @@ fn event_card_fixture(
 }
 
 fn fixture_query_result_event(payload: serde_json::Value) -> QueryResultEvent {
-    let mut event = sinex_primitives::events::DynamicPayload::new(
-        "ux-mk3.fixture",
-        "ux.fixture",
-        payload,
-    )
-    .from_material(sinex_primitives::ids::Id::<sinex_primitives::events::SourceMaterial>::new())
-    .build()
-    .expect("fixture event should build");
+    let mut event =
+        sinex_primitives::events::DynamicPayload::new("ux-mk3.fixture", "ux.fixture", payload)
+            .from_material(sinex_primitives::ids::Id::<
+                sinex_primitives::events::SourceMaterial,
+            >::new())
+            .build()
+            .expect("fixture event should build");
     event.id = Some(sinex_primitives::ids::Id::new());
     QueryResultEvent {
         event,
@@ -629,10 +628,16 @@ async fn tui_module_liveness_uses_canonical_policy_and_run_status() -> TestResul
         started_at: Some(now),
         heartbeat_source: RuntimeHeartbeatSource::Run,
     };
-    assert_eq!(module_liveness(&module, now), RuntimeLivenessStatus::Healthy);
+    assert_eq!(
+        module_liveness(&module, now),
+        RuntimeLivenessStatus::Healthy
+    );
 
     module.status = "draining".to_string();
-    assert_eq!(module_liveness(&module, now), RuntimeLivenessStatus::Degraded);
+    assert_eq!(
+        module_liveness(&module, now),
+        RuntimeLivenessStatus::Degraded
+    );
 
     module.status = "running".to_string();
     module.last_heartbeat_at = Some(now - time::Duration::seconds(301));
@@ -640,7 +645,10 @@ async fn tui_module_liveness_uses_canonical_policy_and_run_status() -> TestResul
 
     module.last_heartbeat_at = Some(now);
     module.status = "failed".to_string();
-    assert_eq!(module_liveness(&module, now), RuntimeLivenessStatus::Unhealthy);
+    assert_eq!(
+        module_liveness(&module, now),
+        RuntimeLivenessStatus::Unhealthy
+    );
     Ok(())
 }
 

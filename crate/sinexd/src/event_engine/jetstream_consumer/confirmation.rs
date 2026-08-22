@@ -72,7 +72,9 @@ impl JetStreamConsumer {
             && failures.load(Ordering::SeqCst) > 0
         {
             failures.fetch_sub(1, Ordering::SeqCst);
-            return Err(SinexError::network("forced confirmed-event publish failure"));
+            return Err(SinexError::network(
+                "forced confirmed-event publish failure",
+            ));
         }
 
         let Some(event_id) = event.id else {

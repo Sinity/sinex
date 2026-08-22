@@ -1,12 +1,13 @@
 // Inline because this covers local checkpoint env/default semantics.
 use super::{
     CheckpointCleanupConfig, CheckpointManager, CheckpointState, checkpoint_cleanup_cutoff,
-    checkpoint_conflict_would_regress, cleanup_stale_checkpoints, ensure_checkpoint_kv_payload_fits,
+    checkpoint_conflict_would_regress, cleanup_stale_checkpoints,
+    ensure_checkpoint_kv_payload_fits,
 };
-use crate::runtime::stream::Checkpoint;
 use crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
-use sinex_primitives::prelude::Timestamp;
+use crate::runtime::stream::Checkpoint;
 use sinex_primitives::Uuid;
+use sinex_primitives::prelude::Timestamp;
 use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
 #[sinex_serial_test]
@@ -16,8 +17,8 @@ async fn checkpoint_cleanup_default_is_disabled() -> xtask::sandbox::TestResult<
 }
 
 #[sinex_serial_test]
-async fn checkpoint_cleanup_from_env_defaults_invalid_overrides()
--> xtask::sandbox::TestResult<()> {
+async fn checkpoint_cleanup_from_env_defaults_invalid_overrides() -> xtask::sandbox::TestResult<()>
+{
     let mut env = EnvGuard::new();
     env.set("SINEX_CHECKPOINT_CLEANUP_ENABLED", "maybe");
     env.set("SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS", "bogus");
@@ -76,8 +77,8 @@ async fn checkpoint_conflict_would_regress_ignores_cursor_advancement_at_equal_p
 }
 
 #[sinex_serial_test]
-async fn checkpoint_cleanup_cutoff_rejects_out_of_range_max_age()
--> xtask::sandbox::TestResult<()> {
+async fn checkpoint_cleanup_cutoff_rejects_out_of_range_max_age() -> xtask::sandbox::TestResult<()>
+{
     let error = checkpoint_cleanup_cutoff(Timestamp::now(), std::time::Duration::MAX)
         .expect_err("out-of-range cleanup ages must fail honestly");
     assert!(
@@ -139,10 +140,7 @@ async fn checkpoint_manager_adopts_latest_peer_for_stable_automaton_consumer(
     let adopted = stable_manager.load_checkpoint().await?;
     assert_eq!(adopted.processed_count, 42);
     assert_eq!(adopted.checkpoint, expected_checkpoint);
-    assert_eq!(
-        adopted.data,
-        Some(serde_json::json!({ "state": "peer" }))
-    );
+    assert_eq!(adopted.data, Some(serde_json::json!({ "state": "peer" })));
     Ok(())
 }
 
@@ -153,24 +151,16 @@ async fn checkpoint_cleanup_purges_migrated_peer_keys_only_when_stable_is_curren
     let kv = ctx.with_nats().shared().await?.checkpoint_kv().await?;
     let module = format!("checkpoint-cleanup-{}", Uuid::now_v7().simple());
     let group = "default".to_string();
-    let stable_manager = CheckpointManager::new(
-        kv.clone(),
-        module.clone(),
-        group.clone(),
-        module.clone(),
-    );
+    let stable_manager =
+        CheckpointManager::new(kv.clone(), module.clone(), group.clone(), module.clone());
     let migrated_peer_manager = CheckpointManager::new(
         kv.clone(),
         module.clone(),
         group.clone(),
         "host-a-1234".to_string(),
     );
-    let newer_peer_manager = CheckpointManager::new(
-        kv.clone(),
-        module.clone(),
-        group,
-        "host-b-9999".to_string(),
-    );
+    let newer_peer_manager =
+        CheckpointManager::new(kv.clone(), module.clone(), group, "host-b-9999".to_string());
 
     migrated_peer_manager
         .save_checkpoint(&CheckpointState {
@@ -203,8 +193,8 @@ async fn checkpoint_cleanup_purges_migrated_peer_keys_only_when_stable_is_curren
         })
         .await?;
 
-    let result = cleanup_stale_checkpoints(&kv, std::time::Duration::from_secs(365 * 86400))
-        .await?;
+    let result =
+        cleanup_stale_checkpoints(&kv, std::time::Duration::from_secs(365 * 86400)).await?;
 
     assert_eq!(result.migrated_deleted, 1);
     assert!(
@@ -229,8 +219,7 @@ async fn checkpoint_cleanup_purges_migrated_peer_keys_only_when_stable_is_curren
 }
 
 #[sinex_test]
-async fn checkpoint_kv_payload_guard_rejects_oversized_entries()
--> xtask::sandbox::TestResult<()> {
+async fn checkpoint_kv_payload_guard_rejects_oversized_entries() -> xtask::sandbox::TestResult<()> {
     let error = ensure_checkpoint_kv_payload_fits(
         "oversized.module.consumer",
         NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES + 1,

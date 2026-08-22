@@ -1385,7 +1385,9 @@ pub(super) async fn handle_slice(
             let slice_io_lock = assembler.slice_io_lock(material_id);
             let _slice_io_guard = slice_io_lock.lock().await;
             notify_slice_staging_io_for_tests().await;
-            assembler.fault_injector.inject(FaultPoint::MaterialStagedFile)?;
+            assembler
+                .fault_injector
+                .inject(FaultPoint::MaterialStagedFile)?;
             stage_slice_file(material_id, &temp_path, &pending_write, &data, staged_sync).await?;
             let mut state = state_handle.lock().await;
             commit_pending_slice_write(

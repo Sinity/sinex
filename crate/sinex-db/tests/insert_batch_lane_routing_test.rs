@@ -9,10 +9,10 @@
 //! placement directly in both event tables.
 
 use sinex_db::DbPoolExt;
-use sinex_primitives::events::payload::DynamicPayload;
-use sinex_primitives::events::EventId;
-use sinex_primitives::derivation::DerivedProductClass;
 use sinex_primitives::Id;
+use sinex_primitives::derivation::DerivedProductClass;
+use sinex_primitives::events::EventId;
+use sinex_primitives::events::payload::DynamicPayload;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -47,7 +47,11 @@ async fn insert_batch_routes_reflection_event_out_of_multi_element_batch(
         .events()
         .insert_batch(vec![reflection_event, activity_event])
         .await?;
-    assert_eq!(inserted.len(), 2, "both events in the batch should be inserted");
+    assert_eq!(
+        inserted.len(),
+        2,
+        "both events in the batch should be inserted"
+    );
     let reflection_event_id = *inserted
         .iter()
         .find(|event| event.source.as_str() == "sinex.selftest")
@@ -57,12 +61,11 @@ async fn insert_batch_routes_reflection_event_out_of_multi_element_batch(
         .expect("inserted event should have an id")
         .as_uuid();
 
-    let in_reflection: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM reflection.events WHERE id = $1",
-    )
-    .bind(reflection_event_id)
-    .fetch_one(ctx.pool())
-    .await?;
+    let in_reflection: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM reflection.events WHERE id = $1")
+            .bind(reflection_event_id)
+            .fetch_one(ctx.pool())
+            .await?;
     let in_core: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE id = $1")
         .bind(reflection_event_id)
         .fetch_one(ctx.pool())

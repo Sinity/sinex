@@ -13,10 +13,8 @@ fn lane_id() -> Uuid {
 
 #[sinex_test]
 async fn epoch_list_empty_envelope_names_absent_registry() -> xtask::TestResult<()> {
-    let envelope = semantic_epoch_list_envelope(
-        SemanticEpochListResponse { epochs: Vec::new() },
-        100,
-    );
+    let envelope =
+        semantic_epoch_list_envelope(SemanticEpochListResponse { epochs: Vec::new() }, 100);
     let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
         .expect("json renders finite semantic epoch envelope");
     let parsed: serde_json::Value = serde_json::from_str(&rendered)?;

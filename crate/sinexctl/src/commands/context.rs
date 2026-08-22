@@ -25,10 +25,9 @@ use sinex_primitives::views::{
     ContextTimelineItemView, DesktopContextCandidateView, DesktopContextInputEvidence,
     DesktopContextInputState, DesktopContextView, DesktopFocusSessionListView,
     DesktopFocusSessionView, DesktopNotificationPressureView, DesktopProjectContextListView,
-    DesktopProjectContextRowView, EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView,
-    EventCardView, PrivacyStateKind, ReadinessCaveatId, SinexObjectKind, SinexObjectRef,
-    SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
-    ViewEnvelope,
+    DesktopProjectContextRowView, EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, EventCardView,
+    PrivacyStateKind, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
+    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
 };
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration as StdDuration, Instant};
@@ -1012,20 +1011,17 @@ fn recall_interval_views(event_cards: &EventCardListView) -> Vec<ContextInterval
         .cards
         .iter()
         .filter(|card| is_interval_lift_card(card))
-        .map(|card| {
-            ContextIntervalView {
-                ref_: card.ref_.clone(),
-                state_kind: interval_state_kind(card),
-                subject_id: string_payload_preview_field(card, "subject_id"),
-                label: string_payload_preview_field(card, "label"),
-                started_at: timestamp_payload_preview_field(card, "start_time"),
-                ended_at: timestamp_payload_preview_field(card, "end_time")
-                    .or(card.timestamp.original),
-                duration_secs: u64_payload_preview_field(card, "duration_secs"),
-                summary: card.summary.clone(),
-                parent_refs: card.trace_refs.clone(),
-                latest_event: card.clone(),
-            }
+        .map(|card| ContextIntervalView {
+            ref_: card.ref_.clone(),
+            state_kind: interval_state_kind(card),
+            subject_id: string_payload_preview_field(card, "subject_id"),
+            label: string_payload_preview_field(card, "label"),
+            started_at: timestamp_payload_preview_field(card, "start_time"),
+            ended_at: timestamp_payload_preview_field(card, "end_time").or(card.timestamp.original),
+            duration_secs: u64_payload_preview_field(card, "duration_secs"),
+            summary: card.summary.clone(),
+            parent_refs: card.trace_refs.clone(),
+            latest_event: card.clone(),
         })
         .collect::<Vec<_>>();
     intervals.sort_by(|left, right| {

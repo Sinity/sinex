@@ -337,7 +337,9 @@ async fn embedding_repository_search_similar_uses_hnsw_index(ctx: TestContext) -
     let model_id = repo
         .ensure_model("test-provider", "hnsw-index-usage-model", 3)
         .await?;
-    let material_id = ctx.create_source_material(Some("embedding-hnsw-index")).await?;
+    let material_id = ctx
+        .create_source_material(Some("embedding-hnsw-index"))
+        .await?;
     let event_id = ctx
         .pool
         .events()
@@ -354,8 +356,13 @@ async fn embedding_repository_search_similar_uses_hnsw_index(ctx: TestContext) -
         .id
         .expect("inserted event has id")
         .into();
-    repo.store_event_embedding(event_id, model_id, "hnsw index usage probe", &[1.0, 0.0, 0.0])
-        .await?;
+    repo.store_event_embedding(
+        event_id,
+        model_id,
+        "hnsw index usage probe",
+        &[1.0, 0.0, 0.0],
+    )
+    .await?;
 
     let mut tx = ctx.pool.begin().await?;
     sqlx::query("SET LOCAL enable_seqscan = off")

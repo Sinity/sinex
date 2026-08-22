@@ -561,9 +561,7 @@ impl EventBatcher {
                             .open(&remaining_temp_path)
                             .await?;
                         remaining_file = Some(out);
-                        remaining_file
-                            .as_mut()
-                            .expect("just inserted Some above")
+                        remaining_file.as_mut().expect("just inserted Some above")
                     }
                 };
                 out.write_all(line.as_bytes()).await?;
@@ -995,7 +993,11 @@ impl EventBatcher {
             }
         }
 
-        debug!(published, original_batch_size = event_count, "Intent batch sent via NATS");
+        debug!(
+            published,
+            original_batch_size = event_count,
+            "Intent batch sent via NATS"
+        );
         BatchPublishResult {
             published,
             failed: 0,
@@ -1045,15 +1047,11 @@ impl EventBatcher {
         events: Vec<Event<JsonValue>>,
     ) -> Result<usize, (Vec<Event<JsonValue>>, SinexError)> {
         let event_count = events.len();
-        let payload_len = match Self::intent_payload_len(
-            source_id,
-            parser_id,
-            parser_version,
-            &events,
-        ) {
-            Ok(payload_len) => payload_len,
-            Err(error) => return Err((events, error)),
-        };
+        let payload_len =
+            match Self::intent_payload_len(source_id, parser_id, parser_version, &events) {
+                Ok(payload_len) => payload_len,
+                Err(error) => return Err((events, error)),
+            };
         if let Err(error) =
             ensure_nats_payload_fits("event intent envelope", source_id, payload_len)
         {

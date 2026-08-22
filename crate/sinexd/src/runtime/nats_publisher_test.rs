@@ -72,8 +72,7 @@ async fn publish_payload_serializes_json_once() -> TestResult<()> {
     .expect("infallible: test provenance set");
     event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-    let (event_id, payload) =
-        build_publish_payload(&event, None, None, None, None, None, None)?;
+    let (event_id, payload) = build_publish_payload(&event, None, None, None, None, None, None)?;
     let value: serde_json::Value = serde_json::from_slice(&payload)?;
 
     assert_eq!(value["id"], event_id);

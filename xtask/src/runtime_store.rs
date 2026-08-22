@@ -274,8 +274,12 @@ pub async fn query_storage_growth_snapshot(
         });
     pool.close().await;
 
-    let mut assessment =
-        assess_storage_growth(&material_summary, &source_growth, &compression, projection_days);
+    let mut assessment = assess_storage_growth(
+        &material_summary,
+        &source_growth,
+        &compression,
+        projection_days,
+    );
     assessment.warnings.extend(compression.warnings.clone());
     assessment.warnings.sort();
     assessment.warnings.dedup();

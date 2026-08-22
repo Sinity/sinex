@@ -117,14 +117,17 @@ impl ContentHashWindow {
     pub fn snapshot(&self) -> ContentHashWindowSnapshot {
         ContentHashWindowSnapshot {
             capacity: self.capacity,
-            hashes: self.order.iter().map(Hash::to_hex).map(|h| h.to_string()).collect(),
+            hashes: self
+                .order
+                .iter()
+                .map(Hash::to_hex)
+                .map(|h| h.to_string())
+                .collect(),
         }
     }
 
     /// Restore a window from a snapshot.
-    pub fn from_snapshot(
-        snapshot: ContentHashWindowSnapshot,
-    ) -> Result<Self, blake3::HexError> {
+    pub fn from_snapshot(snapshot: ContentHashWindowSnapshot) -> Result<Self, blake3::HexError> {
         let mut order = VecDeque::with_capacity(snapshot.capacity);
         let mut seen = std::collections::HashSet::with_capacity(snapshot.capacity);
         for hash in snapshot.hashes {

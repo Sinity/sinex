@@ -109,8 +109,8 @@ async fn preserves_normal_commands() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn count_only_detection_reports_metadata_without_values()
--> ::xtask::sandbox::TestResult<()> {
+async fn count_only_detection_reports_metadata_without_values() -> ::xtask::sandbox::TestResult<()>
+{
     let e = test_engine();
     let secret = aws_access_key_fixture();
     let input = format!("url=https://user:password@example.test and key={secret}");
@@ -127,12 +127,12 @@ async fn count_only_detection_reports_metadata_without_values()
 }
 
 #[sinex_test]
-async fn count_only_detection_keeps_benign_text_empty()
--> ::xtask::sandbox::TestResult<()> {
+async fn count_only_detection_keeps_benign_text_empty() -> ::xtask::sandbox::TestResult<()> {
     let e = test_engine();
-    assert!(e
-        .detect_matches("git status --short", ProcessingContext::Command)
-        .is_empty());
+    assert!(
+        e.detect_matches("git status --short", ProcessingContext::Command)
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -542,7 +542,10 @@ async fn forged_encrypted_marker_does_not_bypass_engine_redaction()
     let forged = "documentation ⌜enc:v1:example⌝ still contains SECRET";
     let result = engine.process(forged, ProcessingContext::Document);
 
-    assert_eq!(result.text, "documentation ⌜enc:v1:example⌝ still contains <SECRET>");
+    assert_eq!(
+        result.text,
+        "documentation ⌜enc:v1:example⌝ still contains <SECRET>"
+    );
     Ok(())
 }
 

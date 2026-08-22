@@ -49,7 +49,10 @@ async fn seed_raw_backlog(
         });
         let subject = env.nats_subject_with_namespace(
             Some(namespace),
-            &format!("events.raw.{}.restart_backlog_event", source.replace('.', "_")),
+            &format!(
+                "events.raw.{}.restart_backlog_event",
+                source.replace('.', "_")
+            ),
         );
         nats_client
             .publish(
@@ -63,13 +66,10 @@ async fn seed_raw_backlog(
 }
 
 async fn stored_event_count(pool: &sinex_db::DbPool, source: &str) -> TestResult<i64> {
-    let count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.events WHERE source = $1",
-        source,
-    )
-    .fetch_one(pool)
-    .await?
-    .expect("COUNT(*) should always return one row");
+    let count = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = $1", source,)
+        .fetch_one(pool)
+        .await?
+        .expect("COUNT(*) should always return one row");
     Ok(count)
 }
 
@@ -94,11 +94,8 @@ async fn restart_drain_holds_configured_rate_and_completes(ctx: TestContext) -> 
     // "already landed in NATS from before a crash" scenario, not a live scan.
     // Bootstrap the raw stream directly (the same helper `scan_historical`'s
     // pacing e2e coverage uses) so publishing below has somewhere to land.
-    sinexd::runtime::jetstream_streams::bootstrap_raw_events_stream(
-        &nats_client,
-        Some(&namespace),
-    )
-    .await?;
+    sinexd::runtime::jetstream_streams::bootstrap_raw_events_stream(&nats_client, Some(&namespace))
+        .await?;
 
     let stream_name = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS");
     let topology = JetStreamTopology::new(

@@ -1,9 +1,7 @@
 use super::*;
 use sinex_primitives::domain::{HostName, InstanceId, ModuleKind};
 use sinex_primitives::rpc::coordination::InstanceInfo;
-use sinex_primitives::rpc::replay::{
-    ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState,
-};
+use sinex_primitives::rpc::replay::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
 use sinex_primitives::temporal::Duration;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;

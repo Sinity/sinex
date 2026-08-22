@@ -657,12 +657,7 @@ const AUTOMATON_TARGETS: &[&str] = &[
 
 fn lookup_binary(
     name: &str,
-) -> Option<&'static (
-    &'static str,
-    &'static str,
-    &'static str,
-    RuntimeTarget,
-)> {
+) -> Option<&'static (&'static str, &'static str, &'static str, RuntimeTarget)> {
     BINARIES
         .iter()
         .find(|(candidate, _, _, _)| *candidate == name)
@@ -894,8 +889,7 @@ impl XtaskCommand for RunCommand {
                 .await
             }
             RunSubcommand::AllAutomatons { instance_id } => {
-                self.run_all_automata(instance_id.clone(), ctx)
-                    .await
+                self.run_all_automata(instance_id.clone(), ctx).await
             }
             RunSubcommand::Tether {
                 target,
@@ -1019,7 +1013,10 @@ impl RunCommand {
     fn automaton_env_vars(&self, automaton: &str) -> Vec<(String, String)> {
         let mut env = self.local_run_env_vars();
         env.push(("SINEX_AUTOMATA_ENABLED".to_string(), automaton.to_string()));
-        env.push(("SINEX_EVENT_ENGINE_ENABLED".to_string(), "false".to_string()));
+        env.push((
+            "SINEX_EVENT_ENGINE_ENABLED".to_string(),
+            "false".to_string(),
+        ));
         env.push(("SINEX_API_ENABLED".to_string(), "false".to_string()));
         env.push(("SINEX_SOURCE_BINDINGS_PATH".to_string(), String::new()));
         env
@@ -1028,7 +1025,10 @@ impl RunCommand {
     fn all_automata_env_vars(&self) -> Vec<(String, String)> {
         let mut env = self.local_run_env_vars();
         env.push(("SINEX_AUTOMATA_ENABLED".to_string(), "all".to_string()));
-        env.push(("SINEX_EVENT_ENGINE_ENABLED".to_string(), "false".to_string()));
+        env.push((
+            "SINEX_EVENT_ENGINE_ENABLED".to_string(),
+            "false".to_string(),
+        ));
         env.push(("SINEX_API_ENABLED".to_string(), "false".to_string()));
         env.push(("SINEX_SOURCE_BINDINGS_PATH".to_string(), String::new()));
         env

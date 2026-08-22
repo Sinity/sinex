@@ -61,7 +61,6 @@ fn is_sinexd_journal_entry(json: &serde_json::Value) -> bool {
         })
 }
 
-
 /// Parser for `system.journald` — converts journal JSON lines into typed events.
 #[derive(Default, SourceMeta)]
 #[source_meta(

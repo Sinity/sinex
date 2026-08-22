@@ -5,8 +5,8 @@
 use super::{Checkpoint, TimeHorizon};
 use serde::{Deserialize, Serialize};
 use sinex_db::SourceMaterialRecord;
-use sinex_primitives::{Timestamp, Uuid};
 use sinex_primitives::events::OffsetKind;
+use sinex_primitives::{Timestamp, Uuid};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

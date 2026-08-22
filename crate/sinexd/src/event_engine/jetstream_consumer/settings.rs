@@ -72,8 +72,7 @@ pub(crate) const DURABLE_EMISSION_SETTLEMENT_TIMEOUT: Duration = Duration::from_
 );
 
 const _: () = assert!(
-    DURABLE_EMISSION_SETTLEMENT_TIMEOUT.as_secs()
-        > SOURCE_MATERIAL_READY_DEFERRAL_BUDGET.as_secs()
+    DURABLE_EMISSION_SETTLEMENT_TIMEOUT.as_secs() > SOURCE_MATERIAL_READY_DEFERRAL_BUDGET.as_secs()
 );
 pub(super) const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes
 // Keep runtime-created stream caps aligned with the Nix bootstrap path. The current

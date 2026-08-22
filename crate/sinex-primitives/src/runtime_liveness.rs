@@ -223,7 +223,9 @@ impl RuntimeLivenessAggregate {
                     RuntimeLivenessMembership::HistoricalStopped => {
                         aggregate.excluded_historical_stopped_count += 1;
                     }
-                    RuntimeLivenessMembership::Assessed => unreachable!("assessed evidence has a verdict"),
+                    RuntimeLivenessMembership::Assessed => {
+                        unreachable!("assessed evidence has a verdict")
+                    }
                 },
             }
 
@@ -239,7 +241,11 @@ impl RuntimeLivenessAggregate {
             left.module_name
                 .as_ref()
                 .cmp(right.module_name.as_ref())
-                .then_with(|| left.module_kind.to_string().cmp(&right.module_kind.to_string()))
+                .then_with(|| {
+                    left.module_kind
+                        .to_string()
+                        .cmp(&right.module_kind.to_string())
+                })
         });
         aggregate.status = if aggregate.unhealthy_count > 0 || aggregate.stale_count > 0 {
             HealthStatus::Unhealthy
@@ -553,6 +559,11 @@ mod tests {
         assert_eq!(aggregate.assessed_count, 0);
         assert_eq!(aggregate.excluded_disabled_or_profile_gated_count, 1);
         assert_eq!(aggregate.excluded_historical_stopped_count, 1);
-        assert!(aggregate.runtimes.iter().all(|runtime| runtime.liveness.is_none()));
+        assert!(
+            aggregate
+                .runtimes
+                .iter()
+                .all(|runtime| runtime.liveness.is_none())
+        );
     }
 }

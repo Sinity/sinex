@@ -104,7 +104,8 @@ async fn ensure_lineage_test_declaration(pool: &sqlx::PgPool) -> color_eyre::Res
 fn mark_derived_test_event(
     mut event: sinex_primitives::Event<serde_json::Value>,
 ) -> sinex_primitives::Event<serde_json::Value> {
-    event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    event.product_class =
+        Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
     event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
     event.derivation_declaration_id = Some("composable-query-test-lineage-decl".to_string());
     event
@@ -473,14 +474,10 @@ async fn time_window_listing_paginates_by_ts_orig_then_id(ctx: TestContext) -> T
     ];
 
     for (index, timestamp) in timestamps.iter().enumerate() {
-        let event = DynamicPayload::new(
-            "time-window-source",
-            "test.type",
-            json!({"index": index}),
-        )
-        .from_material(material_id)
-        .build()?
-        .with_timestamp(Timestamp::parse_rfc3339(timestamp)?);
+        let event = DynamicPayload::new("time-window-source", "test.type", json!({"index": index}))
+            .from_material(material_id)
+            .build()?
+            .with_timestamp(Timestamp::parse_rfc3339(timestamp)?);
         ctx.pool.events().insert(event).await?;
     }
 

@@ -204,7 +204,9 @@ impl LaneOutputKind for SessionLaneOutputs {
         let summary = LaneDiffSummary {
             added: counts.session_new,
             removed: counts.session_missing,
-            changed: counts.duration_changed + counts.event_count_changed + counts.window_count_changed,
+            changed: counts.duration_changed
+                + counts.event_count_changed
+                + counts.window_count_changed,
             unchanged,
         };
 
@@ -253,9 +255,8 @@ pub fn compute_session_boundaries(
 
     for window in windows {
         let gap_closed = matches!(window.close_reason, ActivityWindowCloseReason::Gap);
-        let entry = accumulator.get_or_insert_with(|| {
-            Accumulator::new(window.window_start, window.window_id.clone())
-        });
+        let entry = accumulator
+            .get_or_insert_with(|| Accumulator::new(window.window_start, window.window_id.clone()));
         entry.last_end = window.window_end;
         entry.event_count += window.event_count;
         entry.window_count += 1;

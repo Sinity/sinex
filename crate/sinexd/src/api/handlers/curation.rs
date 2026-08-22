@@ -76,8 +76,7 @@ const CURATION_PROPOSAL_DECLARATION: DerivationOutputDeclaration = DerivationOut
         SourceCoverage::Partial,
         ClaimTemporalQuality::RealtimeCapture,
     ),
-    verification_command:
-        "xtask test -p sinexd -E 'test(curation_duplicate_judgment_records_proposal_over_candidate_set)'",
+    verification_command: "xtask test -p sinexd -E 'test(curation_duplicate_judgment_records_proposal_over_candidate_set)'",
 };
 
 /// `curation.judgment` written by `handle_curation_record_judgment` and
@@ -85,51 +84,51 @@ const CURATION_PROPOSAL_DECLARATION: DerivationOutputDeclaration = DerivationOut
 /// shared declaration). An authority decision over a proposal —
 /// `OperatorJudgment` per `DerivedProductClass::OperatorJudgment`'s doc
 /// ("only the curation/authority finalizer writer may emit this class").
-pub(crate) const CURATION_JUDGMENT_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
-    declaration_id: "curation-rpc.curation.judgment",
-    owner: "curation-rpc",
-    product_class: DerivedProductClass::OperatorJudgment,
-    write_surface: DerivationWriteSurface::CurationWriter,
-    output_source: None,
-    output_event_type: None,
-    projection_kind: None,
-    artifact_kind: None,
-    proposal_kind: None,
-    semantics_version: "1.0.0",
-    input_eligibility: InputEligibility::ExplicitOnly,
-    default_support: ClaimSupportTemplate::new(
-        SupportLevel::Direct,
-        SourceCoverage::Covered,
-        ClaimTemporalQuality::RealtimeCapture,
-    ),
-    verification_command:
-        "xtask test -p sinexd -E 'test(curation_record_judgment_persists_synthesis_event)'",
-};
+pub(crate) const CURATION_JUDGMENT_DECLARATION: DerivationOutputDeclaration =
+    DerivationOutputDeclaration {
+        declaration_id: "curation-rpc.curation.judgment",
+        owner: "curation-rpc",
+        product_class: DerivedProductClass::OperatorJudgment,
+        write_surface: DerivationWriteSurface::CurationWriter,
+        output_source: None,
+        output_event_type: None,
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::ExplicitOnly,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::RealtimeCapture,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(curation_record_judgment_persists_synthesis_event)'",
+    };
 
 /// `curation.finalized` written by `handle_curation_finalize`: a
 /// deterministic receipt recording that an accepted/modified judgment was
 /// applied — `ReportArtifact` ("a persisted generated report, receipt,
 /// export, or artifact pointer"), `artifact_writer`.
-pub(crate) const CURATION_FINALIZED_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
-    declaration_id: "curation-rpc.curation.finalized",
-    owner: "curation-rpc",
-    product_class: DerivedProductClass::ReportArtifact,
-    write_surface: DerivationWriteSurface::ArtifactWriter,
-    output_source: None,
-    output_event_type: None,
-    projection_kind: None,
-    artifact_kind: None,
-    proposal_kind: None,
-    semantics_version: "1.0.0",
-    input_eligibility: InputEligibility::NeverInput,
-    default_support: ClaimSupportTemplate::new(
-        SupportLevel::Direct,
-        SourceCoverage::Covered,
-        ClaimTemporalQuality::RealtimeCapture,
-    ),
-    verification_command:
-        "xtask test -p sinexd -E 'test(curation_finalize_persists_lineage_to_original_proposal_and_judgment)'",
-};
+pub(crate) const CURATION_FINALIZED_DECLARATION: DerivationOutputDeclaration =
+    DerivationOutputDeclaration {
+        declaration_id: "curation-rpc.curation.finalized",
+        owner: "curation-rpc",
+        product_class: DerivedProductClass::ReportArtifact,
+        write_surface: DerivationWriteSurface::ArtifactWriter,
+        output_source: None,
+        output_event_type: None,
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::NeverInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::RealtimeCapture,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(curation_finalize_persists_lineage_to_original_proposal_and_judgment)'",
+    };
 
 /// Static `authority.finalizer_registry` declarations for the curation-rpc
 /// writer (sinex-0vx.5): the set of `proposal_kind`s this handler file is

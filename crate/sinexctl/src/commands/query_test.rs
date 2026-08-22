@@ -7,8 +7,7 @@ use sinex_primitives::temporal::Duration;
 use sinex_primitives::testing::event_fixture;
 use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
 use sinex_primitives::views::{
-    EVENT_CARD_LIST_SCHEMA_VERSION, EVENT_QUERY_LIST_SCHEMA_VERSION,
-    VIEW_ENVELOPE_SCHEMA_VERSION,
+    EVENT_CARD_LIST_SCHEMA_VERSION, EVENT_QUERY_LIST_SCHEMA_VERSION, VIEW_ENVELOPE_SCHEMA_VERSION,
 };
 use sinex_primitives::{Event, Id, JsonValue, Uuid};
 use xtask::TestResult;

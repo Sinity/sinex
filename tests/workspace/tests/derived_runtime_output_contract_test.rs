@@ -258,8 +258,11 @@ where
     // right here could race a forward that hasn't landed yet. Drain with a
     // short per-recv timeout instead of a single non-blocking pass.
     let mut outputs = Vec::new();
-    while let Ok(Some(event)) =
-        tokio::time::timeout(std::time::Duration::from_millis(500), runtime.event_rx.recv()).await
+    while let Ok(Some(event)) = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        runtime.event_rx.recv(),
+    )
+    .await
     {
         outputs.push(event);
     }
@@ -450,7 +453,8 @@ mod test_runtime {
         mut raw: mpsc::Receiver<Event<JsonValue>>,
         registry: SettlementRegistry,
     ) -> mpsc::Receiver<Event<JsonValue>> {
-        let (forward_tx, forward_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
+        let (forward_tx, forward_rx) =
+            mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
         tokio::spawn(async move {
             while let Some(event) = raw.recv().await {
                 if let Some(id) = event.id {

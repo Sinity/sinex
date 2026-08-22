@@ -141,9 +141,11 @@ async fn private_mode_unavailable_status_reports_fail_closed_privacy_caveat()
 -> xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
     let state_path = dir.path().join(PRIVATE_MODE_STATE_RELATIVE_PATH);
-    std::fs::create_dir_all(state_path.parent().ok_or_else(|| {
-        color_eyre::eyre::eyre!("private-mode state path should have a parent")
-    })?)?;
+    std::fs::create_dir_all(
+        state_path.parent().ok_or_else(|| {
+            color_eyre::eyre::eyre!("private-mode state path should have a parent")
+        })?,
+    )?;
     std::fs::write(&state_path, b"{not-valid-json")?;
 
     let warning = private_mode_signal(Some(dir.path()))
@@ -194,8 +196,7 @@ async fn privacy_dlq_status_reports_sanitized_backlog() -> xtask::sandbox::TestR
 }
 
 #[sinex_test]
-async fn source_readiness_status_reports_capture_gap_counts() -> xtask::sandbox::TestResult<()>
-{
+async fn source_readiness_status_reports_capture_gap_counts() -> xtask::sandbox::TestResult<()> {
     let summary = summarize_source_readiness(&[
         readiness(SourceReadinessStatus::Available),
         readiness(SourceReadinessStatus::Disabled),
@@ -214,9 +215,10 @@ async fn source_readiness_status_reports_capture_gap_counts() -> xtask::sandbox:
     assert_eq!(summary.blocking_count(), 3);
     assert_eq!(signal.name, "source-readiness");
     assert_eq!(signal.status, RuntimeStatusSignalStatus::Unhealthy);
-    let message = signal.message.as_deref().ok_or_else(|| {
-        color_eyre::eyre::eyre!("source readiness signal should explain counts")
-    })?;
+    let message = signal
+        .message
+        .as_deref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("source readiness signal should explain counts"))?;
     assert!(message.contains("partial=1"));
     assert!(message.contains("stale=1"));
     assert!(message.contains("error=1"));
@@ -255,7 +257,10 @@ async fn watch_summary_truncation_is_utf8_boundary_safe() -> xtask::sandbox::Tes
     let summary: String = "Пример события в системе мониторинга активности пользователя"
         .chars()
         .collect();
-    assert!(summary.len() > 60, "fixture must exceed the truncation threshold in bytes");
+    assert!(
+        summary.len() > 60,
+        "fixture must exceed the truncation threshold in bytes"
+    );
 
     let display = format_watch_summary(&summary);
 

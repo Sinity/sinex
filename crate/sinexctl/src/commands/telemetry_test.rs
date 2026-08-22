@@ -43,7 +43,10 @@ async fn telemetry_list_json_renders_finite_view_envelope() -> xtask::TestResult
         parsed["source_surface"],
         "sinexctl.metrics.telemetry.gateway-stats"
     );
-    assert_eq!(parsed["payload"]["schema_version"], TELEMETRY_LIST_SCHEMA_VERSION);
+    assert_eq!(
+        parsed["payload"]["schema_version"],
+        TELEMETRY_LIST_SCHEMA_VERSION
+    );
     assert_eq!(parsed["payload"]["row_kind"], "gateway_stats_bucket");
     assert_eq!(parsed["payload"]["count"], 1);
     assert_eq!(parsed["payload"]["rows"][0]["source"], "sinex.gateway");
@@ -65,7 +68,9 @@ async fn telemetry_list_empty_rows_name_unmeasurable_window() -> xtask::TestResu
     assert_eq!(envelope.caveats.len(), 1);
     assert_eq!(envelope.caveats[0].id, "coverage.unmeasurable");
     assert!(
-        envelope.caveats[0].message.contains("empty read-model window"),
+        envelope.caveats[0]
+            .message
+            .contains("empty read-model window"),
         "empty telemetry rows must not imply the source signal never existed"
     );
     assert_eq!(
@@ -79,8 +84,7 @@ async fn telemetry_list_empty_rows_name_unmeasurable_window() -> xtask::TestResu
 }
 
 #[sinex_test]
-async fn telemetry_otel_projection_empty_metrics_is_unmeasurable()
--> xtask::TestResult<()> {
+async fn telemetry_otel_projection_empty_metrics_is_unmeasurable() -> xtask::TestResult<()> {
     let projection = gateway_stats_to_otel_metrics_projection(Vec::new());
     let envelope = telemetry_otel_envelope(projection);
     let output = crate::fmt::render_finite_envelope(&envelope, OutputFormat::Json)?
@@ -108,7 +112,10 @@ async fn telemetry_validation_missing_snapshot_is_unmeasurable() -> xtask::TestR
         None,
     );
 
-    assert_eq!(envelope.payload.schema_version, TELEMETRY_SNAPSHOT_SCHEMA_VERSION);
+    assert_eq!(
+        envelope.payload.schema_version,
+        TELEMETRY_SNAPSHOT_SCHEMA_VERSION
+    );
     assert!(envelope.payload.snapshot.is_none());
     assert_eq!(envelope.caveats.len(), 1);
     assert_eq!(envelope.caveats[0].id, "coverage.unmeasurable");

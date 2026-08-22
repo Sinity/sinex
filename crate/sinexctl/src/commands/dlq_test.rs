@@ -464,7 +464,10 @@ async fn dlq_cleanup_plan_regroups_messages_when_server_groups_are_stale()
 
     let report = dlq_triage_report(stats, peek, 2);
     assert_eq!(report.groups.len(), 2);
-    assert_eq!(report.groups.iter().map(|group| group.count).sum::<usize>(), 2);
+    assert_eq!(
+        report.groups.iter().map(|group| group.count).sum::<usize>(),
+        2
+    );
 
     let plan = dlq_cleanup_plan(report);
     assert_eq!(plan.items.len(), 2);
@@ -768,9 +771,7 @@ fn fixture_dlq_list(
     let action_reason = match pressure_level {
         sinex_primitives::RuntimePressureLevel::Unknown => "DLQ owner could not be observed",
         sinex_primitives::RuntimePressureLevel::Nominal => "raw-ingest DLQ is empty",
-        sinex_primitives::RuntimePressureLevel::Warning => {
-            "inspect raw-ingest DLQ before retry"
-        }
+        sinex_primitives::RuntimePressureLevel::Warning => "inspect raw-ingest DLQ before retry",
         sinex_primitives::RuntimePressureLevel::Critical => {
             "throttle ingestion and inspect raw-ingest DLQ"
         }
@@ -829,7 +830,9 @@ async fn dlq_list_empty_queue_names_observation_limit() -> xtask::sandbox::TestR
     assert_eq!(envelope.caveats.len(), 1);
     assert_eq!(envelope.caveats[0].id, "coverage.unmeasurable");
     assert!(
-        envelope.caveats[0].message.contains("current queue observation"),
+        envelope.caveats[0]
+            .message
+            .contains("current queue observation"),
         "empty DLQ must not be presented as proof of complete historical ingestion"
     );
     assert_eq!(
@@ -843,8 +846,8 @@ async fn dlq_list_empty_queue_names_observation_limit() -> xtask::sandbox::TestR
 }
 
 #[sinex_test]
-async fn dlq_list_critical_pressure_marks_partial_runtime_window()
--> xtask::sandbox::TestResult<()> {
+async fn dlq_list_critical_pressure_marks_partial_runtime_window() -> xtask::sandbox::TestResult<()>
+{
     let envelope = dlq_list_envelope(fixture_dlq_list(
         42,
         sinex_primitives::RuntimePressureLevel::Critical,
@@ -913,15 +916,13 @@ fn fixture_dlq_triage_report() -> DlqTriageReport {
             first_sequence: 10,
             last_sequence: 11,
             sample_previews: vec![
-                "{\"error\":\"live event with equivalence_key git|a already exists\"}"
-                    .to_string(),
+                "{\"error\":\"live event with equivalence_key git|a already exists\"}".to_string(),
             ],
             material_ids: Vec::new(),
             material_statuses: Vec::new(),
             inspect_command: "sinexctl ops dlq peek --start-sequence 10 -n 2".to_string(),
-            purge_command:
-                "sinexctl ops dlq purge --start-sequence 10 --end-sequence 11 --confirm"
-                    .to_string(),
+            purge_command: "sinexctl ops dlq purge --start-sequence 10 --end-sequence 11 --confirm"
+                .to_string(),
             caveat: "duplicate occurrence; verify historical residue before purge".to_string(),
         }],
         recommended_next: "Inspect group commands before requeue or purge".to_string(),
@@ -947,8 +948,7 @@ async fn dlq_peek_json_renders_finite_view_envelope() -> xtask::sandbox::TestRes
 }
 
 #[sinex_test]
-async fn dlq_peek_empty_sample_names_bounded_observation()
--> xtask::sandbox::TestResult<()> {
+async fn dlq_peek_empty_sample_names_bounded_observation() -> xtask::sandbox::TestResult<()> {
     let envelope = dlq_peek_envelope(DlqPeekResponse::from_messages(Vec::new()));
 
     assert_eq!(envelope.caveats.len(), 1);
@@ -983,8 +983,7 @@ async fn dlq_triage_json_renders_finite_view_envelope() -> xtask::sandbox::TestR
 }
 
 #[sinex_test]
-async fn dlq_triage_empty_queue_names_observation_limit()
--> xtask::sandbox::TestResult<()> {
+async fn dlq_triage_empty_queue_names_observation_limit() -> xtask::sandbox::TestResult<()> {
     let mut report = fixture_dlq_triage_report();
     report.total_messages = 0;
     report.pressure_level = sinex_primitives::RuntimePressureLevel::Nominal;
@@ -995,15 +994,16 @@ async fn dlq_triage_empty_queue_names_observation_limit()
     assert_eq!(envelope.caveats.len(), 1);
     assert_eq!(envelope.caveats[0].id, "coverage.unmeasurable");
     assert!(
-        envelope.caveats[0].message.contains("current queue observation"),
+        envelope.caveats[0]
+            .message
+            .contains("current queue observation"),
         "empty triage caveat must not imply historical completeness"
     );
     Ok(())
 }
 
 #[sinex_test]
-async fn dlq_cleanup_plan_json_renders_finite_view_envelope()
--> xtask::sandbox::TestResult<()> {
+async fn dlq_cleanup_plan_json_renders_finite_view_envelope() -> xtask::sandbox::TestResult<()> {
     let plan = dlq_cleanup_plan(fixture_dlq_triage_report());
     let envelope = dlq_cleanup_plan_envelope(plan);
     let output = crate::fmt::render_finite_envelope(&envelope, OutputFormat::Json)?
@@ -1026,8 +1026,7 @@ async fn dlq_cleanup_plan_json_renders_finite_view_envelope()
 }
 
 #[sinex_test]
-async fn dlq_cleanup_plan_caveats_name_candidates_and_blockers()
--> xtask::sandbox::TestResult<()> {
+async fn dlq_cleanup_plan_caveats_name_candidates_and_blockers() -> xtask::sandbox::TestResult<()> {
     let plan = DlqCleanupPlanView {
         schema_version: DLQ_CLEANUP_PLAN_SCHEMA_VERSION.to_string(),
         total_messages: 3,

@@ -5,8 +5,7 @@ use std::ffi::OsString;
 use std::sync::LazyLock;
 use xtask::sandbox::sinex_test;
 
-static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(()));
+static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 fn restore_var(key: &str, value: Option<OsString>) {
     match value {
@@ -27,15 +26,13 @@ async fn clone_environment_override_recovers_poisoned_lock() -> xtask::sandbox::
     })
     .join();
 
-    let env =
-        clone_environment_override(&lock).expect("poisoned lock should still yield override");
+    let env = clone_environment_override(&lock).expect("poisoned lock should still yield override");
     assert_eq!(env.name, "dev");
     Ok(())
 }
 
 #[sinex_test]
-async fn restore_environment_override_recovers_poisoned_lock() -> xtask::sandbox::TestResult<()>
-{
+async fn restore_environment_override_recovers_poisoned_lock() -> xtask::sandbox::TestResult<()> {
     let lock = std::sync::Arc::new(std::sync::RwLock::new(Some(SinexEnvironment::new("dev")?)));
     let poison_target = lock.clone();
     let _ = std::thread::spawn(move || {

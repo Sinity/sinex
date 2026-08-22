@@ -62,7 +62,8 @@ async fn ensure_fs_watcher_derived_declaration(pool: &sqlx::PgPool) -> color_eyr
 /// `events_derived_requires_product_class` and the product-declaration
 /// trigger require. Pairs with `ensure_fs_watcher_derived_declaration`.
 fn mark_fs_watcher_derived_event<T>(mut event: Event<T>) -> Event<T> {
-    event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    event.product_class =
+        Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
     event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
     event.derivation_declaration_id = Some("temporal-facts-fs-watcher-derived-decl".to_string());
     event

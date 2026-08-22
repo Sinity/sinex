@@ -205,12 +205,18 @@ fn parse_wav_header(bytes: &[u8]) -> Option<WavMeta> {
     let mut data_len = None;
     while offset + 8 <= bytes.len() {
         let chunk_id = &bytes[offset..offset + 4];
-        let chunk_size =
-            u32::from_le_bytes([bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]])
-                as usize;
+        let chunk_size = u32::from_le_bytes([
+            bytes[offset + 4],
+            bytes[offset + 5],
+            bytes[offset + 6],
+            bytes[offset + 7],
+        ]) as usize;
         let body = offset + 8;
         if chunk_id == b"fmt " && body + 16 <= bytes.len() {
-            channels = Some(u32::from(u16::from_le_bytes([bytes[body + 2], bytes[body + 3]])));
+            channels = Some(u32::from(u16::from_le_bytes([
+                bytes[body + 2],
+                bytes[body + 3],
+            ])));
             sample_rate = Some(u32::from_le_bytes([
                 bytes[body + 4],
                 bytes[body + 5],
@@ -269,9 +275,12 @@ fn build_recording_event(
         policy_posture: config.policy_posture.clone(),
         observed_at,
     };
-    let event = payload.from_material(material_id).build().map_err(|error| {
-        SinexError::invalid_state(format!("failed to build recording event: {error}"))
-    })?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|error| {
+            SinexError::invalid_state(format!("failed to build recording event: {error}"))
+        })?;
     event.to_json_event().map_err(|error| {
         SinexError::serialization(format!("failed to serialize recording event: {error}"))
     })

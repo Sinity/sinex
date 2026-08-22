@@ -489,20 +489,15 @@ async fn stale_cas_lease_is_reported_and_does_not_protect_unreferenced_object_in
     let old_time = SystemTime::now()
         .checked_sub(Duration::from_secs(25 * 60 * 60))
         .expect("stale fixture timestamp must be representable");
-    std::fs::File::open(object_path.as_std_path())?.set_times(
-        std::fs::FileTimes::new().set_modified(old_time),
-    )?;
+    std::fs::File::open(object_path.as_std_path())?
+        .set_times(std::fs::FileTimes::new().set_modified(old_time))?;
 
     let mut stale_lease = lease;
     stale_lease.created_at_unix_secs = old_time
         .duration_since(SystemTime::UNIX_EPOCH)
         .expect("stale fixture timestamp must be after the epoch")
         .as_secs();
-    tokio::fs::write(
-        &stale_lease.record_path,
-        serde_json::to_vec(&stale_lease)?,
-    )
-    .await?;
+    tokio::fs::write(&stale_lease.record_path, serde_json::to_vec(&stale_lease)?).await?;
 
     // Keep an unrelated database authority so the apply ratio safeguard is
     // exercised rather than bypassed by an empty authority set.
@@ -525,7 +520,10 @@ async fn stale_cas_lease_is_reported_and_does_not_protect_unreferenced_object_in
     assert_eq!(report.stale_leases, 1);
     assert_eq!(report.quarantined, 1);
     assert_eq!(report.pending_deletes, 1);
-    assert!(!object_path.exists(), "stale lease must not protect an orphan");
+    assert!(
+        !object_path.exists(),
+        "stale lease must not protect an orphan"
+    );
     assert_eq!(content_store.list_pending_deletions().await?.len(), 1);
     assert_eq!(
         content_store.list_write_leases().await?.len(),

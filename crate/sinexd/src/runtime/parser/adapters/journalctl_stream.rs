@@ -503,7 +503,8 @@ pub fn records_from_journal_lines(
         if line.len() > MAX_JOURNAL_LINE_BYTES {
             records.push(Err(ParserError::Parse(format!(
                 "journal line exceeds configured size cap: {} > {} bytes",
-                line.len(), MAX_JOURNAL_LINE_BYTES
+                line.len(),
+                MAX_JOURNAL_LINE_BYTES
             ))));
             continue;
         }

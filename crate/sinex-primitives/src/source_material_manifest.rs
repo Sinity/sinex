@@ -6,8 +6,8 @@
 //! in CAS.  Every field has an explicit availability state so an older importer
 //! cannot silently turn "not captured" into a guessed value.
 
-use blake3::Hash;
 use crate::domain::ContentKey;
+use blake3::Hash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -487,10 +487,7 @@ impl MaterialManifestV1 {
     }
 
     /// Validate and convert an inclusive-exclusive byte range for replay.
-    pub fn exact_range(
-        &self,
-        range: ByteRange,
-    ) -> Result<std::ops::Range<usize>, &'static str> {
+    pub fn exact_range(&self, range: ByteRange) -> Result<std::ops::Range<usize>, &'static str> {
         if range.start >= range.end || range.end > self.bytes.encoded_size {
             return Err("material replay range is outside encoded material");
         }
@@ -710,7 +707,11 @@ mod tests {
         value["future_field"] = serde_json::json!({"b": 1, "a": 2});
         let manifest: MaterialManifestV1 = serde_json::from_value(value).expect("decode v1");
         let canonical = manifest.canonical_bytes().expect("canonical bytes");
-        assert!(String::from_utf8(canonical).expect("utf8").contains("future_field"));
+        assert!(
+            String::from_utf8(canonical)
+                .expect("utf8")
+                .contains("future_field")
+        );
     }
 
     #[test]
@@ -722,9 +723,11 @@ mod tests {
                 .expect("bounded range"),
             0..1
         );
-        assert!(manifest
-            .exact_range(ByteRange { start: 0, end: 2 })
-            .is_err());
+        assert!(
+            manifest
+                .exact_range(ByteRange { start: 0, end: 2 })
+                .is_err()
+        );
     }
 
     #[test]

@@ -175,22 +175,24 @@ async fn recreate_raw_stream_for_workqueue_if_safe(
                 consumer = %topology.consumer_durable,
                 "Recreating drained raw events stream with WorkQueue retention"
             );
-            js.delete_stream(&topology.events_stream).await.map_err(|e| {
-                SinexError::network(format!(
-                    "Failed to delete drained raw events stream {} for WorkQueue migration",
-                    topology.events_stream
-                ))
-                .with_source(e)
-            })?;
+            js.delete_stream(&topology.events_stream)
+                .await
+                .map_err(|e| {
+                    SinexError::network(format!(
+                        "Failed to delete drained raw events stream {} for WorkQueue migration",
+                        topology.events_stream
+                    ))
+                    .with_source(e)
+                })?;
             Ok(())
         }
         RawStreamWorkQueueRecreationDecision::AlreadyWorkQueueOrEmpty => Ok(()),
-        RawStreamWorkQueueRecreationDecision::Reject { reason } => Err(SinexError::processing(
-            format!(
+        RawStreamWorkQueueRecreationDecision::Reject { reason } => {
+            Err(SinexError::processing(format!(
                 "Raw events stream {} cannot be recreated for WorkQueue retention: {reason}",
                 topology.events_stream
-            ),
-        )),
+            )))
+        }
     }
 }
 

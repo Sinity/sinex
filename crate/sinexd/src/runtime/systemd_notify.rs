@@ -170,8 +170,7 @@ impl HostedReadiness {
                 HostedReadinessStatus::Ready => return HostedReadinessStatus::Ready,
                 HostedReadinessStatus::Cancelled => return HostedReadinessStatus::Cancelled,
                 HostedReadinessStatus::Warming => {}
-                HostedReadinessStatus::Failed { .. }
-                | HostedReadinessStatus::Degraded { .. } => {
+                HostedReadinessStatus::Failed { .. } | HostedReadinessStatus::Degraded { .. } => {
                     unreachable!("failure statuses are returned above")
                 }
             }
@@ -194,11 +193,7 @@ impl HostedReadiness {
     }
 
     fn failure_status(&self) -> Option<HostedReadinessStatus> {
-        self.state
-            .status_tx
-            .borrow()
-            .clone()
-            .into_failure_status()
+        self.state.status_tx.borrow().clone().into_failure_status()
     }
 
     fn mark_ready(&self, worker_id: &HostedWorkerId) {
@@ -263,8 +258,10 @@ impl HostedReadiness {
         ) {
             return;
         }
-        let _ =
-            self.mark_failure(worker_id, "worker exited without remaining healthy".to_string());
+        let _ = self.mark_failure(
+            worker_id,
+            "worker exited without remaining healthy".to_string(),
+        );
     }
 }
 
@@ -298,22 +295,19 @@ impl HostedWorker {
     {
         let worker = self.clone();
         CURRENT_HOSTED_WORKER
-            .scope(
-                self,
-                async move {
-                    let completed = tokio::select! {
-                        result = std::panic::AssertUnwindSafe(future).catch_unwind() => Some(result),
-                        _ = worker.cancelled() => None,
-                    };
-                    match completed {
-                        Some(Ok(())) => worker.readiness.mark_exited(&worker.worker_id),
-                        Some(Err(_)) => {
-                            worker.mark_failure("worker task panicked");
-                        }
-                        None => {}
+            .scope(self, async move {
+                let completed = tokio::select! {
+                    result = std::panic::AssertUnwindSafe(future).catch_unwind() => Some(result),
+                    _ = worker.cancelled() => None,
+                };
+                match completed {
+                    Some(Ok(())) => worker.readiness.mark_exited(&worker.worker_id),
+                    Some(Err(_)) => {
+                        worker.mark_failure("worker task panicked");
                     }
-                },
-            )
+                    None => {}
+                }
+            })
             .await;
     }
 

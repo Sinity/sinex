@@ -155,7 +155,10 @@ fn cases_attr_with_malformed_args_panics_instead_of_compile_erroring() {
     let attrs = syn::Attribute::parse_outer
         .parse_str("#[cases]")
         .expect("a bare attribute path is well-formed syntax");
-    let attr = attrs.into_iter().next().expect("parsed exactly one attribute");
+    let attr = attrs
+        .into_iter()
+        .next()
+        .expect("parsed exactly one attribute");
     let result = std::panic::catch_unwind(|| {
         let _: proc_macro2::TokenStream = attr.parse_args().unwrap();
     });

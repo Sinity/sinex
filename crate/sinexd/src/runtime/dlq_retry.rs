@@ -10,9 +10,8 @@ use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
 use sinex_primitives::{
-    environment::SinexEnvironment, temporal, transport, units::Seconds,
-    rpc::dlq::DlqPayloadAuthority,
-    utils::wait_helpers::RetryConfig,
+    environment::SinexEnvironment, rpc::dlq::DlqPayloadAuthority, temporal, transport,
+    units::Seconds, utils::wait_helpers::RetryConfig,
 };
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
@@ -551,11 +550,9 @@ impl DlqRetryHandler {
                 SinexError::processing("failed to inspect settled DLQ message").with_source(error)
             })?
             .stream_sequence;
-        let deleted = stream
-            .delete_message(sequence)
-            .await
-            .map_err(|error| SinexError::processing("failed to delete settled DLQ message")
-                .with_source(error))?;
+        let deleted = stream.delete_message(sequence).await.map_err(|error| {
+            SinexError::processing("failed to delete settled DLQ message").with_source(error)
+        })?;
         if !deleted {
             return Err(SinexError::processing(format!(
                 "DLQ stream refused to delete settled message sequence {sequence}"
@@ -983,9 +980,7 @@ fn authoritative_raw_bytes(envelope: &JsonValue) -> RuntimeResult<Vec<u8>> {
     let authority = envelope
         .get("payload_authority")
         .cloned()
-        .ok_or_else(|| {
-            SinexError::validation("DLQ entry is missing an explicit payload authority")
-        })
+        .ok_or_else(|| SinexError::validation("DLQ entry is missing an explicit payload authority"))
         .and_then(|value| {
             serde_json::from_value::<DlqPayloadAuthority>(value).map_err(|error| {
                 SinexError::validation("DLQ entry has an invalid payload authority")
@@ -1013,7 +1008,9 @@ fn authoritative_raw_bytes(envelope: &JsonValue) -> RuntimeResult<Vec<u8>> {
             )
         })?;
     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw_base64).map_err(
-        |error| SinexError::validation("DLQ entry carries invalid base64 raw bytes").with_source(error),
+        |error| {
+            SinexError::validation("DLQ entry carries invalid base64 raw bytes").with_source(error)
+        },
     )
 }
 

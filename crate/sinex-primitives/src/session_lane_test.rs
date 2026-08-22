@@ -36,13 +36,7 @@ fn window(
 fn compute_session_boundaries_groups_until_gap_close() {
     let start = Timestamp::now();
     let windows = vec![
-        window(
-            "w1",
-            start,
-            60,
-            5,
-            ActivityWindowCloseReason::MaxDuration,
-        ),
+        window("w1", start, 60, 5, ActivityWindowCloseReason::MaxDuration),
         window(
             "w2",
             start + Duration::seconds(60),

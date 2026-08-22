@@ -2,8 +2,8 @@ use super::*;
 use xtask::sandbox::{EnvGuard, sinex_test};
 
 #[sinex_test]
-async fn coordination_timing_defaults_match_deployment_contract()
--> ::xtask::sandbox::TestResult<()> {
+async fn coordination_timing_defaults_match_deployment_contract() -> ::xtask::sandbox::TestResult<()>
+{
     let timing = CoordinationTiming::from_overrides(None, None, None);
     assert_eq!(timing.heartbeat_secs, Seconds::from_secs(5));
     assert_eq!(timing.leadership_timeout_secs, Seconds::from_secs(30));
@@ -50,8 +50,8 @@ async fn coordination_timing_from_env_accepts_positive_overrides()
 }
 
 #[sinex_test(serial = true)]
-async fn coordination_timing_from_env_ignores_invalid_overrides()
--> ::xtask::sandbox::TestResult<()> {
+async fn coordination_timing_from_env_ignores_invalid_overrides() -> ::xtask::sandbox::TestResult<()>
+{
     let mut env = EnvGuard::with_keys(&[
         "SINEX_COORDINATION_HEARTBEAT",
         "SINEX_COORDINATION_TIMEOUT",

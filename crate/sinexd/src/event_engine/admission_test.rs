@@ -144,7 +144,11 @@ async fn stale_payload_schema_id_is_terminal_without_metadata_stripping(
         "the error must say what the freshly reloaded validator observed: {error}"
     );
     assert!(
-        ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+        ctx.pool
+            .events()
+            .get_by_id(event_id.into())
+            .await?
+            .is_none(),
         "a stale schema id must never be persisted by stripping payload_schema_id"
     );
     Ok(())

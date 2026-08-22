@@ -241,12 +241,13 @@ impl ReplayControlServer {
         transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
 
         let bytes = match serde_json::to_vec(&response) {
-            Ok(bytes) if ensure_nats_payload_fits(
-                "replay control response",
-                reply_subject,
-                bytes.len(),
-            )
-            .is_ok() =>
+            Ok(bytes)
+                if ensure_nats_payload_fits(
+                    "replay control response",
+                    reply_subject,
+                    bytes.len(),
+                )
+                .is_ok() =>
             {
                 bytes
             }

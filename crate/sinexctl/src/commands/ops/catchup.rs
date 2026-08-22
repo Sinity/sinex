@@ -5,11 +5,10 @@ use sinex_primitives::rpc::sources::{
 };
 use sinex_primitives::runtime_pressure::RuntimePressureLevel;
 use sinex_primitives::views::{
-    ActionAvailability, ActionAvailabilityState,
-    OpsCatchupConsumerSignalView, OpsCatchupDlqSignalView,
-    OpsCatchupMaterialRemediationCandidateView, OpsCatchupMaterialRemediationView,
-    OpsCatchupReadinessView, OpsCatchupRuntimeSignalView, OpsCatchupSourceMaterialSignalView,
-    OpsCatchupStreamSignalView, ViewEnvelope,
+    ActionAvailability, ActionAvailabilityState, OpsCatchupConsumerSignalView,
+    OpsCatchupDlqSignalView, OpsCatchupMaterialRemediationCandidateView,
+    OpsCatchupMaterialRemediationView, OpsCatchupReadinessView, OpsCatchupRuntimeSignalView,
+    OpsCatchupSourceMaterialSignalView, OpsCatchupStreamSignalView, ViewEnvelope,
 };
 use tabled::{builder::Builder, settings::Style};
 
@@ -45,9 +44,13 @@ impl CatchupCommands {
                 include_streams,
                 include_consumers,
             } => {
-                let view =
-                    build_catchup_readiness(client, *stale_after_secs, *include_streams, *include_consumers)
-                        .await?;
+                let view = build_catchup_readiness(
+                    client,
+                    *stale_after_secs,
+                    *include_streams,
+                    *include_consumers,
+                )
+                .await?;
                 let envelope = ViewEnvelope::new("sinexctl.ops.catchup.status", view.clone())
                     .with_query_echo(serde_json::json!({
                         "stale_after_secs": stale_after_secs,
@@ -136,10 +139,7 @@ async fn build_catchup_readiness(
     }
 
     if include_streams {
-        match client
-            .telemetry_stream_stats(None, None, Some(20))
-            .await
-        {
+        match client.telemetry_stream_stats(None, None, Some(20)).await {
             Ok(buckets) => {
                 view.streams = buckets
                     .into_iter()
@@ -188,9 +188,9 @@ async fn build_catchup_readiness(
                     pressure = pressure.strongest(consumer.pressure_level);
                 }
             }
-            Err(error) => view
-                .caveats
-                .push(format!("shadow consumer backlog unavailable via shadow.list: {error}")),
+            Err(error) => view.caveats.push(format!(
+                "shadow consumer backlog unavailable via shadow.list: {error}"
+            )),
         }
     }
 
@@ -260,8 +260,10 @@ fn source_material_signal(sources: &[SourceCoverageEntry]) -> OpsCatchupSourceMa
         signal.total_bytes += source.total_bytes.unwrap_or(0);
     }
 
-    signal.pressure_level =
-        source_material_pressure(signal.failed_material_count, signal.recovered_partial_material_count);
+    signal.pressure_level = source_material_pressure(
+        signal.failed_material_count,
+        signal.recovered_partial_material_count,
+    );
     signal
 }
 

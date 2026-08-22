@@ -53,13 +53,16 @@ async fn automata_status_json_renders_finite_view_envelope() -> xtask::TestResul
     let envelope = automata_status_envelope(fixture_response(vec![fixture_automaton(
         "session-detector",
     )]));
-    let output = render_finite_envelope(&envelope, OutputFormat::Json)?
-        .expect("json must return Some");
+    let output =
+        render_finite_envelope(&envelope, OutputFormat::Json)?.expect("json must return Some");
     let parsed: serde_json::Value = serde_json::from_str(&output)?;
 
     assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
     assert_eq!(parsed["source_surface"], "sinexctl.runtime.automata");
-    assert_eq!(parsed["payload"]["automata"][0]["module_name"], "session-detector");
+    assert_eq!(
+        parsed["payload"]["automata"][0]["module_name"],
+        "session-detector"
+    );
     assert!(
         parsed.get("caveats").is_none(),
         "live automata with recent output should not emit readiness caveats"

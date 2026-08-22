@@ -37,7 +37,10 @@ async fn documents_search_empty_results_emit_coverage_caveat() -> TestResult<()>
 
     assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
     assert_eq!(parsed["source_surface"], "sinexctl.docs.search");
-    assert_eq!(parsed["payload"]["results"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        parsed["payload"]["results"].as_array().map(Vec::len),
+        Some(0)
+    );
     assert_eq!(parsed["query_echo"]["query"], "missing context");
     assert_eq!(parsed["caveats"][0]["id"], "coverage.unmeasurable");
     assert!(
@@ -98,7 +101,10 @@ async fn documents_chunks_empty_results_emit_coverage_caveat() -> TestResult<()>
     let parsed: serde_json::Value = serde_json::from_str(&output)?;
 
     assert_eq!(parsed["source_surface"], "sinexctl.docs.chunks");
-    assert_eq!(parsed["payload"]["chunks"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        parsed["payload"]["chunks"].as_array().map(Vec::len),
+        Some(0)
+    );
     assert_eq!(parsed["query_echo"]["document_id"], document_id.to_string());
     assert_eq!(parsed["caveats"][0]["id"], "coverage.unmeasurable");
     assert!(

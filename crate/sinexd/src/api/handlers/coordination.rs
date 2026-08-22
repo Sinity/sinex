@@ -8,15 +8,17 @@ use sinex_primitives::rpc::coordination::{
 };
 use sinex_primitives::rpc::runtime::{RuntimeInfo, RuntimeListActiveRequest};
 use sinex_primitives::{
-    Result, RuntimeLivenessPolicy, RuntimeLivenessSignals, SinexError, evaluate_runtime_liveness,
-    Timestamp,
+    Result, RuntimeLivenessPolicy, RuntimeLivenessSignals, SinexError, Timestamp,
+    evaluate_runtime_liveness,
 };
 use sqlx::PgPool;
 
 async fn active_runtime_modules(pool: &PgPool) -> Result<Vec<RuntimeInfo>> {
-    Ok(handle_runtime_list_active(pool, RuntimeListActiveRequest::default())
-        .await?
-        .modules)
+    Ok(
+        handle_runtime_list_active(pool, RuntimeListActiveRequest::default())
+            .await?
+            .modules,
+    )
 }
 
 fn instance_info(module: RuntimeInfo, is_leader: bool) -> InstanceInfo {
@@ -27,7 +29,10 @@ fn instance_info(module: RuntimeInfo, is_leader: bool) -> InstanceInfo {
     InstanceInfo {
         instance_id: InstanceId::new(instance_id),
         module_kind: module.module_kind,
-        hostname: module.host.as_deref().and_then(|host| HostName::new(host).ok()),
+        hostname: module
+            .host
+            .as_deref()
+            .and_then(|host| HostName::new(host).ok()),
         last_heartbeat: module.last_heartbeat_at,
         is_leader,
     }

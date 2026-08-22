@@ -46,7 +46,9 @@ async fn test_events_indexes_creation() -> color_eyre::eyre::Result<()> {
             .any(|name| name.contains("source_type_ts"))
     );
     assert!(
-        index_names.iter().any(|name| name.contains("payload_text_fts")),
+        index_names
+            .iter()
+            .any(|name| name.contains("payload_text_fts")),
         "sinex-1l52: ix_events_payload_text_fts must exist so PayloadFilter::TextSearch/ \
          hybrid_search FTS queries don't full-scan the hypertable"
     );
@@ -103,7 +105,9 @@ async fn test_events_text_search_index_is_used_by_production_query_shape()
     // this is what actually happened in production before this fix landed.
     // Material-provenance shape (source_material_id + anchor_byte), matching
     // the XOR provenance constraint on core.events.
-    let material_id = ctx.create_source_material(Some("fts-index-plan-test")).await?;
+    let material_id = ctx
+        .create_source_material(Some("fts-index-plan-test"))
+        .await?;
     for i in 0..200i64 {
         sqlx::query!(
             r#"
@@ -168,12 +172,10 @@ async fn test_index_performance_benefit() -> color_eyre::eyre::Result<()> {
     let _scope = ctx.pipeline().await?;
 
     // Create tables and indexes
-    sqlx::query(
-        &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query(&SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder))
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
         .execute(pool)
         .await
@@ -185,9 +187,7 @@ async fn test_index_performance_benefit() -> color_eyre::eyre::Result<()> {
     }
 
     let payloads: Vec<_> = (0..40)
-        .map(|i| {
-            DynamicPayload::new("test-source", "test-event", serde_json::json!({"index": i}))
-        })
+        .map(|i| DynamicPayload::new("test-source", "test-event", serde_json::json!({"index": i})))
         .collect();
     let events = ctx.publish_many(payloads).await?;
     assert_eq!(events.len(), 40);

@@ -486,7 +486,11 @@ async fn append_stream_retains_handle_until_finalize_succeeds(ctx: TestContext) 
         .finalize("injected-transient-finalize-failure")
         .await
         .expect_err("injected finalize failure must reach the caller");
-    assert!(error.to_string().contains("injected source material finalization failure"));
+    assert!(
+        error
+            .to_string()
+            .contains("injected source material finalization failure")
+    );
     assert_eq!(
         stream.current_material_id(),
         Some(anchor.material_id),
@@ -522,7 +526,9 @@ async fn buffered_append_writer_reports_closed_worker_channel(ctx: TestContext) 
     ] {
         let error = result.expect_err("closed writer channel must not report success");
         assert!(
-            error.to_string().contains("buffered append writer has shut down"),
+            error
+                .to_string()
+                .contains("buffered append writer has shut down"),
             "{operation} returned the wrong closed-channel error: {error}"
         );
     }

@@ -11,10 +11,10 @@ use futures::StreamExt;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::Operation as DbOperation;
+use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::{ErrorClass, SinexError};
-use sinex_primitives::Id;
 use sinex_primitives::rpc::dlq::{
     DlqListRequest, DlqPeekRequest, DlqPurgeRequest, DlqRequeueRequest,
 };
@@ -65,9 +65,7 @@ async fn ensure_raw_events_stream(
         ..Default::default()
     })
     .await?;
-    Ok(js
-        .get_stream(&env.nats_stream_name("EVENTS"))
-        .await?)
+    Ok(js.get_stream(&env.nats_stream_name("EVENTS")).await?)
 }
 
 async fn publish_requeueable_dlq_message(
@@ -870,12 +868,8 @@ async fn dlq_bulk_requeue_is_pollable_before_paced_work_completes(
     let mut raw_stream = ensure_raw_events_stream(&harness.client, &harness.env).await?;
 
     for index in 0..20 {
-        publish_requeueable_dlq_message(
-            &harness.client,
-            &harness.env,
-            &format!("bulk-{index}"),
-        )
-        .await?;
+        publish_requeueable_dlq_message(&harness.client, &harness.env, &format!("bulk-{index}"))
+            .await?;
     }
     wait_for_dlq_stream_messages(&harness.client, &harness.env, 20).await?;
 
@@ -901,7 +895,9 @@ async fn dlq_bulk_requeue_is_pollable_before_paced_work_completes(
     assert_eq!(operation.result_status, OperationStatus::Success);
     wait_for_dlq_empty(&harness.client, &harness.env).await?;
     assert_eq!(
-        handle_dlq_list(&harness.services, DlqListRequest {}).await?.total_messages,
+        handle_dlq_list(&harness.services, DlqListRequest {})
+            .await?
+            .total_messages,
         0
     );
     assert_eq!(raw_stream.info().await?.state.messages, 20);
@@ -967,12 +963,8 @@ async fn dlq_startup_recovery_resumes_interrupted_range_idempotently(
 
     let resumed = recover_stale_dlq_requeue_operations(&harness.services).await?;
     assert_eq!(resumed, 1);
-    let recovered = wait_for_dlq_operation(
-        &harness,
-        &operation.id.to_uuid().to_string(),
-        1,
-    )
-    .await?;
+    let recovered =
+        wait_for_dlq_operation(&harness, &operation.id.to_uuid().to_string(), 1).await?;
     assert_eq!(recovered.result_status, OperationStatus::Success);
     assert_eq!(
         recovered
@@ -981,7 +973,12 @@ async fn dlq_startup_recovery_resumes_interrupted_range_idempotently(
             .and_then(|summary| summary["requeued_count"].as_u64()),
         Some(1)
     );
-    assert_eq!(handle_dlq_list(&harness.services, DlqListRequest {}).await?.total_messages, 0);
+    assert_eq!(
+        handle_dlq_list(&harness.services, DlqListRequest {})
+            .await?
+            .total_messages,
+        0
+    );
     assert_eq!(raw_stream.info().await?.state.messages, 1);
     Ok(())
 }

@@ -462,8 +462,9 @@ pub trait ScopeReconciler: Send + Sync + 'static {
         &mut self,
         _state: &mut Self::State,
         _now: Timestamp,
-    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError>>
-    + Send {
+    ) -> impl std::future::Future<
+        Output = Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError>,
+    > + Send {
         async { Ok(Vec::new()) }
     }
 }

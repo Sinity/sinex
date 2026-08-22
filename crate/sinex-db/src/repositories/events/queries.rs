@@ -848,9 +848,10 @@ impl EventRepository<'_> {
         // each `query!` invocation generates its own distinct struct even
         // when the selected columns are identical).
         let row = match lane {
-            EventStorageLane::Activity => sqlx::query_as!(
-                LiveEquivalenceRow,
-                r#"
+            EventStorageLane::Activity => {
+                sqlx::query_as!(
+                    LiveEquivalenceRow,
+                    r#"
                 SELECT
                     $1::text as "equivalence_key!",
                     id::uuid as "id!",
@@ -861,13 +862,15 @@ impl EventRepository<'_> {
                 ORDER BY id DESC
                 LIMIT 1
                 "#,
-                key
-            )
-            .fetch_optional(self.pool)
-            .await,
-            EventStorageLane::Reflection => sqlx::query_as!(
-                LiveEquivalenceRow,
-                r#"
+                    key
+                )
+                .fetch_optional(self.pool)
+                .await
+            }
+            EventStorageLane::Reflection => {
+                sqlx::query_as!(
+                    LiveEquivalenceRow,
+                    r#"
                 SELECT
                     $1::text as "equivalence_key!",
                     id::uuid as "id!",
@@ -878,10 +881,11 @@ impl EventRepository<'_> {
                 ORDER BY id DESC
                 LIMIT 1
                 "#,
-                key
-            )
-            .fetch_optional(self.pool)
-            .await,
+                    key
+                )
+                .fetch_optional(self.pool)
+                .await
+            }
         }
         .map_err(|e| db_error(e, "find live event by equivalence_key"))?;
 
@@ -913,9 +917,10 @@ impl EventRepository<'_> {
         // shared `LiveEquivalenceRow` type is required here (anonymous
         // `query!` record types wouldn't unify across the match arms).
         let rows = match lane {
-            EventStorageLane::Activity => sqlx::query_as!(
-                LiveEquivalenceRow,
-                r#"
+            EventStorageLane::Activity => {
+                sqlx::query_as!(
+                    LiveEquivalenceRow,
+                    r#"
                 SELECT DISTINCT ON (equivalence_key)
                     equivalence_key as "equivalence_key!",
                     id::uuid as "id!",
@@ -925,13 +930,15 @@ impl EventRepository<'_> {
                 WHERE equivalence_key = ANY($1::text[])
                 ORDER BY equivalence_key, id DESC
                 "#,
-                &keys_vec
-            )
-            .fetch_all(self.pool)
-            .await,
-            EventStorageLane::Reflection => sqlx::query_as!(
-                LiveEquivalenceRow,
-                r#"
+                    &keys_vec
+                )
+                .fetch_all(self.pool)
+                .await
+            }
+            EventStorageLane::Reflection => {
+                sqlx::query_as!(
+                    LiveEquivalenceRow,
+                    r#"
                 SELECT DISTINCT ON (equivalence_key)
                     equivalence_key as "equivalence_key!",
                     id::uuid as "id!",
@@ -941,10 +948,11 @@ impl EventRepository<'_> {
                 WHERE equivalence_key = ANY($1::text[])
                 ORDER BY equivalence_key, id DESC
                 "#,
-                &keys_vec
-            )
-            .fetch_all(self.pool)
-            .await,
+                    &keys_vec
+                )
+                .fetch_all(self.pool)
+                .await
+            }
         }
         .map_err(|e| db_error(e, "find live events by equivalence_keys"))?;
 

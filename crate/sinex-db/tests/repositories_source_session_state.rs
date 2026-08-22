@@ -93,6 +93,10 @@ async fn source_session_state_distinct_scopes_coexist(ctx: TestContext) -> TestR
     repo.upsert(other).await?;
 
     let rows = repo.list_current_by_source("media.screen-ocr").await?;
-    assert_eq!(rows.len(), 2, "distinct session scopes are independent rows");
+    assert_eq!(
+        rows.len(),
+        2,
+        "distinct session scopes are independent rows"
+    );
     Ok(())
 }

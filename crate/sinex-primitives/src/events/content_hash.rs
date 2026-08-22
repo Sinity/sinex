@@ -51,8 +51,8 @@ pub fn payload_content_hash(payload: &Value) -> [u8; 32] {
     // Serialize impls, no non-string map keys), but avoid unwrap: fall back to
     // hashing the Debug form so a pathological value still yields a stable,
     // self-consistent hash rather than panicking in the admission hot path.
-    let bytes = serde_json::to_vec(&canonical)
-        .unwrap_or_else(|_| format!("{canonical:?}").into_bytes());
+    let bytes =
+        serde_json::to_vec(&canonical).unwrap_or_else(|_| format!("{canonical:?}").into_bytes());
     *blake3::hash(&bytes).as_bytes()
 }
 

@@ -831,11 +831,13 @@ where
 /// implemented by many non-automaton runtime modules that have no
 /// declarations at all).
 pub trait DeclaresOutputs {
-    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration];
+    const OUTPUT_DECLARATIONS:
+        &'static [sinex_primitives::derivation::DerivationOutputDeclaration];
 }
 
 impl<N: Automaton> DeclaresOutputs for AutomatonRuntime<N> {
-    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+    const OUTPUT_DECLARATIONS:
+        &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
         N::OUTPUT_DECLARATIONS;
 }
 

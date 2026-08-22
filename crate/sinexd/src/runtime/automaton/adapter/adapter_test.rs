@@ -7,6 +7,7 @@ use super::log_self_observation_failure;
 #[cfg(feature = "messaging")]
 use super::recv_invalidation;
 use super::{AutomatonRuntime, stale_output_ids_or_fail_scope};
+use crate::runtime::automaton::traits::Automaton;
 use crate::runtime::automaton::{
     AutomatonAdapterConfig, AutomatonContext, DerivedOutput, DerivedScopeInvalidation,
     INVALIDATION_SUBJECT, InputProvenanceFilter, ScopeReconcilerWrapper, TransducerWrapper,
@@ -21,7 +22,6 @@ use crate::runtime::stream::{
     Checkpoint, EventEmitter, RuntimeContext, RuntimeHandles, RuntimeModule, ScanArgs, ServiceInfo,
 };
 use crate::runtime::{AutomatonLogicError, ScopeReconciler, Transducer, Windowed, WindowedWrapper};
-use crate::runtime::automaton::traits::Automaton;
 use crate::runtime::{
     CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError,
 };
@@ -277,7 +277,8 @@ struct ScopeReconcilerOutput {
     count: usize,
 }
 
-const SCOPE_RECONCILER_OUTPUT_DECLARATION: sinex_primitives::derivation::DerivationOutputDeclaration =
+const SCOPE_RECONCILER_OUTPUT_DECLARATION:
+    sinex_primitives::derivation::DerivationOutputDeclaration =
     sinex_primitives::derivation::DerivationOutputDeclaration {
         declaration_id: "test.derived-adapter-scope-reconciler.measurement.aggregate",
         owner: "test",
@@ -316,7 +317,8 @@ impl ScopeReconciler for TestScopeReconcilerAutomaton {
     fn output_event_type(&self) -> &'static str {
         "measurement.aggregate"
     }
-    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+    const OUTPUT_DECLARATIONS:
+        &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
         &[SCOPE_RECONCILER_OUTPUT_DECLARATION];
     fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]

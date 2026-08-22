@@ -197,15 +197,15 @@ async fn replay_preview_bounds_root_identity_at_the_keyset_page_boundary(
     assert_eq!(preview["total_events"], serde_json::json!(10_001));
     assert_eq!(preview["root_event_count"], serde_json::json!(10_001));
     assert_eq!(
-        preview["root_event_id_sample"]
-            .as_array()
-            .map(Vec::len),
+        preview["root_event_id_sample"].as_array().map(Vec::len),
         Some(100),
         "the persisted preview must stay bounded after the 10,000-root query page"
     );
     assert!(preview.get("root_event_ids").is_none());
-    assert!(preview["root_event_id_fingerprint"]
-        .as_str()
-        .is_some_and(|fingerprint| !fingerprint.is_empty()));
+    assert!(
+        preview["root_event_id_fingerprint"]
+            .as_str()
+            .is_some_and(|fingerprint| !fingerprint.is_empty())
+    );
     Ok(())
 }

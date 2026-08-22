@@ -76,19 +76,18 @@ use sinex_primitives::rpc::{
         PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
         PRIVACY_POLICY_RULE_REMOVE_METHOD, PRIVACY_POLICY_RULE_SET_ENABLED_METHOD,
         PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
-        PRIVACY_SHADOW_AUDIT_METHOD,
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
-        PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivacyPolicyBackendAddRequest,
-        PrivacyPolicyDictionaryAddRequest, PrivacyPolicyFieldBindRequest,
-        PrivacyPolicyFieldBindResponse, PrivacyPolicyFieldUnbindRequest,
-        PrivacyPolicyFieldUnbindResponse, PrivacyPolicyListRequest, PrivacyPolicyListResponse,
-        PrivacyPolicyMutationResponse, PrivacyPolicyRuleAddRequest, PrivacyPolicyRuleRemoveRequest,
+        PRIVACY_PRIVATE_MODE_STATUS_METHOD, PRIVACY_SHADOW_AUDIT_METHOD,
+        PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionaryAddRequest,
+        PrivacyPolicyFieldBindRequest, PrivacyPolicyFieldBindResponse,
+        PrivacyPolicyFieldUnbindRequest, PrivacyPolicyFieldUnbindResponse,
+        PrivacyPolicyListRequest, PrivacyPolicyListResponse, PrivacyPolicyMutationResponse,
+        PrivacyPolicyRuleAddRequest, PrivacyPolicyRuleRemoveRequest,
         PrivacyPolicyRuleRemoveResponse, PrivacyPolicyRuleSetEnabledRequest,
         PrivacyPolicyRuleSetEnabledResponse, PrivacyPolicyScopeBindRequest,
         PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
-        PrivacyShadowAuditRequest, PrivacyShadowAuditResponse,
-        PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
-        PrivateModeStatusRequest,
+        PrivacyShadowAuditRequest, PrivacyShadowAuditResponse, PrivateModeDisableRequest,
+        PrivateModeEnableRequest, PrivateModeStateResponse, PrivateModeStatusRequest,
     },
     replay::{
         REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
@@ -1322,7 +1321,8 @@ impl GatewayClient {
         &self,
         request: LlmEmbeddingEstimateRequest,
     ) -> Result<LlmEmbeddingEstimateResponse> {
-        self.call_typed(LLM_EMBEDDING_ESTIMATE_METHOD, &request).await
+        self.call_typed(LLM_EMBEDDING_ESTIMATE_METHOD, &request)
+            .await
     }
 
     // ==================== Source Material Commands ====================

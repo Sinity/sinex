@@ -42,16 +42,13 @@ async fn test_schema_access_uses_source_material_registry_contract(
 }
 
 #[sinex_test]
-async fn preflight_database_session_disables_parallel_workers(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn preflight_database_session_disables_parallel_workers(ctx: TestContext) -> TestResult<()> {
     let mut conn = ctx.pool().acquire().await?;
     configure_preflight_database_session(&mut conn).await?;
 
-    let parallel_workers =
-        sqlx::query_scalar::<_, String>("SHOW max_parallel_workers_per_gather")
-            .fetch_one(&mut *conn)
-            .await?;
+    let parallel_workers = sqlx::query_scalar::<_, String>("SHOW max_parallel_workers_per_gather")
+        .fetch_one(&mut *conn)
+        .await?;
     let statement_timeout = sqlx::query_scalar::<_, String>("SHOW statement_timeout")
         .fetch_one(&mut *conn)
         .await?;

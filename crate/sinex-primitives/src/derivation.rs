@@ -513,10 +513,10 @@ impl DerivationOutputDeclaration {
         if matches!(self.product_class, DerivedProductClass::ProjectionRow)
             && self.projection_kind.is_none()
         {
-            return Err(
-                SinexError::validation("projection_row product class requires projection_kind")
-                    .with_context("declaration_id", self.declaration_id),
-            );
+            return Err(SinexError::validation(
+                "projection_row product class requires projection_kind",
+            )
+            .with_context("declaration_id", self.declaration_id));
         }
         Ok(())
     }
@@ -540,9 +540,11 @@ pub struct TstzRange {
 impl TstzRange {
     pub fn new(start: Timestamp, end: Timestamp) -> Result<Self> {
         if start > end {
-            return Err(SinexError::validation("TstzRange start must not be after end")
-                .with_context("start", start.to_string())
-                .with_context("end", end.to_string()));
+            return Err(
+                SinexError::validation("TstzRange start must not be after end")
+                    .with_context("start", start.to_string())
+                    .with_context("end", end.to_string()),
+            );
         }
         Ok(Self { start, end })
     }

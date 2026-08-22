@@ -1,9 +1,11 @@
-use super::{DOCUMENT_AUTO_TAG_DECLARATION, DocumentSourceDriver, stamp_document_auto_tag_declaration};
+use super::{
+    DOCUMENT_AUTO_TAG_DECLARATION, DocumentSourceDriver, stamp_document_auto_tag_declaration,
+};
 use crate::runtime::ExplorationProvider;
 use crate::runtime::stream::Checkpoint;
 use serde_json::json;
-use sinex_primitives::events::{EventId, EventPayload};
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
+use sinex_primitives::events::{EventId, EventPayload};
 use sinex_primitives::temporal::Timestamp;
 use xtask::sandbox::sinex_test;
 
@@ -32,8 +34,8 @@ async fn test_completed_report_uses_elapsed_window() -> ::xtask::sandbox::TestRe
 }
 
 #[sinex_test]
-async fn document_source_state_is_unhealthy_before_initialize()
--> ::xtask::sandbox::TestResult<()> {
+async fn document_source_state_is_unhealthy_before_initialize() -> ::xtask::sandbox::TestResult<()>
+{
     let source = DocumentSourceDriver::new();
     let state = source.get_source_state()?;
 
@@ -144,7 +146,10 @@ async fn document_auto_tag_declares_product_class() -> ::xtask::sandbox::TestRes
         .build()
         .expect("build with a valid provenance must succeed");
 
-    assert_eq!(event.product_class, None, "unstamped baseline must be anonymous");
+    assert_eq!(
+        event.product_class, None,
+        "unstamped baseline must be anonymous"
+    );
     assert_eq!(event.claim_support, None);
     assert_eq!(event.derivation_declaration_id, None);
 

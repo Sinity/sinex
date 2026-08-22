@@ -26,14 +26,14 @@ pub(crate) fn ensure_nats_payload_fits(
         context,
         "Refusing oversized NATS publish before server disconnect"
     );
-    Err(SinexError::validation(
-        "NATS payload exceeds configured hard limit",
+    Err(
+        SinexError::validation("NATS payload exceeds configured hard limit")
+            .with_context("subject", subject.to_string())
+            .with_context("payload_bytes", payload_bytes.to_string())
+            .with_context(
+                "max_payload_bytes",
+                NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES.to_string(),
+            )
+            .with_context("publish_context", context),
     )
-    .with_context("subject", subject.to_string())
-    .with_context("payload_bytes", payload_bytes.to_string())
-    .with_context(
-        "max_payload_bytes",
-        NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES.to_string(),
-    )
-    .with_context("publish_context", context))
 }

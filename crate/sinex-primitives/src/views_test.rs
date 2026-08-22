@@ -18,10 +18,7 @@ use xtask::sandbox::sinex_test;
 async fn readiness_caveat_ids_are_stable_wire_vocabulary() -> xtask::TestResult<()> {
     let cases = [
         (ReadinessCaveatId::SourceAbsent, "source.absent"),
-        (
-            ReadinessCaveatId::ReadmodelStaleBy,
-            "readmodel.stale_by",
-        ),
+        (ReadinessCaveatId::ReadmodelStaleBy, "readmodel.stale_by"),
         (ReadinessCaveatId::WindowPartial, "window.partial"),
         (
             ReadinessCaveatId::CoverageUnmeasurable,
@@ -36,7 +33,10 @@ async fn readiness_caveat_ids_are_stable_wire_vocabulary() -> xtask::TestResult<
     for (id, expected) in cases {
         assert_eq!(id.as_str(), expected);
         assert_eq!(serde_json::to_value(id)?, json!(expected));
-        assert_eq!(serde_json::from_value::<ReadinessCaveatId>(json!(expected))?, id);
+        assert_eq!(
+            serde_json::from_value::<ReadinessCaveatId>(json!(expected))?,
+            id
+        );
     }
     Ok(())
 }
@@ -247,7 +247,9 @@ async fn candidate_row_with_unreviewed_claim_support_renders_distinct_caveat()
         .caveats
         .iter()
         .find(|c| c.id == CLAIM_UNADJUDICATED_CAVEAT_ID)
-        .expect("candidate row with an unreviewed claim_support must carry an unadjudicated caveat");
+        .expect(
+            "candidate row with an unreviewed claim_support must carry an unadjudicated caveat",
+        );
     assert!(caveat.message.contains("Heuristic"));
     assert!(caveat.message.contains("unreviewed"));
     assert!(
@@ -319,7 +321,10 @@ async fn claim_support_list_caveats_summarizes_unknown_and_unadjudicated_rows()
         .iter()
         .find(|c| c.id == CLAIM_SUPPORT_UNKNOWN_CAVEAT_ID)
         .expect("one unknown-support row must produce the unknown-support caveat");
-    assert!(unknown.message.contains('1'), "count must be reflected in the message");
+    assert!(
+        unknown.message.contains('1'),
+        "count must be reflected in the message"
+    );
 
     let unadjudicated = caveats
         .iter()
@@ -333,7 +338,11 @@ async fn claim_support_list_caveats_summarizes_unknown_and_unadjudicated_rows()
             .any(|c| c.id == CLAIM_ADJUDICATED_ACCEPTED_CAVEAT_ID),
         "no accepted rows were present — the accepted caveat must not appear"
     );
-    assert_eq!(caveats.len(), 2, "canonical_derived_event row must not add a third caveat");
+    assert_eq!(
+        caveats.len(),
+        2,
+        "canonical_derived_event row must not add a third caveat"
+    );
 
     // An all-canonical (non-candidate-grade) list renders no claim-support
     // caveats at all — this bead does not gate CanonicalDerivedEvent.
@@ -716,7 +725,9 @@ async fn source_coverage_summary_counts_coverage_error_evidence() -> xtask::Test
     assert_eq!(list.summary.coverage_error_sources, 1);
     assert_eq!(list.summary.coverage_error_basis_points, 5_000);
     assert_eq!(
-        list.summary.coverage_error_kinds.get("readiness.missing_events"),
+        list.summary
+            .coverage_error_kinds
+            .get("readiness.missing_events"),
         Some(&1)
     );
     assert_eq!(

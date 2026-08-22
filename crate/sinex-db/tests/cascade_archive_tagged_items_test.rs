@@ -71,7 +71,10 @@ async fn cascade_archive_preserves_and_removes_tagged_items(ctx: TestContext) ->
     .bind(*event_id.as_uuid())
     .fetch_one(ctx.pool())
     .await?;
-    assert_eq!(live_count, 1, "fixture setup: tagged_items row must exist pre-archive");
+    assert_eq!(
+        live_count, 1,
+        "fixture setup: tagged_items row must exist pre-archive"
+    );
 
     let archive_operation_id = sinex_primitives::Uuid::now_v7().to_string();
     ctx.pool()

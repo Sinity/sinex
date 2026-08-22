@@ -37,8 +37,8 @@ async fn systemd_service_details_parse_watchdog_usec_human_duration() -> TestRes
 }
 
 #[sinex_test]
-async fn systemd_service_details_treat_infinity_watchdog_as_inactive_placeholder()
--> TestResult<()> {
+async fn systemd_service_details_treat_infinity_watchdog_as_inactive_placeholder() -> TestResult<()>
+{
     let details = SystemdServiceDetails::from_show_output(
         "ActiveState=inactive\nSubState=dead\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=infinity\n",
     )?;
@@ -85,8 +85,7 @@ async fn discover_unit_files_in_path_finds_only_sinex_service_units() -> TestRes
     std::fs::write(temp.path().join("postgresql.service"), [])?;
     std::fs::create_dir(temp.path().join("sinex-dir.service"))?;
 
-    let mut found =
-        discover_unit_files_in_path(temp.path().to_str().expect("utf8 path")).await?;
+    let mut found = discover_unit_files_in_path(temp.path().to_str().expect("utf8 path")).await?;
     found.sort();
 
     assert_eq!(
@@ -113,8 +112,7 @@ async fn discover_unit_files_in_path_rejects_non_utf8_entry_names() -> TestResul
 
     let temp = tempfile::tempdir()?;
     let invalid_name = std::ffi::OsString::from_vec(vec![
-        b's', b'i', b'n', b'e', b'x', b'-', 0xff, b'.', b's', b'e', b'r', b'v', b'i', b'c',
-        b'e',
+        b's', b'i', b'n', b'e', b'x', b'-', 0xff, b'.', b's', b'e', b'r', b'v', b'i', b'c', b'e',
     ]);
     std::fs::write(temp.path().join(invalid_name), [])?;
 

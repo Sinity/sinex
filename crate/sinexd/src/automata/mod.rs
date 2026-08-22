@@ -6,9 +6,9 @@
 //! catalog discovers them through `inventory`.
 
 pub mod analytics;
-pub mod civil;
 pub mod attention;
 pub mod canonicalizer;
+pub mod civil;
 pub mod daily;
 pub mod document_parser;
 pub mod embedding_producer;

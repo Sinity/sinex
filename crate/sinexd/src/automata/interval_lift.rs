@@ -14,12 +14,12 @@ use sinex_primitives::derivation::{
     DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
 };
 use sinex_primitives::domain::SyntheticTemporalPolicy;
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     ActivityWatchAfkChangedPayload, ActivityWatchWindowActivePayload, HyprlandWindowFocusedPayload,
     HyprlandWorkspaceSwitchedPayload, StateIntervalPayload, SystemdUnitStartedPayload,
     SystemdUnitStoppedPayload,
 };
-use sinex_primitives::events::EventPayload;
 use sinex_primitives::temporal::Duration;
 use sinex_primitives::{JsonValue, Timestamp, Uuid};
 use std::collections::BTreeMap;
@@ -734,9 +734,7 @@ impl From<LegacyFocusTransition> for StateObservation {
     }
 }
 
-fn deserialize_active_focus<'de, D>(
-    deserializer: D,
-) -> Result<Option<StateObservation>, D::Error>
+fn deserialize_active_focus<'de, D>(deserializer: D) -> Result<Option<StateObservation>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -872,7 +870,11 @@ impl IntervalLift {
         for slot in [&mut state.active_focus, &mut state.active_workspace] {
             if slot.as_ref().is_some_and(|o| o.ts_orig <= fence_ts) {
                 let observation = slot.take().expect("checked Some above");
-                outputs.push(observation.close_at_fence(fence_ts, fence_event_type, fence_event_id));
+                outputs.push(observation.close_at_fence(
+                    fence_ts,
+                    fence_event_type,
+                    fence_event_id,
+                ));
             }
         }
         outputs
@@ -898,7 +900,9 @@ impl IntervalLift {
                 ));
             } else {
                 // Opened after the fence (out-of-order) — keep it open.
-                state.active_activitywatch_heartbeats.insert(key, observation);
+                state
+                    .active_activitywatch_heartbeats
+                    .insert(key, observation);
             }
         }
         outputs
@@ -913,166 +917,161 @@ impl IntervalLift {
         input: JsonValue,
         context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<StateIntervalPayload>>, AutomatonLogicError> {
-        let (slot, current) =
-            match (context.source.as_str(), context.event_type.as_str()) {
-                ("wm.hyprland", event_type)
-                    if event_type == HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str() =>
-                {
-                    let payload: HyprlandWindowFocusedPayload = serde_json::from_value(input)
-                        .map_err(|e| {
-                            AutomatonLogicError::InputParsing(format!(
-                                "failed to parse Hyprland focus payload: {e}"
-                            ))
-                        })?;
-                    (
-                        &mut state.active_focus,
-                        StateObservation::from_focus_payload(payload, context)?,
-                    )
-                }
-                ("wm.hyprland", event_type)
-                    if event_type
-                        == HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_static_str() =>
-                {
-                    let payload: HyprlandWorkspaceSwitchedPayload =
-                        serde_json::from_value(input).map_err(|e| {
-                            AutomatonLogicError::InputParsing(format!(
-                                "failed to parse Hyprland workspace payload: {e}"
-                            ))
-                        })?;
-                    (
-                        &mut state.active_workspace,
-                        StateObservation::from_workspace_payload(payload, context)?,
-                    )
-                }
-                ("activitywatch", event_type)
-                    if event_type
-                        == ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str() =>
-                {
-                    let payload: ActivityWatchWindowActivePayload =
-                        serde_json::from_value(input).map_err(|e| {
-                            AutomatonLogicError::InputParsing(format!(
-                                "failed to parse ActivityWatch window payload: {e}"
-                            ))
-                        })?;
-                    let duration_ms = payload.duration_ms;
-                    let observation =
-                        StateObservation::from_activitywatch_window_payload(payload, context)?;
-                    if duration_ms == 0 {
-                        return Ok(Self::process_activitywatch_heartbeat(
-                            &mut state.active_activitywatch_heartbeats,
-                            observation,
-                        ));
-                    }
-                    return Ok(Some(
-                        observation.observed_duration_interval(duration_ms, Timestamp::now()),
+        let (slot, current) = match (context.source.as_str(), context.event_type.as_str()) {
+            ("wm.hyprland", event_type)
+                if event_type == HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str() =>
+            {
+                let payload: HyprlandWindowFocusedPayload =
+                    serde_json::from_value(input).map_err(|e| {
+                        AutomatonLogicError::InputParsing(format!(
+                            "failed to parse Hyprland focus payload: {e}"
+                        ))
+                    })?;
+                (
+                    &mut state.active_focus,
+                    StateObservation::from_focus_payload(payload, context)?,
+                )
+            }
+            ("wm.hyprland", event_type)
+                if event_type == HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_static_str() =>
+            {
+                let payload: HyprlandWorkspaceSwitchedPayload = serde_json::from_value(input)
+                    .map_err(|e| {
+                        AutomatonLogicError::InputParsing(format!(
+                            "failed to parse Hyprland workspace payload: {e}"
+                        ))
+                    })?;
+                (
+                    &mut state.active_workspace,
+                    StateObservation::from_workspace_payload(payload, context)?,
+                )
+            }
+            ("activitywatch", event_type)
+                if event_type == ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str() =>
+            {
+                let payload: ActivityWatchWindowActivePayload = serde_json::from_value(input)
+                    .map_err(|e| {
+                        AutomatonLogicError::InputParsing(format!(
+                            "failed to parse ActivityWatch window payload: {e}"
+                        ))
+                    })?;
+                let duration_ms = payload.duration_ms;
+                let observation =
+                    StateObservation::from_activitywatch_window_payload(payload, context)?;
+                if duration_ms == 0 {
+                    return Ok(Self::process_activitywatch_heartbeat(
+                        &mut state.active_activitywatch_heartbeats,
+                        observation,
                     ));
                 }
-                ("activitywatch", event_type)
-                    if event_type == ActivityWatchAfkChangedPayload::EVENT_TYPE.as_static_str() =>
-                {
-                    let payload: ActivityWatchAfkChangedPayload =
-                        serde_json::from_value(input).map_err(|e| {
-                            AutomatonLogicError::InputParsing(format!(
-                                "failed to parse ActivityWatch AFK payload: {e}"
-                            ))
-                        })?;
-                    let duration_ms = payload.duration_ms;
-                    let observation =
-                        StateObservation::from_activitywatch_afk_payload(payload, context)?;
-                    if duration_ms == 0 {
-                        return Ok(Self::process_activitywatch_heartbeat(
-                            &mut state.active_activitywatch_heartbeats,
-                            observation,
-                        ));
-                    }
-                    return Ok(Some(
-                        observation.observed_duration_interval(duration_ms, Timestamp::now()),
+                return Ok(Some(
+                    observation.observed_duration_interval(duration_ms, Timestamp::now()),
+                ));
+            }
+            ("activitywatch", event_type)
+                if event_type == ActivityWatchAfkChangedPayload::EVENT_TYPE.as_static_str() =>
+            {
+                let payload: ActivityWatchAfkChangedPayload = serde_json::from_value(input)
+                    .map_err(|e| {
+                        AutomatonLogicError::InputParsing(format!(
+                            "failed to parse ActivityWatch AFK payload: {e}"
+                        ))
+                    })?;
+                let duration_ms = payload.duration_ms;
+                let observation =
+                    StateObservation::from_activitywatch_afk_payload(payload, context)?;
+                if duration_ms == 0 {
+                    return Ok(Self::process_activitywatch_heartbeat(
+                        &mut state.active_activitywatch_heartbeats,
+                        observation,
                     ));
                 }
-                ("systemd", event_type)
-                    if event_type == SystemdUnitStartedPayload::EVENT_TYPE.as_static_str() =>
+                return Ok(Some(
+                    observation.observed_duration_interval(duration_ms, Timestamp::now()),
+                ));
+            }
+            ("systemd", event_type)
+                if event_type == SystemdUnitStartedPayload::EVENT_TYPE.as_static_str() =>
+            {
+                let payload: SystemdUnitStartedPayload =
+                    serde_json::from_value(input).map_err(|e| {
+                        AutomatonLogicError::InputParsing(format!(
+                            "failed to parse systemd unit-start payload: {e}"
+                        ))
+                    })?;
+                let observation = StateObservation::from_systemd_started_payload(payload, context)?;
+                let Some(subject_id) = observation.subject_id.clone() else {
+                    return Ok(None);
+                };
+                // sinex-uzc(c): start-after-start for the same subject — the new
+                // start implies the previous instance ran until now; emit an implied
+                // close (restart fence) instead of silently discarding the open start.
+                let restart_close = state
+                    .active_subject_states
+                    .get(&subject_id)
+                    .filter(|previous| observation.ts_orig > previous.ts_orig)
+                    .map(|previous| previous.close_with(&observation));
+                // sinex-uzc(d): bound the map — evict the stalest open start (with a
+                // debt warning) before inserting a genuinely new subject at capacity.
+                if !state.active_subject_states.contains_key(&subject_id)
+                    && state.active_subject_states.len() >= MAX_ACTIVE_SUBJECT_STATES
                 {
-                    let payload: SystemdUnitStartedPayload =
-                        serde_json::from_value(input).map_err(|e| {
-                            AutomatonLogicError::InputParsing(format!(
-                                "failed to parse systemd unit-start payload: {e}"
-                            ))
-                        })?;
-                    let observation =
-                        StateObservation::from_systemd_started_payload(payload, context)?;
-                    let Some(subject_id) = observation.subject_id.clone() else {
-                        return Ok(None);
-                    };
-                    // sinex-uzc(c): start-after-start for the same subject — the new
-                    // start implies the previous instance ran until now; emit an implied
-                    // close (restart fence) instead of silently discarding the open start.
-                    let restart_close = state
+                    if let Some(stalest) = state
                         .active_subject_states
-                        .get(&subject_id)
-                        .filter(|previous| observation.ts_orig > previous.ts_orig)
-                        .map(|previous| previous.close_with(&observation));
-                    // sinex-uzc(d): bound the map — evict the stalest open start (with a
-                    // debt warning) before inserting a genuinely new subject at capacity.
-                    if !state.active_subject_states.contains_key(&subject_id)
-                        && state.active_subject_states.len() >= MAX_ACTIVE_SUBJECT_STATES
+                        .iter()
+                        .min_by_key(|(_, obs)| obs.ts_orig)
+                        .map(|(key, _)| key.clone())
                     {
-                        if let Some(stalest) = state
-                            .active_subject_states
-                            .iter()
-                            .min_by_key(|(_, obs)| obs.ts_orig)
-                            .map(|(key, _)| key.clone())
-                        {
-                            warn!(
-                                module = "interval-lift",
-                                evicted = %stalest,
-                                cap = MAX_ACTIVE_SUBJECT_STATES,
-                                "interval-lift evicted stalest open systemd state (durable debt, unbounded-growth guard)"
-                            );
-                            state.active_subject_states.remove(&stalest);
-                        }
-                    }
-                    state.active_subject_states.insert(subject_id, observation);
-                    return Ok(restart_close);
-                }
-                ("systemd", event_type)
-                    if event_type == SystemdUnitStoppedPayload::EVENT_TYPE.as_static_str() =>
-                {
-                    let payload: SystemdUnitStoppedPayload =
-                        serde_json::from_value(input).map_err(|e| {
-                            AutomatonLogicError::InputParsing(format!(
-                                "failed to parse systemd unit-stop payload: {e}"
-                            ))
-                        })?;
-                    let current =
-                        StateObservation::from_systemd_stopped_payload(payload, context)?;
-                    let Some(subject_id) = current.subject_id.clone() else {
-                        return Ok(None);
-                    };
-                    let Some(previous) = state.active_subject_states.remove(&subject_id) else {
-                        // sinex-uzc: a stop with no open start — record debt, don't
-                        // silently drop (missed/duplicate boundary).
                         warn!(
                             module = "interval-lift",
-                            subject = %subject_id,
-                            "interval-lift saw a systemd stop with no open start (durable debt)"
+                            evicted = %stalest,
+                            cap = MAX_ACTIVE_SUBJECT_STATES,
+                            "interval-lift evicted stalest open systemd state (durable debt, unbounded-growth guard)"
                         );
-                        return Ok(None);
-                    };
-                    // sinex-uzc(b): a stop with ts <= start is a tie/out-of-order
-                    // boundary; close a zero-duration interval (end clamped to start)
-                    // rather than discarding the matched start+stop and losing it.
-                    let stop = if current.ts_orig < previous.ts_orig {
-                        StateObservation {
-                            ts_orig: previous.ts_orig,
-                            ..current
-                        }
-                    } else {
-                        current
-                    };
-                    return Ok(Some(previous.close_with(&stop)));
+                        state.active_subject_states.remove(&stalest);
+                    }
                 }
-                _ => return Ok(None),
-            };
+                state.active_subject_states.insert(subject_id, observation);
+                return Ok(restart_close);
+            }
+            ("systemd", event_type)
+                if event_type == SystemdUnitStoppedPayload::EVENT_TYPE.as_static_str() =>
+            {
+                let payload: SystemdUnitStoppedPayload =
+                    serde_json::from_value(input).map_err(|e| {
+                        AutomatonLogicError::InputParsing(format!(
+                            "failed to parse systemd unit-stop payload: {e}"
+                        ))
+                    })?;
+                let current = StateObservation::from_systemd_stopped_payload(payload, context)?;
+                let Some(subject_id) = current.subject_id.clone() else {
+                    return Ok(None);
+                };
+                let Some(previous) = state.active_subject_states.remove(&subject_id) else {
+                    // sinex-uzc: a stop with no open start — record debt, don't
+                    // silently drop (missed/duplicate boundary).
+                    warn!(
+                        module = "interval-lift",
+                        subject = %subject_id,
+                        "interval-lift saw a systemd stop with no open start (durable debt)"
+                    );
+                    return Ok(None);
+                };
+                // sinex-uzc(b): a stop with ts <= start is a tie/out-of-order
+                // boundary; close a zero-duration interval (end clamped to start)
+                // rather than discarding the matched start+stop and losing it.
+                let stop = if current.ts_orig < previous.ts_orig {
+                    StateObservation {
+                        ts_orig: previous.ts_orig,
+                        ..current
+                    }
+                } else {
+                    current
+                };
+                return Ok(Some(previous.close_with(&stop)));
+            }
+            _ => return Ok(None),
+        };
 
         let Some(previous) = slot.as_mut() else {
             *slot = Some(current);

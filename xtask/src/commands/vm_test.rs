@@ -158,8 +158,8 @@ async fn test_validate_rejects_run_only_flags() -> ::xtask::sandbox::TestResult<
 }
 
 #[sinex_test]
-async fn test_resolve_vm_tests_rejects_empty_requested_category()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_resolve_vm_tests_rejects_empty_requested_category() -> ::xtask::sandbox::TestResult<()>
+{
     let available_tests = Vec::new();
     let error = resolve_vm_tests_to_run(&available_tests, Some("smoke"), &[], "x86_64-linux")
         .expect_err("empty smoke category must not pass as a gate");
@@ -171,8 +171,8 @@ async fn test_resolve_vm_tests_rejects_empty_requested_category()
 }
 
 #[sinex_test]
-async fn test_resolve_vm_tests_keeps_exported_category_members()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_resolve_vm_tests_keeps_exported_category_members() -> ::xtask::sandbox::TestResult<()>
+{
     let available_tests = vec!["basic".to_string(), "runtime-matrix".to_string()];
     let tests = resolve_vm_tests_to_run(&available_tests, Some("smoke"), &[], "x86_64-linux")?;
 

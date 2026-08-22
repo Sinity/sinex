@@ -101,16 +101,21 @@ async fn cascade_restore_skips_derived_row_whose_parent_was_reemitted(
         "neither the occurrence-blocked material nor its derived child should restore"
     );
 
-    let m1_live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
-        .bind(m1_id)
-        .fetch_one(&ctx.pool)
-        .await?;
-    assert_eq!(m1_live, 0, "m1 must stay archived (existing occurrence-safety guard)");
+    let m1_live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+            .bind(m1_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        m1_live, 0,
+        "m1 must stay archived (existing occurrence-safety guard)"
+    );
 
-    let d1_live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
-        .bind(d1_id)
-        .fetch_one(&ctx.pool)
-        .await?;
+    let d1_live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+            .bind(d1_id)
+            .fetch_one(&ctx.pool)
+            .await?;
     assert_eq!(
         d1_live, 0,
         "d1 must stay archived: its only parent (m1) is not live -- this is the sinex-79is regression"
@@ -125,10 +130,11 @@ async fn cascade_restore_skips_derived_row_whose_parent_was_reemitted(
     assert_eq!(d1_archived, 1, "d1 must remain in the archive, not be lost");
 
     // Sanity: m2 (the fresh re-emission) is unaffected by any of this.
-    let m2_live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
-        .bind(m2_id)
-        .fetch_one(&ctx.pool)
-        .await?;
+    let m2_live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+            .bind(m2_id)
+            .fetch_one(&ctx.pool)
+            .await?;
     assert_eq!(m2_live, 1);
 
     Ok(())
@@ -199,16 +205,18 @@ async fn cascade_restore_restores_derived_row_whose_parent_is_live(ctx: TestCont
         .await?;
     assert_eq!(restored_count, 2);
 
-    let m1_live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
-        .bind(m1_id)
-        .fetch_one(&ctx.pool)
-        .await?;
+    let m1_live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+            .bind(m1_id)
+            .fetch_one(&ctx.pool)
+            .await?;
     assert_eq!(m1_live, 1);
 
-    let d1_live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
-        .bind(d1_id)
-        .fetch_one(&ctx.pool)
-        .await?;
+    let d1_live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+            .bind(d1_id)
+            .fetch_one(&ctx.pool)
+            .await?;
     assert_eq!(
         d1_live, 1,
         "d1 should restore normally when its parent is also being restored"

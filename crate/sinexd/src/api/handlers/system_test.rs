@@ -2,11 +2,11 @@ use super::*;
 use crate::api::service_container::{
     GatewayHealthStatus, NatsHealthProbe, ReplayControlStatus, aggregate_gateway_health_report,
 };
+use sinex_primitives::domain::{ModuleKind, ModuleName};
 use sinex_primitives::{
     RuntimeLivenessAggregate, RuntimeLivenessEvidence, RuntimeLivenessMembership,
     RuntimeLivenessPolicy, Timestamp,
 };
-use sinex_primitives::domain::{ModuleKind, ModuleName};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -40,8 +40,7 @@ async fn system_health_response_uses_typed_contract() -> TestResult<()> {
             connected: true,
             pending_messages: Some(3),
             pending_sequence_span: Some(5),
-            detail: "raw-ingest DLQ pressure: 3 pending message(s), sequence span 5"
-                .to_string(),
+            detail: "raw-ingest DLQ pressure: 3 pending message(s), sequence span 5".to_string(),
         },
         replay: ReplayControlStatus {
             enabled: true,
@@ -154,14 +153,25 @@ async fn failed_and_stale_runtime_evidence_prevents_infrastructure_all_clear() -
         runtime_liveness,
     );
 
-    assert!(report.serving, "runtime evidence must not change /ready semantics");
-    assert!(!report.healthy, "failed or stale runtime evidence must defeat all-clear");
+    assert!(
+        report.serving,
+        "runtime evidence must not change /ready semantics"
+    );
+    assert!(
+        !report.healthy,
+        "failed or stale runtime evidence must defeat all-clear"
+    );
     assert_eq!(report.status, HealthStatus::Unhealthy);
 
     let response = system_health_response(report);
     assert!(!response.healthy);
     assert_eq!(response.components.runtime_liveness.unhealthy_count, 1);
     assert_eq!(response.components.runtime_liveness.stale_count, 1);
-    assert!(response.degradation_reasons.iter().any(|reason| reason.contains("runtime liveness")));
+    assert!(
+        response
+            .degradation_reasons
+            .iter()
+            .any(|reason| reason.contains("runtime liveness"))
+    );
     Ok(())
 }

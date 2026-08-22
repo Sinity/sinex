@@ -372,11 +372,7 @@ impl PrivacyEngine {
     /// bounded privacy audits so the recognizer catalog can measure cleartext
     /// posture without ever constructing a redacted or raw-value report.
     #[must_use]
-    pub fn detect_matches(
-        &self,
-        input: &str,
-        ctx: ProcessingContext,
-    ) -> Vec<PrivacyMatchFinding> {
+    pub fn detect_matches(&self, input: &str, ctx: ProcessingContext) -> Vec<PrivacyMatchFinding> {
         if !self.enabled || input.is_empty() {
             return Vec::new();
         }

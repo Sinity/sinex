@@ -7,10 +7,10 @@ use crate::runtime::parser::{
 };
 use sinex_db::DbPoolExt;
 use sinex_db::SourceMaterialRecord;
+use sinex_db::replay::state_machine::{ReplayScope, ReplayStateMachine};
 use sinex_db::repositories::{
     EmailMailboxProjectionEvent, EmailMailboxProjectionRecord, EmailProviderStateUpsert,
 };
-use sinex_db::replay::state_machine::{ReplayScope, ReplayStateMachine};
 use sinex_primitives::Id;
 use sinex_primitives::SinexError;
 use sinex_primitives::Uuid;
@@ -1100,9 +1100,10 @@ async fn execute_email_mailbox_pause_resume(
         },
         |state| state.provider.clone(),
     );
-    let mailbox_scope = existing
-        .as_ref()
-        .map_or_else(|| "default".to_string(), |state| state.mailbox_scope.clone());
+    let mailbox_scope = existing.as_ref().map_or_else(
+        || "default".to_string(),
+        |state| state.mailbox_scope.clone(),
+    );
     let (sync_state, required_action) = if pause {
         ("paused".to_string(), Some("resume".to_string()))
     } else {
@@ -1121,9 +1122,10 @@ async fn execute_email_mailbox_pause_resume(
             auth_state: existing
                 .as_ref()
                 .map_or_else(|| "unknown".to_string(), |state| state.auth_state.clone()),
-            network_state: existing
-                .as_ref()
-                .map_or_else(|| "unknown".to_string(), |state| state.network_state.clone()),
+            network_state: existing.as_ref().map_or_else(
+                || "unknown".to_string(),
+                |state| state.network_state.clone(),
+            ),
             sync_state: sync_state.clone(),
             rate_limit_state: existing
                 .as_ref()
@@ -1148,8 +1150,12 @@ async fn execute_email_mailbox_pause_resume(
             reconnect_state: existing
                 .as_ref()
                 .and_then(|state| state.reconnect_state.clone()),
-            cursor_kind: existing.as_ref().and_then(|state| state.cursor_kind.clone()),
-            cursor_value: existing.as_ref().and_then(|state| state.cursor_value.clone()),
+            cursor_kind: existing
+                .as_ref()
+                .and_then(|state| state.cursor_kind.clone()),
+            cursor_value: existing
+                .as_ref()
+                .and_then(|state| state.cursor_value.clone()),
             continuity_state: existing
                 .as_ref()
                 .and_then(|state| state.continuity_state.clone()),
@@ -1296,12 +1302,14 @@ async fn execute_email_mailbox_authorize(
         },
         |state| state.provider.clone(),
     );
-    let mailbox_scope = existing
-        .as_ref()
-        .map_or_else(|| "default".to_string(), |state| state.mailbox_scope.clone());
-    let mut provider_runtime = existing
-        .as_ref()
-        .map_or_else(|| serde_json::json!({}), |state| state.provider_runtime.clone());
+    let mailbox_scope = existing.as_ref().map_or_else(
+        || "default".to_string(),
+        |state| state.mailbox_scope.clone(),
+    );
+    let mut provider_runtime = existing.as_ref().map_or_else(
+        || serde_json::json!({}),
+        |state| state.provider_runtime.clone(),
+    );
     if let Some(secret_ref) = &secret_ref
         && let Some(object) = provider_runtime.as_object_mut()
     {
@@ -1318,9 +1326,10 @@ async fn execute_email_mailbox_authorize(
             operation_id: Uuid::now_v7(),
             result_status: OperationStatus::Success,
             auth_state: "authorized".to_string(),
-            network_state: existing
-                .as_ref()
-                .map_or_else(|| "unknown".to_string(), |state| state.network_state.clone()),
+            network_state: existing.as_ref().map_or_else(
+                || "unknown".to_string(),
+                |state| state.network_state.clone(),
+            ),
             sync_state: existing
                 .as_ref()
                 .map_or_else(|| "idle".to_string(), |state| state.sync_state.clone()),
@@ -1346,8 +1355,12 @@ async fn execute_email_mailbox_authorize(
             reconnect_state: existing
                 .as_ref()
                 .and_then(|state| state.reconnect_state.clone()),
-            cursor_kind: existing.as_ref().and_then(|state| state.cursor_kind.clone()),
-            cursor_value: existing.as_ref().and_then(|state| state.cursor_value.clone()),
+            cursor_kind: existing
+                .as_ref()
+                .and_then(|state| state.cursor_kind.clone()),
+            cursor_value: existing
+                .as_ref()
+                .and_then(|state| state.cursor_value.clone()),
             continuity_state: existing
                 .as_ref()
                 .and_then(|state| state.continuity_state.clone()),
