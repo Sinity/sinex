@@ -38,6 +38,22 @@ pub enum AdapterKind {
     UnixSocket,
 }
 
+impl AdapterKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AppendOnlyFile => "append_only_file",
+            Self::SqliteRow => "sqlite_row",
+            Self::StaticFile => "static_file",
+            Self::FileDrop => "file_drop",
+            Self::Journal => "journal",
+            Self::Dbus => "dbus",
+            Self::Clipboard => "clipboard",
+            Self::UnixSocket => "unix_socket",
+        }
+    }
+}
+
 /// Canonical parser-fixture obligations exercised by each source case.
 ///
 /// Per-source tests pass this to `_run_case(...)` when they need full
@@ -183,6 +199,12 @@ pub async fn _run_case(
     }
 
     let mut failures = Vec::new();
+    if let Err(error) = fixtures::exercise_adapter_binding(adapter_kind, fixture_data).await {
+        failures.push(format!(
+            "[{source_id}] adapter binding '{}': {error}",
+            adapter_kind.as_str()
+        ));
+    }
     let mut initial_ingestion_verified = false;
     for &obligation in obligations {
         let result = if obligation.can_reuse_initial_ingestion() && initial_ingestion_verified {
@@ -297,6 +319,12 @@ async fn _run_case_with_record_fixture(
     }
 
     let mut failures = Vec::new();
+    if let Err(error) = fixtures::exercise_adapter_binding(adapter_kind, fixture.fixture_data).await {
+        failures.push(format!(
+            "[{source_id}] adapter binding '{}': {error}",
+            adapter_kind.as_str()
+        ));
+    }
     let mut initial_ingestion_verified = false;
     for &obligation in obligations {
         let result = if obligation.can_reuse_initial_ingestion() && initial_ingestion_verified {

@@ -22,10 +22,32 @@ use super::{FixtureBinding, FixtureHandle};
 ///
 /// Returns an error if any line fails JSON deserialization or is missing required fields.
 pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
+    let messages = messages_from_bytes(data)?;
+
+    let record_bytes: Vec<Vec<u8>> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            serde_json::to_vec(&m.body_json)
+                .map_err(|e| format!("dbus fixture line {i}: failed to serialize body_json: {e}"))
+        })
+        .collect::<Result<_, _>>()?;
+
+    Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(
+        record_bytes,
+    )))
+}
+
+/// Decode fixture bytes into the messages consumed by [`MockDbusBackend`].
+///
+/// Keeping this parser shared between the fixture handle and adapter-binding
+/// gate ensures a D-Bus case cannot pass merely because its bytes dispatch to
+/// a parser while the mock adapter would reject the fixture shape.
+pub fn messages_from_bytes(data: &[u8]) -> Result<Vec<DbusMessage>, String> {
     let text = std::str::from_utf8(data)
         .map_err(|e| format!("dbus fixture data is not valid UTF-8: {e}"))?;
 
-    let messages: Vec<DbusMessage> = text
+    text
         .lines()
         .filter(|l| !l.trim().is_empty())
         .enumerate()
@@ -53,22 +75,7 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
                 body_json,
             })
         })
-        .collect::<Result<_, _>>()?;
-
-    // Expose the message bodies as record bytes so the obligation layer can
-    // feed them through the dispatch function.
-    let record_bytes: Vec<Vec<u8>> = messages
-        .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            serde_json::to_vec(&m.body_json)
-                .map_err(|e| format!("dbus fixture line {i}: failed to serialize body_json: {e}"))
-        })
-        .collect::<Result<_, _>>()?;
-
-    Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(
-        record_bytes,
-    )))
+        .collect()
 }
 
 /// Build a D-Bus fixture directly from typed messages (for callers that
