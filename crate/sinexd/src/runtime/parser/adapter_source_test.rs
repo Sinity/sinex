@@ -8,11 +8,12 @@ use crate::runtime::parser::adapters::{
 };
 use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
 use crate::runtime::stream::{
-    Checkpoint, ContinuousStart, EventEmitter, ReplayMaterialOccurrence, ReplayScopeFilters,
-    ResolvedReplayMaterial, RuntimeHandles, ScanArgs, ServiceInfo, TimeHorizon,
+    Checkpoint, ContinuousStart, EventEmitter, MaterialReplayContext, ReplayMaterialOccurrence,
+    ReplayScopeFilters, ResolvedReplayMaterial, RuntimeHandles, ScanArgs, ServiceInfo,
+    TimeHorizon,
 };
-use crate::sources::source_contracts::library::DocsLibraryParser;
 use crate::runtime::{EventTransport, NatsPublisher, SOURCE_MATERIAL_STREAM};
+use crate::sources::source_contracts::library::DocsLibraryParser;
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::eyre;
@@ -527,6 +528,20 @@ impl InputShapeAdapterExt for AlreadyMaterializedRecordAdapter {
         };
         Ok(Box::pin(stream::iter(vec![Ok(record)])))
     }
+}
+
+#[test]
+fn file_drop_source_skips_finite_startup_snapshot() {
+    let source = AdapterBackedSource::<FileDropAdapter, TestParser>::new("fs");
+    let capabilities = source.capabilities();
+
+    assert!(
+        !capabilities.supports_snapshot,
+        "a native file watcher cannot complete the finite startup snapshot phase"
+    );
+    assert!(capabilities.supports_historical);
+    assert!(capabilities.supports_continuous);
+    assert!(source.defers_service_ready_until_continuous());
 }
 
 #[derive(Default)]
@@ -2503,10 +2518,10 @@ async fn adapter_source_state_summarizes_latest_input_drift_caveats()
 /// for temporal-ledger resolution at admission instead of promoting the
 /// parser's acquisition-time placeholder.
 #[sinex_test]
-async fn activitywatch_malformed_started_at_defers_ts_orig_to_material_tier(
-) -> xtask::sandbox::TestResult<()> {
-    use crate::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
+async fn activitywatch_malformed_started_at_defers_ts_orig_to_material_tier()
+-> xtask::sandbox::TestResult<()> {
     use crate::runtime::parser::MaterialParser;
+    use crate::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
 
     let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
     let record = SourceRecord {
@@ -2556,8 +2571,9 @@ async fn activitywatch_malformed_started_at_defers_ts_orig_to_material_tier(
         .pop()
         .expect("known ActivityWatch bucket produces one replay intent");
     assert_eq!(replay_intent.timing, TimingEvidence::Atemporal);
-    let replay_event = intent_to_event_with_anchor(replay_intent, material_id, 42, None, None, None, 0)
-        .expect("replayed ActivityWatch intent converts to an event");
+    let replay_event =
+        intent_to_event_with_anchor(replay_intent, material_id, 42, None, None, None, 0)
+            .expect("replayed ActivityWatch intent converts to an event");
     assert_eq!(replay_event.ts_orig, None);
     assert_eq!(replay_event.ts_quality, None);
     assert_eq!(event.equivalence_key, replay_event.equivalence_key);
@@ -2568,10 +2584,10 @@ async fn activitywatch_malformed_started_at_defers_ts_orig_to_material_tier(
 /// intent type is concrete, but invalid provider timestamps must still take
 /// the production `Atemporal` route and arrive at admission unresolved.
 #[sinex_test]
-async fn journald_and_systemd_invalid_timestamps_defer_to_material_tier(
-) -> xtask::sandbox::TestResult<()> {
-    use crate::runtime::parser::records_from_journal_lines;
+async fn journald_and_systemd_invalid_timestamps_defer_to_material_tier()
+-> xtask::sandbox::TestResult<()> {
     use crate::runtime::parser::MaterialParser;
+    use crate::runtime::parser::records_from_journal_lines;
     use crate::sources::source_contracts::system::journald::JournaldParser;
     use crate::sources::source_contracts::system::systemd::SystemdParser;
 
