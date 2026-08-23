@@ -5,7 +5,7 @@
 # infrastructure with the rest of the codebase.
 #
 # Scenarios (in categories/concurrency.rs):
-#   1. Coordinator lock stampede: 5 concurrent `xtask check --bg`, all reach terminal state.
+#   1. Coordinator lock stampede: 5 concurrent background builds all reach terminal state.
 #   2. Zombie reaping: SIGKILL xtask coordinator, orphaned job becomes terminal.
 #   3. PID reuse safety: cancel reads /proc/{pid}/cmdline before sending signal.
 #   4. History DB consistency: each invocation adds exactly 1 record.

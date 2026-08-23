@@ -126,15 +126,16 @@ fn invocation_count_for(command: &str) -> Result<usize> {
 // ─── Scenario 1: coordinator lock stampede ───────────────────────────────────
 
 fn test_coordinator_lock_stampede(runner: &mut TestRunner) {
-    let name = "coordinator: 5 concurrent check --bg invocations deduplicate";
+    let name = "coordinator: 5 concurrent background build invocations deduplicate";
 
-    // Spawn 5 concurrent check --bg invocations.
+    // Spawn 5 concurrent background build invocations.
     let handles: Vec<_> = (0..5)
         .map(|_| {
             thread::spawn(|| {
-                let value = xtask_json(&["check", "--bg"]).map_err(|error| error.to_string())?;
+                let value = xtask_json(&["build", "-p", "xtask", "--bg"])
+                    .map_err(|error| error.to_string())?;
                 json_u64_at(&value, &["data", "job_id"])
-                    .ok_or_else(|| format!("xtask check --bg JSON missing data.job_id: {value}"))
+                    .ok_or_else(|| format!("background build JSON missing data.job_id: {value}"))
             })
         })
         .collect();
@@ -146,7 +147,7 @@ fn test_coordinator_lock_stampede(runner: &mut TestRunner) {
             Ok(Ok(job_id)) => job_ids.push(job_id),
             Ok(Err(error)) => start_errors.push(error),
             Err(_) => start_errors
-                .push("worker thread panicked while starting xtask check --bg".to_string()),
+                .push("worker thread panicked while starting a background build".to_string()),
         }
     }
 
@@ -190,18 +191,18 @@ fn test_coordinator_lock_stampede(runner: &mut TestRunner) {
             return;
         }
     };
-    let check_jobs: Vec<_> = jobs
+    let build_jobs: Vec<_> = jobs
         .iter()
-        .filter(|j| j["command"].as_str() == Some("check"))
+        .filter(|j| j["command"].as_str() == Some("build"))
         .collect();
 
-    if check_jobs.is_empty() {
-        runner.fail(name, "no check jobs recorded in history");
+    if build_jobs.is_empty() {
+        runner.fail(name, "no build jobs recorded in history");
         return;
     }
 
-    // All recorded check jobs must be in a terminal state.
-    let non_terminal: Vec<_> = check_jobs
+    // All recorded build jobs must be in a terminal state.
+    let non_terminal: Vec<_> = build_jobs
         .iter()
         .filter(|j| {
             let s = j["status"].as_str().unwrap_or("");
@@ -213,7 +214,7 @@ fn test_coordinator_lock_stampede(runner: &mut TestRunner) {
         runner.fail(
             name,
             &format!(
-                "{} check jobs still in non-terminal state after waiting",
+                "{} build jobs still in non-terminal state after waiting",
                 non_terminal.len()
             ),
         );
@@ -229,13 +230,13 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
     let name = "zombie reaping: orphaned jobs become terminal after SIGKILL";
 
     // Start a background job
-    let jid = match xtask_json(&["check", "--bg"]) {
+    let jid = match xtask_json(&["build", "-p", "xtask", "--bg"]) {
         Ok(value) => match json_u64_at(&value, &["data", "job_id"]) {
             Some(job_id) => job_id,
             None => {
                 runner.fail(
                     name,
-                    &format!("xtask check --bg JSON missing data.job_id: {value}"),
+                    &format!("background build JSON missing data.job_id: {value}"),
                 );
                 return;
             }
@@ -243,7 +244,7 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
         Err(error) => {
             runner.fail(
                 name,
-                &format!("failed to start background check job: {error:#}"),
+                &format!("failed to start background build job: {error:#}"),
             );
             return;
         }
@@ -275,7 +276,7 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
         Err(error) => {
             runner.fail(
                 name,
-                &format!("failed to inject SIGKILL into recorded xtask check process: {error}"),
+                &format!("failed to inject SIGKILL into recorded xtask build process: {error}"),
             );
             return;
         }
@@ -352,13 +353,13 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
     let name = "PID reuse safety: stale cancel does not claim a missing process was killed";
 
     // Start a background job and get its PID
-    let jid = match xtask_json(&["check", "--bg"]) {
+    let jid = match xtask_json(&["build", "-p", "xtask", "--bg"]) {
         Ok(value) => match json_u64_at(&value, &["data", "job_id"]) {
             Some(job_id) => job_id,
             None => {
                 runner.fail(
                     name,
-                    &format!("xtask check --bg JSON missing data.job_id: {value}"),
+                    &format!("background build JSON missing data.job_id: {value}"),
                 );
                 return;
             }
@@ -366,7 +367,7 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
         Err(error) => {
             runner.fail(
                 name,
-                &format!("failed to start background check job: {error:#}"),
+                &format!("failed to start background build job: {error:#}"),
             );
             return;
         }
@@ -510,7 +511,7 @@ fn test_history_db_consistency(runner: &mut TestRunner) {
         }
     };
 
-    // Run one foreground check (will be blocked by any ongoing bg check's coordinator).
+    // Run one foreground check after any background coordinator jobs are complete.
     let output = match xtask(&["check", "--json"]) {
         Ok(output) => output,
         Err(error) => {
