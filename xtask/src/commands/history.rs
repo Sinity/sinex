@@ -700,7 +700,10 @@ impl XtaskCommand for HistoryCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::diagnostics()
             .with_history_tracking(false)
-            .with_history_access(crate::command::HistoryAccessMode::Query)
+            // `history current` is the recovery read path for interrupted
+            // invocations, so it needs the bounded durable reconciliation in
+            // `HistoryDb::open()` before resolving selectors.
+            .with_history_access(crate::command::HistoryAccessMode::ReadWrite)
     }
 }
 

@@ -194,9 +194,11 @@ impl HistoryDb {
 
     /// Open an existing history database for read-only observational queries.
     ///
-    /// Query surfaces like `xtask history` and `xtask analytics`
-    /// should not pay integrity sweeps or stale-cleanup work just to read recent
-    /// rows. If the database does not exist yet, return an empty in-memory view.
+    /// Observational surfaces such as `xtask analytics` should not pay
+    /// integrity sweeps or stale-cleanup work just to read recent rows. The
+    /// `xtask history` command intentionally uses [`Self::open`] because its
+    /// `current` selector is the recovery read path for interrupted rows. If
+    /// the database does not exist yet, return an empty in-memory view.
     pub fn open_query(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Self::open_in_memory();

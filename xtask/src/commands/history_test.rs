@@ -580,6 +580,11 @@ async fn test_history_command_metadata() -> ::xtask::sandbox::TestResult<()> {
     assert_eq!(metadata.category, Some("diagnostics"));
     assert!(metadata.timeout.is_some());
     assert!(!metadata.modifies_state); // History commands are read-only
+    assert_eq!(
+        metadata.history_access,
+        crate::command::HistoryAccessMode::ReadWrite,
+        "history current must reconcile aged interrupted invocations before selector resolution"
+    );
     Ok(())
 }
 
