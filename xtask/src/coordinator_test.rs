@@ -32,74 +32,18 @@ fn env_set_path(key: &str, value: &std::path::Path) -> EnvGuard {
 async fn test_should_coordinate() -> TestResult<()> {
     assert!(!JobCoordinator::should_coordinate("check", &[]));
     assert!(!JobCoordinator::should_coordinate("build", &[]));
+    assert!(!JobCoordinator::should_coordinate("test", &[]));
     assert!(JobCoordinator::should_coordinate("vm", &["test".into()]));
-    assert!(JobCoordinator::should_coordinate(
-        "test",
-        &["-p".into(), "sinex-db".into()]
-    ));
-    assert!(!JobCoordinator::should_coordinate(
-        "test",
-        &["--debug".into()]
-    ));
-    assert!(!JobCoordinator::should_coordinate(
-        "test",
-        &["--fuzz".into()]
-    ));
-    assert!(!JobCoordinator::should_coordinate(
-        "test",
-        &["--coverage".into()]
-    ));
-    assert!(!JobCoordinator::should_coordinate(
-        "test",
-        &["--mutants".into()]
-    ));
-    assert!(!JobCoordinator::should_coordinate(
-        "test",
-        &["--bench".into()]
-    ));
     assert!(JobCoordinator::should_coordinate("fix", &[]));
     Ok(())
 }
 
 #[sinex_test]
-async fn test_supports_fresh_reuse_only_for_background_tests() -> TestResult<()> {
-    assert!(!supports_fresh_reuse_for("check", &[]));
-    assert!(!supports_fresh_reuse_for("check", &["--full".into()]));
-    assert!(!supports_fresh_reuse_for("build", &[]));
-    assert!(!supports_fresh_reuse_for("build", &["--dry-run".into()]));
-    assert!(!supports_fresh_reuse_for("fix", &[]));
-    assert!(supports_fresh_reuse_for(
-        "test",
-        &["--scope=packages:xtask".into()]
-    ));
-    assert!(supports_fresh_reuse_for(
-        "test",
-        &["--scope=packages:xtask".into(), "--lib".into()]
-    ));
-    assert!(!supports_fresh_reuse_for(
-        "test",
-        &[
-            "--scope=packages:xtask".into(),
-            "--lib".into(),
-            "--update-snapshots".into()
-        ]
-    ));
-    assert!(!supports_fresh_reuse_for(
-        "test",
-        &["--scope=packages:xtask".into(), "--dry-run".into()]
-    ));
-    assert!(!supports_fresh_reuse_for(
-        "test",
-        &["--scope=packages:xtask".into(), "--debug".into()]
-    ));
-    assert!(!supports_fresh_reuse_for(
-        "test",
-        &["--scope=packages:xtask".into(), "-l".into()]
-    ));
-    assert!(!supports_fresh_reuse_for(
-        "test",
-        &["--scope=packages:xtask".into(), "--no-reuse".into()]
-    ));
+async fn test_freshness_explanation_preserves_test_proof_diagnostics() -> TestResult<()> {
+    let explanation = explain_freshness("test", &["--scope=packages:xtask".into()])?;
+
+    assert!(!explanation.should_coordinate);
+    assert!(explanation.fresh_reuse_enabled);
     Ok(())
 }
 
@@ -127,16 +71,6 @@ async fn test_test_binary_args_are_scope_relevant() -> TestResult<()> {
 
     assert_ne!(without_args, with_args);
     assert_eq!(with_args, with_args_as_semantic);
-    assert!(supports_fresh_reuse_for(
-        "test",
-        &[
-            "-p".into(),
-            "xtask".into(),
-            "--".into(),
-            "--exact".into(),
-            "case-name".into(),
-        ]
-    ));
     Ok(())
 }
 
@@ -253,11 +187,9 @@ async fn test_runtime_binary_requirements_extend_package_fingerprint_scope() -> 
 
 #[sinex_test]
 async fn test_coordination_family_groups_heavy_commands() -> TestResult<()> {
-    assert_eq!(coordination_family("check"), "heavy-work");
-    assert_eq!(coordination_family("build"), "heavy-work");
-    assert_eq!(coordination_family("test"), "heavy-work");
     assert_eq!(coordination_family("fix"), "heavy-work");
     assert_eq!(coordination_family("vm"), "heavy-work");
+    assert_eq!(coordination_family("test"), "test");
     Ok(())
 }
 
@@ -336,21 +268,6 @@ async fn test_scope_key_canonicalizes_package_scope_marker() -> TestResult<()> {
                 "--filter=test(example)".into()
             ]
         )
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_check_fresh_returns_none_when_history_db_is_unopenable() -> TestResult<()> {
-    let tempdir = tempfile::tempdir()?;
-    let _history_db_guard = env_set_path("XTASK_HISTORY_DB", tempdir.path());
-    let coordinator = JobCoordinator::new()?;
-
-    assert!(
-        coordinator
-            .check_fresh("check", &[], "tree-fingerprint", "scope-key")
-            .is_none(),
-        "unopenable history DB should disable freshness checks instead of panicking"
     );
     Ok(())
 }
@@ -1597,74 +1514,6 @@ async fn proof_wait_fails_closed_for_unidentifiable_queue() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_to_result_fresh() -> TestResult<()> {
-    let ctx = json_ctx();
-    let result = coordination_fresh_result(
-        42,
-        "success",
-        3.5,
-        &ctx,
-        FreshPackagesProbe {
-            packages: vec!["sinex-db".into(), "xtask".into()],
-            issue: None,
-        },
-    );
-
-    assert!(result.is_success());
-    let data = result.data.as_ref().expect("should have data");
-    assert_eq!(data["action"], "fresh");
-    assert_eq!(data["invocation_id"], 42);
-    assert_eq!(data["job_id"], serde_json::Value::Null);
-    assert_eq!(data["cached_status"], "success");
-    assert_eq!(data["cached_duration_secs"], 3.5);
-    assert_eq!(
-        data["compiled_packages"],
-        serde_json::json!(["sinex-db", "xtask"])
-    );
-    assert_eq!(data["compiled_packages_issue"], serde_json::Value::Null);
-    assert_eq!(data["proof_status"], "incomplete");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_coordination_fresh_result_surfaces_compiled_package_probe_errors() -> TestResult<()> {
-    let ctx = json_ctx();
-    let result = coordination_fresh_result(
-        42,
-        "success",
-        3.5,
-        &ctx,
-        FreshPackagesProbe {
-            packages: Vec::new(),
-            issue: Some("probe exploded".into()),
-        },
-    );
-
-    assert!(result.is_success());
-    assert_eq!(result.warnings, vec!["probe exploded".to_string()]);
-    let data = result.data.as_ref().expect("should have data");
-    assert_eq!(data["compiled_packages"], serde_json::json!([]));
-    assert_eq!(data["compiled_packages_issue"], "probe exploded");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_fresh_packages_probe_from_result_reports_errors() -> TestResult<()> {
-    let db_path = std::path::Path::new("/tmp/test-history.db");
-    let probe = fresh_packages_probe_from_result(
-        7,
-        db_path,
-        Err(color_eyre::eyre::eyre!("history exploded")),
-    );
-    assert!(probe.packages.is_empty());
-    let issue = probe.issue.expect("probe failure should surface");
-    assert!(issue.contains("failed to load compiled packages for fresh invocation 7"));
-    assert!(issue.contains("/tmp/test-history.db"));
-    assert!(issue.contains("history exploded"));
-    Ok(())
-}
-
-#[sinex_test]
 async fn test_coordination_to_result_attached() -> TestResult<()> {
     let ctx = json_ctx();
     let coord = CoordinationResult::Attached { job_id: 99 };
@@ -1802,11 +1651,6 @@ async fn test_coordination_result_serde_roundtrip() -> TestResult<()> {
     let variants = vec![
         CoordinationResult::Started { job_id: 1 },
         CoordinationResult::Attached { job_id: 2 },
-        CoordinationResult::Fresh {
-            invocation_id: 3,
-            status: "success".into(),
-            duration_secs: 1.5,
-        },
         CoordinationResult::Superseded {
             old_job_id: 4,
             new_job_id: 5,
@@ -1825,13 +1669,10 @@ async fn test_coordination_result_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_should_coordinate_test_list_flag() -> TestResult<()> {
-    // --list and -l should both exclude coordination
-    assert!(!JobCoordinator::should_coordinate(
-        "test",
-        &["--list".into()]
-    ));
-    assert!(!JobCoordinator::should_coordinate("test", &["-l".into()]));
+async fn test_test_lifecycle_is_unmanaged_for_all_argument_shapes() -> TestResult<()> {
+    assert!(!JobCoordinator::should_coordinate("test", &["--list".into()]));
+    assert!(!JobCoordinator::should_coordinate("test", &["--debug".into()]));
+    assert!(!JobCoordinator::should_coordinate("test", &["-p".into(), "xtask".into()]));
     Ok(())
 }
 

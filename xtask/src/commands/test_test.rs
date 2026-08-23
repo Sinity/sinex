@@ -810,30 +810,29 @@ async fn test_nextest_invocation_args_include_reuse_and_impact_flags()
 }
 
 #[sinex_test]
-async fn test_background_invocation_args_carry_inferred_lib_target()
--> ::xtask::sandbox::TestResult<()> {
-    let command = TestCommand {
-        packages: vec!["sinexd".to_string()],
-        filter: Some("test(source_status)".to_string()),
-        ..Default::default()
-    };
-
-    let effective_test_binaries = command.effective_test_binaries(command.filter.as_deref())?;
-    let effective_lib_target =
-        command.effective_lib_target(command.filter.as_deref(), &effective_test_binaries)?;
-    let args = command.nextest_background_invocation_args(
-        false,
-        &effective_test_binaries,
-        effective_lib_target,
+async fn background_test_is_rejected_before_planning() -> ::xtask::sandbox::TestResult<()> {
+    let ctx = CommandContext::new(
+        OutputWriter::new(OutputFormat::Silent),
+        true,
+        None,
+        "test",
     );
+    let result = TestCommand::default().execute(&ctx).await?;
 
+    assert!(result.is_failure(), "background test must be rejected: {result:?}");
+    assert_eq!(result.errors[0].code, "XTASK_TEST_BACKGROUND_UNSUPPORTED");
+    Ok(())
+}
+
+#[sinex_test]
+async fn foreground_test_keeps_exact_proof_reuse() -> ::xtask::sandbox::TestResult<()> {
+    assert!(TestCommand::default().can_consume_exact_test_proof());
     assert!(
-        effective_lib_target,
-        "source_status tests live under src/ and should infer the library target"
-    );
-    assert!(
-        args.contains(&"--lib".to_string()),
-        "background execution must carry inferred --lib to avoid compiling every sinexd integration binary: {args:?}"
+        !TestCommand {
+            no_reuse: true,
+            ..Default::default()
+        }
+        .can_consume_exact_test_proof()
     );
     Ok(())
 }

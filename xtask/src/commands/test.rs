@@ -484,92 +484,6 @@ pub struct VmArgs {
 }
 
 impl TestCommand {
-    /// Background path: serialize args for the chosen subcommand (or the default
-    /// nextest run) and hand off to the coordinator. Extracted from `execute` to
-    /// keep it within the cognitive-complexity budget.
-    fn execute_background(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        let mut args = Vec::new();
-
-        // Serialize subcommand first (if any)
-        match &self.subcommand {
-            Some(TestSubcommand::Bench(bench)) => {
-                args = bench_background_args(bench);
-            }
-            Some(TestSubcommand::Fuzz(fuzz)) => {
-                args = fuzz_background_args(fuzz);
-            }
-            Some(TestSubcommand::Coverage(cov)) => {
-                args = coverage_background_args(cov);
-            }
-            Some(TestSubcommand::Mutants(m)) => {
-                args = mutants_background_args(m);
-            }
-            Some(TestSubcommand::Vm(vm)) => {
-                args.push("vm".to_string());
-                if let Some(ref c) = vm.category {
-                    args.push(format!("--category={c}"));
-                }
-                if vm.timeout != crate::commands::vm::DEFAULT_TIMEOUT_SECS {
-                    args.push(format!("--timeout={}", vm.timeout));
-                }
-                if vm.keep_failed {
-                    args.push("--keep-failed".to_string());
-                }
-                if vm.list {
-                    args.push("--list".to_string());
-                }
-                if vm.validate {
-                    args.push("--validate".to_string());
-                }
-                if !vm.args.is_empty() {
-                    args.push("--".to_string());
-                    args.extend(vm.args.clone());
-                }
-
-                let coordination_args = crate::commands::vm::vm_test_coordination_args(
-                    vm.category.as_deref(),
-                    vm.timeout,
-                    vm.keep_failed,
-                    vm.validate,
-                    &vm.args,
-                );
-                return crate::coordinator::coordinate_and_spawn_with_scope(
-                    "test",
-                    &args,
-                    &coordination_args,
-                    ctx,
-                );
-            }
-            None => {
-                let execution_plan =
-                    self.resolve_execution_plan(None, self.filter.as_deref(), None)?;
-                let effective_test_binaries =
-                    self.effective_test_binaries(self.filter.as_deref())?;
-                let effective_lib_target =
-                    self.effective_lib_target(self.filter.as_deref(), &effective_test_binaries)?;
-                args = self.nextest_background_invocation_args(
-                    false,
-                    &effective_test_binaries,
-                    effective_lib_target,
-                );
-                let coordination_args = self.semantic_invocation_args(
-                    &execution_plan.workload_scope,
-                    self.filter.as_deref(),
-                    &effective_test_binaries,
-                    effective_lib_target,
-                );
-                return crate::coordinator::coordinate_and_spawn_with_scope(
-                    "test",
-                    &args,
-                    &coordination_args,
-                    ctx,
-                );
-            }
-        }
-
-        crate::coordinator::coordinate_and_spawn("test", &args, ctx)
-    }
-
     /// `--dry-run` path: resolve the execution plan, print/emit it, and return
     /// without running tests. Extracted from `execute` to keep it within the
     /// cognitive-complexity budget.
@@ -1142,27 +1056,6 @@ impl TestCommand {
         args
     }
 
-    fn nextest_background_invocation_args(
-        &self,
-        force_skip_preflight: bool,
-        effective_test_binaries: &[String],
-        effective_lib_target: bool,
-    ) -> Vec<String> {
-        let mut args = self.nextest_invocation_args(force_skip_preflight);
-
-        if self.test_binaries.is_empty() {
-            for test_binary in effective_test_binaries {
-                args.push("--test".to_string());
-                args.push(test_binary.clone());
-            }
-        }
-        if effective_lib_target && !self.lib {
-            args.push("--lib".to_string());
-        }
-
-        args
-    }
-
     fn resolve_execution_plan(
         &self,
         ctx: Option<&CommandContext>,
@@ -1507,108 +1400,22 @@ fn print_proof_coverage(coverage: &[PackageProofCoverage]) {
     }
 }
 
-/// Build serialized background CLI args for a bench subcommand.
-fn bench_background_args(bench: &BenchArgs) -> Vec<String> {
-    let mut args = vec![
-        "bench".to_string(),
-        format!("--mode={}", bench.mode),
-        format!("--profile={}", bench.profile),
-        format!("--runs={}", bench.runs),
-        {
-            let threads_str: Vec<String> = bench.threads.iter().map(ToString::to_string).collect();
-            format!("--threads={}", threads_str.join(","))
-        },
-    ];
-    if !bench.db_pool_sizes.is_empty() {
-        let pool_sizes = bench
-            .db_pool_sizes
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        args.push(format!("--db-pool-sizes={pool_sizes}"));
-    }
-    push_flag(&mut args, bench.system_impact, "--system-impact");
-    push_flag(
-        &mut args,
-        bench.system_impact_extended,
-        "--system-impact-extended",
-    );
-    args.push(format!("--target={}", bench.target));
-    push_flag(&mut args, bench.contracts, "--contracts");
-    if let Some(ref f) = bench.contracts_file {
-        args.push(format!("--contracts-file={}", f.display()));
-    }
-    if let Some(ref r) = bench.report {
-        args.push(format!("--report={}", r.display()));
-    }
-    if let Some(ref c) = bench.compare {
-        args.push(format!("--compare={}", c[0].display()));
-        args.push(c[1].display().to_string());
-    }
-    if let Some(ref o) = bench.output {
-        args.push(format!("--output={}", o.display()));
-    }
-    if let Some(ref h) = bench.history_db {
-        args.push(format!("--history-db={}", h.display()));
-    }
-    push_flag(&mut args, bench.dry_run, "--dry-run");
-    push_flag(&mut args, bench.continue_on_fail, "--continue-on-fail");
-    push_flag(&mut args, bench.verbose, "--verbose");
-    args
-}
-
-/// Build serialized background CLI args for a fuzz subcommand.
-fn fuzz_background_args(fuzz: &FuzzArgs) -> Vec<String> {
-    let mut args = vec!["fuzz".to_string()];
-    if let Some(ref t) = fuzz.target {
-        args.push(t.clone());
-    }
-    args.push(format!("--max-time={}", fuzz.max_time));
-    if let Some(j) = fuzz.jobs {
-        args.push(format!("--jobs={j}"));
-    }
-    push_flag(&mut args, fuzz.list, "--list");
-    args
-}
-
-/// Build serialized background CLI args for a coverage subcommand.
-fn coverage_background_args(cov: &CoverageArgs) -> Vec<String> {
-    let mut args = vec!["coverage".to_string(), format!("--output={}", cov.output)];
-    push_flag(&mut args, cov.open, "--open");
-    if let Some(ref p) = cov.package {
-        args.push(format!("--package={p}"));
-    }
-    push_flag(&mut args, cov.html, "--html");
-    if let Some(e) = cov.enforce {
-        args.push(format!("--enforce={e}"));
-    }
-    args
-}
-
-/// Build serialized background CLI args for a mutants subcommand.
-fn mutants_background_args(m: &MutantsArgs) -> Vec<String> {
-    let mut args = vec!["mutants".to_string()];
-    if let Some(ref p) = m.package {
-        args.push(format!("--package={p}"));
-    }
-    if let Some(ref f) = m.file {
-        args.push(format!("--file={f}"));
-    }
-    args.push(format!("--timeout={}", m.timeout));
-    args.push(format!("--jobs={}", m.jobs));
-    args
-}
-
 impl XtaskCommand for TestCommand {
     fn name(&self) -> &'static str {
         "test"
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        // Handle background execution (like build/check/fix)
         if ctx.is_background() {
-            return self.execute_background(ctx);
+            return Ok(CommandResult::failure(
+                crate::output::StructuredError::new(
+                    "XTASK_TEST_BACKGROUND_UNSUPPORTED",
+                    "background mode is unsupported for xtask test",
+                )
+                .with_suggestion(
+                    "run `xtask test` in the foreground or start AgentCTL's declared test_default operation",
+                ),
+            ));
         }
 
         // Dispatch to subcommand handler if present
@@ -1663,9 +1470,7 @@ impl XtaskCommand for TestCommand {
             return Err(color_eyre::eyre::eyre!(
                 "Cannot run `xtask test` foreground inside an active nextest run — \
                  the cargo target/ lock would deadlock.\n\
-                 Use `xtask test --bg ...` to spawn in background instead:\n\
-                 \n  xtask test --bg [your flags]\n\
-                 \n  Then: xtask jobs wait <ID>"
+                 Run the test outside nextest or start AgentCTL's declared test_default operation."
             ));
         }
 

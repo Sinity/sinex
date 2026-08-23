@@ -9,7 +9,7 @@ It is intentionally selective: hidden automation plumbing and one-off implementa
 
 - Prefer `--json` or `--format json` when another tool will parse the output.
 - Use `--bg` for long-running work you want to inspect through `xtask jobs`.
-- Use `--bg --wait` with fix or test when the command must return terminal proof instead of launch acknowledgement.
+- Use `--bg --wait` with fix when the command must return terminal proof instead of launch acknowledgement.
 - Use `xtask <command> --help` only to confirm the exact live flags for commands already named below.
 
 ## Core Loop
@@ -33,7 +33,7 @@ Use these when the local stack or a running process is part of the work.
 - `xtask doctor`: Probe developer-environment health (Postgres, NATS, tools, TLS, runtime). Use when the environment may be broken, stale, or missing expected dependencies. Common forms: `xtask doctor`; `xtask doctor --fix`; `xtask doctor --runtime`.
 - `xtask ra-diagnose`: Diagnose rust-analyzer process footprint and local workspace contract. Use when rust-analyzer is slow, memory-heavy, duplicated, or suspected of ignoring the local workspace contract. Common forms: `xtask ra-diagnose`; `xtask --json ra-diagnose`; `xtask --json ra-diagnose --collect-diagnostics`. Notes: This command reuses the rust-analyzer contract checks surfaced by `xtask doctor --rust-analyzer`. Use --collect-diagnostics only when you want rust-analyzer's batch diagnostics subcommand; the default remains a cheap process/config probe.
 - `xtask ra`: Rust-analyzer refactor/search helpers. Use when you need rust-analyzer structured search, structured search-replace, or batch diagnostics during refactors. Common forms: `xtask ra search 'register_module(\$a)'`; `xtask ra ssr '\$a.into_builder() ==>> EventBuilder::from(\$a)' --apply`; `xtask ra diagnostics --severity error --disable-build-scripts`. Notes: `xtask ra ssr` is dry-run by default; pass `--apply` to let rust-analyzer edit files. This wraps rust-analyzer's available CLI primitives. rust-analyzer does not expose a stable standalone rename-at-position CLI.
-- `xtask jobs output`: Show full output of a job. Use when you launched a long-running command with --bg and need its logs or current state. Common forms: `xtask test -p xtask --bg`; `xtask jobs status 42`; `xtask jobs output 42`. Notes: Use xtask history when you need trends, diagnostics, or durable execution records beyond the live job handle.
+- `xtask jobs output`: Show full output of a job. Use when you launched a long-running command with --bg and need its logs or current state. Common forms: `xtask fix -p xtask --bg`; `xtask jobs status 42`; `xtask jobs output 42`. Notes: Use xtask history when you need trends, diagnostics, or durable execution records beyond the live job handle.
 - `xtask reset`: Reset developer state for a fresh start. Use when local state is genuinely corrupted and you need a deliberate clean-slate reset. Common forms: `xtask reset --yes`; `xtask reset --yes --db`; `xtask reset --yes --target`. Notes: This is destructive. Scope it to the smallest reset that fixes the problem.
 
 ## Investigation & Verification

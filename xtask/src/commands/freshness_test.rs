@@ -4,7 +4,7 @@ use crate::output::{OutputFormat, OutputWriter};
 use crate::sandbox::prelude::*;
 
 #[sinex_test]
-async fn freshness_explain_marks_exact_test_reuse_enabled() -> TestResult<()> {
+async fn freshness_explain_reports_foreground_test_proof_reuse() -> TestResult<()> {
     let ctx = CommandContext::new(
         OutputWriter::new(OutputFormat::Json),
         false,
@@ -28,7 +28,7 @@ async fn freshness_explain_marks_exact_test_reuse_enabled() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn freshness_explain_test_hits_test_proof_units() -> TestResult<()> {
+async fn freshness_explain_test_queries_foreground_proof_units() -> TestResult<()> {
     let dir = tempfile::tempdir()?;
     let db_path = dir.path().join("history.db");
     let db = HistoryDb::open(&db_path)?;
@@ -74,15 +74,12 @@ async fn freshness_explain_test_hits_test_proof_units() -> TestResult<()> {
 
     assert_eq!(data["reuse"]["decision"], "hit");
     assert_eq!(data["reuse"]["last_completed"]["source"], "test_proof_unit");
-    assert_eq!(
-        data["reuse"]["last_completed"]["invocation_id"],
-        invocation_id
-    );
+    assert_eq!(data["reuse"]["last_completed"]["invocation_id"], invocation_id);
     Ok(())
 }
 
 #[sinex_test]
-async fn freshness_explain_test_uses_resolved_test_semantics() -> TestResult<()> {
+async fn freshness_explain_test_uses_semantic_scope_diagnostics() -> TestResult<()> {
     let dir = tempfile::tempdir()?;
     let db_path = dir.path().join("history.db");
     let raw_args = vec![
@@ -149,10 +146,7 @@ async fn freshness_explain_test_uses_resolved_test_semantics() -> TestResult<()>
 
     assert_eq!(data["scope_key"], key.scope_key);
     assert_eq!(data["reuse"]["decision"], "hit");
-    assert_eq!(
-        data["reuse"]["last_completed"]["invocation_id"],
-        invocation_id
-    );
+    assert_eq!(data["reuse"]["last_completed"]["invocation_id"], invocation_id);
     Ok(())
 }
 

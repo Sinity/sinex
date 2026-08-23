@@ -277,7 +277,7 @@ the binary is on PATH).
 | list tests | `xtask test --list -p <pkg>` |
 | build | `xtask build -p <pkg>` |
 | local stack | `xtask infra start/status/stop`, `xtask doctor`, `xtask run core --bg` |
-| background | append `--bg` to supported async commands (`fix`, `test`, `run`); poll `xtask jobs active/output/wait <id>`; `check` and `build` are foreground-only |
+| background | append `--bg` to supported async commands (`fix`, `run`); poll `xtask jobs active/output/wait <id>`; `check`, `build`, and `test` are foreground-only |
 | failure forensics | `xtask history diagnostics --level error`, `xtask history tests analyze` |
 | generated surfaces | `xtask docs sync` / `xtask docs check` |
 | schema | `xtask schema strict-diff`, `xtask schema backfill` |
@@ -330,7 +330,7 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
   `/var/cache/sinex/$USER/<checkout-hash>/dev-state`, which is why a worktree's own
   devshell URL points at an empty database.
 - **Memory pressure**: earlyoom SIGTERMs rustc when free <15% (exit 144 ≠ code error). One
-  heavy compile at a time; don't run two heavy `xtask test --bg` (target-lock collision).
+  heavy compile at a time; do not overlap heavy `xtask test` runs (target-lock collision).
   Clippy on the full workspace can exceed the 600s cargo timeout under load —
   `SINEX_CARGO_TIMEOUT=1800`, not lock-contention theories.
 - **Dev runtime**: `xtask run core --bg` (foreground self-times-out); kill sinexd by PID,

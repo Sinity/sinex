@@ -34,7 +34,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `deps` | Analyze workspace dependency structure and impact |
 | `history` | Query build, test, and runtime history recorded by xtask |
 | `analytics` | `xtask analytics` — developer intelligence analytics |
-| `freshness` | Inspect coordinator freshness keys and reuse decisions |
+| `freshness` | Inspect foreground proof and coordinator lifecycle freshness decisions |
 | `impact` |  |
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health (Postgres, NATS, tools, TLS, runtime) |
@@ -1480,7 +1480,7 @@ Stage-level timing breakdowns aggregated across invocations (J7)
 
 ## `xtask freshness`
 
-Inspect coordinator freshness keys and reuse decisions
+Inspect foreground proof and coordinator lifecycle freshness decisions
 
 **Subcommands**
 
@@ -1496,7 +1496,7 @@ Explain the freshness key for a command scope
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `command` | yes | yes | Coordinated command to explain, such as check, build, fix, test, or vm |
+| `command` | yes | yes | Command to explain, such as test, fix, or vm |
 | `args` | yes | no | Arguments for the explained command. Use `--` before hyphen-prefixed args |
 
 
@@ -1837,8 +1837,8 @@ Run or resume a named schema backfill
 | `key` | yes | yes | Backfill key to run |
 | `--database-url` | yes | no | Database URL to inspect. Without this, prepares the checkout-local stack first |
 | `--batch-size` | yes | no | Rows to scan before persisting progress |
-| `--assume-quiescent` | no | no | Acknowledge that writers are quiesced for this first implementation slice |
-| `--restart` | no | no | Clear persisted progress and recompute from the current event horizon |
+| `--assume-quiescent` | no | no | Confirm event writers are stopped; active writer transactions are rejected before the horizon is frozen |
+| `--restart` | no | no | Clear persisted progress and recompute from a fresh horizon (required after failure) |
 
 
 ## `xtask verify`
