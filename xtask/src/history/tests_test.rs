@@ -1356,7 +1356,7 @@ async fn test_parse_nextest_output_ignores_started_events() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_open_reconciles_interrupted_invocation_before_current_resolution() -> TestResult<()> {
+async fn test_open_preserves_aged_running_invocation_without_liveness_proof() -> TestResult<()> {
     let dir = tempfile::tempdir()?;
     let db_path = dir.path().join("history.db");
     let invocation_id = {
@@ -1374,77 +1374,50 @@ async fn test_open_reconciles_interrupted_invocation_before_current_resolution()
     let db = HistoryDb::open(&db_path)?;
     let invocation = db
         .get_invocation(invocation_id)?
-        .ok_or_else(|| color_eyre::eyre::eyre!("reconciled invocation disappeared"))?;
-    assert_eq!(invocation.status, InvocationStatus::Cancelled);
-    assert!(invocation.finished_at.is_some());
+        .ok_or_else(|| color_eyre::eyre::eyre!("aged invocation disappeared"))?;
+    assert_eq!(invocation.status, InvocationStatus::Running);
+    assert!(invocation.finished_at.is_none());
     assert_eq!(invocation.duration_secs, None);
     assert_eq!(
-        db.get_invocation_cancel_metadata(invocation_id)?,
-        Some((
-            Some("interrupted".to_string()),
-            Some("history_open_reconciliation".to_string()),
-        ))
+        db.resolve_invocation_id("current", Some("check"))?,
+        None,
+        "an aged running row has no terminal or liveness proof, so it cannot claim current"
     );
 
-    let recovered_invocation = db.start_invocation("check", None, None, None)?;
-    db.finish_invocation(
-        recovered_invocation,
-        InvocationStatus::Success,
-        Some(0),
-        0.1,
-    )?;
-    assert_eq!(
-        db.resolve_invocation_id("current", Some("check"))?,
-        Some(recovered_invocation),
-        "interrupted rows must not remain preferred by current after recovery"
-    );
     Ok(())
 }
 
 #[sinex_test]
-async fn test_current_ignores_stale_running_rows_beyond_reconciliation_bound() -> TestResult<()> {
+async fn test_current_excludes_aged_running_rows_before_terminal_work() -> TestResult<()> {
     let dir = tempfile::tempdir()?;
     let db_path = dir.path().join("history.db");
-    let (stale_ids, terminal_id) = {
+    let (terminal_invocation, aged_running_invocation) = {
         let db = HistoryDb::open(&db_path)?;
-        let stale_ids = (0..=128)
-            .map(|_| db.start_invocation("check", None, None, None))
-            .collect::<Result<Vec<_>, _>>()?;
-        let terminal_id = db.start_invocation("check", None, None, None)?;
-        db.finish_invocation(terminal_id, InvocationStatus::Success, Some(0), 0.1)?;
-        (stale_ids, terminal_id)
+        let terminal_invocation = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(terminal_invocation, InvocationStatus::Success, Some(0), 0.1)?;
+        let aged_running_invocation = db.start_invocation("check", None, None, None)?;
+        (terminal_invocation, aged_running_invocation)
     };
 
     let old_started_at = (time::OffsetDateTime::now_utc() - time::Duration::hours(48))
         .format(&time::format_description::well_known::Rfc3339)?;
-    let connection = rusqlite::Connection::open(&db_path)?;
-    for stale_id in &stale_ids {
-        connection.execute(
-            "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
-            rusqlite::params![old_started_at, stale_id],
-        )?;
-    }
-    drop(connection);
+    rusqlite::Connection::open(&db_path)?.execute(
+        "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+        rusqlite::params![old_started_at, aged_running_invocation],
+    )?;
 
     let db = HistoryDb::open(&db_path)?;
     assert_eq!(
-        db.get_invocation(stale_ids[0])?
-            .expect("oldest stale invocation remains after bounded reconciliation")
+        db.resolve_invocation_id("current", Some("check"))?,
+        Some(terminal_invocation),
+        "an aged running row with a newer ID must not outrank terminal work"
+    );
+    assert_eq!(
+        db.get_invocation(aged_running_invocation)?
+            .expect("aged running invocation remains in history")
             .status,
         InvocationStatus::Running,
-        "only the newest 128 stale rows are reconciled per open"
-    );
-    assert_eq!(
-        db.get_invocation(*stale_ids.last().expect("129 stale ids"))?
-            .expect("newest stale invocation exists")
-            .status,
-        InvocationStatus::Cancelled,
-        "reconciliation prioritizes the newest stale rows"
-    );
-    assert_eq!(
-        db.resolve_invocation_id("current", Some("check"))?,
-        Some(terminal_id),
-        "a stale running row cannot outrank later terminal work after one recovery read"
+        "history must not manufacture terminal state from an age threshold"
     );
     Ok(())
 }

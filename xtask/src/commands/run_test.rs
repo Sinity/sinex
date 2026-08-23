@@ -1,6 +1,9 @@
 use super::*;
 use crate::output::{OutputFormat, OutputWriter};
-use crate::sandbox::{EnvGuard, sinex_test};
+use crate::sandbox::{
+    EnvGuard, sinex_test,
+    timing::{Timeouts, WaitHelpers},
+};
 
 fn test_context(background: bool) -> CommandContext {
     CommandContext::new(
@@ -588,6 +591,38 @@ async fn test_agentctl_run_all_sources_inherits_selected_manifest()
 }
 
 #[sinex_test]
+async fn test_agentctl_runtime_operations_are_non_cacheable_with_eight_hour_leases()
+-> ::xtask::sandbox::TestResult<()> {
+    let descriptor: toml::Value = toml::from_str(include_str!("../../../.agentctl/project.toml"))?;
+    let operations = descriptor["operations"]
+        .as_table()
+        .ok_or_else(|| color_eyre::eyre::eyre!("AgentCTL operations must be a TOML table"))?;
+
+    for operation_name in ["run_core", "run_all_automatons", "run_all_sources"] {
+        let operation = operations
+            .get(operation_name)
+            .and_then(toml::Value::as_table)
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!("missing AgentCTL runtime operation {operation_name}")
+            })?;
+        assert_eq!(
+            operation.get("cache").and_then(toml::Value::as_str),
+            Some("none"),
+            "{operation_name} must relaunch instead of reusing a terminal runtime result"
+        );
+        assert_eq!(
+            operation
+                .get("timeout_seconds")
+                .and_then(toml::Value::as_integer),
+            Some(28_800),
+            "{operation_name} keeps the declared eight-hour foreground lease"
+        );
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_build_cargo_run_args_target_sinexd() -> ::xtask::sandbox::TestResult<()> {
     let command = base_command(RunSubcommand::RuntimeModule {
         name: "terminal-source".to_string(),
@@ -875,18 +910,38 @@ async fn test_stop_bundle_child_kills_child_process_group() -> ::xtask::sandbox:
     configure_managed_child_tokio(&mut command);
     command
         .arg("-c")
-        .arg("sleep 30 & echo $!; wait")
+        .arg("sleep 30 & descendant=$!; echo $descendant; wait $descendant")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
 
     let mut child = command.spawn()?;
+    crate::process::register_tokio_child_process_group(&child, "test bundle child");
+    let leader_pid = child.id().expect("bundle child exposes a PID") as i32;
     let stdout = child.stdout.take().expect("stdout should be piped");
     let mut lines = BufReader::new(stdout).lines();
-    let sleep_pid = lines
+    let descendant_pid = lines
         .next_line()
         .await?
         .expect("shell should print background child pid")
         .parse::<i32>()?;
+
+    let process_group = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(leader_pid)))?;
+    assert_eq!(
+        process_group.as_raw(),
+        leader_pid,
+        "test child must use the dedicated process-group configuration used in production"
+    );
+    assert_eq!(
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(descendant_pid)))?,
+        process_group,
+        "persistent descendant must join the managed child process group"
+    );
+    assert_eq!(
+        unsafe { libc::kill(-process_group.as_raw(), 0) },
+        0,
+        "process group must exist before injecting cleanup"
+    );
 
     stop_bundle_child("test child", &mut child).await?;
 
@@ -894,11 +949,17 @@ async fn test_stop_bundle_child_kills_child_process_group() -> ::xtask::sandbox:
         child.try_wait()?.is_some(),
         "terminated bundle child should be reaped"
     );
-    assert_ne!(
-        unsafe { libc::kill(sleep_pid, 0) },
-        0,
-        "background process in the bundle child group should be gone"
-    );
+    WaitHelpers::wait_for_condition(
+        move || async move {
+            let group_gone = unsafe { libc::kill(-process_group.as_raw(), 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            let descendant_gone = unsafe { libc::kill(descendant_pid, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            Ok::<_, std::io::Error>(group_gone && descendant_gone)
+        },
+        Timeouts::QUICK,
+    )
+    .await?;
 
     let status = child.wait().await?;
     assert!(

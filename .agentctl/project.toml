@@ -152,7 +152,8 @@ description = "Run the default local Sinex core bundle through AgentCTL"
 exec = ["xtask", "run", "core"]
 pool = "normal"
 result = "exit"
-cache = "tree+environment"
+cache = "none"
+timeout_seconds = 28800
 
 [operations.run_core.parameters.release]
 type = "bool"
@@ -163,7 +164,8 @@ description = "Run the default local Sinex automaton supervisor through AgentCTL
 exec = ["xtask", "run", "all-automatons"]
 pool = "normal"
 result = "exit"
-cache = "tree+environment"
+cache = "none"
+timeout_seconds = 28800
 
 [operations.run_all_automatons.parameters.release]
 type = "bool"
@@ -174,7 +176,8 @@ description = "Run Sinex's manifest-driven source bindings through AgentCTL"
 exec = ["xtask", "run", "all-sources"]
 pool = "normal"
 result = "exit"
-cache = "tree+environment"
+cache = "none"
+timeout_seconds = 28800
 
 [operations.run_all_sources.parameters.release]
 type = "bool"

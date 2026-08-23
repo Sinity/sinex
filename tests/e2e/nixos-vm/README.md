@@ -78,7 +78,6 @@ It follows the scenario registry in `tests/e2e/nixos-vm/default.nix`.
    - `chaos-network-partition`
    - `chaos-process-restart`
    - `chaos-clock-skew`
-   - `xtask-concurrency`
 
 ## Coverage Notes
 

@@ -72,8 +72,7 @@ pub use types::{
 use std::path::Path;
 use time::OffsetDateTime;
 
-const ABANDONED_INVOCATION_RECONCILIATION_LIMIT: usize = 128;
-const ABANDONED_INVOCATION_GRACE: time::Duration = time::Duration::hours(24);
+pub(super) const CURRENT_RUNNING_INVOCATION_GRACE: time::Duration = time::Duration::hours(24);
 
 fn capture_working_directory(current_dir: std::io::Result<std::path::PathBuf>) -> String {
     match current_dir {
@@ -435,57 +434,7 @@ impl HistoryDb {
         }
         db.ensure_compat_schema()?;
         db.is_synthetic = db.check_synthetic()?;
-        db.reconcile_abandoned_invocations_on_open()?;
         Ok(db)
-    }
-
-    /// Mark bounded, aged rows that never received a terminal write as interrupted.
-    ///
-    /// This is history recovery, not process management: it relies only on the
-    /// durable invocation clock and never probes, signals, or otherwise claims a
-    /// process. The 24-hour grace period keeps long-lived foreground commands from
-    /// being reclassified while still ensuring a killed invocation cannot win the
-    /// `current` selector indefinitely after later persistent work resumes.
-    fn reconcile_abandoned_invocations_on_open(&self) -> Result<usize> {
-        let cutoff = (OffsetDateTime::now_utc() - ABANDONED_INVOCATION_GRACE)
-            .format(&time::format_description::well_known::Rfc3339)
-            .context("failed to format abandoned invocation reconciliation cutoff")?;
-        let finished_at = Timestamp::now().format_rfc3339();
-        let reconciled = self
-            .conn
-            .execute(
-                r"
-                UPDATE invocations
-                SET finished_at = ?1,
-                    duration_secs = NULL,
-                    exit_code = NULL,
-                    status = 'cancelled',
-                    cancel_reason = 'interrupted',
-                    cancelled_by = 'history_open_reconciliation',
-                    live_stage = NULL
-                WHERE id IN (
-                    SELECT id
-                    FROM invocations
-                    WHERE status = 'running'
-                      AND started_at < ?2
-                    ORDER BY id DESC
-                    LIMIT ?3
-                )
-                ",
-                params![
-                    finished_at,
-                    cutoff,
-                    ABANDONED_INVOCATION_RECONCILIATION_LIMIT
-                ],
-            )
-            .context("failed to reconcile abandoned invocation rows")?;
-
-        if reconciled > 0 {
-            eprintln!(
-                "ℹ️  Reconciled {reconciled} interrupted history invocation(s) from durable timestamps"
-            );
-        }
-        Ok(reconciled)
     }
 }
 
