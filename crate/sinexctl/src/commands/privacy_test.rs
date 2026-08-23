@@ -35,7 +35,10 @@ async fn private_mode_status_envelope_caveats_enabled_state() -> xtask::sandbox:
     );
     let envelope = private_mode_status_envelope(state);
 
-    assert_eq!(envelope.source_surface, "sinexctl.privacy.private_mode.status");
+    assert_eq!(
+        envelope.source_surface,
+        "sinexctl.privacy.private_mode.status"
+    );
     assert!(envelope.payload.enabled);
     assert_eq!(envelope.caveats.len(), 1);
     assert_eq!(
@@ -121,8 +124,8 @@ async fn privacy_audit_summarizes_posture_without_source_identifier_leak()
 }
 
 #[sinex_test]
-async fn privacy_audit_collects_empty_policy_catalog_from_gateway()
--> xtask::sandbox::TestResult<()> {
+async fn privacy_audit_collects_empty_policy_catalog_from_gateway() -> xtask::sandbox::TestResult<()>
+{
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/"))
@@ -190,7 +193,10 @@ async fn privacy_audit_collects_empty_policy_catalog_from_gateway()
     assert_eq!(report.findings.len(), 1);
     assert_eq!(report.findings[0].code, "privacy.policy_catalog_empty");
     assert_eq!(report.findings[0].severity, "blocking");
-    assert_eq!(report.findings[0].message, EMPTY_PRIVACY_POLICY_CATALOG_MESSAGE);
+    assert_eq!(
+        report.findings[0].message,
+        EMPTY_PRIVACY_POLICY_CATALOG_MESSAGE
+    );
     server.verify().await;
     Ok(())
 }
@@ -226,13 +232,20 @@ async fn privacy_audit_envelope_carries_posture_caveats() -> xtask::sandbox::Tes
         stale_after_seconds: Some(60),
     };
     let envelope = privacy_audit_envelope(report, &args);
-    let caveat_ids: Vec<&str> = envelope.caveats.iter().map(|caveat| caveat.id.as_str()).collect();
+    let caveat_ids: Vec<&str> = envelope
+        .caveats
+        .iter()
+        .map(|caveat| caveat.id.as_str())
+        .collect();
 
     assert_eq!(envelope.source_surface, "sinexctl.privacy.audit");
     assert!(caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()));
     assert!(caveat_ids.contains(&ReadinessCaveatId::SourceAbsent.as_str()));
     assert!(caveat_ids.contains(&ReadinessCaveatId::CoverageUnmeasurable.as_str()));
-    assert_eq!(envelope.query_echo.as_ref().unwrap()["source_family"], "desktop");
+    assert_eq!(
+        envelope.query_echo.as_ref().unwrap()["source_family"],
+        "desktop"
+    );
     Ok(())
 }
 
@@ -365,12 +378,19 @@ async fn privacy_export_envelope_caveats_empty_and_partial_results()
         output: None,
     };
     let envelope = privacy_export_envelope(report, &args);
-    let caveat_ids: Vec<&str> = envelope.caveats.iter().map(|caveat| caveat.id.as_str()).collect();
+    let caveat_ids: Vec<&str> = envelope
+        .caveats
+        .iter()
+        .map(|caveat| caveat.id.as_str())
+        .collect();
 
     assert_eq!(envelope.source_surface, "sinexctl.privacy.export");
     assert!(caveat_ids.contains(&ReadinessCaveatId::CoverageUnmeasurable.as_str()));
     assert!(caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()));
-    assert_eq!(envelope.query_echo.as_ref().unwrap()["source"][0], "terminal");
+    assert_eq!(
+        envelope.query_echo.as_ref().unwrap()["source"][0],
+        "terminal"
+    );
     Ok(())
 }
 
@@ -518,8 +538,7 @@ async fn privacy_policy_rule_add_parses_matcher_config_without_receipt_leak()
 }
 
 #[sinex_test]
-async fn privacy_policy_seed_builtin_formats_idempotent_counts()
--> xtask::sandbox::TestResult<()> {
+async fn privacy_policy_seed_builtin_formats_idempotent_counts() -> xtask::sandbox::TestResult<()> {
     let args = PolicySeedBuiltinArgs { enabled: false };
     let response = PrivacyPolicySeedBuiltinResponse {
         inserted: 37,
@@ -561,8 +580,8 @@ async fn privacy_policy_backend_add_parses_config_and_enabled_state()
 }
 
 #[sinex_test]
-async fn privacy_policy_dictionary_add_preserves_terms_and_tags()
--> xtask::sandbox::TestResult<()> {
+async fn privacy_policy_dictionary_add_preserves_terms_and_tags() -> xtask::sandbox::TestResult<()>
+{
     let args = PolicyDictionaryAddArgs {
         name: "local-projects".to_string(),
         description: "project deny-list".to_string(),
@@ -589,8 +608,7 @@ async fn privacy_policy_dictionary_add_preserves_terms_and_tags()
 }
 
 #[sinex_test]
-async fn privacy_policy_scope_bind_preserves_field_hint_scope() -> xtask::sandbox::TestResult<()>
-{
+async fn privacy_policy_scope_bind_preserves_field_hint_scope() -> xtask::sandbox::TestResult<()> {
     let args = PolicyScopeBindArgs {
         rule_name: "window-title-sensitive".to_string(),
         event_source: Some("desktop".to_string()),

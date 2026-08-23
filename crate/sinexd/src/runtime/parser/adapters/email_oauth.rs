@@ -186,10 +186,9 @@ impl OAuthError {
             {
                 EmailAuthorizationState::Rejected
             }
-            Self::EmptyAccessToken
-            | Self::Status { .. }
-            | Self::Transport(_)
-            | Self::Decode(_) => EmailAuthorizationState::Unknown,
+            Self::EmptyAccessToken | Self::Status { .. } | Self::Transport(_) | Self::Decode(_) => {
+                EmailAuthorizationState::Unknown
+            }
         }
     }
 
@@ -223,7 +222,9 @@ impl fmt::Display for OAuthError {
                 }
                 None => write!(f, "OAuth token endpoint returned HTTP {status}: {body}"),
             },
-            Self::EmptyAccessToken => write!(f, "OAuth token endpoint returned an empty access token"),
+            Self::EmptyAccessToken => {
+                write!(f, "OAuth token endpoint returned an empty access token")
+            }
         }
     }
 }

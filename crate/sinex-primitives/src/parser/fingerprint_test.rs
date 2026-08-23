@@ -149,8 +149,7 @@ async fn test_from_csv_bytes_infers_header_shape() -> xtask::sandbox::TestResult
 }
 
 #[sinex_test]
-async fn test_from_tsv_bytes_detects_missing_and_extra_columns()
--> xtask::sandbox::TestResult<()> {
+async fn test_from_tsv_bytes_detects_missing_and_extra_columns() -> xtask::sandbox::TestResult<()> {
     let fp = SourceRecordFingerprint::from_tsv_bytes(b"id\tname\n42\tAlice\tunexpected\n")?;
 
     assert_eq!(fp.format, "tsv");
@@ -197,8 +196,8 @@ async fn test_csv_drift_reports_header_and_type_changes() -> xtask::sandbox::Tes
 
 #[cfg(feature = "rusqlite")]
 #[sinex_test]
-async fn test_from_sqlite_connection_fingerprints_table_columns()
--> xtask::sandbox::TestResult<()> {
+async fn test_from_sqlite_connection_fingerprints_table_columns() -> xtask::sandbox::TestResult<()>
+{
     let conn = rusqlite::Connection::open_in_memory()?;
     conn.execute(
         "CREATE TABLE history (
@@ -321,8 +320,7 @@ async fn test_drift_accumulator_detects_drift() -> xtask::sandbox::TestResult<()
 }
 
 #[sinex_test]
-async fn test_drift_accumulator_respects_record_count_limit() -> xtask::sandbox::TestResult<()>
-{
+async fn test_drift_accumulator_respects_record_count_limit() -> xtask::sandbox::TestResult<()> {
     let source = SourceId::from_static("test.unit");
     let mut acc = DriftAccumulator::new(source)
         .with_emit_every_n_records(100)
@@ -485,8 +483,7 @@ async fn drift_readiness_caveats_classify_advisory_and_degraded_shapes()
             .all(|caveat| caveat.severity == CaveatSeverity::Degraded)
     );
 
-    let required_caveats =
-        degraded.readiness_caveats_with_required_fields(&["/name".to_string()]);
+    let required_caveats = degraded.readiness_caveats_with_required_fields(&["/name".to_string()]);
     assert!(
         required_caveats.iter().any(|caveat| {
             caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
@@ -576,8 +573,7 @@ async fn test_array_top_level() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_top_level_array_of_objects_records_element_keys() -> xtask::sandbox::TestResult<()>
-{
+async fn test_top_level_array_of_objects_records_element_keys() -> xtask::sandbox::TestResult<()> {
     let value = json!([
         {
             "ts": "2026-01-01T00:00:00Z",
@@ -662,8 +658,7 @@ async fn drift_record_count_resets_after_emission() -> xtask::sandbox::TestResul
 }
 
 #[sinex_test]
-async fn drift_hash_stable_for_same_schema_under_value_changes()
--> xtask::sandbox::TestResult<()> {
+async fn drift_hash_stable_for_same_schema_under_value_changes() -> xtask::sandbox::TestResult<()> {
     // Two records with the same field set + types but different values
     // must produce the same fingerprint hash, so DriftAccumulator does
     // not flap on every record.

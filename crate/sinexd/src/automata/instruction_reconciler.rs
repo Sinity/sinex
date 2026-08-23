@@ -156,10 +156,12 @@ impl ScopeReconciler for InstructionExpectationReconciler {
     /// applies to observations, but without needing an observation to trigger
     /// it.
     fn flush_due(&self, state: &Self::State, now: Timestamp) -> bool {
-        state
-            .pending_hyprland_workspace
-            .iter()
-            .any(|pending| pending.instruction.deadline.is_some_and(|deadline| now > deadline))
+        state.pending_hyprland_workspace.iter().any(|pending| {
+            pending
+                .instruction
+                .deadline
+                .is_some_and(|deadline| now > deadline)
+        })
     }
 
     async fn flush(
@@ -257,7 +259,8 @@ fn reconcile_workspace_observation(
             .instruction
             .deadline
             .is_some_and(|deadline| observed_at > deadline);
-        let target_matches = candidate.instruction.desired_workspace_id == observation.to_workspace_id;
+        let target_matches =
+            candidate.instruction.desired_workspace_id == observation.to_workspace_id;
 
         if !deadline_elapsed && !target_matches && !sole_candidate {
             // This observation doesn't correspond to `candidate`, and there is

@@ -165,7 +165,10 @@ mod help_tests {
             .env("DATABASE_URL", "postgresql://unused.example/sinex_prod")
             .output()?;
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!output.status.success(), "unconfirmed demo must fail: {stderr}");
+        assert!(
+            !output.status.success(),
+            "unconfirmed demo must fail: {stderr}"
+        );
         assert!(
             stderr.contains("--confirm"),
             "failure should explain explicit confirmation: {stderr}"

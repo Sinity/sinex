@@ -89,7 +89,10 @@ async fn throughput_envelope_renders_finite_json() -> xtask::TestResult<()> {
 
     assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
     assert_eq!(parsed["source_surface"], "sinexctl.metrics.throughput");
-    assert_eq!(parsed["payload"]["per_source"][0]["source"], "terminal.atuin");
+    assert_eq!(
+        parsed["payload"]["per_source"][0]["source"],
+        "terminal.atuin"
+    );
     assert_eq!(
         parsed["payload"]["per_component"][0]["component"],
         "event_engine"

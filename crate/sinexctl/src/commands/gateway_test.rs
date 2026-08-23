@@ -27,10 +27,7 @@ async fn gateway_version_envelope_renders_finite_machine_view() -> xtask::TestRe
         .expect("json renders finite gateway version envelope");
     let parsed: serde_json::Value = serde_json::from_str(&rendered)?;
 
-    assert_eq!(
-        parsed["source_surface"],
-        "sinexctl.runtime.gateway.version"
-    );
+    assert_eq!(parsed["source_surface"], "sinexctl.runtime.gateway.version");
     assert_eq!(parsed["payload"]["response"], "0.4.2");
     Ok(())
 }

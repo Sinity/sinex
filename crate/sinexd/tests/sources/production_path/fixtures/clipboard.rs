@@ -20,7 +20,19 @@ use super::{FixtureBinding, FixtureHandle};
 ///
 /// Returns an error if `data` is not valid UTF-8.
 pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
-    let snapshots = snapshots_from_bytes(data)?;
+    let text = std::str::from_utf8(data)
+        .map_err(|e| format!("clipboard fixture data is not valid UTF-8: {e}"))?;
+
+    let snapshots: Vec<Option<String>> = text
+        .lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                None
+            } else {
+                Some(line.to_string())
+            }
+        })
+        .collect();
 
     // Expose non-None snapshots as record bytes for dispatch-level testing.
     let record_bytes: Vec<Vec<u8>> = snapshots
@@ -32,20 +44,6 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
     Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(
         record_bytes,
     )))
-}
-
-/// Decode fixture bytes into the exact sequence consumed by the mock backend.
-///
-/// The production-path harness uses this to inject the same synthetic states
-/// into [`MockClipboardBackend`](sinexd::runtime::parser::MockClipboardBackend)
-/// rather than reducing clipboard cases to parser-only byte dispatch.
-pub fn snapshots_from_bytes(data: &[u8]) -> Result<Vec<Option<String>>, String> {
-    let text = std::str::from_utf8(data)
-        .map_err(|e| format!("clipboard fixture data is not valid UTF-8: {e}"))?;
-    Ok(text
-        .lines()
-        .map(|line| (!line.trim().is_empty()).then(|| line.to_string()))
-        .collect())
 }
 
 /// Build a clipboard fixture directly from snapshot strings.

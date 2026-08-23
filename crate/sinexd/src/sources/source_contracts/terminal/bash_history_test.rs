@@ -39,7 +39,9 @@ async fn checkpointed_dedup_window_suppresses_rotation_overlap_after_restart() -
     let ctx = parser_context();
     let mut parser = BashHistoryParser::default();
 
-    let first = parser.parse_record(line_record(1, "echo one"), &ctx).await?;
+    let first = parser
+        .parse_record(line_record(1, "echo one"), &ctx)
+        .await?;
     assert_eq!(first.len(), 1);
     let checkpoint = parser
         .checkpoint_state()?
@@ -56,7 +58,9 @@ async fn checkpointed_dedup_window_suppresses_rotation_overlap_after_restart() -
         "restart after rotation must not re-emit a command retained in the dedup checkpoint"
     );
 
-    let next = restarted.parse_record(line_record(2, "echo two"), &ctx).await?;
+    let next = restarted
+        .parse_record(line_record(2, "echo two"), &ctx)
+        .await?;
     assert_eq!(next.len(), 1);
     Ok(())
 }

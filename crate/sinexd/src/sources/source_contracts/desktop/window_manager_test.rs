@@ -1,9 +1,9 @@
 use super::*;
-use std::sync::{LazyLock, Mutex};
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{MaterialAnchor, SourceRecord};
 use sinex_primitives::primitives::Uuid;
+use std::sync::{LazyLock, Mutex};
 use xtask::sandbox::prelude::*;
 
 static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -104,10 +104,7 @@ async fn pending_activewindow_flush_keeps_original_realtime_hint() -> TestResult
     let first = parser.parse_record(first_record, &ctx).await?;
     assert!(first.is_empty());
 
-    let later_record = source_record(
-        "openwindow>>0xabc,1,dev,firefox,docs\n",
-        later_ts,
-    );
+    let later_record = source_record("openwindow>>0xabc,1,dev,firefox,docs\n", later_ts);
     let ctx = parser_context(later_record.anchor.clone());
     let intents = parser.parse_record(later_record, &ctx).await?;
 
@@ -178,10 +175,7 @@ fn now_ts() -> Timestamp {
 #[sinex_test]
 async fn openwindow_emits_window_opened_with_parsed_workspace_id() -> TestResult<()> {
     let mut parser = HyprlandParser::default();
-    let record = source_record(
-        "openwindow>>0xabc123,3,dev,firefox,Sinex — docs",
-        now_ts(),
-    );
+    let record = source_record("openwindow>>0xabc123,3,dev,firefox,Sinex — docs", now_ts());
     let ctx = parser_context(record.anchor.clone());
     let intents = parser.parse_record(record, &ctx).await?;
 
@@ -316,10 +310,7 @@ async fn focusedmon_emits_monitor_focused() -> TestResult<()> {
 
     assert_eq!(intents.len(), 1);
     let intent = &intents[0];
-    assert_eq!(
-        intent.event_type,
-        EventType::from_static("monitor.focused")
-    );
+    assert_eq!(intent.event_type, EventType::from_static("monitor.focused"));
     assert_eq!(intent.payload["monitor_name"], "DP-1");
     assert_eq!(intent.payload["workspace_name"], "dev");
     Ok(())
@@ -351,7 +342,10 @@ async fn unknown_event_type_emits_wm_unhandled_not_dropped() -> TestResult<()> {
     let intents = parser.parse_record(record, &ctx).await?;
 
     assert_eq!(intents.len(), 1);
-    assert_eq!(intents[0].event_type, EventType::from_static("wm.unhandled"));
+    assert_eq!(
+        intents[0].event_type,
+        EventType::from_static("wm.unhandled")
+    );
     assert_eq!(intents[0].payload["event_type"], "configreloaded");
     Ok(())
 }
@@ -364,7 +358,10 @@ async fn malformed_line_without_separator_emits_wm_unhandled() -> TestResult<()>
     let intents = parser.parse_record(record, &ctx).await?;
 
     assert_eq!(intents.len(), 1);
-    assert_eq!(intents[0].event_type, EventType::from_static("wm.unhandled"));
+    assert_eq!(
+        intents[0].event_type,
+        EventType::from_static("wm.unhandled")
+    );
     assert_eq!(intents[0].payload["event_type"], "unknown");
     Ok(())
 }
@@ -401,6 +398,9 @@ async fn malformed_line_flushes_stale_pending_activewindow() -> TestResult<()> {
         EventType::from_static("window.focused")
     );
     assert_eq!(intents[0].payload["window_class"], "kitty");
-    assert_eq!(intents[1].event_type, EventType::from_static("wm.unhandled"));
+    assert_eq!(
+        intents[1].event_type,
+        EventType::from_static("wm.unhandled")
+    );
     Ok(())
 }

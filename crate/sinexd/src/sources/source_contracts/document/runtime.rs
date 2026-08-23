@@ -92,8 +92,11 @@ const DOCUMENT_AUTO_TAG_DECLARATION: DerivationOutputDeclaration =
 /// without a database (see `document_auto_tag_declares_product_class` below).
 fn stamp_document_auto_tag_declaration(event: &mut Event<KnowledgeTagAppliedPayload>) {
     event.product_class = Some(DOCUMENT_AUTO_TAG_DECLARATION.product_class);
-    event.claim_support =
-        Some(DOCUMENT_AUTO_TAG_DECLARATION.default_support.instantiate(1, 0, 1, 0));
+    event.claim_support = Some(
+        DOCUMENT_AUTO_TAG_DECLARATION
+            .default_support
+            .instantiate(1, 0, 1, 0),
+    );
     event.derivation_declaration_id =
         Some(DOCUMENT_AUTO_TAG_DECLARATION.declaration_id.to_string());
 }

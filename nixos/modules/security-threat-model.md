@@ -45,8 +45,8 @@ primary mitigation other docs rely on.
 ### T2. Unauthorized local access (other accounts, malware, rogue processes)
 
 - **Impact**: High. A second local identity could read the PostgreSQL data
-  directory or CAS blobs if file permissions are wrong, or query the database
-  via the Unix socket without credentials.
+  directory or CAS blobs if file permissions are wrong, or attempt a database
+  connection through the local socket or loopback listener.
 - **Primary mitigation**: A dedicated `sinex` service user (uid 991 on the
   reference deployment) that owns the database and ingestion paths. Data
   directories at `0700`. Database role isolation: `sinex_event_engine`,
@@ -86,8 +86,11 @@ primary mitigation other docs rely on.
 ### T5. Application-level access to the database
 
 - **Impact**: High. A reader with the right role sees the entire history.
-- **Primary mitigation**: Least-privilege roles. `peer` auth for local socket
-  connections. Future: row-level security on `core.events`. Optional:
+- **Primary mitigation**: Least-privilege roles and `scram-sha-256` for
+  application Unix-socket and loopback-TCP connections. The only `peer`
+  exception is the `postgres` OS account used by `postgresql-setup` to
+  bootstrap and rotate application-role passwords. Future: row-level security
+  on `core.events`. Optional:
   pgsodium for column-level encryption of CRITICAL-tier fields (financial,
   health). pgsodium is exploratory, not on the active roadmap.
 - **Status**: Role separation implemented. RLS and pgsodium tracked as

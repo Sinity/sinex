@@ -101,9 +101,7 @@ async fn llm_budget_report_aggregates_ledger_events(ctx: TestContext) -> TestRes
 }
 
 #[sinex_test]
-async fn llm_budget_report_empty_rows_explain_missing_producer(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn llm_budget_report_empty_rows_explain_missing_producer(ctx: TestContext) -> TestResult<()> {
     let report = handle_llm_budget_report(ctx.pool(), LlmBudgetReportRequest { limit: 10 }).await?;
 
     assert_eq!(report.total_rows, 0);
@@ -114,7 +112,10 @@ async fn llm_budget_report_empty_rows_explain_missing_producer(
         .expect("empty budget report must expose source.absent caveat");
     assert!(caveat.message.contains("no ledger rows"));
     assert_eq!(
-        caveat.ref_.as_ref().map(|object_ref| object_ref.id.as_str()),
+        caveat
+            .ref_
+            .as_ref()
+            .map(|object_ref| object_ref.id.as_str()),
         Some("llm.budget.ledger")
     );
     Ok(())

@@ -8,16 +8,13 @@ use crate::api::replay_control::{
 };
 use crate::event_engine::policy::PolicyEngine;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
-use sinex_db::validation::{EventValidator, SchemaCompilationFailure};
-use sinex_db::{DbPoolExt, create_pool_with_config};
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
+use sinex_db::validation::{EventValidator, SchemaCompilationFailure};
+use sinex_db::{DbPoolExt, create_pool_with_config};
 use sinex_primitives::{
-    Result as SinexResult,
-    RuntimeLivenessAggregate, RuntimeLivenessPolicy, Timestamp,
-    coordination::CoordinationKvClient,
-    environment as sinex_environment,
-    error::SinexError,
+    Result as SinexResult, RuntimeLivenessAggregate, RuntimeLivenessPolicy, Timestamp,
+    coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
 };
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -122,12 +119,10 @@ async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> SinexRe
                 .recover_replay_archive("system:sinexd-startup-recovery", replay_operation_id)
                 .await
                 .map_err(|error| {
-                    SinexError::service(
-                        "Failed to recover terminal replay archive debt on startup",
-                    )
-                    .with_operation("gateway.recover_failed_replay_archive_debt")
-                    .with_id("replay_operation_id", replay_operation_id.to_string())
-                    .with_source(error.to_string())
+                    SinexError::service("Failed to recover terminal replay archive debt on startup")
+                        .with_operation("gateway.recover_failed_replay_archive_debt")
+                        .with_id("replay_operation_id", replay_operation_id.to_string())
+                        .with_source(error.to_string())
                 })?;
         }
     }
@@ -655,15 +650,18 @@ pub(crate) fn aggregate_gateway_health_report(
     }
     if !runtime_liveness.healthy {
         degradation_reasons.push(
-            runtime_liveness.observation_error.clone().unwrap_or_else(|| {
-                format!(
-                    "runtime liveness: {} unhealthy, {} stale, {} degraded, {} unknown",
-                    runtime_liveness.unhealthy_count,
-                    runtime_liveness.stale_count,
-                    runtime_liveness.degraded_count,
-                    runtime_liveness.unknown_count,
-                )
-            }),
+            runtime_liveness
+                .observation_error
+                .clone()
+                .unwrap_or_else(|| {
+                    format!(
+                        "runtime liveness: {} unhealthy, {} stale, {} degraded, {} unknown",
+                        runtime_liveness.unhealthy_count,
+                        runtime_liveness.stale_count,
+                        runtime_liveness.degraded_count,
+                        runtime_liveness.unknown_count,
+                    )
+                }),
         );
     }
 
@@ -769,12 +767,12 @@ async fn connect_replay_control_with_backoff(
                 request_timeout,
                 material_authority.clone(),
             )
-                .await
-                .map_err(|err| {
-                    SinexError::service("Failed to initialize replay control")
-                        .with_operation("gateway.spawn_replay_control")
-                        .with_source(err.to_string())
-                })
+            .await
+            .map_err(|err| {
+                SinexError::service("Failed to initialize replay control")
+                    .with_operation("gateway.spawn_replay_control")
+                    .with_source(err.to_string())
+            })
         }
         .await;
 

@@ -384,10 +384,9 @@ impl EventEngineConfig {
         let ts_orig_future_skew_secs: u64 =
             shared_env::strict_parsed("SINEX_EVENT_ENGINE_TS_ORIG_FUTURE_SKEW_SECS")?
                 .unwrap_or_else(default_ts_orig_future_skew_secs);
-        let ts_orig_lower_bound_unix = shared_env::strict_parsed::<i64>(
-            "SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX",
-        )?
-        .or_else(default_ts_orig_lower_bound_unix);
+        let ts_orig_lower_bound_unix =
+            shared_env::strict_parsed::<i64>("SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX")?
+                .or_else(default_ts_orig_lower_bound_unix);
 
         // Construct NatsConnectionConfig from args/environment.
         // Full auth/TLS detail is still supplied via the shared env-first NATS config.

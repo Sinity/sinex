@@ -163,9 +163,7 @@ impl PoolConfig {
             env_parse_override("SINEX_DB_MAX_CONNECTIONS", "database pool max connections")
         {
             config.max_connections = num;
-        } else if let Some(num) =
-            env_parse_override("SINEX_DB_POOL_SIZE", "database pool size")
-        {
+        } else if let Some(num) = env_parse_override("SINEX_DB_POOL_SIZE", "database pool size") {
             config.max_connections = num;
         } else if let Some(num) =
             env_parse_override("SINEX_DATABASE_POOL_SIZE", "database pool size")

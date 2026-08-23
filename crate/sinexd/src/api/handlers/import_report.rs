@@ -244,8 +244,8 @@ mod tests {
     use sinex_db::repositories::{
         ImportEventRow, ImportReplacementRow, Operation, OperationRecord,
     };
-    use sinex_primitives::domain::OperationStatus;
     use sinex_primitives::Id;
+    use sinex_primitives::domain::OperationStatus;
 
     #[test]
     fn archived_operation_output_remains_in_replacement_report() {

@@ -1758,8 +1758,14 @@ async fn mcp_source_remediation_plan_call_uses_gateway_fixture() -> TestResult<(
         "/realm/data/captures/fixture.jsonl"
     );
     assert_eq!(response["query_echo"]["include_empty"], true);
-    assert_eq!(response["payload"]["result"]["summary"]["total_candidates"], 1);
-    assert_eq!(response["payload"]["result"]["items"][0]["decision"], "inspect");
+    assert_eq!(
+        response["payload"]["result"]["summary"]["total_candidates"],
+        1
+    );
+    assert_eq!(
+        response["payload"]["result"]["items"][0]["decision"],
+        "inspect"
+    );
     assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
@@ -1775,10 +1781,7 @@ async fn mcp_source_package_completeness_call_uses_gateway_fixture() -> TestResu
         response["source_surface"],
         "sinex_source_package_completeness"
     );
-    assert_eq!(
-        response["payload"]["result"]["summary"]["package_count"],
-        1
-    );
+    assert_eq!(response["payload"]["result"]["summary"]["package_count"], 1);
     assert_eq!(
         response["payload"]["result"]["packages"][0]["package_id"],
         "terminal.kitty-osc-live"

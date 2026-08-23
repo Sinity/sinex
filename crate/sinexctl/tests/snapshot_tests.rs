@@ -70,10 +70,7 @@ async fn snapshot_structured_completion_shape() -> TestResult<()> {
         );
     }
     assert_eq!(hyprland["stale"], true);
-    assert_eq!(
-        hyprland["privacy"],
-        "metadata-only"
-    );
+    assert_eq!(hyprland["privacy"], "metadata-only");
     Ok(())
 }
 

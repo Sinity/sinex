@@ -158,8 +158,8 @@ async fn test_validate_rejects_run_only_flags() -> ::xtask::sandbox::TestResult<
 }
 
 #[sinex_test]
-async fn test_resolve_vm_tests_rejects_empty_requested_category()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_resolve_vm_tests_rejects_empty_requested_category() -> ::xtask::sandbox::TestResult<()>
+{
     let available_tests = Vec::new();
     let error = resolve_vm_tests_to_run(&available_tests, Some("smoke"), &[], "x86_64-linux")
         .expect_err("empty smoke category must not pass as a gate");
@@ -171,8 +171,8 @@ async fn test_resolve_vm_tests_rejects_empty_requested_category()
 }
 
 #[sinex_test]
-async fn test_resolve_vm_tests_keeps_exported_category_members()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_resolve_vm_tests_keeps_exported_category_members() -> ::xtask::sandbox::TestResult<()>
+{
     let available_tests = vec!["basic".to_string(), "runtime-matrix".to_string()];
     let tests = resolve_vm_tests_to_run(&available_tests, Some("smoke"), &[], "x86_64-linux")?;
 
@@ -353,6 +353,24 @@ error: Cannot build '/nix/store/a1ya883515vqnfs96g9pwphbv6kq588f-sinex-vm-runtim
     assert!(summary.contains("error: could not compile `sinexd`"));
     assert!(summary.contains("signal: 15, SIGTERM: termination signal"));
     assert!(summary.contains("nix log /nix/store/a1ya883515vqnfs96g9pwphbv6kq588f"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_summarize_vm_failure_output_prefers_assertion_over_later_success()
+-> ::xtask::sandbox::TestResult<()> {
+    let output = "\
+vm-test-run-sinex-postgres-local-auth> !!! RequestedAssertionFailed: application socket required no password
+sinex-vm-runtime> SUCCESS: unrelated checked derivation is valid
+error: Cannot build '/nix/store/example-vm-test.drv'.
+";
+
+    let summary = summarize_vm_failure_output(output).expect("summary should be extracted");
+
+    assert_eq!(
+        summary,
+        "RequestedAssertionFailed: application socket required no password"
+    );
     Ok(())
 }
 

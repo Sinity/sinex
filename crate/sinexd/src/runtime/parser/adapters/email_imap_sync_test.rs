@@ -36,8 +36,8 @@ async fn debug_redacts_through_client_wrapper() -> xtask::sandbox::TestResult<()
 }
 
 #[sinex_test]
-async fn debug_marks_absent_access_token_without_leaking_none_as_secret() -> xtask::sandbox::TestResult<()>
-{
+async fn debug_marks_absent_access_token_without_leaking_none_as_secret()
+-> xtask::sandbox::TestResult<()> {
     let mut cfg = config();
     cfg.access_token = None;
     let rendered = format!("{:?}", cfg);

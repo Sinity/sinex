@@ -3,9 +3,9 @@ use super::{
     RawStreamWorkQueueRecreationDecision, raw_events_stream_config,
     raw_stream_workqueue_recreation_decision,
 };
+use futures::StreamExt;
 use sinex_primitives::environment::SinexEnvironment;
 use sinex_primitives::nats::{JetStreamEventLane, JetStreamTopology};
-use futures::StreamExt;
 use std::time::Duration;
 use xtask::sandbox::{sinex_test, timing::Timeouts};
 
@@ -120,15 +120,11 @@ async fn confirmed_discard_old_stream_accepts_past_message_cap(
     let js = async_nats::jetstream::new(ctx.nats_client());
     let stream = format!(
         "confirmed_discard_old_{}",
-        sinex_primitives::Uuid::now_v7()
-            .to_string()
-            .to_lowercase()
+        sinex_primitives::Uuid::now_v7().to_string().to_lowercase()
     );
     let subject = format!(
         "test.confirmed.discard_old.{}",
-        sinex_primitives::Uuid::now_v7()
-            .to_string()
-            .to_lowercase()
+        sinex_primitives::Uuid::now_v7().to_string().to_lowercase()
     );
 
     js.create_stream(async_nats::jetstream::stream::Config {
@@ -175,21 +171,15 @@ async fn raw_workqueue_stream_removes_acked_messages(
     let js = async_nats::jetstream::new(ctx.nats_client());
     let stream = format!(
         "raw_workqueue_{}",
-        sinex_primitives::Uuid::now_v7()
-            .to_string()
-            .to_lowercase()
+        sinex_primitives::Uuid::now_v7().to_string().to_lowercase()
     );
     let subject = format!(
         "test.raw.workqueue.{}",
-        sinex_primitives::Uuid::now_v7()
-            .to_string()
-            .to_lowercase()
+        sinex_primitives::Uuid::now_v7().to_string().to_lowercase()
     );
     let durable = format!(
         "raw_workqueue_consumer_{}",
-        sinex_primitives::Uuid::now_v7()
-            .to_string()
-            .to_lowercase()
+        sinex_primitives::Uuid::now_v7().to_string().to_lowercase()
     );
 
     let stream_handle = js
@@ -245,10 +235,7 @@ async fn raw_workqueue_stream_removes_acked_messages(
     }
     drop(batch);
 
-    assert_eq!(
-        processed, 50,
-        "expected to drain all workqueue messages"
-    );
+    assert_eq!(processed, 50, "expected to drain all workqueue messages");
 
     let mut raw_stream = js.get_stream(&stream).await?;
     let info = raw_stream.info().await?;

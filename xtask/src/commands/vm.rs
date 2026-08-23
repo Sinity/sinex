@@ -52,8 +52,8 @@ const CHAOS_TESTS: &[&str] = &[
     "chaos-spool-rename-durability",
     "xtask-concurrency",
 ];
-/// End-to-end production-shape proof (#1135): source -> NATS -> event engine -> DB -> API.
-const PRODUCTION_SHAPE_TESTS: &[&str] = &["production-shape"];
+/// Production-shape proofs: local database authentication plus source -> NATS -> event engine -> DB -> API.
+const PRODUCTION_SHAPE_TESTS: &[&str] = &["postgres-local-auth", "production-shape"];
 
 /// Default timeout per test in seconds (15 minutes).
 pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
@@ -535,6 +535,7 @@ fn extract_signal_summary(line: &str) -> Option<String> {
 }
 
 fn summarize_vm_failure_output(output: &str) -> Option<String> {
+    let mut assertion_failure = None;
     let mut compile_error = None;
     let mut signal = None;
     let mut primary_error = None;
@@ -559,6 +560,12 @@ fn summarize_vm_failure_output(output: &str) -> Option<String> {
             continue;
         }
 
+        if assertion_failure.is_none()
+            && (candidate.starts_with("RequestedAssertionFailed:")
+                || candidate.starts_with("!!! RequestedAssertionFailed:"))
+        {
+            assertion_failure = Some(candidate.trim_start_matches("!!! ").to_string());
+        }
         if compile_error.is_none() && candidate.starts_with("error: could not compile ") {
             compile_error = Some(candidate.clone());
         }
@@ -574,7 +581,11 @@ fn summarize_vm_failure_output(output: &str) -> Option<String> {
     }
 
     let mut parts = Vec::new();
-    if let Some(error) = compile_error.or(primary_error).or(cannot_build) {
+    if let Some(error) = assertion_failure
+        .or(compile_error)
+        .or(primary_error)
+        .or(cannot_build)
+    {
         parts.push(error);
     }
     if let Some(signal) = signal {
@@ -921,8 +932,8 @@ async fn run_single_vm_test(
     while let Ok(summary) = summary_rx.try_recv() {
         last_summary = Some(summary);
     }
-    if !passed && !timed_out && last_summary.is_none() {
-        last_summary = summarize_vm_failure_output(&combined_output);
+    if !passed && !timed_out {
+        last_summary = summarize_vm_failure_output(&combined_output).or(last_summary);
     }
 
     VmTestResult {
@@ -1018,7 +1029,8 @@ async fn execute_test(
         return Ok(CommandResult::success().with_message("listed exported VM checks"));
     }
 
-    let tests_to_run = resolve_vm_tests_to_run(&available_tests, category, explicit_tests, &system)?;
+    let tests_to_run =
+        resolve_vm_tests_to_run(&available_tests, category, explicit_tests, &system)?;
 
     if ctx.is_human() {
         println!("\n{}", style("NixOS VM Tests").bold());
@@ -1225,8 +1237,9 @@ async fn run_sequential(
     results
 }
 
+const VM_VALIDATION_NIXPKGS_EXPR: &str = "import <nixpkgs> { config.allowUnfree = true; }";
 const VM_VALIDATION_DUMMY_PACKAGE_EXPR: &str =
-    r#"(import <nixpkgs> {}).runCommand "dummy" {} "mkdir -p $out""#;
+    r#"(import <nixpkgs> { config.allowUnfree = true; }).runCommand "dummy" {} "mkdir -p $out""#;
 
 fn run_vm_validation_probe(
     target: &Path,
@@ -1237,10 +1250,7 @@ fn run_vm_validation_probe(
         .args([
             "--arg",
             "pkgs",
-            "import <nixpkgs> {}",
-            "--arg",
-            "sinexd",
-            VM_VALIDATION_DUMMY_PACKAGE_EXPR,
+            VM_VALIDATION_NIXPKGS_EXPR,
             "--arg",
             "sinexd",
             VM_VALIDATION_DUMMY_PACKAGE_EXPR,
@@ -1290,7 +1300,7 @@ fn validate_vm_test_file(file: &Path, workspace_root: &Path, ctx: &CommandContex
         Ok(output) => {
             if ctx.is_human() {
                 println!(
-                    "  {} Syntax error: {} ({})",
+                    "  {} Validation error: {} ({})",
                     style("✗").red(),
                     file.display(),
                     first_stderr_detail(&output)
@@ -1311,7 +1321,7 @@ fn validate_vm_test_file(file: &Path, workspace_root: &Path, ctx: &CommandContex
     }
 }
 
-/// Validate nix syntax of VM test scenario files.
+/// Validate VM scenario evaluation against the fixture package interface.
 fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("vm validate");
 
@@ -1476,7 +1486,7 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
 
     if !validate_ok {
         bail!(
-            "{failed} test file(s) have syntax errors; {probe_failures} validation probe(s) failed"
+            "{failed} test file(s) failed VM scenario validation; {probe_failures} validation probe(s) failed"
         );
     }
 

@@ -1,6 +1,4 @@
-use crate::fmt::{
-    format_yaml, print_finite_envelope, render_envelope, truncate_str_boundary_safe,
-};
+use crate::fmt::{format_yaml, print_finite_envelope, render_envelope, truncate_str_boundary_safe};
 use crate::model::OutputFormat;
 use crate::parse::parse_duration;
 use clap::Args;
@@ -8,10 +6,6 @@ use color_eyre::Result;
 use console::style;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_primitives::{
-    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
-    evaluate_runtime_liveness,
-};
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::privacy::{load_private_mode_state, resolve_private_mode_state_dir};
 use sinex_primitives::query::{
@@ -25,6 +19,10 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     EVENT_ERROR_LIST_SCHEMA_VERSION, EventCardListView, EventCardView, EventErrorListView,
     ViewEnvelope,
+};
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    evaluate_runtime_liveness,
 };
 use sinex_primitives::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,

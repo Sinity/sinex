@@ -3,8 +3,7 @@ use std::ffi::OsString;
 use std::sync::LazyLock;
 use xtask::sandbox::sinex_test;
 
-static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(()));
+static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 fn restore_var(key: &str, value: Option<OsString>) {
     match value {

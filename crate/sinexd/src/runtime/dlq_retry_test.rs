@@ -230,8 +230,8 @@ async fn dlq_requeue_target_decodes_exact_raw_bytes() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_requeue_target_rejects_privacy_suppressed_parse_failure_as_raw_input(
-) -> TestResult<()> {
+async fn dlq_requeue_target_rejects_privacy_suppressed_parse_failure_as_raw_input() -> TestResult<()>
+{
     let mut headers = async_nats::HeaderMap::new();
     headers.insert("Original-Subject", "events.raw.shell.command");
     let payload = serde_json::json!({

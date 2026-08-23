@@ -250,12 +250,9 @@ fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<V
         let content = fs::read_to_string(&full_path)
             .wrap_err_with(|| format!("failed to read {}", full_path.display()))?;
 
-        if test_names
-            .iter()
-            .any(|test_name| {
-                path_or_content_mentions_test_name(&relative_path, &content, test_name)
-            })
-            && let Some(package) = package_for_path(&relative_path)
+        if test_names.iter().any(|test_name| {
+            path_or_content_mentions_test_name(&relative_path, &content, test_name)
+        }) && let Some(package) = package_for_path(&relative_path)
         {
             packages.insert(package);
         }

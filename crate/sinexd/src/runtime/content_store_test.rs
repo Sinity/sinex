@@ -482,7 +482,11 @@ async fn post_rename_directory_sync_failure_is_not_acknowledged_and_reingests()
         .store_file(&source_path)
         .await
         .expect_err("post-rename directory sync failure must not acknowledge ingestion");
-    assert!(error.to_string().contains("injected directory sync failure"));
+    assert!(
+        error
+            .to_string()
+            .contains("injected directory sync failure")
+    );
 
     let digest = blake3::hash(payload).to_hex().to_string();
     let key = format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{}--{digest}", payload.len());

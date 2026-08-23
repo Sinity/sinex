@@ -3,8 +3,8 @@ use super::test_support::{build_test_assembler, build_test_content_store};
 use super::{
     MaterialAssembler, disk_usage_allows_assembly, maintenance::MaterialTaskOutcome, signal_ready,
 };
-use crate::event_engine::durable_failure::DURABLE_FAILURE_ID_HEADER;
 use crate::event_engine::MaterialReadySet;
+use crate::event_engine::durable_failure::DURABLE_FAILURE_ID_HEADER;
 use sinex_db::DbPoolExt;
 use sinex_primitives::{Id, domain::MaterialStatus};
 #[cfg(unix)]
@@ -94,7 +94,10 @@ async fn material_dlq_requires_and_records_durable_evidence(ctx: TestContext) ->
         .get_stream(&dlq_stream_name)
         .await?;
     let dlq_info = dlq_stream.info().await?;
-    assert_eq!(dlq_info.config.subjects, vec![assembler.dlq_subject.clone()]);
+    assert_eq!(
+        dlq_info.config.subjects,
+        vec![assembler.dlq_subject.clone()]
+    );
     let material_id = uuid::Uuid::now_v7();
     let durable_failure_id = assembler
         .route_material_error(
@@ -242,7 +245,13 @@ async fn disk_backpressure_allows_high_percent_with_large_free_floor() -> TestRe
     let available_blocks = 84 * one_gib_blocks;
 
     assert!(
-        disk_usage_allows_assembly(total_blocks, available_blocks, 1024, 90, 4 * 1024 * 1024 * 1024),
+        disk_usage_allows_assembly(
+            total_blocks,
+            available_blocks,
+            1024,
+            90,
+            4 * 1024 * 1024 * 1024
+        ),
         "91% used on a large filesystem with 84 GiB free must not reject tiny assemblies"
     );
     Ok(())
@@ -365,10 +374,9 @@ async fn wait_for_material_tasks_times_out_hung_tasks() -> TestResult<()> {
         ("material stale cleanup task", Ok(Ok(())))
     });
 
-    let error =
-        MaterialAssembler::wait_for_material_tasks(&mut tasks, Duration::from_millis(10))
-            .await
-            .expect("hung task should time out");
+    let error = MaterialAssembler::wait_for_material_tasks(&mut tasks, Duration::from_millis(10))
+        .await
+        .expect("hung task should time out");
 
     assert!(error.to_string().contains("timed out waiting"));
     assert!(
@@ -380,9 +388,7 @@ async fn wait_for_material_tasks_times_out_hung_tasks() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn assembler_rejects_unrepresentable_max_material_size(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn assembler_rejects_unrepresentable_max_material_size(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (content_store, _content_store_dir) =
         build_test_content_store("oversized-config-test").await?;

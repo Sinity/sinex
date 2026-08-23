@@ -1004,7 +1004,10 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             "{}",
             Self::format_direct_scan_import_receipt(report, adjudication_candidates)
         );
-        println!("Operation: {} ({})", report.operation_id, report.operation_status);
+        println!(
+            "Operation: {} ({})",
+            report.operation_id, report.operation_status
+        );
     }
 
     fn format_direct_scan_import_receipt(

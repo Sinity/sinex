@@ -260,10 +260,7 @@ fn browser_observation_equivalence_key(
             ("profile_id".to_string(), profile_id.to_string()),
             (
                 "tab_id".to_string(),
-                tab_id
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
+                tab_id.as_ref().map(ToString::to_string).unwrap_or_default(),
             ),
             ("url".to_string(), url.clone()),
             ("observed_at".to_string(), observed_at.format_rfc3339()),

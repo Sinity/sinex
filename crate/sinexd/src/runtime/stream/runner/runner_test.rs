@@ -394,11 +394,8 @@ async fn summarizer_confirmed_consumers_stay_narrowed_to_declared_input_types() 
          activity.window.summary type, not a wildcard"
     );
     assert_eq!(hourly_provenance, InputProvenanceFilter::SynthesizedOnly);
-    let hourly_config = RuntimeRunner::automaton_consumer_config(
-        "sinex.hourly",
-        hourly_provenance,
-        hourly_types,
-    );
+    let hourly_config =
+        RuntimeRunner::automaton_consumer_config("sinex.hourly", hourly_provenance, hourly_types);
     assert_eq!(
         hourly_config.event_type_filters,
         vec!["activity.window.summary".to_string()]
@@ -441,10 +438,7 @@ async fn confirmed_consumer_start_gate_captures_concurrent_publication(
     let namespace = format!("i41y-start-gate-{}", Uuid::now_v7());
     let raw_stream = env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS");
     let confirmed_stream = format!("{raw_stream}_CONFIRMED");
-    let confirmed_subject = env.nats_subject_with_namespace(
-        Some(&namespace),
-        "events.confirmed.>",
-    );
+    let confirmed_subject = env.nats_subject_with_namespace(Some(&namespace), "events.confirmed.>");
     let js = jetstream::new(client.clone());
 
     js.create_stream(jetstream::stream::Config {
@@ -526,7 +520,9 @@ async fn confirmed_consumer_start_gate_captures_concurrent_publication(
         .map_err(|_| color_eyre::eyre::eyre!("consumer start gate receiver was dropped"))?;
     tokio::time::timeout(Duration::from_secs(3), handler.received.notified())
         .await
-        .map_err(|_| color_eyre::eyre::eyre!("confirmed event was not delivered after gate release"))?;
+        .map_err(|_| {
+            color_eyre::eyre::eyre!("confirmed event was not delivered after gate release")
+        })?;
 
     let received_events = handler.events.lock().await;
     assert_eq!(received_events.len(), 1);
@@ -593,7 +589,9 @@ impl RuntimeModule for FailingInitModule {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
-        Err(SinexError::processing("deliberate module init failure (sinex-q102 test)"))
+        Err(SinexError::processing(
+            "deliberate module init failure (sinex-q102 test)",
+        ))
     }
 
     async fn scan(

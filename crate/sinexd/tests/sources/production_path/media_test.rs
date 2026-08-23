@@ -76,8 +76,7 @@ const SCREEN_OCR_MANIFEST: &[u8] = br#"{
 }"#;
 
 #[sinex_test]
-async fn media_audio_production_path_keeps_arrow_text_out_of_timed_parser()
--> TestResult<()> {
+async fn media_audio_production_path_keeps_arrow_text_out_of_timed_parser() -> TestResult<()> {
     let bytes = b"handoff A --> B\n";
     let dispatch = sinexd::sources::dispatch::default_parser_dispatch();
     let outcome = dispatch("media.audio-transcript", bytes, None)

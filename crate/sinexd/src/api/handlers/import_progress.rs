@@ -39,8 +39,8 @@ pub async fn handle_sources_import_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{NatsPublisher, PacingController, RateBudget};
     use crate::runtime::scan_progress::ScanProgressTracker;
+    use crate::runtime::{NatsPublisher, PacingController, RateBudget};
     use sinex_primitives::temporal::Timestamp;
     use xtask::sandbox::prelude::*;
 

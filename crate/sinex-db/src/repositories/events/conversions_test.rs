@@ -95,8 +95,8 @@ async fn test_try_to_event_rejects_invalid_claim_support() -> xtask::sandbox::Te
 /// `derivation_epoch_id`/`derivation_lane_id`/`adjudication_event_id` back
 /// into their typed `Event<T>` counterparts, not just pass `None` through.
 #[sinex_test]
-async fn test_try_to_event_parses_derivation_control_plane_fields()
--> xtask::sandbox::TestResult<()> {
+async fn test_try_to_event_parses_derivation_control_plane_fields() -> xtask::sandbox::TestResult<()>
+{
     use sinex_primitives::derivation::{
         AdjudicationStatus, ClaimSupport, ClaimTemporalQuality, DerivedProductClass,
         SourceCoverage, SupportLevel,
@@ -122,7 +122,10 @@ async fn test_try_to_event_parses_derivation_control_plane_fields()
     record.derivation_lane_id = Some(lane_id);
 
     let event = record.try_to_event()?;
-    assert_eq!(event.product_class, Some(DerivedProductClass::AnalysisClaim));
+    assert_eq!(
+        event.product_class,
+        Some(DerivedProductClass::AnalysisClaim)
+    );
     assert_eq!(event.claim_support, Some(claim_support));
     assert_eq!(
         event.claim_support.as_ref().map(ClaimSupport::adjudication),

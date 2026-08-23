@@ -22,10 +22,11 @@ async fn gateway_stats_projection_maps_existing_telemetry_to_metrics()
     assert_eq!(view.signal, OtelSignalKind::Metrics);
     assert_eq!(view.metric_count(), 5);
     assert_eq!(view.point_count(), 5);
-    assert!(view.metrics.iter().any(|metric| metric.name
-        == "sinex.gateway.requests.rate_limited"
-        && metric.kind == OtelMetricKind::Sum
-        && metric.aggregation_temporality == OtelAggregationTemporality::Delta));
+    assert!(view.metrics.iter().any(
+        |metric| metric.name == "sinex.gateway.requests.rate_limited"
+            && metric.kind == OtelMetricKind::Sum
+            && metric.aggregation_temporality == OtelAggregationTemporality::Delta
+    ));
     Ok(())
 }
 

@@ -380,7 +380,7 @@ in
               <literal>sinex-local-db</literal> / <literal>sinex-remote-db</literal>
               and the declarative files <literal>/etc/sinex/db-password</literal> /
               <literal>/etc/sinex/remote-db-password</literal>.
-              Local loopback deployments using <literal>localAuth = "trust"</literal>
+              Explicit development deployments using <literal>localAuth = "trust"</literal>
               usually do not need this at all.
             '';
           };
@@ -389,8 +389,12 @@ in
             type = enum [ "trust" "scram-sha-256" "md5" ];
             default = "scram-sha-256";
             description = ''
-              Authentication method for loopback TCP connections (127.0.0.1/::1).
-              Use "scram-sha-256" to require password authentication, including on loopback.
+              Authentication method for application Unix-socket and loopback TCP
+              connections (127.0.0.1/::1). The managed PostgreSQL setup service
+              retains a separate <literal>peer</literal> rule for the <literal>postgres</literal>
+              OS account so it can initialize and rotate application-role passwords.
+              Use "scram-sha-256" to require password authentication for all
+              application connections, including local sockets and loopback.
               "trust" is reserved for explicitly configured development deployments;
               requires a database password source (services.sinex.database.passwordFile or
               an agenix secret named sinex-local-db / sinex-remote-db).

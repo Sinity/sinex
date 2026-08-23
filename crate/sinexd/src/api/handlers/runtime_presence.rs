@@ -4,17 +4,16 @@
 
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
-use sinex_primitives::{
-    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus,
-    evaluate_runtime_liveness,
-};
+use sinex_primitives::Timestamp;
 use sinex_primitives::rpc::runtime::{
     RuntimeHealthRequest, RuntimeHealthResponse, RuntimeHeartbeatSource, RuntimeInfo,
     RuntimeListActiveRequest, RuntimeListActiveResponse,
 };
+use sinex_primitives::{
+    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus, evaluate_runtime_liveness,
+};
 use sqlx::PgPool;
 use std::time::Duration;
-use sinex_primitives::Timestamp;
 
 type Result<T> = std::result::Result<T, SinexError>;
 

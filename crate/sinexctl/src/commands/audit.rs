@@ -99,11 +99,10 @@ fn audit_envelope(
     response: AuditGetResponse,
     operation_id: &str,
 ) -> ViewEnvelope<AuditGetResponse> {
-    let mut envelope = ViewEnvelope::new("sinexctl.ops.audit", response).with_query_echo(
-        serde_json::json!({
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.ops.audit", response).with_query_echo(serde_json::json!({
             "operation_id": operation_id,
-        }),
-    );
+        }));
     envelope.caveats = audit_caveats(&envelope.payload, operation_id);
     envelope
 }

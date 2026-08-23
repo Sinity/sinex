@@ -130,8 +130,8 @@ async fn enabling_binding_without_criticality_fails_loudly() -> xtask::sandbox::
 }
 
 #[sinex_test]
-async fn enabling_binding_with_invalid_recovery_policy_fails_loudly(
-) -> xtask::sandbox::TestResult<()> {
+async fn enabling_binding_with_invalid_recovery_policy_fails_loudly()
+-> xtask::sandbox::TestResult<()> {
     let manifest_binding = SourceBinding {
         source_id: INVALID_RECOVERY_FIXTURE_SOURCE_ID.to_string(),
         instance_idx: 1,

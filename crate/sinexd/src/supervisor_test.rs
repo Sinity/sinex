@@ -72,8 +72,7 @@ async fn runtime_retry_backoff_has_bounded_jitter() -> xtask::sandbox::TestResul
 }
 
 #[sinex_test]
-async fn runtime_retry_backoff_stays_capped_at_the_ladder_max()
--> xtask::sandbox::TestResult<()> {
+async fn runtime_retry_backoff_stays_capped_at_the_ladder_max() -> xtask::sandbox::TestResult<()> {
     let first = jittered_runtime_backoff(Duration::from_secs(30), 0);
     let second = jittered_runtime_backoff(Duration::from_secs(30), u64::MAX);
     assert!(first >= Duration::from_secs(15));
@@ -112,10 +111,9 @@ async fn runtime_retry_schedule_jitters_capped_retries_and_resets_after_stabilit
 async fn supervisor_configures_worker_before_spawn_and_stops_pre_ready_retry()
 -> xtask::sandbox::TestResult<()> {
     SUPERVISOR_FAILURE_RUNS.store(0, Ordering::Relaxed);
-    let readiness = HostedReadiness::configured([HostedWorkerId::from(
-        "automaton:test-failing-worker",
-    )])
-    .map_err(|error| color_eyre::eyre::eyre!(error))?;
+    let readiness =
+        HostedReadiness::configured([HostedWorkerId::from("automaton:test-failing-worker")])
+            .map_err(|error| color_eyre::eyre::eyre!(error))?;
     let worker = readiness
         .worker("automaton:test-failing-worker")
         .expect("worker identity must be configured before spawn");

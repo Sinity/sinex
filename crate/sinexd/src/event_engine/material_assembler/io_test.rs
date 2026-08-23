@@ -74,10 +74,7 @@ async fn import_into_content_store_preserves_staging_file_until_cleanup(
         temp_path.exists(),
         "content-store import should preserve the staging file until cleanup succeeds"
     );
-    assembler
-        .content_store
-        .release_write_lease(&lease)
-        .await?;
+    assembler.content_store.release_write_lease(&lease).await?;
     Ok(())
 }
 
@@ -126,9 +123,11 @@ async fn staged_file_fault_is_recoverable_by_slice_redelivery(ctx: TestContext) 
             .build(&ctx)
             .await?;
     let material_id = Uuid::now_v7();
-    assert!(handle_slice(&assembler, material_id, 0, b"retry-me".to_vec())
-        .await
-        .is_err());
+    assert!(
+        handle_slice(&assembler, material_id, 0, b"retry-me".to_vec())
+            .await
+            .is_err()
+    );
     handle_slice(&assembler, material_id, 0, b"retry-me".to_vec()).await?;
     let state = assembler
         .get_state_handle(&material_id)
@@ -148,9 +147,11 @@ async fn wal_fault_is_recoverable_by_slice_redelivery(ctx: TestContext) -> TestR
             .build(&ctx)
             .await?;
     let material_id = Uuid::now_v7();
-    assert!(handle_slice(&assembler, material_id, 0, b"retry-wal".to_vec())
-        .await
-        .is_err());
+    assert!(
+        handle_slice(&assembler, material_id, 0, b"retry-wal".to_vec())
+            .await
+            .is_err()
+    );
     handle_slice(&assembler, material_id, 0, b"retry-wal".to_vec()).await?;
     let state = assembler
         .get_state_handle(&material_id)
@@ -250,7 +251,10 @@ async fn restore_state_truncates_uncommitted_suffix_without_pending_marker(
         .expect("WAL-confirmed prefix should remain recoverable");
     assert_eq!(state.lock().await.expected_offset, 10);
     let bytes = tokio::fs::read(material_dir.join(TEMP_FILE_NAME)).await?;
-    assert_eq!(bytes, b"committed-", "only the WAL-confirmed prefix survives");
+    assert_eq!(
+        bytes, b"committed-",
+        "only the WAL-confirmed prefix survives"
+    );
     Ok(())
 }
 

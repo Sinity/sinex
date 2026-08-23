@@ -44,7 +44,9 @@ const TEST_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaratio
 #[sinex_test]
 async fn finalizer_registry_rejects_bypass(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    pool.product_declarations().insert(&TEST_DECLARATION).await?;
+    pool.product_declarations()
+        .insert(&TEST_DECLARATION)
+        .await?;
 
     let proposal_kind = "sinex-db-test.bypass_check";
     let output_source = "sinex-db-test";
@@ -112,7 +114,9 @@ async fn finalizer_registry_rejects_bypass(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn agent_judgment_not_auto_accepted(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    pool.product_declarations().insert(&TEST_DECLARATION).await?;
+    pool.product_declarations()
+        .insert(&TEST_DECLARATION)
+        .await?;
 
     // Row inserted relying on the DB DEFAULT for requires_human_judgment
     // (raw SQL bypassing the repository's explicit-argument insert, to

@@ -48,7 +48,8 @@ async fn test_empty_directory_yields_zero_records() -> xtask::sandbox::TestResul
 }
 
 #[sinex_test]
-async fn oversized_directory_file_is_rejected_as_a_visible_error() -> xtask::sandbox::TestResult<()> {
+async fn oversized_directory_file_is_rejected_as_a_visible_error() -> xtask::sandbox::TestResult<()>
+{
     let dir = TempDir::new().unwrap();
     let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
     let path = dir.path().join("oversized.bin");

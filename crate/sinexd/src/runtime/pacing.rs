@@ -124,11 +124,7 @@ impl PacingController {
             .map(|rate| rate * BURST_WINDOW.as_secs_f64())
     }
 
-    fn refill_bucket(
-        tokens: Option<f64>,
-        rate: Option<f64>,
-        elapsed: Duration,
-    ) -> Option<f64> {
+    fn refill_bucket(tokens: Option<f64>, rate: Option<f64>, elapsed: Duration) -> Option<f64> {
         let capacity = Self::bucket_capacity(rate)?;
         Some((tokens.unwrap_or(capacity) + rate.unwrap() * elapsed.as_secs_f64()).min(capacity))
     }
@@ -136,16 +132,10 @@ impl PacingController {
     fn refill_tokens(&mut self) {
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(self.tokens_refilled_at);
-        self.event_tokens = Self::refill_bucket(
-            self.event_tokens,
-            self.budget.events_per_sec,
-            elapsed,
-        );
-        self.byte_tokens = Self::refill_bucket(
-            self.byte_tokens,
-            self.budget.bytes_per_sec,
-            elapsed,
-        );
+        self.event_tokens =
+            Self::refill_bucket(self.event_tokens, self.budget.events_per_sec, elapsed);
+        self.byte_tokens =
+            Self::refill_bucket(self.byte_tokens, self.budget.bytes_per_sec, elapsed);
         self.tokens_refilled_at = now;
     }
 
@@ -155,16 +145,12 @@ impl PacingController {
         }
     }
 
-    fn wait_for_bucket(
-        tokens: Option<f64>,
-        rate: Option<f64>,
-        elapsed: Duration,
-    ) -> Duration {
+    fn wait_for_bucket(tokens: Option<f64>, rate: Option<f64>, elapsed: Duration) -> Duration {
         let Some(rate) = rate.filter(|rate| rate.is_finite() && *rate > 0.0) else {
             return Duration::ZERO;
         };
-        let available = tokens.unwrap_or(rate * BURST_WINDOW.as_secs_f64())
-            + rate * elapsed.as_secs_f64();
+        let available =
+            tokens.unwrap_or(rate * BURST_WINDOW.as_secs_f64()) + rate * elapsed.as_secs_f64();
         if available >= 0.0 {
             Duration::ZERO
         } else {
@@ -183,9 +169,7 @@ impl PacingController {
     /// Record a processed batch and sleep until its bounded token debt clears.
     /// No-op when the budget is unlimited on both rate dimensions.
     pub async fn record_and_throttle(&mut self, events: u64, bytes: u64) {
-        let _ = self
-            .record_and_throttle_inner(events, bytes, None)
-            .await;
+        let _ = self.record_and_throttle_inner(events, bytes, None).await;
     }
 
     /// Record a processed batch with a cooperative cancellation source. This
@@ -312,7 +296,10 @@ impl BacklogGate {
     /// `fetch_pending` never reported a signal, e.g. the consumer doesn't
     /// exist yet) — callers that want to surface backlog depth (progress
     /// reporting) get it for free instead of needing a second query.
-    pub async fn wait_for_capacity<F, Fut>(&self, mut fetch_pending: F) -> RuntimeResult<Option<u64>>
+    pub async fn wait_for_capacity<F, Fut>(
+        &self,
+        mut fetch_pending: F,
+    ) -> RuntimeResult<Option<u64>>
     where
         F: FnMut() -> Fut,
         Fut: Future<Output = RuntimeResult<Option<u64>>>,
@@ -441,9 +428,9 @@ impl ScanPacer {
 
     async fn publish_progress_if_due(&mut self, force: bool) {
         let due = force
-            || self
-                .last_progress_publish
-                .is_none_or(|last| last.elapsed() >= crate::runtime::scan_progress::PUBLISH_INTERVAL);
+            || self.last_progress_publish.is_none_or(|last| {
+                last.elapsed() >= crate::runtime::scan_progress::PUBLISH_INTERVAL
+            });
         if !due {
             return;
         }

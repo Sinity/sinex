@@ -919,8 +919,7 @@ pub(crate) fn local_runtime_env_overrides() -> Vec<(String, String)> {
     let tls_dir = workspace_root().join(".sinex/tls");
     let cert_path = tls_dir.join("server.pem");
     let key_path = tls_dir.join("server-key.pem");
-    if !env_var_present_and_nonempty("SINEX_EVENT_ENGINE_WORK_DIR")
-    {
+    if !env_var_present_and_nonempty("SINEX_EVENT_ENGINE_WORK_DIR") {
         overrides.push((
             "SINEX_EVENT_ENGINE_WORK_DIR".to_string(),
             workspace_root()

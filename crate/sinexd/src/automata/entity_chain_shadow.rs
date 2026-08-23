@@ -64,10 +64,11 @@ use sqlx::PgPool;
 use sinex_db::repositories::{
     CreateDerivationEpoch, CreateDerivationLane, DbPoolExt, LaneOutputRow,
 };
+use sinex_primitives::Uuid;
 use sinex_primitives::derivation::{
     ClaimSupport, ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
-    DerivationScope, DerivationWriteSurface, DerivedProductClass, InputEligibility,
-    LaneDiffReport, SourceCoverage, SupportLevel,
+    DerivationScope, DerivationWriteSurface, DerivedProductClass, InputEligibility, LaneDiffReport,
+    SourceCoverage, SupportLevel,
 };
 use sinex_primitives::domain::EntityTypeName;
 use sinex_primitives::error::{Result, SinexError};
@@ -77,9 +78,10 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::events::{CurationJudgmentActorKind, Event, EventPayload};
 use sinex_primitives::rpc::curation::CurationFinalizeRequest;
-use sinex_primitives::semantic::{EntityRelationLaneOutputs, SemanticEntityOutput, SemanticRelationOutput};
+use sinex_primitives::semantic::{
+    EntityRelationLaneOutputs, SemanticEntityOutput, SemanticRelationOutput,
+};
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::Uuid;
 
 use crate::automata::entity_enricher::refine_category;
 use crate::automata::entity_extractor::{extract_text_fields, find_first_entity};
@@ -105,8 +107,8 @@ const ENTITY_CHAIN_STREAM: &str = "core.events";
 pub const ENTITY_CHAIN_SHADOW_DECLARATION_ID: &str =
     "entity-chain-shadow.entity_relation.semantic_candidate";
 
-pub const ENTITY_CHAIN_SHADOW_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
-    &[DerivationOutputDeclaration {
+pub const ENTITY_CHAIN_SHADOW_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] = &[
+    DerivationOutputDeclaration {
         declaration_id: ENTITY_CHAIN_SHADOW_DECLARATION_ID,
         owner: "entity-chain-shadow",
         product_class: DerivedProductClass::SemanticCandidate,
@@ -122,9 +124,9 @@ pub const ENTITY_CHAIN_SHADOW_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration
         // `run_entity_chain` below (never taken from this template) — this
         // is only the FK-bound placeholder the declaration itself carries.
         default_support: ClaimSupportTemplate::UNKNOWN,
-        verification_command:
-            "xtask test -p sinexd -E 'test(entity_chain_stream_checkpoint_shadow_lane)'",
-    }];
+        verification_command: "xtask test -p sinexd -E 'test(entity_chain_stream_checkpoint_shadow_lane)'",
+    },
+];
 
 /// `authority.finalizer_registry` declaration authorizing promotion of an
 /// entity-chain shadow-lane `entity.related` candidate (sinex-0vx.9),
@@ -136,22 +138,22 @@ pub const ENTITY_CHAIN_SHADOW_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration
 /// [`promote_entity_related_output`] and by
 /// `entity_chain_finalizer_targets_curation_finalized_declaration` in the
 /// test module.
-pub const ENTITY_CHAIN_RELATION_FINALIZER_DECLARATIONS: &[crate::authority::FinalizerDeclaration] =
-    &[crate::authority::FinalizerDeclaration {
-        finalizer_id: "entity-chain-shadow.entity.related",
-        proposal_kind: "entity.related",
-        output_source: "relation-extractor",
-        output_event_type: "entity.related",
-        output_product_class: DerivedProductClass::ReportArtifact,
-        derivation_declaration_id: crate::api::handlers::curation::CURATION_FINALIZED_DECLARATION
-            .declaration_id,
-        // Safe default posture (0vx design decision (a)): promotion always
-        // requires a human/policy-granted confirmation, same as every other
-        // registered finalizer.
-        requires_human_judgment: true,
-        auto_accept_policy: None,
-        registered_by: "entity-chain-shadow",
-    }];
+pub const ENTITY_CHAIN_RELATION_FINALIZER_DECLARATIONS:
+    &[crate::authority::FinalizerDeclaration] = &[crate::authority::FinalizerDeclaration {
+    finalizer_id: "entity-chain-shadow.entity.related",
+    proposal_kind: "entity.related",
+    output_source: "relation-extractor",
+    output_event_type: "entity.related",
+    output_product_class: DerivedProductClass::ReportArtifact,
+    derivation_declaration_id: crate::api::handlers::curation::CURATION_FINALIZED_DECLARATION
+        .declaration_id,
+    // Safe default posture (0vx design decision (a)): promotion always
+    // requires a human/policy-granted confirmation, same as every other
+    // registered finalizer.
+    requires_human_judgment: true,
+    auto_accept_policy: None,
+    registered_by: "entity-chain-shadow",
+}];
 
 /// One `core.events` row read back for shadow-lane processing.
 struct StreamCheckpointEventRow {
@@ -182,7 +184,8 @@ pub async fn freeze_entity_chain_stream_checkpoint(
     .fetch_one(pool)
     .await
     .map_err(|error| {
-        SinexError::database("count entity-chain shadow-lane candidate events").with_std_error(&error)
+        SinexError::database("count entity-chain shadow-lane candidate events")
+            .with_std_error(&error)
     })?;
     let end_seq = u64::try_from(matching).unwrap_or(0);
     if end_seq < start_seq {
@@ -292,7 +295,9 @@ struct BatchWindowEntry {
 /// `events` slice in the same order always produces the same outputs and
 /// row set, which is what makes a re-run over the identical frozen scope
 /// byte-reproducible.
-fn run_entity_chain(events: &[StreamCheckpointEventRow]) -> (EntityRelationLaneOutputs, Vec<LaneOutputRow>) {
+fn run_entity_chain(
+    events: &[StreamCheckpointEventRow],
+) -> (EntityRelationLaneOutputs, Vec<LaneOutputRow>) {
     let mut known_entities: HashMap<String, Uuid> = HashMap::new();
     let mut entity_outputs: Vec<SemanticEntityOutput> = Vec::new();
     let mut rows: Vec<LaneOutputRow> = Vec::new();
@@ -356,11 +361,13 @@ fn run_entity_chain(events: &[StreamCheckpointEventRow]) -> (EntityRelationLaneO
         // ── Stage 3: relation-extractor co-occurrence window (batched port
         // of `relation_extractor::reconcile`/`drain_and_emit_pairs`) ──────
         let now = event.ts_orig;
-        let gap_triggered = last_seen.is_some_and(|last| now - last >= Duration::seconds(WINDOW_GAP_SECS));
+        let gap_triggered =
+            last_seen.is_some_and(|last| now - last >= Duration::seconds(WINDOW_GAP_SECS));
         let age_triggered = window_started_at
             .is_some_and(|opened| now - opened >= Duration::seconds(WINDOW_FORCE_EMIT_SECS));
         let capacity_triggered = window.len() >= MAX_WINDOW_ENTITIES;
-        let should_close = (gap_triggered || age_triggered || capacity_triggered) && window.len() >= 2;
+        let should_close =
+            (gap_triggered || age_triggered || capacity_triggered) && window.len() >= 2;
         if should_close {
             drain_relation_pairs(&mut window, &mut relation_outputs, &mut rows);
             window_started_at = None;
@@ -456,7 +463,10 @@ fn drain_relation_pairs(
 /// `ts_orig` rather than observed independently. `adjudication` is always
 /// `Unreviewed` -- promotion is a separate, explicit step
 /// ([`promote_entity_related_output`]), never implicit here.
-fn honest_claim_support(event: &StreamCheckpointEventRow, evidence_event_count: u32) -> ClaimSupport {
+fn honest_claim_support(
+    event: &StreamCheckpointEventRow,
+    evidence_event_count: u32,
+) -> ClaimSupport {
     let source_coverage = if event.source_material_id.is_some() {
         SourceCoverage::Covered
     } else {

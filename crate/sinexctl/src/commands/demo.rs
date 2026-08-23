@@ -211,8 +211,7 @@ impl DemoCommand {
 fn require_confirmation(confirm: bool) -> Result<()> {
     if !confirm {
         return Err(color_eyre::eyre::eyre!(
-            "sinexctl ops demo writes synthetic events directly to DATABASE_URL; "
-                .to_string()
+            "sinexctl ops demo writes synthetic events directly to DATABASE_URL; ".to_string()
                 + "rerun with --confirm to proceed"
         ));
     }

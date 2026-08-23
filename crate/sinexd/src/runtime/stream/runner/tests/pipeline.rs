@@ -467,7 +467,9 @@ async fn automaton_service_route_does_not_wait_for_coordination_leader(
         })??;
     let error = run_result.expect_err("historical catch-up fixture must stop the route");
     assert!(
-        error.to_string().contains("intentional historical catch-up stop"),
+        error
+            .to_string()
+            .contains("intentional historical catch-up stop"),
         "the production route must reach the historical scan: {error:#}"
     );
     Ok(())
@@ -489,10 +491,7 @@ async fn source_service_route_defers_ready_until_snapshot_finishes(
     // Unix-domain socket paths have a small platform limit.  The checkout and
     // xtask artifact paths can already consume most of it, so keep this test
     // socket explicitly short while retaining per-process isolation.
-    let socket_path = std::env::temp_dir().join(format!(
-        "sx-ready-{}.sock",
-        std::process::id()
-    ));
+    let socket_path = std::env::temp_dir().join(format!("sx-ready-{}.sock", std::process::id()));
     let listener = UnixDatagram::bind(&socket_path)?;
     let mut env_guard = EnvGuard::with_keys(&["NOTIFY_SOCKET", "SINEX_SD_NOTIFY_HOSTED"]);
     env_guard.set("NOTIFY_SOCKET", &socket_path);
@@ -523,8 +522,7 @@ async fn source_service_route_defers_ready_until_snapshot_finishes(
     );
 
     snapshot_release.notify_one();
-    let ready_len = tokio::time::timeout(Duration::from_secs(3), listener.recv(&mut buf))
-        .await??;
+    let ready_len = tokio::time::timeout(Duration::from_secs(3), listener.recv(&mut buf)).await??;
     let ready_message = std::str::from_utf8(&buf[..ready_len])?;
     assert!(ready_message.contains("READY=1"));
 

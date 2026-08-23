@@ -217,15 +217,21 @@ impl Supervisor {
                 ))
             }))
             .collect::<Vec<_>>();
-        let hosted_readiness = HostedReadiness::configured(worker_ids)
-            .map_err(SinexError::configuration)?;
-        let automaton_handles =
-            start_automata(selected_automata, shutdown_rx.clone(), hosted_readiness.clone())?;
+        let hosted_readiness =
+            HostedReadiness::configured(worker_ids).map_err(SinexError::configuration)?;
+        let automaton_handles = start_automata(
+            selected_automata,
+            shutdown_rx.clone(),
+            hosted_readiness.clone(),
+        )?;
 
         // Hosted source bindings. Same isolation property: one
         // binding crash is logged and contained, sibling captures continue.
-        let source_binding_handles =
-            start_source_bindings(source_bindings, shutdown_rx.clone(), hosted_readiness.clone())?;
+        let source_binding_handles = start_source_bindings(
+            source_bindings,
+            shutdown_rx.clone(),
+            hosted_readiness.clone(),
+        )?;
 
         info!(
             automata = automaton_handles.len(),
@@ -763,10 +769,7 @@ fn start_source_bindings(
     shutdown_rx: watch::Receiver<bool>,
     readiness: HostedReadiness,
 ) -> Result<Vec<(String, JoinHandle<()>)>> {
-    info!(
-        count = bindings.len(),
-        "starting hosted source bindings"
-    );
+    info!(count = bindings.len(), "starting hosted source bindings");
 
     let mut handles = Vec::with_capacity(bindings.len());
     for binding in bindings {
@@ -825,8 +828,8 @@ fn spawn_source_binding(
                                 );
                                 break;
                             }
-                            let retry_delay =
-                                retry_schedule.next_delay(started.elapsed(), random_jitter_entropy());
+                            let retry_delay = retry_schedule
+                                .next_delay(started.elapsed(), random_jitter_entropy());
                             warn!(
                                 source_binding = %label,
                                 backoff_ms = retry_delay.as_millis(),

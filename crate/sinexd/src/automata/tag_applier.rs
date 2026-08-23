@@ -103,8 +103,7 @@ impl Transducer for TagApplier {
                 .ts_orig
                 .unwrap_or_else(sinex_primitives::Timestamp::now);
             let declaration = &TAG_APPLIER_OUTPUT_DECLARATIONS[0];
-            let equivalence_key =
-                format!("tag-applier:{}:{tag_name}", context.trigger_uuid());
+            let equivalence_key = format!("tag-applier:{}:{tag_name}", context.trigger_uuid());
             let output = DerivedOutput::transduced(
                 KnowledgeTagAppliedPayload {
                     entity_id: context.trigger_uuid(),

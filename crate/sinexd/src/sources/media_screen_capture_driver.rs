@@ -132,8 +132,7 @@ impl ScreenCaptureBackend for CommandScreenCaptureBackend {
                         self.program
                     ))
                 } else {
-                    SinexError::io("failed to spawn screen capture command")
-                        .with_std_error(&error)
+                    SinexError::io("failed to spawn screen capture command").with_std_error(&error)
                 }
             })?;
 
@@ -197,7 +196,10 @@ fn build_screenshot_event(
     request: &ScreenCaptureRequest,
     observed_at: Timestamp,
 ) -> RuntimeResult<Event<JsonValue>> {
-    let region = request.region.as_ref().and_then(|region| parse_region(region));
+    let region = request
+        .region
+        .as_ref()
+        .and_then(|region| parse_region(region));
     let payload = ScreenScreenshotObservedPayload {
         raw_material_id: material_id.to_string(),
         display_id: request.display.clone(),
@@ -210,9 +212,12 @@ fn build_screenshot_event(
         policy_posture: config.policy_posture.clone(),
         observed_at,
     };
-    let event = payload.from_material(material_id).build().map_err(|error| {
-        SinexError::invalid_state(format!("failed to build screenshot event: {error}"))
-    })?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|error| {
+            SinexError::invalid_state(format!("failed to build screenshot event: {error}"))
+        })?;
     event.to_json_event().map_err(|error| {
         SinexError::serialization(format!("failed to serialize screenshot event: {error}"))
     })

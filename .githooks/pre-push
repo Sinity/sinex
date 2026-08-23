@@ -60,36 +60,68 @@ _sinex_pre_push_nats_port() {
   printf '%s' "$((4222 + (first_byte % 100)))"
 }
 
+_sinex_pre_push_pg_bin() {
+  local rc candidate
+  if [[ -n "${SINEX_PG_BIN:-}" && -x "${SINEX_PG_BIN}/postgres" ]]; then
+    printf '%s\n' "$SINEX_PG_BIN"
+    return 0
+  fi
+  while IFS= read -r rc; do
+    candidate="$(sed -n "s/^SINEX_PG_BIN='\([^']*\)'$/\1/p" "$rc" | sed -n '1p')"
+    if [[ -n "$candidate" && -x "$candidate/postgres" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(find "$REPO_ROOT/.direnv" -maxdepth 1 -name 'flake-profile-*.rc' -type f -printf '%T@ %p\n' 2>/dev/null | sort -nr | sed 's/^[^ ]* //')
+}
+
+_sinex_pre_push_devshell_rc() {
+  find "$REPO_ROOT/.direnv" -maxdepth 1 -name 'flake-profile-*.rc' -type f -printf '%T@ %p\n' 2>/dev/null \
+    | sort -nr \
+    | sed -n '1s/^[^ ]* //p'
+}
+
 _sinex_pre_push_checkout_env() {
-  local cache_root dev_state_dir target_dir pg_run_dir pg_port nats_port gateway_port
+  local cache_root dev_state_dir target_dir pg_run_dir pg_port pg_bin devshell_rc nats_port gateway_port
   cache_root="$(_sinex_pre_push_cache_root)"
   dev_state_dir="$cache_root/dev-state"
   target_dir="$cache_root/target"
   pg_run_dir="$dev_state_dir/run"
   pg_port="5432"
+  pg_bin="$(_sinex_pre_push_pg_bin || true)"
+  devshell_rc="$(_sinex_pre_push_devshell_rc || true)"
   nats_port="$(_sinex_pre_push_nats_port)"
   gateway_port="$(_sinex_pre_push_gateway_port)"
 
   mkdir -p "$cache_root" "$target_dir" "$dev_state_dir" "$REPO_ROOT/.sinex/state"
 
-  env \
-    CARGO_TARGET_DIR="$target_dir" \
-    DATABASE_URL="postgresql:///sinex_dev?host=$pg_run_dir" \
-    PGHOST="$pg_run_dir" \
-    PGPORT="$pg_port" \
-    PATH="$target_dir/debug:$PATH" \
-    SINEX_CACHE_DIR="$cache_root" \
-    SINEX_DEV_CACHE_ROOT="$cache_root" \
-    SINEX_DEV_GATEWAY_PORT="$gateway_port" \
-    SINEX_DEV_NATS_PORT="$nats_port" \
-    SINEX_DEV_PG_PORT="$pg_port" \
-    SINEX_DEV_ROOT="$REPO_ROOT" \
-    SINEX_DEV_STATE_DIR="$dev_state_dir" \
-    SINEX_NATS_DIR="$dev_state_dir/nats" \
-    SINEX_NATS_URL="nats://127.0.0.1:$nats_port" \
-    SINEX_ROOT="$REPO_ROOT" \
-    SINEX_STATE_DIR="$REPO_ROOT/.sinex/state" \
-    "$@"
+  if [[ -z "$pg_bin" || -z "$devshell_rc" ]]; then
+    echo "[pre-push] No checkout-matching devshell environment found; run direnv allow or nix develop first." >&2
+    return 1
+  fi
+
+  (
+    source "$devshell_rc"
+    env \
+      CARGO_TARGET_DIR="$target_dir" \
+      DATABASE_URL="postgresql:///sinex_dev?host=$pg_run_dir" \
+      PGHOST="$pg_run_dir" \
+      PGPORT="$pg_port" \
+      SINEX_PG_BIN="$pg_bin" \
+      PATH="$target_dir/debug:$PATH" \
+      SINEX_CACHE_DIR="$cache_root" \
+      SINEX_DEV_CACHE_ROOT="$cache_root" \
+      SINEX_DEV_GATEWAY_PORT="$gateway_port" \
+      SINEX_DEV_NATS_PORT="$nats_port" \
+      SINEX_DEV_PG_PORT="$pg_port" \
+      SINEX_DEV_ROOT="$REPO_ROOT" \
+      SINEX_DEV_STATE_DIR="$dev_state_dir" \
+      SINEX_NATS_DIR="$dev_state_dir/nats" \
+      SINEX_NATS_URL="nats://127.0.0.1:$nats_port" \
+      SINEX_ROOT="$REPO_ROOT" \
+      SINEX_STATE_DIR="$REPO_ROOT/.sinex/state" \
+      "$@"
+  )
 }
 
 _sinex_pre_push_checkout_xtask_binary() {

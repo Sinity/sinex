@@ -27,8 +27,8 @@ pub mod batch_importer;
 pub mod checkpoint;
 pub mod config;
 pub mod confirmation_handler;
-pub mod content_store;
 pub mod confirmed_stream_liveness;
+pub mod content_store;
 pub mod diagnostics {
     pub mod regression;
 }
@@ -42,8 +42,8 @@ pub mod error_helpers;
 pub mod event_transport;
 pub mod examples;
 pub mod exploration;
-pub mod file_tailer;
 pub mod fault_injection;
+pub mod file_tailer;
 pub mod health_reporter;
 pub mod heartbeat;
 pub mod hyprland;

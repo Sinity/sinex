@@ -49,11 +49,9 @@ async fn test_migration_up_down_cycle() -> color_eyre::eyre::Result<()> {
     assert!(columns.iter().any(|c| c == "associated_blob_ids"));
 
     // Simulate migration DOWN: drop the column.
-    sqlx::query(
-        "ALTER TABLE core.events_migration_test DROP COLUMN IF EXISTS associated_blob_ids",
-    )
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("ALTER TABLE core.events_migration_test DROP COLUMN IF EXISTS associated_blob_ids")
+        .execute(&mut *tx)
+        .await?;
 
     // Verify the column was removed.
     let columns: Vec<String> = sqlx::query(

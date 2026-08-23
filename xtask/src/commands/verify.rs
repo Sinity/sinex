@@ -1445,8 +1445,8 @@ fn looks_like_bead_id(candidate: &str) -> bool {
 }
 
 fn parse_bead_closure_payload(bytes: &[u8], expected_id: &str) -> Result<BeadClosurePayload> {
-    let mut payloads: Vec<BeadClosurePayload> = serde_json::from_slice(bytes)
-        .with_context(|| "bd show output is not valid Beads JSON")?;
+    let mut payloads: Vec<BeadClosurePayload> =
+        serde_json::from_slice(bytes).with_context(|| "bd show output is not valid Beads JSON")?;
     if payloads.len() != 1 {
         bail!(
             "bd show {expected_id} returned {} top-level records; expected exactly one",
@@ -1682,10 +1682,7 @@ fn normalize_manifest_status(status: &str) -> String {
         "deferred".to_string()
     } else if words.contains("misframed") {
         "misframed".to_string()
-    } else if ["fail", "failed"]
-        .iter()
-        .any(|word| words.contains(word))
-    {
+    } else if ["fail", "failed"].iter().any(|word| words.contains(word)) {
         "failed".to_string()
     } else {
         lower
@@ -1714,9 +1711,7 @@ fn extract_bead_acceptance_criteria(text: &str) -> Vec<String> {
             .or_else(|| strip_numbered_list_prefix(trimmed));
         if let Some(criterion) = bullet {
             criteria.push(criterion.trim().to_string());
-        } else if line.chars().next().is_some_and(char::is_whitespace)
-            && !criteria.is_empty()
-        {
+        } else if line.chars().next().is_some_and(char::is_whitespace) && !criteria.is_empty() {
             let previous = criteria.last_mut().expect("non-empty checked above");
             previous.push(' ');
             previous.push_str(trimmed);
@@ -1778,7 +1773,10 @@ fn validate_bead_closure_contract(
             continue;
         }
         if !covered.insert(ordinal) {
-            errors.push(manifest_error(item, "duplicate disposition for this acceptance criterion"));
+            errors.push(manifest_error(
+                item,
+                "duplicate disposition for this acceptance criterion",
+            ));
         }
 
         match item.status.as_str() {
@@ -1849,10 +1847,8 @@ fn manifest_ac_ordinal(ac_id: &str) -> Option<usize> {
 }
 
 fn contains_bead_id(text: &str) -> bool {
-    text.split(|ch: char| {
-        !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_'))
-    })
-    .any(looks_like_bead_id)
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_')))
+        .any(looks_like_bead_id)
 }
 
 fn validate_closure_evidence_readiness(

@@ -4,14 +4,11 @@ use std::sync::LazyLock;
 pub(super) struct GitSnapshot {
     pub(super) commit: Option<String>,
     pub(super) dirty: bool,
-    /// Branch checked out in this workspace, or `None` on a detached HEAD.
-    pub(super) branch: Option<String>,
 }
 
 static CURRENT_PROCESS_GIT_SNAPSHOT: LazyLock<GitSnapshot> = LazyLock::new(|| GitSnapshot {
     commit: get_git_commit_uncached(),
     dirty: is_git_dirty_uncached(),
-    branch: get_git_branch_uncached(),
 });
 
 /// Get current git commit hash and dirty state for this xtask process.
@@ -26,16 +23,6 @@ fn get_git_commit_uncached() -> Option<String> {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-}
-
-fn get_git_branch_uncached() -> Option<String> {
-    std::process::Command::new("git")
-        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|branch| !branch.is_empty())
 }
 
 fn is_git_dirty_uncached() -> bool {

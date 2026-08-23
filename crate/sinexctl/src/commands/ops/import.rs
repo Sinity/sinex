@@ -143,7 +143,11 @@ async fn load_adjudication_queue_summary(
     match response {
         Ok(response) => AdjudicationQueueSummary::Available {
             clusters: response.clusters.len(),
-            events: response.clusters.iter().map(|cluster| cluster.event_count).sum(),
+            events: response
+                .clusters
+                .iter()
+                .map(|cluster| cluster.event_count)
+                .sum(),
             partial: response.clusters.len() as i64 >= ADJUDICATION_CANDIDATE_LIMIT,
         },
         Err(_) => AdjudicationQueueSummary::Unavailable,
@@ -377,9 +381,7 @@ mod tests {
         assert!(table.contains("event-ref"));
         assert!(table.contains("material-ref"));
         assert!(table.contains("prior-event-ref"));
-        assert!(table.contains(
-            "3 pending candidate cluster(s), 7 candidate event(s)"
-        ));
+        assert!(table.contains("3 pending candidate cluster(s), 7 candidate event(s)"));
     }
 
     #[test]

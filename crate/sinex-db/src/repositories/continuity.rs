@@ -34,8 +34,8 @@ use sinex_primitives::sources::continuity::{
     PrivacyClass, Replayability, SeamKind, SourceContinuityReport, TemporalSeam,
 };
 use sinex_primitives::{
-    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus,
-    Timestamp, evaluate_runtime_liveness,
+    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus, Timestamp,
+    evaluate_runtime_liveness,
 };
 use sqlx::PgPool;
 use time::OffsetDateTime;

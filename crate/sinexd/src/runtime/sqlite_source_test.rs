@@ -35,8 +35,7 @@ async fn sqlite_snapshot_uses_online_backup_and_reports_shape() -> TestResult<()
 
 #[cfg(unix)]
 #[sinex_test]
-async fn sqlite_reads_fall_back_to_immutable_when_wal_sidecars_are_readonly() -> TestResult<()>
-{
+async fn sqlite_reads_fall_back_to_immutable_when_wal_sidecars_are_readonly() -> TestResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
     struct PermissionRestore {

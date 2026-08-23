@@ -161,15 +161,6 @@ impl HistoryDb {
                 tree_fingerprint TEXT,
                 scope_key TEXT,
                 live_stage TEXT,
-                -- Provenance of the workspace that produced this run. Every
-                -- checkout and linked worktree writes to one shared ledger, so
-                -- these are what make a row attributable, and what keeps
-                -- freshness/proof reuse from crossing between workspaces that
-                -- happen to share a tree fingerprint. NULL on rows recorded
-                -- before the ledger was unified.
-                workspace_root TEXT,
-                workspace_name TEXT,
-                git_branch TEXT,
                 pre_fix_errors INTEGER,
                 pre_fix_warnings INTEGER,
                 pre_fix_fixable INTEGER,
@@ -397,10 +388,7 @@ impl HistoryDb {
                 job_status TEXT NOT NULL DEFAULT 'running',
                 exit_code INTEGER,
                 started_at TEXT NOT NULL,
-                finished_at TEXT,
-                -- Job stdout/stderr paths point into the launching workspace's
-                -- own state dir, so job listings must not cross workspaces.
-                workspace_root TEXT
+                finished_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS background_job_logs (
@@ -425,10 +413,6 @@ impl HistoryDb {
                 WHERE is_background = 1;
             CREATE INDEX IF NOT EXISTS idx_invocations_fingerprint
                 ON invocations(command, tree_fingerprint, scope_key);
-            CREATE INDEX IF NOT EXISTS idx_invocations_workspace_started
-                ON invocations(workspace_root, started_at);
-            CREATE INDEX IF NOT EXISTS idx_invocations_workspace_fingerprint
-                ON invocations(workspace_root, command, tree_fingerprint, scope_key);
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
@@ -457,8 +441,6 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_background_jobs_status     ON background_jobs(job_status);
             CREATE INDEX IF NOT EXISTS idx_background_jobs_started    ON background_jobs(started_at);
             CREATE INDEX IF NOT EXISTS idx_background_jobs_invocation ON background_jobs(invocation_id);
-            CREATE INDEX IF NOT EXISTS idx_background_jobs_workspace
-                ON background_jobs(workspace_root, job_status);
             CREATE INDEX IF NOT EXISTS idx_eta_samples_command_phase ON invocation_eta_samples(command, phase);
             CREATE INDEX IF NOT EXISTS idx_invocation_progress_invocation ON invocation_progress(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_proof_evidence_exact
@@ -816,34 +798,9 @@ impl HistoryDb {
         Ok(())
     }
 
-    /// Add the workspace-provenance columns and their indexes to a ledger
-    /// created before the per-workspace databases were unified.
-    ///
-    /// Additive, like every other compatibility step here: the shared ledger
-    /// carries months of evidence and is never recreated to gain a column.
-    pub(super) fn ensure_workspace_schema(&self) -> Result<()> {
-        self.ensure_column_exists("invocations", "workspace_root", "TEXT")?;
-        self.ensure_column_exists("invocations", "workspace_name", "TEXT")?;
-        self.ensure_column_exists("invocations", "git_branch", "TEXT")?;
-        self.ensure_column_exists("background_jobs", "workspace_root", "TEXT")?;
-        if self.conn.is_readonly(rusqlite::DatabaseName::Main)? {
-            return Ok(());
-        }
-        self.conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_invocations_workspace_started
-                 ON invocations(workspace_root, started_at);
-             CREATE INDEX IF NOT EXISTS idx_invocations_workspace_fingerprint
-                 ON invocations(workspace_root, command, tree_fingerprint, scope_key);
-             CREATE INDEX IF NOT EXISTS idx_background_jobs_workspace
-                 ON background_jobs(workspace_root, job_status);",
-        )?;
-        Ok(())
-    }
-
     pub(super) fn ensure_compat_schema(&self) -> Result<()> {
         self.ensure_proof_schema()?;
         self.ensure_impact_schema()?;
-        self.ensure_workspace_schema()?;
         self.ensure_column_exists("coverage_regions", "content_hash", "TEXT")?;
         self.ensure_column_exists("test_execution_manifests", "content_hash", "TEXT")?;
         self.ensure_column_exists("invocations", "process_cpu_usage_avg", "REAL")?;

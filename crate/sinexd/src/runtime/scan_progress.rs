@@ -231,10 +231,10 @@ impl ScanProgressStore {
         let key = Self::key(module_name);
         match self.kv.delete(key).await {
             Ok(()) => Ok(()),
-            Err(error) => Err(
-                sinex_primitives::SinexError::kv("Failed to clear scan progress snapshot")
-                    .with_std_error(&error),
-            ),
+            Err(error) => Err(sinex_primitives::SinexError::kv(
+                "Failed to clear scan progress snapshot",
+            )
+            .with_std_error(&error)),
         }
     }
 

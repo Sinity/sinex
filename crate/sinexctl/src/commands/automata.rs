@@ -80,7 +80,11 @@ fn automata_status_caveats(response: &AutomataStatusResponse) -> Vec<CaveatView>
             id: ReadinessCaveatId::WindowPartial.as_str().to_string(),
             message: format!(
                 "{} automata are not live under stale_after_secs={}: {names}",
-                response.automata.iter().filter(|automaton| !automaton.live).count(),
+                response
+                    .automata
+                    .iter()
+                    .filter(|automaton| !automaton.live)
+                    .count(),
                 response.stale_after_secs
             ),
             ref_: Some(automata_ref("automata.live")),

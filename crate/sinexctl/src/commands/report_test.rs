@@ -177,10 +177,7 @@ async fn calendar_envelope_names_zero_days_as_unmeasurable() -> TestResult<()> {
         .expect("json must render");
     let parsed: serde_json::Value = serde_json::from_str(&output)?;
 
-    assert_eq!(
-        parsed["source_surface"],
-        "sinexctl.metrics.report.calendar"
-    );
+    assert_eq!(parsed["source_surface"], "sinexctl.metrics.report.calendar");
     assert_eq!(parsed["payload"]["schema_version"], CALENDAR_SCHEMA_VERSION);
     assert_eq!(parsed["payload"]["days"].as_array().map(Vec::len), Some(2));
     assert_eq!(parsed["caveats"][0]["id"], "coverage.unmeasurable");

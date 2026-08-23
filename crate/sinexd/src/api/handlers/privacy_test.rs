@@ -15,8 +15,7 @@ async fn private_mode_status_defaults_disabled() -> xtask::sandbox::TestResult<(
 }
 
 #[sinex_test]
-async fn private_mode_status_treats_expired_state_as_disabled() -> xtask::sandbox::TestResult<()>
-{
+async fn private_mode_status_treats_expired_state_as_disabled() -> xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
     let expired = RuntimePrivateModeState::enabled_by(
         "sinity",

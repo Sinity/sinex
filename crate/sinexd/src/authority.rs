@@ -22,9 +22,7 @@
 
 use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, ExistingFinalizerRegistration};
-use sinex_primitives::authority::{
-    AutoAcceptPolicy, judgment_actor_sufficient_for_acceptance,
-};
+use sinex_primitives::authority::{AutoAcceptPolicy, judgment_actor_sufficient_for_acceptance};
 use sinex_primitives::derivation::DerivedProductClass;
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::events::CurationJudgmentActorKind;
@@ -180,8 +178,16 @@ fn declaration_matches(
         };
     }
 
-    check!("proposal_kind", declaration.proposal_kind, existing.proposal_kind);
-    check!("output_source", declaration.output_source, existing.output_source);
+    check!(
+        "proposal_kind",
+        declaration.proposal_kind,
+        existing.proposal_kind
+    );
+    check!(
+        "output_source",
+        declaration.output_source,
+        existing.output_source
+    );
     check!(
         "output_event_type",
         declaration.output_event_type,

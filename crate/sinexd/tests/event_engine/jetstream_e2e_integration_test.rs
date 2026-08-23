@@ -3,13 +3,12 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::JsonValue;
-use sinex_primitives::events::builder::EventId;
 use sinex_primitives::events::Event;
+use sinex_primitives::events::builder::EventId;
 use sinex_primitives::{error::SinexError, temporal};
 use sinexd::runtime::{
     ConfirmedEventCompletion, ConfirmedEventHandler, JetStreamEventConsumer,
-    JetStreamEventConsumerConfig, RuntimeResult,
-    prelude::async_trait,
+    JetStreamEventConsumerConfig, RuntimeResult, prelude::async_trait,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -219,18 +218,18 @@ async fn confirmed_event_ack_waits_for_automaton_completion(ctx: TestContext) ->
     );
     let mut consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    let (first_delivered_id, first_completion) = timeout(
-        Duration::from_secs(Timeouts::STANDARD),
-        delivery_rx.recv(),
-    )
-    .await?
-    .ok_or_else(|| eyre!("confirmed consumer stopped before dispatching the first test event"))?;
-    let (second_delivered_id, second_completion) = timeout(
-        Duration::from_secs(Timeouts::STANDARD),
-        delivery_rx.recv(),
-    )
-    .await?
-    .ok_or_else(|| eyre!("confirmed consumer stopped before dispatching the retry test event"))?;
+    let (first_delivered_id, first_completion) =
+        timeout(Duration::from_secs(Timeouts::STANDARD), delivery_rx.recv())
+            .await?
+            .ok_or_else(|| {
+                eyre!("confirmed consumer stopped before dispatching the first test event")
+            })?;
+    let (second_delivered_id, second_completion) =
+        timeout(Duration::from_secs(Timeouts::STANDARD), delivery_rx.recv())
+            .await?
+            .ok_or_else(|| {
+                eyre!("confirmed consumer stopped before dispatching the retry test event")
+            })?;
     assert_eq!(first_delivered_id, first_event_id);
     assert_eq!(second_delivered_id, retry_event_id);
 
@@ -282,12 +281,10 @@ async fn confirmed_event_ack_waits_for_automaton_completion(ctx: TestContext) ->
     )
     .await?;
 
-    let (redelivered_id, redelivery_completion) = timeout(
-        Duration::from_secs(Timeouts::STANDARD),
-        delivery_rx.recv(),
-    )
-    .await?
-    .ok_or_else(|| eyre!("retrying confirmed event was not redelivered"))?;
+    let (redelivered_id, redelivery_completion) =
+        timeout(Duration::from_secs(Timeouts::STANDARD), delivery_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("retrying confirmed event was not redelivered"))?;
     assert_eq!(redelivered_id, retry_event_id);
     redelivery_completion
         .send(ConfirmedEventCompletion::Safe)

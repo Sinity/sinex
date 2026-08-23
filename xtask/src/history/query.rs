@@ -43,18 +43,12 @@ use super::tests::{TestResult, TestStatus, parse_stored_test_status};
 // ─── Shared base ─────────────────────────────────────────────────────────────
 
 /// Filter state shared by all query builders.
-///
-/// Every checkout and linked worktree records into one ledger, so queries are
-/// scoped to the running workspace unless a caller asks for the machine-wide
-/// view with `all_workspaces()`. Reads that name an explicit invocation id are
-/// never scoped — an id the caller already holds is an explicit request.
 #[derive(Default, Clone)]
 pub struct QueryBase {
     pub command_filter: Option<String>,
     pub package_filter: Option<String>,
     pub days: Option<u32>,
     pub limit: usize,
-    pub all_workspaces: bool,
 }
 
 // ─── DiagnosticQuery ─────────────────────────────────────────────────────────
@@ -162,13 +156,6 @@ impl DiagnosticQuery {
     #[must_use]
     pub fn recent(mut self) -> Self {
         self.scope = DiagnosticScope::Recent;
-        self
-    }
-
-    /// Include diagnostics produced by every workspace on this machine.
-    #[must_use]
-    pub fn all_workspaces(mut self) -> Self {
-        self.base.all_workspaces = true;
         self
     }
 
@@ -340,13 +327,6 @@ impl InvocationQuery {
         self
     }
 
-    /// Include invocations from every workspace on this machine.
-    #[must_use]
-    pub fn all_workspaces(mut self) -> Self {
-        self.base.all_workspaces = true;
-        self
-    }
-
     /// Execute and return matching invocations (newest first).
     pub fn run(self, db: &HistoryDb) -> Result<Vec<Invocation>> {
         db.run_invocation_query(&self)
@@ -469,13 +449,6 @@ impl TestResultQuery {
         self
     }
 
-    /// Include test results from every workspace on this machine.
-    #[must_use]
-    pub fn all_workspaces(mut self) -> Self {
-        self.base.all_workspaces = true;
-        self
-    }
-
     /// Execute and return matching test results (newest first).
     pub fn run(self, db: &HistoryDb) -> Result<Vec<TestResult>> {
         db.run_test_result_query(&self)
@@ -512,14 +485,6 @@ impl HistoryDb {
                     JOIN invocations i ON ip.invocation_id = i.id \
                     WHERE i.status IN ('success', 'failed')",
                 );
-                // Restricting the CTE is enough: the outer join pins each
-                // diagnostic to a latest_inv_id already filtered to this
-                // workspace, so an extra outer predicate would only add a
-                // placeholder the parameter ordering has to carry.
-                if !q.base.all_workspaces {
-                    cte.push_str(" AND i.workspace_root = ?");
-                    bound_params.push(self.workspace_root.clone());
-                }
                 if let Some(cmd) = &q.base.command_filter {
                     cte.push_str(" AND i.command = ?");
                     bound_params.push(cmd.clone());
@@ -556,10 +521,6 @@ impl HistoryDb {
                     i.command as source_command, i.started_at as source_time \
                     FROM build_diagnostics bd \
                     JOIN invocations i ON bd.invocation_id = i.id";
-                if !q.base.all_workspaces {
-                    where_clauses.push("i.workspace_root = ?".into());
-                    bound_params.push(self.workspace_root.clone());
-                }
                 if let Some(cmd) = &q.base.command_filter {
                     where_clauses.push("i.command = ?".into());
                     bound_params.push(cmd.clone());
@@ -634,10 +595,6 @@ impl HistoryDb {
         let mut where_clauses = Vec::<String>::new();
         let mut bound_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if !q.base.all_workspaces && q.invocation_id.is_none() {
-            where_clauses.push("i.workspace_root = ?".into());
-            bound_params.push(Box::new(self.workspace_root.clone()));
-        }
         if let Some(cmd) = &q.base.command_filter {
             where_clauses.push("i.command = ?".into());
             bound_params.push(Box::new(cmd.clone()));
@@ -717,10 +674,6 @@ impl HistoryDb {
         let mut where_clauses = Vec::<String>::new();
         let mut bound_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if !q.base.all_workspaces && q.invocation_id.is_none() {
-            where_clauses.push("i.workspace_root = ?".into());
-            bound_params.push(Box::new(self.workspace_root.clone()));
-        }
         if let Some(cmd) = &q.base.command_filter {
             where_clauses.push("i.command = ?".into());
             bound_params.push(Box::new(cmd.clone()));
@@ -782,10 +735,6 @@ impl HistoryDb {
         let mut where_clauses = Vec::<String>::new();
         let mut bound_params: Vec<String> = Vec::new();
 
-        if !q.base.all_workspaces && q.invocation_id.is_none() {
-            where_clauses.push("i.workspace_root = ?".into());
-            bound_params.push(self.workspace_root.clone());
-        }
         if let Some(inv_id) = q.invocation_id {
             where_clauses.push("tr.invocation_id = ?".into());
             bound_params.push(inv_id.to_string());
@@ -857,10 +806,6 @@ impl HistoryDb {
         let mut where_clauses = Vec::<String>::new();
         let mut bound_params: Vec<String> = Vec::new();
 
-        if !q.base.all_workspaces && q.invocation_id.is_none() {
-            where_clauses.push("i.workspace_root = ?".into());
-            bound_params.push(self.workspace_root.clone());
-        }
         if let Some(inv_id) = q.invocation_id {
             where_clauses.push("tr.invocation_id = ?".into());
             bound_params.push(inv_id.to_string());

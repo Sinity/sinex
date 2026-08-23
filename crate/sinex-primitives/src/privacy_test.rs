@@ -5,8 +5,7 @@ use std::ffi::OsString;
 use std::sync::LazyLock;
 use xtask::sandbox::sinex_test;
 
-static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(()));
+static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 fn restore_var(key: &str, value: Option<OsString>) {
     match value {
@@ -16,8 +15,7 @@ fn restore_var(key: &str, value: Option<OsString>) {
 }
 
 #[sinex_test]
-async fn explicit_env_config_load_propagates_config_errors() -> ::xtask::sandbox::TestResult<()>
-{
+async fn explicit_env_config_load_propagates_config_errors() -> ::xtask::sandbox::TestResult<()> {
     let _guard = ENV_LOCK.lock().await;
     let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
     unsafe { std::env::set_var("SINEX_PRIVACY_EXTRA_RULES", "{not-json") };
@@ -40,8 +38,8 @@ async fn explicit_env_config_load_propagates_config_errors() -> ::xtask::sandbox
 }
 
 #[sinex_test]
-async fn explicit_env_config_load_accepts_default_configuration()
--> ::xtask::sandbox::TestResult<()> {
+async fn explicit_env_config_load_accepts_default_configuration() -> ::xtask::sandbox::TestResult<()>
+{
     let _guard = ENV_LOCK.lock().await;
     let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
     let old_builtin = std::env::var_os("SINEX_PRIVACY_BUILTIN_CATEGORIES");

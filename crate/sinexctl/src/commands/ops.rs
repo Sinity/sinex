@@ -156,8 +156,8 @@ pub enum OpsCommands {
     Demo(DemoCommand),
 }
 
-mod debt;
 mod catchup;
+mod debt;
 mod evidence;
 mod import;
 mod jobs;
@@ -173,7 +173,6 @@ pub use evidence::EvidenceCommands;
 pub use import::ImportCommands;
 pub(crate) use import::render_import_report;
 pub use jobs::JobsCommands;
-
 
 impl OpsCommands {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {

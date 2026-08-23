@@ -943,8 +943,7 @@ struct PrivacyExportReceipt {
 }
 
 const PRIVACY_POLICY_LIST_SCHEMA_VERSION: &str = "sinex.privacy-policy-list/v1";
-const EMPTY_PRIVACY_POLICY_CATALOG_MESSAGE: &str =
-    "no DB-backed privacy policy rules are configured; redaction/encryption remains a pass-through unless another policy layer applies";
+const EMPTY_PRIVACY_POLICY_CATALOG_MESSAGE: &str = "no DB-backed privacy policy rules are configured; redaction/encryption remains a pass-through unless another policy layer applies";
 
 #[derive(Debug, Clone, Serialize)]
 struct PrivacyPolicyListView {
@@ -1061,8 +1060,8 @@ fn privacy_audit_envelope(
     report: PrivacyAuditReport,
     args: &PrivacyAuditArgs,
 ) -> ViewEnvelope<PrivacyAuditReport> {
-    let mut envelope = ViewEnvelope::new("sinexctl.privacy.audit", report)
-        .with_query_echo(serde_json::json!({
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.privacy.audit", report).with_query_echo(serde_json::json!({
             "source_family": &args.source_family,
             "stale_after_seconds": args.stale_after_seconds,
         }));

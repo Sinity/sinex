@@ -56,8 +56,8 @@ fn row_fields(row: &StreamBatchRow) -> Vec<String> {
 /// same public verifier; this fixture removes one declared column without
 /// writing a COPY row.
 #[sinex_test]
-async fn copy_contract_rejects_missing_declared_column_before_serialization(
-) -> ::xtask::sandbox::TestResult<()> {
+async fn copy_contract_rejects_missing_declared_column_before_serialization()
+-> ::xtask::sandbox::TestResult<()> {
     let truncated_contract = &EVENT_COPY_COLUMNS[..EVENT_COPY_COLUMNS.len() - 1];
 
     let error = validate_event_copy_columns(truncated_contract)
@@ -387,9 +387,8 @@ async fn copy_column_contract() -> ::xtask::sandbox::TestResult<()> {
         row_field_values[event_copy_column_index(Events::ProductClass)],
         "canonical_derived_event"
     );
-    let decoded_support: serde_json::Value = serde_json::from_str(
-        &row_field_values[event_copy_column_index(Events::ClaimSupport)],
-    )?;
+    let decoded_support: serde_json::Value =
+        serde_json::from_str(&row_field_values[event_copy_column_index(Events::ClaimSupport)])?;
     assert_eq!(decoded_support, claim_support_json);
     assert_eq!(
         row_field_values[event_copy_column_index(Events::DerivationDeclarationId)],
@@ -446,7 +445,11 @@ async fn copy_column_contract() -> ::xtask::sandbox::TestResult<()> {
     let mut buf = Vec::new();
     event.write_copy_row(&mut buf)?;
     let s = String::from_utf8(buf).expect("non-UTF-8 output");
-    let event_fields: Vec<String> = s.trim_end_matches('\n').split('\t').map(str::to_string).collect();
+    let event_fields: Vec<String> = s
+        .trim_end_matches('\n')
+        .split('\t')
+        .map(str::to_string)
+        .collect();
 
     assert_eq!(
         event_fields[event_copy_column_index(Events::ProductClass)],

@@ -30,8 +30,8 @@ fn task_state() -> TaskState {
 }
 
 #[sinex_test]
-async fn task_list_empty_envelope_names_absent_and_unmeasurable_projection()
--> xtask::TestResult<()> {
+async fn task_list_empty_envelope_names_absent_and_unmeasurable_projection() -> xtask::TestResult<()>
+{
     let request = TaskListRequest::default();
     let envelope = task_list_envelope(
         TaskListResponse {
@@ -199,7 +199,9 @@ async fn task_import_rerun_reaches_duplicate_external_ref_protection() -> xtask:
         .await
         .expect_err("a duplicate Taskwarrior UUID must fail the import command");
     assert!(
-        error.to_string().contains("external ref already belongs to another task"),
+        error
+            .to_string()
+            .contains("external ref already belongs to another task"),
         "the duplicate rejection must reach the CLI caller: {error}"
     );
 

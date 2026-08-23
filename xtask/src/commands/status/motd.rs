@@ -91,7 +91,8 @@ impl<'a> MotdRenderer<'a> {
 
         let branch_raw = self.data.git.branch.as_deref().unwrap_or("-");
         let max_branch = 20;
-        let branch_name = sinex_primitives::text::truncate_cols(branch_raw, max_branch).into_owned();
+        let branch_name =
+            sinex_primitives::text::truncate_cols(branch_raw, max_branch).into_owned();
         let branch_part = if self.data.git.dirty {
             style(&branch_name).bold().to_string()
         } else {

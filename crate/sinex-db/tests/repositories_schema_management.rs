@@ -502,11 +502,7 @@ async fn sync_schema_bundle_detects_content_hash_drift_from_schema_content(
     // matches what's stored (stale), so sync_schema_bundle currently reports
     // this as unchanged and never reconciles schema_content back to what the
     // bundle actually declares.
-    let sync_result = repo
-        .sync_schema_bundle([
-            original_entry.clone(),
-        ])
-        .await?;
+    let sync_result = repo.sync_schema_bundle([original_entry.clone()]).await?;
 
     let active = repo
         .get_active_schema(source.as_str(), event_type.as_str())

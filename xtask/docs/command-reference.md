@@ -830,8 +830,6 @@ Query build, test, and runtime history recorded by xtask
 | `seed` | Seed the history database with synthetic data for exploration (T2) |
 | `progress` | Show live or final progress for an invocation |
 | `eta` | Show ETA estimates for a command based on recorded phase timings |
-| `unify` | Absorb every linked worktree's private history database into the shared ledger |
-| `import` | Absorb one named history database into the shared ledger |
 | `exercise` | Show exercise run history with pass/fail counts and regression detection |
 
 ### `xtask history list`
@@ -1291,32 +1289,6 @@ Show ETA estimates for a command based on recorded phase timings
 | `command` | yes | yes | Command name (e.g. "check", "test", "build") |
 | `--phase` | yes | no | Phase name (e.g. "compile", "tests"). If omitted, shows all phases |
 | `--window` | yes | no | Number of recent samples to use for the median estimate (default: 20) |
-
-
-### `xtask history unify`
-
-Absorb every linked worktree's private history database into the shared ledger
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--remove-sources` | no | no | Delete each source database once every row is accounted for |
-| `--dry-run` | no | no | List the databases that would be absorbed without writing anything |
-
-
-### `xtask history import`
-
-Absorb one named history database into the shared ledger
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `source` | yes | yes | Path to the history database to absorb |
-| `--workspace-root` | yes | no | Workspace root to attribute rows to; inferred from the source path when omitted |
-| `--workspace-name` | yes | no | Workspace label to attribute rows to; defaults to the root's directory name |
-| `--remove-source` | no | no | Delete the source database once every row is accounted for |
 
 
 ### `xtask history exercise`
@@ -1864,8 +1836,8 @@ Run or resume a named schema backfill
 | `key` | yes | yes | Backfill key to run |
 | `--database-url` | yes | no | Database URL to inspect. Without this, prepares the checkout-local stack first |
 | `--batch-size` | yes | no | Rows to scan before persisting progress |
-| `--assume-quiescent` | no | no | Confirm event writers are stopped; active writer transactions are rejected before the horizon is frozen |
-| `--restart` | no | no | Clear persisted progress and recompute from a fresh horizon (required after failure) |
+| `--assume-quiescent` | no | no | Acknowledge that writers are quiesced for this first implementation slice |
+| `--restart` | no | no | Clear persisted progress and recompute from the current event horizon |
 
 
 ## `xtask verify`

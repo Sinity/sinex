@@ -203,7 +203,8 @@ fn group_dlq_messages(messages: &[DlqMessagePeek]) -> Vec<DlqMessageGroup> {
     for message in messages {
         let reason_bucket = dlq_reason_bucket(&message.payload_preview);
         if let Some(existing) = groups.iter_mut().find(|group| {
-            group.original_subject == message.original_subject && group.reason_bucket == reason_bucket
+            group.original_subject == message.original_subject
+                && group.reason_bucket == reason_bucket
         }) {
             existing.add(message);
         } else {

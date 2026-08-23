@@ -121,7 +121,10 @@ async fn tombstone_list_table_truncates_non_ascii_reason_without_panicking() -> 
     // deletion) audit list, so a crash here hides operation state entirely.
     let mut op = fixture_tombstone_operation("op-utf8");
     op.reason = "この理由のテキストは非ASCII文字を多数含んでいます".to_string();
-    assert!(op.reason.len() > 30, "fixture must exceed the truncation threshold in bytes");
+    assert!(
+        op.reason.len() > 30,
+        "fixture must exceed the truncation threshold in bytes"
+    );
     op.created_at = "会議終了後のタイムスタンプ表記例".to_string();
 
     let response = TombstoneListResponse {

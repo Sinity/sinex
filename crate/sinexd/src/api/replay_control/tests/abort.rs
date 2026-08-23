@@ -547,7 +547,12 @@ async fn replay_scope_invalidations_cover_every_archived_metadata_page(
         .insert_batch(events)
         .await?
         .into_iter()
-        .map(|event| event.id.expect("inserted scoped event must have ID").to_uuid())
+        .map(|event| {
+            event
+                .id
+                .expect("inserted scoped event must have ID")
+                .to_uuid()
+        })
         .collect::<Vec<_>>();
     let operation_id = Uuid::now_v7();
     let archive_reason = "bounded replay scope metadata page test";

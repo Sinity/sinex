@@ -252,7 +252,12 @@ let
   };
 
   authenticationConfig = ''
-    local   all             all                                     peer
+    # postgresql-setup runs as the postgres OS user and needs local
+    # superuser access to initialize and rotate the application role.
+    # Every other Unix-socket client, including the sinex role, uses the
+    # configured password method just like loopback TCP clients.
+    local   all             postgres                                peer
+    local   all             all                                     ${db.localAuth}
     host    all             all             127.0.0.1/32            ${db.localAuth}
     host    all             all             ::1/128                 ${db.localAuth}
     host    all             all             0.0.0.0/0               reject
@@ -322,7 +327,10 @@ in
         package = mkForce postgresqlPkg;
         ensureDatabases = mkDefault allDatabases;
         ensureUsers = mkDefault ensuredUsers;
-        authentication = mkDefault authenticationConfig;
+        # Nixpkgs supplies its fallback pg_hba.conf at normal priority. This
+        # policy must win that fallback while retaining mkForce as the explicit
+        # escape hatch for disposable VM fixtures or deliberate deployments.
+        authentication = lib.mkOverride 90 authenticationConfig;
         settings = mkMerge [
           baseSettings
           { port = mkForce db.port; }

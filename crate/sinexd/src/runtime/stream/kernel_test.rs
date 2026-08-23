@@ -67,10 +67,7 @@ fn raw_stream_reconciliation_keeps_only_expected_consumer() {
 #[test]
 fn raw_stream_reconciliation_deletes_legacy_automaton_consumers() {
     assert_eq!(
-        raw_stream_consumer_action(
-            "event-engine-dev",
-            "sinex-analytics-automaton-confirmed-v2"
-        ),
+        raw_stream_consumer_action("event-engine-dev", "sinex-analytics-automaton-confirmed-v2"),
         RawStreamConsumerAction::DeleteLegacyAutomaton
     );
     assert_eq!(

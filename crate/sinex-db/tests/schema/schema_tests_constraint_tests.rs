@@ -7,12 +7,10 @@ async fn test_events_provenance_constraint() -> color_eyre::eyre::Result<()> {
     let pool = &ctx.pool;
 
     // Create tables
-    sqlx::query(
-        &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query(&SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder))
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
         .execute(pool)
         .await
@@ -98,7 +96,10 @@ async fn test_events_provenance_constraint() -> color_eyre::eyre::Result<()> {
             "counterevidence_count": 0
         }),
         "test-decl-provenance",
-    ).execute(pool).await.unwrap();
+    )
+    .execute(pool)
+    .await
+    .unwrap();
 
     // Test 3: Invalid case - both source_material_id AND source_event_ids
     let event_id3 = uuid::Uuid::now_v7();

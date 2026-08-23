@@ -97,13 +97,10 @@ impl TaskImportCommand {
                     continue;
                 }
             };
-            let uuid = request
-                .external_refs
-                .first()
-                .map_or_else(
-                    || "<unknown>".to_string(),
-                    |external_ref| external_ref.external_id.clone(),
-                );
+            let uuid = request.external_refs.first().map_or_else(
+                || "<unknown>".to_string(),
+                |external_ref| external_ref.external_id.clone(),
+            );
             if self.dry_run {
                 let desc = task["description"].as_str().unwrap_or("");
                 println!("  [dry-run] {uuid} {desc}");
@@ -166,10 +163,7 @@ fn build_task_create_request(
     })
 }
 
-fn taskwarrior_string_field(
-    task: &serde_json::Value,
-    field: &str,
-) -> Result<Option<String>> {
+fn taskwarrior_string_field(task: &serde_json::Value, field: &str) -> Result<Option<String>> {
     match task.get(field) {
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::String(value)) => Ok(Some(value.clone())),
@@ -191,7 +185,9 @@ fn taskwarrior_tags(task: &serde_json::Value) -> Result<Vec<String>> {
                     .ok_or_else(|| eyre!("Taskwarrior tag at index {index} must be a string"))
             })
             .collect(),
-        Some(value) => Err(eyre!("Taskwarrior field \"tags\" must be an array, got {value}")),
+        Some(value) => Err(eyre!(
+            "Taskwarrior field \"tags\" must be an array, got {value}"
+        )),
     }
 }
 
@@ -582,8 +578,8 @@ fn task_list_envelope(
     response: TaskListResponse,
     request: &TaskListRequest,
 ) -> ViewEnvelope<TaskListResponse> {
-    let mut envelope = ViewEnvelope::new("sinexctl.tasks.list", response).with_query_echo(
-        serde_json::json!({
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.tasks.list", response).with_query_echo(serde_json::json!({
             "query": request.query,
             "external_system": request.external_system,
             "external_id": request.external_id,
@@ -593,8 +589,7 @@ fn task_list_envelope(
             "due_from": request.due_from,
             "due_until": request.due_until,
             "limit": request.limit,
-        }),
-    );
+        }));
     envelope.caveats = task_list_caveats(&envelope.payload);
     envelope
 }

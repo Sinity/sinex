@@ -41,8 +41,8 @@ async fn truncate_str_boundary_safe_never_splits_a_codepoint() -> xtask::sandbox
 }
 
 #[sinex_test]
-async fn truncate_str_boundary_safe_handles_every_utf8_codepoint_width() -> xtask::sandbox::TestResult<()>
-{
+async fn truncate_str_boundary_safe_handles_every_utf8_codepoint_width()
+-> xtask::sandbox::TestResult<()> {
     // The back-scan loop (`while !s.is_char_boundary(end) { end -= 1 }`) must
     // walk back the correct number of bytes for each UTF-8 width class, not
     // just the 4-byte case: 2-byte (Cyrillic, as in the real watch-summary

@@ -104,11 +104,10 @@ impl HistoryDb {
                     SELECT 1
                     FROM invocations
                     WHERE status = 'running'
-                      AND workspace_root = ?1
                       AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
                 )
                 ",
-                params![self.workspace_root],
+                [],
                 |row| row.get(0),
             )
             .context("failed to detect stale invocations before cleanup")?;
@@ -132,13 +131,12 @@ impl HistoryDb {
                     ON bg.invocation_id = i.id
                    AND bg.job_status = 'running'
                 WHERE i.status = 'running'
-                  AND i.workspace_root = ?1
                   AND i.started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
                 ",
             )
             .context("failed to prepare stale invocation candidate query")?;
         let rows = stmt
-            .query_map(params![self.workspace_root], |row| {
+            .query_map([], |row| {
                 Ok(StaleInvocationCandidate {
                     invocation_id: row.get(0)?,
                     background_job_id: row.get(1)?,
@@ -161,13 +159,12 @@ impl HistoryDb {
                 FROM background_jobs bg
                 JOIN invocations i ON i.id = bg.invocation_id
                 WHERE bg.job_status = 'running'
-                  AND bg.workspace_root = ?1
                   AND i.finished_at IS NOT NULL
                 ",
             )
             .context("failed to prepare finished invocation background-job repair query")?;
         let rows = stmt
-            .query_map(params![self.workspace_root], |row| row.get(0))
+            .query_map([], |row| row.get(0))
             .context("failed to execute finished invocation background-job repair query")?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .context("failed to collect finished invocation background-job repair candidates")
@@ -393,20 +390,16 @@ impl HistoryDb {
         let git_snapshot = current_git_snapshot();
         let git_commit = git_snapshot.commit.clone();
         let git_dirty = git_snapshot.dirty;
-        let git_branch = git_snapshot.branch.clone();
-        let cfg = crate::config::config();
-        let host = cfg.hostname.clone();
-        let workspace_root = cfg.workspace_root.display().to_string();
-        let workspace_name = cfg.workspace_name.clone();
+        let host = crate::config::config().hostname.clone();
         let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
 
         // Create the durable invocation record.
         self.conn.execute(
             r"INSERT INTO invocations
-                (command, args_json, git_commit, git_dirty, started_at, host, cwd, status, launch_mode, is_background, workspace_root, workspace_name, git_branch)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', 'background', 1, ?8, ?9, ?10)",
-            params![command, args_json, git_commit, git_dirty, started_at, host, cwd, workspace_root, workspace_name, git_branch],
+                (command, args_json, git_commit, git_dirty, started_at, host, cwd, status, launch_mode, is_background)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', 'background', 1)",
+            params![command, args_json, git_commit, git_dirty, started_at, host, cwd],
         )?;
         let invocation_id = self.conn.last_insert_rowid();
 
@@ -423,9 +416,9 @@ impl HistoryDb {
         };
         self.conn.execute(
             r"INSERT INTO background_jobs
-                (invocation_id, command, args_json, pid, stdout_path, stderr_path, job_status, started_at, workspace_root)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7, ?8)",
-            params![invocation_id, command, args_json, pid, stdout_str, stderr_str, started_at, workspace_root],
+                (invocation_id, command, args_json, pid, stdout_path, stderr_path, job_status, started_at)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7)",
+            params![invocation_id, command, args_json, pid, stdout_str, stderr_str, started_at],
         )?;
         let job_id = self.conn.last_insert_rowid();
 
@@ -468,10 +461,9 @@ impl HistoryDb {
             r"SELECT id, invocation_id, command, args_json, started_at, pid, stdout_path, stderr_path, job_status, exit_code
               FROM background_jobs
               WHERE job_status = 'running'
-                AND workspace_root = ?1
               ORDER BY started_at DESC",
         )?;
-        let rows = stmt.query_map(params![self.workspace_root], row_to_background_job)?;
+        let rows = stmt.query_map([], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
     }
@@ -481,8 +473,8 @@ impl HistoryDb {
         self.conn
             .query_row(
                 r"SELECT id, invocation_id, command, args_json, started_at, pid, stdout_path, stderr_path, job_status, exit_code
-                  FROM background_jobs WHERE id = ?1 AND workspace_root = ?2",
-                params![id, self.workspace_root],
+                  FROM background_jobs WHERE id = ?1",
+                params![id],
                 row_to_background_job,
             )
             .optional()
@@ -491,10 +483,8 @@ impl HistoryDb {
 
     /// Get all background job IDs (for prune orphan directory cleanup).
     pub fn get_all_background_job_ids(&self) -> Result<HashSet<i64>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id FROM background_jobs WHERE workspace_root = ?1")?;
-        let rows = stmt.query_map(params![self.workspace_root], |row| row.get::<_, i64>(0))?;
+        let mut stmt = self.conn.prepare("SELECT id FROM background_jobs")?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
         let mut ids = HashSet::new();
         for id in rows {
             ids.insert(id?);
@@ -507,11 +497,10 @@ impl HistoryDb {
         let mut stmt = self.conn.prepare(
             r"SELECT id, invocation_id, command, args_json, started_at, pid, stdout_path, stderr_path, job_status, exit_code
               FROM background_jobs
-              WHERE workspace_root = ?1
               ORDER BY started_at DESC
-              LIMIT ?2",
+              LIMIT ?1",
         )?;
-        let rows = stmt.query_map(params![self.workspace_root, limit], row_to_background_job)?;
+        let rows = stmt.query_map(params![limit], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
     }

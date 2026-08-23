@@ -488,15 +488,13 @@ fn curation_duplicates_envelope(
     response: CurationListDuplicateCandidatesResponse,
     query: CurationDuplicateQueryEcho<'_>,
 ) -> ViewEnvelope<CurationListDuplicateCandidatesResponse> {
-    let mut envelope =
-        ViewEnvelope::new("sinexctl.semantic.curation.duplicates", response).with_query_echo(
-            serde_json::json!({
-                "source": query.source,
-                "event_type": query.event_type,
-                "limit": query.limit,
-                "events_per_cluster": query.events_per_cluster,
-            }),
-        );
+    let mut envelope = ViewEnvelope::new("sinexctl.semantic.curation.duplicates", response)
+        .with_query_echo(serde_json::json!({
+            "source": query.source,
+            "event_type": query.event_type,
+            "limit": query.limit,
+            "events_per_cluster": query.events_per_cluster,
+        }));
     envelope.caveats = curation_duplicate_caveats(&envelope.payload, query);
     envelope
 }
@@ -528,7 +526,8 @@ fn curation_duplicate_caveats(
     }
     if response.clusters.iter().any(|cluster| {
         cluster.event_count > cluster.events.len() as i64
-            || (query.events_per_cluster > 0 && cluster.events.len() as i64 >= query.events_per_cluster)
+            || (query.events_per_cluster > 0
+                && cluster.events.len() as i64 >= query.events_per_cluster)
     }) {
         caveats.push(curation_caveat(
             ReadinessCaveatId::WindowPartial,

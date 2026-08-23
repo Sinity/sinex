@@ -3004,33 +3004,48 @@ fn validate_material_replay_context(
                 return Err(crate::runtime::SinexError::invalid_state(
                     "material replay context contains a non-byte occurrence coordinate",
                 )
-                .with_context("source_material_id", material.source_material_id.to_string())
+                .with_context(
+                    "source_material_id",
+                    material.source_material_id.to_string(),
+                )
                 .with_context("offset_kind", occurrence.offset_kind.as_wire_str()));
             }
             if occurrence.anchor_byte < 0 {
                 return Err(crate::runtime::SinexError::invalid_state(
                     "material replay context contains a negative anchor_byte",
                 )
-                .with_context("source_material_id", material.source_material_id.to_string())
+                .with_context(
+                    "source_material_id",
+                    material.source_material_id.to_string(),
+                )
                 .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
             }
             let start = occurrence.offset_start.ok_or_else(|| {
                 crate::runtime::SinexError::invalid_state(
                     "material replay context is missing offset_start before archive/replay",
                 )
-                .with_context("source_material_id", material.source_material_id.to_string())
+                .with_context(
+                    "source_material_id",
+                    material.source_material_id.to_string(),
+                )
             })?;
             let end = occurrence.offset_end.ok_or_else(|| {
                 crate::runtime::SinexError::invalid_state(
                     "material replay context is missing offset_end before archive/replay",
                 )
-                .with_context("source_material_id", material.source_material_id.to_string())
+                .with_context(
+                    "source_material_id",
+                    material.source_material_id.to_string(),
+                )
             })?;
             if start < 0 || end <= start || start != occurrence.anchor_byte {
                 return Err(crate::runtime::SinexError::invalid_state(
                     "material replay context contains an invalid byte range",
                 )
-                .with_context("source_material_id", material.source_material_id.to_string())
+                .with_context(
+                    "source_material_id",
+                    material.source_material_id.to_string(),
+                )
                 .with_context("anchor_byte", occurrence.anchor_byte.to_string())
                 .with_context("offset_start", start.to_string())
                 .with_context("offset_end", end.to_string()));
@@ -3041,7 +3056,10 @@ fn validate_material_replay_context(
             return Err(crate::runtime::SinexError::invalid_state(
                 "material replay context is missing the original material occurrence coordinates",
             )
-            .with_context("source_material_id", material.source_material_id.to_string()));
+            .with_context(
+                "source_material_id",
+                material.source_material_id.to_string(),
+            ));
         }
     }
     Ok(())

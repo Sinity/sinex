@@ -118,8 +118,10 @@ pub struct ProjectionReadinessView {
 impl ProjectionReadinessView {
     #[must_use]
     pub fn from_rows(rows: impl IntoIterator<Item = ProjectionReadinessInput>) -> Self {
-        let projections: Vec<ProjectionReadinessEntry> =
-            rows.into_iter().map(ProjectionReadinessEntry::from).collect();
+        let projections: Vec<ProjectionReadinessEntry> = rows
+            .into_iter()
+            .map(ProjectionReadinessEntry::from)
+            .collect();
         let ready_count = projections
             .iter()
             .filter(|entry| entry.status.is_read_ready())

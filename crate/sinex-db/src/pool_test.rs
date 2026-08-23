@@ -1,8 +1,6 @@
 use xtask::sandbox::sinex_test;
 // Inline because this covers local env parsing semantics in the pool module.
-use super::{
-    DEFAULT_POOL_ACQUIRE_WARN_MS, PoolConfig, env_parse_override, env_parse_with_default,
-};
+use super::{DEFAULT_POOL_ACQUIRE_WARN_MS, PoolConfig, env_parse_override, env_parse_with_default};
 use xtask::sandbox::sinex_serial_test;
 
 use xtask::sandbox::EnvGuard;

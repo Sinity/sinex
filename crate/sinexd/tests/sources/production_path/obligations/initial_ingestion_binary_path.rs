@@ -4,8 +4,7 @@ use xtask::sandbox::prelude::*;
 
 const WEECHAT_MESSAGE: &str = "hello from source host binary";
 const WEECHAT_SUPPRESSED_MESSAGE: &str = "private mode should suppress this";
-const WEECHAT_MALFORMED_STATE_MESSAGE: &str =
-    "malformed private-mode state should suppress this";
+const WEECHAT_MALFORMED_STATE_MESSAGE: &str = "malformed private-mode state should suppress this";
 const WEECHAT_OUT_OF_SCOPE_MESSAGE: &str = "desktop scope should not suppress terminal";
 const BASH_SUPPRESSED_COMMAND: &str = "echo private mode should suppress bash history";
 
@@ -218,19 +217,18 @@ async fn source_driver_host_scan_private_mode_matrix(ctx: TestContext) -> TestRe
     out_of_scope_config["private_mode_state_dir"] =
         serde_json::Value::String(out_of_scope_state_dir.display().to_string());
 
-    let (baseline_output, private_output, malformed_output, bash_output, out_of_scope_output) =
-        tokio::try_join!(
-            run_weechat_scan(
-                &ctx,
-                &tempdir,
-                "baseline",
-                weechat_runtime_config(&baseline_log_path),
-            ),
-            run_weechat_scan(&ctx, &tempdir, "weechat-private", private_config),
-            run_weechat_scan(&ctx, &tempdir, "weechat-malformed", malformed_config),
-            run_bash_scan(&ctx, &tempdir, "bash-private", bash_config),
-            run_weechat_scan(&ctx, &tempdir, "weechat-out-of-scope", out_of_scope_config),
-        )?;
+    let (baseline_output, private_output, malformed_output, bash_output, out_of_scope_output) = tokio::try_join!(
+        run_weechat_scan(
+            &ctx,
+            &tempdir,
+            "baseline",
+            weechat_runtime_config(&baseline_log_path),
+        ),
+        run_weechat_scan(&ctx, &tempdir, "weechat-private", private_config),
+        run_weechat_scan(&ctx, &tempdir, "weechat-malformed", malformed_config),
+        run_bash_scan(&ctx, &tempdir, "bash-private", bash_config),
+        run_weechat_scan(&ctx, &tempdir, "weechat-out-of-scope", out_of_scope_config),
+    )?;
 
     ctx.assert("source host scan processed one event").that(
         baseline_output.contains("Events processed: 1"),
@@ -264,18 +262,20 @@ async fn source_driver_host_scan_private_mode_matrix(ctx: TestContext) -> TestRe
     ctx.assert("fail-closed malformed state persisted no irc.message events")
         .eq(&count, &0)?;
 
-    ctx.assert("private-mode bash scan suppressed all events").that(
-        bash_output.contains("Events processed: 0"),
-        "scan output should report no processed events when terminal private mode is active",
-    )?;
+    ctx.assert("private-mode bash scan suppressed all events")
+        .that(
+            bash_output.contains("Events processed: 0"),
+            "scan output should report no processed events when terminal private mode is active",
+        )?;
     let count = count_bash_commands(&ctx, BASH_SUPPRESSED_COMMAND).await?;
     ctx.assert("suppressed private-mode scan persisted no shell.history events")
         .eq(&count, &0)?;
 
-    ctx.assert("out-of-scope private mode preserves acquisition").that(
-        out_of_scope_output.contains("Events processed: 1"),
-        "scan output should report one processed event when private mode is scoped elsewhere",
-    )?;
+    ctx.assert("out-of-scope private mode preserves acquisition")
+        .that(
+            out_of_scope_output.contains("Events processed: 1"),
+            "scan output should report one processed event when private mode is scoped elsewhere",
+        )?;
     WaitHelpers::wait_for_condition(
         || async {
             let count = count_irc_messages(&ctx, WEECHAT_OUT_OF_SCOPE_MESSAGE)

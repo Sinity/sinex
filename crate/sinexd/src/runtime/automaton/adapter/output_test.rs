@@ -81,7 +81,11 @@ fn no_anonymous_derived_outputs() {
     let error = runtime
         .validate_output_declaration(None, None, None, "test.output")
         .expect_err("a DerivedOutput with no declaration_id must be rejected");
-    assert!(error.to_string().contains("anonymous derived outputs are forbidden"));
+    assert!(
+        error
+            .to_string()
+            .contains("anonymous derived outputs are forbidden")
+    );
 }
 
 #[test]
@@ -95,7 +99,11 @@ fn derived_output_declaration_gate_rejects_product_class_without_declaration_id(
             "test.output",
         )
         .expect_err("product_class without declaration_id must be rejected");
-    assert!(error.to_string().contains("anonymous derived outputs are forbidden"));
+    assert!(
+        error
+            .to_string()
+            .contains("anonymous derived outputs are forbidden")
+    );
 }
 
 #[test]

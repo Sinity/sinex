@@ -504,7 +504,8 @@ impl ReplayCommands {
                 let operations = client
                     .replay_list_filtered(state.map(Into::into), source.as_deref(), Some(*limit))
                     .await?;
-                let envelope = replay_list_envelope(operations.clone(), *state, source.as_deref(), *limit);
+                let envelope =
+                    replay_list_envelope(operations.clone(), *state, source.as_deref(), *limit);
                 if print_finite_envelope(&envelope, format)? {
                     return Ok(());
                 }
@@ -621,41 +622,45 @@ async fn execute_watch(
                 }
             }
         }
-        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot | OutputFormat::Yaml => loop {
-            let op = client.replay_status(operation_id).await?;
-            let rendered = match format {
-                OutputFormat::Yaml => format_yaml(&op)?,
-                OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => format_json(&op)?,
-                OutputFormat::Table => unreachable!("table watch uses a progress reporter"),
-            };
-            println!("{rendered}");
-            if op.state.is_terminal() {
-                let failure = (op.state == ReplayState::Failed).then(|| {
-                    format!(
-                        "Failed: {}",
-                        op.error_details.as_deref().unwrap_or("Unknown error")
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot | OutputFormat::Yaml => {
+            loop {
+                let op = client.replay_status(operation_id).await?;
+                let rendered = match format {
+                    OutputFormat::Yaml => format_yaml(&op)?,
+                    OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
+                        format_json(&op)?
+                    }
+                    OutputFormat::Table => unreachable!("table watch uses a progress reporter"),
+                };
+                println!("{rendered}");
+                if op.state.is_terminal() {
+                    let failure = (op.state == ReplayState::Failed).then(|| {
+                        format!(
+                            "Failed: {}",
+                            op.error_details.as_deref().unwrap_or("Unknown error")
+                        )
+                    });
+                    render_import_report(
+                        client,
+                        operation_id,
+                        // Dot watch status is intentionally emitted as JSON; use the
+                        // same supported machine-readable form for its terminal report.
+                        if *format == OutputFormat::Dot {
+                            OutputFormat::Json
+                        } else {
+                            *format
+                        },
+                        "sinexctl.ops.replay.watch",
+                        true,
                     )
-                });
-                render_import_report(
-                    client,
-                    operation_id,
-                    // Dot watch status is intentionally emitted as JSON; use the
-                    // same supported machine-readable form for its terminal report.
-                    if *format == OutputFormat::Dot {
-                        OutputFormat::Json
-                    } else {
-                        *format
-                    },
-                    "sinexctl.ops.replay.watch",
-                    true,
-                )
-                .await?;
-                if let Some(msg) = failure {
-                    return Err(color_eyre::eyre::eyre!(msg));
+                    .await?;
+                    if let Some(msg) = failure {
+                        return Err(color_eyre::eyre::eyre!(msg));
+                    }
+                    break;
                 }
-                break;
+                sleep(Duration::from_secs(interval)).await;
             }
-            sleep(Duration::from_secs(interval)).await;
         }
     }
     Ok(())
@@ -787,10 +792,11 @@ fn replay_status_envelope(
     operation: ReplayOperation,
     operation_id: &str,
 ) -> ViewEnvelope<ReplayOperation> {
-    let mut envelope = ViewEnvelope::new("sinexctl.ops.replay.status", operation)
-        .with_query_echo(serde_json::json!({
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.replay.status", operation).with_query_echo(
+        serde_json::json!({
             "operation_id": operation_id,
-        }));
+        }),
+    );
     envelope.caveats = replay_operation_caveats(&envelope.payload);
     envelope
 }
@@ -801,12 +807,13 @@ fn replay_list_envelope(
     source: Option<&str>,
     limit: i64,
 ) -> ViewEnvelope<Vec<ReplayOperation>> {
-    let mut envelope = ViewEnvelope::new("sinexctl.ops.replay.list", operations)
-        .with_query_echo(serde_json::json!({
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.replay.list", operations).with_query_echo(
+        serde_json::json!({
             "state": state.map(|s| format!("{s:?}").to_ascii_lowercase()),
             "source": source,
             "limit": limit,
-        }));
+        }),
+    );
     if envelope.payload.is_empty() {
         envelope.caveats.push(replay_caveat(
             ReadinessCaveatId::SourceAbsent,
@@ -821,9 +828,7 @@ fn replay_list_envelope(
 
 fn replay_preview_caveats(payload: &serde_json::Value, operation_id: &str) -> Vec<CaveatView> {
     let mut caveats = Vec::new();
-    let preview = payload
-        .get("preview")
-        .unwrap_or(&serde_json::Value::Null);
+    let preview = payload.get("preview").unwrap_or(&serde_json::Value::Null);
     if preview
         .get("total_events")
         .and_then(serde_json::Value::as_u64)

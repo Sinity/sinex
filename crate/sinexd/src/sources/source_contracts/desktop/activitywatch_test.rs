@@ -154,7 +154,10 @@ async fn unparseable_started_at_reuses_the_stable_sqlite_row_occurrence_key() ->
     assert_eq!(
         key.fields,
         vec![
-            ("bucket_id".to_string(), "aw-watcher-web_firefox".to_string()),
+            (
+                "bucket_id".to_string(),
+                "aw-watcher-web_firefox".to_string()
+            ),
             ("event_timestamp".to_string(), "anchor:events:1".to_string()),
         ]
     );

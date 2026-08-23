@@ -5,9 +5,9 @@
 //! - Operations log (audit trail of system operations)
 
 use super::common::{DbResult, EnhancedRepository, Repository, db_error};
-use crate::schema::OperationsLog;
 use crate::repositories::DbPoolExt;
 use crate::repositories::replay::REPLAY_ARCHIVE_PAGE_SIZE;
+use crate::schema::OperationsLog;
 use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use num_traits::ToPrimitive;
@@ -27,13 +27,11 @@ mod helpers;
 mod tombstone;
 mod types;
 
-pub use helpers::{
-    PROJECTION_REBUILD_OPERATION_TYPE, REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE,
-};
 use helpers::{
     MANAGED_OPERATION_TYPES, SQLSTATE_UNDEFINED_FUNCTION, module_heartbeat_stale_after,
     probe_health, probe_health_bool,
 };
+pub use helpers::{PROJECTION_REBUILD_OPERATION_TYPE, REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE};
 pub use types::{
     AutomataStatusRow, LiveModulePresence, ManifestRow, ModuleHealthSummary, ModuleManifest,
     ModuleRun, Operation, OperationRecord, OperationStatistics, RuntimeLivenessEvidenceRow,
@@ -666,9 +664,8 @@ impl StateRepository<'_> {
             SinexError::not_found(format!("Replay operation not found: {replay_operation_id}"))
         })?;
 
-        let archive_reason = format!(
-            "superseded by replay re-execution (operation {replay_operation_id})"
-        );
+        let archive_reason =
+            format!("superseded by replay re-execution (operation {replay_operation_id})");
         let recovery_scope = serde_json::json!({
             "replay_operation_id": replay_operation_id.to_string(),
             "archive_reason": archive_reason,
@@ -772,7 +769,9 @@ impl StateRepository<'_> {
                     .ok_or_else(|| SinexError::database("archive recovery operation disappeared"))
             }
             Err(error) => {
-                let summary = metadata.preview_summary.unwrap_or_else(|| serde_json::json!({}));
+                let summary = metadata
+                    .preview_summary
+                    .unwrap_or_else(|| serde_json::json!({}));
                 let _ = self
                     .update_operation_meta(
                         &recovery.id,

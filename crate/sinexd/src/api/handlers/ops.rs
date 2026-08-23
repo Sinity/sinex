@@ -290,10 +290,8 @@ async fn start_replay_archive_recovery_operation(
         .get("replay_operation_id")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| {
-            SinexError::validation(
-                "replay-archive-recovery scope requires replay_operation_id",
-            )
-            .with_operation("ops.start")
+            SinexError::validation("replay-archive-recovery scope requires replay_operation_id")
+                .with_operation("ops.start")
         })?;
     let replay_operation_id = uuid::Uuid::parse_str(replay_operation_id).map_err(|error| {
         SinexError::validation("replay-archive-recovery replay_operation_id must be a UUID")

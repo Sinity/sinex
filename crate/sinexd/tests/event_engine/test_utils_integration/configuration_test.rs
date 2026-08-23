@@ -983,7 +983,9 @@ async fn test_default_configuration_validation(ctx: TestContext) -> TestResult<(
 
     // Test specific default values
     if let Some(event_engine_defaults) = validator.component_defaults.get("EventEngineConfig") {
-        if let Some(ConfigValue::Integer(pool_size)) = event_engine_defaults.get("database_pool_size") {
+        if let Some(ConfigValue::Integer(pool_size)) =
+            event_engine_defaults.get("database_pool_size")
+        {
             assert!(pool_size > &0, "Default pool size should be positive");
         }
 

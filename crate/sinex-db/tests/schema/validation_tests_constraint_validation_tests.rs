@@ -373,13 +373,12 @@ async fn test_material_finalization_rejects_existing_out_of_bounds_events() -> T
         "Should allow material events before total_bytes is known"
     );
 
-    let finalization = sqlx::query(
-        "UPDATE raw.source_material_registry SET total_bytes = $2 WHERE id = $1::uuid",
-    )
-    .bind(material.id)
-    .bind(10i64)
-    .execute(pool)
-    .await;
+    let finalization =
+        sqlx::query("UPDATE raw.source_material_registry SET total_bytes = $2 WHERE id = $1::uuid")
+            .bind(material.id)
+            .bind(10i64)
+            .execute(pool)
+            .await;
     assert!(
         finalization.is_err(),
         "Should reject finalization that would invalidate existing byte anchors"

@@ -73,7 +73,9 @@ impl FromStr for FaultPoint {
             #[cfg(test)]
             "material-commit-post-commit-response" => Ok(Self::MaterialCommitPostCommitResponse),
             #[cfg(test)]
-            "material-commit-connection-termination" => Ok(Self::MaterialCommitConnectionTermination),
+            "material-commit-connection-termination" => {
+                Ok(Self::MaterialCommitConnectionTermination)
+            }
             other => Err(SinexError::validation(format!(
                 "unknown deterministic fault point: {other}"
             ))),

@@ -199,10 +199,11 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
         "test.output",
     )
     .await?;
-    let mut output = DynamicPayload::new("test.output", "test.output", json!({ "canonical": "ls" }))
-        .module_run_id(run.id.to_uuid())
-        .from_parents(vec![parent_id])?
-        .build()?;
+    let mut output =
+        DynamicPayload::new("test.output", "test.output", json!({ "canonical": "ls" }))
+            .module_run_id(run.id.to_uuid())
+            .from_parents(vec![parent_id])?
+            .build()?;
     output.product_class = Some(product_class);
     output.claim_support = Some(ClaimSupport::unknown());
     output.derivation_declaration_id = Some(declaration_id.to_string());

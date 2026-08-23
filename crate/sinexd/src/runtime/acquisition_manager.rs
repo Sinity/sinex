@@ -753,8 +753,7 @@ impl AcquisitionManager {
                 "injected source material finalization failure",
             ));
         }
-        self.finalize_with_metadata(handle, reason, json!({}))
-            .await
+        self.finalize_with_metadata(handle, reason, json!({})).await
     }
 
     #[cfg(test)]

@@ -4,14 +4,14 @@ use super::{
     ReplayControlStatus, SseConfirmationStatus, apply_schema_compilation_health,
 };
 use crate::api::{ReplayScope, ReplayState};
+use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_db::validation::SchemaCompilationFailure;
-use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::domain::OperationStatus;
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::{EventPayload, payloads::FileCreatedPayload};
 use sinex_primitives::rpc::system::SystemHealthRequest;
-use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
@@ -116,11 +116,8 @@ async fn system_health_reports_schema_compilation_failure_from_active_db_row(
         .await?;
 
     let container = super::ServiceContainer::from_database_url(ctx.database_url()).await?;
-    let failure_response = super::super::handlers::handle_system_health(
-        &container,
-        SystemHealthRequest {},
-    )
-    .await?;
+    let failure_response =
+        super::super::handlers::handle_system_health(&container, SystemHealthRequest {}).await?;
     let failure_reason = failure_response
         .degradation_reasons
         .iter()
@@ -141,11 +138,8 @@ async fn system_health_reports_schema_compilation_failure_from_active_db_row(
         })
         .await?;
 
-    let recovered_response = super::super::handlers::handle_system_health(
-        &container,
-        SystemHealthRequest {},
-    )
-    .await?;
+    let recovered_response =
+        super::super::handlers::handle_system_health(&container, SystemHealthRequest {}).await?;
     assert!(
         recovered_response
             .degradation_reasons

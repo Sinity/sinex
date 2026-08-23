@@ -1,7 +1,6 @@
 // Inline because these helpers are local implementation detail and only exercised via env-driven call sites.
 use super::{
-    elapsed_seconds_with_warning, env_nonempty_string_optional,
-    unix_timestamp_secs_with_warning,
+    elapsed_seconds_with_warning, env_nonempty_string_optional, unix_timestamp_secs_with_warning,
 };
 #[cfg(unix)]
 use std::ffi::OsString;
@@ -11,8 +10,8 @@ use std::time::SystemTime;
 use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
 #[sinex_serial_test]
-async fn env_bool_with_default_uses_default_on_invalid_override()
--> xtask::sandbox::TestResult<()> {
+async fn env_bool_with_default_uses_default_on_invalid_override() -> xtask::sandbox::TestResult<()>
+{
     let mut env = EnvGuard::new();
     env.set("SINEX_TEST_BOOL_OVERRIDE", "bogus");
 
@@ -22,8 +21,8 @@ async fn env_bool_with_default_uses_default_on_invalid_override()
 }
 
 #[sinex_serial_test]
-async fn env_parse_with_default_uses_default_on_invalid_override()
--> xtask::sandbox::TestResult<()> {
+async fn env_parse_with_default_uses_default_on_invalid_override() -> xtask::sandbox::TestResult<()>
+{
     let mut env = EnvGuard::new();
     env.set("SINEX_TEST_U64_OVERRIDE", "bogus");
 
@@ -47,8 +46,7 @@ async fn env_string_optional_ignores_non_utf8_override() -> xtask::sandbox::Test
 }
 
 #[sinex_serial_test]
-async fn env_nonempty_string_optional_ignores_blank_override() -> xtask::sandbox::TestResult<()>
-{
+async fn env_nonempty_string_optional_ignores_blank_override() -> xtask::sandbox::TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_TEST_STRING_OVERRIDE", "   ");
 
@@ -58,8 +56,8 @@ async fn env_nonempty_string_optional_ignores_blank_override() -> xtask::sandbox
 }
 
 #[sinex_test]
-async fn test_elapsed_seconds_with_warning_uses_real_elapsed_time()
--> xtask::sandbox::TestResult<()> {
+async fn test_elapsed_seconds_with_warning_uses_real_elapsed_time() -> xtask::sandbox::TestResult<()>
+{
     let start_time = SystemTime::now()
         .checked_sub(std::time::Duration::from_secs(5))
         .expect("past timestamp");
@@ -69,8 +67,8 @@ async fn test_elapsed_seconds_with_warning_uses_real_elapsed_time()
 }
 
 #[sinex_test]
-async fn test_elapsed_seconds_with_warning_clamps_clock_rollback()
--> xtask::sandbox::TestResult<()> {
+async fn test_elapsed_seconds_with_warning_clamps_clock_rollback() -> xtask::sandbox::TestResult<()>
+{
     let start_time = SystemTime::now()
         .checked_add(std::time::Duration::from_secs(5))
         .expect("future timestamp");

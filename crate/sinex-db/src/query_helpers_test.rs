@@ -21,9 +21,7 @@ async fn rollback_failure_preserves_original_error_context() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn db_pool_ext_with_transaction_runs_single_operation(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn db_pool_ext_with_transaction_runs_single_operation(ctx: TestContext) -> TestResult<()> {
     let value = ctx
         .pool()
         .with_transaction(async |tx| {

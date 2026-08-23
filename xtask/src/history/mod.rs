@@ -5,7 +5,6 @@
 
 mod analysis;
 mod db;
-pub mod merge;
 pub mod query;
 pub mod seed;
 mod tests;
@@ -22,10 +21,6 @@ pub use db::{
     InvocationTimelineEntry, InvocationWithFingerprint, JobLifecycleStatus, LifecycleStatus,
     ProofEvidence, ResourceUsage, StagePressure, StageStats, StageTiming, StageTrendPoint,
     StoredDiagnostic, TestProofUnit, TraceEventRow, WorkingSession, WrapperEventRow,
-};
-pub use merge::{
-    BackfillReport, ImportReport, WorkspaceAttribution, attribution_for_workspace_db,
-    backfill_workspace_attribution, import_history, recorded_workspace_roots,
 };
 pub use query::{DiagnosticQuery, DiagnosticScope, InvocationQuery, TestResultQuery};
 pub use seed::SeedOptions;

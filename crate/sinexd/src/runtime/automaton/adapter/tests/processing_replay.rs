@@ -698,7 +698,7 @@ async fn handle_invalidation_archives_before_output_emit_and_retries_without_dup
         EventSource::from_static("measurements"),
         EventType::from_static("measurement.taken"),
     )
-        .with_scope_keys(vec![scope_key.to_string()]);
+    .with_scope_keys(vec![scope_key.to_string()]);
     let payload = serde_json::to_vec(&invalidation)?;
 
     let result = adapter.handle_invalidation_message(&payload).await;

@@ -144,7 +144,8 @@ async fn document_chunks_replay_overwrites_stale_text(ctx: TestContext) -> TestR
     //    chunk_index)` occurrence (deterministic document_id, stable
     //    chunk_index — this is exactly what replay produces).
     let redacted_text = "original under-redacted text SSN [REDACTED]";
-    let replay_material = seed_material(pool, &format!("chunk-material-replay-{document_id}")).await?;
+    let replay_material =
+        seed_material(pool, &format!("chunk-material-replay-{document_id}")).await?;
     seed_document_event(
         pool,
         replay_material,
@@ -189,13 +190,15 @@ async fn document_chunks_replay_overwrites_stale_text(ctx: TestContext) -> TestR
 
     // Only one row should exist for this occurrence — this is an upsert,
     // not an accumulating insert.
-    let row_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM core.document_chunks WHERE document_id = $1",
-    )
-    .bind(document_id)
-    .fetch_one(pool)
-    .await?;
-    assert_eq!(row_count, 1, "replay must upsert in place, not accumulate rows");
+    let row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.document_chunks WHERE document_id = $1")
+            .bind(document_id)
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(
+        row_count, 1,
+        "replay must upsert in place, not accumulate rows"
+    );
 
     Ok(())
 }
@@ -229,11 +232,8 @@ async fn document_chunks_new_chunk_index_still_inserts(ctx: TestContext) -> Test
 
     for chunk_index in 0..2i32 {
         let text = format!("chunk body {chunk_index}");
-        let material = seed_material(
-            pool,
-            &format!("chunk-material-{document_id}-{chunk_index}"),
-        )
-        .await?;
+        let material =
+            seed_material(pool, &format!("chunk-material-{document_id}-{chunk_index}")).await?;
         seed_document_event(
             pool,
             material,
@@ -257,7 +257,10 @@ async fn document_chunks_new_chunk_index_still_inserts(ctx: TestContext) -> Test
             .bind(document_id)
             .fetch_one(pool)
             .await?;
-    assert_eq!(row_count, 2, "distinct chunk_index values must both be inserted");
+    assert_eq!(
+        row_count, 2,
+        "distinct chunk_index values must both be inserted"
+    );
 
     Ok(())
 }

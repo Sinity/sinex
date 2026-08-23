@@ -189,7 +189,10 @@ async fn list_active_collapses_component_health_to_latest_run(ctx: TestContext) 
         1,
         "component-level health does not identify distinct parallel run IDs"
     );
-    assert_eq!(parallel_modules[0]["instance_id"].as_str(), Some("instance-b"));
+    assert_eq!(
+        parallel_modules[0]["instance_id"].as_str(),
+        Some("instance-b")
+    );
 
     Ok(())
 }

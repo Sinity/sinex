@@ -33,14 +33,11 @@ pub fn xtask_command() -> color_eyre::eyre::Result<Command> {
         .ok_or_else(|| color_eyre::eyre::eyre!("failed to resolve workspace root"))?;
     let mut command = Command::new(xtask_bin()?);
     command.current_dir(workspace_root);
-    // Point the child at a disposable ledger. The history DB is shared by every
-    // workspace on the machine and no longer follows SINEX_STATE_DIR, so
-    // without an explicit override a subprocess test would record into the
-    // operator's real evidence. Callers that seed their own DB set
-    // XTASK_HISTORY_DB again and win, since the override is read last.
-    let state_dir = fresh_state_dir()?;
-    command.env("XTASK_HISTORY_DB", state_dir.join("xtask-history.db"));
-    command.env("SINEX_STATE_DIR", state_dir);
+    // Subprocess tests often seed a history DB under an explicit SINEX_STATE_DIR.
+    // Clear any suite-level XTASK_HISTORY_DB override so children use the state
+    // directory unless the caller opts into a specific history DB explicitly.
+    command.env_remove("XTASK_HISTORY_DB");
+    command.env("SINEX_STATE_DIR", fresh_state_dir()?);
     command.env("NO_COLOR", "1");
     command.env("FORCE_COLOR", "0");
     Ok(command)

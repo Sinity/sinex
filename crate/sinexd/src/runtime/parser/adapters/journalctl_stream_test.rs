@@ -31,7 +31,8 @@ async fn test_cursor_after_extracts_cursor_field() -> xtask::sandbox::TestResult
 }
 
 #[sinex_test]
-async fn test_cursor_after_missing_cursor_is_not_checkpointable() -> xtask::sandbox::TestResult<()> {
+async fn test_cursor_after_missing_cursor_is_not_checkpointable() -> xtask::sandbox::TestResult<()>
+{
     let mid = dummy_material_id();
     let records = records_from_journal_lines(mid, &[JOURNAL_LINE_NO_CURSOR]);
     let record = records[0].as_ref().unwrap();
@@ -139,12 +140,17 @@ async fn test_multiple_lines_have_distinct_monotonic_material_offsets()
     let offsets: Vec<u64> = records
         .iter()
         .map(|r| match &r.as_ref().unwrap().anchor {
-            MaterialAnchor::StreamFrame { material_offset, .. } => *material_offset,
+            MaterialAnchor::StreamFrame {
+                material_offset, ..
+            } => *material_offset,
             _ => panic!("unexpected anchor"),
         })
         .collect();
 
-    assert_eq!(offsets[0], 0, "first record anchors at the start of the material");
+    assert_eq!(
+        offsets[0], 0,
+        "first record anchors at the start of the material"
+    );
     for w in offsets.windows(2) {
         assert!(
             w[1] > w[0],
@@ -413,8 +419,7 @@ async fn test_subscriber_kind_is_subprocess() -> xtask::sandbox::TestResult<()> 
 }
 
 #[sinex_test]
-async fn test_subscriber_cursor_after_extracts_journal_cursor() -> xtask::sandbox::TestResult<()>
-{
+async fn test_subscriber_cursor_after_extracts_journal_cursor() -> xtask::sandbox::TestResult<()> {
     let (tx, rx) = broadcast::channel::<SourceRecord>(4);
     drop(tx); // no sending needed for this test
     let subscriber = super::JournalctlSubscriber {

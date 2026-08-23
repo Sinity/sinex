@@ -69,8 +69,7 @@ async fn test_sqlite_cursor_resumes_after_rowid() -> xtask::sandbox::TestResult<
 }
 
 #[sinex_test]
-async fn test_sqlite_input_fingerprint_reports_schema_shape() -> xtask::sandbox::TestResult<()>
-{
+async fn test_sqlite_input_fingerprint_reports_schema_shape() -> xtask::sandbox::TestResult<()> {
     let db = make_test_db();
     let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
     let config = SqliteRowConfig {
@@ -145,9 +144,7 @@ async fn test_sqlite_anchor_contains_table_name() -> xtask::sandbox::TestResult<
         .unwrap();
     let record = stream.next().await.unwrap().unwrap();
 
-    assert!(
-        matches!(&record.anchor, MaterialAnchor::SqliteRow { table, .. } if table == "items")
-    );
+    assert!(matches!(&record.anchor, MaterialAnchor::SqliteRow { table, .. } if table == "items"));
     Ok(())
 }
 
@@ -216,8 +213,7 @@ async fn test_sqlite_row_json_has_column_keys() -> xtask::sandbox::TestResult<()
 /// asserted by `test_sqlite_cursor_resumes_after_rowid` above; this proves
 /// the opt-in widens the read window instead.
 #[sinex_test]
-async fn test_sqlite_mutable_trailing_rows_rereads_mutated_row() -> xtask::sandbox::TestResult<()>
-{
+async fn test_sqlite_mutable_trailing_rows_rereads_mutated_row() -> xtask::sandbox::TestResult<()> {
     let db = make_test_db();
     let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
     let config = SqliteRowConfig {
@@ -259,8 +255,8 @@ async fn test_sqlite_mutable_trailing_rows_rereads_mutated_row() -> xtask::sandb
         1,
         "trailing window of 1 must re-offer exactly the mutated row"
     );
-    let json: serde_json::Value = serde_json::from_slice(&records2[0].as_ref().unwrap().bytes)
-        .unwrap();
+    let json: serde_json::Value =
+        serde_json::from_slice(&records2[0].as_ref().unwrap().bytes).unwrap();
     assert_eq!(json["id"], 3);
     assert_eq!(
         json["value"], 99.9,

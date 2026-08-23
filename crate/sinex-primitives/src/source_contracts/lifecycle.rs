@@ -61,8 +61,13 @@ pub enum CatchUpAuthority {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AcceptedLossPolicy {
     NoSilentLoss,
-    BoundedByAuthority { boundary: &'static str },
-    Accepted { rationale: &'static str, record: &'static str },
+    BoundedByAuthority {
+        boundary: &'static str,
+    },
+    Accepted {
+        rationale: &'static str,
+        record: &'static str,
+    },
 }
 
 /// Recovery contract for one deployed source binding.

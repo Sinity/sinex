@@ -12,18 +12,17 @@ use sinex_primitives::privacy::{
     builtin_policy_seed_rules, load_private_mode_state, save_private_mode_state,
 };
 use sinex_primitives::rpc::privacy::{
-    PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionary, PrivacyPolicyDictionaryAddRequest,
-    PrivacyPolicyFieldBindRequest, PrivacyPolicyFieldBindResponse, PrivacyPolicyFieldScope,
-    PrivacyPolicyFieldUnbindRequest, PrivacyPolicyFieldUnbindResponse, PrivacyPolicyKeyNamespace,
-    PrivacyPolicyListRequest, PrivacyPolicyListResponse, PrivacyPolicyMutationResponse,
-    PrivacyPolicyRecognizerBackend, PrivacyPolicyRule, PrivacyPolicyRuleAddRequest,
-    PrivacyPolicyRuleRemoveRequest, PrivacyPolicyRuleRemoveResponse,
-    PrivacyPolicyRuleSetEnabledRequest, PrivacyPolicyRuleSetEnabledResponse,
-    PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest,
-    PrivacyPolicySeedBuiltinResponse, PrivateModeDisableRequest, PrivateModeEnableRequest,
-    PrivateModeStateResponse, PrivateModeStatusRequest, PrivacyInvalidationStatus,
-    PrivacyInvalidationSurface, PrivacyShadowAuditFinding, PrivacyShadowAuditRequest,
-    PrivacyShadowAuditResponse,
+    PrivacyInvalidationStatus, PrivacyInvalidationSurface, PrivacyPolicyBackendAddRequest,
+    PrivacyPolicyDictionary, PrivacyPolicyDictionaryAddRequest, PrivacyPolicyFieldBindRequest,
+    PrivacyPolicyFieldBindResponse, PrivacyPolicyFieldScope, PrivacyPolicyFieldUnbindRequest,
+    PrivacyPolicyFieldUnbindResponse, PrivacyPolicyKeyNamespace, PrivacyPolicyListRequest,
+    PrivacyPolicyListResponse, PrivacyPolicyMutationResponse, PrivacyPolicyRecognizerBackend,
+    PrivacyPolicyRule, PrivacyPolicyRuleAddRequest, PrivacyPolicyRuleRemoveRequest,
+    PrivacyPolicyRuleRemoveResponse, PrivacyPolicyRuleSetEnabledRequest,
+    PrivacyPolicyRuleSetEnabledResponse, PrivacyPolicyScopeBindRequest,
+    PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse, PrivacyShadowAuditFinding,
+    PrivacyShadowAuditRequest, PrivacyShadowAuditResponse, PrivateModeDisableRequest,
+    PrivateModeEnableRequest, PrivateModeStateResponse, PrivateModeStatusRequest,
 };
 use sinex_primitives::temporal::{Timestamp, parse_duration};
 use sinex_primitives::transport;
@@ -37,28 +36,64 @@ const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 const SHADOW_SURFACES: &[(&str, &str)] = &[
     ("core.events", "retention follows event lifecycle"),
     ("reflection.events", "reflection retention window"),
-    ("audit.archived_events", "operator-authorized archive retention"),
-    ("audit.archived_annotations", "operator-authorized archive retention"),
-    ("audit.archived_embeddings", "operator-authorized archive retention"),
-    ("audit.archived_tagged_items", "operator-authorized archive retention"),
-    ("raw.source_material_registry", "source material retention policy"),
-    ("raw.source_material_links", "source material retention policy"),
+    (
+        "audit.archived_events",
+        "operator-authorized archive retention",
+    ),
+    (
+        "audit.archived_annotations",
+        "operator-authorized archive retention",
+    ),
+    (
+        "audit.archived_embeddings",
+        "operator-authorized archive retention",
+    ),
+    (
+        "audit.archived_tagged_items",
+        "operator-authorized archive retention",
+    ),
+    (
+        "raw.source_material_registry",
+        "source material retention policy",
+    ),
+    (
+        "raw.source_material_links",
+        "source material retention policy",
+    ),
     ("raw.temporal_ledger", "source material retention policy"),
     ("core.document_chunks", "projection rebuild retention"),
-    ("core.email_mailbox_projection", "projection rebuild retention"),
+    (
+        "core.email_mailbox_projection",
+        "projection rebuild retention",
+    ),
     ("core.entities", "projection rebuild retention"),
     ("core.entity_relations", "projection rebuild retention"),
     ("core.event_annotations", "operator annotation retention"),
     ("core.event_embeddings", "embedding worker retention"),
     ("core.embedding_cache", "cache eviction horizon"),
-    ("derivation.lane_outputs", "lane retention and discard policy"),
-    ("derivation.projection_registry", "stale registry rebuild horizon"),
+    (
+        "derivation.lane_outputs",
+        "lane retention and discard policy",
+    ),
+    (
+        "derivation.projection_registry",
+        "stale registry rebuild horizon",
+    ),
     ("core.model_effects", "model-effect retention policy"),
     ("core.operations_log", "immutable operator audit retention"),
     ("sinex_schemas.dlq_events", "DLQ retention window"),
-    ("sinex_telemetry.current_health", "telemetry retention window"),
-    ("sinex_telemetry.current_window_focus", "telemetry retention window"),
-    ("sinex_telemetry.recent_activity_summary", "telemetry retention window"),
+    (
+        "sinex_telemetry.current_health",
+        "telemetry retention window",
+    ),
+    (
+        "sinex_telemetry.current_window_focus",
+        "telemetry retention window",
+    ),
+    (
+        "sinex_telemetry.recent_activity_summary",
+        "telemetry retention window",
+    ),
 ];
 
 /// Fold typed Presidio `context_words` into the rule's `matcher_config` under
@@ -518,11 +553,10 @@ async fn publish_private_mode_control(
     let payload = private_mode_control_payload(action, state);
     let mut headers = async_nats::HeaderMap::new();
     transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
-    let payload_bytes = serde_json::to_vec(&payload)
-        .map_err(|err| {
-            SinexError::serialization("failed to serialize private-mode control payload")
-                .with_std_error(&err)
-        })?;
+    let payload_bytes = serde_json::to_vec(&payload).map_err(|err| {
+        SinexError::serialization("failed to serialize private-mode control payload")
+            .with_std_error(&err)
+    })?;
 
     ensure_nats_payload_fits("private-mode control update", &subject, payload_bytes.len())?;
 
@@ -713,18 +747,24 @@ pub async fn handle_privacy_shadow_audit(
         ));
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| SinexError::database("failed to begin privacy shadow audit").with_source(e.to_string()))?;
+    let mut tx = pool.begin().await.map_err(|e| {
+        SinexError::database("failed to begin privacy shadow audit").with_source(e.to_string())
+    })?;
     sqlx::query("SET TRANSACTION READ ONLY")
         .execute(&mut *tx)
         .await
-        .map_err(|e| SinexError::database("failed to set privacy shadow audit read-only").with_source(e.to_string()))?;
-    let read_only: bool = sqlx::query_scalar("SELECT current_setting('transaction_read_only') = 'on'")
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| SinexError::database("failed to prove privacy shadow audit read-only").with_source(e.to_string()))?;
+        .map_err(|e| {
+            SinexError::database("failed to set privacy shadow audit read-only")
+                .with_source(e.to_string())
+        })?;
+    let read_only: bool =
+        sqlx::query_scalar("SELECT current_setting('transaction_read_only') = 'on'")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| {
+                SinexError::database("failed to prove privacy shadow audit read-only")
+                    .with_source(e.to_string())
+            })?;
     if !read_only {
         return Err(SinexError::invalid_state(
             "privacy shadow audit could not prove a read-only transaction",
@@ -736,25 +776,35 @@ pub async fn handle_privacy_shadow_audit(
         builtin_categories: CategorySet::All,
         ..PrivacyConfig::default()
     })
-    .map_err(|e| SinexError::processing("failed to compile privacy shadow recognizers").with_source(e.to_string()))?;
-    let mut aggregate = BTreeMap::<(String, String, String, String, String, String), PrivacyShadowAuditFinding>::new();
+    .map_err(|e| {
+        SinexError::processing("failed to compile privacy shadow recognizers")
+            .with_source(e.to_string())
+    })?;
+    let mut aggregate = BTreeMap::<
+        (String, String, String, String, String, String),
+        PrivacyShadowAuditFinding,
+    >::new();
     let mut surfaces = Vec::new();
     let mut scanned_events = 0_u64;
     let mut scanned_rows = 0_u64;
 
     for lane in ["core.events", "reflection.events"] {
         let (schema, table) = lane.split_once('.').expect("static lane has schema");
-        let mut sql = format!(
-            "SELECT source, event_type, payload, ts_orig FROM {schema}.{table} WHERE TRUE"
-        );
+        let mut sql =
+            format!("SELECT source, event_type, payload, ts_orig FROM {schema}.{table} WHERE TRUE");
         if request.source.is_some() {
             sql.push_str(" AND source = $1");
         }
         if request.event_type.is_some() {
-            sql.push_str(if request.source.is_some() { " AND event_type = $2" } else { " AND event_type = $1" });
+            sql.push_str(if request.source.is_some() {
+                " AND event_type = $2"
+            } else {
+                " AND event_type = $1"
+            });
         }
         if since.is_some() {
-            let index = 1 + request.source.is_some() as usize + request.event_type.is_some() as usize;
+            let index =
+                1 + request.source.is_some() as usize + request.event_type.is_some() as usize;
             sql.push_str(&format!(" AND ts_orig >= ${index}"));
         }
         if until.is_some() {
@@ -765,7 +815,13 @@ pub async fn handle_privacy_shadow_audit(
             sql.push_str(&format!(" AND ts_orig < ${index}"));
         }
         sql.push_str(" ORDER BY id DESC LIMIT $");
-        sql.push_str(&(1 + request.source.is_some() as usize + request.event_type.is_some() as usize + since.is_some() as usize + until.is_some() as usize).to_string());
+        sql.push_str(
+            &(1 + request.source.is_some() as usize
+                + request.event_type.is_some() as usize
+                + since.is_some() as usize
+                + until.is_some() as usize)
+                .to_string(),
+        );
 
         let mut query = sqlx::query(&sql);
         if let Some(source) = request.source.as_deref() {
@@ -784,15 +840,31 @@ pub async fn handle_privacy_shadow_audit(
             .bind(request.limit_events)
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| SinexError::database(format!("privacy shadow audit failed on {lane}")).with_source(e.to_string()))?;
+            .map_err(|e| {
+                SinexError::database(format!("privacy shadow audit failed on {lane}"))
+                    .with_source(e.to_string())
+            })?;
         for row in rows {
             scanned_events += 1;
             scanned_rows += 1;
-            let source: String = row.try_get("source").map_err(|e| SinexError::database("privacy shadow audit source read failed").with_source(e.to_string()))?;
-            let event_type: String = row.try_get("event_type").map_err(|e| SinexError::database("privacy shadow audit event type read failed").with_source(e.to_string()))?;
-            let payload: Value = row.try_get("payload").map_err(|e| SinexError::database("privacy shadow audit payload read failed").with_source(e.to_string()))?;
+            let source: String = row.try_get("source").map_err(|e| {
+                SinexError::database("privacy shadow audit source read failed")
+                    .with_source(e.to_string())
+            })?;
+            let event_type: String = row.try_get("event_type").map_err(|e| {
+                SinexError::database("privacy shadow audit event type read failed")
+                    .with_source(e.to_string())
+            })?;
+            let payload: Value = row.try_get("payload").map_err(|e| {
+                SinexError::database("privacy shadow audit payload read failed")
+                    .with_source(e.to_string())
+            })?;
             let ts_orig: Option<time::OffsetDateTime> = row.try_get("ts_orig").ok();
-            let timestamp = ts_orig.map(|value| value.format(&time::format_description::well_known::Rfc3339).unwrap_or_default());
+            let timestamp = ts_orig.map(|value| {
+                value
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default()
+            });
             let mut leaves = Vec::new();
             collect_string_leaves(&payload, "$", &mut leaves);
             for (path, value) in leaves {
@@ -806,19 +878,21 @@ pub async fn handle_privacy_shadow_audit(
                         event_type.clone(),
                         path.clone(),
                     );
-                    let entry = aggregate.entry(key).or_insert_with(|| PrivacyShadowAuditFinding {
-                        recognizer: finding.rule_name,
-                        category: finding.category,
-                        surface: lane.to_string(),
-                        source: source.clone(),
-                        event_type: event_type.clone(),
-                        field_path: path.clone(),
-                        sampled_row_count: 0,
-                        matched_row_count: 0,
-                        match_count: 0,
-                        first_seen: timestamp.clone(),
-                        last_seen: timestamp.clone(),
-                    });
+                    let entry = aggregate
+                        .entry(key)
+                        .or_insert_with(|| PrivacyShadowAuditFinding {
+                            recognizer: finding.rule_name,
+                            category: finding.category,
+                            surface: lane.to_string(),
+                            source: source.clone(),
+                            event_type: event_type.clone(),
+                            field_path: path.clone(),
+                            sampled_row_count: 0,
+                            matched_row_count: 0,
+                            match_count: 0,
+                            first_seen: timestamp.clone(),
+                            last_seen: timestamp.clone(),
+                        });
                     entry.matched_row_count += 1;
                     entry.match_count += finding.match_count;
                     if entry.first_seen.is_none() {
@@ -856,7 +930,9 @@ pub async fn handle_privacy_shadow_audit(
         });
     }
 
-    tx.rollback().await.map_err(|e| SinexError::database("failed to roll back privacy shadow audit").with_source(e.to_string()))?;
+    tx.rollback().await.map_err(|e| {
+        SinexError::database("failed to roll back privacy shadow audit").with_source(e.to_string())
+    })?;
     let generated_at = Timestamp::now().format_rfc3339();
     Ok(PrivacyShadowAuditResponse {
         schema_version: "sinex.privacy-shadow-audit/v1".to_string(),
@@ -884,17 +960,26 @@ async fn count_rows(
         .bind(limit)
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| SinexError::database(format!("privacy shadow audit surface read failed for {surface}")).with_source(e.to_string()))?;
+        .map_err(|e| {
+            SinexError::database(format!(
+                "privacy shadow audit surface read failed for {surface}"
+            ))
+            .with_source(e.to_string())
+        })?;
     Ok(count.max(0) as u64)
 }
 
 fn parse_audit_bound(value: Option<&str>, _upper: bool) -> Result<Option<time::OffsetDateTime>> {
-    let Some(value) = value else { return Ok(None); };
+    let Some(value) = value else {
+        return Ok(None);
+    };
     if let Ok(timestamp) = Timestamp::parse_rfc3339(value) {
         return Ok(Some(timestamp.into()));
     }
     let Some(duration) = parse_duration(value) else {
-        return Err(SinexError::validation(format!("invalid privacy audit time bound: {value}")));
+        return Err(SinexError::validation(format!(
+            "invalid privacy audit time bound: {value}"
+        )));
     };
     Ok(Some((Timestamp::now() - duration).into()))
 }
@@ -906,7 +991,11 @@ fn collect_string_leaves(value: &Value, path: &str, output: &mut Vec<(String, St
             collect_string_leaves(value, &format!("{path}/{index}"), output);
         }),
         Value::Object(values) => values.iter().for_each(|(key, value)| {
-            collect_string_leaves(value, &format!("{path}/{}", key.replace('~', "~0").replace('/', "~1")), output);
+            collect_string_leaves(
+                value,
+                &format!("{path}/{}", key.replace('~', "~0").replace('/', "~1")),
+                output,
+            );
         }),
         _ => {}
     }
@@ -918,9 +1007,18 @@ fn audit_context_for_field(path: &str) -> ProcessingContext {
         ProcessingContext::Command
     } else if lower.contains("clipboard") {
         ProcessingContext::Clipboard
-    } else if lower.contains("message") || lower.contains("body") || lower.contains("text") || lower.contains("content") || lower.contains("note") {
+    } else if lower.contains("message")
+        || lower.contains("body")
+        || lower.contains("text")
+        || lower.contains("content")
+        || lower.contains("note")
+    {
         ProcessingContext::Document
-    } else if lower.contains("path") || lower.contains("url") || lower.contains("host") || lower.contains("title") {
+    } else if lower.contains("path")
+        || lower.contains("url")
+        || lower.contains("host")
+        || lower.contains("title")
+    {
         ProcessingContext::Metadata
     } else {
         ProcessingContext::Document

@@ -30,7 +30,7 @@ pub use stats::ProcessingStats;
 pub use time_horizon::TimeHorizon;
 pub use wire_types::{
     ContinuousStart, MaterialReplayContext, ModuleKind, ReplayMaterialOccurrence,
-    ReplayScopeFilters, ResolvedReplayMaterial,
-    RunnerLifecycle, RuntimeCapabilities, ScanArgs, ScanEstimate, ScanReport, SchemaBroadcastCache,
-    SchemaBroadcastEntry, SourceScanAck, SourceScanCancel, SourceScanCommand, SourceScanProgress,
+    ReplayScopeFilters, ResolvedReplayMaterial, RunnerLifecycle, RuntimeCapabilities, ScanArgs,
+    ScanEstimate, ScanReport, SchemaBroadcastCache, SchemaBroadcastEntry, SourceScanAck,
+    SourceScanCancel, SourceScanCommand, SourceScanProgress,
 };

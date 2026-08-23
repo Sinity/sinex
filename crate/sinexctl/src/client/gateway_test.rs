@@ -7,8 +7,7 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 async fn test_build_replay_time_window_supports_relative_inputs() -> TestResult<()> {
     let now = Timestamp::parse_rfc3339("2025-01-15T12:00:00Z")?;
-    let window =
-        GatewayClient::build_replay_time_window(Some("24h"), None, now)?.expect("window");
+    let window = GatewayClient::build_replay_time_window(Some("24h"), None, now)?.expect("window");
 
     assert_eq!(window.0.format_rfc3339(), "2025-01-14T12:00:00Z");
     assert_eq!(window.1.format_rfc3339(), "2025-01-15T12:00:00Z");
@@ -32,9 +31,8 @@ async fn test_build_replay_time_window_rejects_inverted_range() -> TestResult<()
 #[sinex_test]
 async fn test_build_replay_time_window_defaults_since_from_until() -> TestResult<()> {
     let now = Timestamp::parse_rfc3339("2025-01-15T12:00:00Z")?;
-    let window =
-        GatewayClient::build_replay_time_window(None, Some("2025-01-10T08:30:00Z"), now)?
-            .expect("window");
+    let window = GatewayClient::build_replay_time_window(None, Some("2025-01-10T08:30:00Z"), now)?
+        .expect("window");
 
     assert_eq!(window.0.format_rfc3339(), "2025-01-09T08:30:00Z");
     assert_eq!(window.1.format_rfc3339(), "2025-01-10T08:30:00Z");

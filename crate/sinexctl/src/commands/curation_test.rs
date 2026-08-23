@@ -1,5 +1,6 @@
 use super::*;
 use crate::fmt::render_finite_envelope;
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::Cursor;
@@ -8,7 +9,6 @@ use sinex_primitives::rpc::curation::{
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
-use sinex_primitives::JsonValue;
 use xtask::sandbox::sinex_test;
 
 fn empty_proposals() -> EventQueryResult {
@@ -40,7 +40,10 @@ fn duplicate_query(limit: i64, events_per_cluster: i64) -> CurationDuplicateQuer
 async fn curation_proposals_empty_envelope_names_absent_candidates() -> xtask::TestResult<()> {
     let envelope = curation_proposals_envelope(empty_proposals(), "pending", 100);
 
-    assert_eq!(envelope.source_surface, "sinexctl.semantic.curation.proposals");
+    assert_eq!(
+        envelope.source_surface,
+        "sinexctl.semantic.curation.proposals"
+    );
     assert_eq!(envelope.query_echo.as_ref().unwrap()["status"], "pending");
     assert_eq!(envelope.caveats.len(), 1);
     assert_eq!(envelope.caveats[0].id, "source.absent");

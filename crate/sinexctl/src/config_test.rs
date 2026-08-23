@@ -5,8 +5,8 @@ use super::*;
 use xtask::sandbox::prelude::sinex_test;
 
 #[sinex_test]
-async fn render_user_preferences_toml_escapes_structured_values()
--> xtask::sandbox::TestResult<()> {
+async fn render_user_preferences_toml_escapes_structured_values() -> xtask::sandbox::TestResult<()>
+{
     let rendered = Config::render_user_preferences_toml(
         OutputFormat::Json,
         r#"nvim "\path\with\quotes""#.to_string(),

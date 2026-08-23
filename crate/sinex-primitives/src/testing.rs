@@ -318,7 +318,6 @@ pub mod strategies {
             )
         })
     }
-
 }
 
 #[cfg(all(test, feature = "proptest"))]

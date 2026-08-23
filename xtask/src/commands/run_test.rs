@@ -262,8 +262,8 @@ async fn test_default_all_source_bindings_excludes_journald() -> ::xtask::sandbo
 }
 
 #[sinex_test]
-async fn test_all_source_bindings_can_include_default_excluded_sources(
-) -> ::xtask::sandbox::TestResult<()> {
+async fn test_all_source_bindings_can_include_default_excluded_sources()
+-> ::xtask::sandbox::TestResult<()> {
     let manifest = DevSourceBindingsManifest {
         bindings: vec![
             DevSourceBinding {

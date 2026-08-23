@@ -441,14 +441,15 @@ impl ContentStoreManager {
         self.verify_post_write(&content_key.key, &blake3_hash)
             .await?;
 
-        let blob_metadata = self.register_new_blob(
-            &content_key,
-            effective_filename,
-            size_bytes,
-            mime_type,
-            blake3_hash,
-        )
-        .await?;
+        let blob_metadata = self
+            .register_new_blob(
+                &content_key,
+                effective_filename,
+                size_bytes,
+                mime_type,
+                blake3_hash,
+            )
+            .await?;
         if let Err(error) = self.content_store.release_write_lease(&write_lease).await {
             warn!(
                 content_key = %content_key.key,
@@ -517,17 +518,18 @@ impl ContentStoreManager {
         self.verify_post_write(&content_key.key, &blake3_hash)
             .await?;
 
-        let blob_metadata = self.register_new_blob(
-            &content_key,
-            filename,
-            i64::try_from(content.len()).map_err(|error| {
-                SinexError::blob_storage("blob size does not fit database metadata")
-                    .with_source(error)
-            })?,
-            content_type.to_string(),
-            blake3_hash,
-        )
-        .await?;
+        let blob_metadata = self
+            .register_new_blob(
+                &content_key,
+                filename,
+                i64::try_from(content.len()).map_err(|error| {
+                    SinexError::blob_storage("blob size does not fit database metadata")
+                        .with_source(error)
+                })?,
+                content_type.to_string(),
+                blake3_hash,
+            )
+            .await?;
         if let Err(error) = self.content_store.release_write_lease(&write_lease).await {
             warn!(
                 content_key = %content_key.key,

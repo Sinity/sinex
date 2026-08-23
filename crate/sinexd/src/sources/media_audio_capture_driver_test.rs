@@ -130,8 +130,7 @@ async fn non_wav_bytes_have_no_metadata() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn build_recording_event_anchors_material_and_metadata()
--> xtask::sandbox::TestResult<()> {
+async fn build_recording_event_anchors_material_and_metadata() -> xtask::sandbox::TestResult<()> {
     let captured = decode_audio_metadata(fake_wav(2, 48_000, 96_000));
     let material_id = Id::<SourceMaterial>::from_uuid(uuid::Uuid::new_v4());
     let config = MediaAudioCaptureConfig {

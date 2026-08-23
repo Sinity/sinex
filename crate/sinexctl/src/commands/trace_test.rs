@@ -41,8 +41,7 @@ async fn dot_renderer_uses_provenance_edges_instead_of_flattening_to_root()
         "document.parsed",
         [ancestor.id.expect("ancestor id")],
     );
-    let descendant =
-        synthesis_event("process", "document.chunked", [root.id.expect("root id")]);
+    let descendant = synthesis_event("process", "document.chunked", [root.id.expect("root id")]);
 
     let dot = render_dot(&LineageResult {
         root: root.clone(),
@@ -77,8 +76,7 @@ async fn dot_renderer_uses_provenance_edges_instead_of_flattening_to_root()
 }
 
 #[sinex_test]
-async fn dot_renderer_includes_material_evidence_and_legend() -> xtask::sandbox::TestResult<()>
-{
+async fn dot_renderer_includes_material_evidence_and_legend() -> xtask::sandbox::TestResult<()> {
     let root = material_event("fs", "file.created");
     let from_material_id = Id::<SourceMaterial>::new().to_uuid();
     let to_material_id = Id::<SourceMaterial>::new().to_uuid();

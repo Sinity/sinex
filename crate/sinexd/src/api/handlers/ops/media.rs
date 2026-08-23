@@ -162,8 +162,7 @@ pub(super) async fn execute_session_control(
     let started = Instant::now();
     let session_scope = media_session_scope(scope);
     let reason = super::optional_scope_string(scope, "reason");
-    let (runtime_state_ref, coverage_ref, debt_ref) =
-        media_session_refs(spec.source_id, mode_id);
+    let (runtime_state_ref, coverage_ref, debt_ref) = media_session_refs(spec.source_id, mode_id);
 
     let record = pool
         .source_session_states()
@@ -253,8 +252,7 @@ pub(super) async fn execute_session_inspect(
         })
         .collect();
 
-    let (runtime_state_ref, coverage_ref, debt_ref) =
-        media_session_refs(spec.source_id, mode_id);
+    let (runtime_state_ref, coverage_ref, debt_ref) = media_session_refs(spec.source_id, mode_id);
     let inspect = serde_json::json!({
         "source_id": spec.source_id,
         "mode_id": mode_id,
@@ -653,7 +651,8 @@ async fn execute_media_worker_command(
                 "timed_out": false,
                 "model_available": false,
             });
-            summary["worker_budget"] = worker_budget_block(&request, elapsed_millis(started), false);
+            summary["worker_budget"] =
+                worker_budget_block(&request, elapsed_millis(started), false);
             return Ok(MediaWorkerCommandOutcome {
                 output: None,
                 summary,

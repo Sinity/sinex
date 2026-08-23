@@ -98,10 +98,8 @@ impl InputShapeAdapter for FixtureAdapter {
 #[sinex_test]
 async fn test_sequential_merge_drains_primary_first() -> xtask::sandbox::TestResult<()> {
     let mid = dummy_material_id();
-    let primary = FixtureAdapter::with_records(vec![
-        make_record(mid, 0, "p0"),
-        make_record(mid, 1, "p1"),
-    ]);
+    let primary =
+        FixtureAdapter::with_records(vec![make_record(mid, 0, "p0"), make_record(mid, 1, "p1")]);
     let secondary = FixtureAdapter::with_records(vec![make_record(mid, 0, "s0")]);
 
     let adapter = ChainedAdapter(primary, secondary);

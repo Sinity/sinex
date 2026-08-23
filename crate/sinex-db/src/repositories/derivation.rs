@@ -13,9 +13,12 @@
 use super::common::{DbResult, Repository, db_error};
 use crate::schema::records;
 use crate::{JsonValue, Timestamp};
+use sinex_primitives::Uuid;
 use sinex_primitives::derivation::{ClaimSupport, DerivationOutputDeclaration, LaneDiffReport};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::events::payloads::{ActivitySessionBoundaryPayload, ActivityWindowSummaryPayload};
+use sinex_primitives::events::payloads::{
+    ActivitySessionBoundaryPayload, ActivityWindowSummaryPayload,
+};
 use sinex_primitives::events::{EntityRelatedPayload, EntityResolvedPayload};
 use sinex_primitives::semantic::{
     EntityRelationLaneOutputs, SemanticEntityOutput, SemanticRelationOutput, SemanticScope,
@@ -23,7 +26,6 @@ use sinex_primitives::semantic::{
 use sinex_primitives::session_lane::{
     SessionBoundaryOutput, SessionLaneOutputs, compute_session_boundaries,
 };
-use sinex_primitives::Uuid;
 use sqlx::PgPool;
 
 /// A `derivation.product_declarations` row as currently stored, for
@@ -1086,15 +1088,16 @@ impl DerivationRepository<'_> {
         .fetch_all(self.pool)
         .await
         .map_err(|error| {
-            db_error(error, "read canonical session boundaries for derivation lane")
+            db_error(
+                error,
+                "read canonical session boundaries for derivation lane",
+            )
         })?;
 
         let mut output_rows = Vec::with_capacity(rows.len());
         for row in rows {
-            let payload: ActivitySessionBoundaryPayload = parse_lane_output_payload(
-                "activity.session.boundary event payload",
-                row.payload,
-            )?;
+            let payload: ActivitySessionBoundaryPayload =
+                parse_lane_output_payload("activity.session.boundary event payload", row.payload)?;
             let boundary = SessionBoundaryOutput {
                 session_key: payload.session_id.clone(),
                 start_time: payload.start_time,
@@ -1160,10 +1163,8 @@ impl DerivationRepository<'_> {
 
         let mut windows = Vec::with_capacity(rows.len());
         for row in rows {
-            let payload: ActivityWindowSummaryPayload = parse_lane_output_payload(
-                "activity.window.summary event payload",
-                row.payload,
-            )?;
+            let payload: ActivityWindowSummaryPayload =
+                parse_lane_output_payload("activity.window.summary event payload", row.payload)?;
             windows.push(payload);
         }
 

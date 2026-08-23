@@ -6,10 +6,6 @@ use crate::commands::runtime_presence::{EnrichedRuntimeInfo, runtime_modules_env
 use std::collections::BTreeMap;
 
 use crate::fmt::render_finite_envelope;
-use sinex_primitives::{
-    RuntimeLivenessAggregate, RuntimeLivenessEvidence, RuntimeLivenessMembership,
-    RuntimeLivenessPolicy, RuntimeLivenessStatus,
-};
 use sinex_primitives::domain::{HealthStatus, InstanceId, ModuleKind, ModuleName};
 use sinex_primitives::rpc::coordination::{ErrorInfo, InstanceInfo};
 use sinex_primitives::rpc::runtime::RuntimeHeartbeatSource;
@@ -18,6 +14,10 @@ use sinex_primitives::rpc::system::{
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
+use sinex_primitives::{
+    RuntimeLivenessAggregate, RuntimeLivenessEvidence, RuntimeLivenessMembership,
+    RuntimeLivenessPolicy, RuntimeLivenessStatus,
+};
 use xtask::sandbox::sinex_test;
 
 fn make_module(id: &str, kind: ModuleKind) -> RuntimeInfo {
@@ -395,8 +395,18 @@ async fn runtime_health_renders_failed_and_stale_runtime_evidence() -> xtask::Te
     );
 
     let envelope = runtime_health_envelope(health.clone());
-    assert!(envelope.caveats.iter().any(|caveat| caveat.message.contains("failed-source")));
-    assert!(envelope.caveats.iter().any(|caveat| caveat.message.contains("stale-automaton")));
+    assert!(
+        envelope
+            .caveats
+            .iter()
+            .any(|caveat| caveat.message.contains("failed-source"))
+    );
+    assert!(
+        envelope
+            .caveats
+            .iter()
+            .any(|caveat| caveat.message.contains("stale-automaton"))
+    );
 
     let table = format_health_table(&health);
     assert!(table.contains("Runtime Liveness: unhealthy"));

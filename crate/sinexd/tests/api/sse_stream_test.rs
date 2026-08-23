@@ -270,8 +270,7 @@ async fn bus_retries_initial_subscribe_failures_until_shutdown(
     let bus_task = tokio::spawn({
         let bus = Arc::clone(&bus);
         async move {
-            bus.run_with_ready(nats, env, None, shutdown_rx, None)
-                .await;
+            bus.run_with_ready(nats, env, None, shutdown_rx, None).await;
         }
     });
 

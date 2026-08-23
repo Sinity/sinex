@@ -313,7 +313,10 @@ async fn recall_machine_output_projects_attention_spans() -> xtask::sandbox::Tes
         .ok_or_else(|| color_eyre::eyre::eyre!("attention span missing from timeline"))?;
     assert_eq!(attention_item["item_kind"], "attention_span");
     assert_eq!(attention_item["state_kind"], "attention.span");
-    assert_eq!(attention_item["support_refs"][0]["id"], "event:raw-window-1");
+    assert_eq!(
+        attention_item["support_refs"][0]["id"],
+        "event:raw-window-1"
+    );
     let event_item = timeline
         .iter()
         .find(|item| item["ref"]["id"] == "event:cmd-1")
@@ -403,8 +406,8 @@ async fn recall_machine_output_projects_lifted_intervals() -> xtask::sandbox::Te
 }
 
 #[sinex_test]
-async fn recall_machine_output_projects_caveats_as_timeline_gaps()
--> xtask::sandbox::TestResult<()> {
+async fn recall_machine_output_projects_caveats_as_timeline_gaps() -> xtask::sandbox::TestResult<()>
+{
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 1,
@@ -1582,6 +1585,9 @@ fn truncate_gates_on_char_count_not_byte_length() {
     assert!(s.len() > 10);
 
     let truncated = truncate(s, 6);
-    assert!(truncated.chars().count() <= 6, "must respect the char budget");
+    assert!(
+        truncated.chars().count() <= 6,
+        "must respect the char budget"
+    );
     assert!(truncated.ends_with("..."));
 }

@@ -543,9 +543,13 @@ async fn tombstone_approve_retains_manifest_replay_root_without_explicit_purge(
         .pool()
         .events()
         .insert(
-            DynamicPayload::new(source, "test.lifecycle.manifest", json!({ "kind": "fixture" }))
-                .from_material(material_id)
-                .build()?,
+            DynamicPayload::new(
+                source,
+                "test.lifecycle.manifest",
+                json!({ "kind": "fixture" }),
+            )
+            .from_material(material_id)
+            .build()?,
         )
         .await?;
     let event_id = event.id.expect("inserted event must have id").to_string();
@@ -615,9 +619,13 @@ async fn tombstone_approve_purges_manifest_root_only_after_specific_acknowledgem
         .pool()
         .events()
         .insert(
-            DynamicPayload::new(source, "test.lifecycle.manifest", json!({ "kind": "fixture" }))
-                .from_material(material_id)
-                .build()?,
+            DynamicPayload::new(
+                source,
+                "test.lifecycle.manifest",
+                json!({ "kind": "fixture" }),
+            )
+            .from_material(material_id)
+            .build()?,
         )
         .await?;
     let event_id = event.id.expect("inserted event must have id").to_string();
@@ -1067,8 +1075,7 @@ async fn tombstone_approve_retains_cas_when_blob_authority_delete_fails(
         .pool()
         .source_materials()
         .register_material(
-            SourceMaterialRegistration::blob_binary("authority-failure.bin")
-                .with_blob_id(blob.id),
+            SourceMaterialRegistration::blob_binary("authority-failure.bin").with_blob_id(blob.id),
         )
         .await?;
     let material_id = sinex_primitives::Id::from_uuid(material.id);
@@ -1081,7 +1088,10 @@ async fn tombstone_approve_retains_cas_when_blob_authority_delete_fails(
                 .build()?,
         )
         .await?;
-    let event_id = event.id.expect("inserted event must have an id").to_string();
+    let event_id = event
+        .id
+        .expect("inserted event must have an id")
+        .to_string();
 
     let archive: LifecycleArchiveResponse = serde_json::from_value(
         handle_lifecycle_archive(
@@ -1158,11 +1168,9 @@ async fn tombstone_approve_retains_cas_when_blob_authority_delete_fails(
         "anti-vacuity: DB deletion failure must not strand a committed blob authority without CAS bytes"
     );
 
-    sqlx::query(
-        "DROP TRIGGER test_fail_tombstone_blob_authority_delete ON core.blobs",
-    )
-    .execute(ctx.pool())
-    .await?;
+    sqlx::query("DROP TRIGGER test_fail_tombstone_blob_authority_delete ON core.blobs")
+        .execute(ctx.pool())
+        .await?;
     sqlx::query("DROP FUNCTION public.test_fail_tombstone_blob_authority_delete()")
         .execute(ctx.pool())
         .await?;
@@ -1416,7 +1424,9 @@ async fn tombstone_completion_failure_is_recoverable_after_deletion_boundary(
     .await
     .expect_err("injected completion write must fail the approve request");
     assert!(
-        error.to_string().contains("Failed to finalize tombstone operation"),
+        error
+            .to_string()
+            .contains("Failed to finalize tombstone operation"),
         "unexpected completion-write error: {error}"
     );
 

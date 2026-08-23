@@ -316,7 +316,10 @@ impl TelemetryCommands {
                     let projection = gateway_stats_to_otel_metrics_projection(buckets);
                     let envelope = telemetry_otel_envelope(projection);
                     if !print_finite_envelope(&envelope, format)? {
-                        println!("{}", format_otel_metrics_projection_table(&envelope.payload));
+                        println!(
+                            "{}",
+                            format_otel_metrics_projection_table(&envelope.payload)
+                        );
                     }
                 } else {
                     print_telemetry_list(
@@ -475,7 +478,8 @@ where
 fn telemetry_otel_envelope(
     projection: OtelMetricsProjectionView,
 ) -> ViewEnvelope<OtelMetricsProjectionView> {
-    let mut envelope = ViewEnvelope::new("sinexctl.metrics.telemetry.gateway-stats.otel", projection);
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.metrics.telemetry.gateway-stats.otel", projection);
     if envelope.payload.point_count() == 0 {
         envelope.caveats.push(telemetry_unmeasurable_caveat(
             "sinexctl.metrics.telemetry.gateway-stats.otel",
@@ -520,8 +524,16 @@ fn telemetry_unmeasurable_caveat(source_surface: &str, message: String) -> Cavea
 fn telemetry_ref(source_surface: &str) -> SinexObjectRef {
     SinexObjectRef::new(SinexObjectKind::RuntimeModule, source_surface)
         .with_label(source_surface.to_string())
-        .with_command_hint(source_surface.replace("sinexctl.", "sinexctl ").replace('.', " "))
-        .with_rpc_method(source_surface.strip_prefix("sinexctl.metrics.").unwrap_or(source_surface))
+        .with_command_hint(
+            source_surface
+                .replace("sinexctl.", "sinexctl ")
+                .replace('.', " "),
+        )
+        .with_rpc_method(
+            source_surface
+                .strip_prefix("sinexctl.metrics.")
+                .unwrap_or(source_surface),
+        )
 }
 
 /// Resolve a time argument to an RFC3339 string.

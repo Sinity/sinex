@@ -68,7 +68,9 @@ async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
     // Publish events
     for (i, event) in test_events.iter().enumerate() {
         let event_bytes = serde_json::to_vec(event)?;
-        let ack = jetstream.publish(subject.clone(), event_bytes.into()).await?;
+        let ack = jetstream
+            .publish(subject.clone(), event_bytes.into())
+            .await?;
         ack.await?;
 
         debug!(

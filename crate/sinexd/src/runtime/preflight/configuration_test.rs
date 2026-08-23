@@ -1,8 +1,7 @@
 // Small inline tests are justified here because they exercise private
 // helper behavior without widening the preflight API surface.
 use super::{
-    collect_hyprland_runtime_sockets, document_root_error_is_blocking,
-    parse_systemd_version_line,
+    collect_hyprland_runtime_sockets, document_root_error_is_blocking, parse_systemd_version_line,
 };
 use crate::runtime::SinexError;
 use std::fs;
@@ -27,8 +26,7 @@ async fn collect_hyprland_runtime_sockets_reports_entry_failures() -> TestResult
 }
 
 #[sinex_test]
-async fn collect_hyprland_runtime_sockets_returns_present_event_socket_only() -> TestResult<()>
-{
+async fn collect_hyprland_runtime_sockets_returns_present_event_socket_only() -> TestResult<()> {
     let temp = tempfile::tempdir()?;
     let hypr_dir = temp.path().join("hypr");
     let instance_a = hypr_dir.join("instance-a");
@@ -73,10 +71,9 @@ async fn parse_systemd_version_line_uses_first_non_empty_line() -> TestResult<()
 
 #[sinex_test]
 async fn document_root_permission_denied_is_advisory() -> TestResult<()> {
-    let permission_denied = SinexError::processing("denied")
-        .with_context("document_root_probe", "permission_denied");
-    let missing =
-        SinexError::processing("missing").with_context("document_root_probe", "missing");
+    let permission_denied =
+        SinexError::processing("denied").with_context("document_root_probe", "permission_denied");
+    let missing = SinexError::processing("missing").with_context("document_root_probe", "missing");
 
     assert!(
         !document_root_error_is_blocking(&permission_denied),

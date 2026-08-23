@@ -53,7 +53,12 @@ pub async fn spawn_replay_control_with_material_authority(
     server::ReplayControlServer::new(&env, client.clone(), replay, executor, Arc::clone(&health))
         .spawn()
         .await?;
-    Ok(ReplayControlClient::new(&env, client, request_timeout, health))
+    Ok(ReplayControlClient::new(
+        &env,
+        client,
+        request_timeout,
+        health,
+    ))
 }
 
 impl ReplayControlError {

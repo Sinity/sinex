@@ -178,10 +178,8 @@ async fn dispatched_scan_cancel_stops_in_flight_emission(ctx: TestContext) -> Te
 
     let env = sinex_primitives::environment::environment();
     let operation_id = Uuid::now_v7();
-    let scan_subject =
-        env.nats_subject("sinex.control.sources.slow-emitting-test-source.scan");
-    let cancel_subject =
-        env.nats_subject("sinex.control.sources.slow-emitting-test-source.cancel");
+    let scan_subject = env.nats_subject("sinex.control.sources.slow-emitting-test-source.scan");
+    let cancel_subject = env.nats_subject("sinex.control.sources.slow-emitting-test-source.cancel");
     let progress_subject =
         env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
     let mut progress_sub = client.subscribe(progress_subject).await?;
@@ -228,7 +226,9 @@ async fn dispatched_scan_cancel_stops_in_flight_emission(ctx: TestContext) -> Te
 
     let final_msg = tokio::time::timeout(Duration::from_secs(3), progress_sub.next())
         .await?
-        .ok_or_else(|| color_eyre::eyre::eyre!("progress subscription closed before terminal update"))?;
+        .ok_or_else(|| {
+            color_eyre::eyre::eyre!("progress subscription closed before terminal update")
+        })?;
     let stopped_after = cancel_sent_at.elapsed();
     let final_progress: SourceScanProgress = serde_json::from_slice(&final_msg.payload)?;
 
@@ -358,7 +358,9 @@ async fn runner_shutdown_cancels_and_joins_dispatched_replay_worker(
 
     let final_msg = tokio::time::timeout(Duration::from_millis(500), progress_sub.next())
         .await?
-        .ok_or_else(|| color_eyre::eyre::eyre!("progress subscription closed before terminal update"))?;
+        .ok_or_else(|| {
+            color_eyre::eyre::eyre!("progress subscription closed before terminal update")
+        })?;
     let final_progress: SourceScanProgress = serde_json::from_slice(&final_msg.payload)?;
     assert!(
         final_progress.cancelled,

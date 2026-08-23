@@ -108,7 +108,10 @@ impl SqliteRowAdapter {
         for suffix in ["-wal", "-shm"] {
             let sidecar = Path::new(&format!("{path}{suffix}")).to_path_buf();
             if sidecar.exists() {
-                fs::copy(&sidecar, dir.path().join(format!("snapshot.sqlite{suffix}")))?;
+                fs::copy(
+                    &sidecar,
+                    dir.path().join(format!("snapshot.sqlite{suffix}")),
+                )?;
             }
         }
 
@@ -179,17 +182,19 @@ impl SqliteRowAdapter {
         ) {
             Ok(rows) => Ok(rows),
             Err(error) if Self::is_lock_error(&error) => {
-                let (_dir, snapshot_path) = Self::copy_sqlite_snapshot(path).map_err(|io_error| {
-                    ParserError::Adapter(format!(
-                        "failed to snapshot locked SQLite database {path}: {io_error}"
-                    ))
-                })?;
-                Self::collect_rows_from_path(&snapshot_path, true, false, sql, bind_rowid)
-                    .map_err(|snapshot_error| {
+                let (_dir, snapshot_path) =
+                    Self::copy_sqlite_snapshot(path).map_err(|io_error| {
+                        ParserError::Adapter(format!(
+                            "failed to snapshot locked SQLite database {path}: {io_error}"
+                        ))
+                    })?;
+                Self::collect_rows_from_path(&snapshot_path, true, false, sql, bind_rowid).map_err(
+                    |snapshot_error| {
                         ParserError::Adapter(format!(
                             "failed to query SQLite snapshot for {path}: {snapshot_error}"
                         ))
-                    })
+                    },
+                )
             }
             Err(error) => Err(ParserError::Adapter(format!("query error: {error}"))),
         }
@@ -211,11 +216,12 @@ impl SqliteRowAdapter {
         match Self::fingerprint_from_path(path, config.read_only, config.immutable) {
             Ok(fingerprint) => Ok(fingerprint),
             Err(error) if Self::is_lock_error(&error) => {
-                let (_dir, snapshot_path) = Self::copy_sqlite_snapshot(path).map_err(|io_error| {
-                    ParserError::Adapter(format!(
-                        "failed to snapshot locked SQLite database {path}: {io_error}"
-                    ))
-                })?;
+                let (_dir, snapshot_path) =
+                    Self::copy_sqlite_snapshot(path).map_err(|io_error| {
+                        ParserError::Adapter(format!(
+                            "failed to snapshot locked SQLite database {path}: {io_error}"
+                        ))
+                    })?;
                 Self::fingerprint_from_path(&snapshot_path, true, false).map_err(|error| {
                     ParserError::Adapter(format!(
                         "failed to fingerprint SQLite snapshot for {path}: {error}"

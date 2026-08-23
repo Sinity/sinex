@@ -65,8 +65,8 @@ async fn stream_pressure_warning_samples_are_sparse_per_stream() -> TestResult<(
 }
 
 #[sinex_test]
-async fn stream_pressure_raw_and_dlq_byte_warnings_remain_bounded_independently()
--> TestResult<()> {
+async fn stream_pressure_raw_and_dlq_byte_warnings_remain_bounded_independently() -> TestResult<()>
+{
     let mut state = HashMap::new();
     let pressure = StreamPressureSnapshot {
         message_fill_pct: 45.0,
@@ -83,11 +83,7 @@ async fn stream_pressure_raw_and_dlq_byte_warnings_remain_bounded_independently(
         .collect::<Vec<_>>();
     let dlq_emitted = (1..=64)
         .filter_map(|_| {
-            record_stream_pressure_warning_sample(
-                &mut state,
-                "PROD_SINEX_RAW_EVENTS_DLQ",
-                pressure,
-            )
+            record_stream_pressure_warning_sample(&mut state, "PROD_SINEX_RAW_EVENTS_DLQ", pressure)
         })
         .collect::<Vec<_>>();
 
@@ -102,8 +98,7 @@ async fn stream_pressure_raw_and_dlq_byte_warnings_remain_bounded_independently(
 }
 
 #[sinex_test]
-async fn stream_pressure_warning_schedule_resets_when_classification_changes() -> TestResult<()>
-{
+async fn stream_pressure_warning_schedule_resets_when_classification_changes() -> TestResult<()> {
     let mut state = HashMap::new();
     let warning = StreamPressureSnapshot {
         message_fill_pct: 81.0,
@@ -133,11 +128,7 @@ async fn stream_pressure_warning_schedule_resets_when_classification_changes() -
         None
     );
     assert_eq!(
-        record_stream_pressure_warning_sample(
-            &mut state,
-            "PROD_SINEX_RAW_EVENTS_DLQ",
-            critical
-        ),
+        record_stream_pressure_warning_sample(&mut state, "PROD_SINEX_RAW_EVENTS_DLQ", critical),
         Some(1)
     );
     assert_eq!(
@@ -153,11 +144,7 @@ async fn stream_pressure_warning_schedule_resets_when_classification_changes() -
         None
     );
     assert_eq!(
-        record_stream_pressure_warning_sample(
-            &mut state,
-            "PROD_SINEX_RAW_EVENTS_DLQ",
-            critical
-        ),
+        record_stream_pressure_warning_sample(&mut state, "PROD_SINEX_RAW_EVENTS_DLQ", critical),
         Some(1)
     );
 

@@ -56,8 +56,7 @@ const ACTUATION_ATTEMPT_DECLARATION: DerivationOutputDeclaration = DerivationOut
         SourceCoverage::Covered,
         ClaimTemporalQuality::RealtimeCapture,
     ),
-    verification_command:
-        "xtask test -p sinexd -E 'test(hyprland_workspace_switch_dispatches_typed_command_when_observation_ready)'",
+    verification_command: "xtask test -p sinexd -E 'test(hyprland_workspace_switch_dispatches_typed_command_when_observation_ready)'",
 };
 
 pub async fn handle_hyprland_workspace_switch(

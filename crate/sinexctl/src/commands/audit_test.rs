@@ -1,5 +1,6 @@
 use super::*;
 use crate::fmt::render_finite_envelope;
+use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::OperationMarker;
@@ -7,7 +8,6 @@ use sinex_primitives::ids::Id;
 use sinex_primitives::rpc::audit::{AuditTrail, EventSummary, OperationRecord};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
-use sinex_primitives::Uuid;
 use xtask::sandbox::sinex_test;
 
 fn operation(status: OperationStatus) -> OperationRecord {
@@ -35,7 +35,11 @@ fn affected_event() -> EventSummary {
     }
 }
 
-fn response(status: OperationStatus, affected_events: Vec<EventSummary>, has_more: bool) -> AuditGetResponse {
+fn response(
+    status: OperationStatus,
+    affected_events: Vec<EventSummary>,
+    has_more: bool,
+) -> AuditGetResponse {
     AuditGetResponse {
         audit_trail: AuditTrail {
             operation: operation(status),
@@ -65,7 +69,10 @@ async fn audit_envelope_caveats_empty_paginated_and_failed() -> xtask::TestResul
         2,
         "pagination and failed operation should both be explicit partial-window caveats"
     );
-    assert_eq!(envelope.query_echo.as_ref().unwrap()["operation_id"], "op-1");
+    assert_eq!(
+        envelope.query_echo.as_ref().unwrap()["operation_id"],
+        "op-1"
+    );
     assert_eq!(
         envelope.caveats[0]
             .ref_

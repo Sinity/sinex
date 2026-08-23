@@ -19,11 +19,7 @@ fn test_ctx() -> ParserContext {
     }
 }
 
-fn make_record(
-    bytes: &[u8],
-    line: u64,
-    byte_start: u64,
-) -> sinex_primitives::parser::SourceRecord {
+fn make_record(bytes: &[u8], line: u64, byte_start: u64) -> sinex_primitives::parser::SourceRecord {
     sinex_primitives::parser::SourceRecord {
         material_id: sinex_primitives::ids::Id::new(),
         anchor: MaterialAnchor::Line { byte_start, line },

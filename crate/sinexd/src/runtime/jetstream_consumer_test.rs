@@ -1,20 +1,19 @@
 use super::{
-    ConfirmedConsumerRetirementAction, JetStreamEventConsumerConfig,
-    confirmed_filter_subject_for,
+    ConfirmedConsumerRetirementAction, JetStreamEventConsumerConfig, confirmed_filter_subject_for,
 };
-use crate::runtime::{ConfirmedEventHandler, JetStreamEventConsumer, RuntimeResult, SelfObserver};
 use crate::runtime::automaton::traits::InputProvenanceFilter;
+use crate::runtime::{ConfirmedEventHandler, JetStreamEventConsumer, RuntimeResult, SelfObserver};
 use async_nats::jetstream::consumer::DeliverPolicy;
 use async_trait::async_trait;
+use serde_json::json;
+use sinex_primitives::environment::SinexEnvironment;
 use sinex_primitives::events::payload::DynamicPayload;
 use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, Uuid};
-use sinex_primitives::environment::SinexEnvironment;
 use std::sync::Arc;
-use xtask::sandbox::sinex_test;
-use tokio::sync::{Mutex, Notify, oneshot};
-use serde_json::json;
 use std::time::Duration;
+use tokio::sync::{Mutex, Notify, oneshot};
+use xtask::sandbox::sinex_test;
 
 struct BlockingConfirmedHandler {
     first_started: Notify,
@@ -56,8 +55,7 @@ impl ConfirmedEventHandler for BlockingConfirmedHandler {
 }
 
 #[sinex_test]
-async fn default_consumer_config_targets_confirmed_firehose() -> xtask::sandbox::TestResult<()>
-{
+async fn default_consumer_config_targets_confirmed_firehose() -> xtask::sandbox::TestResult<()> {
     let config = JetStreamEventConsumerConfig::default();
     assert!(config.event_type_filters.is_empty());
     assert_eq!(config.deliver_policy, DeliverPolicy::All);
@@ -65,8 +63,7 @@ async fn default_consumer_config_targets_confirmed_firehose() -> xtask::sandbox:
 }
 
 #[sinex_test]
-async fn confirmed_filter_subject_composes_provenance_and_type()
--> xtask::sandbox::TestResult<()> {
+async fn confirmed_filter_subject_composes_provenance_and_type() -> xtask::sandbox::TestResult<()> {
     let env = SinexEnvironment::new("dev")?;
 
     assert_eq!(
@@ -99,14 +96,17 @@ async fn confirmed_filter_subject_composes_provenance_and_type()
 }
 
 #[sinex_test]
-async fn confirmed_filter_subjects_compose_multiple_event_types()
--> xtask::sandbox::TestResult<()> {
+async fn confirmed_filter_subjects_compose_multiple_event_types() -> xtask::sandbox::TestResult<()>
+{
     let env = SinexEnvironment::new("dev")?;
     let filters = super::confirmed_filter_subjects_for(
         &env,
         None,
         InputProvenanceFilter::MaterialOnly,
-        &["command.executed".to_string(), "command.canonical".to_string()],
+        &[
+            "command.executed".to_string(),
+            "command.canonical".to_string(),
+        ],
     );
 
     assert_eq!(
@@ -159,9 +159,8 @@ async fn confirmed_consumer_stops_on_real_retention_gap(
         Some(namespace.clone()),
     );
     let (ready_tx, ready_rx) = oneshot::channel();
-    let consumer_task = tokio::spawn(async move {
-        consumer.run_with_ready_signal(Some(ready_tx)).await
-    });
+    let consumer_task =
+        tokio::spawn(async move { consumer.run_with_ready_signal(Some(ready_tx)).await });
     let ready_result = tokio::time::timeout(Duration::from_secs(3), ready_rx).await?;
     if ready_result.is_err() {
         let startup_result = consumer_task.await?;

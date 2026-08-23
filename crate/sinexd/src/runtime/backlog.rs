@@ -45,10 +45,10 @@ pub async fn raw_events_consumer_pending(
         Ok(stream) => stream,
         Err(error) if stream_not_found(&error) => return Ok(None),
         Err(error) => {
-            return Err(
-                sinex_primitives::SinexError::network("Failed to inspect raw-events stream")
-                    .with_std_error(&error),
-            );
+            return Err(sinex_primitives::SinexError::network(
+                "Failed to inspect raw-events stream",
+            )
+            .with_std_error(&error));
         }
     };
 

@@ -837,9 +837,7 @@ async fn finalization_persists_canonical_manifest_and_registry_reference(
         .expect("manifest CAS key must resolve to a local path");
     let manifest_bytes = tokio::fs::read(manifest_path).await?;
     let manifest = match MaterialManifestV1::decode(&manifest_bytes)
-        .map_err(|error| {
-            color_eyre::eyre::eyre!("finalizer manifest decode failed: {error}")
-        })?
+        .map_err(|error| color_eyre::eyre::eyre!("finalizer manifest decode failed: {error}"))?
     {
         sinex_primitives::DecodedMaterialManifest::V1(manifest) => manifest,
         decoded => panic!("finalizer must emit a V1 manifest, got {decoded:?}"),
@@ -866,13 +864,10 @@ async fn finalization_persists_canonical_manifest_and_registry_reference(
         manifest.bytes.encoded.value_hex,
         blake3::hash(&payload).to_hex().to_string()
     );
-    let encoded_content_key = ContentStoreKey::parse(
-        &manifest
-            .encoded_content_store_key()
-            .map_err(|error| {
-                color_eyre::eyre::eyre!("finalizer encoded CAS key derivation failed: {error}")
-            })?,
-    )?;
+    let encoded_content_key =
+        ContentStoreKey::parse(&manifest.encoded_content_store_key().map_err(|error| {
+            color_eyre::eyre::eyre!("finalizer encoded CAS key derivation failed: {error}")
+        })?)?;
     let expected_content_key = ContentStoreKey::local_blake3(
         payload.len() as u64,
         blake3::hash(&payload).to_hex().to_string(),
@@ -1125,11 +1120,17 @@ async fn database_commit_failure_after_cas_publish_is_redeliverable_inner(
         "a definite rollback must not be mislabeled unknown: {first_error}"
     );
     assert!(
-        first_error.to_string().contains("Failed to commit material finalization transaction"),
+        first_error
+            .to_string()
+            .contains("Failed to commit material finalization transaction"),
         "the failure must be classified at the commit boundary: {first_error}"
     );
     assert!(
-        assembler.content_store.list_write_leases().await?.is_empty(),
+        assembler
+            .content_store
+            .list_write_leases()
+            .await?
+            .is_empty(),
         "failed commit cleanup must release the CAS lease"
     );
 

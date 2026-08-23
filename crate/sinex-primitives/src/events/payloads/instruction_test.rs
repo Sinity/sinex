@@ -76,8 +76,7 @@ async fn expectation_fulfilled_when_observed_matches() -> xtask::sandbox::TestRe
 
 #[sinex_test]
 async fn expectation_contradicted_when_observed_differs() -> xtask::sandbox::TestResult<()> {
-    let s =
-        evaluate_hyprland_workspace_expectation(&make_instruction(3), 7, Uuid::now_v7(), now());
+    let s = evaluate_hyprland_workspace_expectation(&make_instruction(3), 7, Uuid::now_v7(), now());
     assert_eq!(s.status, InstructionExpectationStatus::Contradicted);
     Ok(())
 }

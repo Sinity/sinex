@@ -18,7 +18,9 @@ impl JetStreamConsumer {
         // failure here is strictly better than a consumer that starts, then
         // fails every publish at runtime with no startup-time signal.
         if std::env::var(env_vars::NATS_STREAMS_MANAGED_EXTERNALLY).as_deref() == Ok("true") {
-            info!("NATS streams managed externally -- verifying required streams instead of bootstrapping");
+            info!(
+                "NATS streams managed externally -- verifying required streams instead of bootstrapping"
+            );
             return self.verify_externally_managed_streams_present().await;
         }
 

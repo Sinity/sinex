@@ -111,7 +111,6 @@ async fn snapshot_status_summary_json() -> ::xtask::sandbox::TestResult<()> {
 
     let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
-        .env("XTASK_HISTORY_DB", dir.path().join("xtask-history.db"))
         .env("NO_COLOR", "1")
         .args(["status", "--summary", "--json"])
         .output()?;
@@ -185,7 +184,6 @@ async fn snapshot_doctor_json() -> ::xtask::sandbox::TestResult<()> {
 
     let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
-        .env("XTASK_HISTORY_DB", dir.path().join("xtask-history.db"))
         .env("NO_COLOR", "1")
         // Remove TLS env vars so the TLS section has stable null state
         .env_remove("SINEX_API_TLS_CERT")
@@ -244,7 +242,6 @@ async fn snapshot_history_list_seeded() -> ::xtask::sandbox::TestResult<()> {
 
     let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
-        .env("XTASK_HISTORY_DB", dir.path().join("xtask-history.db"))
         .env("NO_COLOR", "1")
         .args(["history", "list", "--json", "--limit", "1"])
         .output()?;
@@ -285,7 +282,6 @@ async fn snapshot_analytics_workspace_health_seeded() -> ::xtask::sandbox::TestR
 
     let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
-        .env("XTASK_HISTORY_DB", dir.path().join("xtask-history.db"))
         .env("NO_COLOR", "1")
         .args(["analytics", "workspace-health", "--json"])
         .output()?;

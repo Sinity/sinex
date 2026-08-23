@@ -35,24 +35,6 @@ fn preserved_history_backup_dirs(
     Ok(backup_dirs)
 }
 
-
-/// Attribute rows a fixture inserted with raw SQL to the workspace under test.
-///
-/// The stale-invocation sweep and the job listings are scoped to the running
-/// workspace, so a fixture row that names no workspace is invisible to them by
-/// design. Production inserts fill these columns; raw-SQL fixtures must too.
-fn attribute_fixture_rows(db: &HistoryDb) -> color_eyre::Result<()> {
-    db.conn.execute(
-        "UPDATE invocations SET workspace_root = ?1 WHERE workspace_root IS NULL",
-        params![db.workspace_root()],
-    )?;
-    db.conn.execute(
-        "UPDATE background_jobs SET workspace_root = ?1 WHERE workspace_root IS NULL",
-        params![db.workspace_root()],
-    )?;
-    Ok(())
-}
-
 #[sinex_test]
 async fn test_capture_working_directory_success() -> TestResult<()> {
     let captured = capture_working_directory(Ok(std::path::PathBuf::from("/tmp/sinex")));
@@ -318,10 +300,7 @@ async fn test_history_db_open_surfaces_stale_invocation_pid_query_failures() -> 
             host TEXT NOT NULL,
             cwd TEXT NOT NULL,
             live_stage TEXT,
-            is_background INTEGER NOT NULL DEFAULT 0,
-            -- Present so the row is visible to the workspace-scoped sweep; the
-            -- point of this fixture is the missing `pid` column below it.
-            workspace_root TEXT
+            is_background INTEGER NOT NULL DEFAULT 0
         );
 
         INSERT INTO invocations (
@@ -343,7 +322,6 @@ async fn test_history_db_open_surfaces_stale_invocation_pid_query_failures() -> 
         );
         ",
     )?;
-    attribute_fixture_rows(&db)?;
     drop(db);
 
     let Err(error) = HistoryDb::open(&db_path) else {
@@ -508,7 +486,6 @@ async fn test_history_db_open_times_out_overage_background_job_rows() -> TestRes
         ",
         params![invocation_id, "check", child_pid, "2000-01-01T00:00:00Z"],
     )?;
-    attribute_fixture_rows(&db)?;
     drop(db);
 
     let reopened = HistoryDb::open(&db_path)?;
@@ -590,7 +567,6 @@ async fn test_history_db_open_preserves_old_sinexd_background_job_rows() -> Test
             "2000-01-01T00:00:00Z"
         ],
     )?;
-    attribute_fixture_rows(&db)?;
     drop(db);
 
     let reopened = HistoryDb::open(&db_path)?;
@@ -652,7 +628,6 @@ async fn test_history_db_open_cancels_dead_background_job_rows() -> TestResult<(
             "2000-01-01T00:00:00Z"
         ],
     )?;
-    attribute_fixture_rows(&db)?;
     drop(db);
 
     let reopened = HistoryDb::open(&db_path)?;
@@ -724,7 +699,6 @@ async fn test_history_db_open_repairs_running_background_job_for_finished_invoca
             "2026-05-17T14:28:06Z"
         ],
     )?;
-    attribute_fixture_rows(&db)?;
     drop(db);
 
     let reopened = HistoryDb::open(&db_path)?;
@@ -771,7 +745,6 @@ async fn test_history_db_open_repairs_inflated_stale_cleanup_duration() -> TestR
         ],
     )?;
     let invocation_id = db.conn.last_insert_rowid();
-    attribute_fixture_rows(&db)?;
     drop(db);
 
     let reopened = HistoryDb::open(&db_path)?;
@@ -834,7 +807,6 @@ async fn test_history_db_open_skips_locked_stale_cleanup() -> TestResult<()> {
             i64::from(std::process::id())
         ],
     )?;
-    attribute_fixture_rows(&db)?;
     drop(db);
 
     let lock_conn = Connection::open(&db_path)?;
@@ -875,7 +847,6 @@ async fn test_history_db_open_skips_cleanup_when_cleanup_lock_is_held() -> TestR
             i64::from(std::process::id())
         ],
     )?;
-    attribute_fixture_rows(&db)?;
     drop(db);
 
     let lock_path = db_path.with_extension("cleanup.lock");
@@ -924,7 +895,6 @@ async fn test_history_db_open_query_does_not_mutate_stale_rows() -> TestResult<(
             i64::from(std::process::id())
         ],
     )?;
-    attribute_fixture_rows(&db)?;
     drop(db);
 
     let queried = HistoryDb::open_query(&db_path)?;
@@ -1231,20 +1201,10 @@ async fn test_has_stale_invocations_detects_old_running_rows() -> TestResult<()>
         ",
         params!["check", "localhost", "/tmp", i64::from(std::process::id())],
     )?;
-    attribute_fixture_rows(&db)?;
 
     assert!(
         db.has_stale_invocations()?,
         "old running rows should be detected as stale"
-    );
-
-    db.conn.execute(
-        "UPDATE invocations SET workspace_root = '/realm/worktrees/another-lane'",
-        [],
-    )?;
-    assert!(
-        !db.has_stale_invocations()?,
-        "another workspace's stale rows are not this workspace's to reap"
     );
     Ok(())
 }

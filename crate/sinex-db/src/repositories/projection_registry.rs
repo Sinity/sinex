@@ -137,7 +137,10 @@ impl ProjectionRegistryRepository<'_> {
     /// (`ready`/`partial`/`building`). No-op if there is no current row or
     /// the semantics version has not changed. See `insert_row`'s call site
     /// for why this runs before the new row is inserted.
-    async fn stale_superseded_semantics(&self, input: &ProjectionRegistrationInput<'_>) -> DbResult<u64> {
+    async fn stale_superseded_semantics(
+        &self,
+        input: &ProjectionRegistrationInput<'_>,
+    ) -> DbResult<u64> {
         let result = sqlx::query!(
             r#"
             WITH latest AS (

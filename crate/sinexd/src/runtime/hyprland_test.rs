@@ -1,6 +1,4 @@
-use sinex_primitives::events::payloads::instruction::{
-    HyprlandDispatch, HyprlandWorkspaceCommand,
-};
+use sinex_primitives::events::payloads::instruction::{HyprlandDispatch, HyprlandWorkspaceCommand};
 use std::path::PathBuf;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

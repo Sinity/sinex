@@ -11,10 +11,11 @@ use xtask::sandbox::prelude::*;
 /// the three `coordination.*` methods sinex-kke3 found.
 #[sinex_test]
 async fn every_cataloged_method_is_registered_in_the_gateway_registry() -> TestResult<()> {
-    let registered: std::collections::BTreeSet<String> = crate::api::rpc_registry::list_all_methods()
-        .into_iter()
-        .map(|(name, _role)| name)
-        .collect();
+    let registered: std::collections::BTreeSet<String> =
+        crate::api::rpc_registry::list_all_methods()
+            .into_iter()
+            .map(|(name, _role)| name)
+            .collect();
 
     let missing: Vec<&'static str> = sinex_primitives::rpc::method_catalog()
         .into_iter()

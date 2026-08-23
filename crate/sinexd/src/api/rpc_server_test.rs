@@ -44,7 +44,10 @@ async fn gateway_auth_accepts_distinct_admin_and_readonly_tokens() -> TestResult
 
     assert!(auth.verify(&bearer_headers("admin-secret:admin")).is_ok());
     assert!(auth.verify(&bearer_headers("read-secret:readonly")).is_ok());
-    assert!(auth.verify(&bearer_headers("admin-secret:readonly")).is_err());
+    assert!(
+        auth.verify(&bearer_headers("admin-secret:readonly"))
+            .is_err()
+    );
     Ok(())
 }
 
@@ -108,8 +111,7 @@ async fn rpc_error_projection_preserves_kind_without_private_context() -> TestRe
 }
 
 #[sinex_test]
-async fn parse_cors_origin_values_keeps_valid_entries_and_rejects_invalid_ones()
--> TestResult<()> {
+async fn parse_cors_origin_values_keeps_valid_entries_and_rejects_invalid_ones() -> TestResult<()> {
     let origins = parse_cors_origin_values(&[
         "http://localhost:3000".to_string(),
         "bad\norigin".to_string(),
@@ -147,8 +149,7 @@ async fn spawn_router(router: Router) -> (SocketAddr, JoinHandle<()>) {
 
 #[sinex_test]
 async fn concurrency_limit_returns_429() -> TestResult<()> {
-    let limits =
-        RpcServerLimits::test_limits(1, Duration::from_secs(5), Bytes::from_mebibytes(1));
+    let limits = RpcServerLimits::test_limits(1, Duration::from_secs(5), Bytes::from_mebibytes(1));
     let router = build_test_router(limits);
     let (addr, handle) = spawn_router(router).await;
     let client = Client::new();
@@ -234,8 +235,7 @@ async fn body_limit_returns_413() -> TestResult<()> {
 
 #[sinex_test]
 async fn rpc_responses_include_request_id_header() -> TestResult<()> {
-    let limits =
-        RpcServerLimits::test_limits(4, Duration::from_secs(1), Bytes::from_bytes(1024));
+    let limits = RpcServerLimits::test_limits(4, Duration::from_secs(1), Bytes::from_bytes(1024));
     let router = build_test_router(limits);
     let (addr, handle) = spawn_router(router).await;
     let client = Client::new();
@@ -307,21 +307,18 @@ async fn monitor_background_task_rejects_early_exit_before_shutdown() -> TestRes
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let completed = tokio::spawn(async move {});
 
-    let error =
-        RpcServer::monitor_background_task("Metrics emission task", completed, shutdown_rx)
-            .await
-            .expect("monitor join should succeed")
-            .expect_err(
-                "background task that exits before shutdown must be treated as a failure",
-            );
+    let error = RpcServer::monitor_background_task("Metrics emission task", completed, shutdown_rx)
+        .await
+        .expect("monitor join should succeed")
+        .expect_err("background task that exits before shutdown must be treated as a failure");
 
     assert!(error.to_string().contains("exited before gateway shutdown"));
     Ok(())
 }
 
 #[sinex_test]
-async fn monitor_background_task_rejects_dropped_shutdown_channel_without_signal()
--> TestResult<()> {
+async fn monitor_background_task_rejects_dropped_shutdown_channel_without_signal() -> TestResult<()>
+{
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let completed = tokio::spawn(async move {});
     drop(shutdown_tx);
@@ -346,8 +343,7 @@ async fn monitor_background_task_rejects_dropped_shutdown_channel_without_signal
 }
 
 #[sinex_test]
-async fn monitor_background_task_allows_dropped_shutdown_channel_after_signal() -> TestResult<()>
-{
+async fn monitor_background_task_allows_dropped_shutdown_channel_after_signal() -> TestResult<()> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     shutdown_tx.send(true)?;
     drop(shutdown_tx);
@@ -361,8 +357,7 @@ async fn monitor_background_task_allows_dropped_shutdown_channel_after_signal() 
 }
 
 #[sinex_test]
-async fn monitor_background_task_retains_pending_handle_after_shutdown_signal() -> TestResult<()>
-{
+async fn monitor_background_task_retains_pending_handle_after_shutdown_signal() -> TestResult<()> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
     let task = tokio::spawn(async move {
@@ -548,8 +543,7 @@ async fn token_env_rejects_non_utf8_values() -> TestResult<()> {
         );
     }
 
-    let error =
-        read_token_and_path_from_env().expect_err("non-UTF-8 token env should be rejected");
+    let error = read_token_and_path_from_env().expect_err("non-UTF-8 token env should be rejected");
     assert!(error.to_string().contains("SINEX_API_TOKEN"));
 
     clear_auth_env();

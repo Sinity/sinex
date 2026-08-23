@@ -839,8 +839,9 @@ impl AdminSnapshotRestoreCommand {
             );
         }
 
-        let topology = exec::SnapshotTopology::discover(self.state_dir.as_deref(), None, false, true)
-            .context("discover deployed backup topology before restore planning")?;
+        let topology =
+            exec::SnapshotTopology::discover(self.state_dir.as_deref(), None, false, true)
+                .context("discover deployed backup topology before restore planning")?;
         let active_services = topology.active_writer_units.clone();
         let mut warnings = Vec::new();
         if !active_services.is_empty() {

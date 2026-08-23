@@ -347,8 +347,11 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     )
     .await?;
 
-    let confirmation_subject =
-        confirmation_subject_for(&ready_topology.confirmed_events_prefix, "test", "test.event");
+    let confirmation_subject = confirmation_subject_for(
+        &ready_topology.confirmed_events_prefix,
+        "test",
+        "test.event",
+    );
     let confirmation = wait_for_last_stream_message_by_subject(
         &js,
         &ready_topology.confirmed_events_stream,
@@ -437,8 +440,11 @@ async fn confirmation_publishes_redacted_persisted_image() -> color_eyre::Result
     )
     .await?;
 
-    let confirmation_subject =
-        confirmation_subject_for(&ready_topology.confirmed_events_prefix, "test", "test.event");
+    let confirmation_subject = confirmation_subject_for(
+        &ready_topology.confirmed_events_prefix,
+        "test",
+        "test.event",
+    );
     let confirmation = wait_for_last_stream_message_by_subject(
         &js,
         &ready_topology.confirmed_events_stream,
@@ -798,12 +804,11 @@ async fn reimport_manifest_source_date_survives_deferred_admission(
         .expect("deferred historical event should persist");
     assert_eq!(persisted.ts_orig, Some(source_date));
 
-    let (stored_ts_orig, stored_ts_coided): (Timestamp, Timestamp) = sqlx::query_as(
-        "SELECT ts_orig, ts_coided FROM core.events WHERE id = $1::uuid",
-    )
-    .bind(event_id)
-    .fetch_one(ctx.pool())
-    .await?;
+    let (stored_ts_orig, stored_ts_coided): (Timestamp, Timestamp) =
+        sqlx::query_as("SELECT ts_orig, ts_coided FROM core.events WHERE id = $1::uuid")
+            .bind(event_id)
+            .fetch_one(ctx.pool())
+            .await?;
     assert_eq!(stored_ts_orig, source_date);
     assert!(
         stored_ts_coided > source_date,
@@ -1162,12 +1167,11 @@ async fn supersede_on_change_archives_predecessor_and_admits_revision(
     );
 
     // The revision itself is the live row for this occurrence.
-    let live_now: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM core.events WHERE equivalence_key = $1",
-    )
-    .bind(&equivalence_key)
-    .fetch_optional(&ctx.pool)
-    .await?;
+    let live_now: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM core.events WHERE equivalence_key = $1")
+            .bind(&equivalence_key)
+            .fetch_optional(&ctx.pool)
+            .await?;
     assert_eq!(
         live_now,
         Some(revision_id),
@@ -1299,12 +1303,11 @@ async fn daily_summary_supersede_on_change_archives_predecessor_and_admits_revis
     );
 
     // The revision is the sole live row for this bucket occurrence.
-    let live_now: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM core.events WHERE equivalence_key = $1",
-    )
-    .bind(&equivalence_key)
-    .fetch_optional(&ctx.pool)
-    .await?;
+    let live_now: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM core.events WHERE equivalence_key = $1")
+            .bind(&equivalence_key)
+            .fetch_optional(&ctx.pool)
+            .await?;
     assert_eq!(
         live_now,
         Some(revision_id),
@@ -1353,15 +1356,18 @@ async fn daily_summary_supersede_on_change_archives_predecessor_and_admits_revis
     .await?;
 
     assert!(
-        ctx.pool.events().get_by_id(repeat_id.into()).await?.is_none(),
+        ctx.pool
+            .events()
+            .get_by_id(repeat_id.into())
+            .await?
+            .is_none(),
         "identical-content re-emit must be suppressed, never persisted"
     );
-    let live_still: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM core.events WHERE equivalence_key = $1",
-    )
-    .bind(&equivalence_key)
-    .fetch_optional(&ctx.pool)
-    .await?;
+    let live_still: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM core.events WHERE equivalence_key = $1")
+            .bind(&equivalence_key)
+            .fetch_optional(&ctx.pool)
+            .await?;
     assert_eq!(
         live_still,
         Some(revision_id),
@@ -1463,13 +1469,12 @@ async fn activitywatch_grown_row_supersedes_stale_short_interpretation(
     );
 
     // Exactly ONE live row for this occurrence, carrying the GROWN duration.
-    let live_row: Option<(Uuid, serde_json::Value)> = sqlx::query(
-        "SELECT id, payload FROM core.events WHERE equivalence_key = $1",
-    )
-    .bind(&equivalence_key)
-    .fetch_optional(&ctx.pool)
-    .await?
-    .map(|row| (row.get("id"), row.get("payload")));
+    let live_row: Option<(Uuid, serde_json::Value)> =
+        sqlx::query("SELECT id, payload FROM core.events WHERE equivalence_key = $1")
+            .bind(&equivalence_key)
+            .fetch_optional(&ctx.pool)
+            .await?
+            .map(|row| (row.get("id"), row.get("payload")));
     let (live_id_now, live_payload) =
         live_row.expect("exactly one live row must exist for this occurrence");
     assert_eq!(
@@ -1555,11 +1560,7 @@ async fn suppress_duplicate_type_changed_content_suppresses_through_consumer(
 
     // The original live row is unchanged; the changed re-emit never persisted.
     assert!(
-        ctx.pool
-            .events()
-            .get_by_id(live_id.into())
-            .await?
-            .is_some(),
+        ctx.pool.events().get_by_id(live_id.into()).await?.is_some(),
         "original live row must remain untouched for a SuppressDuplicate type"
     );
     assert!(
@@ -2640,10 +2641,12 @@ async fn settlement_registry_resolves_durable_debt_for_a_dlqd_event(
         "source_material_id": bogus_material_id.to_string(),
         "anchor_byte": 0,
     });
-    let subject =
-        env.nats_subject_with_namespace(Some(&namespace), "events.raw.r6d11dd.event");
+    let subject = env.nats_subject_with_namespace(Some(&namespace), "events.raw.r6d11dd.event");
     nats_client
-        .publish(subject, serde_json::to_vec(&admission_envelope("r6d11dd", event))?.into())
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope("r6d11dd", event))?.into(),
+        )
         .await?;
     nats_client.flush().await?;
 
@@ -2766,7 +2769,11 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
 
     // The rejected event must never reach core.events.
     assert!(
-        ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+        ctx.pool
+            .events()
+            .get_by_id(event_id.into())
+            .await?
+            .is_none(),
         "admission-rejected event must not be persisted"
     );
 
@@ -2855,7 +2862,8 @@ async fn full_validator_rejections_route_through_real_admission_dlq_settlement(
         (structural_id, structural_rx, cases[0].4),
         (plausibility_id, plausibility_rx, cases[1].4),
     ] {
-        let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), receiver).await??;
+        let state =
+            tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), receiver).await??;
         let EmissionReceiptState::DurableDebt { debt_id, reason } = state else {
             panic!("validator rejection for {event_id} must settle as durable debt: {state:?}");
         };
@@ -2881,7 +2889,11 @@ async fn full_validator_rejections_route_through_real_admission_dlq_settlement(
             "DLQ evidence must retain the validator failure ({expected_reason}), got: {failure_reason}"
         );
         assert!(
-            ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+            ctx.pool
+                .events()
+                .get_by_id(event_id.into())
+                .await?
+                .is_none(),
             "validator-rejected event must not reach core.events"
         );
     }
@@ -2897,14 +2909,14 @@ async fn full_validator_rejections_route_through_real_admission_dlq_settlement(
 /// timestamp and route old/future values through the normal JetStream DLQ
 /// settlement path, while a valid value persists.
 #[sinex_test]
-async fn resolved_material_ts_orig_reuses_plausibility_gate(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn resolved_material_ts_orig_reuses_plausibility_gate(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let setup = start_isolated_consumer_with_lower_bound(
         &ctx,
         "resolved-ts-orig",
-        Some(Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC))),
+        Some(Timestamp::from_const(
+            time::macros::datetime!(2000-01-01 00:00:00 UTC),
+        )),
     )
     .await?;
     let nats_client = ctx.nats_client();
@@ -2999,23 +3011,24 @@ async fn resolved_material_ts_orig_reuses_plausibility_gate(
     .await?;
 
     for (label, event_id, _, expected_ts) in event_ids {
-        let persisted: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM core.events WHERE id = $1::uuid",
-        )
-        .bind(event_id)
-        .fetch_optional(&ctx.pool)
-        .await?;
+        let persisted: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM core.events WHERE id = $1::uuid")
+                .bind(event_id)
+                .fetch_optional(&ctx.pool)
+                .await?;
         if label == "valid" {
             assert_eq!(persisted, Some(event_id));
-            let stored: Timestamp = sqlx::query_scalar(
-                "SELECT ts_orig FROM core.events WHERE id = $1::uuid",
-            )
-            .bind(event_id)
-            .fetch_one(&ctx.pool)
-            .await?;
+            let stored: Timestamp =
+                sqlx::query_scalar("SELECT ts_orig FROM core.events WHERE id = $1::uuid")
+                    .bind(event_id)
+                    .fetch_one(&ctx.pool)
+                    .await?;
             assert_eq!(stored, expected_ts);
         } else {
-            assert_eq!(persisted, None, "implausible {label} material timestamp must not persist");
+            assert_eq!(
+                persisted, None,
+                "implausible {label} material timestamp must not persist"
+            );
         }
     }
 

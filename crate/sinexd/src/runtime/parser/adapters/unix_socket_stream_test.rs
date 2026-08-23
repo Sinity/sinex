@@ -37,8 +37,7 @@ async fn test_unix_socket_yields_one_record_per_line() -> xtask::sandbox::TestRe
 }
 
 #[sinex_test]
-async fn test_unix_socket_records_carry_realtime_capture_hint()
--> xtask::sandbox::TestResult<()> {
+async fn test_unix_socket_records_carry_realtime_capture_hint() -> xtask::sandbox::TestResult<()> {
     let (mut server, client) = make_socket_pair();
     server.write_all(b"line1\nline2\n").await.unwrap();
     drop(server);
@@ -287,8 +286,8 @@ async fn listen_mode_replaces_stale_socket() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn connect_mode_reconnects_after_producer_closes_mid_stream()
--> xtask::sandbox::TestResult<()> {
+async fn connect_mode_reconnects_after_producer_closes_mid_stream() -> xtask::sandbox::TestResult<()>
+{
     // Exercises the `reconnect_on_eof: true` path end-to-end: the producer
     // (e.g. a Hyprland compositor restart) closes the connection, and the
     // adapter must reconnect with backoff and keep yielding records from the
@@ -339,7 +338,9 @@ async fn connect_mode_reconnects_after_producer_closes_mid_stream()
             frame_index,
         } => (material_offset, frame_index),
         other => {
-            return Err(color_eyre::eyre::eyre!("expected stream-frame anchor, got {other:?}"));
+            return Err(color_eyre::eyre::eyre!(
+                "expected stream-frame anchor, got {other:?}"
+            ));
         }
     };
     let (second_offset, second_frame) = match second.anchor {
@@ -348,7 +349,9 @@ async fn connect_mode_reconnects_after_producer_closes_mid_stream()
             frame_index,
         } => (material_offset, frame_index),
         other => {
-            return Err(color_eyre::eyre::eyre!("expected stream-frame anchor, got {other:?}"));
+            return Err(color_eyre::eyre::eyre!(
+                "expected stream-frame anchor, got {other:?}"
+            ));
         }
     };
     assert!(second_offset > first_offset);

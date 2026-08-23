@@ -8,7 +8,9 @@ use sinex_primitives::views::{
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, Spinner, format_bytes, print_finite_envelope, with_spinner_result};
+use crate::fmt::{
+    CommandOutput, Spinner, format_bytes, print_finite_envelope, with_spinner_result,
+};
 use crate::model::OutputFormat;
 
 /// Dead letter queue operations
@@ -930,7 +932,8 @@ fn dlq_triage_group_keys(messages: &[DlqMessagePeek]) -> Vec<DlqTriageGroupKey> 
     for message in messages {
         let reason_bucket = dlq_reason_bucket(&message.payload_preview);
         if let Some(existing) = groups.iter_mut().find(|group| {
-            group.original_subject == message.original_subject && group.reason_bucket == reason_bucket
+            group.original_subject == message.original_subject
+                && group.reason_bucket == reason_bucket
         }) {
             existing.count += 1;
             existing.first_sequence = existing.first_sequence.min(message.sequence);

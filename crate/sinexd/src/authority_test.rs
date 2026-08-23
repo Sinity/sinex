@@ -28,7 +28,9 @@ async fn seed_curation_output_declarations(pool: &DbPool) -> TestResult<()> {
 /// reconciler call (or its `INSERT`) turns the second half of this test red
 /// with the "no registered finalizer" rejection.
 #[sinex_test]
-async fn reconcile_finalizer_registrations_allows_real_finalize(ctx: TestContext) -> TestResult<()> {
+async fn reconcile_finalizer_registrations_allows_real_finalize(
+    ctx: TestContext,
+) -> TestResult<()> {
     let pool = ctx.pool();
     seed_curation_output_declarations(pool).await?;
 
@@ -52,7 +54,10 @@ async fn reconcile_finalizer_registrations_allows_real_finalize(ctx: TestContext
         "authorize_finalization must refuse everyone before the reconciler has run"
     );
     assert!(
-        before.unwrap_err().to_string().contains("no registered finalizer"),
+        before
+            .unwrap_err()
+            .to_string()
+            .contains("no registered finalizer"),
         "pre-reconcile rejection should be the bypass rejection, not something else"
     );
 

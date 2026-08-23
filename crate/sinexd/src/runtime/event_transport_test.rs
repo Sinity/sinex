@@ -318,9 +318,7 @@ async fn recovery_spool_replay_never_discards_past_a_line_count(
     // with malformed lines (cheap: no publish round-trip needed) and assert
     // every single one survives replay into the quarantine file.
     const OVER_CAP: usize = 1_100;
-    let malformed_lines: Vec<String> = (0..OVER_CAP)
-        .map(|i| format!("{{not-json-{i}"))
-        .collect();
+    let malformed_lines: Vec<String> = (0..OVER_CAP).map(|i| format!("{{not-json-{i}")).collect();
     EventBatcher::rewrite_recovery_spool_file(&malformed_lines, &recovery_spool_path).await?;
 
     let (_sender, receiver) = mpsc::channel(1);

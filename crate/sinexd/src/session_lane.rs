@@ -69,8 +69,8 @@ const SESSION_LANE_DECLARATION: DerivationOutputDeclaration = DerivationOutputDe
 /// stance to every other curation-rpc finalizer declaration
 /// (`crate::api::handlers::curation::CURATION_FINALIZER_DECLARATIONS`):
 /// an `Agent` judgment is never sufficient by itself.
-pub const SESSION_LANE_FINALIZER_DECLARATIONS: &[crate::authority::FinalizerDeclaration] = &[
-    crate::authority::FinalizerDeclaration {
+pub const SESSION_LANE_FINALIZER_DECLARATIONS: &[crate::authority::FinalizerDeclaration] =
+    &[crate::authority::FinalizerDeclaration {
         finalizer_id: "session-lane.session.lane_promotion",
         proposal_kind: "session.lane_promotion",
         output_source: "session-lane",
@@ -81,5 +81,4 @@ pub const SESSION_LANE_FINALIZER_DECLARATIONS: &[crate::authority::FinalizerDecl
         requires_human_judgment: true,
         auto_accept_policy: None,
         registered_by: "session-lane",
-    },
-];
+    }];

@@ -63,11 +63,6 @@ pub struct Config {
     pub toolchain: Option<String>,
     /// Whether we're inside the sinex development shell
     pub in_dev_shell: bool,
-    /// Absolute root of the checkout or linked worktree this process runs in.
-    pub workspace_root: PathBuf,
-    /// Directory name of [`Config::workspace_root`], used as the human label
-    /// for the workspace in history rows and query output.
-    pub workspace_name: String,
     /// User preferences from `~/.config/xtask/preferences.toml` (W1).
     pub prefs: UserPreferences,
 }
@@ -107,8 +102,6 @@ impl Config {
                 .ok()
                 .or_else(|| env::var("RUSTUP_TOOLCHAIN").ok()),
             in_dev_shell: env::var("SINEX_DEV_ROOT").is_ok() || env::var("IN_NIX_SHELL").is_ok(),
-            workspace_name: workspace_name_for(&workspace_root),
-            workspace_root,
             prefs: load_user_preferences(),
         }
     }
@@ -122,17 +115,14 @@ impl Config {
     /// dataset and optimize access patterns, indexes, WAL/compaction behavior,
     /// or explicit archive flows.
     ///
-    /// There is exactly one such database per machine, shared by the main
-    /// checkout and every linked worktree — see [`canonical_history_db_path`].
-    ///
-    /// `XTASK_HISTORY_DB` overrides the location outright. Tests and
-    /// `xtask exercise` use it for synthetic ledgers; an operator can use it
-    /// to place the canonical database outside any checkout.
+    /// `XTASK_HISTORY_DB` is a test/exercise escape hatch for synthetic
+    /// ledgers. Normal developer and observability flows should use the
+    /// checkout-scoped canonical DB at `SINEX_STATE_DIR/xtask-history.db`.
     pub(crate) fn history_db_path(&self) -> PathBuf {
         if let Ok(path) = env::var("XTASK_HISTORY_DB") {
             return PathBuf::from(path);
         }
-        canonical_history_db_path(&self.workspace_root)
+        self.state_dir.join("xtask-history.db")
     }
 
     /// Directory for job output files.
@@ -166,64 +156,6 @@ impl Default for Config {
 #[must_use]
 pub fn workspace_state_root() -> PathBuf {
     workspace_root().join(".sinex")
-}
-
-/// Human label for a workspace: the directory name of its root.
-#[must_use]
-pub fn workspace_name_for(workspace_root: &Path) -> String {
-    workspace_root
-        .file_name()
-        .map_or_else(|| workspace_root.display().to_string(), |name| {
-            name.to_string_lossy().into_owned()
-        })
-}
-
-/// Location of the single history database shared by every workspace.
-///
-/// The history DB is a durable evidence ledger spanning months of development,
-/// and it is the substrate Lynchpin promotes into the activity read model. A
-/// per-workspace database breaks both properties: a linked worktree's ledger is
-/// deleted along with the worktree, and because each fresh database restarts
-/// `AUTOINCREMENT` at 1, a later worktree of the same name re-mints row ids that
-/// downstream consumers had already bound to the dead lane's runs.
-///
-/// So every workspace resolves to the **main checkout's** state directory,
-/// found through `git rev-parse --git-common-dir` (for a linked worktree the
-/// common dir is the main checkout's `.git`). The rule is structural rather
-/// than configured: no environment variable can be missing in one shell and
-/// present in another, so the ledger cannot silently fork.
-///
-/// Falls back to `workspace_root` itself when git cannot answer — a source
-/// tarball, a sandbox without git, or a checkout whose common dir is not a
-/// sinex workspace.
-#[must_use]
-pub fn canonical_history_db_path(workspace_root: &Path) -> PathBuf {
-    main_checkout_root(workspace_root)
-        .unwrap_or_else(|| workspace_root.to_path_buf())
-        .join(".sinex/state/xtask-history.db")
-}
-
-/// Resolve the main checkout backing `workspace_root`, which is
-/// `workspace_root` itself unless it is a linked worktree.
-fn main_checkout_root(workspace_root: &Path) -> Option<PathBuf> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(workspace_root)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let common_dir = PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
-    let root = common_dir.parent()?;
-    // A bare or unusual layout can put the common dir somewhere that is not a
-    // sinex checkout; only trust a root carrying the workspace markers.
-    if root.join("Cargo.toml").is_file() && root.join("xtask/Cargo.toml").is_file() {
-        Some(root.to_path_buf())
-    } else {
-        None
-    }
 }
 
 /// Durable state directory for this checkout.

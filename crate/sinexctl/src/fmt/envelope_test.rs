@@ -36,8 +36,8 @@ async fn json_renders_one_finite_document_across_counts() -> xtask::TestResult<(
         let envelope = fixture_envelope(count);
         let items = fixture_items(count);
 
-        let output = render_envelope(&envelope, &items, OutputFormat::Json)?
-            .expect("json must return Some");
+        let output =
+            render_envelope(&envelope, &items, OutputFormat::Json)?.expect("json must return Some");
 
         let parsed: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
             color_eyre::eyre::eyre!("json output did not parse (count={count}): {e}")
@@ -176,8 +176,8 @@ async fn machine_formats_contain_no_ansi_sequences() -> xtask::TestResult<()> {
     let items = fixture_items(2);
 
     for format in [OutputFormat::Json, OutputFormat::Ndjson, OutputFormat::Yaml] {
-        let output = render_envelope(&envelope, &items, format)?
-            .expect("machine format must return Some");
+        let output =
+            render_envelope(&envelope, &items, format)?.expect("machine format must return Some");
         assert!(
             !output.contains("\x1b["),
             "format {format:?} must not contain ANSI escape sequences"

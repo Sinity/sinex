@@ -860,9 +860,9 @@ fn collect_source_files(root: &std::path::Path, paths: &mut Vec<PathBuf>) {
 /// unavoidably included — those edits also recompile the production code.)
 fn is_test_only_source_path(root: &std::path::Path, path: &std::path::Path) -> bool {
     let relative = path.strip_prefix(root).unwrap_or(path);
-    relative.file_name().is_some_and(|name| {
-        name == "tests.rs" || name.to_string_lossy().ends_with("_test.rs")
-    })
+    relative
+        .file_name()
+        .is_some_and(|name| name == "tests.rs" || name.to_string_lossy().ends_with("_test.rs"))
         || relative
             .components()
             .any(|component| component.as_os_str() == "tests")

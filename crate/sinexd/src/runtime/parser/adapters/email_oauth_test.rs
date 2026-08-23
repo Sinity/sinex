@@ -103,7 +103,10 @@ async fn invalid_grant_maps_to_rejected() -> xtask::sandbox::TestResult<()> {
     })]);
     let provider = OAuthTokenProvider::new(creds(), exchange);
     let error = provider.bearer_token().await.unwrap_err();
-    assert_eq!(error.authorization_state(), EmailAuthorizationState::Rejected);
+    assert_eq!(
+        error.authorization_state(),
+        EmailAuthorizationState::Rejected
+    );
     assert!(!error.is_retryable());
     Ok(())
 }
@@ -113,7 +116,10 @@ async fn missing_credential_maps_to_missing() -> xtask::sandbox::TestResult<()> 
     let error = OAuthError::MissingCredential {
         field: "refresh_token",
     };
-    assert_eq!(error.authorization_state(), EmailAuthorizationState::Missing);
+    assert_eq!(
+        error.authorization_state(),
+        EmailAuthorizationState::Missing
+    );
     assert!(!error.is_retryable());
     Ok(())
 }
@@ -125,7 +131,10 @@ async fn server_error_maps_to_unknown_and_is_retryable() -> xtask::sandbox::Test
         error_code: None,
         body: String::new(),
     };
-    assert_eq!(error.authorization_state(), EmailAuthorizationState::Unknown);
+    assert_eq!(
+        error.authorization_state(),
+        EmailAuthorizationState::Unknown
+    );
     assert!(error.is_retryable());
     Ok(())
 }
@@ -171,14 +180,14 @@ async fn load_from_files_rejects_empty_and_loads_trimmed() -> xtask::sandbox::Te
 
     // A wholly-missing file also maps to MissingCredential, not an IO panic.
     let absent = dir.join("does-not-exist");
-    let error = GmailOAuthCredentials::load_from_files(
-        &id_str,
-        &secret_str,
-        &absent.to_string_lossy(),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(error.authorization_state(), EmailAuthorizationState::Missing);
+    let error =
+        GmailOAuthCredentials::load_from_files(&id_str, &secret_str, &absent.to_string_lossy())
+            .await
+            .unwrap_err();
+    assert_eq!(
+        error.authorization_state(),
+        EmailAuthorizationState::Missing
+    );
 
     // Trimmed contents load cleanly when present.
     let refresh_path = dir.join("refresh");
@@ -205,7 +214,8 @@ async fn google_client_parses_token_over_http() -> xtask::sandbox::TestResult<()
         let (mut stream, _) = listener.accept().await?;
         let mut buf = [0_u8; 2048];
         let _ = stream.read(&mut buf).await?;
-        let body = b"{\"access_token\":\"live-access\",\"expires_in\":3600,\"token_type\":\"Bearer\"}";
+        let body =
+            b"{\"access_token\":\"live-access\",\"expires_in\":3600,\"token_type\":\"Bearer\"}";
         let header = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
             body.len()
@@ -243,7 +253,10 @@ async fn google_client_maps_invalid_grant_status() -> xtask::sandbox::TestResult
     let client = GoogleOAuthClient::with_endpoint(reqwest::Client::new(), endpoint);
     let error = client.exchange(&creds()).await.unwrap_err();
     server.await??;
-    assert_eq!(error.authorization_state(), EmailAuthorizationState::Rejected);
+    assert_eq!(
+        error.authorization_state(),
+        EmailAuthorizationState::Rejected
+    );
     // Error display must not leak the refresh token or client secret.
     let rendered = error.to_string();
     assert!(!rendered.contains("refresh-token"));

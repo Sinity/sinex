@@ -1,7 +1,6 @@
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{HealthStatus, ModuleKind};
-use sinex_primitives::{RuntimeLivenessAggregate, RuntimeLivenessStatus};
 use sinex_primitives::rpc::coordination::InstanceHealthResponse;
 use sinex_primitives::rpc::runtime::{RuntimeHeartbeatSource, RuntimeInfo};
 use sinex_primitives::rpc::system::{
@@ -10,6 +9,7 @@ use sinex_primitives::rpc::system::{
 use sinex_primitives::views::{
     CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
+use sinex_primitives::{RuntimeLivenessAggregate, RuntimeLivenessStatus};
 
 use crate::Result;
 use crate::client::GatewayClient;

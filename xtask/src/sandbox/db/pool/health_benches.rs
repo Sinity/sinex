@@ -1,4 +1,3 @@
-
 use xtask_macros::*;
 
 /// Benchmark database acquisition from pool

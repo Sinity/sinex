@@ -135,10 +135,8 @@ async fn default_exploration_capabilities_are_explicitly_unavailable() -> TestRe
 
 #[sinex_test]
 async fn request_runtime_drain_delivers_to_receiver() -> TestResult<()> {
-    crate::runtime::stream::test_support::assert_request_drain_delivers_to_receiver(
-        "test-source",
-    )
-    .await
+    crate::runtime::stream::test_support::assert_request_drain_delivers_to_receiver("test-source")
+        .await
 }
 
 #[sinex_test]
@@ -439,9 +437,7 @@ async fn save_state_recreates_missing_kv_entry_for_stale_hot_reload_revision(
 }
 
 #[sinex_test]
-async fn save_state_updates_existing_zero_progress_checkpoint(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn save_state_updates_existing_zero_progress_checkpoint(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let manager = Arc::new(CheckpointManager::new(
@@ -648,8 +644,12 @@ async fn commit_settlement_records_health_error_and_returns_empty_report() -> Te
     assert_eq!(reporter.metrics().errors.load(Ordering::Relaxed), 0);
 
     let error = SinexError::processing("synthetic benign scan error for testing");
-    let report =
-        adapter.apply_scan_settlement(Settlement::Commit, error, "test-phase", &Checkpoint::None)?;
+    let report = adapter.apply_scan_settlement(
+        Settlement::Commit,
+        error,
+        "test-phase",
+        &Checkpoint::None,
+    )?;
 
     assert_eq!(report.events_processed, 0);
     assert!(report.failed_targets.is_empty());
@@ -668,8 +668,12 @@ async fn commit_settlement_without_health_reporter_still_returns_empty_report() 
     // not panic or error just because there's nowhere to record health.
     let adapter = SourceDriverRuntime::new(TestSource);
     let error = SinexError::processing("synthetic benign scan error for testing");
-    let report =
-        adapter.apply_scan_settlement(Settlement::Commit, error, "test-phase", &Checkpoint::None)?;
+    let report = adapter.apply_scan_settlement(
+        Settlement::Commit,
+        error,
+        "test-phase",
+        &Checkpoint::None,
+    )?;
     assert_eq!(report.events_processed, 0);
     Ok(())
 }

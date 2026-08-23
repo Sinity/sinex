@@ -90,8 +90,8 @@ async fn capture_once_publishes_latest_snapshot_evidence(ctx: TestContext) -> Te
         dedup_by_content_hash: true,
     };
     let latest = LatestSqliteSnapshotEvidence::default();
-    let mut lane = SqliteSnapshotLane::new(spec, Arc::clone(&manager))
-        .with_latest_evidence(latest.clone());
+    let mut lane =
+        SqliteSnapshotLane::new(spec, Arc::clone(&manager)).with_latest_evidence(latest.clone());
 
     assert!(latest.latest().is_none());
     lane.capture_once().await?;

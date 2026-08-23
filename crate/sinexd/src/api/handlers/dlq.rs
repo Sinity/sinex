@@ -19,7 +19,9 @@ use sinex_db::repositories::Operation;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 use sinex_primitives::validation::normalize_unicode;
-use sinex_primitives::views::{CaveatView, SinexObjectKind, SinexObjectRef, strip_unsafe_display_chars};
+use sinex_primitives::views::{
+    CaveatView, SinexObjectKind, SinexObjectRef, strip_unsafe_display_chars,
+};
 use sinex_primitives::{Id, Result, SinexError};
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -467,7 +469,9 @@ pub async fn handle_dlq_requeue(
         .state()
         .start_operation("dlq.requeue", &actor, operation_scope.clone())
         .await
-        .map_err(|error| SinexError::database("Failed to persist DLQ requeue operation").with_source(error))?;
+        .map_err(|error| {
+            SinexError::database("Failed to persist DLQ requeue operation").with_source(error)
+        })?;
     let operation_id = operation.id.clone();
     if let Err(error) = services
         .pool()
@@ -549,10 +553,7 @@ pub async fn handle_dlq_requeue(
                 let _ = services
                     .pool()
                     .state()
-                    .fail_operation(
-                        &operation_id,
-                        json!({ "error": message, "processed": 0 }),
-                    )
+                    .fail_operation(&operation_id, json!({ "error": message, "processed": 0 }))
                     .await;
                 Err(error)
             }
@@ -643,8 +644,8 @@ fn spawn_bulk_dlq_requeue(
 
         let mut config = DlqRetryConfig::default();
         config.consumer_name = format!("dlq-retry-{}", operation_id.to_uuid().simple());
-        let handler = DlqRetryHandler::new(nats_client, env, config)
-            .with_progress_sender(progress_sender);
+        let handler =
+            DlqRetryHandler::new(nats_client, env, config).with_progress_sender(progress_sender);
         let result = match selector {
             DlqBulkSelector::All => handler.retry_all().await,
             DlqBulkSelector::SequenceRange { start, end } => {
@@ -730,9 +731,7 @@ fn spawn_bulk_dlq_requeue(
 /// a freshly constructed single-daemon gateway cannot have legitimate work in
 /// flight, so every pre-existing running DLQ operation is resumed from its
 /// durable selector and retained DLQ state.
-pub async fn recover_stale_dlq_requeue_operations(
-    services: &ServiceContainer,
-) -> Result<usize> {
+pub async fn recover_stale_dlq_requeue_operations(services: &ServiceContainer) -> Result<usize> {
     let operations = services
         .pool()
         .state()
@@ -764,11 +763,7 @@ pub async fn recover_stale_dlq_requeue_operations(
                         );
                     }
                     DlqRecoverySelector::Bulk(selector) => {
-                        spawn_bulk_dlq_requeue(
-                            services.clone(),
-                            operation.id.clone(),
-                            selector,
-                        );
+                        spawn_bulk_dlq_requeue(services.clone(), operation.id.clone(), selector);
                     }
                 }
                 resumed += 1;
@@ -816,11 +811,15 @@ fn dlq_selector_from_scope(scope: &JsonValue) -> Result<Option<DlqRecoverySelect
             let start = scope
                 .get("start_sequence")
                 .and_then(JsonValue::as_u64)
-                .ok_or_else(|| SinexError::processing("DLQ range selector is missing start_sequence"))?;
+                .ok_or_else(|| {
+                    SinexError::processing("DLQ range selector is missing start_sequence")
+                })?;
             let end = scope
                 .get("end_sequence")
                 .and_then(JsonValue::as_u64)
-                .ok_or_else(|| SinexError::processing("DLQ range selector is missing end_sequence"))?;
+                .ok_or_else(|| {
+                    SinexError::processing("DLQ range selector is missing end_sequence")
+                })?;
             if start == 0 || end == 0 || start > end {
                 return Err(SinexError::processing(
                     "DLQ range selector has invalid sequence bounds",

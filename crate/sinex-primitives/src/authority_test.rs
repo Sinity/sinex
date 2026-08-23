@@ -228,8 +228,7 @@ async fn auto_accept_policy_grants_checks_membership() -> TestResult<()> {
 #[sinex_test]
 async fn schema_generation_covers_all_authority_types() -> TestResult<()> {
     let proposal_schema =
-        serde_json::to_value(schemars::schema_for!(Proposal<DuplicateCandidatePayload>))
-            .unwrap();
+        serde_json::to_value(schemars::schema_for!(Proposal<DuplicateCandidatePayload>)).unwrap();
     let judgment_schema = serde_json::to_value(schemars::schema_for!(Judgment)).unwrap();
     let finalizer_schema =
         serde_json::to_value(schemars::schema_for!(FinalizerRegistration)).unwrap();

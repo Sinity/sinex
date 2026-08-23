@@ -189,7 +189,10 @@ async fn replayed_identical_proposal_keeps_judgment_addressable() -> TestResult<
 async fn curation_actor_kind_agent_is_distinct_typed_non_human_actor() -> TestResult<()> {
     // sinex-8cr.1 decision (a): Agent is a typed, auditable non-human actor
     // class distinct from Operator — never agent-as-Operator-with-actor_id.
-    assert_ne!(CurationJudgmentActorKind::Agent, CurationJudgmentActorKind::Operator);
+    assert_ne!(
+        CurationJudgmentActorKind::Agent,
+        CurationJudgmentActorKind::Operator
+    );
     assert_ne!(
         CurationJudgmentActorKind::Agent,
         CurationJudgmentActorKind::DeterministicPolicy

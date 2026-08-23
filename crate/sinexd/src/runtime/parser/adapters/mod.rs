@@ -38,7 +38,8 @@ fn whole_file_limit_error(path: &Path, max_bytes: u64) -> io::Error {
         io::ErrorKind::InvalidData,
         format!(
             "whole-file adapter input {} exceeds the {}-byte limit",
-            path.display(), max_bytes
+            path.display(),
+            max_bytes
         ),
     )
 }
@@ -46,7 +47,8 @@ fn whole_file_limit_error(path: &Path, max_bytes: u64) -> io::Error {
 pub(crate) fn read_file_bounded_sync(path: &Path, max_bytes: u64) -> io::Result<Vec<u8>> {
     let file = std::fs::File::open(path)?;
     let mut bytes = Vec::new();
-    file.take(max_bytes.saturating_add(1)).read_to_end(&mut bytes)?;
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > max_bytes {
         return Err(whole_file_limit_error(path, max_bytes));
     }

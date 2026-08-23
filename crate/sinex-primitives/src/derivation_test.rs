@@ -11,7 +11,10 @@ use xtask::sandbox::sinex_test;
 #[sinex_test]
 async fn derived_product_class_serde_round_trips_exact_vocabulary() -> TestResult<()> {
     let expected = [
-        (DerivedProductClass::CanonicalDerivedEvent, "canonical_derived_event"),
+        (
+            DerivedProductClass::CanonicalDerivedEvent,
+            "canonical_derived_event",
+        ),
         (DerivedProductClass::ProjectionRow, "projection_row"),
         (DerivedProductClass::AnalysisClaim, "analysis_claim"),
         (DerivedProductClass::ReportArtifact, "report_artifact"),
@@ -145,7 +148,10 @@ async fn claim_support_template_instantiate_produces_unreviewed_vector() -> Test
 
     assert_eq!(support.support_level(), SupportLevel::Convergent);
     assert_eq!(support.source_coverage(), SourceCoverage::Covered);
-    assert_eq!(support.temporal_quality(), ClaimTemporalQuality::InheritParent);
+    assert_eq!(
+        support.temporal_quality(),
+        ClaimTemporalQuality::InheritParent
+    );
     assert_eq!(support.adjudication(), AdjudicationStatus::Unreviewed);
     assert_eq!(support.evidence_event_count(), 4);
     assert_eq!(support.evidence_material_count(), 2);
@@ -155,8 +161,7 @@ async fn claim_support_template_instantiate_produces_unreviewed_vector() -> Test
 }
 
 #[sinex_test]
-async fn claim_support_template_unknown_baseline_matches_claim_support_unknown() -> TestResult<()>
-{
+async fn claim_support_template_unknown_baseline_matches_claim_support_unknown() -> TestResult<()> {
     let instantiated = ClaimSupportTemplate::UNKNOWN.instantiate(0, 0, 0, 0);
     assert_eq!(instantiated, ClaimSupport::unknown());
     Ok(())
@@ -216,8 +221,7 @@ async fn derivation_output_declaration_rejects_output_identity_on_non_derived_ou
 }
 
 #[sinex_test]
-async fn derivation_output_declaration_projection_row_requires_projection_kind() -> TestResult<()>
-{
+async fn derivation_output_declaration_projection_row_requires_projection_kind() -> TestResult<()> {
     let mut declaration = valid_derived_output_declaration();
     declaration.product_class = DerivedProductClass::ProjectionRow;
     declaration.write_surface = DerivationWriteSurface::ProjectionWriter;
@@ -305,8 +309,7 @@ async fn derivation_scope_input_set_hash_is_uniform_across_every_variant() -> Te
 }
 
 #[sinex_test]
-async fn derivation_scope_stream_checkpoint_distinguishes_frozen_vs_open_ended() -> TestResult<()>
-{
+async fn derivation_scope_stream_checkpoint_distinguishes_frozen_vs_open_ended() -> TestResult<()> {
     let live = DerivationScope::StreamCheckpoint {
         stream: "core.events.confirmed".to_string(),
         filter_subjects: vec!["entity.>".to_string()],
@@ -320,7 +323,9 @@ async fn derivation_scope_stream_checkpoint_distinguishes_frozen_vs_open_ended()
         filter_subjects: vec!["entity.>".to_string()],
         start_seq: 0,
         end_seq: Some(500),
-        coverage_window: Some(TstzRange::new(Timestamp::UNIX_EPOCH, Timestamp::UNIX_EPOCH).unwrap()),
+        coverage_window: Some(
+            TstzRange::new(Timestamp::UNIX_EPOCH, Timestamp::UNIX_EPOCH).unwrap(),
+        ),
         input_set_hash: "hash-frozen".to_string(),
     };
 
@@ -529,8 +534,8 @@ async fn projection_status_only_ready_is_read_ready() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn projection_freshness_class_round_trips_through_check_constraint_spelling()
--> TestResult<()> {
+async fn projection_freshness_class_round_trips_through_check_constraint_spelling() -> TestResult<()>
+{
     for class in [
         ProjectionFreshnessClass::Seconds,
         ProjectionFreshnessClass::Minutes,
