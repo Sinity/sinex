@@ -5,11 +5,10 @@
 //!
 //! ## Signal sources (in priority order)
 //!
-//! 1. **Active/queued jobs** — if work is already running, wait for it
-//! 2. **Dirty files** — uncommitted changes should be checked
-//! 3. **Generated surface drift** — docs/schema/snapshots may be stale
-//! 4. **Resource pressure** — warn when CPU/memory are under load (#1145)
-//! 5. **Idle** — no action needed, checkout is freshly proven
+//! 1. **Dirty files** — uncommitted changes should be checked
+//! 2. **Generated surface drift** — docs/schema/snapshots may be stale
+//! 3. **Resource pressure** — warn when CPU/memory are under load (#1145)
+//! 4. **Idle** — no action needed, checkout is freshly proven
 
 use color_eyre::eyre::Result;
 use serde::Serialize;
@@ -39,27 +38,22 @@ pub enum Priority {
 pub fn plan_next_actions() -> Result<Vec<PlannedAction>> {
     let mut actions = Vec::new();
 
-    // ── Signal 1: active jobs ────────────────────────────────────────────
-    if let Some(job_actions) = check_active_jobs() {
-        actions.extend(job_actions);
-    }
-
-    // ── Signal 2: dirty files ────────────────────────────────────────────
+    // ── Signal 1: dirty files ────────────────────────────────────────────
     if let Some(dirty_actions) = check_dirty_files()? {
         actions.extend(dirty_actions);
     }
 
-    // ── Signal 3: generated surface drift ────────────────────────────────
+    // ── Signal 2: generated surface drift ────────────────────────────────
     if let Some(drift_actions) = check_generated_drift()? {
         actions.extend(drift_actions);
     }
 
-    // ── Signal 4: resource pressure (#1145) ───────────────────────────────
+    // ── Signal 3: resource pressure (#1145) ───────────────────────────────
     if let Some(pressure_actions) = check_resource_pressure() {
         actions.extend(pressure_actions);
     }
 
-    // ── Signal 5: idle — nothing to do ───────────────────────────────────
+    // ── Signal 4: idle — nothing to do ───────────────────────────────────
     if actions.is_empty() {
         actions.push(PlannedAction {
             command: "xtask check".to_string(),
@@ -75,41 +69,6 @@ pub fn plan_next_actions() -> Result<Vec<PlannedAction>> {
 }
 
 // ── Signal probes ──────────────────────────────────────────────────────────
-
-fn check_active_jobs() -> Option<Vec<PlannedAction>> {
-    let coordinator_dir = crate::config::config().state_dir.join("coordinator");
-    let Ok(entries) = std::fs::read_dir(&coordinator_dir) else {
-        return None;
-    };
-
-    let mut actions = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "json")
-            && let Ok(content) = std::fs::read_to_string(&path)
-            && let Ok(state) =
-                serde_json::from_str::<crate::coordinator::CoordinationState>(&content)
-            && state.job_id > 0
-            && state.pid > 0
-        {
-            actions.push(PlannedAction {
-                command: format!("xtask jobs status {}", state.job_id),
-                reason: format!(
-                    "active job {} ({}) is running (pid {})",
-                    state.job_id, state.command, state.pid
-                ),
-                priority: Priority::Now,
-                confidence: 0.9,
-            });
-        }
-    }
-
-    if actions.is_empty() {
-        None
-    } else {
-        Some(actions)
-    }
-}
 
 fn check_dirty_files() -> Result<Option<Vec<PlannedAction>>> {
     let output = std::process::Command::new("git")

@@ -72,6 +72,6 @@ Every xtask command supports the shared global output controls documented in the
 generated reference. In practice:
 
 - prefer `--json` or `--format json` when another tool will parse the result
-- use `--bg` for long-running work you want to observe through `xtask jobs`
-- add `--wait` to a background fix command when launch acknowledgement is not sufficient proof
+- use AgentCTL for declared fix, default runtime, and default VM lifecycle operations
+- use `xtask jobs` only for custom run shapes that AgentCTL cannot yet express; run parameterized VM work in the foreground
 - use human output for interactive inspection

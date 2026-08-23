@@ -367,9 +367,6 @@ fn build_context_block(ctx: &CommandContext) -> String {
         format_active_diagnostics(ctx),
     );
 
-    // Coordinator state
-    push_context_field(&mut lines, "coordinator_state", format_coordinator_state());
-
     // Active background jobs
     push_context_field(&mut lines, "active_jobs", format_active_jobs(ctx));
 
@@ -459,47 +456,6 @@ fn format_active_diagnostics(ctx: &CommandContext) -> SnapshotContextField {
                 ctx.history_db_path().display()
             )),
         },
-    }
-}
-
-fn format_coordinator_state() -> SnapshotContextField {
-    use crate::coordinator::JobCoordinator;
-
-    let coord = match JobCoordinator::new() {
-        Ok(c) => c,
-        Err(error) => {
-            return SnapshotContextField {
-                value: "{}".to_string(),
-                issue: Some(format!("failed to open coordinator state: {error:#}")),
-            };
-        }
-    };
-
-    let mut parts: Vec<String> = vec![];
-    let mut issues = Vec::new();
-    for cmd in &["check", "test", "build"] {
-        match coord.state(cmd) {
-            Ok(Some(state)) => {
-                parts.push(format!(
-                    "{cmd}: {{job_id:{}, scope:\"{}\", fingerprint:\"{}\"}}",
-                    state.job_id,
-                    state.scope_key,
-                    &state.tree_fingerprint[..state.tree_fingerprint.len().min(12)]
-                ));
-            }
-            Ok(None) => {}
-            Err(error) => issues.push(format!(
-                "failed to read coordinator state for {cmd}: {error:#}"
-            )),
-        }
-    }
-    SnapshotContextField {
-        value: if parts.is_empty() {
-            "{}".to_string()
-        } else {
-            format!("{{{}}}", parts.join(", "))
-        },
-        issue: (!issues.is_empty()).then(|| issues.join("; ")),
     }
 }
 

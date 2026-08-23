@@ -1,7 +1,11 @@
 # Jobs Command
 
-`xtask jobs` is the operational surface for background work. It is distinct from
-`xtask history`, which is the durable execution record.
+`xtask jobs` is the operational surface for custom background `xtask run` work.
+It is distinct from `xtask history`, which is the durable execution record.
+
+Declared AgentCTL operations own their own launch, logs, cancellation, results,
+workspace identity, and process trees. VM workflows retain foreground semantics,
+including parameterized VM selections that AgentCTL cannot represent yet.
 
 ## Mental Model
 
@@ -106,7 +110,7 @@ This cleans up the operational job layer only. Durable invocation history is not
 Typical workflow:
 
 ```bash
-xtask fix -p xtask --bg --json
+xtask run module terminal-source --bg --json
 xtask jobs status <job_id> --json
 xtask jobs wait <job_id> --json
 xtask history progress --invocation <invocation_id> --json

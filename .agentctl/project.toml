@@ -114,6 +114,75 @@ max_length = 128
 type = "bool"
 flag = "--release"
 
+[operations.fix_default]
+description = "Apply Sinex fixes through the foreground semantic fix workflow"
+exec = ["xtask", "fix"]
+pool = "normal"
+result = "exit"
+cache = "tree+environment"
+
+[operations.fix_default.parameters.all]
+type = "bool"
+flag = "--all"
+
+[operations.fix_default.parameters.clippy]
+type = "bool"
+flag = "--clippy"
+
+[operations.fix_default.parameters.fmt_only]
+type = "bool"
+flag = "--fmt-only"
+
+[operations.fix_default.parameters.package]
+type = "string-list"
+flag = "--package"
+max_items = 32
+max_length = 128
+
+[operations.fix_default.parameters.smart]
+type = "bool"
+flag = "--smart"
+
+[operations.fix_default.parameters.thorough]
+type = "bool"
+flag = "--thorough"
+
+[operations.run_core]
+description = "Run the default local Sinex core bundle through AgentCTL"
+exec = ["xtask", "run", "core"]
+pool = "normal"
+result = "exit"
+cache = "tree+environment"
+
+[operations.run_core.parameters.release]
+type = "bool"
+flag = "--release"
+
+[operations.run_all_automatons]
+description = "Run the default local Sinex automaton supervisor through AgentCTL"
+exec = ["xtask", "run", "all-automatons"]
+pool = "normal"
+result = "exit"
+cache = "tree+environment"
+
+[operations.run_all_automatons.parameters.release]
+type = "bool"
+flag = "--release"
+
+[operations.vm_smoke]
+description = "Run Sinex's default foreground NixOS VM smoke suite through AgentCTL"
+exec = ["xtask", "test", "vm"]
+pool = "normal"
+result = "exit"
+cache = "tree+environment"
+
+[operations.vm_validate]
+description = "Validate Sinex's foreground VM scenario surface through AgentCTL"
+exec = ["xtask", "test", "vm", "--validate"]
+pool = "normal"
+result = "exit"
+cache = "tree+environment"
+
 [operations.test_default]
 description = "Run Sinex's foreground nextest workflow through its semantic test planner"
 exec = ["xtask", "test"]

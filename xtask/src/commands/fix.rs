@@ -52,29 +52,16 @@ impl XtaskCommand for FixCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        // Handle background execution via coordinator (same as check/build)
         if ctx.is_background() {
-            let mut args = Vec::new();
-            for p in &self.packages {
-                args.push("-p".to_string());
-                args.push(p.clone());
-            }
-            if self.all {
-                args.push("--all".to_string());
-            }
-            if self.fmt_only {
-                args.push("--fmt-only".to_string());
-            }
-            if self.clippy {
-                args.push("--clippy".to_string());
-            }
-            if self.thorough {
-                args.push("--thorough".to_string());
-            }
-            if self.smart {
-                args.push("--smart".to_string());
-            }
-            return crate::coordinator::coordinate_and_spawn("fix", &args, ctx);
+            return Ok(CommandResult::failure(
+                crate::output::StructuredError::new(
+                    "XTASK_FIX_BACKGROUND_UNSUPPORTED",
+                    "background mode is unsupported for xtask fix",
+                )
+                .with_suggestion(
+                    "run `xtask fix` in the foreground or start AgentCTL's declared fix_default operation",
+                ),
+            ));
         }
 
         // Guard: cargo fmt / cargo fix / clippy --fix all invoke cargo and need the target/ lock.
@@ -83,7 +70,7 @@ impl XtaskCommand for FixCommand {
             return Err(color_eyre::eyre::eyre!(
                 "Cannot run `xtask fix` foreground inside an active nextest run — \
                  cargo fmt / cargo fix need the cargo target/ lock which nextest holds.\n\
-                 Use `xtask fix --bg ...` to spawn in background instead."
+                 Run the fix outside nextest or start AgentCTL's declared fix_default operation."
             ));
         }
 

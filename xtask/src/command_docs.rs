@@ -167,7 +167,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "`xtask run` is the local unified-sinexd development surface; it replaces old multi-node dev-run assumptions.",
                     "Local sinexd execution is explicit. Build/check/test/help/pre-push flows must not start it as a side effect.",
                     "Dry-run and startup output report the checkout root, dev-state, log directory, database URL, NATS URL, API URL when configured, and job directory; use `xtask infra status` to inspect live dev-local processes.",
-                    "Foreground runs are owned by the terminal lifecycle; background runs are owned by `xtask jobs` and show up in the checkout-local process inventory.",
+                    "AgentCTL owns the default core and all-automatons lifecycle (`agentctl job start sinex run_core` or `run_all_automatons`); foreground runs remain terminal-owned, while custom background run shapes remain under `xtask jobs` until AgentCTL supports scalar and arbitrary-string parameters.",
                 ],
             },
             GuideEntry {
@@ -221,7 +221,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 fallback_summary: "Read output for a background job",
                 when: "you launched a long-running command with --bg and need its logs or current state",
                 examples: &[
-                    "xtask fix -p xtask --bg",
+                    "xtask run module terminal-source --bg",
                     "xtask jobs status 42",
                     "xtask jobs output 42",
                 ],
@@ -543,8 +543,8 @@ pub fn render_command_guide(commands: &[CommandInfo]) -> String {
     );
     out.push_str("## Agent Defaults\n\n");
     out.push_str("- Prefer `--json` or `--format json` when another tool will parse the output.\n");
-    out.push_str("- Use `--bg` for long-running work you want to inspect through `xtask jobs`.\n");
-    out.push_str("- Use `--bg --wait` with fix when the command must return terminal proof instead of launch acknowledgement.\n");
+    out.push_str("- Start declared `fix_default`, `run_core`, `run_all_automatons`, `vm_smoke`, and `vm_validate` operations through AgentCTL when lifecycle ownership matters.\n");
+    out.push_str("- `xtask jobs` remains only for custom run shapes that AgentCTL cannot express yet; use foreground xtask for parameterized VM and other semantic work.\n");
     out.push_str("- Use `xtask <command> --help` only to confirm the exact live flags for commands already named below.\n\n");
 
     for section in GUIDE_SECTIONS {
