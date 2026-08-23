@@ -34,3 +34,57 @@ exec = ["xtask", "check"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"
+
+[operations.check_default.parameters.all]
+type = "bool"
+flag = "--all"
+
+[operations.check_default.parameters.by_file]
+type = "bool"
+flag = "--by-file"
+
+[operations.check_default.parameters.changed_strict_default]
+type = "bool"
+flag = "--agentctl-changed-strict-default"
+
+[operations.check_default.parameters.fmt]
+type = "bool"
+flag = "--fmt"
+
+[operations.check_default.parameters.forbidden]
+type = "bool"
+flag = "--forbidden"
+
+[operations.check_default.parameters.full]
+type = "bool"
+flag = "--full"
+
+[operations.check_default.parameters.heavy]
+type = "bool"
+flag = "--heavy"
+
+[operations.check_default.parameters.lint]
+type = "bool"
+flag = "--lint"
+
+[operations.check_default.parameters.lint_breakdown]
+type = "bool"
+flag = "--lint-breakdown"
+
+[operations.check_default.parameters.nix]
+type = "bool"
+flag = "--nix"
+
+[operations.check_default.parameters.package]
+type = "string-list"
+flag = "--package"
+max_items = 32
+max_length = 128
+
+[operations.check_default.parameters.plan]
+type = "bool"
+flag = "--plan"
+
+[operations.check_default.parameters.skip_tests]
+type = "bool"
+flag = "--skip-tests"

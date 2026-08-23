@@ -31,6 +31,7 @@ fn make_cmd(flags: CheckFlags) -> CheckCommand {
         plan: false,
         skip_preflight: false,
         changed_strict: None,
+        agentctl_changed_strict_default: false,
     }
 }
 
@@ -84,6 +85,20 @@ async fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
     assert!(!cmd.fmt);
     assert!(!cmd.forbidden);
     assert!(!cmd.full);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_agentctl_changed_strict_default_normalizes_to_primary_flag()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut cmd = CheckCommand {
+        agentctl_changed_strict_default: true,
+        ..make_cmd(CheckFlags::default())
+    };
+
+    cmd.resolve_flags();
+
+    assert_eq!(cmd.changed_strict, Some(None));
     Ok(())
 }
 

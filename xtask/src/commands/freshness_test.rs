@@ -157,19 +157,11 @@ async fn freshness_explain_test_uses_resolved_test_semantics() -> TestResult<()>
 }
 
 #[sinex_test]
-async fn freshness_explain_reports_shared_inputs_for_scoped_check() -> TestResult<()> {
+async fn freshness_explain_reports_check_as_uncoordinated() -> TestResult<()> {
     let explanation =
         coordinator::explain_freshness("check", &["-p".to_string(), "xtask".to_string()])?;
 
-    assert!(explanation.fresh_reuse_enabled);
-    assert!(
-        explanation
-            .shared_inputs
-            .contains(&"Cargo.lock".to_string())
-    );
-    assert!(matches!(
-        explanation.scope,
-        FreshnessScopeExplanation::Packages { .. }
-    ));
+    assert!(!explanation.should_coordinate);
+    assert!(!explanation.fresh_reuse_enabled);
     Ok(())
 }

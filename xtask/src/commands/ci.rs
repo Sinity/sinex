@@ -253,6 +253,7 @@ fn check_command_for_ci() -> crate::commands::check::CheckCommand {
         plan: false,
         skip_preflight: false,
         changed_strict: None, // CI uses the full workspace check, not the delta guard
+        agentctl_changed_strict_default: false,
     }
 }
 
