@@ -1,6 +1,6 @@
 //! Scoped job coordination for concurrent xtask processes.
 //!
-//! When multiple agents call `xtask {check,test,build,fix,vm} --bg` concurrently,
+//! When multiple agents call `xtask {test,build,fix,vm} --bg` concurrently,
 //! they all compete for the same cargo/Nix worker surface, causing redundant
 //! recompilation and host pressure spikes.
 //!
@@ -13,7 +13,7 @@
 //! ## Decision Matrix
 //!
 //! 1. **Excluded** — Non-coordinatable modes (debug, fuzz, coverage, etc.) run directly.
-//! 2. **Fresh** — (check/build only) Last completed job has same fingerprint+scope → return cached.
+//! 2. **Fresh** — (build only) Last completed job has same fingerprint+scope → return cached.
 //! 3. **Attach** — Running job has same fingerprint+scope → return its job ID.
 //! 4. **Supersede** — Running bg job has same scope but different fingerprint → cancel + restart.
 //! 5. **Queue** — Running job has different scope → queue after it.
@@ -198,7 +198,7 @@ impl JobCoordinator {
     #[must_use]
     pub fn should_coordinate(command: &str, args: &[String]) -> bool {
         match command {
-            "check" | "fix" => true,
+            "fix" => true,
             "build" => !args.iter().any(|arg| arg == "--dry-run"),
             "test" => {
                 // Exclude non-coordinatable test modes
@@ -1195,12 +1195,11 @@ fn coordination_family(command: &str) -> &str {
 }
 
 fn supports_fresh_reuse(command: &str) -> bool {
-    matches!(command, "check" | "build")
+    command == "build"
 }
 
 fn supports_fresh_reuse_for(command: &str, args: &[String]) -> bool {
     match command {
-        "check" => supports_fresh_reuse(command) && !args.iter().any(|arg| arg == "--fix"),
         "build" => supports_fresh_reuse(command) && !args.iter().any(|arg| arg == "--dry-run"),
         "test" => test_scope_is_fresh_reusable(args),
         _ => false,

@@ -86,11 +86,18 @@ pub struct CheckCommand {
     /// This flag is opt-in and does not alter the default check behaviour.
     #[arg(long, value_name = "BASE_REF")]
     pub changed_strict: Option<Option<String>>,
+
+    /// AgentCTL's typed boolean representation of valueless `--changed-strict`.
+    #[arg(long, hide = true, conflicts_with = "changed_strict")]
+    pub agentctl_changed_strict_default: bool,
 }
 
 impl CheckCommand {
     /// Resolve composite flags into individual flags (mutates self).
     fn resolve_flags(&mut self) {
+        if self.agentctl_changed_strict_default {
+            self.changed_strict = Some(None);
+        }
         if self.fix {
             self.full = true;
         }
