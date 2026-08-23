@@ -149,7 +149,7 @@ fn test_proof_producing_commands_refuse_stale_binary_fallback() {
 #[test]
 fn test_pure_observability_commands_allow_stale_binary_fallback() {
     let functions = extract_flake_functions();
-    for &cmd in &["status", "history", "analytics", "jobs", "snapshot"] {
+    for &cmd in &["history", "analytics", "snapshot"] {
         assert!(
             call(&functions, "_sinex_xtask_is_observability_command", &[cmd]),
             "_sinex_xtask_is_observability_command must allow '{cmd}' — it \

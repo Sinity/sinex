@@ -100,18 +100,31 @@ async fn test_resolve_vm_tests_rejects_empty_requested_category() -> ::xtask::sa
         .expect_err("empty smoke category must not pass as a gate");
 
     let message = format!("{error:#}");
-    assert!(message.contains("selected no exported checks"));
+    assert!(message.contains("configured checks absent from flake exports"));
     assert!(message.contains("xtask test vm --list"));
     Ok(())
 }
 
 #[sinex_test]
-async fn test_resolve_vm_tests_keeps_exported_category_members() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_resolve_vm_tests_requires_every_configured_category_member()
+-> ::xtask::sandbox::TestResult<()> {
     let available_tests = vec!["basic".to_string(), "runtime-matrix".to_string()];
+    let error = resolve_vm_tests_to_run(&available_tests, Some("smoke"), &[], "x86_64-linux")
+        .expect_err("a partial catalog export must fail rather than silently filtering checks");
+
+    let message = format!("{error:#}");
+    assert!(message.contains("replay-smoke"));
+    assert!(message.contains("configured checks absent from flake exports"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_resolve_vm_tests_keeps_complete_exported_category() -> ::xtask::sandbox::TestResult<()>
+{
+    let available_tests = vec!["basic".to_string(), "replay-smoke".to_string()];
     let tests = resolve_vm_tests_to_run(&available_tests, Some("smoke"), &[], "x86_64-linux")?;
 
-    assert_eq!(tests, vec!["basic"]);
+    assert_eq!(tests, vec!["basic", "replay-smoke"]);
     Ok(())
 }
 

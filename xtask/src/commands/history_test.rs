@@ -582,8 +582,8 @@ async fn test_history_command_metadata() -> ::xtask::sandbox::TestResult<()> {
     assert!(!metadata.modifies_state); // History commands are read-only
     assert_eq!(
         metadata.history_access,
-        crate::command::HistoryAccessMode::ReadWrite,
-        "history current must reconcile aged interrupted invocations before selector resolution"
+        crate::command::HistoryAccessMode::Query,
+        "history selectors must stay on the read-only history connection"
     );
     Ok(())
 }

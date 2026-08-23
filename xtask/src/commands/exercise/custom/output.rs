@@ -28,7 +28,7 @@ pub fn custom_output_format_matrix(dir: &Path, verbose: bool) -> Vec<StepOutcome
             dir,
             i,
             &format!("format_{fmt}"),
-            &["status", "--doctor", "--format", fmt],
+            &["doctor", "--format", fmt],
             *expected,
             validations,
             verbose,

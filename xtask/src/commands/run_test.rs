@@ -14,6 +14,77 @@ fn test_context(background: bool) -> CommandContext {
     )
 }
 
+#[cfg(unix)]
+async fn spawn_managed_persistent_child(
+    name: &str,
+) -> ::xtask::sandbox::TestResult<(Child, nix::unistd::Pid, i32)> {
+    let mut command = tokio::process::Command::new("sh");
+    configure_managed_child_tokio(&mut command);
+    command
+        .arg("-c")
+        .arg("sleep 30 & descendant=$!; echo $descendant; wait $descendant")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+
+    let mut child = command.spawn()?;
+    crate::process::register_tokio_child_process_group(&child, name);
+    let leader_pid = child.id().expect("managed child exposes a PID") as i32;
+    let stdout = child
+        .stdout
+        .take()
+        .expect("managed child stdout should be piped");
+    let mut lines = BufReader::new(stdout).lines();
+    let descendant_pid = lines
+        .next_line()
+        .await?
+        .expect("managed shell should print the persistent descendant PID")
+        .parse::<i32>()?;
+
+    let process_group = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(leader_pid)))?;
+    assert_eq!(
+        process_group.as_raw(),
+        leader_pid,
+        "managed fixture must use the dedicated process-group configuration used in production"
+    );
+    assert_eq!(
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(descendant_pid)))?,
+        process_group,
+        "persistent descendant must join the managed child process group"
+    );
+    assert_eq!(
+        unsafe { libc::kill(-process_group.as_raw(), 0) },
+        0,
+        "managed process group must exist before cleanup injection"
+    );
+    assert_eq!(
+        unsafe { libc::kill(descendant_pid, 0) },
+        0,
+        "persistent descendant must exist before cleanup injection"
+    );
+
+    Ok((child, process_group, descendant_pid))
+}
+
+#[cfg(unix)]
+async fn assert_managed_child_group_and_descendant_gone(
+    process_group: nix::unistd::Pid,
+    descendant_pid: i32,
+) -> ::xtask::sandbox::TestResult<()> {
+    WaitHelpers::wait_for_condition(
+        move || async move {
+            let group_gone = unsafe { libc::kill(-process_group.as_raw(), 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            let descendant_gone = unsafe { libc::kill(descendant_pid, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            Ok::<_, std::io::Error>(group_gone && descendant_gone)
+        },
+        Timeouts::QUICK,
+    )
+    .await?;
+    Ok(())
+}
+
 fn base_command(subcommand: RunSubcommand) -> RunCommand {
     RunCommand {
         subcommand,
@@ -490,12 +561,10 @@ async fn test_trigger_failure_and_all_cleanup_failures_are_preserved()
 #[sinex_test]
 async fn test_wait_error_still_terminates_source_child_group() -> ::xtask::sandbox::TestResult<()> {
     let mut children = HashMap::new();
-    let mut pids = Vec::new();
+    let mut managed_children = Vec::new();
     for name in ["source-wait-error", "source-sibling"] {
-        let child = Command::new("sh")
-            .args(["-c", "trap 'exit 0' TERM; while :; do sleep 1; done"])
-            .spawn()?;
-        pids.push(child.id().expect("spawned child exposes a PID"));
+        let (child, process_group, descendant_pid) = spawn_managed_persistent_child(name).await?;
+        managed_children.push((process_group, descendant_pid));
         children.insert(name.to_string(), child);
     }
 
@@ -509,14 +578,8 @@ async fn test_wait_error_still_terminates_source_child_group() -> ::xtask::sandb
     for child in children.values_mut() {
         assert!(child.try_wait()?.is_some(), "source child was reaped");
     }
-    for pid in pids {
-        let group_probe = std::process::Command::new("kill")
-            .args(["-0", &format!("-{pid}")])
-            .status()?;
-        assert!(
-            !group_probe.success(),
-            "trigger and sibling process groups must not survive wait-error cleanup"
-        );
+    for (process_group, descendant_pid) in managed_children {
+        assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
     }
     Ok(())
 }
@@ -524,10 +587,8 @@ async fn test_wait_error_still_terminates_source_child_group() -> ::xtask::sandb
 #[sinex_test]
 async fn test_poll_error_attempts_process_group_termination_before_returning()
 -> ::xtask::sandbox::TestResult<()> {
-    let mut child = Command::new("sh")
-        .args(["-c", "trap 'exit 0' TERM; while :; do sleep 1; done"])
-        .spawn()?;
-    let pid = child.id().expect("spawned child exposes a PID");
+    let (mut child, process_group, descendant_pid) =
+        spawn_managed_persistent_child("source-poll-error").await?;
 
     let error = stop_bundle_child_after_poll(
         "source-poll-error",
@@ -539,13 +600,7 @@ async fn test_poll_error_attempts_process_group_termination_before_returning()
 
     assert!(error.to_string().contains("injected poll failure"));
     assert!(child.try_wait()?.is_some(), "source child was reaped");
-    assert!(
-        !std::process::Command::new("kill")
-            .args(["-0", &format!("-{pid}")])
-            .status()?
-            .success(),
-        "source process group must not survive a failed liveness poll"
-    );
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
     Ok(())
 }
 
@@ -906,42 +961,8 @@ async fn test_stop_bundle_child_succeeds_for_exited_process() -> ::xtask::sandbo
 async fn test_stop_bundle_child_kills_child_process_group() -> ::xtask::sandbox::TestResult<()> {
     use std::os::unix::process::ExitStatusExt;
 
-    let mut command = tokio::process::Command::new("sh");
-    configure_managed_child_tokio(&mut command);
-    command
-        .arg("-c")
-        .arg("sleep 30 & descendant=$!; echo $descendant; wait $descendant")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-
-    let mut child = command.spawn()?;
-    crate::process::register_tokio_child_process_group(&child, "test bundle child");
-    let leader_pid = child.id().expect("bundle child exposes a PID") as i32;
-    let stdout = child.stdout.take().expect("stdout should be piped");
-    let mut lines = BufReader::new(stdout).lines();
-    let descendant_pid = lines
-        .next_line()
-        .await?
-        .expect("shell should print background child pid")
-        .parse::<i32>()?;
-
-    let process_group = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(leader_pid)))?;
-    assert_eq!(
-        process_group.as_raw(),
-        leader_pid,
-        "test child must use the dedicated process-group configuration used in production"
-    );
-    assert_eq!(
-        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(descendant_pid)))?,
-        process_group,
-        "persistent descendant must join the managed child process group"
-    );
-    assert_eq!(
-        unsafe { libc::kill(-process_group.as_raw(), 0) },
-        0,
-        "process group must exist before injecting cleanup"
-    );
+    let (mut child, process_group, descendant_pid) =
+        spawn_managed_persistent_child("test bundle child").await?;
 
     stop_bundle_child("test child", &mut child).await?;
 
@@ -949,17 +970,7 @@ async fn test_stop_bundle_child_kills_child_process_group() -> ::xtask::sandbox:
         child.try_wait()?.is_some(),
         "terminated bundle child should be reaped"
     );
-    WaitHelpers::wait_for_condition(
-        move || async move {
-            let group_gone = unsafe { libc::kill(-process_group.as_raw(), 0) } == -1
-                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
-            let descendant_gone = unsafe { libc::kill(descendant_pid, 0) } == -1
-                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
-            Ok::<_, std::io::Error>(group_gone && descendant_gone)
-        },
-        Timeouts::QUICK,
-    )
-    .await?;
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
 
     let status = child.wait().await?;
     assert!(
