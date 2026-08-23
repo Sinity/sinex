@@ -381,9 +381,14 @@ async fn test_source_binding_child_success_is_preserved() -> ::xtask::sandbox::T
     assert!(exit.is_success());
     assert_eq!(exit.name(), Some("source-success"));
     assert!(
-        source_bindings_terminal_result(exit, serde_json::json!({}))
-            .errors
-            .is_empty()
+        foreground_bundle_terminal_result(
+            SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+            exit,
+            Vec::new(),
+            serde_json::json!({}),
+        )
+        .errors
+        .is_empty()
     );
     Ok(())
 }
@@ -398,7 +403,12 @@ async fn test_source_binding_child_failure_is_preserved() -> ::xtask::sandbox::T
 
     assert!(!exit.is_success());
     assert!(exit.trigger().contains("source-failure"));
-    let result = source_bindings_terminal_result(exit, serde_json::json!({}));
+    let result = foreground_bundle_terminal_result(
+        SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+        exit,
+        Vec::new(),
+        serde_json::json!({}),
+    );
     assert_eq!(result.errors[0].code, "SOURCE_BINDING_EXITED");
     Ok(())
 }
@@ -413,8 +423,64 @@ async fn test_source_binding_wait_error_is_preserved() -> ::xtask::sandbox::Test
     assert!(!exit.is_success());
     assert_eq!(exit.exited_name(), None);
     assert!(exit.trigger().contains("injected wait failure"));
-    let result = source_bindings_terminal_result(exit, serde_json::json!({}));
+    let result = foreground_bundle_terminal_result(
+        SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+        exit,
+        Vec::new(),
+        serde_json::json!({}),
+    );
     assert_eq!(result.errors[0].code, "SOURCE_BINDING_WAIT_FAILED");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_bundle_child_failure_is_preserved_as_failed_result()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut children = HashMap::from([(
+        "core-child".to_string(),
+        Command::new("sh").args(["-c", "exit 23"]).spawn()?,
+    )]);
+    let exit = wait_for_any_child_exit(&mut children, &test_context(false)).await;
+
+    let result = foreground_bundle_terminal_result(
+        GENERIC_FOREGROUND_BUNDLE,
+        exit,
+        Vec::new(),
+        serde_json::json!({ "binaries": ["sinexd"] }),
+    );
+    assert!(result.is_failure(), "a nonzero child must fail run_core");
+    assert_eq!(result.errors[0].code, "BUNDLE_EXITED");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_trigger_failure_and_all_cleanup_failures_are_preserved()
+-> ::xtask::sandbox::TestResult<()> {
+    let result = foreground_bundle_terminal_result(
+        SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+        ChildExit::WaitError {
+            name: "trigger-source".to_string(),
+            error: std::io::Error::other("injected trigger wait failure"),
+        },
+        vec![
+            "sibling-a: injected cleanup failure".to_string(),
+            "sibling-b: another injected cleanup failure".to_string(),
+        ],
+        serde_json::json!({}),
+    );
+
+    assert!(result.is_failure());
+    assert_eq!(result.errors.len(), 3, "trigger plus every cleanup failure");
+    assert_eq!(result.errors[0].code, "SOURCE_BINDING_WAIT_FAILED");
+    assert_eq!(result.errors[1].code, "SOURCE_BINDING_CLEANUP_FAILED");
+    assert_eq!(result.errors[2].code, "SOURCE_BINDING_CLEANUP_FAILED");
+    assert!(
+        result.errors[0]
+            .message
+            .contains("injected trigger wait failure")
+    );
+    assert!(result.errors[1].message.contains("sibling-a"));
+    assert!(result.errors[2].message.contains("sibling-b"));
     Ok(())
 }
 

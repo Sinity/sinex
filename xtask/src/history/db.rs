@@ -468,7 +468,7 @@ impl HistoryDb {
                     FROM invocations
                     WHERE status = 'running'
                       AND started_at < ?2
-                    ORDER BY id ASC
+                    ORDER BY id DESC
                     LIMIT ?3
                 )
                 ",

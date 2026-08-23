@@ -1400,3 +1400,51 @@ async fn test_open_reconciles_interrupted_invocation_before_current_resolution()
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn test_current_ignores_stale_running_rows_beyond_reconciliation_bound() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let db_path = dir.path().join("history.db");
+    let (stale_ids, terminal_id) = {
+        let db = HistoryDb::open(&db_path)?;
+        let stale_ids = (0..=128)
+            .map(|_| db.start_invocation("check", None, None, None))
+            .collect::<Result<Vec<_>, _>>()?;
+        let terminal_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(terminal_id, InvocationStatus::Success, Some(0), 0.1)?;
+        (stale_ids, terminal_id)
+    };
+
+    let old_started_at = (time::OffsetDateTime::now_utc() - time::Duration::hours(48))
+        .format(&time::format_description::well_known::Rfc3339)?;
+    let connection = rusqlite::Connection::open(&db_path)?;
+    for stale_id in &stale_ids {
+        connection.execute(
+            "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+            rusqlite::params![old_started_at, stale_id],
+        )?;
+    }
+    drop(connection);
+
+    let db = HistoryDb::open(&db_path)?;
+    assert_eq!(
+        db.get_invocation(stale_ids[0])?
+            .expect("oldest stale invocation remains after bounded reconciliation")
+            .status,
+        InvocationStatus::Running,
+        "only the newest 128 stale rows are reconciled per open"
+    );
+    assert_eq!(
+        db.get_invocation(*stale_ids.last().expect("129 stale ids"))?
+            .expect("newest stale invocation exists")
+            .status,
+        InvocationStatus::Cancelled,
+        "reconciliation prioritizes the newest stale rows"
+    );
+    assert_eq!(
+        db.resolve_invocation_id("current", Some("check"))?,
+        Some(terminal_id),
+        "a stale running row cannot outrank later terminal work after one recovery read"
+    );
+    Ok(())
+}

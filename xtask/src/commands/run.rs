@@ -484,6 +484,26 @@ enum ChildExit {
     TimedOut,
 }
 
+/// Names and structured-error codes for one foreground bundle surface.
+#[derive(Clone, Copy)]
+struct ForegroundBundleResultKind {
+    name: &'static str,
+    location: &'static str,
+    error_prefix: &'static str,
+}
+
+const GENERIC_FOREGROUND_BUNDLE: ForegroundBundleResultKind = ForegroundBundleResultKind {
+    name: "bundle",
+    location: "run bundle",
+    error_prefix: "BUNDLE",
+};
+
+const SOURCE_BINDINGS_FOREGROUND_BUNDLE: ForegroundBundleResultKind = ForegroundBundleResultKind {
+    name: "source bindings",
+    location: "run all-sources",
+    error_prefix: "SOURCE_BINDING",
+};
+
 impl ChildExit {
     fn name(&self) -> Option<&str> {
         match self {
@@ -1452,17 +1472,6 @@ impl RunCommand {
         let run_stage = ctx.start_stage("source-bindings-run");
         let exited = wait_for_any_child_exit(&mut children, ctx).await;
         let shutdown_failures = stop_bundle_children(&mut children, exited.exited_name()).await;
-        ctx.finish_stage(
-            run_stage,
-            shutdown_failures.is_empty() && exited.is_success(),
-        );
-        if !shutdown_failures.is_empty() {
-            bail!(
-                "failed to stop remaining source bindings:\n{}",
-                shutdown_failures.join("\n")
-            );
-        }
-
         let data = serde_json::json!({
                 "sources": sources,
                 "service_names": service_names,
@@ -1472,7 +1481,13 @@ impl RunCommand {
                 "reconcile": reconcile,
                 "runtime": runtime,
         });
-        let result = source_bindings_terminal_result(exited, data);
+        let result = foreground_bundle_terminal_result(
+            SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+            exited,
+            shutdown_failures,
+            data,
+        );
+        ctx.finish_stage(run_stage, result.is_success());
         Ok(result.with_duration(ctx.elapsed()))
     }
 
@@ -1628,21 +1643,15 @@ impl RunCommand {
                 eprintln!("Error stopping {failure}");
             }
         }
-        if !shutdown_failures.is_empty() {
-            ctx.finish_stage(run_stage, false);
-            bail!(
-                "failed to stop remaining bundle processes:\n{}",
-                shutdown_failures.join("\n")
-            );
-        }
-        ctx.finish_stage(run_stage, true);
+        let result = foreground_bundle_terminal_result(
+            GENERIC_FOREGROUND_BUNDLE,
+            exited,
+            shutdown_failures,
+            serde_json::json!({ "binaries": binaries }),
+        );
+        ctx.finish_stage(run_stage, result.is_success());
 
-        Ok(CommandResult::success()
-            .with_message(format!(
-                "Bundle stopped (triggered by {})",
-                exited.trigger()
-            ))
-            .with_duration(ctx.elapsed()))
+        Ok(result.with_duration(ctx.elapsed()))
     }
 
     async fn run_direct(
@@ -1894,48 +1903,57 @@ impl RunCommand {
     }
 }
 
-fn source_bindings_terminal_result(exited: ChildExit, data: serde_json::Value) -> CommandResult {
-    match exited {
+fn foreground_bundle_terminal_result(
+    kind: ForegroundBundleResultKind,
+    exited: ChildExit,
+    cleanup_failures: Vec<String>,
+    data: serde_json::Value,
+) -> CommandResult {
+    let suggestion = "Inspect the AgentCTL operation result and process logs before restarting it.";
+    let mut result = match exited {
         ChildExit::Exited { name, status } if status.success() => CommandResult::success()
             .with_message(format!(
-                "Source bindings stopped after {name} exited successfully"
-            ))
-            .with_data(data),
-        ChildExit::Exited { name, status } => {
-            CommandResult::failure(crate::output::StructuredError {
-                code: "SOURCE_BINDING_EXITED".to_string(),
-                message: format!("source binding {name} exited with {status}"),
-                location: Some("run all-sources".to_string()),
-                suggestion: Some(
-                    "Inspect the AgentCTL operation result and source logs before restarting it."
-                        .to_string(),
-                ),
-            })
-            .with_data(data)
-        }
-        ChildExit::WaitError { name, error } => {
-            CommandResult::failure(crate::output::StructuredError {
-                code: "SOURCE_BINDING_WAIT_FAILED".to_string(),
-                message: format!("failed to wait for source binding {name}: {error}"),
-                location: Some("run all-sources".to_string()),
-                suggestion: Some(
-                    "Inspect the AgentCTL operation result and source logs before restarting it."
-                        .to_string(),
-                ),
-            })
-            .with_data(data)
-        }
-        ChildExit::TimedOut => CommandResult::failure(crate::output::StructuredError {
-            code: "SOURCE_BINDING_WAIT_TIMED_OUT".to_string(),
-            message: "source bindings exceeded the 8-hour foreground deadline".to_string(),
-            location: Some("run all-sources".to_string()),
-            suggestion: Some(
-                "Inspect the AgentCTL operation result and source logs before restarting it."
-                    .to_string(),
-            ),
-        })
-        .with_data(data),
+                "{} stopped after {name} exited successfully",
+                kind.name
+            )),
+        ChildExit::Exited { name, status } => CommandResult::failure(
+            crate::output::StructuredError::new(
+                format!("{}_EXITED", kind.error_prefix),
+                format!("{name} exited with {status}"),
+            )
+            .with_location(kind.location)
+            .with_suggestion(suggestion),
+        ),
+        ChildExit::WaitError { name, error } => CommandResult::failure(
+            crate::output::StructuredError::new(
+                format!("{}_WAIT_FAILED", kind.error_prefix),
+                format!("failed to wait for {name}: {error}"),
+            )
+            .with_location(kind.location)
+            .with_suggestion(suggestion),
+        ),
+        ChildExit::TimedOut => CommandResult::failure(
+            crate::output::StructuredError::new(
+                format!("{}_WAIT_TIMED_OUT", kind.error_prefix),
+                format!("{} exceeded the 8-hour foreground deadline", kind.name),
+            )
+            .with_location(kind.location)
+            .with_suggestion(suggestion),
+        ),
+    };
+
+    for cleanup_failure in cleanup_failures {
+        result = result.with_error(
+            crate::output::StructuredError::new(
+                format!("{}_CLEANUP_FAILED", kind.error_prefix),
+                cleanup_failure,
+            )
+            .with_location(kind.location)
+            .with_suggestion(suggestion),
+        );
     }
+
+    result.with_data(data)
 }
 
 fn execute_list(ctx: &CommandContext) -> CommandResult {
