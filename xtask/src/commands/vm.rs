@@ -224,17 +224,6 @@ impl XtaskCommand for VmCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        if ctx.is_background()
-            && let Some((spawn_args, coordination_args)) = self.background_coordination_plan()
-        {
-            return crate::coordinator::coordinate_and_spawn_with_scope(
-                "vm",
-                &spawn_args,
-                &coordination_args,
-                ctx,
-            );
-        }
-
         match &self.subcommand {
             VmSubcommand::Test {
                 category,
@@ -293,59 +282,6 @@ pub(crate) fn vm_test_coordination_args(
             "--scope=vm:run:{selection}:timeout={timeout}:keep_failed={}",
             u8::from(keep_failed)
         )]
-    }
-}
-
-impl VmCommand {
-    fn background_coordination_plan(&self) -> Option<(Vec<String>, Vec<String>)> {
-        match &self.subcommand {
-            VmSubcommand::Test {
-                category,
-                timeout,
-                keep_failed,
-                list,
-                validate,
-                tests,
-            } => {
-                if *list {
-                    return None;
-                }
-
-                let mut spawn_args = vec!["test".to_string()];
-                if *validate {
-                    spawn_args.push("--validate".to_string());
-                } else {
-                    if let Some(category) = category {
-                        spawn_args.push("--category".to_string());
-                        spawn_args.push(category.clone());
-                    }
-                    if *timeout != DEFAULT_TIMEOUT_SECS {
-                        spawn_args.push(format!("--timeout={timeout}"));
-                    }
-                    if *keep_failed {
-                        spawn_args.push("--keep-failed".to_string());
-                    }
-                    if !tests.is_empty() {
-                        spawn_args.push("--".to_string());
-                        spawn_args.extend(tests.iter().cloned());
-                    }
-                }
-
-                let coordination_args = vm_test_coordination_args(
-                    category.as_deref(),
-                    *timeout,
-                    *keep_failed,
-                    *validate,
-                    tests,
-                );
-
-                Some((spawn_args, coordination_args))
-            }
-            VmSubcommand::Start { .. }
-            | VmSubcommand::Ssh
-            | VmSubcommand::Stop
-            | VmSubcommand::Snapshot { .. } => None,
-        }
     }
 }
 

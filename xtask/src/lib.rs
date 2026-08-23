@@ -674,13 +674,6 @@ pub async fn run_cli() -> Result<()> {
         );
     }
 
-    // Handle coordinator completion: clear state, spawn queued work (FIFO).
-    if let Some(true) =
-        claimed_bg_job.map(|_| matches!(command_name, "check" | "test" | "build" | "fix" | "vm"))
-    {
-        handle_coordinator_completion(command_name);
-    }
-
     // Write exit_code file and record background job completion.
     if let Some(job_dir) = bg_job_dir {
         record_bg_job_completion(
@@ -800,53 +793,6 @@ fn start_or_claim_invocation(
         db_err()
     );
     None
-}
-
-/// Attempt to pop and spawn the next queued work item after a coordinated job completes.
-fn handle_coordinator_completion(command_name: &str) {
-    let Ok(coord) = coordinator::JobCoordinator::new() else {
-        return;
-    };
-    let Ok(Some(queued)) = coord.handle_completion(command_name) else {
-        return;
-    };
-    let cfg = config();
-    let manager = match jobs::JobManager::new(cfg.jobs_dir()) {
-        Ok(m) => m,
-        Err(error) => {
-            eprintln!(
-                "Warning: failed to open jobs directory for queued {command_name} work: {error}"
-            );
-            return;
-        }
-    };
-    let queued_command = if queued.command.is_empty() {
-        command_name.to_string()
-    } else {
-        queued.command.clone()
-    };
-    match manager.spawn_xtask(&queued_command, &queued.args, queued.output_format) {
-        Ok(job) => {
-            if let Some(pid) = job.pid {
-                let start_ticks =
-                    crate::process::read_proc_sample(pid).map_or(0, |s| s.start_ticks);
-                if let Err(error) = coord.update_state(&queued_command, job.id, pid, start_ticks) {
-                    eprintln!(
-                        "⚠️  Failed to update queued {queued_command} coordinator state for job {}: {error}",
-                        job.id
-                    );
-                }
-            } else {
-                eprintln!(
-                    "⚠️  Failed to update queued {queued_command} coordinator state for job {}: spawned job did not expose a PID",
-                    job.id
-                );
-            }
-        }
-        Err(error) => {
-            eprintln!("Warning: failed to spawn queued {queued_command} work: {error}");
-        }
-    }
 }
 
 /// Write exit_code to the job dir, record completion in history, and optionally

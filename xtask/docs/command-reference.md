@@ -34,7 +34,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `deps` | Analyze workspace dependency structure and impact |
 | `history` | Query build, test, and runtime history recorded by xtask |
 | `analytics` | `xtask analytics` — developer intelligence analytics |
-| `freshness` | Inspect foreground proof and coordinator lifecycle freshness decisions |
+| `freshness` | Inspect foreground proof freshness decisions |
 | `impact` |  |
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health (Postgres, NATS, tools, TLS, runtime) |
@@ -1480,7 +1480,7 @@ Stage-level timing breakdowns aggregated across invocations (J7)
 
 ## `xtask freshness`
 
-Inspect foreground proof and coordinator lifecycle freshness decisions
+Inspect foreground proof freshness decisions
 
 **Subcommands**
 

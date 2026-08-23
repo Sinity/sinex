@@ -465,58 +465,6 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
     v.push(def("t4.output_format_matrix", "Output format matrix", T4).custom());
     v.push(def("t4.jobs_prune", "Jobs prune safety boundary", T4).custom());
 
-    // Coordinator exercises — validate deduplication decision matrix
-    v.push(
-        def(
-            "t4.coord_fresh_test",
-            "Coordinator: Fresh detection (test re-run)",
-            T4,
-        )
-        .custom(),
-    );
-    v.push(
-        def(
-            "t4.coord_attach_test",
-            "Coordinator: Attach to running job",
-            T4,
-        )
-        .custom(),
-    );
-    v.push(
-        def(
-            "t4.coord_scope_isolation",
-            "Coordinator: Scope key isolates packages",
-            T4,
-        )
-        .custom(),
-    );
-    v.push(
-        def(
-            "t4.coord_state_update",
-            "Coordinator: State updated with real job_id+pid",
-            T4,
-        )
-        .custom(),
-    );
-
-    // Extended coordinator exercises — validate FIFO queue and supersede behavior
-    v.push(
-        def(
-            "t4.coord_supersede",
-            "Coordinator: Supersede stale bg job on tree change",
-            T4,
-        )
-        .custom(),
-    );
-    v.push(
-        def(
-            "t4.coord_queue_no_overwrite",
-            "Coordinator: Multiple queued jobs are preserved (FIFO)",
-            T4,
-        )
-        .custom(),
-    );
-
     // Extended affected exercise
     v.push(
         def(

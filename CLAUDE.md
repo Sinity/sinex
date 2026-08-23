@@ -276,17 +276,18 @@ the binary is on PATH).
 | tests | `xtask test` (impact-planned) · `-p <pkg>` · `-E 'test(name)'` · `--heavy` · `--impact-mode=off --all` for deliberate full pass |
 | list tests | `xtask test --list -p <pkg>` |
 | build | `xtask build -p <pkg>` |
-| local stack | `xtask infra start/status/stop`, `xtask doctor`, `xtask run core --bg` |
-| background | append `--bg` to supported async commands (`fix`, `run`); poll `xtask jobs active/output/wait <id>`; `check`, `build`, and `test` are foreground-only |
+| local stack | `xtask infra start/status/stop`, `xtask doctor`, `agentctl job start sinex run_core` |
+| lifecycle | Start declared `fix_default`, `run_core`, `run_all_automatons`, `vm_smoke`, and `vm_validate` operations through AgentCTL; use `agentctl job get/logs/result/cancel` with its returned ID |
 | failure forensics | `xtask history diagnostics --level error`, `xtask history tests analyze` |
 | generated surfaces | `xtask docs sync` / `xtask docs check` |
 | schema | `xtask schema strict-diff`, `xtask schema backfill` |
 | VM coverage | `xtask test vm --category smoke\|integration` |
 
-Async-first: spawn `--bg`, keep working, poll. One plain `--bg` call — don't nest it in
-shell background (duplicate runs collide on the target lock). Read the printed job id; exit
-code at `.sinex/state/jobs/<id>/exit_code`. Never pipe xtask through `head`/`tail` (hook
-blocks it). Never combine `--workspace` with `-p`.
+AgentCTL owns launch, logs, cancellation, results, checkout identity, and process trees for
+its declared operations. `xtask run` and `xtask test vm` retain foreground semantics for
+custom module/source names, instance IDs, VM categories/test names, and scalar VM timeouts:
+the current descriptor contract has no arbitrary-string, enum, or integer parameter types.
+Never pipe xtask through `head`/`tail` (hook blocks it). Never combine `--workspace` with `-p`.
 
 `$SINEX_STATE_DIR` = durable checkout state (`<checkout>/.sinex/state`, holds
 `xtask-history.db` — evidence, never delete); `$SINEX_CACHE_DIR`/`CARGO_TARGET_DIR` =
@@ -333,8 +334,8 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
   heavy compile at a time; do not overlap heavy `xtask test` runs (target-lock collision).
   Clippy on the full workspace can exceed the 600s cargo timeout under load —
   `SINEX_CARGO_TIMEOUT=1800`, not lock-contention theories.
-- **Dev runtime**: `xtask run core --bg` (foreground self-times-out); kill sinexd by PID,
-  never `pkill -f`. Dev gateway/token/TLS coordinates come from `xtask run core --dry-run`.
+- **Dev runtime**: start `agentctl job start sinex run_core` and use the returned AgentCTL job
+  ID for logs or cancellation. Dev gateway/token/TLS coordinates come from `xtask run core --dry-run`.
 - **Prod**: sinexd is a SYSTEM service (`sudo systemctl stop/start sinexd`); prod DB is the
   system PostgreSQL on TCP 5432 (`sinex_prod`), not the dev socket. Deploy = pin sinex rev
   in the sinnix flake, then `nix develop --command switch` from `/realm/project/sinnix`.

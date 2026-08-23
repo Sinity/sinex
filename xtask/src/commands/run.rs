@@ -852,6 +852,18 @@ impl XtaskCommand for RunCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        if ctx.is_background()
+            && let Some(operation) = self.agentctl_owned_background_operation()
+        {
+            return Ok(CommandResult::failure(
+                crate::output::StructuredError::new(
+                    "XTASK_RUN_BACKGROUND_UNSUPPORTED",
+                    format!("background mode is unsupported for this xtask run shape; use AgentCTL's {operation} operation"),
+                )
+                .with_suggestion(format!("start it with `agentctl job start sinex {operation}`")),
+            ));
+        }
+
         // Guard: xtask run invokes `cargo build` before starting binaries, which needs the
         // cargo target/ lock. If nextest is running, that lock is held and we'd deadlock.
         if std::env::var("NEXTEST_RUN_ID").is_ok() {
@@ -909,6 +921,18 @@ impl XtaskCommand for RunCommand {
 }
 
 impl RunCommand {
+    fn agentctl_owned_background_operation(&self) -> Option<&'static str> {
+        if self.watch || self.dry_run || self.logs || self.metrics || self.dev_journal {
+            return None;
+        }
+
+        match &self.subcommand {
+            RunSubcommand::Core { instance_id: None } => Some("run_core"),
+            RunSubcommand::AllAutomatons { instance_id: None } => Some("run_all_automatons"),
+            _ => None,
+        }
+    }
+
     fn ensure_ready_staged(&self, ctx: &CommandContext) -> Result<()> {
         let stage = ctx.start_stage("preflight");
         let result = preflight::ensure_ready(ctx);

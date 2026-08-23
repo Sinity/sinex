@@ -8,7 +8,7 @@ use clap::Parser;
 use color_eyre::eyre::Result;
 use serde::Serialize;
 
-/// Inspect foreground proof and coordinator lifecycle freshness decisions.
+/// Inspect foreground proof freshness decisions.
 #[derive(Debug, Clone, clap::Args)]
 pub struct FreshnessCommand {
     #[command(subcommand)]
@@ -21,7 +21,7 @@ pub enum FreshnessSubcommand {
     Explain(FreshnessExplainCommand),
 }
 
-/// Explain the foreground proof or coordinator freshness key for a command and its args.
+/// Explain the foreground proof freshness key for a command and its args.
 #[derive(Debug, Clone, clap::Args)]
 pub struct FreshnessExplainCommand {
     /// Command to explain, such as test, fix, or vm.

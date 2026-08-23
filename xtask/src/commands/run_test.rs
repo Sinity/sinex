@@ -36,6 +36,47 @@ async fn test_run_metadata_has_no_outer_timeout() -> ::xtask::sandbox::TestResul
 }
 
 #[sinex_test]
+async fn agentctl_owned_run_shapes_are_identified_without_losing_custom_runs()
+-> ::xtask::sandbox::TestResult<()> {
+    assert_eq!(
+        base_command(RunSubcommand::Core { instance_id: None })
+            .agentctl_owned_background_operation(),
+        Some("run_core")
+    );
+    assert_eq!(
+        base_command(RunSubcommand::AllAutomatons { instance_id: None })
+            .agentctl_owned_background_operation(),
+        Some("run_all_automatons")
+    );
+    assert_eq!(
+        base_command(RunSubcommand::Core {
+            instance_id: Some("custom-core".to_string()),
+        })
+        .agentctl_owned_background_operation(),
+        None
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn default_background_core_points_to_agentctl_before_preflight()
+-> ::xtask::sandbox::TestResult<()> {
+    let result = base_command(RunSubcommand::Core { instance_id: None })
+        .execute(&test_context(true))
+        .await?;
+
+    assert!(result.is_failure());
+    assert_eq!(result.errors[0].code, "XTASK_RUN_BACKGROUND_UNSUPPORTED");
+    assert!(
+        result.errors[0]
+            .suggestion
+            .as_deref()
+            .is_some_and(|suggestion| suggestion.contains("agentctl job start sinex run_core"))
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
     // All binaries should be findable
     for (name, package, _, _) in BINARIES {
