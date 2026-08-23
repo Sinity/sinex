@@ -48,12 +48,12 @@ pub fn custom_analytics_recommend_runs(dir: &Path, verbose: bool) -> Vec<StepOut
 pub fn custom_live_stage_visible_during_run(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
-    // 1. Spawn a background build
+    // 1. Spawn a background test
     let (outcome, output) = exec_step(
         dir,
         0,
         "spawn",
-        &["build", "--bg", "--json"],
+        &["test", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,

@@ -30,12 +30,12 @@ pub fn custom_jobs_prune(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
 pub fn custom_jobs_output_while_running(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
-    // 1. Spawn a build that takes a bit of time
+    // 1. Spawn a test that takes a bit of time
     let (outcome, output) = exec_step(
         dir,
         0,
         "spawn",
-        &["build", "--bg", "--json"],
+        &["test", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -50,7 +50,7 @@ pub fn custom_jobs_output_while_running(dir: &Path, verbose: bool) -> Vec<StepOu
     steps.push(outcome);
 
     if is_fresh {
-        // Build returned fresh — no running job to observe output from
+        // Test returned fresh — no running job to observe output from
         steps.push(StepOutcome {
             label: "skip_fresh".into(),
             passed: true,

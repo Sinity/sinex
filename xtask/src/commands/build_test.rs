@@ -1,4 +1,6 @@
 use super::*;
+use crate::command::CommandContext;
+use crate::output::{OutputFormat, OutputWriter};
 use crate::sandbox::sinex_test;
 
 #[sinex_test]
@@ -35,5 +37,20 @@ async fn explicit_packages_are_sorted_and_deduplicated() -> ::xtask::sandbox::Te
     let expected = vec!["sinex-primitives".to_string(), "xtask".to_string()];
     assert_eq!(packages, expected);
     assert_eq!(scope, WorkloadScope::Packages(expected));
+    Ok(())
+}
+
+#[sinex_test]
+async fn background_build_is_rejected_before_planning() -> ::xtask::sandbox::TestResult<()> {
+    let ctx = CommandContext::new(
+        OutputWriter::new(OutputFormat::Silent),
+        true,
+        None,
+        "build",
+    );
+    let result = BuildCommand::default().execute(&ctx).await?;
+
+    assert!(result.is_failure(), "background build must be rejected: {result:?}");
+    assert_eq!(result.errors[0].code, "XTASK_BUILD_BACKGROUND_UNSUPPORTED");
     Ok(())
 }

@@ -73,5 +73,5 @@ generated reference. In practice:
 
 - prefer `--json` or `--format json` when another tool will parse the result
 - use `--bg` for long-running work you want to observe through `xtask jobs`
-- add `--wait` to background fix/test/build commands when launch acknowledgement is not sufficient proof
+- add `--wait` to background fix/test commands when launch acknowledgement is not sufficient proof
 - use human output for interactive inspection

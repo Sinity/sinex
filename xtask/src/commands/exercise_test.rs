@@ -388,7 +388,7 @@ async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
 async fn test_background_args_preserve_exercise_ids() -> ::xtask::sandbox::TestResult<()> {
     let cmd = ExerciseCommand {
         exercises: vec![
-            "t4.coord_attach_check".to_string(),
+            "t4.coord_attach_test".to_string(),
             "t4.coord_scope_isolation".to_string(),
         ],
         skip_infra: true,
@@ -399,7 +399,7 @@ async fn test_background_args_preserve_exercise_ids() -> ::xtask::sandbox::TestR
         cmd.background_args(),
         vec![
             "--id",
-            "t4.coord_attach_check",
+            "t4.coord_attach_test",
             "--id",
             "t4.coord_scope_isolation",
             "--skip-infra",

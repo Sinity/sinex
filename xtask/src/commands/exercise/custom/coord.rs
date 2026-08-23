@@ -5,17 +5,17 @@ use crate::commands::exercise::builders::{extract_json_field, v_json};
 use crate::commands::exercise::runner::{GitStateGuard, exec_step};
 use crate::commands::exercise::types::{ExpectedExit, StepOutcome};
 
-/// Fresh detection: run a background build, wait for completion, re-run — second is "fresh".
+/// Fresh detection: run a background test, wait for completion, re-run — second is "fresh".
 #[must_use]
-pub fn custom_coord_fresh_build(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+pub fn custom_coord_fresh_test(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
-    // 1. Run a background build and wait for completion.
+    // 1. Run a background test and wait for completion.
     let (outcome, output) = exec_step(
         dir,
         0,
-        "first_build",
-        &["build", "-p", "xtask", "--bg", "--json"],
+        "first_test",
+        &["test", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -68,17 +68,17 @@ pub fn custom_coord_fresh_build(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
             passed: false,
             exit_code: -1,
             duration: Duration::ZERO,
-            validation_errors: vec!["could not extract job_id from first build".into()],
+            validation_errors: vec!["could not extract job_id from first test".into()],
         });
         return steps;
     }
 
-    // 2. Immediately re-run the same build — it should be fresh.
+    // 2. Immediately re-run the same test — it should be fresh.
     let (mut outcome, output) = exec_step(
         dir,
         2,
-        "second_build",
-        &["build", "-p", "xtask", "--bg", "--json"],
+        "second_test",
+        &["test", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -104,17 +104,17 @@ pub fn custom_coord_fresh_build(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     steps
 }
 
-/// Attach: start a long-running --bg build, immediately re-run — should get "attached".
+/// Attach: start a long-running --bg test, immediately re-run — should get "attached".
 #[must_use]
-pub fn custom_coord_attach_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+pub fn custom_coord_attach_test(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
-    // 1. Start a background build (builds take longer than checks, more likely to still be running)
+    // 1. Start a background test.
     let (outcome, output) = exec_step(
         dir,
         0,
-        "start_build",
-        &["build", "--bg", "--json"],
+        "start_test",
+        &["test", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -149,12 +149,12 @@ pub fn custom_coord_attach_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
         return steps;
     };
 
-    // 2. Immediately re-run build --bg --json — should get "attached" with same job_id
+    // 2. Immediately re-run the test — should get "attached" with the same job ID.
     let (mut outcome, output) = exec_step(
         dir,
         1,
-        "re_run_build",
-        &["build", "--bg", "--json"],
+        "re_run_test",
+        &["test", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -334,17 +334,17 @@ pub fn custom_coord_scope_isolation(dir: &Path, verbose: bool) -> Vec<StepOutcom
     steps
 }
 
-/// State update: verify that a background build produces real job and PID values.
+/// State update: verify that a background test produces real job and PID values.
 #[must_use]
 pub fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
-    // 1. Run a background build.
+    // 1. Run a background test.
     let (mut outcome, output) = exec_step(
         dir,
         0,
-        "build_bg",
-        &["build", "-p", "xtask", "--bg", "--json"],
+        "test_bg",
+        &["test", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -425,7 +425,7 @@ pub fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
     steps
 }
 
-/// Supersede: start bg build, modify tree (GitStateGuard), re-run build with
+/// Supersede: start a background test, modify the tree, then re-run the test with
 /// same scope — coordinator should cancel stale job and start fresh.
 #[must_use]
 pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
@@ -445,12 +445,12 @@ pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         }
     };
 
-    // 1. Start a background build
+    // 1. Start a background test.
     let (outcome, output) = exec_step(
         dir,
         0,
-        "start_build",
-        &["build", "-p", "sinex-primitives", "--bg", "--json"],
+        "start_test",
+        &["test", "-p", "sinex-primitives", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -463,7 +463,7 @@ pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     });
     steps.push(outcome);
 
-    // If first build returned "fresh", we need a real running job to supersede.
+    // If the first test returned "fresh", we need a real running job to supersede.
     // Wait for it and force a new start by changing the tree.
     if first_is_fresh {
         // Touch a file to change tree fingerprint, then start a real job
@@ -483,7 +483,7 @@ pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
             dir,
             1,
             "force_start",
-            &["build", "-p", "sinex-primitives", "--bg", "--json"],
+            &["test", "-p", "sinex-primitives", "--bg", "--json"],
             ExpectedExit::Success,
             &[v_json()],
             verbose,
@@ -518,7 +518,7 @@ pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
             return steps;
         }
     } else {
-        // First build is running — touch a file to change tree fingerprint
+        // The first test is running. Touch a file to change its tree fingerprint.
         if let Err(e) = guard.touch_file("crate/sinex-primitives/src/lib.rs") {
             steps.push(StepOutcome {
                 label: "touch".into(),
@@ -532,12 +532,12 @@ pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         }
     }
 
-    // 2. Re-run build --bg with same scope but different tree → should get "superseded"
+    // 2. Re-run the test with the same scope and a different tree.
     let (mut outcome, output) = exec_step(
         dir,
         steps.len(),
-        "supersede_build",
-        &["build", "-p", "sinex-primitives", "--bg", "--json"],
+        "supersede_test",
+        &["test", "-p", "sinex-primitives", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
