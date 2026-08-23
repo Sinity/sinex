@@ -1,6 +1,6 @@
 //! Scoped job coordination for concurrent xtask processes.
 //!
-//! When multiple agents call `xtask {test,fix,vm} --bg` concurrently,
+//! When multiple agents call `xtask {fix,vm} --bg` concurrently,
 //! they all compete for the same cargo/Nix worker surface, causing redundant
 //! recompilation and host pressure spikes.
 //!
@@ -48,6 +48,7 @@ pub struct FreshnessExplanation {
     pub command: String,
     pub args: Vec<String>,
     pub should_coordinate: bool,
+    /// Whether the command's foreground semantic path can reuse an exact proof.
     pub fresh_reuse_enabled: bool,
     pub proof_kind: String,
     pub scope_key: String,
@@ -81,12 +82,6 @@ pub enum CoordinationResult {
     Superseded { old_job_id: i64, new_job_id: i64 },
     /// Running job has same scope + tree — wait for its results.
     Attached { job_id: i64 },
-    /// Last completed invocation already validated this scope + tree.
-    Fresh {
-        invocation_id: i64,
-        status: String,
-        duration_secs: f64,
-    },
     /// Different-scope job running — queued after it.
     Queued { current_job_id: i64 },
 }
@@ -150,7 +145,7 @@ fn log_coordination_decision(
     tree_fingerprint: &str,
     result: &CoordinationResult,
 ) {
-    let (decision, job_id, invocation_id) = coordination_decision_fields(result);
+    let (decision, job_id) = coordination_decision_fields(result);
     tracing::info!(
         target: "xtask::coordinator",
         command = command,
@@ -158,22 +153,18 @@ fn log_coordination_decision(
         scope_key = %scope_key,
         tree_fingerprint = %tree_fingerprint,
         job_id = job_id,
-        invocation_id = invocation_id,
         "coordinator decision"
     );
 }
 
-fn coordination_decision_fields(
-    result: &CoordinationResult,
-) -> (&'static str, Option<i64>, Option<i64>) {
+fn coordination_decision_fields(result: &CoordinationResult) -> (&'static str, Option<i64>) {
     match result {
-        CoordinationResult::Fresh { invocation_id, .. } => ("fresh", None, Some(*invocation_id)),
-        CoordinationResult::Started { job_id } => ("started", Some(*job_id), None),
-        CoordinationResult::Attached { job_id } => ("attached", Some(*job_id), None),
+        CoordinationResult::Started { job_id } => ("started", Some(*job_id)),
+        CoordinationResult::Attached { job_id } => ("attached", Some(*job_id)),
         CoordinationResult::Superseded { new_job_id, .. } => {
-            ("superseded", Some(*new_job_id), None)
+            ("superseded", Some(*new_job_id))
         }
-        CoordinationResult::Queued { current_job_id } => ("queued", Some(*current_job_id), None),
+        CoordinationResult::Queued { current_job_id } => ("queued", Some(*current_job_id)),
     }
 }
 
@@ -193,26 +184,11 @@ impl JobCoordinator {
 
     /// Should this command+mode be coordinated?
     ///
-    /// Returns `false` for modes that should bypass coordination entirely:
-    /// test --debug, --fuzz, --mutants, --coverage, --bench, --list, --dry-run.
+    /// Returns `false` for commands whose lifecycle is owned elsewhere.
     #[must_use]
     pub fn should_coordinate(command: &str, args: &[String]) -> bool {
         match command {
             "fix" => true,
-            "test" => {
-                // Exclude non-coordinatable test modes
-                let excluded = [
-                    "--debug",
-                    "--fuzz",
-                    "--mutants",
-                    "--coverage",
-                    "--bench",
-                    "--list",
-                    "--dry-run",
-                    "-l",
-                ];
-                !args.iter().any(|a| excluded.contains(&a.as_str()))
-            }
             "vm" => !args.iter().any(|a| a == "--list"),
             _ => false,
         }
@@ -259,25 +235,6 @@ impl JobCoordinator {
         scope_args: &[String],
         is_foreground: bool,
         output_format: OutputFormat,
-    ) -> Result<CoordinationResult> {
-        self.request_with_format_policy(
-            command,
-            spawn_args,
-            scope_args,
-            is_foreground,
-            output_format,
-            true,
-        )
-    }
-
-    fn request_with_format_policy(
-        &self,
-        command: &str,
-        spawn_args: &[String],
-        scope_args: &[String],
-        is_foreground: bool,
-        output_format: OutputFormat,
-        allow_fresh_reuse: bool,
     ) -> Result<CoordinationResult> {
         let lock_path = self.lock_path_for(command);
         let state_path = self.state_path_for(command);
@@ -345,28 +302,6 @@ impl JobCoordinator {
                 )?
             }
         } else {
-            // No state — check for fresh result (check/build only), then start new
-            if allow_fresh_reuse
-                && supports_fresh_reuse_for(command, spawn_args)
-                && let Some(fresh) =
-                    self.check_fresh(command, spawn_args, &tree_fingerprint, &scope_key)
-            {
-                // R5: Log fresh decision with structured fields
-                let invocation_id = match &fresh {
-                    CoordinationResult::Fresh { invocation_id, .. } => *invocation_id,
-                    _ => -1,
-                };
-                tracing::info!(
-                    target: "xtask::coordinator",
-                    command = command,
-                    decision = "fresh",
-                    scope_key = %scope_key,
-                    tree_fingerprint = %tree_fingerprint,
-                    invocation_id = invocation_id,
-                    "coordinator: fresh — no recompilation needed"
-                );
-                return Ok(fresh);
-            }
             self.start_new_job(
                 command,
                 spawn_args,
@@ -531,85 +466,6 @@ impl JobCoordinator {
                 current_job_id: state.job_id,
             })
         }
-    }
-
-    fn check_fresh(
-        &self,
-        command: &str,
-        args: &[String],
-        tree_fingerprint: &str,
-        scope_key: &str,
-    ) -> Option<CoordinationResult> {
-        let cfg = config();
-        let history_db_path = cfg.history_db_path();
-        let db = match crate::history::HistoryDb::open(&history_db_path) {
-            Ok(db) => db,
-            Err(error) => {
-                tracing::warn!(
-                    target: "xtask::coordinator",
-                    path = %history_db_path.display(),
-                    error = %error,
-                    command,
-                    "coordinator freshness check disabled because history DB could not be opened"
-                );
-                return None;
-            }
-        };
-
-        let proof_kind = proof_kind(command, args);
-
-        if command == "test" {
-            match db.get_successful_reusable_test_proof_unit(
-                &proof_kind,
-                tree_fingerprint,
-                scope_key,
-            ) {
-                Ok(Some(unit)) => {
-                    return Some(CoordinationResult::Fresh {
-                        invocation_id: unit.invocation_id,
-                        status: "success".to_string(),
-                        duration_secs: unit.duration_secs.unwrap_or(0.0),
-                    });
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        target: "xtask::coordinator",
-                        path = %history_db_path.display(),
-                        error = %error,
-                        command,
-                        proof_kind,
-                        "coordinator freshness test proof query failed"
-                    );
-                    return None;
-                }
-            }
-            return None;
-        }
-
-        match db.get_successful_proof_evidence(command, &proof_kind, tree_fingerprint, scope_key) {
-            Ok(Some(last)) => {
-                return Some(CoordinationResult::Fresh {
-                    invocation_id: last.invocation_id,
-                    status: "success".to_string(),
-                    duration_secs: last.duration_secs.unwrap_or(0.0),
-                });
-            }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(
-                    target: "xtask::coordinator",
-                    path = %history_db_path.display(),
-                    error = %error,
-                    command,
-                    tree_fingerprint = %tree_fingerprint,
-                    scope_key = %scope_key,
-                    "coordinator freshness check disabled because history lookup failed"
-                );
-            }
-        }
-
-        None
     }
 
     /// Reserve a coordination slot for a new job.
@@ -1156,7 +1012,7 @@ pub fn explain_freshness(command: &str, args: &[String]) -> Result<FreshnessExpl
         command: command.to_string(),
         args: args.to_vec(),
         should_coordinate: JobCoordinator::should_coordinate(command, args),
-        fresh_reuse_enabled: supports_fresh_reuse_for(command, args),
+        fresh_reuse_enabled: command == "test" && test_scope_has_exact_proof(args),
         proof_kind: proof_kind(command, args),
         scope_key: scope_key(command, args),
         tree_fingerprint: scoped_tree_fingerprint(command, args)?,
@@ -1188,41 +1044,12 @@ fn scope_key(command: &str, args: &[String]) -> String {
 
 fn coordination_family(command: &str) -> &str {
     match command {
-        "check" | "build" | "test" | "fix" | "vm" => "heavy-work",
+        "fix" | "vm" => "heavy-work",
         _ => command,
     }
 }
 
-fn supports_fresh_reuse_for(command: &str, args: &[String]) -> bool {
-    match command {
-        "test" => test_scope_is_fresh_reusable(args),
-        _ => false,
-    }
-}
-
-fn test_scope_is_fresh_reusable(args: &[String]) -> bool {
-    let has_runtime_or_mutating_flag = args.iter().any(|arg| {
-        matches!(
-            arg.as_str(),
-            "--heavy"
-                | "--include-ignored"
-                | "--debug"
-                | "--fuzz"
-                | "--mutants"
-                | "--coverage"
-                | "--bench"
-                | "--list"
-                | "--dry-run"
-                | "-l"
-                | "--prime"
-                | "--update-snapshots"
-                | "--no-reuse"
-        )
-    });
-    !has_runtime_or_mutating_flag
-}
-
-/// Human-readable proof unit class for a coordinated command.
+/// Human-readable proof unit class for a foreground or host-managed command.
 #[must_use]
 pub fn proof_kind(command: &str, args: &[String]) -> String {
     match command {
@@ -1265,7 +1092,7 @@ pub fn proof_kind(command: &str, args: &[String]) -> String {
             }
         }
         "test" => {
-            if test_scope_is_fresh_reusable(args) {
+            if test_scope_has_exact_proof(args) {
                 "test.nextest.exact".to_string()
             } else {
                 "test.nextest.plan".to_string()
@@ -1273,6 +1100,27 @@ pub fn proof_kind(command: &str, args: &[String]) -> String {
         }
         other => format!("{other}.default"),
     }
+}
+
+fn test_scope_has_exact_proof(args: &[String]) -> bool {
+    !args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--heavy"
+                | "--include-ignored"
+                | "--debug"
+                | "--fuzz"
+                | "--mutants"
+                | "--coverage"
+                | "--bench"
+                | "--list"
+                | "--dry-run"
+                | "-l"
+                | "--prime"
+                | "--update-snapshots"
+                | "--no-reuse"
+        )
+    })
 }
 
 /// Extract scope-relevant arguments for a command.
@@ -1638,8 +1486,8 @@ fn write_state(path: &std::path::Path, state: &CoordinationState) -> Result<()> 
 
 /// Coordinate and spawn a background job, deduplicating work across concurrent invocations.
 ///
-/// Encapsulates the two-phase coordination protocol used by check, build, and test:
-/// 1. Ask the coordinator if this work is already running/cached
+/// Encapsulates the two-phase coordination protocol used by supported host-managed commands:
+/// 1. Ask the coordinator if this work is already running
 /// 2. If not, spawn a background job and update coordination state
 ///
 /// Returns early with cached/attached results when possible, otherwise spawns.
@@ -1660,18 +1508,15 @@ pub fn coordinate_and_spawn_with_scope(
     let coordinator = if JobCoordinator::should_coordinate(command, spawn_args) {
         let coordinator = JobCoordinator::new()
             .with_context(|| format!("failed to initialize coordinator for `{command}`"))?;
-        match coordinator.request_with_format_policy(
+        match coordinator.request_with_format(
             command,
             spawn_args,
             coordination_args,
             false,
             ctx.writer().format(),
-            !ctx.background_wait(),
         ) {
             Ok(
-                result @ (CoordinationResult::Attached { .. }
-                | CoordinationResult::Fresh { .. }
-                | CoordinationResult::Queued { .. }),
+                result @ (CoordinationResult::Attached { .. } | CoordinationResult::Queued { .. }),
             ) => {
                 if ctx.background_wait() {
                     return wait_for_coordination_result(command, &result, ctx);
@@ -1764,16 +1609,6 @@ fn wait_for_coordination_result(
                 "action": "queued",
                 "current_job_id": (!pending_job_assignment).then_some(current_job_id),
                 "current_job_pending_assignment": pending_job_assignment,
-                "proof_status": "incomplete",
-            })))
-        }
-        CoordinationResult::Fresh { .. } => {
-            Ok(CommandResult::failure(crate::output::StructuredError::new(
-                "XTASK_BG_WAIT_UNSEALED_FRESH",
-                "proof wait refused an unsealed freshness hit; no proof was produced",
-            ))
-            .with_data(serde_json::json!({
-                "action": "fresh",
                 "proof_status": "incomplete",
             })))
         }
@@ -1970,17 +1805,6 @@ fn coordination_queued_result(current_job_id: i64, ctx: &CommandContext) -> Comm
 
 pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext) -> CommandResult {
     match result {
-        CoordinationResult::Fresh {
-            invocation_id,
-            status,
-            duration_secs,
-        } => coordination_fresh_result(
-            *invocation_id,
-            status,
-            *duration_secs,
-            ctx,
-            fresh_packages_probe(*invocation_id),
-        ),
         CoordinationResult::Attached { job_id } => coordination_attached_result(*job_id, ctx),
         CoordinationResult::Superseded {
             old_job_id,
@@ -2007,98 +1831,6 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 }))
         }
     }
-}
-
-struct FreshPackagesProbe {
-    packages: Vec<String>,
-    issue: Option<String>,
-}
-
-fn fresh_packages_probe(invocation_id: i64) -> FreshPackagesProbe {
-    let cfg = config();
-    let db_path = cfg.history_db_path();
-    let result = crate::history::HistoryDb::open(&db_path)
-        .and_then(|db| db.get_compiled_packages_for_invocation(invocation_id));
-    fresh_packages_probe_from_result(invocation_id, &db_path, result)
-}
-
-fn fresh_packages_probe_from_result(
-    invocation_id: i64,
-    db_path: &std::path::Path,
-    result: color_eyre::eyre::Result<Vec<String>>,
-) -> FreshPackagesProbe {
-    match result {
-        Ok(packages) => FreshPackagesProbe {
-            packages,
-            issue: None,
-        },
-        Err(error) => FreshPackagesProbe {
-            packages: Vec::new(),
-            issue: Some(format!(
-                "failed to load compiled packages for fresh invocation {invocation_id} from {}: {error:#}",
-                db_path.display()
-            )),
-        },
-    }
-}
-
-fn coordination_fresh_result(
-    invocation_id: i64,
-    status: &str,
-    duration_secs: f64,
-    ctx: &CommandContext,
-    packages_probe: FreshPackagesProbe,
-) -> CommandResult {
-    tracing::info!(
-        target: "xtask::coordinator",
-        invocation_id = invocation_id,
-        action = "fresh",
-        cached_status = status,
-        cached_duration_secs = duration_secs,
-        "coordinator: fresh — last check already validated this code state"
-    );
-
-    if ctx.is_human() {
-        if packages_probe.packages.is_empty() {
-            println!(
-                "✅ Fresh: last invocation already validated this code state (invocation {invocation_id}, {status} in {duration_secs:.1}s)"
-            );
-        } else {
-            let pkg_list = if packages_probe.packages.len() <= 4 {
-                packages_probe.packages.join(", ")
-            } else {
-                format!(
-                    "{}, …+{}",
-                    packages_probe.packages[..3].join(", "),
-                    packages_probe.packages.len() - 3
-                )
-            };
-            println!(
-                "✅ Fresh: last invocation already validated {pkg_list} (invocation {invocation_id}, {duration_secs:.1}s)"
-            );
-        }
-        if let Some(issue) = &packages_probe.issue {
-            println!("   Warning: {issue}");
-        }
-    }
-
-    let mut result = CommandResult::success()
-        .with_message(format!("Fresh result from invocation {invocation_id}"))
-        .with_data(serde_json::json!({
-            "action": "fresh",
-            "invocation_id": invocation_id,
-            "cached_status": status,
-            "cached_duration_secs": duration_secs,
-            "compiled_packages": packages_probe.packages,
-            "compiled_packages_issue": packages_probe.issue,
-            "proof_status": "incomplete",
-        }));
-
-    if let Some(issue) = packages_probe.issue {
-        result = result.with_warning(issue);
-    }
-
-    result
 }
 
 /// Tree fingerprint exposed for callers that need it (e.g., recording in history DB).

@@ -113,3 +113,82 @@ max_length = 128
 [operations.build_default.parameters.release]
 type = "bool"
 flag = "--release"
+
+[operations.test_default]
+description = "Run Sinex's foreground nextest workflow through its semantic test planner"
+exec = ["xtask", "test"]
+pool = "normal"
+result = "exit"
+cache = "tree+environment"
+
+[operations.test_default.parameters.all]
+type = "bool"
+flag = "--all"
+
+[operations.test_default.parameters.debug]
+type = "bool"
+flag = "--debug"
+
+[operations.test_default.parameters.dry_run]
+type = "bool"
+flag = "--dry-run"
+
+[operations.test_default.parameters.exclude]
+type = "string-list"
+flag = "--exclude"
+max_items = 32
+max_length = 128
+
+[operations.test_default.parameters.fail_fast]
+type = "bool"
+flag = "--fail-fast"
+
+[operations.test_default.parameters.features]
+type = "string-list"
+flag = "--features"
+max_items = 32
+max_length = 128
+
+[operations.test_default.parameters.heavy]
+type = "bool"
+flag = "--heavy"
+
+[operations.test_default.parameters.include_ignored]
+type = "bool"
+flag = "--include-ignored"
+
+[operations.test_default.parameters.lib]
+type = "bool"
+flag = "--lib"
+
+[operations.test_default.parameters.list]
+type = "bool"
+flag = "--list"
+
+[operations.test_default.parameters.no_reuse]
+type = "bool"
+flag = "--no-reuse"
+
+[operations.test_default.parameters.package]
+type = "string-list"
+flag = "--package"
+max_items = 32
+max_length = 128
+
+[operations.test_default.parameters.prime]
+type = "bool"
+flag = "--prime"
+
+[operations.test_default.parameters.skip_preflight]
+type = "bool"
+flag = "--skip-preflight"
+
+[operations.test_default.parameters.test]
+type = "string-list"
+flag = "--test"
+max_items = 32
+max_length = 128
+
+[operations.test_default.parameters.update_snapshots]
+type = "bool"
+flag = "--update-snapshots"
