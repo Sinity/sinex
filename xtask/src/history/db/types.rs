@@ -54,7 +54,6 @@ impl InvocationStatus {
     }
 }
 
-
 /// A recorded command invocation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invocation {

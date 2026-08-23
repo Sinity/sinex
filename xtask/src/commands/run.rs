@@ -569,23 +569,66 @@ async fn wait_for_any_child_exit(
 }
 
 async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
-    if child
-        .try_wait()
-        .with_context(|| format!("failed to poll {name} before bundle shutdown"))?
-        .is_some()
-    {
-        return Ok(());
+    let poll_error = match child.try_wait() {
+        Ok(Some(_)) => return Ok(()),
+        Ok(None) => None,
+        Err(error) => Some(error),
+    };
+
+    stop_bundle_child_after_poll(name, child, poll_error).await
+}
+
+/// Shut down a child whose liveness is known or unknown.
+///
+/// A failed pre-shutdown poll is evidence that the child's state is unknown,
+/// not evidence that it is gone. Always attempt process-group termination in
+/// that case, then retain the polling failure in the returned error.
+async fn stop_bundle_child_after_poll(
+    name: &str,
+    child: &mut Child,
+    poll_error: Option<std::io::Error>,
+) -> Result<()> {
+    let poll_context = poll_error
+        .as_ref()
+        .map(|error| format!("failed to poll {name} before bundle shutdown: {error}"));
+
+    if let Err(error) = terminate_tokio_child_process_group(child, name, "bundle shutdown") {
+        return match poll_context {
+            Some(poll_error) => Err(eyre!(
+                "{poll_error}; failed to terminate {name} process group during bundle shutdown: {error}"
+            )),
+            None => Err(error).with_context(|| {
+                format!("failed to terminate {name} process group during bundle shutdown")
+            }),
+        };
     }
 
-    terminate_tokio_child_process_group(child, name, "bundle shutdown").with_context(|| {
-        format!("failed to terminate {name} process group during bundle shutdown")
-    })?;
-
-    child
+    let wait_result = child
         .wait()
         .await
-        .with_context(|| format!("failed to wait for {name} during bundle shutdown"))?;
-    Ok(())
+        .with_context(|| format!("failed to wait for {name} during bundle shutdown"));
+
+    match (poll_context, wait_result) {
+        (Some(poll_error), Ok(_)) => Err(eyre!(poll_error)),
+        (Some(poll_error), Err(wait_error)) => Err(eyre!("{poll_error}; {wait_error:#}")),
+        (None, Ok(_)) => Ok(()),
+        (None, Err(wait_error)) => Err(wait_error),
+    }
+}
+
+async fn stop_bundle_children(
+    children: &mut HashMap<String, Child>,
+    exited_name: Option<&str>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (name, child) in children {
+        if Some(name.as_str()) != exited_name
+            && let Err(error) = stop_bundle_child(name, child).await
+        {
+            failures.push(format!("{name}: {error:#}"));
+        }
+    }
+    failures
 }
 
 /// Known binary targets and their package names.
@@ -1399,22 +1442,20 @@ impl RunCommand {
         }
 
         if pipe_output && !log_streams.is_empty() {
-            let journal = self.dev_journal.then(|| config().state_dir.join("dev-journal.log"));
+            let journal = self
+                .dev_journal
+                .then(|| config().state_dir.join("dev-journal.log"));
             let journal = journal.as_deref().map(DevJournal::new).transpose()?;
             spawn_output_handlers(log_streams, self.logs, &journal);
         }
         self.maybe_spawn_metrics_overlay(ctx);
         let run_stage = ctx.start_stage("source-bindings-run");
         let exited = wait_for_any_child_exit(&mut children, ctx).await;
-        let mut shutdown_failures = Vec::new();
-        for (name, child) in &mut children {
-            if Some(name.as_str()) != exited.exited_name()
-                && let Err(error) = stop_bundle_child(name, child).await
-            {
-                shutdown_failures.push(format!("{name}: {error:#}"));
-            }
-        }
-        ctx.finish_stage(run_stage, shutdown_failures.is_empty() && exited.is_success());
+        let shutdown_failures = stop_bundle_children(&mut children, exited.exited_name()).await;
+        ctx.finish_stage(
+            run_stage,
+            shutdown_failures.is_empty() && exited.is_success(),
+        );
         if !shutdown_failures.is_empty() {
             bail!(
                 "failed to stop remaining source bindings:\n{}",
@@ -1581,15 +1622,10 @@ impl RunCommand {
         if ctx.is_human() {
             println!("\nShutting down remaining processes...");
         }
-        let mut shutdown_failures = Vec::new();
-        for (name, child) in &mut children {
-            if Some(name.as_str()) != exited.exited_name()
-                && let Err(error) = stop_bundle_child(name, child).await
-            {
-                if ctx.is_human() {
-                    eprintln!("Error stopping {name}: {error:#}");
-                }
-                shutdown_failures.push(format!("{name}: {error:#}"));
+        let shutdown_failures = stop_bundle_children(&mut children, exited.exited_name()).await;
+        if ctx.is_human() {
+            for failure in &shutdown_failures {
+                eprintln!("Error stopping {failure}");
             }
         }
         if !shutdown_failures.is_empty() {
@@ -1861,27 +1897,42 @@ impl RunCommand {
 fn source_bindings_terminal_result(exited: ChildExit, data: serde_json::Value) -> CommandResult {
     match exited {
         ChildExit::Exited { name, status } if status.success() => CommandResult::success()
-            .with_message(format!("Source bindings stopped after {name} exited successfully"))
+            .with_message(format!(
+                "Source bindings stopped after {name} exited successfully"
+            ))
             .with_data(data),
-        ChildExit::Exited { name, status } => CommandResult::failure(crate::output::StructuredError {
-            code: "SOURCE_BINDING_EXITED".to_string(),
-            message: format!("source binding {name} exited with {status}"),
-            location: Some("run all-sources".to_string()),
-            suggestion: Some("Inspect the AgentCTL operation result and source logs before restarting it.".to_string()),
-        })
-        .with_data(data),
-        ChildExit::WaitError { name, error } => CommandResult::failure(crate::output::StructuredError {
-            code: "SOURCE_BINDING_WAIT_FAILED".to_string(),
-            message: format!("failed to wait for source binding {name}: {error}"),
-            location: Some("run all-sources".to_string()),
-            suggestion: Some("Inspect the AgentCTL operation result and source logs before restarting it.".to_string()),
-        })
-        .with_data(data),
+        ChildExit::Exited { name, status } => {
+            CommandResult::failure(crate::output::StructuredError {
+                code: "SOURCE_BINDING_EXITED".to_string(),
+                message: format!("source binding {name} exited with {status}"),
+                location: Some("run all-sources".to_string()),
+                suggestion: Some(
+                    "Inspect the AgentCTL operation result and source logs before restarting it."
+                        .to_string(),
+                ),
+            })
+            .with_data(data)
+        }
+        ChildExit::WaitError { name, error } => {
+            CommandResult::failure(crate::output::StructuredError {
+                code: "SOURCE_BINDING_WAIT_FAILED".to_string(),
+                message: format!("failed to wait for source binding {name}: {error}"),
+                location: Some("run all-sources".to_string()),
+                suggestion: Some(
+                    "Inspect the AgentCTL operation result and source logs before restarting it."
+                        .to_string(),
+                ),
+            })
+            .with_data(data)
+        }
         ChildExit::TimedOut => CommandResult::failure(crate::output::StructuredError {
             code: "SOURCE_BINDING_WAIT_TIMED_OUT".to_string(),
             message: "source bindings exceeded the 8-hour foreground deadline".to_string(),
             location: Some("run all-sources".to_string()),
-            suggestion: Some("Inspect the AgentCTL operation result and source logs before restarting it.".to_string()),
+            suggestion: Some(
+                "Inspect the AgentCTL operation result and source logs before restarting it."
+                    .to_string(),
+            ),
         })
         .with_data(data),
     }

@@ -440,9 +440,7 @@ impl HistoryDb {
             InvocationSelector::Latest => self.resolve_completed_invocation_offset(command, 0),
             InvocationSelector::Previous => self.resolve_completed_invocation_offset(command, 1),
             InvocationSelector::Current => self.resolve_current_invocation(command),
-            InvocationSelector::InvocationId(invocation_id) => {
-                Ok(Some(invocation_id))
-            }
+            InvocationSelector::InvocationId(invocation_id) => Ok(Some(invocation_id)),
         }
     }
 

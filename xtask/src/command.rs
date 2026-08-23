@@ -1199,7 +1199,6 @@ impl CommandContext {
             .collect();
         eprintln!("Stages: {}  →  total {:.1}s", parts.join(" "), total);
     }
-
 }
 
 impl Drop for CommandContext {

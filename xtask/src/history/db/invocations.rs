@@ -945,5 +945,4 @@ impl HistoryDb {
         )?;
         Ok(())
     }
-
 }

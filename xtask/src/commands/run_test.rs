@@ -380,9 +380,11 @@ async fn test_source_binding_child_success_is_preserved() -> ::xtask::sandbox::T
 
     assert!(exit.is_success());
     assert_eq!(exit.name(), Some("source-success"));
-    assert!(source_bindings_terminal_result(exit, serde_json::json!({}))
-        .errors
-        .is_empty());
+    assert!(
+        source_bindings_terminal_result(exit, serde_json::json!({}))
+            .errors
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -417,6 +419,68 @@ async fn test_source_binding_wait_error_is_preserved() -> ::xtask::sandbox::Test
 }
 
 #[sinex_test]
+async fn test_wait_error_still_terminates_source_child_group() -> ::xtask::sandbox::TestResult<()> {
+    let mut children = HashMap::new();
+    let mut pids = Vec::new();
+    for name in ["source-wait-error", "source-sibling"] {
+        let child = Command::new("sh")
+            .args(["-c", "trap 'exit 0' TERM; while :; do sleep 1; done"])
+            .spawn()?;
+        pids.push(child.id().expect("spawned child exposes a PID"));
+        children.insert(name.to_string(), child);
+    }
+
+    let exit = ChildExit::WaitError {
+        name: "source-wait-error".to_string(),
+        error: std::io::Error::other("injected wait failure"),
+    };
+    let failures = stop_bundle_children(&mut children, exit.exited_name()).await;
+
+    assert!(failures.is_empty());
+    for child in children.values_mut() {
+        assert!(child.try_wait()?.is_some(), "source child was reaped");
+    }
+    for pid in pids {
+        let group_probe = std::process::Command::new("kill")
+            .args(["-0", &format!("-{pid}")])
+            .status()?;
+        assert!(
+            !group_probe.success(),
+            "trigger and sibling process groups must not survive wait-error cleanup"
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_poll_error_attempts_process_group_termination_before_returning()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut child = Command::new("sh")
+        .args(["-c", "trap 'exit 0' TERM; while :; do sleep 1; done"])
+        .spawn()?;
+    let pid = child.id().expect("spawned child exposes a PID");
+
+    let error = stop_bundle_child_after_poll(
+        "source-poll-error",
+        &mut child,
+        Some(std::io::Error::other("injected poll failure")),
+    )
+    .await
+    .expect_err("the polling failure remains visible after cleanup");
+
+    assert!(error.to_string().contains("injected poll failure"));
+    assert!(child.try_wait()?.is_some(), "source child was reaped");
+    assert!(
+        !std::process::Command::new("kill")
+            .args(["-0", &format!("-{pid}")])
+            .status()?
+            .success(),
+        "source process group must not survive a failed liveness poll"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_agentctl_run_all_sources_inherits_selected_manifest()
 -> ::xtask::sandbox::TestResult<()> {
     let descriptor: toml::Value = toml::from_str(include_str!("../../../.agentctl/project.toml"))?;
@@ -444,8 +508,9 @@ async fn test_agentctl_run_all_sources_inherits_selected_manifest()
         r#"{"bindings":[{"source_id":"selected.source","service_name":"selected-service"}]}"#,
     )?;
     let _env = EnvGuard::set_single("SINEX_SOURCE_BINDINGS_PATH", &manifest_path);
-    let manifest = load_dev_source_bindings_manifest()
-        .ok_or_else(|| color_eyre::eyre::eyre!("selected source-binding manifest was not loaded"))?;
+    let manifest = load_dev_source_bindings_manifest().ok_or_else(|| {
+        color_eyre::eyre::eyre!("selected source-binding manifest was not loaded")
+    })?;
 
     assert_eq!(manifest.bindings.len(), 1);
     assert_eq!(manifest.bindings[0].source_id, "selected.source");

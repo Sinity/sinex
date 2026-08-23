@@ -64,9 +64,9 @@ use sinex_primitives::temporal::Timestamp;
 pub use types::{
     CommandStats, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession,
     ImpactAuditRunRow, Invocation, InvocationFull, InvocationProgress, InvocationStatus,
-    InvocationTimelineEntry, InvocationWithFingerprint, ProofEvidence,
-    ResourceUsage, StagePressure, StageStats, StageTiming, StageTrendPoint, TestProofUnit,
-    TraceEventRow, WorkingSession, WrapperEventRow,
+    InvocationTimelineEntry, InvocationWithFingerprint, ProofEvidence, ResourceUsage,
+    StagePressure, StageStats, StageTiming, StageTrendPoint, TestProofUnit, TraceEventRow,
+    WorkingSession, WrapperEventRow,
 };
 
 use std::path::Path;
@@ -472,7 +472,11 @@ impl HistoryDb {
                     LIMIT ?3
                 )
                 ",
-                params![finished_at, cutoff, ABANDONED_INVOCATION_RECONCILIATION_LIMIT],
+                params![
+                    finished_at,
+                    cutoff,
+                    ABANDONED_INVOCATION_RECONCILIATION_LIMIT
+                ],
             )
             .context("failed to reconcile abandoned invocation rows")?;
 

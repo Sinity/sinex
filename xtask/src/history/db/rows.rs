@@ -64,7 +64,6 @@ pub(super) fn format_history_timestamp(
         .wrap_err_with(|| format!("failed to format {context} as RFC3339"))
 }
 
-
 pub(super) fn row_to_proof_evidence(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProofEvidence> {
     let status_str: String = row.get(6)?;
     Ok(ProofEvidence {

@@ -200,7 +200,6 @@ impl ExerciseCommand {
             .clone()
             .unwrap_or_else(|| workspace_root().join("xtask/config/exercise-baseline.json"))
     }
-
 }
 
 impl XtaskCommand for ExerciseCommand {

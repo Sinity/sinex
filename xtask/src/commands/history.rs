@@ -671,10 +671,9 @@ impl XtaskCommand for HistoryCommand {
                 HistorySubcommand::Diff { from, to, command } => {
                     execute_diff(db, *from, *to, command.as_deref(), ctx)
                 }
-                HistorySubcommand::Sessions {
-                    limit,
-                    gap_minutes,
-                } => execute_sessions(db, *limit, *gap_minutes, ctx),
+                HistorySubcommand::Sessions { limit, gap_minutes } => {
+                    execute_sessions(db, *limit, *gap_minutes, ctx)
+                }
                 HistorySubcommand::Invocation { id, full, command } => {
                     execute_invocation(db, id, *full, command.as_deref(), ctx)
                 }

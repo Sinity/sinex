@@ -93,10 +93,8 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     v.push(
-        def("t1.format_compact", "Compact format is 1-3 lines", T1).step(
-            step("compact", &["doctor", "--format", "compact"])
-                .v(v_lines(Some(1), Some(3))),
-        ),
+        def("t1.format_compact", "Compact format is 1-3 lines", T1)
+            .step(step("compact", &["doctor", "--format", "compact"]).v(v_lines(Some(1), Some(3)))),
     );
 
     v.push(
@@ -316,10 +314,7 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
 
     v.push(
         def("t2.json_vs_compact", "JSON vs compact format", T2)
-            .step(
-                step("compact", &["doctor", "--format", "compact"])
-                    .v(v_lines(Some(1), Some(5))),
-            )
+            .step(step("compact", &["doctor", "--format", "compact"]).v(v_lines(Some(1), Some(5))))
             .step(step("json", &["doctor", "--json"]).v(v_json())),
     );
 

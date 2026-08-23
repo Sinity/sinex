@@ -1356,8 +1356,7 @@ async fn test_parse_nextest_output_ignores_started_events() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_open_reconciles_interrupted_invocation_before_current_resolution()
--> TestResult<()> {
+async fn test_open_reconciles_interrupted_invocation_before_current_resolution() -> TestResult<()> {
     let dir = tempfile::tempdir()?;
     let db_path = dir.path().join("history.db");
     let invocation_id = {
@@ -1381,7 +1380,10 @@ async fn test_open_reconciles_interrupted_invocation_before_current_resolution()
     assert_eq!(invocation.duration_secs, None);
     assert_eq!(
         db.get_invocation_cancel_metadata(invocation_id)?,
-        Some(Some("interrupted".to_string()), Some("history_open_reconciliation".to_string()))
+        Some((
+            Some("interrupted".to_string()),
+            Some("history_open_reconciliation".to_string()),
+        ))
     );
 
     let recovered_invocation = db.start_invocation("check", None, None, None)?;

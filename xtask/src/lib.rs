@@ -55,9 +55,9 @@ pub mod watcher;
 use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, FreshnessCommand,
-    ImpactCommand, PrivacyCommand, RaDiagnoseCommand,
-    RecordDriftBypassCommand, ReleaseReadinessCommand, ResetCommand, SchemaCommand,
-    TestCommand, ci::CiCommand, completions::CompletionsCommand, verify::VerifyCommand,
+    ImpactCommand, PrivacyCommand, RaDiagnoseCommand, RecordDriftBypassCommand,
+    ReleaseReadinessCommand, ResetCommand, SchemaCommand, TestCommand, ci::CiCommand,
+    completions::CompletionsCommand, verify::VerifyCommand,
 };
 use config::config;
 pub use config::workspace_target_dir_for;
@@ -80,7 +80,6 @@ struct GlobalOpts {
     /// List all available commands and exit
     #[arg(long, global = true)]
     list_commands: bool,
-
 
     /// Increase log verbosity. Use -v for INFO, -vv for DEBUG, -vvv for TRACE.
     /// Overridden by SINEX_LOG env var.
@@ -234,7 +233,6 @@ enum Commands {
     },
     #[command(hide = true)]
     #[command(hide = true)]
-
     // ─── Analysis ──────────────────────────────────────────────────
     #[command(hide = true)]
     Deps(commands::DepsCommand),
@@ -247,7 +245,6 @@ enum Commands {
     #[command(hide = true)]
     Impact(ImpactCommand),
     #[command(hide = true)]
-
     // ─── Diagnostics ───────────────────────────────────────────────
     #[command(hide = true)]
     Doctor(DoctorCommand),
