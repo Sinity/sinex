@@ -1,6 +1,6 @@
 use super::*;
 use crate::output::{OutputFormat, OutputWriter};
-use crate::sandbox::sinex_test;
+use crate::sandbox::{EnvGuard, sinex_test};
 
 fn test_context(background: bool) -> CommandContext {
     CommandContext::new(
@@ -367,6 +367,91 @@ async fn test_all_sources_subcommand_can_target_reconcile_service()
 
     assert!(command.runs_bundle());
     assert!(!command.runs_single_binary());
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_source_binding_child_success_is_preserved() -> ::xtask::sandbox::TestResult<()> {
+    let mut children = HashMap::from([(
+        "source-success".to_string(),
+        Command::new("sh").args(["-c", "exit 0"]).spawn()?,
+    )]);
+    let exit = wait_for_any_child_exit(&mut children, &test_context(false)).await;
+
+    assert!(exit.is_success());
+    assert_eq!(exit.name(), Some("source-success"));
+    assert!(source_bindings_terminal_result(exit, serde_json::json!({}))
+        .errors
+        .is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_source_binding_child_failure_is_preserved() -> ::xtask::sandbox::TestResult<()> {
+    let mut children = HashMap::from([(
+        "source-failure".to_string(),
+        Command::new("sh").args(["-c", "exit 17"]).spawn()?,
+    )]);
+    let exit = wait_for_any_child_exit(&mut children, &test_context(false)).await;
+
+    assert!(!exit.is_success());
+    assert!(exit.trigger().contains("source-failure"));
+    let result = source_bindings_terminal_result(exit, serde_json::json!({}));
+    assert_eq!(result.errors[0].code, "SOURCE_BINDING_EXITED");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_source_binding_wait_error_is_preserved() -> ::xtask::sandbox::TestResult<()> {
+    let exit = ChildExit::WaitError {
+        name: "source-wait-error".to_string(),
+        error: std::io::Error::other("injected wait failure"),
+    };
+
+    assert!(!exit.is_success());
+    assert!(exit.trigger().contains("injected wait failure"));
+    let result = source_bindings_terminal_result(exit, serde_json::json!({}));
+    assert_eq!(result.errors[0].code, "SOURCE_BINDING_WAIT_FAILED");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_agentctl_run_all_sources_inherits_selected_manifest()
+-> ::xtask::sandbox::TestResult<()> {
+    let descriptor: toml::Value = toml::from_str(include_str!("../../../.agentctl/project.toml"))?;
+    let inherit = descriptor["environment"]["inherit"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("AgentCTL environment.inherit must be an array"))?;
+    let inherited: Vec<&str> = inherit.iter().filter_map(toml::Value::as_str).collect();
+    assert_eq!(
+        inherited
+            .iter()
+            .filter(|value| **value == "SINEX_SOURCE_BINDINGS_PATH")
+            .count(),
+        1,
+        "the manifest path is an explicit, single-variable AgentCTL inheritance contract"
+    );
+    assert!(
+        !inherited.contains(&"SINEX_ARBITRARY_ENV_OVERLAY"),
+        "run_all_sources must not admit an arbitrary environment overlay"
+    );
+
+    let manifest_dir = tempfile::tempdir()?;
+    let manifest_path = manifest_dir.path().join("selected-bindings.json");
+    std::fs::write(
+        &manifest_path,
+        r#"{"bindings":[{"source_id":"selected.source","service_name":"selected-service"}]}"#,
+    )?;
+    let _env = EnvGuard::set_single("SINEX_SOURCE_BINDINGS_PATH", &manifest_path);
+    let manifest = load_dev_source_bindings_manifest()
+        .ok_or_else(|| color_eyre::eyre::eyre!("selected source-binding manifest was not loaded"))?;
+
+    assert_eq!(manifest.bindings.len(), 1);
+    assert_eq!(manifest.bindings[0].source_id, "selected.source");
+    assert_eq!(
+        default_source_binding_service_name(&manifest.bindings[0]),
+        "selected-service"
+    );
     Ok(())
 }
 

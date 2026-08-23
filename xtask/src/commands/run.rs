@@ -470,10 +470,45 @@ fn require_spawned_pid(pid: Option<u32>, binary: &str) -> Result<u32> {
     pid.ok_or_else(|| eyre!("spawned process for {binary} did not expose a PID"))
 }
 
-/// Poll children until one exits, returning its name.
+/// The terminal outcome of a foreground child bundle.
+#[derive(Debug)]
+enum ChildExit {
+    Exited {
+        name: String,
+        status: std::process::ExitStatus,
+    },
+    WaitError {
+        name: String,
+        error: std::io::Error,
+    },
+    TimedOut,
+}
+
+impl ChildExit {
+    fn name(&self) -> Option<&str> {
+        match self {
+            Self::Exited { name, .. } | Self::WaitError { name, .. } => Some(name),
+            Self::TimedOut => None,
+        }
+    }
+
+    fn is_success(&self) -> bool {
+        matches!(self, Self::Exited { status, .. } if status.success())
+    }
+
+    fn trigger(&self) -> String {
+        match self {
+            Self::Exited { name, status } => format!("{name} exited with {status}"),
+            Self::WaitError { name, error } => format!("waiting for {name} failed: {error}"),
+            Self::TimedOut => "the 8-hour foreground deadline".to_string(),
+        }
+    }
+}
+
+/// Poll children until one exits, returning its terminal outcome.
 ///
-/// Returns `None` after 8 hours (D6 fix) — callers treat None as "kill everything",
-/// so a timeout causes a clean shutdown rather than an infinite poll.
+/// Returns [`ChildExit::TimedOut`] after 8 hours (D6 fix), so callers can shut
+/// down cleanly rather than wait forever.
 ///
 /// X5: Signal propagation note — foreground helpers become managed child process
 /// groups with a parent-death kill signal. Ctrl+C therefore does not rely on the
@@ -482,7 +517,7 @@ fn require_spawned_pid(pid: Option<u32>, binary: &str) -> Result<u32> {
 async fn wait_for_any_child_exit(
     children: &mut HashMap<String, Child>,
     ctx: &CommandContext,
-) -> Option<String> {
+) -> ChildExit {
     use futures::stream::{FuturesUnordered, StreamExt};
 
     // Event-driven: each child.wait() wakes when its SIGCHLD arrives.
@@ -505,21 +540,21 @@ async fn wait_for_any_child_exit(
                 if ctx.is_human() {
                     println!("{name} exited with status: {status}");
                 }
-                Some(name)
+                ChildExit::Exited { name, status }
             }
             Some((name, Err(e))) => {
                 if ctx.is_human() {
                     eprintln!("Error waiting on {name}: {e}");
                 }
-                Some(name)
+                ChildExit::WaitError { name, error: e }
             }
-            None => None, // empty children map
+            None => ChildExit::TimedOut, // empty children map
         },
         () = tokio::time::sleep_until(deadline) => {
             if ctx.is_human() {
                 eprintln!("[run] 8-hour timeout reached — shutting down");
             }
-            None
+            ChildExit::TimedOut
         }
     }
 }
@@ -1361,16 +1396,16 @@ impl RunCommand {
         }
         self.maybe_spawn_metrics_overlay(ctx);
         let run_stage = ctx.start_stage("source-bindings-run");
-        let exited_name = wait_for_any_child_exit(&mut children, ctx).await;
+        let exited = wait_for_any_child_exit(&mut children, ctx).await;
         let mut shutdown_failures = Vec::new();
         for (name, child) in &mut children {
-            if Some(name) != exited_name.as_ref()
+            if Some(name.as_str()) != exited.name()
                 && let Err(error) = stop_bundle_child(name, child).await
             {
                 shutdown_failures.push(format!("{name}: {error:#}"));
             }
         }
-        ctx.finish_stage(run_stage, shutdown_failures.is_empty());
+        ctx.finish_stage(run_stage, shutdown_failures.is_empty() && exited.is_success());
         if !shutdown_failures.is_empty() {
             bail!(
                 "failed to stop remaining source bindings:\n{}",
@@ -1378,9 +1413,7 @@ impl RunCommand {
             );
         }
 
-        Ok(CommandResult::success()
-            .with_message(format!("Source bindings stopped (triggered by {})", exited_name.unwrap_or_else(|| "Ctrl+C".to_string())))
-            .with_data(serde_json::json!({
+        let data = serde_json::json!({
                 "sources": sources,
                 "service_names": service_names,
                 "default_excluded_sources": excluded,
@@ -1388,7 +1421,9 @@ impl RunCommand {
                 "already_running_service_names": already_running,
                 "reconcile": reconcile,
                 "runtime": runtime,
-            })))
+        });
+        let result = source_bindings_terminal_result(exited, data);
+        Ok(result.with_duration(ctx.elapsed()))
     }
 
     async fn run_all_automata(
@@ -1531,7 +1566,7 @@ impl RunCommand {
         self.maybe_spawn_metrics_overlay(ctx);
 
         let run_stage = ctx.start_stage("bundle-run");
-        let exited_name = wait_for_any_child_exit(&mut children, ctx).await;
+        let exited = wait_for_any_child_exit(&mut children, ctx).await;
 
         // Kill remaining children
         if ctx.is_human() {
@@ -1539,7 +1574,7 @@ impl RunCommand {
         }
         let mut shutdown_failures = Vec::new();
         for (name, child) in &mut children {
-            if Some(name) != exited_name.as_ref()
+            if Some(name.as_str()) != exited.name()
                 && let Err(error) = stop_bundle_child(name, child).await
             {
                 if ctx.is_human() {
@@ -1560,7 +1595,7 @@ impl RunCommand {
         Ok(CommandResult::success()
             .with_message(format!(
                 "Bundle stopped (triggered by {})",
-                exited_name.unwrap_or_else(|| "Ctrl+C".to_string())
+                exited.trigger()
             ))
             .with_duration(ctx.elapsed()))
     }
@@ -1811,6 +1846,35 @@ impl RunCommand {
         Ok(CommandResult::success()
             .with_message("Watch mode ended")
             .with_duration(ctx.elapsed()))
+    }
+}
+
+fn source_bindings_terminal_result(exited: ChildExit, data: serde_json::Value) -> CommandResult {
+    match exited {
+        ChildExit::Exited { name, status } if status.success() => CommandResult::success()
+            .with_message(format!("Source bindings stopped after {name} exited successfully"))
+            .with_data(data),
+        ChildExit::Exited { name, status } => CommandResult::failure(crate::output::StructuredError {
+            code: "SOURCE_BINDING_EXITED".to_string(),
+            message: format!("source binding {name} exited with {status}"),
+            location: Some("run all-sources".to_string()),
+            suggestion: Some("Inspect the AgentCTL operation result and source logs before restarting it.".to_string()),
+        })
+        .with_data(data),
+        ChildExit::WaitError { name, error } => CommandResult::failure(crate::output::StructuredError {
+            code: "SOURCE_BINDING_WAIT_FAILED".to_string(),
+            message: format!("failed to wait for source binding {name}: {error}"),
+            location: Some("run all-sources".to_string()),
+            suggestion: Some("Inspect the AgentCTL operation result and source logs before restarting it.".to_string()),
+        })
+        .with_data(data),
+        ChildExit::TimedOut => CommandResult::failure(crate::output::StructuredError {
+            code: "SOURCE_BINDING_WAIT_TIMED_OUT".to_string(),
+            message: "source bindings exceeded the 8-hour foreground deadline".to_string(),
+            location: Some("run all-sources".to_string()),
+            suggestion: Some("Inspect the AgentCTL operation result and source logs before restarting it.".to_string()),
+        })
+        .with_data(data),
     }
 }
 

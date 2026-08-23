@@ -1354,3 +1354,47 @@ async fn test_parse_nextest_output_ignores_started_events() -> TestResult<()> {
     assert!(results.is_empty(), "Started events should be skipped");
     Ok(())
 }
+
+#[sinex_test]
+async fn test_open_reconciles_interrupted_invocation_before_current_resolution()
+-> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let db_path = dir.path().join("history.db");
+    let invocation_id = {
+        let db = HistoryDb::open(&db_path)?;
+        db.start_invocation("check", None, None, None)?
+    };
+
+    let old_started_at = (time::OffsetDateTime::now_utc() - time::Duration::hours(48))
+        .format(&time::format_description::well_known::Rfc3339)?;
+    rusqlite::Connection::open(&db_path)?.execute(
+        "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+        rusqlite::params![old_started_at, invocation_id],
+    )?;
+
+    let db = HistoryDb::open(&db_path)?;
+    let invocation = db
+        .get_invocation(invocation_id)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("reconciled invocation disappeared"))?;
+    assert_eq!(invocation.status, InvocationStatus::Cancelled);
+    assert!(invocation.finished_at.is_some());
+    assert_eq!(invocation.duration_secs, None);
+    assert_eq!(
+        db.get_invocation_cancel_metadata(invocation_id)?,
+        Some(Some("interrupted".to_string()), Some("history_open_reconciliation".to_string()))
+    );
+
+    let recovered_invocation = db.start_invocation("check", None, None, None)?;
+    db.finish_invocation(
+        recovered_invocation,
+        InvocationStatus::Success,
+        Some(0),
+        0.1,
+    )?;
+    assert_eq!(
+        db.resolve_invocation_id("current", Some("check"))?,
+        Some(recovered_invocation),
+        "interrupted rows must not remain preferred by current after recovery"
+    );
+    Ok(())
+}
