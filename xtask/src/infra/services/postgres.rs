@@ -715,6 +715,24 @@ impl PostgresManager {
         let abs_logs_dir = absolute_path(&self.config.logs_dir)?;
         let run_dir = utf8_path(&abs_run_dir, "postgres run dir")?;
         let logs_dir = utf8_path(&abs_logs_dir, "postgres logs dir")?;
+        let pg_bin_dir = env::var_os("SINEX_PG_BIN").map(PathBuf::from);
+        let dynamic_library_path = match pg_bin_dir {
+            Some(bin_dir) => {
+                let package_dir = bin_dir.parent().ok_or_else(|| {
+                    color_eyre::eyre::eyre!(
+                        "SINEX_PG_BIN must name a package bin directory: {}",
+                        bin_dir.display()
+                    )
+                })?;
+                let lib_path = package_dir.join("lib");
+                let lib_dir = utf8_path(&lib_path, "postgres extension lib dir")?;
+                if lib_dir.contains('\'') {
+                    bail!("postgres extension lib dir must not contain a single quote");
+                }
+                format!("dynamic_library_path = '{lib_dir}:$libdir'\n")
+            }
+            None => String::new(),
+        };
         let fast_ephemeral_config = match self.config.durability {
             PostgresDurabilityMode::Durable => "",
             PostgresDurabilityMode::EphemeralFast => {
@@ -739,7 +757,7 @@ port = {}
 max_connections = {}
 max_worker_processes = {}
 shared_buffers = '{}'
-shared_preload_libraries = 'timescaledb'
+{}shared_preload_libraries = 'timescaledb'
 timescaledb.max_background_workers = {}
 log_destination = 'stderr'
 logging_collector = on
@@ -753,6 +771,7 @@ log_filename = 'postgres.log'
             POSTGRES_MAX_CONNECTIONS,
             POSTGRES_MAX_WORKER_PROCESSES,
             POSTGRES_SHARED_BUFFERS,
+            dynamic_library_path,
             TIMESCALEDB_MAX_BACKGROUND_WORKERS,
             logs_dir,
             fast_ephemeral_config.trim_end()

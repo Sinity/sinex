@@ -410,5 +410,15 @@ async fn test_ephemeral_fast_runtime_config_disables_crash_durability() -> TestR
     assert!(config.contains("full_page_writes = off"));
     assert!(config.contains("synchronous_commit = off"));
     assert!(config.contains("autovacuum = off"));
+    if let Some(pg_bin) = std::env::var_os("SINEX_PG_BIN") {
+        let expected_lib = PathBuf::from(pg_bin)
+            .parent()
+            .expect("SINEX_PG_BIN package parent")
+            .join("lib");
+        assert!(config.contains(&format!(
+            "dynamic_library_path = '{}:$libdir'",
+            expected_lib.display()
+        )));
+    }
     Ok(())
 }
