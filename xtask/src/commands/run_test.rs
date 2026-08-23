@@ -409,6 +409,7 @@ async fn test_source_binding_wait_error_is_preserved() -> ::xtask::sandbox::Test
     };
 
     assert!(!exit.is_success());
+    assert_eq!(exit.exited_name(), None);
     assert!(exit.trigger().contains("injected wait failure"));
     let result = source_bindings_terminal_result(exit, serde_json::json!({}));
     assert_eq!(result.errors[0].code, "SOURCE_BINDING_WAIT_FAILED");

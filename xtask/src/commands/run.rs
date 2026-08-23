@@ -492,6 +492,15 @@ impl ChildExit {
         }
     }
 
+    /// Only an observed successful or failed exit is safe to exempt from
+    /// shutdown. A wait error leaves the child's liveness unknown.
+    fn exited_name(&self) -> Option<&str> {
+        match self {
+            Self::Exited { name, .. } => Some(name),
+            Self::WaitError { .. } | Self::TimedOut => None,
+        }
+    }
+
     fn is_success(&self) -> bool {
         matches!(self, Self::Exited { status, .. } if status.success())
     }
@@ -1399,7 +1408,7 @@ impl RunCommand {
         let exited = wait_for_any_child_exit(&mut children, ctx).await;
         let mut shutdown_failures = Vec::new();
         for (name, child) in &mut children {
-            if Some(name.as_str()) != exited.name()
+            if Some(name.as_str()) != exited.exited_name()
                 && let Err(error) = stop_bundle_child(name, child).await
             {
                 shutdown_failures.push(format!("{name}: {error:#}"));
@@ -1574,7 +1583,7 @@ impl RunCommand {
         }
         let mut shutdown_failures = Vec::new();
         for (name, child) in &mut children {
-            if Some(name.as_str()) != exited.name()
+            if Some(name.as_str()) != exited.exited_name()
                 && let Err(error) = stop_bundle_child(name, child).await
             {
                 if ctx.is_human() {
