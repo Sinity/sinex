@@ -8,7 +8,7 @@ the local checkout stack is down.
 
 | Surface | Owns | Does not own |
 | --- | --- | --- |
-| `xtask` | Repository development loops, checkout-local infra, generated docs, CI-style verification, local background jobs, developer ergonomics | Production operation, host proof commands, source ingestion semantics |
+| `xtask` | Repository development loops, checkout-local infra, generated docs, CI-style verification, developer ergonomics | Production operation, host proof commands, source ingestion semantics |
 | `sinexctl` | Live Sinex runtime operation through `sinexd::api`, event/query/replay/lifecycle/DLQ/runtime/status commands | Repository build/test loops, devshell state, local background job bookkeeping |
 | Rust tests | Correctness of crates, SDK behavior, ingestion semantics, replay/provenance invariants, API contracts | Operator dashboards, host activation proof |
 | Benchmarks/load tests | Measured throughput, latency, resource ceilings, regression trends | Arbitrary pass/fail "resource contracts" detached from measured baselines |
@@ -21,9 +21,8 @@ This means:
   NixOS activation checks, and `sinexctl` live-runtime probes.
 - `xtask exercise source-material` is the wrong shape. Source-material ingestion
   correctness belongs to runtime tests and VM integration tests.
-- `xtask status` may display runtime signals, but only as an attributed view of
-  the target it is explicitly probing. It must never silently merge checkout
-  state with deployed-host state.
+- `xtask infra status` displays only checkout-local development infrastructure.
+  It must never silently merge checkout state with deployed-host state.
 
 ## Runtime Descriptors
 
@@ -43,14 +42,12 @@ need a narrow, composable connection target.
 
 ## Default Target Semantics
 
-`xtask status` defaults to `checkout-local`.
+`xtask infra status` is checkout-local.
 
 It derives that target from the current checkout's `.sinex` stack config and
 developer config. If the deployed host has a runtime descriptor under
-`/etc/sinex`, `xtask status` still does not use it unless an explicit future
-selector says so. This keeps the MOTD honest: `pg:offline`, `api:down`, or
-`event-engine:unknown` mean the checkout-local target is down, not that production is
-down.
+`/etc/sinex`, `xtask infra status` does not use it. Its process and resource
+observations describe the checkout-local stack, not production.
 
 `sinexctl` defaults to explicit API configuration.
 
@@ -79,10 +76,8 @@ Runtime-target work is complete only when all of these are covered:
 
 - descriptor parse/load tests;
 - conversion tests from deployment-readiness to runtime-target;
-- `xtask status --summary --json` includes a target and defaults to
-  checkout-local;
-- `xtask status` tests prove deployed descriptors are not implicitly loaded into
-  checkout-local status;
+- `xtask infra status` tests prove deployed descriptors are not implicitly loaded into
+  checkout-local infrastructure inspection;
 - `sinexctl --runtime-target <path> status` applies API/auth/TLS values from
   the descriptor and prints the target in human status output;
 - NixOS exports `/etc/sinex/runtime-target.json` beside

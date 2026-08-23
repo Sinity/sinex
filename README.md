@@ -132,7 +132,6 @@ Useful operator commands:
 
 ```bash
 xtask doctor
-xtask status --summary
 xtask infra status
 journalctl -u sinexd -f
 ```

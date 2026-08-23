@@ -3185,7 +3185,7 @@ fn gateway_unavailable_envelope(tool: &str, query: &Value, target_url: &str) -> 
         "status": "degraded",
         "reason": "gateway_unreachable",
         "target_url": target_url,
-        "suggested_next_probe": "Check the runtime target with `sinexctl runtime gateway ping` or `xtask status --summary --json` before relying on runtime-status evidence.",
+        "suggested_next_probe": "Check the runtime target with `sinexctl runtime gateway ping` or `xtask infra status --json` before relying on runtime-status evidence.",
         "result": null,
     });
     let mut envelope = ViewEnvelope::new(tool, payload).with_query_echo(query.clone());

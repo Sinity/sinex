@@ -15,7 +15,7 @@ mod runner;
 #[derive(Parser)]
 #[command(name = "run-suite", about = "NixOS VM test suite for sinex")]
 struct Args {
-    /// Test category: smoke | integration | all | concurrency |
+    /// Test category: smoke | integration | all |
     ///   chaos-network-partition | chaos-process-restart | chaos-clock-skew
     #[arg(long, default_value = "smoke")]
     category: String,
@@ -48,7 +48,6 @@ async fn main() -> Result<()> {
             categories::smoke::run(&mut runner, &database_url).await?;
             categories::integration::run(&mut runner, &database_url).await?;
         }
-        "concurrency" => categories::concurrency::run(&mut runner),
         "chaos-network-partition" => {
             categories::chaos_network_partition::run(&mut runner, &database_url).await?;
         }
@@ -59,7 +58,7 @@ async fn main() -> Result<()> {
             categories::chaos_clock_skew::run(&mut runner, &database_url).await?;
         }
         other => bail!(
-            "Unknown category: {other}. Valid: smoke, integration, all, concurrency, \
+            "Unknown category: {other}. Valid: smoke, integration, all, \
              chaos-network-partition, chaos-process-restart, chaos-clock-skew"
         ),
     }

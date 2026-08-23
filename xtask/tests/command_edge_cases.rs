@@ -863,26 +863,6 @@ async fn test_db_reset_without_confirmation() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_status_schemas_succeeds() -> TestResult<()> {
-    // `contracts info` was folded into `xtask status --schemas`.
-    let output = xtask_command()?.arg("status").arg("--schemas").output()?;
-
-    assert!(
-        output.status.success(),
-        "status --schemas should succeed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value =
-        serde_json::from_str(&stdout).expect("status --schemas should produce valid JSON");
-    assert!(
-        parsed["data"]["schemas"].is_array(),
-        "JSON data.schemas should be an array"
-    );
-    Ok(())
-}
-
-#[sinex_test]
 async fn test_check_skip_options() -> TestResult<()> {
     // IMPORTANT: never run `xtask check` with valid flags in a nextest test.
     // xtask check invokes `cargo check`, which tries to acquire the cargo

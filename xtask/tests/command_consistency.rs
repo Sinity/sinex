@@ -83,11 +83,6 @@ async fn test_vm_start_reports_structured_unsupported_surface() -> ::xtask::sand
     Ok(())
 }
 
-// test_status_summary_json_contract is covered by snapshot_status_summary_json in
-// cli_output_snapshots.rs.
-// The snapshot catches structural drift (field removed/renamed/retyped) that
-// field-presence asserts cannot detect.
-
 /// JSON contract for `xtask doctor --json`.
 /// Asserts the health-report envelope and per-component field presence.
 #[sinex_test]

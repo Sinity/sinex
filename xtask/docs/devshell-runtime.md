@@ -123,23 +123,27 @@ devshell wrappers, use:
 xtask infra stop
 pgrep -a 'sinexd|postgres|postmaster|nats-server' || true
 xtask infra smoke --reset-first
-xtask infra smoke --reset-first --run-core
+agentctl job start sinex run_core
+# Capture the returned job ID, then inspect, cancel, and collect its result.
+agentctl job get <job-id>
+agentctl job cancel <job-id>
+agentctl job result <job-id>
 xtask infra status --all-checkouts
 ```
 
-If the dogfood stack must remain live, replace the reset-first run-core proof
-with:
+If the dogfood stack must remain live, retain the read-only stack proof and run
+the declared runtime operation separately:
 
 ```bash
-xtask infra smoke --allow-running --run-core
+xtask infra smoke --allow-running
+agentctl job start sinex run_core
 ```
 
 When the wrapper itself is the target, run the smoke through the devshell entry:
 
 ```bash
 nix develop --command xtask infra smoke --reset-first
-nix develop --command xtask infra smoke --reset-first --run-core
-nix develop --command xtask infra smoke --allow-running --run-core
+nix develop --command xtask infra smoke --allow-running
 ```
 
 Do not replace this with a test that only asserts a config literal or flag name.

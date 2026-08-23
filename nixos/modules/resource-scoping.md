@@ -45,7 +45,7 @@ services.sinex.runtime.defaults.resources = {
 - `systemctl show <service> -p MemoryCurrent,MemoryMax,CPUUsageNSec` — live usage
 - `systemd-cgtop` — interactive cgroup resource monitor
 - `/sys/fs/cgroup/system.slice/<service>.service/` — raw cgroup v2 stats
-- `xtask status` — workspace-level health summary (does not check cgroup limits)
+- `xtask infra status` — checkout-local development infrastructure summary (does not check cgroup limits)
 
 ### xtask devshell Resource Limits
 
