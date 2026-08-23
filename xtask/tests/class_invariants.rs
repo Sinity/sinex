@@ -5,34 +5,6 @@
 
 use xtask::sandbox::sinex_test;
 
-/// Commands excluded from invocation tracking in lib.rs (line ~303).
-///
-/// These two never produce a history record; querying recent invocations after
-/// running them should not show a new entry. This test documents the exclusion
-/// contract so any change to the list is a breaking change caught by CI.
-#[sinex_test]
-async fn test_invocation_tracking_exclusion_list() -> xtask::sandbox::TestResult<()> {
-    // Exclusions are coded as:
-    //   if command_name != "completions" && command_name != "status"
-    // This test validates the documented contract, not the runtime behavior
-    // (which is tested by the T4 exercises). The invariant is that exactly
-    // these two commands are excluded.
-    let excluded: &[&str] = &["completions", "status"];
-
-    // Verify these are NOT in the coordinated command set.
-    // Coordinator only accepts "check", "test", "build", "fix".
-    let coordinated: &[&str] = &["check", "test", "build", "fix"];
-
-    for cmd in excluded {
-        assert!(
-            !coordinated.contains(cmd),
-            "Excluded command '{cmd}' must not be in the coordinated set"
-        );
-    }
-
-    Ok(())
-}
-
 /// Package-scoped commands (`-p`/`--package`) must include check, build, and test.
 ///
 /// These are the core development workflow commands; if any loses `-p` support,

@@ -91,37 +91,16 @@ impl XtaskCommand for BuildCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        if self.dry_run && ctx.is_background() {
-            let (_, workload_scope) = self.resolve_execution_plan(None)?;
-            let coordination_args = self.semantic_invocation_args(&workload_scope);
-            ctx.record_invocation_args(&coordination_args);
-            return Ok(
-                CommandResult::success().with_detail("dry-run passed (would build packages)")
-            );
-        }
-
-        // Handle background execution
         if ctx.is_background() {
-            let mut args = Vec::new();
-            for p in &self.packages {
-                args.push("-p".to_string());
-                args.push(p.clone());
-            }
-            if self.release {
-                args.push("--release".to_string());
-            }
-            if self.all {
-                args.push("--all".to_string());
-            }
-
-            let (_, workload_scope) = self.resolve_execution_plan(None)?;
-            let coordination_args = self.semantic_invocation_args(&workload_scope);
-            return crate::coordinator::coordinate_and_spawn_with_scope(
-                "build",
-                &args,
-                &coordination_args,
-                ctx,
-            );
+            return Ok(CommandResult::failure(
+                crate::output::StructuredError::new(
+                    "XTASK_BUILD_BACKGROUND_UNSUPPORTED",
+                    "background mode is unsupported for xtask build",
+                )
+                .with_suggestion(
+                    "run `xtask build` in the foreground or start AgentCTL's declared build_default operation",
+                ),
+            ));
         }
 
         // Guard: same deadlock as xtask test — cargo target/ lock is held by nextest for the
@@ -130,7 +109,7 @@ impl XtaskCommand for BuildCommand {
             return Err(color_eyre::eyre::eyre!(
                 "Cannot run `xtask build` foreground inside an active nextest run — \
                  the cargo target/ lock would deadlock.\n\
-                 Use `xtask build --bg ...` to spawn in background instead."
+                 Run the build outside nextest or start AgentCTL's declared build_default operation."
             ));
         }
 

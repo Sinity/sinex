@@ -31,11 +31,7 @@ fn env_set_path(key: &str, value: &std::path::Path) -> EnvGuard {
 #[sinex_test]
 async fn test_should_coordinate() -> TestResult<()> {
     assert!(!JobCoordinator::should_coordinate("check", &[]));
-    assert!(JobCoordinator::should_coordinate("build", &[]));
-    assert!(!JobCoordinator::should_coordinate(
-        "build",
-        &["--dry-run".into()]
-    ));
+    assert!(!JobCoordinator::should_coordinate("build", &[]));
     assert!(JobCoordinator::should_coordinate("vm", &["test".into()]));
     assert!(JobCoordinator::should_coordinate(
         "test",
@@ -66,15 +62,10 @@ async fn test_should_coordinate() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_supports_fresh_reuse_only_for_background_builds() -> TestResult<()> {
-    assert!(!supports_fresh_reuse("check"));
-    assert!(supports_fresh_reuse("build"));
-    assert!(!supports_fresh_reuse("fix"));
-    assert!(!supports_fresh_reuse("test"));
-    assert!(!supports_fresh_reuse("vm"));
+async fn test_supports_fresh_reuse_only_for_background_tests() -> TestResult<()> {
     assert!(!supports_fresh_reuse_for("check", &[]));
     assert!(!supports_fresh_reuse_for("check", &["--full".into()]));
-    assert!(supports_fresh_reuse_for("build", &[]));
+    assert!(!supports_fresh_reuse_for("build", &[]));
     assert!(!supports_fresh_reuse_for("build", &["--dry-run".into()]));
     assert!(!supports_fresh_reuse_for("fix", &[]));
     assert!(supports_fresh_reuse_for(

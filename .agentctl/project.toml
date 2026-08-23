@@ -88,3 +88,28 @@ flag = "--plan"
 [operations.check_default.parameters.skip_tests]
 type = "bool"
 flag = "--skip-tests"
+
+[operations.build_default]
+description = "Build Sinex packages through the foreground semantic build route"
+exec = ["xtask", "build"]
+pool = "normal"
+result = "exit"
+cache = "tree+environment"
+
+[operations.build_default.parameters.all]
+type = "bool"
+flag = "--all"
+
+[operations.build_default.parameters.dry_run]
+type = "bool"
+flag = "--dry-run"
+
+[operations.build_default.parameters.package]
+type = "string-list"
+flag = "--package"
+max_items = 32
+max_length = 128
+
+[operations.build_default.parameters.release]
+type = "bool"
+flag = "--release"

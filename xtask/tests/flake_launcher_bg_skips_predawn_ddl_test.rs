@@ -140,7 +140,6 @@ fn test_bare_bg_without_worker_env_is_launcher_only() {
     for &args in &[
         &["test", "--bg"][..],
         &["fix", "--bg"][..],
-        &["build", "--bg"][..],
     ] {
         assert!(
             call(
@@ -218,11 +217,11 @@ fn test_no_bg_flag_is_not_launcher_only() {
 /// The full regression path: `_sinex_xtask_requires_sqlx_database` must
 /// return "not required" (skip the pre-exec DDL bootstrap) for a bare
 /// launcher-only `--bg` invocation of a command that would otherwise
-/// require it (test/check/build/deps/fix).
+/// require it (test/check/deps/fix).
 #[test]
 fn test_requires_sqlx_database_skips_bootstrap_for_launcher_only_bg() {
     let functions = extract_flake_functions();
-    for &cmd in &["test", "check", "build", "deps", "fix"] {
+    for &cmd in &["test", "check", "deps", "fix"] {
         assert!(
             !call(
                 &functions,

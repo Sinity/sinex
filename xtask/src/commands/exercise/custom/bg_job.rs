@@ -14,7 +14,7 @@ pub fn custom_bg_job_lifecycle(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         dir,
         0,
         "spawn",
-        &["build", "-p", "sinex-primitives", "--bg", "--json"],
+        &["test", "-p", "sinex-primitives", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,

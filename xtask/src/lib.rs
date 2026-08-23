@@ -424,7 +424,7 @@ fn command_dispatch_metadata(
 }
 
 fn command_supports_background_wait(command_name: &str) -> bool {
-    matches!(command_name, "fix" | "test" | "build")
+    matches!(command_name, "fix" | "test")
 }
 
 pub async fn run_cli() -> Result<()> {

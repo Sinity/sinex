@@ -468,15 +468,15 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
     // Coordinator exercises — validate deduplication decision matrix
     v.push(
         def(
-            "t4.coord_fresh_build",
-            "Coordinator: Fresh detection (build→re-build)",
+            "t4.coord_fresh_test",
+            "Coordinator: Fresh detection (test re-run)",
             T4,
         )
         .custom(),
     );
     v.push(
         def(
-            "t4.coord_attach_check",
+            "t4.coord_attach_test",
             "Coordinator: Attach to running job",
             T4,
         )

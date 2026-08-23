@@ -13,7 +13,7 @@ pub use affected::{
 pub use analytics::{custom_analytics_recommend_runs, custom_live_stage_visible_during_run};
 pub use bg_job::custom_bg_job_lifecycle;
 pub use coord::{
-    custom_coord_attach_check, custom_coord_fresh_build, custom_coord_queue_no_overwrite,
+    custom_coord_attach_test, custom_coord_fresh_test, custom_coord_queue_no_overwrite,
     custom_coord_scope_isolation, custom_coord_state_update, custom_coord_supersede,
 };
 pub use history::{

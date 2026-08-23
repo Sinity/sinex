@@ -1,6 +1,6 @@
 //! Scoped job coordination for concurrent xtask processes.
 //!
-//! When multiple agents call `xtask {test,build,fix,vm} --bg` concurrently,
+//! When multiple agents call `xtask {test,fix,vm} --bg` concurrently,
 //! they all compete for the same cargo/Nix worker surface, causing redundant
 //! recompilation and host pressure spikes.
 //!
@@ -199,7 +199,6 @@ impl JobCoordinator {
     pub fn should_coordinate(command: &str, args: &[String]) -> bool {
         match command {
             "fix" => true,
-            "build" => !args.iter().any(|arg| arg == "--dry-run"),
             "test" => {
                 // Exclude non-coordinatable test modes
                 let excluded = [
@@ -1194,13 +1193,8 @@ fn coordination_family(command: &str) -> &str {
     }
 }
 
-fn supports_fresh_reuse(command: &str) -> bool {
-    command == "build"
-}
-
 fn supports_fresh_reuse_for(command: &str, args: &[String]) -> bool {
     match command {
-        "build" => supports_fresh_reuse(command) && !args.iter().any(|arg| arg == "--dry-run"),
         "test" => test_scope_is_fresh_reusable(args),
         _ => false,
     }

@@ -106,7 +106,7 @@ This cleans up the operational job layer only. Durable invocation history is not
 Typical workflow:
 
 ```bash
-xtask build --bg --json
+xtask test -p xtask --bg --json
 xtask jobs status <job_id> --json
 xtask jobs wait <job_id> --json
 xtask history progress --invocation <invocation_id> --json

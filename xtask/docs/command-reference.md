@@ -89,6 +89,7 @@ Run the fast workspace verification pipeline
 | `--nix` | no | no | Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Fails if `nix` is unavailable or unhealthy |
 | `--skip-preflight` | no | no | Internal: child checks invoked by `--changed-strict` inherit the parent compile-ready environment and must not run their own preflight |
 | `--changed-strict` | yes | no | API drift guard: check only packages that own Rust files changed between HEAD and the merge-base of the given ref (default `origin/master`). Emits a JSON report of changed files, affected packages, and per-package results. Non-zero exit if any per-package check fails. This flag is opt-in and does not alter the default check behaviour |
+| `--agentctl-changed-strict-default` | no | no | AgentCTL's typed boolean representation of valueless `--changed-strict` |
 
 
 ## `xtask test`
