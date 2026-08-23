@@ -424,7 +424,7 @@ fn command_dispatch_metadata(
 }
 
 fn command_supports_background_wait(command_name: &str) -> bool {
-    matches!(command_name, "fix" | "check" | "test" | "build")
+    matches!(command_name, "fix" | "test" | "build")
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -485,7 +485,7 @@ pub async fn run_cli() -> Result<()> {
                 format!("--wait is not supported by 'xtask {command_name}'"),
             )
             .with_suggestion(
-                "use --wait with a coordinated background command (fix, check, test, or build)",
+                "use --wait with a coordinated background command (fix, test, or build)",
             ),
         )
         .with_data(serde_json::json!({"proof_status": "incomplete"}));

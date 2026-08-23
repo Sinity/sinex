@@ -130,6 +130,11 @@ fn mock_ctx(runner: Arc<MockCargoRunner>) -> CommandContext {
     .with_cargo_runner(runner as Arc<dyn crate::cargo_runner::CargoRunner>)
 }
 
+fn mock_background_ctx(runner: Arc<MockCargoRunner>) -> CommandContext {
+    CommandContext::new(OutputWriter::new(OutputFormat::Silent), true, None, "check")
+        .with_cargo_runner(runner as Arc<dyn crate::cargo_runner::CargoRunner>)
+}
+
 fn mock_ctx_with_history(
     runner: Arc<MockCargoRunner>,
     invocation_id: Option<i64>,
@@ -186,6 +191,24 @@ async fn test_execute_clean_compile_succeeds() -> ::xtask::sandbox::TestResult<(
         result.is_success(),
         "clean check should succeed: {result:?}"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_execute_rejects_background_without_compiling() -> ::xtask::sandbox::TestResult<()> {
+    let runner = Arc::new(MockCargoRunner::clean());
+    let ctx = mock_background_ctx(runner.clone());
+    let result = make_cmd(CheckFlags::default()).execute(&ctx).await?;
+
+    assert!(
+        result.is_failure(),
+        "background check must be rejected: {result:?}"
+    );
+    assert_eq!(result.errors[0].code, "XTASK_CHECK_BACKGROUND_UNSUPPORTED");
+    let calls = runner.calls();
+    assert_eq!(calls.check, 0, "rejected background check must not compile");
+    assert_eq!(calls.clippy, 0, "rejected background check must not lint");
+    assert_eq!(calls.fmt, 0, "rejected background check must not format");
     Ok(())
 }
 

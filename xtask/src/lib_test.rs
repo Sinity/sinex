@@ -14,10 +14,10 @@ fn env_set(key: &str, value: Option<std::ffi::OsString>) -> EnvGuard {
 
 #[sinex_test]
 async fn background_wait_requires_background_mode() -> TestResult<()> {
-    let cli = Cli::try_parse_from(["xtask", "--bg", "--wait", "check"])?;
+    let cli = Cli::try_parse_from(["xtask", "--bg", "--wait", "build"])?;
     assert!(cli.global.background_wait());
 
-    let error = match Cli::try_parse_from(["xtask", "--wait", "check"]) {
+    let error = match Cli::try_parse_from(["xtask", "--wait", "build"]) {
         Ok(_) => bail!("--wait without --bg must be rejected"),
         Err(error) => error,
     };
@@ -30,10 +30,10 @@ async fn background_wait_requires_background_mode() -> TestResult<()> {
 
 #[sinex_test]
 async fn background_wait_is_limited_to_coordinated_commands() -> TestResult<()> {
-    for command_name in ["fix", "check", "test", "build"] {
+    for command_name in ["fix", "test", "build"] {
         assert!(command_supports_background_wait(command_name));
     }
-    for command_name in ["run", "exercise", "verify", "jobs"] {
+    for command_name in ["check", "run", "exercise", "verify", "jobs"] {
         assert!(!command_supports_background_wait(command_name));
     }
     Ok(())

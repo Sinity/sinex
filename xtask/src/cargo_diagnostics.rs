@@ -460,7 +460,7 @@ pub fn run_cargo_check(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSumm
             "Cannot invoke `cargo check` from inside a nextest test run — \
              nextest holds the cargo target/ lock and any cargo subprocess \
              will deadlock. Use `xtask check --help` to verify flag presence \
-             in tests; test cargo behavior via `xtask check --bg`."
+             in tests; test cargo behavior outside the active nextest run."
         );
     }
 
@@ -480,7 +480,7 @@ pub fn run_cargo_clippy(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSum
             "Cannot invoke `cargo clippy` from inside a nextest test run — \
              nextest holds the cargo target/ lock and any cargo subprocess \
              will deadlock. Use `xtask check --help` to verify flag presence \
-             in tests; test cargo behavior via `xtask check --lint --bg`."
+             in tests; test cargo behavior outside the active nextest run."
         );
     }
 
@@ -508,7 +508,7 @@ where
             "Cannot invoke `cargo check` from inside a nextest test run — \
              nextest holds the cargo target/ lock and any cargo subprocess \
              will deadlock. Use `xtask check --help` to verify flag presence \
-             in tests; test cargo behavior via `xtask check --bg`."
+             in tests; test cargo behavior outside the active nextest run."
         );
     }
 
@@ -533,7 +533,7 @@ where
             "Cannot invoke `cargo clippy` from inside a nextest test run — \
              nextest holds the cargo target/ lock and any cargo subprocess \
              will deadlock. Use `xtask check --help` to verify flag presence \
-             in tests; test cargo behavior via `xtask check --lint --bg`."
+             in tests; test cargo behavior outside the active nextest run."
         );
     }
 

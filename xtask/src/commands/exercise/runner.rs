@@ -9,7 +9,7 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use super::custom::{
     custom_affected_clean, custom_affected_foundation, custom_affected_leaf,
     custom_affected_transitive, custom_affected_workspace, custom_analytics_recommend_runs,
-    custom_bg_job_lifecycle, custom_coord_attach_check, custom_coord_fresh_check,
+    custom_bg_job_lifecycle, custom_coord_attach_check, custom_coord_fresh_build,
     custom_coord_queue_no_overwrite, custom_coord_scope_isolation, custom_coord_state_update,
     custom_coord_supersede, custom_diagnostic_delta_roundtrip, custom_history_roundtrip,
     custom_history_stages_populated, custom_jobs_output_while_running, custom_jobs_prune,
@@ -289,7 +289,7 @@ pub fn run_custom_exercise(def: &ExerciseDef, output_dir: &Path, verbose: bool) 
         "t4.history_roundtrip" => custom_history_roundtrip(output_dir, verbose),
         "t4.output_format_matrix" => custom_output_format_matrix(output_dir, verbose),
         "t4.jobs_prune" => custom_jobs_prune(output_dir, verbose),
-        "t4.coord_fresh_check" => custom_coord_fresh_check(output_dir, verbose),
+        "t4.coord_fresh_build" => custom_coord_fresh_build(output_dir, verbose),
         "t4.coord_attach_check" => custom_coord_attach_check(output_dir, verbose),
         "t4.coord_scope_isolation" => custom_coord_scope_isolation(output_dir, verbose),
         "t4.coord_state_update" => custom_coord_state_update(output_dir, verbose),

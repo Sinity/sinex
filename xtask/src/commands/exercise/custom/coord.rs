@@ -5,17 +5,17 @@ use crate::commands::exercise::builders::{extract_json_field, v_json};
 use crate::commands::exercise::runner::{GitStateGuard, exec_step};
 use crate::commands::exercise::types::{ExpectedExit, StepOutcome};
 
-/// Fresh detection: run check --bg, wait for completion, re-run — second should be "fresh".
+/// Fresh detection: run a background build, wait for completion, re-run — second is "fresh".
 #[must_use]
-pub fn custom_coord_fresh_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+pub fn custom_coord_fresh_build(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
-    // 1. Run check --bg --json and wait for completion
+    // 1. Run a background build and wait for completion.
     let (outcome, output) = exec_step(
         dir,
         0,
-        "first_check",
-        &["check", "--bg", "--json"],
+        "first_build",
+        &["build", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -68,17 +68,17 @@ pub fn custom_coord_fresh_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
             passed: false,
             exit_code: -1,
             duration: Duration::ZERO,
-            validation_errors: vec!["could not extract job_id from first check".into()],
+            validation_errors: vec!["could not extract job_id from first build".into()],
         });
         return steps;
     }
 
-    // 2. Immediately re-run check --bg --json — should get "fresh"
+    // 2. Immediately re-run the same build — it should be fresh.
     let (mut outcome, output) = exec_step(
         dir,
         2,
-        "second_check",
-        &["check", "--bg", "--json"],
+        "second_build",
+        &["build", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -334,17 +334,17 @@ pub fn custom_coord_scope_isolation(dir: &Path, verbose: bool) -> Vec<StepOutcom
     steps
 }
 
-/// State update: verify that `--bg` check produces a real `job_id` (>0) and `pid` (>0).
+/// State update: verify that a background build produces real job and PID values.
 #[must_use]
 pub fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
-    // 1. Run check --bg --json
+    // 1. Run a background build.
     let (mut outcome, output) = exec_step(
         dir,
         0,
-        "check_bg",
-        &["check", "--bg", "--json"],
+        "build_bg",
+        &["build", "-p", "xtask", "--bg", "--json"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,

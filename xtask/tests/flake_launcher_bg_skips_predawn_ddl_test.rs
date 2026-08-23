@@ -139,7 +139,7 @@ fn test_bare_bg_without_worker_env_is_launcher_only() {
     let functions = extract_flake_functions();
     for &args in &[
         &["test", "--bg"][..],
-        &["check", "--bg"][..],
+        &["fix", "--bg"][..],
         &["build", "--bg"][..],
     ] {
         assert!(

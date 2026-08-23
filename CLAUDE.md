@@ -277,7 +277,7 @@ the binary is on PATH).
 | list tests | `xtask test --list -p <pkg>` |
 | build | `xtask build -p <pkg>` |
 | local stack | `xtask infra start/status/stop`, `xtask doctor`, `xtask run core --bg` |
-| background | append `--bg`; poll `xtask jobs active/output/wait <id>` |
+| background | append `--bg` to supported async commands (`fix`, `test`, `build`, `run`); poll `xtask jobs active/output/wait <id>`; `check` is foreground-only |
 | failure forensics | `xtask history diagnostics --level error`, `xtask history tests analyze` |
 | generated surfaces | `xtask docs sync` / `xtask docs check` |
 | schema | `xtask schema strict-diff`, `xtask schema backfill` |

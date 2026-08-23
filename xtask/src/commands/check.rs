@@ -88,13 +88,6 @@ pub struct CheckCommand {
     pub changed_strict: Option<Option<String>>,
 }
 
-/// Push `flag` onto `args` if `cond` is true.
-fn push_flag(args: &mut Vec<String>, cond: bool, flag: &'static str) {
-    if cond {
-        args.push(flag.to_string());
-    }
-}
-
 impl CheckCommand {
     /// Resolve composite flags into individual flags (mutates self).
     fn resolve_flags(&mut self) {
@@ -107,34 +100,6 @@ impl CheckCommand {
             self.forbidden = true;
             self.nix = true;
         }
-    }
-
-    /// Build the serialized CLI args for background re-invocation.
-    fn background_args(&self) -> Vec<String> {
-        let mut args = Vec::new();
-        push_flag(&mut args, self.lint, "--lint");
-        push_flag(&mut args, self.fmt, "--fmt");
-        push_flag(&mut args, self.forbidden, "--forbidden");
-        push_flag(&mut args, self.full, "--full");
-        push_flag(&mut args, self.fix, "--fix");
-        push_flag(&mut args, self.heavy, "--heavy");
-        push_flag(&mut args, self.all, "--all");
-        push_flag(&mut args, self.skip_tests, "--skip-tests");
-        push_flag(&mut args, self.lint_breakdown, "--lint-breakdown");
-        push_flag(&mut args, self.by_file, "--by-file");
-        push_flag(&mut args, self.nix, "--nix");
-        push_flag(&mut args, self.skip_preflight, "--skip-preflight");
-        if let Some(base_ref) = &self.changed_strict {
-            args.push("--changed-strict".to_string());
-            if let Some(base_ref) = base_ref {
-                args.push(base_ref.clone());
-            }
-        }
-        for p in &self.packages {
-            args.push("-p".to_string());
-            args.push(p.clone());
-        }
-        args
     }
 
     fn semantic_invocation_args(&self, scope: &WorkloadScope) -> Vec<String> {
@@ -492,22 +457,19 @@ impl XtaskCommand for CheckCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        if ctx.is_background() {
+            return Ok(CommandResult::failure(
+                StructuredError::new(
+                    "XTASK_CHECK_BACKGROUND_UNSUPPORTED",
+                    "background mode is unsupported for xtask check",
+                )
+                .with_suggestion("run `xtask check` in the foreground"),
+            ));
+        }
+
         // Resolve --full before anything else
         let mut this = self.clone();
         this.resolve_flags();
-
-        // Handle background execution
-        if ctx.is_background() {
-            let args = this.background_args();
-            let (_, workload_scope) = this.build_package_args(true, false)?;
-            let coordination_args = this.semantic_invocation_args(&workload_scope);
-            return crate::coordinator::coordinate_and_spawn_with_scope(
-                "check",
-                &args,
-                &coordination_args,
-                ctx,
-            );
-        }
 
         // --changed-strict: API drift guard.  Runs before the normal check
         // pipeline and short-circuits it when set.
