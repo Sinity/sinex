@@ -124,10 +124,10 @@ should outlive the turn; local plans are execution checklists only.
 
 ## Execution Tactics (distilled from the retired packet)
 
-- **Async verification.** Never idle-wait a heavy proof: launch with `--bg`,
-  capture the job id, do light work (reads, searches, doc/bead edits), then
-  `xtask jobs wait <id>`. One plain `--bg` per target lock; never nest shell
-  background around it.
+- **Async verification.** Never idle-wait a heavy proof. Run foreground xtask
+  verification synchronously, or start declared lifecycle work through AgentCTL
+  and inspect its returned job ID with AgentCTL logs/results. Never nest shell
+  background around either path.
 - **Serial heavy, parallel light.** In one checkout, serialize anything that
   shares the cargo target dir, the dev database, or the dev runtime
   (`xtask test`/`check`/`build`, schema bootstrap, `sinexd` bringup). Parallel

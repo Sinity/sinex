@@ -20,7 +20,7 @@ pub(super) fn execute_bench(bench: &BenchArgs, ctx: &CommandContext) -> Result<C
         return Err(color_eyre::eyre::eyre!(
             "Cannot run `xtask test bench` inside an active nextest run — \
              cargo target/ lock would deadlock.\n\
-             Use `xtask test --bg bench` instead."
+             Run `xtask test bench` after the active compile completes."
         ));
     }
 
@@ -158,7 +158,7 @@ pub(super) async fn execute_coverage(
         return Err(color_eyre::eyre::eyre!(
             "Cannot run `xtask test coverage` inside an active nextest run — \
              cargo target/ lock would deadlock.\n\
-             Use `xtask test --bg coverage` instead."
+             Run `xtask test coverage` after the active compile completes."
         ));
     }
 
@@ -193,7 +193,7 @@ pub(super) fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<
         return Err(eyre!(
             "Cannot run `xtask test mutants` inside an active nextest run — \
              cargo target/ lock would deadlock.\n\
-             Use `xtask test --bg mutants` instead."
+             Run `xtask test mutants` after the active compile completes."
         ));
     }
 

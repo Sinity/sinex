@@ -91,18 +91,6 @@ impl XtaskCommand for BuildCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        if ctx.is_background() {
-            return Ok(CommandResult::failure(
-                crate::output::StructuredError::new(
-                    "XTASK_BUILD_BACKGROUND_UNSUPPORTED",
-                    "background mode is unsupported for xtask build",
-                )
-                .with_suggestion(
-                    "run `xtask build` in the foreground or start AgentCTL's declared build_default operation",
-                ),
-            ));
-        }
-
         // Guard: same deadlock as xtask test — cargo target/ lock is held by nextest for the
         // entire run. Detect via NEXTEST_RUN_ID and fail immediately instead of hanging.
         if std::env::var("NEXTEST_RUN_ID").is_ok() {

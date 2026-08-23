@@ -169,6 +169,37 @@ cache = "tree+environment"
 type = "bool"
 flag = "--release"
 
+[operations.run_all_sources]
+description = "Run Sinex's manifest-driven source bindings through AgentCTL"
+exec = ["xtask", "run", "all-sources"]
+pool = "normal"
+result = "exit"
+cache = "tree+environment"
+
+[operations.run_all_sources.parameters.release]
+type = "bool"
+flag = "--release"
+
+[operations.run_all_sources.parameters.instance_id]
+type = "string"
+flag = "--instance-id"
+max_length = 128
+grammar = "safe-token"
+
+[operations.run_all_sources.parameters.reconcile]
+type = "bool"
+flag = "--reconcile"
+
+[operations.run_all_sources.parameters.service_name]
+type = "string"
+flag = "--service-name"
+max_length = 128
+grammar = "safe-token"
+
+[operations.run_all_sources.parameters.include_default_excluded]
+type = "bool"
+flag = "--include-default-excluded"
+
 [operations.vm_smoke]
 description = "Run Sinex's default foreground NixOS VM smoke suite through AgentCTL"
 exec = ["xtask", "test", "vm"]

@@ -26,12 +26,10 @@ pub mod commands;
 mod config;
 pub mod coordinator;
 pub mod deps;
-pub mod git_stack;
 pub mod graph;
 pub mod history;
 pub mod impact;
 pub mod infra;
-pub mod jobs;
 pub mod measurement;
 pub mod orchestrator;
 pub mod output;
@@ -57,8 +55,8 @@ pub mod watcher;
 use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, FreshnessCommand,
-    GitStackCommand, ImpactCommand, JobsCommand, PrivacyCommand, RaDiagnoseCommand,
-    RecordDriftBypassCommand, ReleaseReadinessCommand, ResetCommand, SchemaCommand, StatusCommand,
+    ImpactCommand, PrivacyCommand, RaDiagnoseCommand,
+    RecordDriftBypassCommand, ReleaseReadinessCommand, ResetCommand, SchemaCommand,
     TestCommand, ci::CiCommand, completions::CompletionsCommand, verify::VerifyCommand,
 };
 use config::config;
@@ -83,18 +81,6 @@ struct GlobalOpts {
     #[arg(long, global = true)]
     list_commands: bool,
 
-    /// Run command in background (returns immediately with job ID).
-    /// Output is captured to files accessible via `xtask jobs`.
-    #[arg(long, global = true)]
-    bg: bool,
-
-    /// With --bg, wait for terminal proof instead of returning after launch.
-    #[arg(long, global = true, requires = "bg")]
-    wait: bool,
-
-    /// Run command in foreground (default). Explicit flag for scripts.
-    #[arg(long, global = true, conflicts_with = "bg")]
-    fg: bool,
 
     /// Increase log verbosity. Use -v for INFO, -vv for DEBUG, -vvv for TRACE.
     /// Overridden by SINEX_LOG env var.
@@ -123,15 +109,6 @@ impl GlobalOpts {
             return OutputFormat::Json;
         }
         OutputFormat::Human
-    }
-
-    /// Check if background execution is requested.
-    pub(crate) fn is_background(&self) -> bool {
-        self.bg && !self.fg
-    }
-
-    pub(crate) fn background_wait(&self) -> bool {
-        self.is_background() && self.wait
     }
 }
 
@@ -176,39 +153,6 @@ pub(crate) fn parse_positive_u64_env_or_default(
             default
         }
     }
-}
-
-pub(crate) fn parse_one_shot_i64_env(var_name: &str, purpose: &str) -> Option<i64> {
-    let raw = match std::env::var(var_name) {
-        Ok(raw) => Some(raw),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            tracing::warn!(
-                env_var = var_name,
-                purpose,
-                "ignoring non-unicode one-shot environment value"
-            );
-            None
-        }
-    };
-
-    unsafe {
-        std::env::remove_var(var_name);
-    }
-
-    raw.and_then(|raw| match raw.parse::<i64>() {
-        Ok(value) => Some(value),
-        Err(error) => {
-            tracing::warn!(
-                env_var = var_name,
-                purpose,
-                value = %raw,
-                error = %error,
-                "ignoring invalid one-shot environment value"
-            );
-            None
-        }
-    })
 }
 
 /// Categorized command help text, rendered by the custom help_template.
@@ -289,9 +233,7 @@ enum Commands {
         cmd: commands::infra::InfraSubcommand,
     },
     #[command(hide = true)]
-    Jobs(JobsCommand),
     #[command(hide = true)]
-    Status(StatusCommand),
 
     // ─── Analysis ──────────────────────────────────────────────────
     #[command(hide = true)]
@@ -305,7 +247,6 @@ enum Commands {
     #[command(hide = true)]
     Impact(ImpactCommand),
     #[command(hide = true)]
-    GitStack(GitStackCommand),
 
     // ─── Diagnostics ───────────────────────────────────────────────
     #[command(hide = true)]
@@ -338,9 +279,6 @@ enum Commands {
     Ci(CiCommand),
     #[command(hide = true)]
     Completions(CompletionsCommand),
-    /// Internal detached process watchdog — not for human use.
-    #[command(hide = true, name = "__reap")]
-    Reap(commands::reap::ReapCommand),
     /// Internal: record drift guard bypass events from the pre-push hook (#1565).
     #[command(hide = true, name = "record-drift-bypass")]
     RecordDriftBypass(RecordDriftBypassCommand),
@@ -398,14 +336,11 @@ fn command_dispatch_metadata(
         Commands::Build(cmd) => ("build", None, None, cmd.metadata()),
         Commands::Run(cmd) => ("run", None, None, cmd.metadata()),
         Commands::Infra { .. } => ("infra", None, None, command::CommandMetadata::default()),
-        Commands::Jobs(cmd) => ("jobs", None, None, cmd.metadata()),
-        Commands::Status(cmd) => ("status", None, None, cmd.metadata()),
         Commands::Deps(cmd) => ("deps", None, None, cmd.metadata()),
         Commands::History(cmd) => ("history", None, None, cmd.metadata()),
         Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata()),
         Commands::Freshness(cmd) => ("freshness", None, None, cmd.metadata()),
         Commands::Impact(cmd) => ("impact", None, None, cmd.metadata()),
-        Commands::GitStack(cmd) => ("git-stack", None, None, cmd.metadata()),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
         Commands::RaDiagnose(cmd) => ("ra-diagnose", None, None, cmd.metadata()),
@@ -418,13 +353,8 @@ fn command_dispatch_metadata(
         Commands::Reset(cmd) => ("reset", None, None, cmd.metadata()),
         Commands::Ci(cmd) => ("ci", None, None, cmd.metadata()),
         Commands::Completions(cmd) => ("completions", None, None, cmd.metadata()),
-        Commands::Reap(cmd) => ("__reap", None, None, cmd.metadata()),
         Commands::RecordDriftBypass(cmd) => ("record-drift-bypass", None, None, cmd.metadata()),
     }
-}
-
-fn command_supports_background_wait(command_name: &str) -> bool {
-    matches!(command_name, "fix" | "test")
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -436,20 +366,12 @@ pub async fn run_cli() -> Result<()> {
     let cli = Cli::from_arg_matches(&matches).map_err(|e| eyre!(e.to_string()))?;
     let output_format = cli.global.output_format();
 
-    let bg_job_dir = std::env::var("XTASK_JOB_DIR").ok();
-    if bg_job_dir.is_some() {
-        // One-shot handoff: avoid leaking job control env vars to nested child
-        // xtask processes spawned by tests.
-        unsafe {
-            std::env::remove_var("XTASK_JOB_DIR");
-        }
-    } else if let Err(error) = process::arm_current_process_parent_death_signal() {
+    if let Err(error) = process::arm_current_process_parent_death_signal() {
         eprintln!("⚠️  Failed to arm xtask parent-death signal: {error}");
     }
     if let Err(error) = process::install_registered_process_group_signal_cleanup() {
         eprintln!("⚠️  Failed to install xtask signal cleanup: {error}");
     }
-    let claimed_bg_job = parse_one_shot_i64_env("XTASK_BG_JOB_ID", "background job claim");
 
     // Handle --list-commands before normal dispatch
     if cli.global.list_commands {
@@ -478,21 +400,6 @@ pub async fn run_cli() -> Result<()> {
 
     // Dispatch — extract metadata (including timeout/history behavior) before consuming the command
     let (command_name, subcommand, profile, command_metadata) = command_dispatch_metadata(&command);
-    if cli.global.background_wait() && !command_supports_background_wait(command_name) {
-        let result = crate::command::CommandResult::failure(
-            crate::output::StructuredError::new(
-                "XTASK_BG_WAIT_UNSUPPORTED",
-                format!("--wait is not supported by 'xtask {command_name}'"),
-            )
-            .with_suggestion(
-                "use --wait with a coordinated background command (fix, test, or build)",
-            ),
-        )
-        .with_data(serde_json::json!({"proof_status": "incomplete"}));
-        result.print(&OutputWriter::new(output_format), command_name);
-        std::process::exit(2);
-    }
-
     let command_timeout = command_metadata.timeout;
     let tracks_invocation = command_metadata.track_in_history;
     let history_access = command_metadata.history_access;
@@ -517,15 +424,8 @@ pub async fn run_cli() -> Result<()> {
         } else {
             (None, None, None)
         };
-    let claimed_bg_invocation =
-        parse_one_shot_i64_env("XTASK_BG_INVOCATION_ID", "background invocation claim");
-    let launcher_only_background_request =
-        cli.global.is_background() && claimed_bg_invocation.is_none() && claimed_bg_job.is_none();
-    let tracks_invocation = tracks_invocation && !launcher_only_background_request;
-
     let invocation_id = start_or_claim_invocation(
         tracks_invocation,
-        claimed_bg_invocation,
         history_db_write.as_ref(),
         history_db_open_error.as_deref(),
         command_name,
@@ -546,11 +446,10 @@ pub async fn run_cli() -> Result<()> {
     // Create context with invocation ID
     let ctx = CommandContext::new(
         OutputWriter::new(output_format),
-        cli.global.is_background(),
+        false,
         invocation_id,
         command_name,
     )
-    .with_background_wait(cli.global.background_wait())
     .with_preopened_history_db_write(history_db_write.take())
     .with_preopened_history_db_query(history_db_query.take());
 
@@ -569,14 +468,11 @@ pub async fn run_cli() -> Result<()> {
                     .execute(&ctx)
                     .await
             }
-            Commands::Jobs(cmd) => cmd.execute(&ctx).await,
-            Commands::Status(cmd) => cmd.execute(&ctx).await,
             Commands::Deps(cmd) => cmd.execute(&ctx).await,
             Commands::History(cmd) => cmd.execute(&ctx).await,
             Commands::Analytics(cmd) => cmd.execute(&ctx).await,
             Commands::Freshness(cmd) => cmd.execute(&ctx).await,
             Commands::Impact(cmd) => cmd.execute(&ctx).await,
-            Commands::GitStack(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::RaDiagnose(cmd) => cmd.execute(&ctx).await,
@@ -589,7 +485,6 @@ pub async fn run_cli() -> Result<()> {
             Commands::Reset(cmd) => cmd.execute(&ctx).await,
             Commands::Ci(cmd) => cmd.execute(&ctx).await,
             Commands::Completions(cmd) => cmd.execute(&ctx).await,
-            Commands::Reap(cmd) => cmd.execute(&ctx).await,
             Commands::RecordDriftBypass(cmd) => cmd.execute(&ctx).await,
         }
     };
@@ -674,18 +569,6 @@ pub async fn run_cli() -> Result<()> {
         );
     }
 
-    // Write exit_code file and record background job completion.
-    if let Some(job_dir) = bg_job_dir {
-        record_bg_job_completion(
-            &job_dir,
-            claimed_bg_job,
-            invocation_exit_code,
-            command_name,
-            &ctx,
-            history_db_open_error.as_deref(),
-        );
-    }
-
     match result {
         Ok(res) => {
             res.print(ctx.writer(), command_name);
@@ -749,11 +632,9 @@ fn finish_invocation_history(
     ctx.mark_finished();
 }
 
-/// Start a new invocation row or claim a pre-reserved background invocation.
-/// Returns the invocation id, or None if tracking is disabled or the DB is unavailable.
+/// Start a new invocation row. Returns its ID when history is available.
 fn start_or_claim_invocation(
     tracks: bool,
-    claimed_bg_invocation: Option<i64>,
     history_db: Option<&HistoryDb>,
     history_db_open_error: Option<&str>,
     command_name: &str,
@@ -764,21 +645,6 @@ fn start_or_claim_invocation(
         return None;
     }
     let db_err = || history_db_open_error.unwrap_or("unknown history DB open failure");
-    if let Some(bg_id) = claimed_bg_invocation {
-        if let Some(db) = history_db {
-            if let Err(error) =
-                db.claim_background_invocation(bg_id, command_name, subcommand, profile, None)
-            {
-                eprintln!("⚠️  Failed to claim background invocation {bg_id}: {error}");
-            }
-        } else {
-            eprintln!(
-                "⚠️  Failed to open history DB for background invocation {bg_id}: {}",
-                db_err()
-            );
-        }
-        return Some(bg_id);
-    }
     if let Some(db) = history_db {
         match db.start_invocation(command_name, subcommand, profile, None) {
             Ok(id) => return Some(id),
@@ -793,76 +659,6 @@ fn start_or_claim_invocation(
         db_err()
     );
     None
-}
-
-/// Write exit_code to the job dir, record completion in history, and optionally
-/// send a desktop notification. Called only when `XTASK_JOB_DIR` is set.
-fn record_bg_job_completion(
-    job_dir: &str,
-    claimed_bg_job: Option<i64>,
-    invocation_exit_code: i32,
-    command_name: &str,
-    ctx: &command::CommandContext,
-    history_db_open_error: Option<&str>,
-) {
-    let exit_code_path = std::path::Path::new(job_dir).join("exit_code");
-    if let Err(error) = std::fs::write(&exit_code_path, format!("{invocation_exit_code}\n")) {
-        eprintln!(
-            "⚠️  Failed to write background exit code file {}: {error}",
-            exit_code_path.display()
-        );
-    }
-
-    if let Some(job_id) = claimed_bg_job {
-        let stdout_path = std::path::Path::new(job_dir).join("stdout.log");
-        let stderr_path = std::path::Path::new(job_dir).join("stderr.log");
-        let job_status = if invocation_exit_code == 0 {
-            crate::history::JobLifecycleStatus::Completed
-        } else if invocation_exit_code == 124 {
-            crate::history::JobLifecycleStatus::TimedOut
-        } else {
-            crate::history::JobLifecycleStatus::Failed
-        };
-        match ctx.try_with_history_db(|db| {
-            db.finish_background_job(
-                job_id,
-                job_status,
-                Some(invocation_exit_code),
-                ctx.elapsed().as_secs_f64(),
-                stdout_path.exists().then_some(stdout_path.as_path()),
-                stderr_path.exists().then_some(stderr_path.as_path()),
-            )
-        }) {
-            Some(Ok(())) => {}
-            Some(Err(error)) => {
-                eprintln!("⚠️  Failed to record background job completion for {job_id}: {error}");
-            }
-            None => {
-                let error = history_db_open_error.unwrap_or("history DB unavailable");
-                eprintln!(
-                    "⚠️  Failed to open history DB to record background job completion for {job_id}: {error}"
-                );
-            }
-        }
-    }
-
-    if config().prefs.notify_on_completion {
-        let status_str = if invocation_exit_code == 0 {
-            "success"
-        } else if invocation_exit_code == 124 {
-            "timed out"
-        } else {
-            "failed"
-        };
-        let duration = ctx.elapsed().as_secs_f64();
-        let summary = format!("xtask {command_name}");
-        let body = format!("{command_name}: {status_str} ({duration:.1}s)");
-        let _ = std::process::Command::new("notify-send")
-            .arg("--app-name=xtask")
-            .arg(&summary)
-            .arg(&body)
-            .status();
-    }
 }
 
 /// Run `fut` with an optional deadline. Sets `timed_out` when the deadline fires

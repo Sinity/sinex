@@ -512,7 +512,7 @@ async fn test_velocity_trend_ignores_transport_flags_in_scope_identity()
             &db,
             "check",
             None,
-            &["--json", "--bg", "--scope=packages:sinex-db"],
+            &["--json", "--scope=packages:sinex-db"],
             InvocationStatus::Success,
             10.0,
         )?;

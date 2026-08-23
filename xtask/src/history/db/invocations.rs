@@ -946,21 +946,4 @@ impl HistoryDb {
         Ok(())
     }
 
-    /// Prune old background job handles (from `background_jobs`) older than `older_than_days`.
-    ///
-    /// This removes operational job handles and their cached logs, but does NOT touch the
-    /// `invocations` table. Durable execution history survives independently of job pruning.
-    pub fn prune_background_jobs(&self, older_than_days: u32) -> Result<usize> {
-        if older_than_days == 0 {
-            return Ok(0);
-        }
-        let interval = format!("-{older_than_days} days");
-        let deleted = self.conn.execute(
-            r"DELETE FROM background_jobs
-              WHERE finished_at IS NOT NULL
-                AND finished_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
-            rusqlite::params![interval],
-        )?;
-        Ok(deleted)
-    }
 }

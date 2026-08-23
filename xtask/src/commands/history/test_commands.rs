@@ -190,7 +190,7 @@ pub enum HistoryTestsSubcommand {
         #[arg(long)]
         latest_per_test: bool,
         /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
-        /// invocation ID, `inv:<id>`, or `job:<id>`
+        /// invocation ID or `inv:<id>`
         #[arg(long)]
         invocation: Option<String>,
     },
@@ -222,7 +222,7 @@ pub enum HistoryTestsSubcommand {
         #[arg(long)]
         output: bool,
         /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
-        /// invocation ID, `inv:<id>`, or `job:<id>`
+        /// invocation ID or `inv:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
@@ -231,7 +231,7 @@ pub enum HistoryTestsSubcommand {
     /// Shows duration distribution, probable timeouts, and per-package failure summaries.
     Analyze {
         /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
-        /// invocation ID, `inv:<id>`, or `job:<id>`
+        /// invocation ID or `inv:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
@@ -249,7 +249,7 @@ pub enum HistoryTestsSubcommand {
         /// Test name pattern to search for
         pattern: String,
         /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
-        /// invocation ID, `inv:<id>`, or `job:<id>`
+        /// invocation ID or `inv:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
@@ -261,14 +261,14 @@ pub enum HistoryTestsSubcommand {
         #[arg(long, default_value = "20")]
         limit: usize,
         /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
-        /// invocation ID, `inv:<id>`, or `job:<id>`
+        /// invocation ID or `inv:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
     /// Per-package pass rate, test count, avg duration, and flaky count (G7)
     ByPackage {
         /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
-        /// invocation ID, `inv:<id>`, or `job:<id>`
+        /// invocation ID or `inv:<id>`
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
@@ -356,10 +356,7 @@ fn resolve_selected_test_run(
 }
 
 fn describe_test_run(run: &crate::history::ResolvedTestRun) -> String {
-    match run.job_id {
-        Some(job_id) => format!("invocation #{} (job #{job_id})", run.invocation_id),
-        None => format!("invocation #{}", run.invocation_id),
-    }
+    format!("invocation #{}", run.invocation_id)
 }
 
 fn format_optional_pressure(value: Option<f64>) -> String {

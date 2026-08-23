@@ -210,7 +210,6 @@ fn cost_row(
         duration_secs: Some(duration_secs),
         status: "success".to_string(),
         cancel_reason: None,
-        is_background: false,
         tree_fingerprint: None,
         scope_key: None,
         is_stale_cleanup: false,
@@ -256,16 +255,12 @@ async fn test_history_cost_summary_reports_cancelled_and_stale_pid_buckets()
     cancelled.status = "cancelled".to_string();
     cancelled.cancel_reason = Some("user_cancel".to_string());
 
-    let mut background_cancelled = cost_row(2, "test", 40, 40.0, Some(r#"["-p","sinex-db"]"#));
-    background_cancelled.status = "cancelled".to_string();
-    background_cancelled.is_background = true;
-
     let mut stale = cost_row(3, "test", 90, 50.0, None);
     stale.status = "cancelled".to_string();
     stale.cancel_reason = Some("stale_pid".to_string());
     stale.is_stale_cleanup = true;
 
-    let rows = vec![cancelled, background_cancelled, stale];
+    let rows = vec![cancelled, stale];
     let summary = build_history_cost_summary(7, vec!["test".into()], &rows, 0.0);
 
     assert_eq!(summary.invocation_count, 2);
@@ -516,7 +511,7 @@ async fn test_execute_resources_summarizes_commands_and_devices() -> ::xtask::sa
     )?;
     db.finish_invocation(test_id, InvocationStatus::Failed, Some(1), 20.0)?;
 
-    let result = execute_resources(&db, None, 1, &[], 10, false, false, &ctx)?;
+    let result = execute_resources(&db, None, 1, &[], 10, false, &ctx)?;
     let data = result.data.expect("resource report data should be present");
     let rows = data
         .get("rows")
@@ -578,7 +573,6 @@ async fn test_history_command_metadata() -> ::xtask::sandbox::TestResult<()> {
             with_diagnostics: false,
             with_stages: false,
             with_tests: false,
-            include_zombies: false,
         },
     };
 
@@ -784,35 +778,6 @@ async fn test_execute_tests_analyze_honors_explicit_invocation() -> ::xtask::san
 }
 
 #[sinex_test]
-async fn test_execute_tests_analyze_accepts_background_job_selector()
--> ::xtask::sandbox::TestResult<()> {
-    let db = seeded_history_db("tests-analyze-job.db")?;
-    let ctx = silent_ctx();
-
-    let (invocation_id, job_id) = db.start_background_job(
-        "test",
-        &[],
-        None,
-        std::path::Path::new(""),
-        std::path::Path::new(""),
-    )?;
-    db.finish_invocation(invocation_id, InvocationStatus::Success, Some(0), 1.0)?;
-    store_test_result(&db, invocation_id, "job_pass", "pkg-job", TestStatus::Pass)?;
-
-    let result = execute_tests_analyze(&db, &format!("job:{job_id}"), &ctx)?;
-    let data = result.data.expect("analysis data should be present");
-    let resolved_invocation_id = data
-        .get("invocation_id")
-        .and_then(serde_json::Value::as_i64)
-        .expect("analysis invocation id should be present");
-    let expected_message =
-        format!("Analysis for invocation #{invocation_id} (job #{job_id}): 1 passed, 0 failed");
-
-    assert_eq!(resolved_invocation_id, invocation_id);
-    assert_eq!(result.message.as_deref(), Some(expected_message.as_str()));
-    Ok(())
-}
-
 #[sinex_test]
 async fn test_execute_progress_defaults_to_current_selector() -> ::xtask::sandbox::TestResult<()> {
     let db = seeded_history_db("progress-current-selector.db")?;
@@ -821,10 +786,7 @@ async fn test_execute_progress_defaults_to_current_selector() -> ::xtask::sandbo
     let older = db.start_invocation("check", None, None, None)?;
     db.finish_invocation(older, InvocationStatus::Success, Some(0), 1.0)?;
 
-    let stdout = std::path::Path::new("");
-    let stderr = std::path::Path::new("");
-    let (running_invocation, _job_id) =
-        db.start_background_job("test", &[], None, stdout, stderr)?;
+    let running_invocation = db.start_invocation("test", None, None, None)?;
     db.write_progress(
         running_invocation,
         Some("tests"),

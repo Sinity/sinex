@@ -112,7 +112,6 @@ async fn test_resolve_test_run_skips_invocations_without_results() -> TestResult
         .resolve_test_run(None)?
         .expect("latest completed run with results should resolve");
     assert_eq!(resolved.invocation_id, inv_with_results);
-    assert_eq!(resolved.job_id, None);
 
     let error = db
         .resolve_test_run(Some(&inv_without_results.to_string()))
@@ -121,50 +120,6 @@ async fn test_resolve_test_run_skips_invocations_without_results() -> TestResult
         error.to_string().contains("has no stored test results"),
         "{error:#}"
     );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_resolve_test_run_accepts_background_job_selectors() -> TestResult<()> {
-    let (_dir, db, _first_inv) = test_db_with_invocation()?;
-
-    let (background_invocation, background_job) = db.start_background_job(
-        "test",
-        &[],
-        None,
-        std::path::Path::new(""),
-        std::path::Path::new(""),
-    )?;
-    db.finish_invocation(
-        background_invocation,
-        super::super::db::InvocationStatus::Success,
-        Some(0),
-        1.0,
-    )?;
-    db.store_test_results(
-        background_invocation,
-        &[TestResult {
-            test_name: "test_from_job".into(),
-            package: "pkg-job".into(),
-            status: TestStatus::Pass,
-            duration_secs: Some(0.2),
-            attempt: 1,
-            output: None,
-        }],
-    )?;
-
-    let resolved_from_prefix = db
-        .resolve_test_run(Some(&format!("job:{background_job}")))?
-        .expect("job selector should resolve");
-    assert_eq!(resolved_from_prefix.invocation_id, background_invocation);
-    assert_eq!(resolved_from_prefix.job_id, Some(background_job));
-
-    let resolved_from_numeric = db
-        .resolve_test_run(Some(&background_job.to_string()))?
-        .expect("plain numeric selector should fall back to background job id");
-    assert_eq!(resolved_from_numeric.invocation_id, background_invocation);
-    assert_eq!(resolved_from_numeric.job_id, Some(background_job));
-
     Ok(())
 }
 

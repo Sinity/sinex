@@ -277,6 +277,19 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "AgentCTL's typed boolean representation of valueless `--changed-strict`",
+          "long": "agentctl-changed-strict-default",
+          "name": "agentctl_changed_strict_default",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "check",
@@ -1456,19 +1469,6 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Start a managed local sinexd job, observe it in infra status, and cancel it",
-              "long": "run-core",
-              "name": "run_core",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
             }
           ],
           "name": "smoke",
@@ -1942,266 +1942,6 @@ expression: json
       ]
     },
     {
-      "about": "Inspect and manage background xtask jobs",
-      "args": [],
-      "name": "jobs",
-      "subcommands": [
-        {
-          "about": "List recent jobs",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "limit",
-              "name": "limit",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Show only running/active jobs",
-              "long": "active",
-              "name": "active",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "list",
-          "subcommands": []
-        },
-        {
-          "about": "List active jobs",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "limit",
-              "name": "limit",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "active",
-          "subcommands": []
-        },
-        {
-          "about": "Show status of a specific job",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": null,
-              "name": "id",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": null,
-              "long": "follow",
-              "name": "follow",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": "f",
-              "takes_value": false
-            }
-          ],
-          "name": "status",
-          "subcommands": []
-        },
-        {
-          "about": "Show full output of a job",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": null,
-              "name": "id",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Show stdout explicitly (default)",
-              "long": "stdout",
-              "name": "stdout",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Show stderr instead of stdout",
-              "long": "stderr",
-              "name": "stderr",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Select output stream by name. Alias for --stdout/--stderr",
-              "long": "stream",
-              "name": "stream",
-              "possible_values": [
-                "stdout",
-                "stderr"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "output",
-          "subcommands": []
-        },
-        {
-          "about": "Wait for a job to complete",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": null,
-              "name": "id",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": null,
-              "long": "timeout",
-              "name": "timeout",
-              "possible_values": [],
-              "required": false,
-              "short": "t",
-              "takes_value": true
-            }
-          ],
-          "name": "wait",
-          "subcommands": []
-        },
-        {
-          "about": "Cancel a running job (SIGTERM to the process group, SIGKILL escalation)",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": null,
-              "name": "id",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "cancel",
-          "subcommands": []
-        },
-        {
-          "about": "Remove completed jobs older than N days",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "older-than",
-              "name": "older_than",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "prune",
-          "subcommands": []
-        }
-      ]
-    },
-    {
-      "about": "Inspect workspace status, service health, and recent activity",
-      "args": [
-        {
-          "global": false,
-          "help": "Watch for changes (live updates)",
-          "long": "watch",
-          "name": "watch",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": "w",
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Rich multi-section MOTD",
-          "long": "summary",
-          "name": "summary",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Show event payload schema information",
-          "long": "schemas",
-          "name": "schemas",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Show recommended next actions (planner)",
-          "long": "next",
-          "name": "next",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        }
-      ],
-      "name": "status",
-      "subcommands": []
-    },
-    {
       "about": "Analyze workspace dependency structure and impact",
       "args": [],
       "name": "deps",
@@ -2603,7 +2343,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Only show invocations with IDs greater than this selector (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)",
+              "help": "Only show invocations with IDs greater than this selector (`latest`, `previous`, `current`, numeric, or `inv:<id>`)",
               "long": "after-invocation",
               "name": "after_invocation",
               "possible_values": [],
@@ -2613,7 +2353,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Only show invocations with IDs less than this selector (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)",
+              "help": "Only show invocations with IDs less than this selector (`latest`, `previous`, `current`, numeric, or `inv:<id>`)",
               "long": "before-invocation",
               "name": "before_invocation",
               "possible_values": [],
@@ -2672,19 +2412,6 @@ expression: json
               "help": "Include test pass/fail counts for each invocation",
               "long": "with-tests",
               "name": "with_tests",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Include watchdog/stale-pid cancellation rows normally hidden as zombie noise",
-              "long": "include-zombies",
-              "name": "include_zombies",
               "possible_values": [
                 "true",
                 "false"
@@ -2979,19 +2706,6 @@ expression: json
             },
             {
               "global": false,
-              "help": "Include background invocations in addition to foreground work",
-              "long": "include-background",
-              "name": "include_background",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
               "help": "Restrict to successful invocations only",
               "long": "success-only",
               "name": "success_only",
@@ -3012,7 +2726,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Invocation selector: `latest`, `previous`, `current`, invocation ID, `inv:<id>`, or `job:<id>`",
+              "help": "Invocation selector: `latest`, `previous`, `current`, `inv:<id>`, or an invocation ID",
               "long": null,
               "name": "invocation",
               "possible_values": [],
@@ -3032,7 +2746,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Number of overlapping invocations/background jobs to include",
+              "help": "Number of overlapping invocations to include",
               "long": "limit",
               "name": "limit",
               "possible_values": [],
@@ -3097,7 +2811,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -3228,7 +2942,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -3245,7 +2959,7 @@ expression: json
               "args": [
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -3299,7 +3013,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -3342,7 +3056,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -3359,7 +3073,7 @@ expression: json
               "args": [
                 {
                   "global": false,
-                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>`",
                   "long": "invocation",
                   "name": "invocation",
                   "possible_values": [],
@@ -3767,19 +3481,6 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Include watchdog/stale-pid cancellation rows normally hidden as zombie noise",
-              "long": "include-zombies",
-              "name": "include_zombies",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
             }
           ],
           "name": "timeline",
@@ -3844,19 +3545,6 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Include watchdog/stale-pid cancellation rows normally hidden as zombie noise",
-              "long": "include-zombies",
-              "name": "include_zombies",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
             }
           ],
           "name": "sessions",
@@ -3867,7 +3555,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Invocation selector: `latest`, `previous`, `current`, invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs first; use `job:<id>` for unambiguous background-job lookup",
+              "help": "Invocation selector: `latest`, `previous`, `current`, `inv:<id>`, or an invocation ID",
               "long": null,
               "name": "id",
               "possible_values": [],
@@ -3934,7 +3622,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Invocation selector: `current` (default), `latest`, `previous`, invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs first; use `job:<id>` for unambiguous background-job lookup",
+              "help": "Invocation selector: `current` (default), `latest`, `previous`, invocation ID, or `inv:<id>`",
               "long": "invocation",
               "name": "invocation",
               "possible_values": [],
@@ -4108,19 +3796,6 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Include watchdog/stale-pid cancellation rows normally hidden as zombie noise",
-              "long": "include-zombies",
-              "name": "include_zombies",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
             }
           ],
           "name": "resources",
@@ -4287,6 +3962,240 @@ expression: json
           "subcommands": []
         },
         {
+          "about": "Project MaterialManifestV1, event, CAS, staging, and NATS deltas from a bounded fixture",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "measured-days",
+              "name": "measured_days",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "target-days",
+              "name": "target_days",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "measured-material-bytes",
+              "name": "measured_material_bytes",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "measured-manifest-bytes",
+              "name": "measured_manifest_bytes",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "measured-core-event-bytes",
+              "name": "measured_core_event_bytes",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "measured-cas-bytes",
+              "name": "measured_cas_bytes",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "measured-staging-bytes",
+              "name": "measured_staging_bytes",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "measured-nats-bytes",
+              "name": "measured_nats_bytes",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "measured-events",
+              "name": "measured_events",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "copy-events-per-second",
+              "name": "copy_events_per_second",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "available-bytes",
+              "name": "available_bytes",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "manifest-projection",
+          "subcommands": []
+        },
+        {
+          "about": "Report bounded compressed-chunk replay/archive measurements",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "fixture-events",
+              "name": "fixture_events",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "archived-events",
+              "name": "archived_events",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "archive-wall-ms",
+              "name": "archive_wall_ms",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "replay-wall-ms",
+              "name": "replay_wall_ms",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "operation-duration-ms",
+              "name": "operation_duration_ms",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "wal-bytes",
+              "name": "wal_bytes",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "compressed-bytes-before",
+              "name": "compressed_bytes_before",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "uncompressed-bytes-before",
+              "name": "uncompressed_bytes_before",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "compressed-bytes-after",
+              "name": "compressed_bytes_after",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "uncompressed-bytes-after",
+              "name": "uncompressed_bytes_after",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "pathological-threshold-ms",
+              "name": "pathological_threshold_ms",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "replay-cost",
+          "subcommands": []
+        },
+        {
           "about": "Stage-level timing breakdowns aggregated across invocations (J7)",
           "args": [
             {
@@ -4316,7 +4225,7 @@ expression: json
       ]
     },
     {
-      "about": "Inspect coordinator freshness keys and reuse decisions",
+      "about": "Inspect foreground proof freshness decisions",
       "args": [],
       "name": "freshness",
       "subcommands": [
@@ -4325,7 +4234,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Coordinated command to explain, such as check, build, fix, test, or vm",
+              "help": "Command to explain, such as test, fix, or vm",
               "long": null,
               "name": "command",
               "possible_values": [],
@@ -4468,298 +4377,6 @@ expression: json
             }
           ],
           "name": "audit",
-          "subcommands": []
-        }
-      ]
-    },
-    {
-      "about": "Plan and materialize PR-sized git branch stacks from the current commit graph",
-      "args": [],
-      "name": "git-stack",
-      "subcommands": [
-        {
-          "about": "Walk the current commit graph and generate a stack plan plus PR/squash bodies",
-          "args": [
-            {
-              "global": false,
-              "help": "Base ref to split against. Defaults to origin/master when available, else master",
-              "long": "base",
-              "name": "base",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Head ref to analyze",
-              "long": "head",
-              "name": "head",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Branch prefix for generated slice refs",
-              "long": "branch-prefix",
-              "name": "branch_prefix",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Maximum number of commits per generated slice before forcing a split",
-              "long": "max-commits-per-slice",
-              "name": "max_commits_per_slice",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Output directory for generated artifacts",
-              "long": "output",
-              "name": "output",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Overwrite an existing output directory",
-              "long": "force",
-              "name": "force",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "plan",
-          "subcommands": []
-        },
-        {
-          "about": "Materialize branch refs from an existing stack plan",
-          "args": [
-            {
-              "global": false,
-              "help": "Path to a generated `plan.yaml`",
-              "long": "plan",
-              "name": "plan",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Overwrite existing branch refs",
-              "long": "force",
-              "name": "force",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Continue even when the plan recorded blockers",
-              "long": "allow-blockers",
-              "name": "allow_blockers",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "materialize",
-          "subcommands": []
-        },
-        {
-          "about": "Generate a stack plan and immediately materialize the resulting branches",
-          "args": [
-            {
-              "global": false,
-              "help": "Base ref to split against. Defaults to origin/master when available, else master",
-              "long": "base",
-              "name": "base",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Head ref to analyze",
-              "long": "head",
-              "name": "head",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Branch prefix for generated slice refs",
-              "long": "branch-prefix",
-              "name": "branch_prefix",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Maximum number of commits per generated slice before forcing a split",
-              "long": "max-commits-per-slice",
-              "name": "max_commits_per_slice",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Output directory for generated artifacts",
-              "long": "output",
-              "name": "output",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Overwrite an existing output directory and existing branch refs",
-              "long": "force",
-              "name": "force",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Continue even when the generated plan records blockers",
-              "long": "allow-blockers",
-              "name": "allow_blockers",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "split",
-          "subcommands": []
-        },
-        {
-          "about": "Push materialized branches and open/reuse PRs from a generated stack plan",
-          "args": [
-            {
-              "global": false,
-              "help": "Path to a generated `plan.yaml`",
-              "long": "plan",
-              "name": "plan",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Git remote to push branch refs to",
-              "long": "remote",
-              "name": "remote",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Create PRs as ready-for-review instead of drafts",
-              "long": "ready",
-              "name": "ready",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Push branches only; skip GitHub PR creation",
-              "long": "push-only",
-              "name": "push_only",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Force-update the remote branches with `--force-with-lease`",
-              "long": "force-with-lease",
-              "name": "force_with_lease",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Optional GitHub repo override for `gh`, e.g. `owner/name`",
-              "long": "repo",
-              "name": "repo",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Continue even when the plan recorded blockers",
-              "long": "allow-blockers",
-              "name": "allow_blockers",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "publish",
           "subcommands": []
         }
       ]
@@ -5176,7 +4793,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Acknowledge that writers are quiesced for this first implementation slice",
+                  "help": "Confirm event writers are stopped; active writer transactions are rejected before the horizon is frozen",
                   "long": "assume-quiescent",
                   "name": "assume_quiescent",
                   "possible_values": [
@@ -5189,7 +4806,7 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Clear persisted progress and recompute from the current event horizon",
+                  "help": "Clear persisted progress and recompute from a fresh horizon (required after failure)",
                   "long": "restart",
                   "name": "restart",
                   "possible_values": [
@@ -6279,19 +5896,6 @@ expression: json
         },
         {
           "global": false,
-          "help": "Delete background job records and output files",
-          "long": "jobs",
-          "name": "jobs",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
           "help": "Delete stale per-test temporary directories",
           "long": "test-tmp",
           "name": "test_tmp",
@@ -6344,73 +5948,6 @@ expression: json
         }
       ],
       "name": "reset",
-      "subcommands": []
-    },
-    {
-      "about": "Internal detached process watchdog — not for human use",
-      "args": [
-        {
-          "global": false,
-          "help": "PID of the background job process to monitor",
-          "long": "target-pid",
-          "name": "target_pid",
-          "possible_values": [],
-          "required": true,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Maximum seconds to allow before killing the target",
-          "long": "max-secs",
-          "name": "max_secs",
-          "possible_values": [],
-          "required": true,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Invocation ID to mark as cancelled on timeout",
-          "long": "invocation-id",
-          "name": "invocation_id",
-          "possible_values": [],
-          "required": true,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Background job ID to mark as timed out",
-          "long": "job-id",
-          "name": "job_id",
-          "possible_values": [],
-          "required": true,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Path to the history DB file",
-          "long": "db-path",
-          "name": "db_path",
-          "possible_values": [],
-          "required": true,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Directory containing the job's exit_code file (written on timeout)",
-          "long": "job-dir",
-          "name": "job_dir",
-          "possible_values": [],
-          "required": true,
-          "short": null,
-          "takes_value": true
-        }
-      ],
-      "name": "__reap",
       "subcommands": []
     },
     {

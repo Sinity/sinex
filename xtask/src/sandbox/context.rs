@@ -172,16 +172,16 @@ fn load_env_filter(default_filter: &str) -> TestResult<tracing_subscriber::EnvFi
         .map_err(|error| eyre!("Invalid RUST_LOG directive `{raw}`: {error}"))
 }
 
-fn background_invocation_id() -> TestResult<Option<i64>> {
-    let Some(raw) = std::env::var_os("XTASK_BG_INVOCATION_ID") else {
+fn invocation_id_from_env() -> TestResult<Option<i64>> {
+    let Some(raw) = std::env::var_os("XTASK_INVOCATION_ID") else {
         return Ok(None);
     };
     let raw = raw
         .into_string()
-        .map_err(|_| eyre!("XTASK_BG_INVOCATION_ID is not valid UTF-8"))?;
+        .map_err(|_| eyre!("XTASK_INVOCATION_ID is not valid UTF-8"))?;
     let invocation_id = raw
         .parse::<i64>()
-        .map_err(|error| eyre!("Invalid XTASK_BG_INVOCATION_ID `{raw}`: {error}"))?;
+        .map_err(|error| eyre!("Invalid XTASK_INVOCATION_ID `{raw}`: {error}"))?;
     Ok(Some(invocation_id))
 }
 
@@ -1088,8 +1088,8 @@ impl Sandbox {
     /// D8: Attach a NATS consumer snapshot to this test's history record.
     ///
     /// Serializes `snapshot` as JSON and stores it against this test's record in the
-    /// xtask history DB. The invocation ID is read from the `XTASK_BG_INVOCATION_ID`
-    /// environment variable set by `xtask test --bg`; no-op if not running under xtask.
+    /// xtask history DB. The invocation ID is read from the `XTASK_INVOCATION_ID`
+    /// environment variable set by `xtask test`; no-op if not running under xtask.
     ///
     /// # Example
     ///
@@ -1098,11 +1098,11 @@ impl Sandbox {
     /// ctx.record_nats_context(&serde_json::to_value(&snap)?);
     /// ```
     pub fn record_nats_context(&self, snapshot: &serde_json::Value) {
-        let inv_id = match background_invocation_id() {
+        let inv_id = match invocation_id_from_env() {
             Ok(Some(inv_id)) => inv_id,
             Ok(None) => return,
             Err(error) => {
-                eprintln!("⚠ Failed to read XTASK_BG_INVOCATION_ID: {error}");
+                eprintln!("⚠ Failed to read XTASK_INVOCATION_ID: {error}");
                 return;
             }
         };

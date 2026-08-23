@@ -9,9 +9,8 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use super::custom::{
     custom_affected_clean, custom_affected_foundation, custom_affected_leaf,
     custom_affected_transitive, custom_affected_workspace, custom_analytics_recommend_runs,
-    custom_bg_job_lifecycle, custom_diagnostic_delta_roundtrip, custom_history_roundtrip,
-    custom_history_stages_populated, custom_jobs_output_while_running, custom_jobs_prune,
-    custom_live_stage_visible_during_run, custom_output_format_matrix,
+    custom_diagnostic_delta_roundtrip, custom_history_roundtrip, custom_history_stages_populated,
+    custom_output_format_matrix,
     custom_preflight_stages_in_history,
 };
 use super::types::{
@@ -279,20 +278,14 @@ pub fn run_declarative_exercise(
 pub fn run_custom_exercise(def: &ExerciseDef, output_dir: &Path, verbose: bool) -> ExerciseOutcome {
     let start = Instant::now();
     let steps = match def.id.as_str() {
-        "t4.bg_job_lifecycle" => custom_bg_job_lifecycle(output_dir, verbose),
         "t4.affected_clean" => custom_affected_clean(output_dir, verbose),
         "t4.affected_leaf" => custom_affected_leaf(output_dir, verbose),
         "t4.affected_foundation" => custom_affected_foundation(output_dir, verbose),
         "t4.affected_workspace" => custom_affected_workspace(output_dir, verbose),
         "t4.history_roundtrip" => custom_history_roundtrip(output_dir, verbose),
         "t4.output_format_matrix" => custom_output_format_matrix(output_dir, verbose),
-        "t4.jobs_prune" => custom_jobs_prune(output_dir, verbose),
         "t4.affected_transitive" => custom_affected_transitive(output_dir, verbose),
-        "t4.jobs_output_while_running" => custom_jobs_output_while_running(output_dir, verbose),
         "t4.preflight_stages_in_history" => custom_preflight_stages_in_history(output_dir, verbose),
-        "t4.live_stage_visible_during_run" => {
-            custom_live_stage_visible_during_run(output_dir, verbose)
-        }
         "t4.diagnostic_delta_roundtrip" => custom_diagnostic_delta_roundtrip(output_dir, verbose),
         "t4.history_stages_populated" => custom_history_stages_populated(output_dir, verbose),
         "t4.analytics_recommend_runs" => custom_analytics_recommend_runs(output_dir, verbose),

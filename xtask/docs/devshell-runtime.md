@@ -50,20 +50,9 @@ The smoke verifies this sequence:
 `xtask infra smoke --dry-run` is a no-service plan and inventory check. It is
 safe to run before deciding whether to start local infra.
 
-Use `xtask infra smoke --allow-running --run-core` when the current checkout is
-already running the dogfood stack and the proof must not disrupt it. That path
-runs the same read-only probes, verifies `xtask run core --dry-run`, observes an
-already-running checkout-local `sinexd` when present, and exits without stopping
-Postgres, NATS, or `sinexd`. If infra is not already running, the command falls
-back to the normal explicit start/managed-core/stop lifecycle.
-
-Use `xtask infra smoke --reset-first --run-core` when the change needs the full
-dev-local runtime proof. That opt-in path starts `xtask run core` as a managed
-background job, waits until `xtask infra status` observes checkout-local
-`sinexd`, cancels the job through `xtask jobs`, verifies `sinexd` disappears
-from infra status, and then stops Postgres/NATS. The default smoke intentionally
-does not run this phase so routine wrapper/check changes do not compile or start
-`sinexd`.
+`xtask infra smoke` covers only the stack phase. Run the declared AgentCTL
+runtime operation separately when a change needs lifecycle proof; AgentCTL owns
+its process group, logs, and cancellation.
 
 ## Why isolated checkout-local services remain the default
 

@@ -1111,7 +1111,7 @@ SQL
 
                   while [ "$#" -gt 0 ]; do
                     case "$1" in
-                      --json|--list-commands|--bg|--fg)
+                      --json|--list-commands)
                         global_args+=("$1")
                         shift
                         ;;
@@ -1203,7 +1203,7 @@ SQL
                   fi
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
-                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot)
+                    ""|-h|--help|--version|--list-commands|history|analytics|snapshot)
                       return 0
                       ;;
                     check)
@@ -1272,7 +1272,7 @@ SQL
                   seen_command=0
                   while [ "$#" -gt 0 ]; do
                     case "$1" in
-                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                      --json|--list-commands|-v|-vv|-vvv)
                         shift
                         ;;
                       --format)
@@ -1330,7 +1330,7 @@ SQL
                   seen_command=0
                   while [ "$#" -gt 0 ]; do
                     case "$1" in
-                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                      --json|--list-commands|-v|-vv|-vvv)
                         shift
                         ;;
                       --format)
@@ -1370,7 +1370,7 @@ SQL
                   seen_command=0
                   while [ "$#" -gt 0 ]; do
                     case "$1" in
-                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                      --json|--list-commands|-v|-vv|-vvv)
                         shift
                         ;;
                       --format)
@@ -1400,29 +1400,6 @@ SQL
                   [ "$subcommand" = "vm" ]
                 }
 
-                _sinex_xtask_is_launcher_only_background_request() {
-                  local arg saw_bg saw_fg
-
-                  if [ -n "''${XTASK_BG_JOB_ID:-}" ] || [ -n "''${XTASK_BG_INVOCATION_ID:-}" ]; then
-                    return 1
-                  fi
-
-                  saw_bg=0
-                  saw_fg=0
-                  for arg in "$@"; do
-                    case "$arg" in
-                      --bg)
-                        saw_bg=1
-                        ;;
-                      --fg)
-                        saw_fg=1
-                        ;;
-                    esac
-                  done
-
-                  [ "$saw_bg" = 1 ] && [ "$saw_fg" != 1 ]
-                }
-
                 _sinex_xtask_changed_strict_has_no_rust_delta() {
                   local command_name seen_command base_ref next_arg merge_base changed_files
 
@@ -1433,7 +1410,7 @@ SQL
                   base_ref=""
                   while [ "$#" -gt 0 ]; do
                     case "$1" in
-                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                      --json|--list-commands|-v|-vv|-vvv)
                         shift
                         ;;
                       --format)
@@ -1486,7 +1463,7 @@ SQL
                 _sinex_xtask_command_name() {
                   while [ "$#" -gt 0 ]; do
                     case "$1" in
-                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                      --json|--list-commands|-v|-vv|-vvv)
                         shift
                         ;;
                       --format)
@@ -1511,7 +1488,7 @@ SQL
                   local command_name
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
-                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot|schema|check|test|build|deps|doctor|infra|run|docs|fix)
+                    ""|-h|--help|--version|--list-commands|history|analytics|snapshot|schema|check|test|build|deps|doctor|infra|run|docs|fix)
                       return 0
                       ;;
                     *)
@@ -1523,9 +1500,6 @@ SQL
                 _sinex_xtask_requires_sqlx_database() {
                   local command_name
                   if _sinex_xtask_is_help_request "$@"; then
-                    return 1
-                  fi
-                  if _sinex_xtask_is_launcher_only_background_request "$@"; then
                     return 1
                   fi
                   if _sinex_xtask_is_dependency_bootstrap_subcommand "$@"; then
@@ -2263,9 +2237,9 @@ SQL
                       if [ -n "$history_line" ]; then
                         printf '  last xtask: %s\n' "$history_line"
                       fi
-                      printf '  inspect: xtask status --summary | xtask history explain --day today --against yesterday\n'
+                      printf '  inspect: xtask infra status | xtask history explain --day today --against yesterday\n'
                       printf '  prod: sinexctl-prod (SINEX_API_URL=:9999) | dev: sinexctl (SINEX_API_URL=:%s)\n' "$SINEX_DEV_GATEWAY_PORT"
-                      printf '  controls: SINEX_AUTO_INFRA=1 starts infra; SINEX_AUTO_STATUS=1 runs full status; SINEX_MOTD=0 hides this\n'
+                      printf '  controls: SINEX_AUTO_INFRA=1 starts infra; SINEX_AUTO_STATUS=1 runs full infra status; SINEX_MOTD=0 hides this\n'
                     } >&2
                   }
 
@@ -2321,7 +2295,7 @@ SQL
                   fi
 
                   if [ "''${SINEX_AUTO_STATUS:-0}" = 1 ]; then
-                    # If infra was just launched, poll for readiness before status
+                    # If infra was just launched, poll for readiness before the status probe
                     # so the summary reflects actual state.
                     if [ "''${_sinex_infra_starting:-0}" -eq 1 ]; then
                       _deadline=$((SECONDS + 8))
@@ -2333,7 +2307,7 @@ SQL
                         sleep 0.3
                       done
                     fi
-                    xtask status --summary || true
+                    xtask infra status || true
                   elif [ "''${SINEX_MOTD:-1}" = 1 ] && [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
                     _sinex_print_motd
                   fi

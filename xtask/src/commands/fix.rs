@@ -52,18 +52,6 @@ impl XtaskCommand for FixCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        if ctx.is_background() {
-            return Ok(CommandResult::failure(
-                crate::output::StructuredError::new(
-                    "XTASK_FIX_BACKGROUND_UNSUPPORTED",
-                    "background mode is unsupported for xtask fix",
-                )
-                .with_suggestion(
-                    "run `xtask fix` in the foreground or start AgentCTL's declared fix_default operation",
-                ),
-            ));
-        }
-
         // Guard: cargo fmt / cargo fix / clippy --fix all invoke cargo and need the target/ lock.
         // Running inside nextest would deadlock. Detect via NEXTEST_RUN_ID and fail immediately.
         if std::env::var("NEXTEST_RUN_ID").is_ok() {

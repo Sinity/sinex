@@ -367,9 +367,6 @@ fn build_context_block(ctx: &CommandContext) -> String {
         format_active_diagnostics(ctx),
     );
 
-    // Active background jobs
-    push_context_field(&mut lines, "active_jobs", format_active_jobs(ctx));
-
     lines.join("\n")
 }
 
@@ -453,42 +450,6 @@ fn format_active_diagnostics(ctx: &CommandContext) -> SnapshotContextField {
             value: "[]".to_string(),
             issue: Some(format!(
                 "history DB unavailable while reading active diagnostics at {}",
-                ctx.history_db_path().display()
-            )),
-        },
-    }
-}
-
-fn format_active_jobs(ctx: &CommandContext) -> SnapshotContextField {
-    match ctx.try_with_history_db_query(crate::history::HistoryDb::get_active_background_jobs) {
-        Some(Ok(active)) => {
-            let items: Vec<String> = active
-                .iter()
-                .map(|j| {
-                    format!(
-                        "{{id:{}, command:\"{}\", status:\"{}\"}}",
-                        j.id,
-                        j.command,
-                        j.job_status.as_str()
-                    )
-                })
-                .collect();
-            SnapshotContextField {
-                value: format!("[{}]", items.join(", ")),
-                issue: None,
-            }
-        }
-        Some(Err(error)) => SnapshotContextField {
-            value: "[]".to_string(),
-            issue: Some(format!(
-                "failed to read active jobs from history DB at {}: {error:#}",
-                ctx.history_db_path().display()
-            )),
-        },
-        None => SnapshotContextField {
-            value: "[]".to_string(),
-            issue: Some(format!(
-                "history DB unavailable while reading active jobs at {}",
                 ctx.history_db_path().display()
             )),
         },

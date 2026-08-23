@@ -464,16 +464,6 @@ impl XtaskCommand for CheckCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        if ctx.is_background() {
-            return Ok(CommandResult::failure(
-                StructuredError::new(
-                    "XTASK_CHECK_BACKGROUND_UNSUPPORTED",
-                    "background mode is unsupported for xtask check",
-                )
-                .with_suggestion("run `xtask check` in the foreground"),
-            ));
-        }
-
         // Resolve --full before anything else
         let mut this = self.clone();
         this.resolve_flags();
@@ -737,7 +727,7 @@ fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Opt
 ///
 /// This intentionally does not spawn raw cargo. Compilation prefetch must be
 /// implemented by xtask's planner/scheduler so it inherits target-dir, history,
-/// supersession, and background-job semantics.
+/// supersession, and invocation-history semantics.
 fn trigger_compilation_prefetch(ctx: &crate::command::CommandContext) {
     let probability = ctx
         .with_history_db(|db| db.get_transition_probability("check", "test", 5, 20))

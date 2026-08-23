@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 
 impl HistoryDb {
     pub fn record_system_metrics(
@@ -115,16 +116,6 @@ impl HistoryDb {
         &self,
         command_filter: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<ResourceUsage>> {
-        self.get_resource_usage_with_zombies(command_filter, limit, false)
-    }
-
-    /// Get resource usage (CPU/memory) for recent invocations, optionally including zombie cancellations.
-    pub fn get_resource_usage_with_zombies(
-        &self,
-        command_filter: Option<&str>,
-        limit: usize,
-        include_zombies: bool,
     ) -> Result<Vec<ResourceUsage>> {
         let columns = self.invocation_columns()?;
         let process_cpu_expr = if columns.contains("process_cpu_usage_avg") {
@@ -344,10 +335,6 @@ impl HistoryDb {
                      OR cpu_usage_avg IS NOT NULL
                      OR memory_usage_max_mb IS NOT NULL)",
         ));
-        if !include_zombies {
-            query.push_str(" AND ");
-            query.push_str(&non_zombie_cancel_filter(""));
-        }
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut param_idx = 1usize;
 

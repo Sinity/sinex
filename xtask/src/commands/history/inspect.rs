@@ -125,10 +125,9 @@ pub(super) fn execute_timeline(
     command: Option<&str>,
     days: u32,
     limit: usize,
-    include_zombies: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let entries = db.get_invocation_timeline_with_zombies(command, days, limit, include_zombies)?;
+    let entries = db.get_invocation_timeline(command, days, limit)?;
 
     if ctx.is_human() {
         if entries.is_empty() {
@@ -286,10 +285,9 @@ pub(super) fn execute_sessions(
     db: &HistoryDb,
     limit: usize,
     gap_minutes: u32,
-    include_zombies: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let sessions = db.get_working_sessions_with_zombies(limit, gap_minutes, include_zombies)?;
+    let sessions = db.get_working_sessions(limit, gap_minutes)?;
 
     if ctx.is_human() {
         if sessions.is_empty() {
@@ -353,13 +351,7 @@ pub(super) fn execute_invocation(
     let inv_full = db
         .get_invocation_full(inv_id)?
         .ok_or_else(|| color_eyre::eyre::eyre!("Invocation #{inv_id} not found"))?;
-    let resource_usage = match db.get_resource_usage_for_invocation(inv_id)? {
-        Some(usage) => Some(usage),
-        None if matches!(inv_full.invocation.status, InvocationStatus::Running) => db
-            .get_running_job_pid_for_invocation(inv_id)?
-            .and_then(|pid| live_resource_usage_for_invocation(&inv_full.invocation, pid)),
-        None => None,
-    };
+    let resource_usage = db.get_resource_usage_for_invocation(inv_id)?;
 
     if ctx.is_human() {
         let inv = &inv_full.invocation;
@@ -437,113 +429,6 @@ pub(super) fn execute_invocation(
     Ok(CommandResult::success()
         .with_message(format!("Invocation #{inv_id}"))
         .with_duration(ctx.elapsed()))
-}
-
-fn live_resource_usage_for_invocation(
-    invocation: &crate::history::Invocation,
-    pid: u32,
-) -> Option<ResourceUsage> {
-    let process_metrics =
-        crate::process::probe_process_tree_metrics(pid, Duration::from_millis(120));
-    let shared_build_metrics =
-        crate::process::probe_shared_build_metrics(Duration::from_millis(120));
-
-    match (process_metrics, shared_build_metrics) {
-        (Some(metrics), shared_build_metrics) => Some(ResourceUsage {
-            command: invocation.command.clone(),
-            status: invocation.status.as_str().to_string(),
-            started_at: invocation.started_at.to_string(),
-            duration_secs: Some(
-                (time::OffsetDateTime::now_utc() - invocation.started_at).as_seconds_f64(),
-            ),
-            process_cpu_usage_avg: metrics.cpu_usage_avg,
-            process_memory_usage_max_mb: metrics.memory_usage_max_mb,
-            root_process_cpu_usage_avg: metrics.root_cpu_usage_avg,
-            root_process_memory_usage_max_mb: metrics.root_memory_usage_max_mb,
-            shared_nix_daemon_cpu_usage_avg: shared_build_metrics
-                .as_ref()
-                .and_then(|metrics| metrics.shared_nix_daemon_cpu_usage_avg),
-            shared_nix_daemon_memory_usage_max_mb: shared_build_metrics
-                .as_ref()
-                .and_then(|metrics| metrics.shared_nix_daemon_memory_usage_max_mb),
-            shared_nix_build_slice_cpu_usage_avg: shared_build_metrics
-                .as_ref()
-                .and_then(|metrics| metrics.shared_nix_build_slice_cpu_usage_avg),
-            shared_nix_build_slice_memory_usage_max_mb: shared_build_metrics
-                .as_ref()
-                .and_then(|metrics| metrics.shared_nix_build_slice_memory_usage_max_mb),
-            shared_background_slice_cpu_usage_avg: shared_build_metrics
-                .as_ref()
-                .and_then(|metrics| metrics.shared_background_slice_cpu_usage_avg),
-            shared_background_slice_memory_usage_max_mb: shared_build_metrics
-                .as_ref()
-                .and_then(|metrics| metrics.shared_background_slice_memory_usage_max_mb),
-            process_count_max: metrics.process_count_max,
-            sample_count: Some(metrics.sample_count),
-            host_cpu_usage_avg: None,
-            host_memory_usage_max_mb: None,
-            host_cpu_pressure_some_avg10_max: None,
-            host_io_pressure_some_avg10_max: None,
-            host_io_pressure_full_avg10_max: None,
-            host_memory_pressure_some_avg10_max: None,
-            host_memory_pressure_full_avg10_max: None,
-            host_block_read_mib_delta: None,
-            host_block_write_mib_delta: None,
-            host_block_read_iops_avg: None,
-            host_block_write_iops_avg: None,
-            host_block_busiest_device: None,
-            host_block_busiest_device_total_mib_delta: None,
-            host_block_busiest_device_read_iops_avg: None,
-            host_block_busiest_device_write_iops_avg: None,
-            host_block_busiest_device_weighted_io_ms_per_s: None,
-            shm_free_min_mb: None,
-            shm_used_max_mb: None,
-        }),
-        (None, Some(shared_build_metrics)) => Some(ResourceUsage {
-            command: invocation.command.clone(),
-            status: invocation.status.as_str().to_string(),
-            started_at: invocation.started_at.to_string(),
-            duration_secs: Some(
-                (time::OffsetDateTime::now_utc() - invocation.started_at).as_seconds_f64(),
-            ),
-            process_cpu_usage_avg: None,
-            process_memory_usage_max_mb: None,
-            root_process_cpu_usage_avg: None,
-            root_process_memory_usage_max_mb: None,
-            shared_nix_daemon_cpu_usage_avg: shared_build_metrics.shared_nix_daemon_cpu_usage_avg,
-            shared_nix_daemon_memory_usage_max_mb: shared_build_metrics
-                .shared_nix_daemon_memory_usage_max_mb,
-            shared_nix_build_slice_cpu_usage_avg: shared_build_metrics
-                .shared_nix_build_slice_cpu_usage_avg,
-            shared_nix_build_slice_memory_usage_max_mb: shared_build_metrics
-                .shared_nix_build_slice_memory_usage_max_mb,
-            shared_background_slice_cpu_usage_avg: shared_build_metrics
-                .shared_background_slice_cpu_usage_avg,
-            shared_background_slice_memory_usage_max_mb: shared_build_metrics
-                .shared_background_slice_memory_usage_max_mb,
-            process_count_max: None,
-            sample_count: None,
-            host_cpu_usage_avg: None,
-            host_memory_usage_max_mb: None,
-            host_cpu_pressure_some_avg10_max: None,
-            host_io_pressure_some_avg10_max: None,
-            host_io_pressure_full_avg10_max: None,
-            host_memory_pressure_some_avg10_max: None,
-            host_memory_pressure_full_avg10_max: None,
-            host_block_read_mib_delta: None,
-            host_block_write_mib_delta: None,
-            host_block_read_iops_avg: None,
-            host_block_write_iops_avg: None,
-            host_block_busiest_device: None,
-            host_block_busiest_device_total_mib_delta: None,
-            host_block_busiest_device_read_iops_avg: None,
-            host_block_busiest_device_write_iops_avg: None,
-            host_block_busiest_device_weighted_io_ms_per_s: None,
-            shm_free_min_mb: None,
-            shm_used_max_mb: None,
-        }),
-        (None, None) => None,
-    }
 }
 
 fn format_resource_usage(usage: &ResourceUsage) -> String {

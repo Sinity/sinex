@@ -29,7 +29,6 @@ pub(super) struct ListFlags {
     pub(super) with_diagnostics: bool,
     pub(super) with_stages: bool,
     pub(super) with_tests: bool,
-    pub(super) include_zombies: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -49,7 +48,6 @@ pub(super) fn execute_list(
         with_diagnostics,
         with_stages,
         with_tests,
-        include_zombies,
     } = flags;
     let mut warnings = Vec::new();
 
@@ -103,10 +101,6 @@ pub(super) fn execute_list(
         "status" => query.sort_status(),
         _ => query.sort_started(),
     };
-    if include_zombies {
-        query = query.include_zombies();
-    }
-
     let invocations = query.run(db)?;
 
     if ctx.is_human() {

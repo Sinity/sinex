@@ -101,28 +101,6 @@ pub fn configure_managed_child_tokio(command: &mut tokio::process::Command) {
 pub fn configure_managed_child_tokio(_command: &mut tokio::process::Command) {}
 
 #[cfg(target_os = "linux")]
-pub fn configure_background_job_child_tokio(command: &mut tokio::process::Command) {
-    let scheduling = ChildScheduling::from_env();
-
-    // SAFETY: background xtask jobs should survive the short-lived launcher
-    // process, so they intentionally do NOT inherit PR_SET_PDEATHSIG. They do
-    // still become their own process-group leader so the coordinator/watchdog
-    // can terminate the entire job tree coherently.
-    unsafe {
-        command.pre_exec(move || {
-            if libc::setpgid(0, 0) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            scheduling.apply();
-            Ok(())
-        });
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn configure_background_job_child_tokio(_command: &mut tokio::process::Command) {}
-
-#[cfg(target_os = "linux")]
 pub fn configure_persistent_service_child_std(command: &mut Command) {
     use std::os::unix::process::CommandExt;
 
@@ -331,28 +309,6 @@ pub fn install_registered_process_group_signal_cleanup() -> Result<()> {
 #[cfg(not(unix))]
 pub fn install_registered_process_group_signal_cleanup() -> Result<()> {
     Ok(())
-}
-
-/// Returns true if the process at `pid` still looks like a cargo/xtask job.
-///
-/// Reads `/proc/{pid}/cmdline` and checks for "cargo" or "xtask" substrings.
-/// If `/proc` is unavailable (non-Linux, restricted, or the process exited
-/// between caller's check and this read), conservatively returns `true` so
-/// callers don't skip cleanup actions they intended to take.
-///
-/// Used by the job-manager (foreground sweep) and the detached reaper
-/// (grandchild fallback). See `commands/reap.rs` and `jobs/mod.rs`.
-#[must_use]
-pub fn is_xtask_pid(pid: u32) -> bool {
-    let cmdline_path = format!("/proc/{pid}/cmdline");
-    match std::fs::read(&cmdline_path) {
-        Ok(bytes) => {
-            // /proc/PID/cmdline is NUL-delimited.
-            let cmdline = String::from_utf8_lossy(&bytes);
-            cmdline.contains("cargo") || cmdline.contains("xtask")
-        }
-        Err(_) => true,
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -2615,8 +2571,7 @@ impl ProcessBuilder {
 
     /// Spawn the command and return the `std::process::Child` handle.
     ///
-    /// This is useful for long-running processes or when you need manual control
-    /// over the process lifecycle (e.g., background jobs).
+    /// This is useful when a foreground command needs explicit child supervision.
     pub fn spawn(self) -> Result<std::process::Child> {
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);

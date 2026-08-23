@@ -579,7 +579,7 @@ pub(super) fn execute_view(
                 .with_message(format!("{} regressions", regressions.len()))
                 .with_duration(ctx.elapsed()))
         }
-        "workspace-timeline" => execute_timeline(db, None, 7, 20, false, ctx),
+        "workspace-timeline" => execute_timeline(db, None, 7, 20, ctx),
         _ => {
             let names: Vec<&str> = views.iter().map(|v| v.name).collect();
             Err(color_eyre::eyre::eyre!(

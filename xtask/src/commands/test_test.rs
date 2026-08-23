@@ -809,48 +809,6 @@ async fn test_nextest_invocation_args_include_reuse_and_impact_flags()
     Ok(())
 }
 
-#[sinex_test]
-async fn background_test_is_rejected_before_planning() -> ::xtask::sandbox::TestResult<()> {
-    let ctx = CommandContext::new(
-        OutputWriter::new(OutputFormat::Silent),
-        true,
-        None,
-        "test",
-    );
-    let result = TestCommand::default().execute(&ctx).await?;
-
-    assert!(result.is_failure(), "background test must be rejected: {result:?}");
-    assert_eq!(result.errors[0].code, "XTASK_TEST_BACKGROUND_UNSUPPORTED");
-    Ok(())
-}
-
-#[sinex_test]
-async fn default_background_vm_points_to_agentctl_before_planning()
--> ::xtask::sandbox::TestResult<()> {
-    let command = TestCommand {
-        subcommand: Some(TestSubcommand::Vm(VmArgs {
-            category: None,
-            timeout: crate::commands::vm::DEFAULT_TIMEOUT_SECS,
-            keep_failed: false,
-            list: false,
-            validate: false,
-            args: Vec::new(),
-        })),
-        ..Default::default()
-    };
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), true, None, "test");
-    let result = command.execute(&ctx).await?;
-
-    assert!(result.is_failure());
-    assert_eq!(result.errors[0].code, "XTASK_TEST_BACKGROUND_UNSUPPORTED");
-    assert!(
-        result.errors[0]
-            .suggestion
-            .as_deref()
-            .is_some_and(|suggestion| suggestion.contains("vm_smoke"))
-    );
-    Ok(())
-}
 
 #[sinex_test]
 async fn foreground_test_keeps_exact_proof_reuse() -> ::xtask::sandbox::TestResult<()> {

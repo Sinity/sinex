@@ -54,56 +54,6 @@ impl InvocationStatus {
     }
 }
 
-/// Process lifecycle status for background jobs (separate from invocation success/failure).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JobLifecycleStatus {
-    Running,
-    Completed,
-    Failed,
-    Orphaned,
-    Killed,
-    TimedOut,
-}
-
-impl JobLifecycleStatus {
-    pub(crate) fn as_str(&self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Orphaned => "orphaned",
-            Self::Killed => "killed",
-            Self::TimedOut => "timed_out",
-        }
-    }
-
-    pub(crate) fn try_from_str(s: &str) -> Result<Self> {
-        match s {
-            "running" => Ok(Self::Running),
-            "completed" => Ok(Self::Completed),
-            "failed" => Ok(Self::Failed),
-            "orphaned" => Ok(Self::Orphaned),
-            "killed" => Ok(Self::Killed),
-            "timed_out" => Ok(Self::TimedOut),
-            _ => Err(color_eyre::eyre::eyre!("invalid job lifecycle status: {s}")),
-        }
-    }
-
-    pub(crate) fn is_terminal(&self) -> bool {
-        !matches!(self, Self::Running)
-    }
-
-    #[must_use]
-    pub(crate) fn from_invocation_status(status: InvocationStatus) -> Self {
-        match status {
-            InvocationStatus::Running => Self::Running,
-            InvocationStatus::Success => Self::Completed,
-            InvocationStatus::Failed => Self::Failed,
-            InvocationStatus::Cancelled => Self::Killed,
-        }
-    }
-}
 
 /// A recorded command invocation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -264,24 +214,6 @@ pub struct StagePressure {
     pub cpu_some_stall_us: Option<i64>,
     /// Delta of /proc/pressure memory.some `total=` stall μs over the stage.
     pub memory_some_stall_us: Option<i64>,
-}
-
-/// A background job record from the history database.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackgroundJob {
-    /// Background job ID (`background_jobs.id`) — the process handle.
-    pub id: i64,
-    /// Invocation ID (`invocations.id`) — the durable execution record.
-    pub invocation_id: Option<i64>,
-    pub command: String,
-    pub args: Vec<String>,
-    pub started_at: OffsetDateTime,
-    pub pid: Option<u32>,
-    pub stdout_path: Option<String>,
-    pub stderr_path: Option<String>,
-    /// Process lifecycle status (running/completed/failed/orphaned/killed).
-    pub job_status: JobLifecycleStatus,
-    pub exit_code: Option<i32>,
 }
 
 /// Resource usage snapshot for a single invocation.
