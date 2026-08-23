@@ -123,7 +123,6 @@ struct CompareInvocationRow {
 struct ResourceWindowReport {
     window: String,
     commands: Vec<String>,
-    include_background: bool,
     success_only: bool,
     invocation_count: usize,
     rows: Vec<ResourceCommandSummary>,
@@ -138,7 +137,6 @@ struct ResourceCommandSummary {
     invocation_count: usize,
     failed_count: usize,
     cancelled_count: usize,
-    background_count: usize,
     total_duration_hours: f64,
     avg_duration_secs: Option<f64>,
     max_duration_secs: Option<f64>,
@@ -189,7 +187,6 @@ struct ResourceInvocationRow {
     status: String,
     started_at: String,
     duration_secs: f64,
-    is_background: bool,
     io_full: Option<f64>,
     memory_full: Option<f64>,
     process_count_max: Option<i64>,
@@ -210,7 +207,6 @@ struct InvocationOverlapReport {
     target: OverlapInvocation,
     shared_resources: SharedResourceSummary,
     overlapping_invocations: Vec<OverlapInvocation>,
-    overlapping_background_jobs: Vec<OverlapBackgroundJob>,
     evidence_limits: Vec<String>,
 }
 
@@ -224,8 +220,6 @@ struct SharedResourceSummary {
     shared_nix_daemon_memory_max_mb: Option<f64>,
     shared_nix_build_slice_cpu_avg: Option<f64>,
     shared_nix_build_slice_memory_max_mb: Option<f64>,
-    shared_background_slice_cpu_avg: Option<f64>,
-    shared_background_slice_memory_max_mb: Option<f64>,
     process_count_max: Option<i64>,
     resource_sample_count: Option<i64>,
     host_cpu_pressure_some_avg10_max: Option<f64>,
@@ -252,21 +246,6 @@ struct OverlapInvocation {
     started_at: String,
     finished_at: Option<String>,
     duration_secs: Option<f64>,
-    overlap_secs: Option<f64>,
-    overlap_pct_of_target: Option<f64>,
-    is_background: bool,
-    args_json: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct OverlapBackgroundJob {
-    id: i64,
-    invocation_id: Option<i64>,
-    command: String,
-    job_status: String,
-    pid: Option<i64>,
-    started_at: String,
-    finished_at: Option<String>,
     overlap_secs: Option<f64>,
     overlap_pct_of_target: Option<f64>,
     args_json: Option<String>,
@@ -297,18 +276,13 @@ pub(super) fn execute_overlap(
     let mut overlapping_invocations =
         load_overlapping_invocations(db, &target, target_start, target_end, target_duration_secs)?;
     overlapping_invocations.truncate(limit);
-    let mut overlapping_background_jobs =
-        load_overlapping_background_jobs(db, target_start, target_end, target_duration_secs)?;
-    overlapping_background_jobs.truncate(limit);
-
     let report = InvocationOverlapReport {
         shared_resources: load_shared_resource_summary(db, invocation_id)?,
         target,
         overlapping_invocations,
-        overlapping_background_jobs,
         evidence_limits: vec![
-            "History overlap is limited to xtask invocations and background jobs recorded in this checkout history database.".to_string(),
-            "Shared nix/build/background slice columns are CPU and memory summaries, not per-process I/O byte attribution.".to_string(),
+            "History overlap is limited to xtask invocations recorded in this checkout history database.".to_string(),
+            "Shared nix/build slice columns are CPU and memory summaries, not per-process I/O byte attribution.".to_string(),
             "Host pressure fields are PSI stall percentages observed during the invocation; they do not identify a causal process or I/O pattern by themselves.".to_string(),
             "Host block fields are aggregate whole-device deltas sampled while this xtask invocation ran; they quantify device load shape but do not partition ownership across unrelated services.".to_string(),
         ],
@@ -454,7 +428,7 @@ pub(super) fn execute_compare_days(
         rows: comparisons,
         slowest,
         evidence_limits: vec![
-            "Compare-days averages and medians exclude cancelled stale/zombie rows, but tail durations still require end-marker scrutiny.".to_string(),
+            "Compare-days averages and medians require end-marker scrutiny for cancelled or incomplete rows.".to_string(),
             "MAX and slowest rows are outlier triage hints, not proof of actual runtime; missing or late finish registration can inflate them.".to_string(),
             "Use median deltas and recorded stage totals as the primary day-over-day signal.".to_string(),
         ],
@@ -905,7 +879,6 @@ pub(super) fn execute_resources(
     days: u32,
     commands: &[String],
     limit: usize,
-    include_background: bool,
     success_only: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
@@ -938,11 +911,6 @@ pub(super) fn execute_resources(
             .join(", ");
         format!("AND command IN ({command_list})")
     };
-    let background_filter = if include_background {
-        String::new()
-    } else {
-        "AND NOT COALESCE(is_background, 0)".to_string()
-    };
     let status_filter = if success_only {
         "AND status = 'success'"
     } else {
@@ -952,7 +920,6 @@ pub(super) fn execute_resources(
     let rows_sql = format!(
         r"
         SELECT id, command, status, started_at, duration_secs,
-               COALESCE(is_background, 0) AS is_background,
                host_io_pressure_full_avg10_max AS io_full,
                host_memory_pressure_full_avg10_max AS memory_full,
                process_count_max,
@@ -969,12 +936,7 @@ pub(super) fn execute_resources(
         FROM invocations
         WHERE {window_filter}
           AND duration_secs IS NOT NULL
-          AND NOT COALESCE(
-              cancel_reason = 'stale_pid' AND cancelled_by = 'open_time_sweep',
-              0
-          )
           {status_filter}
-          {background_filter}
           {command_filter}
         ORDER BY started_at ASC
         "
@@ -997,7 +959,6 @@ pub(super) fn execute_resources(
     let report = ResourceWindowReport {
         window: window_label,
         commands: commands_for_report,
-        include_background,
         success_only,
         invocation_count: rows.len(),
         rows: summaries,
@@ -1065,8 +1026,7 @@ fn validate_history_day(value: &str, flag: &'static str) -> Result<()> {
 fn load_overlap_target(db: &HistoryDb, invocation_id: i64) -> Result<OverlapInvocation> {
     let sql = format!(
         r"
-        SELECT id, command, status, started_at, finished_at, duration_secs,
-               is_background, args_json
+        SELECT id, command, status, started_at, finished_at, duration_secs, args_json
         FROM invocations
         WHERE id = {}
         LIMIT 1
@@ -1095,8 +1055,6 @@ fn load_shared_resource_summary(
                shared_nix_daemon_memory_usage_max_mb,
                shared_nix_build_slice_cpu_usage_avg,
                shared_nix_build_slice_memory_usage_max_mb,
-               shared_background_slice_cpu_usage_avg,
-               shared_background_slice_memory_usage_max_mb,
                process_count_max,
                resource_sample_count,
                host_cpu_pressure_some_avg10_max,
@@ -1142,14 +1100,6 @@ fn load_shared_resource_summary(
         shared_nix_build_slice_memory_max_mb: json_optional_f64(
             &row,
             "shared_nix_build_slice_memory_usage_max_mb",
-        ),
-        shared_background_slice_cpu_avg: json_optional_f64(
-            &row,
-            "shared_background_slice_cpu_usage_avg",
-        ),
-        shared_background_slice_memory_max_mb: json_optional_f64(
-            &row,
-            "shared_background_slice_memory_usage_max_mb",
         ),
         process_count_max: json_optional_i64(&row, "process_count_max"),
         resource_sample_count: json_optional_i64(&row, "resource_sample_count"),
@@ -1207,8 +1157,7 @@ fn load_overlapping_invocations(
     let now_sql = sql_string_literal(&time::OffsetDateTime::now_utc().to_string());
     let sql = format!(
         r"
-        SELECT id, command, status, started_at, finished_at, duration_secs,
-               is_background, args_json
+        SELECT id, command, status, started_at, finished_at, duration_secs, args_json
         FROM invocations
         WHERE id != {}
           AND started_at < {target_end_sql}
@@ -1245,59 +1194,6 @@ fn load_overlapping_invocations(
     Ok(rows)
 }
 
-fn load_overlapping_background_jobs(
-    db: &HistoryDb,
-    target_start: time::OffsetDateTime,
-    target_end: time::OffsetDateTime,
-    target_duration_secs: f64,
-) -> Result<Vec<OverlapBackgroundJob>> {
-    let target_start_sql = sql_string_literal(&target_start.to_string());
-    let target_end_sql = sql_string_literal(&target_end.to_string());
-    let now_sql = sql_string_literal(&time::OffsetDateTime::now_utc().to_string());
-    let sql = format!(
-        r"
-        SELECT id, invocation_id, command, job_status, pid, started_at, finished_at, args_json
-        FROM background_jobs
-        WHERE started_at < {target_end_sql}
-          AND COALESCE(finished_at, {now_sql}) > {target_start_sql}
-        ORDER BY started_at ASC, id ASC
-        "
-    );
-
-    let mut rows = db
-        .run_readonly_query(&sql)?
-        .into_iter()
-        .map(|row| {
-            let start = parse_history_time(&json_string(&row, "started_at")?, "started_at")?;
-            let end = match row.get("finished_at").and_then(serde_json::Value::as_str) {
-                Some(finished_at) => parse_history_time(finished_at, "finished_at")?,
-                None => time::OffsetDateTime::now_utc(),
-            };
-            let overlap_secs = interval_overlap_secs(target_start, target_end, start, end);
-            Ok(OverlapBackgroundJob {
-                id: json_i64(&row, "id")?,
-                invocation_id: json_optional_i64(&row, "invocation_id"),
-                command: json_string(&row, "command")?,
-                job_status: json_string(&row, "job_status")?,
-                pid: json_optional_i64(&row, "pid"),
-                started_at: json_string(&row, "started_at")?,
-                finished_at: json_optional_string(&row, "finished_at"),
-                overlap_secs: Some(overlap_secs),
-                overlap_pct_of_target: overlap_pct(overlap_secs, target_duration_secs),
-                args_json: json_optional_string(&row, "args_json"),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    rows.sort_by(|left, right| {
-        right
-            .overlap_secs
-            .unwrap_or(0.0)
-            .partial_cmp(&left.overlap_secs.unwrap_or(0.0))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    Ok(rows)
-}
-
 fn overlap_invocation_from_json(
     row: &serde_json::Map<String, serde_json::Value>,
     overlap_secs: Option<f64>,
@@ -1312,10 +1208,6 @@ fn overlap_invocation_from_json(
         duration_secs: json_optional_f64(row, "duration_secs"),
         overlap_secs,
         overlap_pct_of_target,
-        is_background: row
-            .get("is_background")
-            .and_then(serde_json::Value::as_i64)
-            .is_some_and(|value| value != 0),
         args_json: json_optional_string(row, "args_json"),
     })
 }
@@ -1377,12 +1269,6 @@ fn print_overlap_report(report: &InvocationOverlapReport) {
         &mut resources,
         "shared nix-build slice cpu avg",
         report.shared_resources.shared_nix_build_slice_cpu_avg,
-        "%",
-    );
-    push_optional_metric(
-        &mut resources,
-        "shared background slice cpu avg",
-        report.shared_resources.shared_background_slice_cpu_avg,
         "%",
     );
     push_optional_metric(
@@ -1474,7 +1360,6 @@ fn print_overlap_report(report: &InvocationOverlapReport) {
             "STATUS",
             "OVERLAP",
             "TARGET %",
-            "BACKGROUND",
             "ARGS",
         ]);
         for row in &report.overlapping_invocations {
@@ -1484,32 +1369,7 @@ fn print_overlap_report(report: &InvocationOverlapReport) {
                 row.status.clone(),
                 format_optional_secs(row.overlap_secs),
                 format_optional_pct(row.overlap_pct_of_target),
-                row.is_background.to_string(),
                 truncate_middle(row.args_json.as_deref().unwrap_or("[]"), 48),
-            ]);
-        }
-        let mut table = builder.build();
-        table.with(Style::rounded());
-        println!("{table}");
-    }
-
-    println!("\n{}", style("Overlapping Background Jobs:").bold());
-    if report.overlapping_background_jobs.is_empty() {
-        println!("  none recorded");
-    } else {
-        let mut builder = Builder::new();
-        builder.push_record(["JOB", "INV", "CMD", "STATUS", "PID", "OVERLAP", "TARGET %"]);
-        for row in &report.overlapping_background_jobs {
-            builder.push_record([
-                row.id.to_string(),
-                row.invocation_id
-                    .map_or_else(|| "-".to_string(), |id| id.to_string()),
-                row.command.clone(),
-                row.job_status.clone(),
-                row.pid
-                    .map_or_else(|| "-".to_string(), |pid| pid.to_string()),
-                format_optional_secs(row.overlap_secs),
-                format_optional_pct(row.overlap_pct_of_target),
             ]);
         }
         let mut table = builder.build();
@@ -1748,10 +1608,6 @@ fn resource_row_from_json(
             .get("duration_secs")
             .and_then(serde_json::Value::as_f64)
             .ok_or_else(|| color_eyre::eyre::eyre!("history resource row missing duration_secs"))?,
-        is_background: row
-            .get("is_background")
-            .and_then(serde_json::Value::as_i64)
-            .is_some_and(|value| value != 0),
         io_full: json_optional_f64(row, "io_full"),
         memory_full: json_optional_f64(row, "memory_full"),
         process_count_max: json_optional_i64(row, "process_count_max"),
@@ -1828,7 +1684,6 @@ fn summarize_resource_command(
         invocation_count: rows.len(),
         failed_count: rows.iter().filter(|row| row.status == "failed").count(),
         cancelled_count: rows.iter().filter(|row| row.status == "cancelled").count(),
-        background_count: rows.iter().filter(|row| row.is_background).count(),
         total_duration_hours: secs_to_hours(durations.iter().sum::<f64>()),
         avg_duration_secs: average(durations.iter().copied()),
         max_duration_secs: max_option(durations.iter().copied()),
@@ -1940,13 +1795,8 @@ fn slowest_resource_invocations(
 
 fn print_resources_report(report: &ResourceWindowReport) {
     println!(
-        "Recorded xtask resources for {}{}{}:",
+        "Recorded xtask resources for {}{}:",
         report.window,
-        if report.include_background {
-            " (foreground + background)"
-        } else {
-            " (foreground only)"
-        },
         if report.success_only {
             ", success only"
         } else {

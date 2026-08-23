@@ -64,52 +64,52 @@ async fn load_env_filter_rejects_non_utf8_rust_log() -> ::xtask::sandbox::TestRe
 }
 
 #[sinex_test]
-async fn background_invocation_id_defaults_to_none_when_missing() -> ::xtask::sandbox::TestResult<()>
+async fn invocation_id_from_env_defaults_to_none_when_missing() -> ::xtask::sandbox::TestResult<()>
 {
-    let _guard = EnvGuard::set("XTASK_BG_INVOCATION_ID", None);
+    let _guard = EnvGuard::set("XTASK_INVOCATION_ID", None);
 
     assert_eq!(
-        background_invocation_id().expect("missing invocation ID should be allowed"),
+        invocation_id_from_env().expect("missing invocation ID should be allowed"),
         None
     );
     Ok(())
 }
 
 #[sinex_test]
-async fn background_invocation_id_rejects_invalid_integer() -> ::xtask::sandbox::TestResult<()> {
+async fn invocation_id_from_env_rejects_invalid_integer() -> ::xtask::sandbox::TestResult<()> {
     let _guard = EnvGuard::set(
-        "XTASK_BG_INVOCATION_ID",
+        "XTASK_INVOCATION_ID",
         Some(std::ffi::OsString::from("not-a-number")),
     );
 
     let error =
-        background_invocation_id().expect_err("invalid invocation ID should not be ignored");
+        invocation_id_from_env().expect_err("invalid invocation ID should not be ignored");
 
     assert!(
         error
             .to_string()
-            .contains("Invalid XTASK_BG_INVOCATION_ID `not-a-number`")
+            .contains("Invalid XTASK_INVOCATION_ID `not-a-number`")
     );
     Ok(())
 }
 
 #[cfg(unix)]
 #[sinex_test]
-async fn background_invocation_id_rejects_non_utf8_value() -> ::xtask::sandbox::TestResult<()> {
+async fn invocation_id_from_env_rejects_non_utf8_value() -> ::xtask::sandbox::TestResult<()> {
     use std::os::unix::ffi::OsStringExt;
 
     let _guard = EnvGuard::set(
-        "XTASK_BG_INVOCATION_ID",
+        "XTASK_INVOCATION_ID",
         Some(std::ffi::OsString::from_vec(vec![0xff])),
     );
 
     let error =
-        background_invocation_id().expect_err("non-utf8 invocation ID should not be ignored");
+        invocation_id_from_env().expect_err("non-utf8 invocation ID should not be ignored");
 
     assert!(
         error
             .to_string()
-            .contains("XTASK_BG_INVOCATION_ID is not valid UTF-8")
+            .contains("XTASK_INVOCATION_ID is not valid UTF-8")
     );
     Ok(())
 }

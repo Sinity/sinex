@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 use std::fs;
 #[cfg(test)]
 use std::path::Path;
-use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
 use color_eyre::eyre::WrapErr;
@@ -87,11 +86,11 @@ pub enum HistorySubcommand {
         #[arg(long, default_value = "0")]
         offset: usize,
         /// Only show invocations with IDs greater than this selector
-        /// (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)
+        /// (`latest`, `previous`, `current`, numeric, or `inv:<id>`)
         #[arg(long)]
         after_invocation: Option<String>,
         /// Only show invocations with IDs less than this selector
-        /// (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)
+        /// (`latest`, `previous`, `current`, numeric, or `inv:<id>`)
         #[arg(long)]
         before_invocation: Option<String>,
         /// Sort field: started (default), duration, status
@@ -109,9 +108,6 @@ pub enum HistorySubcommand {
         /// Include test pass/fail counts for each invocation
         #[arg(long)]
         with_tests: bool,
-        /// Include watchdog/stale-pid cancellation rows normally hidden as zombie noise
-        #[arg(long)]
-        include_zombies: bool,
     },
     /// Show statistics for a command (or all commands / all packages)
     Stats {
@@ -198,23 +194,19 @@ pub enum HistorySubcommand {
         /// Number of slowest/high-pressure invocations to include.
         #[arg(long, default_value = "10")]
         limit: usize,
-        /// Include background invocations in addition to foreground work.
-        #[arg(long)]
-        include_background: bool,
         /// Restrict to successful invocations only.
         #[arg(long)]
         success_only: bool,
     },
     /// Explain what overlapped an invocation and what shared resources were recorded.
     Overlap {
-        /// Invocation selector: `latest`, `previous`, `current`, invocation ID,
-        /// `inv:<id>`, or `job:<id>`.
+        /// Invocation selector: `latest`, `previous`, `current`, `inv:<id>`, or an invocation ID.
         #[arg(default_value = "latest")]
         invocation: String,
         /// Restrict selector resolution to this command.
         #[arg(long)]
         command: Option<String>,
-        /// Number of overlapping invocations/background jobs to include.
+        /// Number of overlapping invocations to include.
         #[arg(long, default_value = "20")]
         limit: usize,
     },
@@ -339,9 +331,6 @@ pub enum HistorySubcommand {
         /// Maximum number of entries (default: 20)
         #[arg(long, default_value = "20")]
         limit: usize,
-        /// Include watchdog/stale-pid cancellation rows normally hidden as zombie noise
-        #[arg(long)]
-        include_zombies: bool,
     },
     /// Compare two invocations: diagnostic delta, duration delta, stage delta (I5)
     Diff {
@@ -363,15 +352,10 @@ pub enum HistorySubcommand {
         /// Inactivity gap in minutes that separates sessions (default: 30)
         #[arg(long, default_value = "30")]
         gap_minutes: u32,
-        /// Include watchdog/stale-pid cancellation rows normally hidden as zombie noise
-        #[arg(long)]
-        include_zombies: bool,
     },
     /// Show complete details for a single invocation (I7)
     Invocation {
-        /// Invocation selector: `latest`, `previous`, `current`, invocation ID,
-        /// `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs
-        /// first; use `job:<id>` for unambiguous background-job lookup.
+        /// Invocation selector: `latest`, `previous`, `current`, `inv:<id>`, or an invocation ID.
         id: String,
         /// Include full stage timing and diagnostic details
         #[arg(long)]
@@ -400,8 +384,7 @@ pub enum HistorySubcommand {
     /// Show live or final progress for an invocation
     Progress {
         /// Invocation selector: `current` (default), `latest`, `previous`,
-        /// invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as
-        /// invocation IDs first; use `job:<id>` for unambiguous background-job lookup.
+        /// invocation ID, or `inv:<id>`.
         #[arg(long)]
         invocation: Option<String>,
     },
@@ -457,7 +440,6 @@ impl XtaskCommand for HistoryCommand {
                     with_diagnostics,
                     with_stages,
                     with_tests,
-                    include_zombies,
                 } => {
                     if *first {
                         execute_last(db, command.as_deref().unwrap_or(""), ctx)
@@ -477,7 +459,6 @@ impl XtaskCommand for HistoryCommand {
                                 with_diagnostics: *with_diagnostics,
                                 with_stages: *with_stages,
                                 with_tests: *with_tests,
-                                include_zombies: *include_zombies,
                             },
                             ctx,
                         )
@@ -545,7 +526,6 @@ impl XtaskCommand for HistoryCommand {
                     days,
                     commands,
                     limit,
-                    include_background,
                     success_only,
                 } => execute_resources(
                     db,
@@ -553,7 +533,6 @@ impl XtaskCommand for HistoryCommand {
                     *days,
                     commands,
                     *limit,
-                    *include_background,
                     *success_only,
                     ctx,
                 ),
@@ -688,16 +667,14 @@ impl XtaskCommand for HistoryCommand {
                     command,
                     days,
                     limit,
-                    include_zombies,
-                } => execute_timeline(db, command.as_deref(), *days, *limit, *include_zombies, ctx),
+                } => execute_timeline(db, command.as_deref(), *days, *limit, ctx),
                 HistorySubcommand::Diff { from, to, command } => {
                     execute_diff(db, *from, *to, command.as_deref(), ctx)
                 }
                 HistorySubcommand::Sessions {
                     limit,
                     gap_minutes,
-                    include_zombies,
-                } => execute_sessions(db, *limit, *gap_minutes, *include_zombies, ctx),
+                } => execute_sessions(db, *limit, *gap_minutes, ctx),
                 HistorySubcommand::Invocation { id, full, command } => {
                     execute_invocation(db, id, *full, command.as_deref(), ctx)
                 }

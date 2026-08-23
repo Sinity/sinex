@@ -1,6 +1,4 @@
-use super::{
-    BackgroundJob, Invocation, InvocationStatus, JobLifecycleStatus, ProofEvidence, TestProofUnit,
-};
+use super::{Invocation, InvocationStatus, ProofEvidence, TestProofUnit};
 use color_eyre::eyre::{Result, WrapErr};
 use time::OffsetDateTime;
 
@@ -66,58 +64,6 @@ pub(super) fn format_history_timestamp(
         .wrap_err_with(|| format!("failed to format {context} as RFC3339"))
 }
 
-/// Map a SQLite row to a `BackgroundJob`.
-///
-/// Expected column order (0-indexed):
-///   0: id, 1: invocation_id, 2: command, 3: args_json, 4: started_at,
-///   5: pid, 6: stdout_path, 7: stderr_path, 8: job_status, 9: exit_code
-pub(super) fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackgroundJob> {
-    fn invalid_background_job_field(
-        column_index: usize,
-        field_name: &'static str,
-        error: impl std::error::Error + Send + Sync + 'static,
-    ) -> rusqlite::Error {
-        rusqlite::Error::FromSqlConversionFailure(
-            column_index,
-            rusqlite::types::Type::Text,
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("invalid background job {field_name}: {error}"),
-            )),
-        )
-    }
-
-    let args_json: Option<String> = row.get(3)?;
-    let started_at_str: String = row.get(4)?;
-    let pid: Option<u32> = row.get(5)?;
-    let job_status_str: String = row.get(8)?;
-    Ok(BackgroundJob {
-        id: row.get(0)?,
-        invocation_id: row.get(1)?,
-        command: row.get(2)?,
-        args: match args_json {
-            Some(args_json) => serde_json::from_str(&args_json)
-                .map_err(|error| invalid_background_job_field(3, "args_json", error))?,
-            None => Vec::new(),
-        },
-        started_at: OffsetDateTime::parse(
-            &started_at_str,
-            &time::format_description::well_known::Rfc3339,
-        )
-        .map_err(|error| invalid_background_job_field(4, "started_at", error))?,
-        pid,
-        stdout_path: row.get(6)?,
-        stderr_path: row.get(7)?,
-        job_status: JobLifecycleStatus::try_from_str(&job_status_str).map_err(|error| {
-            invalid_background_job_field(
-                8,
-                "job_status",
-                std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()),
-            )
-        })?,
-        exit_code: row.get(9)?,
-    })
-}
 
 pub(super) fn row_to_proof_evidence(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProofEvidence> {
     let status_str: String = row.get(6)?;

@@ -14,9 +14,6 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `--format` | yes | Output format (human, json, compact, silent). When omitted, auto-detects: non-TTY stdout → json, TTY → human. Explicit --format human forces human output even when stdout is redirected |
 | `--json` | no | Shorthand for --format json |
 | `--list-commands` | no | List all available commands and exit |
-| `--bg` | no | Run command in background (returns immediately with job ID). Output is captured to files accessible via `xtask jobs` |
-| `--wait` | no | With --bg, wait for terminal proof instead of returning after launch |
-| `--fg` | no | Run command in foreground (default). Explicit flag for scripts |
 | `-v` | no | Increase log verbosity. Use -v for INFO, -vv for DEBUG, -vvv for TRACE. Overridden by SINEX_LOG env var |
 
 ## Top-Level Commands
@@ -29,14 +26,11 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `build` | Build workspace packages while capturing compiler diagnostics |
 | `run` | Run command for binary lifecycle management |
 | `infra` | Manage local infrastructure (Postgres, NATS, VMs) |
-| `jobs` | Inspect and manage background xtask jobs |
-| `status` | Inspect workspace status, service health, and recent activity |
 | `deps` | Analyze workspace dependency structure and impact |
 | `history` | Query build, test, and runtime history recorded by xtask |
 | `analytics` | `xtask analytics` — developer intelligence analytics |
 | `freshness` | Inspect foreground proof freshness decisions |
 | `impact` |  |
-| `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health (Postgres, NATS, tools, TLS, runtime) |
 | `ra-diagnose` | Diagnose rust-analyzer process footprint and local workspace contract |
 | `ra` | Rust-analyzer refactor/search helpers |
@@ -47,7 +41,6 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `docs` | Generate and verify repo documentation surfaces |
 | `exercise` | Full surface area validation for xtask commands |
 | `reset` | Reset developer state for a fresh start |
-| `__reap` | Internal detached process watchdog — not for human use |
 | `record-drift-bypass` | Internal: record drift guard bypass events from the pre-push hook (#1565) |
 
 ## `xtask fix`
@@ -374,7 +367,6 @@ Run the explicit local devshell/runtime lifecycle smoke
 | `--reset-first` | no | no | Stop current-checkout infra before the smoke if it is already running |
 | `--allow-running` | no | no | Preserve already-running current-checkout infra while running smoke probes |
 | `--skip-start` | no | no | Skip the explicit infra start/stop phase and only verify read-only probes |
-| `--run-core` | no | no | Start a managed local sinexd job, observe it in infra status, and cancel it |
 
 
 ### `xtask infra status`
@@ -560,119 +552,6 @@ Write the checkout-local runtime target descriptor for sinexctl/MCP clients
 | `--stdout` | no | no | Print the descriptor JSON to stdout instead of writing a file |
 
 
-## `xtask jobs`
-
-Inspect and manage background xtask jobs
-
-**Subcommands**
-
-| Command | Purpose |
-|---|---|
-| `list` | List recent jobs |
-| `active` | List active jobs |
-| `status` | Show status of a specific job |
-| `output` | Show full output of a job |
-| `wait` | Wait for a job to complete |
-| `cancel` | Cancel a running job (SIGTERM to the process group, SIGKILL escalation) |
-| `prune` | Remove completed jobs older than N days |
-
-### `xtask jobs list`
-
-List recent jobs
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--limit` | yes | no |  |
-| `--active` | no | no | Show only running/active jobs |
-
-
-### `xtask jobs active`
-
-List active jobs
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--limit` | yes | no |  |
-
-
-### `xtask jobs status`
-
-Show status of a specific job
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `id` | yes | yes |  |
-| `-f, --follow` | no | no |  |
-
-
-### `xtask jobs output`
-
-Show full output of a job
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `id` | yes | yes |  |
-| `--stdout` | no | no | Show stdout explicitly (default) |
-| `--stderr` | no | no | Show stderr instead of stdout |
-| `--stream` | yes | no | Select output stream by name. Alias for --stdout/--stderr |
-
-
-### `xtask jobs wait`
-
-Wait for a job to complete
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `id` | yes | yes |  |
-| `-t, --timeout` | yes | no |  |
-
-
-### `xtask jobs cancel`
-
-Cancel a running job (SIGTERM to the process group, SIGKILL escalation)
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `id` | yes | yes |  |
-
-
-### `xtask jobs prune`
-
-Remove completed jobs older than N days
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--older-than` | yes | no |  |
-
-
-## `xtask status`
-
-Inspect workspace status, service health, and recent activity
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `-w, --watch` | no | no | Watch for changes (live updates) |
-| `--summary` | no | no | Rich multi-section MOTD |
-| `--schemas` | no | no | Show event payload schema information |
-| `--next` | no | no | Show recommended next actions (planner) |
-
-
 ## `xtask deps`
 
 Analyze workspace dependency structure and impact
@@ -846,14 +725,13 @@ List recent invocations
 | `--first` | no | no | Show only the most recent invocation (like the old `last` subcommand) |
 | `--no-limit` | no | no | Export all history as JSON without limit |
 | `--offset` | yes | no | Skip N entries (pagination) |
-| `--after-invocation` | yes | no | Only show invocations with IDs greater than this selector (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`) |
-| `--before-invocation` | yes | no | Only show invocations with IDs less than this selector (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`) |
+| `--after-invocation` | yes | no | Only show invocations with IDs greater than this selector (`latest`, `previous`, `current`, numeric, or `inv:<id>`) |
+| `--before-invocation` | yes | no | Only show invocations with IDs less than this selector (`latest`, `previous`, `current`, numeric, or `inv:<id>`) |
 | `--sort-by` | yes | no | Sort field: started (default), duration, status |
 | `--since` | yes | no | Only show invocations started after this duration ago (e.g. "1h", "30m", "1d") |
 | `--with-diagnostics` | no | no | Include diagnostic error/warning counts for each invocation |
 | `--with-stages` | no | no | Include stage timing summary for each invocation |
 | `--with-tests` | no | no | Include test pass/fail counts for each invocation |
-| `--include-zombies` | no | no | Include watchdog/stale-pid cancellation rows normally hidden as zombie noise |
 
 
 ### `xtask history stats`
@@ -937,7 +815,6 @@ Aggregate recorded resource pressure and block I/O by command/window
 | `--days` | yes | no | Rolling window in days when --day is omitted |
 | `--command` | yes | no | Commands to include. Can be repeated or comma-separated |
 | `--limit` | yes | no | Number of slowest/high-pressure invocations to include |
-| `--include-background` | no | no | Include background invocations in addition to foreground work |
 | `--success-only` | no | no | Restrict to successful invocations only |
 
 
@@ -949,9 +826,9 @@ Explain what overlapped an invocation and what shared resources were recorded
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `invocation` | yes | no | Invocation selector: `latest`, `previous`, `current`, invocation ID, `inv:<id>`, or `job:<id>` |
+| `invocation` | yes | no | Invocation selector: `latest`, `previous`, `current`, `inv:<id>`, or an invocation ID |
 | `--command` | yes | no | Restrict selector resolution to this command |
-| `--limit` | yes | no | Number of overlapping invocations/background jobs to include |
+| `--limit` | yes | no | Number of overlapping invocations to include |
 
 
 ### `xtask history tests`
@@ -986,7 +863,7 @@ Query test result history
 | `--days` | yes | no | Only include test results from the last N days |
 | `--min-runs` | yes | no | Require at least this many passing runs in the selected window |
 | `--latest-per-test` | no | no | Rank each test by its most recent passing result instead of historical average |
-| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>` |
 
 
 #### `xtask history tests flaky`
@@ -1030,7 +907,7 @@ Show failing tests from the most recent test run
 |---|---|---|---|
 | `--limit` | yes | no |  |
 | `--output` | no | no | Show captured failure output (can be verbose) |
-| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>` |
 
 
 #### `xtask history tests analyze`
@@ -1041,7 +918,7 @@ Comprehensive analysis of the most recent test run
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>` |
 
 
 #### `xtask history tests overhead`
@@ -1065,7 +942,7 @@ Show captured output for a test (pass or fail)
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `pattern` | yes | yes | Test name pattern to search for |
-| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>` |
 
 
 #### `xtask history tests eta`
@@ -1081,7 +958,7 @@ Full-text search across stored test output (G7)
 |---|---|---|---|
 | `text` | yes | yes | Text to search for in captured test output |
 | `--limit` | yes | no |  |
-| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>` |
 
 
 #### `xtask history tests by-package`
@@ -1092,7 +969,7 @@ Per-package pass rate, test count, avg duration, and flaky count (G7)
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID or `inv:<id>` |
 
 
 #### `xtask history tests duration-p95`
@@ -1214,7 +1091,6 @@ Cross-invocation chronological view of recent activity (I4)
 | `--command` | yes | no | Restrict to a specific command (check, test, build, …) |
 | `--days` | yes | no | How many days back to show (default: 7) |
 | `--limit` | yes | no | Maximum number of entries (default: 20) |
-| `--include-zombies` | no | no | Include watchdog/stale-pid cancellation rows normally hidden as zombie noise |
 
 
 ### `xtask history diff`
@@ -1240,7 +1116,6 @@ Group invocations into working sessions separated by inactivity gaps (I6)
 |---|---|---|---|
 | `--limit` | yes | no | Number of sessions to show (default: 10) |
 | `--gap-minutes` | yes | no | Inactivity gap in minutes that separates sessions (default: 30) |
-| `--include-zombies` | no | no | Include watchdog/stale-pid cancellation rows normally hidden as zombie noise |
 
 
 ### `xtask history invocation`
@@ -1251,7 +1126,7 @@ Show complete details for a single invocation (I7)
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `id` | yes | yes | Invocation selector: `latest`, `previous`, `current`, invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs first; use `job:<id>` for unambiguous background-job lookup |
+| `id` | yes | yes | Invocation selector: `latest`, `previous`, `current`, `inv:<id>`, or an invocation ID |
 | `--full` | no | no | Include full stage timing and diagnostic details |
 | `--command` | yes | no | Filter selector resolution to a specific command |
 
@@ -1276,7 +1151,7 @@ Show live or final progress for an invocation
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `--invocation` | yes | no | Invocation selector: `current` (default), `latest`, `previous`, invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs first; use `job:<id>` for unambiguous background-job lookup |
+| `--invocation` | yes | no | Invocation selector: `current` (default), `latest`, `previous`, invocation ID, or `inv:<id>` |
 
 
 ### `xtask history eta`
@@ -1378,7 +1253,6 @@ CPU and memory usage trends across invocations (J6)
 |---|---|---|---|
 | `--command` | yes | no | Filter by command (e.g., "check", "test") |
 | `--limit` | yes | no | Number of recent invocations to show |
-| `--include-zombies` | no | no | Include watchdog/stale-pid cancellation rows normally hidden as zombie noise |
 
 
 ### `xtask analytics pressure`
@@ -1557,82 +1431,6 @@ Sample skipped tests by forcing a broader local run
 |---|---|---|---|
 | `--sample-skips` | yes | no | Number of skipped proof decisions to sample |
 | `--mode` | yes | no | Planner mode to audit |
-
-
-## `xtask git-stack`
-
-Plan and materialize PR-sized git branch stacks from the current commit graph
-
-**Subcommands**
-
-| Command | Purpose |
-|---|---|
-| `plan` | Walk the current commit graph and generate a stack plan plus PR/squash bodies |
-| `materialize` | Materialize branch refs from an existing stack plan |
-| `split` | Generate a stack plan and immediately materialize the resulting branches |
-| `publish` | Push materialized branches and open/reuse PRs from a generated stack plan |
-
-### `xtask git-stack plan`
-
-Walk the current commit graph and generate a stack plan plus PR/squash bodies
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--base` | yes | no | Base ref to split against. Defaults to origin/master when available, else master |
-| `--head` | yes | no | Head ref to analyze |
-| `--branch-prefix` | yes | no | Branch prefix for generated slice refs |
-| `--max-commits-per-slice` | yes | no | Maximum number of commits per generated slice before forcing a split |
-| `--output` | yes | no | Output directory for generated artifacts |
-| `--force` | no | no | Overwrite an existing output directory |
-
-
-### `xtask git-stack materialize`
-
-Materialize branch refs from an existing stack plan
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--plan` | yes | yes | Path to a generated `plan.yaml` |
-| `--force` | no | no | Overwrite existing branch refs |
-| `--allow-blockers` | no | no | Continue even when the plan recorded blockers |
-
-
-### `xtask git-stack split`
-
-Generate a stack plan and immediately materialize the resulting branches
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--base` | yes | no | Base ref to split against. Defaults to origin/master when available, else master |
-| `--head` | yes | no | Head ref to analyze |
-| `--branch-prefix` | yes | no | Branch prefix for generated slice refs |
-| `--max-commits-per-slice` | yes | no | Maximum number of commits per generated slice before forcing a split |
-| `--output` | yes | no | Output directory for generated artifacts |
-| `--force` | no | no | Overwrite an existing output directory and existing branch refs |
-| `--allow-blockers` | no | no | Continue even when the generated plan records blockers |
-
-
-### `xtask git-stack publish`
-
-Push materialized branches and open/reuse PRs from a generated stack plan
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--plan` | yes | yes | Path to a generated `plan.yaml` |
-| `--remote` | yes | no | Git remote to push branch refs to |
-| `--ready` | no | no | Create PRs as ready-for-review instead of drafts |
-| `--push-only` | no | no | Push branches only; skip GitHub PR creation |
-| `--force-with-lease` | no | no | Force-update the remote branches with `--force-with-lease` |
-| `--repo` | yes | no | Optional GitHub repo override for `gh`, e.g. `owner/name` |
-| `--allow-blockers` | no | no | Continue even when the plan recorded blockers |
 
 
 ## `xtask doctor`
@@ -2133,27 +1931,10 @@ Reset developer state for a fresh start
 | `--schema` | no | no | Delete schema apply hash file (forces schema reapply on next run, no data loss) |
 | `--history` | no | no | Archive the xtask history database and start a fresh one |
 | `--seed` | no | no | When used with --history: reseed the history database with synthetic data |
-| `--jobs` | no | no | Delete background job records and output files |
 | `--test-tmp` | no | no | Delete stale per-test temporary directories |
 | `--stale-build-processes` | no | no | Kill stale orphaned compiler/linker processes for this checkout's target dirs |
 | `--target` | no | no | Wipe the cargo target/ directory (forces clean recompilation) |
 | `--tls` | no | no | Regenerate TLS certificates |
-
-
-## `xtask __reap`
-
-Internal detached process watchdog — not for human use
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--target-pid` | yes | yes | PID of the background job process to monitor |
-| `--max-secs` | yes | yes | Maximum seconds to allow before killing the target |
-| `--invocation-id` | yes | yes | Invocation ID to mark as cancelled on timeout |
-| `--job-id` | yes | yes | Background job ID to mark as timed out |
-| `--db-path` | yes | yes | Path to the history DB file |
-| `--job-dir` | yes | yes | Directory containing the job's exit_code file (written on timeout) |
 
 
 ## `xtask record-drift-bypass`

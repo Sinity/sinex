@@ -983,7 +983,6 @@ pub struct RunSlowTest {
 pub struct ResolvedTestRun {
     pub invocation_id: i64,
     pub started_at: String,
-    pub job_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -993,7 +992,6 @@ enum TestRunSelector {
     LatestSuccess,
     LatestFailure,
     InvocationId(i64),
-    BackgroundJobId(i64),
 }
 
 impl HistoryDb {
@@ -1011,11 +1009,7 @@ impl HistoryDb {
             return Ok(TestRunSelector::LatestFailure);
         }
 
-        let (kind, raw_id) = if let Some(value) = selector.strip_prefix("job:") {
-            ("job", value)
-        } else if let Some(value) = selector.strip_prefix("background-job:") {
-            ("job", value)
-        } else if let Some(value) = selector.strip_prefix("inv:") {
+        let (kind, raw_id) = if let Some(value) = selector.strip_prefix("inv:") {
             ("invocation", value)
         } else if let Some(value) = selector.strip_prefix("invocation:") {
             ("invocation", value)
@@ -1025,12 +1019,11 @@ impl HistoryDb {
 
         let id = raw_id.parse::<i64>().map_err(|_| {
             color_eyre::eyre::eyre!(
-                "invalid test run selector: '{selector}' (expected 'latest', an invocation ID, 'inv:<id>', or 'job:<id>')"
+                "invalid test run selector: '{selector}' (expected 'latest', an invocation ID, or 'inv:<id>')"
             )
         })?;
 
         Ok(match kind {
-            "job" => TestRunSelector::BackgroundJobId(id),
             _ => TestRunSelector::InvocationId(id),
         })
     }
@@ -1062,7 +1055,6 @@ impl HistoryDb {
                 Ok(ResolvedTestRun {
                     invocation_id: row.get(0)?,
                     started_at: row.get(1)?,
-                    job_id: None,
                 })
             })
             .optional()
@@ -1088,7 +1080,6 @@ impl HistoryDb {
             Ok(ResolvedTestRun {
                 invocation_id: row.get(0)?,
                 started_at: row.get(1)?,
-                job_id: None,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -1111,32 +1102,6 @@ impl HistoryDb {
                     Ok(ResolvedTestRun {
                         invocation_id: row.get(0)?,
                         started_at: row.get(1)?,
-                        job_id: None,
-                    })
-                },
-            )
-            .optional()
-            .map_err(Into::into)
-    }
-
-    fn resolve_test_run_background_job(&self, job_id: i64) -> Result<Option<ResolvedTestRun>> {
-        self.conn
-            .query_row(
-                r"
-                SELECT i.id, i.started_at
-                FROM background_jobs bj
-                JOIN invocations i ON i.id = bj.invocation_id
-                WHERE bj.id = ?1
-                  AND i.command = 'test'
-                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
-                LIMIT 1
-                ",
-                [job_id],
-                |row| {
-                    Ok(ResolvedTestRun {
-                        invocation_id: row.get(0)?,
-                        started_at: row.get(1)?,
-                        job_id: Some(job_id),
                     })
                 },
             )
@@ -1147,10 +1112,7 @@ impl HistoryDb {
     /// Resolve a test-run selector to a concrete invocation with stored test results.
     ///
     /// `None` and `"latest"` both select the most recent completed test invocation
-    /// that actually recorded test results. Explicit selectors also accept
-    /// `job:<id>`/`background-job:<id>`. Plain numeric selectors prefer
-    /// invocation IDs, but fall back to matching background job IDs when the
-    /// numeric invocation has no stored test results.
+    /// that actually recorded test results. Explicit selectors accept invocation IDs.
     pub fn resolve_test_run(&self, selector: Option<&str>) -> Result<Option<ResolvedTestRun>> {
         match selector {
             None | Some("latest") => self.resolve_recent_test_run(None, 0),
@@ -1163,23 +1125,8 @@ impl HistoryDb {
                 TestRunSelector::LatestFailure => {
                     self.resolve_recent_test_run(Some(InvocationStatus::Failed), 0)
                 }
-                TestRunSelector::BackgroundJobId(job_id) => self
-                    .resolve_test_run_background_job(job_id)?
-                    .ok_or_else(|| {
-                        color_eyre::eyre::eyre!(
-                            "Background job #{job_id} does not map to a completed test run with stored results"
-                        )
-                    })
-                    .map(Some),
                 TestRunSelector::InvocationId(invocation_id) => {
                     if let Some(resolved) = self.resolve_test_run_invocation(invocation_id)? {
-                        return Ok(Some(resolved));
-                    }
-
-                    if raw_selector.chars().all(|ch| ch.is_ascii_digit())
-                        && let Some(resolved) =
-                            self.resolve_test_run_background_job(invocation_id)?
-                    {
                         return Ok(Some(resolved));
                     }
 

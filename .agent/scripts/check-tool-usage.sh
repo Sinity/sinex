@@ -47,13 +47,12 @@ fi
 #   - `| tail -N` buffers ALL xtask output until EOF (no streaming), making the output
 #     file appear empty while xtask runs. If xtask hangs, you see nothing forever.
 #   - `| head -N` / `| tail -N` cause SIGPIPE when the pipe consumer exits, which
-#     silently kills xtask mid-run, truncating output and leaving zombie bg processes.
-# Correct patterns: use `--bg --json` to get a job ID, then `xtask jobs output ID`.
+#     silently kills xtask mid-run and truncates the only useful failure output.
 if echo "$command" | grep -qE 'xtask\s' && echo "$command" | grep -qE '\|\s*(tail|head)\b'; then
     cat >&2 <<'EOF'
 {
   "hookSpecificOutput": {"permissionDecision": "deny"},
-  "systemMessage": "❌ Piping xtask output through tail/head is FORBIDDEN.\n\nProblems:\n  1. tail -N buffers ALL output until EOF — if xtask hangs, you see nothing forever\n  2. When tail/head exits, SIGPIPE silently kills xtask mid-run\n  3. Output files appear empty (0 bytes) while xtask is running\n\nCorrect pattern:\n  xtask CMD --bg --json           # get job ID, returns immediately\n  xtask jobs wait ID              # block until done\n  xtask jobs output ID            # retrieve FULL output\n\nOr for quick jobs (< 5s), just run foreground without tail:\n  xtask CMD --json\n\nSee: do-dont.md anti-pattern: 'some_cmd | tail -N on xtask'"
+  "systemMessage": "❌ Piping xtask output through tail/head is FORBIDDEN.\n\nProblems:\n  1. tail -N buffers ALL output until EOF — if xtask hangs, you see nothing forever\n  2. When tail/head exits, SIGPIPE can kill xtask mid-run\n  3. The transcript loses the diagnosis that matters\n\nRun the command foreground and inspect its complete output. For AgentCTL lifecycle work, use the returned job ID with agentctl logs/result.\n\nSee: do-dont.md anti-pattern: 'some_cmd | tail -N on xtask'"
 }
 EOF
     exit 2

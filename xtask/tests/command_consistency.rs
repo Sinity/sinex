@@ -157,37 +157,6 @@ async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
-/// JSON contract for `xtask jobs list --json`.
-/// Asserts the jobs array and per-job required fields.
-#[sinex_test]
-async fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
-    let output = xtask_command()?.args(["jobs", "list", "--json"]).output()?;
-
-    assert!(output.status.success(), "jobs list --json should exit 0");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: Value =
-        serde_json::from_str(&stdout).map_err(|e| color_eyre::eyre::eyre!("invalid JSON: {e}"))?;
-
-    assert_eq!(json["command"], "jobs", "envelope.command");
-    assert!(json["status"].is_string(), "envelope.status");
-
-    let data = &json["data"];
-    assert!(data.is_object(), "data must be an object");
-
-    let jobs = data["jobs"]
-        .as_array()
-        .ok_or_else(|| color_eyre::eyre::eyre!("data.jobs must be an array"))?;
-
-    // Each job (if any exist) must have stable required fields
-    for job in jobs {
-        assert!(job["id"].is_number(), "job.id must be number");
-        assert!(job["command"].is_string(), "job.command must be string");
-        assert!(job["status"].is_string(), "job.status must be string");
-    }
-
-    Ok(())
-}
-
 /// JSON contract for `xtask deps list --json`.
 /// Asserts the packages array and per-package required fields.
 #[sinex_test]

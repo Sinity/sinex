@@ -122,12 +122,6 @@ impl HistoryDb {
                 cancelled_by TEXT,
                 host TEXT NOT NULL,
                 cwd TEXT NOT NULL,
-                pid INTEGER,
-                is_background INTEGER DEFAULT 0,
-                stdout_path TEXT,
-                stderr_path TEXT,
-                stdout_content TEXT,
-                stderr_content TEXT,
                 cpu_usage_avg REAL,
                 memory_usage_max_mb REAL,
                 process_cpu_usage_avg REAL,
@@ -377,26 +371,6 @@ impl HistoryDb {
                 fields        TEXT
             );
 
-            CREATE TABLE IF NOT EXISTS background_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                invocation_id INTEGER REFERENCES invocations(id) ON DELETE SET NULL,
-                command TEXT NOT NULL,
-                args_json TEXT,
-                pid INTEGER,
-                stdout_path TEXT,
-                stderr_path TEXT,
-                job_status TEXT NOT NULL DEFAULT 'running',
-                exit_code INTEGER,
-                started_at TEXT NOT NULL,
-                finished_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS background_job_logs (
-                job_id INTEGER PRIMARY KEY REFERENCES background_jobs(id) ON DELETE CASCADE,
-                stdout_content TEXT,
-                stderr_content TEXT
-            );
-
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -408,9 +382,6 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_invocations_status ON invocations(status);
             CREATE INDEX IF NOT EXISTS idx_invocations_command_status_started
                 ON invocations(command, status, started_at);
-            CREATE INDEX IF NOT EXISTS idx_invocations_background
-                ON invocations(is_background, status)
-                WHERE is_background = 1;
             CREATE INDEX IF NOT EXISTS idx_invocations_fingerprint
                 ON invocations(command, tree_fingerprint, scope_key);
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
@@ -438,9 +409,6 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS trace_events_level_idx       ON trace_events(level);
             CREATE INDEX IF NOT EXISTS trace_events_event_kind_idx  ON trace_events(event_kind);
             CREATE INDEX IF NOT EXISTS trace_events_ts_idx          ON trace_events(ts);
-            CREATE INDEX IF NOT EXISTS idx_background_jobs_status     ON background_jobs(job_status);
-            CREATE INDEX IF NOT EXISTS idx_background_jobs_started    ON background_jobs(started_at);
-            CREATE INDEX IF NOT EXISTS idx_background_jobs_invocation ON background_jobs(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_eta_samples_command_phase ON invocation_eta_samples(command, phase);
             CREATE INDEX IF NOT EXISTS idx_invocation_progress_invocation ON invocation_progress(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_proof_evidence_exact

@@ -21,7 +21,6 @@ pub(super) struct CostInvocationRow {
     pub(super) duration_secs: Option<f64>,
     pub(super) status: String,
     pub(super) cancel_reason: Option<String>,
-    pub(super) is_background: bool,
     pub(super) tree_fingerprint: Option<String>,
     pub(super) scope_key: Option<String>,
     pub(super) is_stale_cleanup: bool,
@@ -85,10 +84,8 @@ pub(super) fn execute_cost(
     let rows_sql = format!(
         r"
         SELECT id, command, args_json, started_at, finished_at, duration_secs,
-               status, cancel_reason, is_background,
-               tree_fingerprint, scope_key,
-               COALESCE(cancel_reason = 'stale_pid' AND cancelled_by = 'open_time_sweep', 0)
-                   AS is_stale_cleanup
+               status, cancel_reason, tree_fingerprint, scope_key,
+               0 AS is_stale_cleanup
         FROM invocations
         WHERE command IN ({command_list})
           AND started_at >= {}
@@ -217,10 +214,6 @@ fn cost_row_from_json(
         .get("cancel_reason")
         .and_then(serde_json::Value::as_str)
         .map(ToOwned::to_owned);
-    let is_background = row
-        .get("is_background")
-        .and_then(serde_json::Value::as_i64)
-        .is_some_and(|value| value != 0);
     let tree_fingerprint = row
         .get("tree_fingerprint")
         .and_then(serde_json::Value::as_str)
@@ -243,7 +236,6 @@ fn cost_row_from_json(
         duration_secs,
         status,
         cancel_reason,
-        is_background,
         tree_fingerprint,
         scope_key,
         is_stale_cleanup,
@@ -279,7 +271,7 @@ pub(super) fn build_history_cost_summary(
     let stage_unaccounted_secs = (non_wrapper_secs - stage_secs).max(0.0);
     let cancelled_foreground_secs = included_rows
         .iter()
-        .filter(|row| row.status == "cancelled" && !row.is_background)
+        .filter(|row| row.status == "cancelled")
         .filter_map(|row| row.duration_secs)
         .sum::<f64>();
     let stale_pid_rows = rows

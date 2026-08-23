@@ -13,33 +13,6 @@ fn env_set(key: &str, value: Option<std::ffi::OsString>) -> EnvGuard {
 }
 
 #[sinex_test]
-async fn background_wait_requires_background_mode() -> TestResult<()> {
-    let cli = Cli::try_parse_from(["xtask", "--bg", "--wait", "test"])?;
-    assert!(cli.global.background_wait());
-
-    let error = match Cli::try_parse_from(["xtask", "--wait", "test"]) {
-        Ok(_) => bail!("--wait without --bg must be rejected"),
-        Err(error) => error,
-    };
-    assert_eq!(
-        error.kind(),
-        clap::error::ErrorKind::MissingRequiredArgument
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn background_wait_is_limited_to_coordinated_commands() -> TestResult<()> {
-    for command_name in ["fix", "test"] {
-        assert!(command_supports_background_wait(command_name));
-    }
-    for command_name in ["check", "build", "run", "exercise", "verify", "jobs"] {
-        assert!(!command_supports_background_wait(command_name));
-    }
-    Ok(())
-}
-
-#[sinex_test]
 async fn command_deadline_returns_typed_timeout() -> TestResult<()> {
     let mut timed_out = false;
     let error = execute_with_optional_timeout(
@@ -84,16 +57,6 @@ async fn open_history_db_uses_declared_access_mode() -> TestResult<()> {
 
 #[sinex_test]
 async fn observational_metadata_uses_query_history_without_tracking() -> TestResult<()> {
-    let status = commands::StatusCommand {
-        watch: false,
-        summary: true,
-        schemas: false,
-        next: false,
-    }
-    .metadata();
-    assert!(!status.track_in_history);
-    assert_eq!(status.history_access, HistoryAccessMode::Query);
-
     let history = commands::history::HistoryCommand {
         subcommand: commands::history::HistorySubcommand::List {
             limit: 10,
@@ -108,7 +71,6 @@ async fn observational_metadata_uses_query_history_without_tracking() -> TestRes
             with_diagnostics: false,
             with_stages: false,
             with_tests: false,
-            include_zombies: false,
         },
     }
     .metadata();
@@ -131,55 +93,6 @@ async fn parse_positive_u64_env_or_default_rejects_zero() -> TestResult<()> {
     assert_eq!(
         parse_positive_u64_env_or_default("SINEX_TEST_TIMEOUT", 42, "test timeout"),
         42
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn parse_one_shot_i64_env_returns_value_and_clears_env() -> TestResult<()> {
-    let _guard = env_set("SINEX_TEST_CLAIM", Some("123".into()));
-
-    assert_eq!(
-        parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"),
-        Some(123)
-    );
-    assert!(
-        std::env::var_os("SINEX_TEST_CLAIM").is_none(),
-        "one-shot env var must be removed after claim"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn parse_one_shot_i64_env_rejects_invalid_values_and_clears_env() -> TestResult<()> {
-    let _guard = env_set("SINEX_TEST_CLAIM", Some("abc".into()));
-
-    assert_eq!(
-        parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"),
-        None
-    );
-    assert!(
-        std::env::var_os("SINEX_TEST_CLAIM").is_none(),
-        "invalid one-shot env var must still be removed"
-    );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[sinex_test]
-async fn parse_one_shot_i64_env_rejects_non_unicode_and_clears_env() -> TestResult<()> {
-    use std::ffi::OsString;
-    use std::os::unix::ffi::OsStringExt;
-
-    let _guard = env_set("SINEX_TEST_CLAIM", Some(OsString::from_vec(vec![0xff])));
-
-    assert_eq!(
-        parse_one_shot_i64_env("SINEX_TEST_CLAIM", "test claim"),
-        None
-    );
-    assert!(
-        std::env::var_os("SINEX_TEST_CLAIM").is_none(),
-        "non-unicode one-shot env var must still be removed"
     );
     Ok(())
 }

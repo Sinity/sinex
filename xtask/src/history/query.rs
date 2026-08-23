@@ -34,10 +34,7 @@
 
 use color_eyre::eyre::Result;
 
-use super::db::{
-    HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, non_zombie_cancel_filter,
-    row_to_invocation,
-};
+use super::db::{HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, row_to_invocation};
 use super::tests::{TestResult, TestStatus, parse_stored_test_status};
 
 // ─── Shared base ─────────────────────────────────────────────────────────────
@@ -195,7 +192,6 @@ pub struct InvocationQuery {
     since_rfc3339: Option<String>,
     offset: usize,
     sort_by: InvocationSort,
-    include_zombies: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -317,13 +313,6 @@ impl InvocationQuery {
     #[must_use]
     pub fn sort_status(mut self) -> Self {
         self.sort_by = InvocationSort::Status;
-        self
-    }
-
-    /// Include watchdog/stale-pid cancellation rows normally hidden as zombie noise.
-    #[must_use]
-    pub fn include_zombies(mut self) -> Self {
-        self.include_zombies = true;
         self
     }
 
@@ -629,10 +618,6 @@ impl HistoryDb {
             where_clauses.push("datetime(i.started_at) >= datetime(?)".into());
             bound_params.push(Box::new(since_rfc3339.clone()));
         }
-        if !q.include_zombies && q.invocation_id.is_none() {
-            where_clauses.push(non_zombie_cancel_filter("i."));
-        }
-
         let where_sql = if where_clauses.is_empty() {
             String::new()
         } else {
@@ -707,10 +692,6 @@ impl HistoryDb {
             where_clauses.push("datetime(i.started_at) >= datetime(?)".into());
             bound_params.push(Box::new(since_rfc3339.clone()));
         }
-        if !q.include_zombies && q.invocation_id.is_none() {
-            where_clauses.push(non_zombie_cancel_filter("i."));
-        }
-
         let where_sql = if where_clauses.is_empty() {
             String::new()
         } else {

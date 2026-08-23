@@ -35,42 +35,6 @@ async fn test_package_scoped_commands_have_flag() -> xtask::sandbox::TestResult<
     Ok(())
 }
 
-/// Background-capable commands (`--bg`) must include the core development workflow.
-///
-/// `--bg` is a global flag on `GlobalOpts` (flattened into the root `Cli`). This
-/// means it's inherited by *every* subcommand at parse time, but clap does not
-/// propagate global args into the static `Command` structure returned by
-/// `CommandFactory::command()` — they appear only on the root command's args.
-///
-/// The invariant is: `--bg` is defined as a GLOBAL arg on the root CLI, making it
-/// available to check, test, and build without those subcommands needing to define it
-/// individually. If it were removed from `GlobalOpts`, all three would lose it.
-#[sinex_test]
-async fn test_bg_capable_commands_include_core_workflow() -> xtask::sandbox::TestResult<()> {
-    use clap::CommandFactory;
-
-    let cli = xtask::Cli::command();
-
-    // --bg is global: verify it exists on the root CLI (applies to all subcommands)
-    let has_bg_global = cli
-        .get_arguments()
-        .any(|a| a.get_long() == Some("bg") && a.is_global_set());
-
-    assert!(
-        has_bg_global,
-        "--bg must be a global flag on the root CLI (async-first workflow invariant)"
-    );
-
-    // Verify the core commands are registered (if they vanish, agents would fail too)
-    let must_exist = ["check", "test", "build"];
-    for cmd_name in must_exist {
-        let exists = cli.get_subcommands().any(|sc| sc.get_name() == cmd_name);
-        assert!(exists, "command '{cmd_name}' must exist in CLI");
-    }
-
-    Ok(())
-}
-
 /// JSON output format flag must be available on core workflow commands.
 ///
 /// `--format` and `--json` are global flags on `GlobalOpts` (flattened into the root
@@ -98,7 +62,7 @@ async fn test_core_commands_have_output_format_flag() -> xtask::sandbox::TestRes
     );
 
     // Verify the agent-critical commands are registered
-    let must_exist = ["check", "test", "build", "status", "history", "jobs"];
+    let must_exist = ["check", "test", "build", "infra", "history", "run"];
     for cmd_name in must_exist {
         let exists = cli.get_subcommands().any(|sc| sc.get_name() == cmd_name);
         assert!(exists, "command '{cmd_name}' must exist in CLI");

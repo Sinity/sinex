@@ -384,30 +384,6 @@ async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_background_args_preserve_exercise_ids() -> ::xtask::sandbox::TestResult<()> {
-    let cmd = ExerciseCommand {
-        exercises: vec![
-            "t4.affected_leaf".to_string(),
-            "t4.affected_workspace".to_string(),
-        ],
-        skip_infra: true,
-        ..ExerciseCommand::default()
-    };
-
-    assert_eq!(
-        cmd.background_args(),
-        vec![
-            "--id",
-            "t4.affected_leaf",
-            "--id",
-            "t4.affected_workspace",
-            "--skip-infra",
-        ]
-    );
-    Ok(())
-}
-
 // ── Builder helpers ───────────────────────────────────────────────────────
 
 #[sinex_test]

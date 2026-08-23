@@ -36,46 +36,6 @@ async fn test_run_metadata_has_no_outer_timeout() -> ::xtask::sandbox::TestResul
 }
 
 #[sinex_test]
-async fn agentctl_owned_run_shapes_are_identified_without_losing_custom_runs()
--> ::xtask::sandbox::TestResult<()> {
-    assert_eq!(
-        base_command(RunSubcommand::Core { instance_id: None })
-            .agentctl_owned_background_operation(),
-        Some("run_core")
-    );
-    assert_eq!(
-        base_command(RunSubcommand::AllAutomatons { instance_id: None })
-            .agentctl_owned_background_operation(),
-        Some("run_all_automatons")
-    );
-    assert_eq!(
-        base_command(RunSubcommand::Core {
-            instance_id: Some("custom-core".to_string()),
-        })
-        .agentctl_owned_background_operation(),
-        None
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn default_background_core_points_to_agentctl_before_preflight()
--> ::xtask::sandbox::TestResult<()> {
-    let result = base_command(RunSubcommand::Core { instance_id: None })
-        .execute(&test_context(true))
-        .await?;
-
-    assert!(result.is_failure());
-    assert_eq!(result.errors[0].code, "XTASK_RUN_BACKGROUND_UNSUPPORTED");
-    assert!(
-        result.errors[0]
-            .suggestion
-            .as_deref()
-            .is_some_and(|suggestion| suggestion.contains("agentctl job start sinex run_core"))
-    );
-    Ok(())
-}
-
 #[sinex_test]
 async fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
     // All binaries should be findable
@@ -472,7 +432,6 @@ async fn test_local_runtime_coordinates_describe_current_checkout()
         "NATS URL should point at the checkout-local dev broker"
     );
     assert!(coordinates.logs_dir.contains("dev-state"));
-    assert!(coordinates.jobs_dir.contains(".sinex/state/jobs"));
     Ok(())
 }
 
@@ -542,24 +501,6 @@ async fn test_watch_rejects_bundle_targets() -> ::xtask::sandbox::TestResult<()>
 }
 
 #[sinex_test]
-async fn test_logs_reject_background_mode() -> ::xtask::sandbox::TestResult<()> {
-    let ctx = test_context(true);
-    let mut command = base_command(RunSubcommand::RuntimeModule {
-        name: "fs-source".to_string(),
-        instance_id: None,
-    });
-    command.logs = true;
-
-    let err = command
-        .validate_flag_compatibility(&ctx)
-        .expect_err("background logs must be rejected");
-    assert!(
-        err.to_string()
-            .contains("--logs and --dev-journal are incompatible with --bg")
-    );
-    Ok(())
-}
-
 #[sinex_test]
 async fn test_dev_journal_writes_durable_ndjson_entries() -> ::xtask::sandbox::TestResult<()> {
     // Verify that DevJournal writes queryable NDJSON entries that survive

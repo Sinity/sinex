@@ -442,7 +442,6 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
 
     // ─── Tier 4: Advanced Multi-Step ────────────────────────────────────────
 
-    v.push(def("t4.bg_job_lifecycle", "Background job full lifecycle", T4).custom());
     v.push(def("t4.affected_clean", "Affected: clean state", T4).custom());
     v.push(def("t4.affected_leaf", "Affected: leaf crate changed", T4).custom());
     v.push(
@@ -476,29 +475,11 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     // Extended job exercise
-    v.push(
-        def(
-            "t4.jobs_output_while_running",
-            "Jobs: output readable while job is running",
-            T4,
-        )
-        .custom(),
-    );
-
     // F6: Observability and query contract exercises
     v.push(
         def(
             "t4.preflight_stages_in_history",
             "History: preflight stage appears in stage timings after check",
-            T4,
-        )
-        .custom(),
-    );
-
-    v.push(
-        def(
-            "t4.live_stage_visible_during_run",
-            "History: live_stage field queryable via jobs status during bg run",
             T4,
         )
         .custom(),

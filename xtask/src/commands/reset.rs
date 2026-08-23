@@ -1,7 +1,7 @@
 //! Reset command — wipe developer state for a fresh start.
 //!
 //! Each flag targets a specific category of state. With no category flags,
-//! `--yes` alone resets operational developer state: db + nats + preflight + jobs + target.
+//! `--yes` alone resets operational developer state: db + nats + preflight + target.
 //! The xtask history database is preserved unless `--history` is passed explicitly.
 //! It is durable development observability evidence, not disposable cache.
 //!
@@ -14,7 +14,6 @@ use color_eyre::eyre::{Result, WrapErr, eyre};
 use sinex_db::schema::apply::SHARED_ACCESS_ROLES;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use time::OffsetDateTime;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -63,10 +62,6 @@ pub struct ResetCommand {
     #[arg(long, requires = "history")]
     seed: bool,
 
-    /// Delete background job records and output files.
-    #[arg(long)]
-    jobs: bool,
-
     /// Delete stale per-test temporary directories.
     #[arg(long)]
     test_tmp: bool,
@@ -98,7 +93,6 @@ impl XtaskCommand for ResetCommand {
             || self.contracts
             || self.schema
             || self.history
-            || self.jobs
             || self.test_tmp
             || self.stale_build_processes
             || self.target
@@ -164,19 +158,6 @@ impl XtaskCommand for ResetCommand {
             let path = cfg.history_db_path();
             let msg = reset_history_db(&path, self.seed, verbose)?;
             actions.push(msg);
-        }
-
-        // ── Jobs ─────────────────────────────────────────────────────────────
-        if all || self.jobs {
-            let jobs_dir = cfg.jobs_dir();
-            if jobs_dir.exists() {
-                std::fs::remove_dir_all(&jobs_dir)
-                    .with_context(|| format!("remove {}", jobs_dir.display()))?;
-                if verbose {
-                    println!("  removed {}", jobs_dir.display());
-                }
-            }
-            actions.push("background job records deleted");
         }
 
         // ── Test temp dirs ───────────────────────────────────────────────────
@@ -447,14 +428,10 @@ fn reset_event_engine_runtime_state(verbose: bool) -> Result<()> {
     dirs.dedup();
     for dir in dirs {
         if dir.exists() {
-            let trash = rename_runtime_state_for_background_delete(&dir)?;
-            spawn_background_delete(&trash, verbose)?;
+            std::fs::remove_dir_all(&dir)
+                .with_context(|| format!("remove event-engine runtime state {}", dir.display()))?;
             if verbose {
-                println!(
-                    "  moved event-engine runtime state {} -> {} for background cleanup",
-                    dir.display(),
-                    trash.display()
-                );
+                println!("  removed event-engine runtime state {}", dir.display());
             }
         } else if verbose {
             println!("  no event-engine runtime state at {}", dir.display());
@@ -468,76 +445,6 @@ fn push_env_path(paths: &mut Vec<PathBuf>, var: &str) {
     if let Some(raw) = std::env::var_os(var) {
         paths.push(PathBuf::from(raw));
     }
-}
-
-fn rename_runtime_state_for_background_delete(path: &Path) -> Result<PathBuf> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| eyre!("runtime state path has no parent: {}", path.display()))?;
-    let name = path
-        .file_name()
-        .ok_or_else(|| eyre!("runtime state path has no file name: {}", path.display()))?;
-    let stamp = reset_timestamp();
-    let trash = parent.join(format!(
-        ".{}.reset-trash.{}.{}",
-        name.to_string_lossy(),
-        std::process::id(),
-        stamp
-    ));
-    std::fs::rename(path, &trash)
-        .with_context(|| format!("rename {} -> {}", path.display(), trash.display()))?;
-    Ok(trash)
-}
-
-fn reset_timestamp() -> String {
-    OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Iso8601::DEFAULT)
-        .unwrap_or_else(|_| "unknown".to_string())
-        .replace([':', '-'], "")
-}
-
-fn spawn_background_delete(path: &Path, verbose: bool) -> Result<()> {
-    if let Ok(mut child) = Command::new("sinnix-scope")
-        .arg("background")
-        .arg("--")
-        .arg("ionice")
-        .arg("-c3")
-        .arg("rm")
-        .arg("-rf")
-        .arg(path)
-        .spawn()
-    {
-        if verbose {
-            println!(
-                "  background cleanup pid {} for {}",
-                child.id(),
-                path.display()
-            );
-        }
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-        return Ok(());
-    }
-
-    let mut child = Command::new("ionice")
-        .arg("-c3")
-        .arg("rm")
-        .arg("-rf")
-        .arg(path)
-        .spawn()
-        .with_context(|| format!("spawn background cleanup for {}", path.display()))?;
-    if verbose {
-        println!(
-            "  background cleanup pid {} for {}",
-            child.id(),
-            path.display()
-        );
-    }
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
 }
 
 fn reset_runtime_material_tmpfiles(verbose: bool) -> Result<()> {

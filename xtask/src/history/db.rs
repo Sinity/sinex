@@ -22,22 +22,9 @@ const LATEST_PER_PACKAGE_CTE_CLOSE: &str = "
     )
 ";
 
-pub(crate) fn non_zombie_cancel_filter(column_prefix: &str) -> String {
-    format!(
-        "NOT ({column_prefix}status = 'cancelled' \
-        AND ({column_prefix}cancel_reason IS NULL \
-             OR {column_prefix}cancel_reason IN (\
-                'stale_pid', \
-                'watchdog_timeout', \
-                'zombie_reaped', \
-                'zombie_escaped_watchdog'\
-             )))"
-    )
-}
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 mod audit;
-mod background;
 mod diagnostics;
 mod exercise;
 mod git;
@@ -46,7 +33,6 @@ mod integrity;
 mod invocations;
 mod metrics;
 mod prediction;
-mod process;
 mod rows;
 mod sandbox_meta;
 mod schema;
@@ -63,32 +49,26 @@ use integrity::{
     format_preserved_history_artifact_destinations, preserve_history_artifacts_for_recreation,
     refresh_history_integrity_stamp, should_run_history_integrity_check,
 };
-use process::{
-    StaleInvocationCandidate, background_watchdog_escape_threshold_secs, history_process_is_alive,
-    is_process_running, try_reap_zombie_pid,
-};
 pub(crate) use rows::parse_stored_invocation_status;
 pub(super) use rows::row_to_invocation;
 use rows::{
     format_history_timestamp, format_invocation_timestamp, parse_invocation_timestamp,
-    row_to_background_job, row_to_proof_evidence, row_to_test_proof_unit,
+    row_to_proof_evidence, row_to_test_proof_unit,
 };
 use sandbox_meta::parse_sandbox_meta;
 pub(super) use schema::{HISTORY_DB_SCHEMA_VERSION, HistoryDbOpenMode};
 use schema::{
     SQLITE_LOCK_RETRY_ATTEMPTS, SQLITE_LOCK_RETRY_BASE_DELAY, SQLITE_LOCK_RETRY_MAX_DELAY,
-    SQLITE_STALE_CLEANUP_BUSY_TIMEOUT,
 };
 use sinex_primitives::temporal::Timestamp;
 pub use types::{
-    BackgroundJob, CommandStats, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession,
+    CommandStats, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession,
     ImpactAuditRunRow, Invocation, InvocationFull, InvocationProgress, InvocationStatus,
-    InvocationTimelineEntry, InvocationWithFingerprint, JobLifecycleStatus, ProofEvidence,
+    InvocationTimelineEntry, InvocationWithFingerprint, ProofEvidence,
     ResourceUsage, StagePressure, StageStats, StageTiming, StageTrendPoint, TestProofUnit,
     TraceEventRow, WorkingSession, WrapperEventRow,
 };
 
-use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
 
@@ -192,18 +172,11 @@ pub struct HistoryDb {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StaleCleanupOutcome {
-    Ran,
-    SkippedLockHeld,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InvocationSelector {
     Latest,
     Previous,
     Current,
     InvocationId(i64),
-    BackgroundJobId(i64),
 }
 
 impl HistoryDb {
@@ -457,83 +430,8 @@ impl HistoryDb {
         }
         db.ensure_compat_schema()?;
         db.is_synthetic = db.check_synthetic()?;
-        if let Err(error) = db.with_busy_timeout(
-            SQLITE_STALE_CLEANUP_BUSY_TIMEOUT,
-            HistoryDbOpenMode::Persistent,
-            || db.cleanup_stale_invocations_on_open(path),
-        ) {
-            if is_sqlite_lock_error(&error) {
-                eprintln!(
-                    "⚠️  History DB is busy; skipping stale invocation cleanup for now: {error:#}"
-                );
-            } else {
-                return Err(error).context("failed to clean up stale invocations");
-            }
-        }
         Ok(db)
-    }
-
-    fn cleanup_stale_invocations_on_open(&self, path: &Path) -> Result<StaleCleanupOutcome> {
-        let lock_path = path.with_extension("cleanup.lock");
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path);
-
-        let lock_file = match lock_file {
-            Ok(file) => file,
-            Err(error) => {
-                eprintln!(
-                    "⚠️  Could not open history cleanup lock ({}): {error}; proceeding without lock",
-                    lock_path.display()
-                );
-                self.cleanup_stale_invocations()?;
-                return Ok(StaleCleanupOutcome::Ran);
-            }
-        };
-
-        use std::os::fd::AsRawFd;
-        let lock_result =
-            unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if lock_result != 0 {
-            return Ok(StaleCleanupOutcome::SkippedLockHeld);
-        }
-
-        self.repair_open_time_sweep_durations()?;
-        self.cleanup_stale_invocations()?;
-        drop(lock_file);
-        Ok(StaleCleanupOutcome::Ran)
-    }
-
-    fn repair_open_time_sweep_durations(&self) -> Result<usize> {
-        let repaired = self
-            .conn
-            .execute(
-                r"
-                UPDATE invocations
-                SET duration_secs = NULL
-                WHERE status = 'cancelled'
-                  AND cancel_reason = 'stale_pid'
-                  AND cancelled_by = 'open_time_sweep'
-                  AND duration_secs IS NOT NULL
-                ",
-                [],
-            )
-            .context("failed to repair stale open-time-sweep invocation durations")?;
-
-        if repaired > 0 {
-            eprintln!(
-                "ℹ️  Repaired {repaired} stale history duration(s): dead-PID cleanup rows have unknown runtime"
-            );
-        }
-
-        Ok(repaired)
     }
 }
 
 impl HistoryDb {}
-
-#[cfg(test)]
-#[path = "db_test.rs"]
-mod tests;

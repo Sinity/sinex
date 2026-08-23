@@ -1,7 +1,6 @@
 //! Persistent build/test history stored in `SQLite`.
 //!
 //! Provides queryable history of xtask invocations, test results, and build diagnostics.
-//! Also tracks background jobs via the unified invocations table.
 
 mod analysis;
 mod db;
@@ -15,10 +14,10 @@ pub use analysis::{
     Recommendation, Regression, VelocityTrend, WorkspaceHealthReport,
 };
 pub use db::{
-    BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle,
+    CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle,
     DiagnosticTrendPoint, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession,
     HistoryDb, ImpactAuditRunRow, Invocation, InvocationFull, InvocationProgress, InvocationStatus,
-    InvocationTimelineEntry, InvocationWithFingerprint, JobLifecycleStatus, LifecycleStatus,
+    InvocationTimelineEntry, InvocationWithFingerprint, LifecycleStatus,
     ProofEvidence, ResourceUsage, StagePressure, StageStats, StageTiming, StageTrendPoint,
     StoredDiagnostic, TestProofUnit, TraceEventRow, WorkingSession, WrapperEventRow,
 };

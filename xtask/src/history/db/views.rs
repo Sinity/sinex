@@ -32,17 +32,6 @@ impl HistoryDb {
         days: u32,
         limit: usize,
     ) -> Result<Vec<InvocationTimelineEntry>> {
-        self.get_invocation_timeline_with_zombies(command, days, limit, false)
-    }
-
-    /// I4: Get cross-invocation chronological timeline, optionally including zombie cancellations.
-    pub fn get_invocation_timeline_with_zombies(
-        &self,
-        command: Option<&str>,
-        days: u32,
-        limit: usize,
-        include_zombies: bool,
-    ) -> Result<Vec<InvocationTimelineEntry>> {
         let cutoff = format_history_timestamp(
             time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days)),
             "history timeline cutoff",
@@ -78,11 +67,6 @@ impl HistoryDb {
               AND i.started_at >= ?1
             ",
         );
-        if !include_zombies {
-            sql.push_str(" AND ");
-            sql.push_str(&non_zombie_cancel_filter("i."));
-        }
-
         let mut params: Vec<String> = vec![cutoff];
         let mut idx = 2usize;
 
@@ -146,16 +130,6 @@ impl HistoryDb {
         limit: usize,
         gap_minutes: u32,
     ) -> Result<Vec<WorkingSession>> {
-        self.get_working_sessions_with_zombies(limit, gap_minutes, false)
-    }
-
-    /// I6: Group invocations into working sessions, optionally including zombie cancellations.
-    pub fn get_working_sessions_with_zombies(
-        &self,
-        limit: usize,
-        gap_minutes: u32,
-        include_zombies: bool,
-    ) -> Result<Vec<WorkingSession>> {
         struct Row {
             command: String,
             started_at: String,
@@ -172,10 +146,6 @@ impl HistoryDb {
             WHERE status IN ('success', 'failed', 'cancelled')
             ",
         );
-        if !include_zombies {
-            sql.push_str(" AND ");
-            sql.push_str(&non_zombie_cancel_filter(""));
-        }
         sql.push_str(" ORDER BY started_at ASC LIMIT 2000");
 
         let mut stmt = self.conn.prepare(&sql)?;
@@ -371,28 +341,21 @@ impl HistoryDb {
             return Ok(InvocationSelector::Current);
         }
 
-        let (kind, raw_id) = if let Some(value) = selector.strip_prefix("job:") {
-            ("job", value)
-        } else if let Some(value) = selector.strip_prefix("background-job:") {
-            ("job", value)
-        } else if let Some(value) = selector.strip_prefix("inv:") {
-            ("invocation", value)
+        let raw_id = if let Some(value) = selector.strip_prefix("inv:") {
+            value
         } else if let Some(value) = selector.strip_prefix("invocation:") {
-            ("invocation", value)
+            value
         } else {
-            ("invocation", selector)
+            selector
         };
 
         let id = raw_id.parse::<i64>().map_err(|_| {
             color_eyre::eyre::eyre!(
-                "invalid invocation selector: '{selector}' (expected 'latest', 'previous', 'current', a numeric invocation ID, 'inv:<id>', or 'job:<id>')"
+                "invalid invocation selector: '{selector}' (expected 'latest', 'previous', 'current', a numeric invocation ID, or 'inv:<id>')"
             )
         })?;
 
-        Ok(match kind {
-            "job" => InvocationSelector::BackgroundJobId(id),
-            _ => InvocationSelector::InvocationId(id),
-        })
+        Ok(InvocationSelector::InvocationId(id))
     }
 
     fn resolve_completed_invocation_offset(
@@ -461,40 +424,6 @@ impl HistoryDb {
         Ok(id)
     }
 
-    fn resolve_background_job_invocation(
-        &self,
-        job_id: i64,
-        command: Option<&str>,
-    ) -> Result<Option<i64>> {
-        // `invocation_id` is nullable in background_jobs — use Option<i64> to
-        // distinguish "row not found" (outer None) from "row found but NULL id"
-        // (inner None), then flatten both into Option<i64>.
-        let id: Option<Option<i64>> = if let Some(cmd) = command {
-            self.conn
-                .query_row(
-                    r"
-                    SELECT invocation_id
-                    FROM background_jobs
-                    WHERE id = ?1
-                      AND command = ?2
-                    LIMIT 1
-                    ",
-                    params![job_id, cmd],
-                    |row| row.get::<_, Option<i64>>(0),
-                )
-                .optional()?
-        } else {
-            self.conn
-                .query_row(
-                    r"SELECT invocation_id FROM background_jobs WHERE id = ?1 LIMIT 1",
-                    params![job_id],
-                    |row| row.get::<_, Option<i64>>(0),
-                )
-                .optional()?
-        };
-        Ok(id.flatten())
-    }
-
     /// Resolve an invocation selector to a concrete invocation ID.
     ///
     /// Supports:
@@ -502,7 +431,6 @@ impl HistoryDb {
     /// - `previous`: invocation immediately before `latest`
     /// - `current`: most recent invocation from the current checkout, preferring a running one
     /// - numeric ID / `inv:<id>`: explicit invocation
-    /// - `job:<id>`: background job handle mapped back to its invocation
     pub fn resolve_invocation_id(
         &self,
         id_or_latest: &str,
@@ -512,23 +440,7 @@ impl HistoryDb {
             InvocationSelector::Latest => self.resolve_completed_invocation_offset(command, 0),
             InvocationSelector::Previous => self.resolve_completed_invocation_offset(command, 1),
             InvocationSelector::Current => self.resolve_current_invocation(command),
-            InvocationSelector::BackgroundJobId(job_id) => {
-                self.resolve_background_job_invocation(job_id, command)
-            }
             InvocationSelector::InvocationId(invocation_id) => {
-                if id_or_latest.chars().all(|ch| ch.is_ascii_digit())
-                    && self
-                        .conn
-                        .query_row(
-                            r"SELECT 1 FROM invocations WHERE id = ?1 LIMIT 1",
-                            params![invocation_id],
-                            |_| Ok(()),
-                        )
-                        .optional()?
-                        .is_none()
-                {
-                    return self.resolve_background_job_invocation(invocation_id, command);
-                }
                 Ok(Some(invocation_id))
             }
         }
@@ -562,7 +474,3 @@ impl HistoryDb {
         Ok(id)
     }
 }
-
-#[cfg(test)]
-#[path = "views_test.rs"]
-mod tests;

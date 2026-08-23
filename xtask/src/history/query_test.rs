@@ -105,47 +105,6 @@ async fn test_invocation_query_offset_and_sort_controls() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_invocation_query_filters_zombie_cancellations_by_default() -> TestResult<()> {
-    let db = HistoryDb::open_in_memory()?;
-
-    let success = db.start_invocation("check", None, None, None)?;
-    db.finish_invocation(success, InvocationStatus::Success, Some(0), 0.1)?;
-
-    let stale = db.start_invocation("check", None, None, None)?;
-    db.finish_invocation_cancelled(stale, None, 0.2, "stale_pid", "open_time_sweep")?;
-
-    let null_reason = db.start_invocation("check", None, None, None)?;
-    db.finish_invocation(null_reason, InvocationStatus::Cancelled, None, 0.3)?;
-
-    let user_cancel = db.start_invocation("check", None, None, None)?;
-    db.finish_invocation_cancelled(user_cancel, None, 0.4, "user_cancel", "user")?;
-
-    let visible_ids = InvocationQuery::new()
-        .command("check")
-        .run(&db)?
-        .into_iter()
-        .map(|invocation| invocation.id)
-        .collect::<Vec<_>>();
-    assert_eq!(visible_ids, vec![user_cancel, success]);
-    assert_eq!(InvocationQuery::new().command("check").count(&db)?, 2);
-
-    let with_zombies = InvocationQuery::new()
-        .command("check")
-        .include_zombies()
-        .run(&db)?
-        .into_iter()
-        .map(|invocation| invocation.id)
-        .collect::<Vec<_>>();
-    assert_eq!(with_zombies, vec![user_cancel, null_reason, stale, success]);
-
-    let exact_zombie = InvocationQuery::new().for_invocation(stale).run(&db)?;
-    assert_eq!(exact_zombie.len(), 1);
-    assert_eq!(exact_zombie[0].id, stale);
-
-    Ok(())
-}
-
-#[sinex_test]
 #[ignore = "sinex-i2r1 open: DiagnosticQuery::count() is implemented as \
             run_diagnostic_query(q)?.len(), which is capped by the query's LIMIT \
             (default 200) instead of reporting the true matching-row cardinality"]

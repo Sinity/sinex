@@ -26,7 +26,7 @@ const HELP_CATEGORIES: &[HelpCategory] = &[
     },
     HelpCategory {
         title: "Runtime",
-        command_paths: &["run", "infra", "jobs", "status"],
+        command_paths: &["run", "infra"],
     },
     HelpCategory {
         title: "Analysis",
@@ -36,7 +36,6 @@ const HELP_CATEGORIES: &[HelpCategory] = &[
             "analytics",
             "freshness",
             "impact",
-            "git-stack",
         ],
     },
     HelpCategory {
@@ -131,15 +130,11 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "xtask infra smoke --dry-run",
                     "xtask infra smoke --reset-first",
                     "xtask infra smoke --reset-first --skip-start",
-                    "xtask infra smoke --reset-first --run-core",
-                    "xtask infra smoke --allow-running --run-core",
                 ],
                 notes: &[
                     "`xtask infra smoke` starts services only in its explicit start phase, then stops them before returning.",
                     "Use `--dry-run` for a no-service plan and current coordinate/RSS inventory.",
                     "Use `--skip-start` when you only want to recheck read-only probes and all-checkout inventory.",
-                    "Use `--run-core` when you need to prove the checkout can start, observe, and cleanly cancel managed local sinexd.",
-                    "Use `--allow-running --run-core` when dogfood infra is already live and the proof must observe it without stopping it.",
                 ],
             },
             GuideEntry {
@@ -166,16 +161,9 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[
                     "`xtask run` is the local unified-sinexd development surface; it replaces old multi-node dev-run assumptions.",
                     "Local sinexd execution is explicit. Build/check/test/help/pre-push flows must not start it as a side effect.",
-                    "Dry-run and startup output report the checkout root, dev-state, log directory, database URL, NATS URL, API URL when configured, and job directory; use `xtask infra status` to inspect live dev-local processes.",
-                    "AgentCTL owns the default core and all-automatons lifecycle (`agentctl job start sinex run_core` or `run_all_automatons`); foreground runs remain terminal-owned, while custom background run shapes remain under `xtask jobs` until AgentCTL supports scalar and arbitrary-string parameters.",
+                    "Dry-run and startup output report the checkout root, dev-state, log directory, database URL, NATS URL, and API URL when configured; use `xtask infra status` to inspect live dev-local processes.",
+                    "AgentCTL owns declared lifecycle operations, including `run_core`, `run_all_automatons`, and `run_all_sources`; foreground runs retain terminal-owned supervision when no declared operation fits.",
                 ],
-            },
-            GuideEntry {
-                path: "status",
-                fallback_summary: "Show workspace and service health",
-                when: "you want a quick read on infra/runtime state before or after a change",
-                examples: &["xtask status", "xtask status --summary"],
-                notes: &[],
             },
             GuideEntry {
                 path: "doctor",
@@ -214,19 +202,6 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[
                     "`xtask ra ssr` is dry-run by default; pass `--apply` to let rust-analyzer edit files.",
                     "This wraps rust-analyzer's available CLI primitives. rust-analyzer does not expose a stable standalone rename-at-position CLI.",
-                ],
-            },
-            GuideEntry {
-                path: "jobs output",
-                fallback_summary: "Read output for a background job",
-                when: "you launched a long-running command with --bg and need its logs or current state",
-                examples: &[
-                    "xtask run module terminal-source --bg",
-                    "xtask jobs status 42",
-                    "xtask jobs output 42",
-                ],
-                notes: &[
-                    "Use xtask history when you need trends, diagnostics, or durable execution records beyond the live job handle.",
                 ],
             },
             GuideEntry {
@@ -290,7 +265,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
             GuideEntry {
                 path: "history overlap",
                 fallback_summary: "Explain invocation overlap and recorded shared resources",
-                when: "a run was slow under pressure and you need to see concurrent xtask work, background jobs, and shared build slices",
+                when: "a run was slow under pressure and you need to see concurrent xtask work and shared build slices",
                 examples: &[
                     "xtask history overlap latest --command test",
                     "xtask history overlap inv:2000549 --limit 20",
@@ -413,30 +388,6 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 ],
             },
             GuideEntry {
-                path: "git-stack split",
-                fallback_summary: "Plan and materialize a stacked PR split from the current branch",
-                when: "a long local commit train needs to be broken into reviewable slices with generated PR bodies and squash commits",
-                examples: &[
-                    "xtask git-stack plan --base origin/master",
-                    "xtask git-stack split --base origin/master --branch-prefix pr-stack",
-                ],
-                notes: &[
-                    "The planner records dirty-worktree loose ends and materializes branches in a temporary worktree so the active checkout is not rewritten.",
-                ],
-            },
-            GuideEntry {
-                path: "git-stack publish",
-                fallback_summary: "Push a materialized stack and open or reuse chained PRs",
-                when: "you already generated stack branches locally and want to publish them to a remote with generated PR bodies",
-                examples: &[
-                    "xtask git-stack publish --plan .sinex/git-stack/master-split/plan.yaml",
-                    "xtask git-stack publish --plan .sinex/git-stack/master-split/plan.yaml --push-only",
-                ],
-                notes: &[
-                    "PR creation reuses existing pull requests when possible and uses the generated per-slice `pr-body.md` files.",
-                ],
-            },
-            GuideEntry {
                 path: "schema strict-diff",
                 fallback_summary: "Check strict live-schema drift",
                 when: "you need to verify the checkout-local database has no drift in categories the declarative apply engine does not reconcile; the default form prepares the checkout-local stack before inspecting it",
@@ -543,8 +494,7 @@ pub fn render_command_guide(commands: &[CommandInfo]) -> String {
     );
     out.push_str("## Agent Defaults\n\n");
     out.push_str("- Prefer `--json` or `--format json` when another tool will parse the output.\n");
-    out.push_str("- Start declared `fix_default`, `run_core`, `run_all_automatons`, `vm_smoke`, and `vm_validate` operations through AgentCTL when lifecycle ownership matters.\n");
-    out.push_str("- `xtask jobs` remains only for custom run shapes that AgentCTL cannot express yet; use foreground xtask for parameterized VM and other semantic work.\n");
+    out.push_str("- Start declared `fix_default`, `run_core`, `run_all_automatons`, `run_all_sources`, `vm_smoke`, and `vm_validate` operations through AgentCTL when lifecycle ownership matters.\n");
     out.push_str("- Use `xtask <command> --help` only to confirm the exact live flags for commands already named below.\n\n");
 
     for section in GUIDE_SECTIONS {

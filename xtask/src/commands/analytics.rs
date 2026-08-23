@@ -48,9 +48,6 @@ pub enum AnalyticsSubcommand {
         /// Number of recent invocations to show
         #[arg(long, default_value = "20")]
         limit: usize,
-        /// Include watchdog/stale-pid cancellation rows normally hidden as zombie noise
-        #[arg(long)]
-        include_zombies: bool,
     },
     /// Current host pressure snapshot, with Sinnix observability join when available
     Pressure {
@@ -279,8 +276,7 @@ impl XtaskCommand for AnalyticsCommand {
                 AnalyticsSubcommand::Resources {
                     command,
                     limit,
-                    include_zombies,
-                } => execute_resources(db, command.as_deref(), *limit, *include_zombies, ctx),
+                } => execute_resources(db, command.as_deref(), *limit, ctx),
                 AnalyticsSubcommand::Pressure { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::Store { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::StorageGrowth { .. } => unreachable!("handled before DB open"),
@@ -1142,10 +1138,9 @@ fn execute_resources(
     db: &HistoryDb,
     command: Option<&str>,
     limit: usize,
-    include_zombies: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let rows = db.get_resource_usage_with_zombies(command, limit, include_zombies)?;
+    let rows = db.get_resource_usage(command, limit)?;
 
     if ctx.is_json() {
         return Ok(CommandResult::success()

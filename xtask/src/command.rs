@@ -481,14 +481,10 @@ impl WorkloadScope {
 /// Context passed to commands during execution.
 ///
 /// Implements `Drop` to ensure invocations stuck in 'running' are marked as
-/// 'failed' on panics, early `?` returns, or OOM kills. For `SIGKILL` (which
-/// doesn't run destructors), the coordinator detects dead PIDs and the zombie
-/// cleanup threshold catches the rest.
+/// 'failed' on panics, early `?` returns, or OOM kills.
 pub struct CommandContext {
     start_time: std::time::Instant,
     writer: crate::output::OutputWriter,
-    background: bool,
-    background_wait: bool,
     command_name: String,
     invocation_id: Option<i64>,
     /// Set to true when `finish_invocation` is called explicitly in lib.rs.
@@ -517,7 +513,7 @@ impl CommandContext {
     #[must_use]
     pub fn new(
         writer: crate::output::OutputWriter,
-        background: bool,
+        _execution_mode: bool,
         invocation_id: Option<i64>,
         command_name: impl Into<String>,
     ) -> Self {
@@ -525,8 +521,6 @@ impl CommandContext {
         Self {
             start_time: std::time::Instant::now(),
             writer,
-            background,
-            background_wait: false,
             command_name: command_name.into(),
             invocation_id,
             finished: AtomicBool::new(false),
@@ -545,7 +539,7 @@ impl CommandContext {
     #[must_use]
     pub fn new_with_db_override(
         writer: crate::output::OutputWriter,
-        background: bool,
+        _execution_mode: bool,
         invocation_id: Option<i64>,
         command_name: impl Into<String>,
         db_path: PathBuf,
@@ -553,8 +547,6 @@ impl CommandContext {
         Self {
             start_time: std::time::Instant::now(),
             writer,
-            background,
-            background_wait: false,
             command_name: command_name.into(),
             invocation_id,
             finished: AtomicBool::new(false),
@@ -631,12 +623,6 @@ impl CommandContext {
         runner: std::sync::Arc<dyn crate::cargo_runner::CargoRunner>,
     ) -> Self {
         self.cargo_runner = runner;
-        self
-    }
-
-    #[must_use]
-    pub fn with_background_wait(mut self, background_wait: bool) -> Self {
-        self.background_wait = self.background && background_wait;
         self
     }
 
@@ -763,16 +749,6 @@ impl CommandContext {
     }
 
     #[must_use]
-    pub fn is_background(&self) -> bool {
-        self.background
-    }
-
-    #[must_use]
-    pub fn background_wait(&self) -> bool {
-        self.background_wait
-    }
-
-    #[must_use]
     pub fn invocation_id(&self) -> Option<i64> {
         self.invocation_id
     }
@@ -803,7 +779,7 @@ impl CommandContext {
     /// subprocesses.
     #[must_use]
     pub fn allows_ambient_optimizations(&self) -> bool {
-        !self.is_background() && self.is_human()
+        self.is_human()
     }
 
     /// Check if output format is JSON.
@@ -946,7 +922,7 @@ impl CommandContext {
     ///
     /// Called by coordinatable commands (check, build, test) at the start of their
     /// foreground execution path. Each command passes its own scope-relevant args
-    /// to ensure the scope key matches what the --bg path would compute.
+    /// to ensure the scope key matches the command's semantic inputs.
     pub fn record_coordination_fingerprint(&self, command: &str, args: &[String]) {
         if let Some(inv_id) = self.invocation_id {
             match Self::resolve_coordination_fingerprint(
@@ -1001,7 +977,7 @@ impl CommandContext {
 
     /// Start timing a pipeline stage. Returns a handle to pass to `finish_stage()`.
     ///
-    /// Writes `live_stage` to the DB so running background jobs show their current phase.
+    /// Writes `live_stage` to the DB so active invocations expose their current phase.
     #[must_use]
     pub fn start_stage(&self, name: &str) -> StageHandle {
         tracing::debug!(target: "xtask::command", stage = name, "stage started");
@@ -1052,7 +1028,7 @@ impl CommandContext {
     /// Report live progress for the current invocation.
     ///
     /// Writes a snapshot to `invocation_progress` in the history DB so that
-    /// `xtask jobs status` and `xtask history progress` can show real-time state.
+    /// `xtask history progress` can show real-time state.
     ///
     /// - `phase`: current pipeline phase name (e.g. "preflight", "clippy", "tests")
     /// - `step`: optional sub-step within the phase
@@ -1224,73 +1200,6 @@ impl CommandContext {
         eprintln!("Stages: {}  →  total {:.1}s", parts.join(" "), total);
     }
 
-    /// Spawn a command as a background job.
-    ///
-    /// Returns a `CommandResult` with the job ID and log paths. The actual command
-    /// execution happens in a separate process.
-    pub fn spawn_background(&self, subcommand: &str, args: &[String]) -> Result<CommandResult> {
-        use crate::config::config;
-        use crate::jobs::JobManager;
-
-        let cfg = config();
-        let manager = JobManager::new(cfg.jobs_dir())?;
-        let job = manager.spawn_xtask(subcommand, args, self.writer.format())?;
-        let history_selector = format!("job:{}", job.id);
-        let history_hint = format!("xtask history invocation {history_selector}");
-        let progress_hint = format!("xtask history progress --invocation {history_selector}");
-        let test_analysis_hint = (subcommand == "test")
-            .then(|| format!("xtask history tests analyze --invocation job:{}", job.id));
-
-        let result = CommandResult::success()
-            .with_message(match job.invocation_id {
-                Some(invocation_id) => {
-                    format!(
-                        "Started background job {} (invocation {invocation_id})",
-                        job.id
-                    )
-                }
-                None => format!("Started background job {}", job.id),
-            })
-            .with_data(serde_json::json!({
-                "job_id": job.id,
-                "invocation_id": job.invocation_id,
-                "pid": job.pid,
-                "stdout": job.stdout_path.display().to_string(),
-                "stderr": job.stderr_path.display().to_string(),
-                "command": subcommand,
-                "args": args,
-                "hint": format!("Monitor with: xtask jobs status {}", job.id),
-                "history_hint": history_hint,
-                "progress_hint": progress_hint,
-                "test_analysis_hint": test_analysis_hint,
-                "proof_status": "incomplete",
-            }));
-
-        if self.is_human() {
-            println!("🚀 Started background job {}", job.id);
-            println!("   Command: xtask {} {}", subcommand, args.join(" "));
-            if let Some(invocation_id) = job.invocation_id {
-                println!("   Invocation: {invocation_id}");
-            }
-            println!("   Logs: {}", job.stdout_path.display());
-            println!();
-            println!("   Monitor: xtask jobs status {}", job.id);
-            println!("   Output:  xtask jobs output {}", job.id);
-            println!("   History: {history_hint}");
-            println!("   Progress: {progress_hint}");
-            if let Some(test_analysis_hint) = &test_analysis_hint {
-                println!("   Analyze: {test_analysis_hint}");
-            }
-            println!("   Cancel:  xtask jobs cancel {}", job.id);
-            // Suppress the automatic CommandResult print — we already wrote the job summary.
-            // In JSON mode is_silent is ignored when data is present, so the JSON envelope
-            // still prints. The separation relies on output.rs: JSON suppresses only when
-            // is_silent=true AND data=None AND errors=[].
-            return Ok(result.with_silent().with_duration(self.elapsed()));
-        }
-
-        Ok(result.with_duration(self.elapsed()))
-    }
 }
 
 impl Drop for CommandContext {

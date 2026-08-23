@@ -20,13 +20,12 @@ development.
 - [`sandbox/README.md`](sandbox/README.md): test harness architecture and sandbox patterns.
 - [`cloud-agent-lane.md`](cloud-agent-lane.md): bounded cloud-sandbox lane and sidecar setup.
 - [`runtime-target-boundaries.md`](runtime-target-boundaries.md): split between checkout tooling, live runtime probes, VM tests, and deployment proof.
-- [`commands/jobs.md`](commands/jobs.md): background job model and how it differs from history.
 - [`commands/deps.md`](commands/deps.md): dependency analysis subcommands and output.
 
 ## Mental Model
 
 - **Core loop**: `xtask check`, `xtask fix`, `xtask test`, and `xtask build`.
-- **Runtime/infra**: `xtask infra`, `xtask run`, `xtask status`, `xtask doctor`, `xtask jobs`, and `xtask reset`.
+- **Runtime/infra**: `xtask infra`, `xtask run`, `xtask doctor`, and `xtask reset`.
 - **Investigation**: `xtask history`, `xtask analytics`, `xtask impact`, and `xtask deps`.
 - **Docs/context**: `xtask docs sync`, `xtask docs check`, `xtask docs ast-grep-catalog`, `xtask docs schema-bundle`, and `xtask docs snapshot`.
 
@@ -72,6 +71,6 @@ Every xtask command supports the shared global output controls documented in the
 generated reference. In practice:
 
 - prefer `--json` or `--format json` when another tool will parse the result
-- use AgentCTL for declared fix, default runtime, and default VM lifecycle operations
-- use `xtask jobs` only for custom run shapes that AgentCTL cannot yet express; run parameterized VM work in the foreground
+- use AgentCTL for declared fix, runtime, and VM lifecycle operations
+- run undeclared local work in the foreground
 - use human output for interactive inspection

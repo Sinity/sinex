@@ -484,27 +484,6 @@ pub struct VmArgs {
 }
 
 impl TestCommand {
-    fn agentctl_owned_background_operation(&self) -> Option<&'static str> {
-        let Some(TestSubcommand::Vm(vm)) = self.subcommand.as_ref() else {
-            return None;
-        };
-
-        if vm.category.is_some()
-            || vm.timeout != crate::commands::vm::DEFAULT_TIMEOUT_SECS
-            || vm.keep_failed
-            || vm.list
-            || !vm.args.is_empty()
-        {
-            return None;
-        }
-
-        if vm.validate {
-            Some("vm_validate")
-        } else {
-            Some("vm_smoke")
-        }
-    }
-
     /// `--dry-run` path: resolve the execution plan, print/emit it, and return
     /// without running tests. Extracted from `execute` to keep it within the
     /// cognitive-complexity budget.
@@ -1427,20 +1406,6 @@ impl XtaskCommand for TestCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        if ctx.is_background() {
-            let operation = self.agentctl_owned_background_operation();
-            return Ok(CommandResult::failure(
-                crate::output::StructuredError::new(
-                    "XTASK_TEST_BACKGROUND_UNSUPPORTED",
-                    "background mode is unsupported for xtask test",
-                )
-                .with_suggestion(operation.map_or_else(
-                    || "run `xtask test` in the foreground or start AgentCTL's declared test_default operation".to_string(),
-                    |operation| format!("run this VM workflow in the foreground or start AgentCTL's declared {operation} operation"),
-                )),
-            ));
-        }
-
         // Dispatch to subcommand handler if present
         if let Some(ref sub) = self.subcommand {
             return match sub {
@@ -1689,6 +1654,10 @@ impl XtaskCommand for TestCommand {
         // --- PREPARE EXECUTION via Runner ---
 
         let mut runner = TestRunner::new(ctx, profile);
+
+        if let Some(invocation_id) = ctx.invocation_id() {
+            runner.add_env("XTASK_INVOCATION_ID", invocation_id.to_string());
+        }
 
         if self.update_snapshots {
             runner.add_env("INSTA_UPDATE", "always");

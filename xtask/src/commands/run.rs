@@ -3,7 +3,6 @@
 //! Provides unified command to run sinex binaries with:
 //! - Process spawning with instance ID tracking
 //! - `--watch` mode for development with seamless handoff
-//! - `--bg` support via jobs system
 //! - `--tether` mode for connecting to production NATS
 //! - Bundle shortcuts (core, all-sources, all-automatons)
 //! - `--logs` mode: interleaved color-coded output from all bundle processes
@@ -20,7 +19,6 @@ use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::infra::stack::StackConfig;
-use crate::jobs::JobManager;
 use crate::orchestrator::{DevOrchestrator, RunArgs};
 use crate::preflight;
 use crate::process::{
@@ -772,7 +770,7 @@ pub struct RunCommand {
     /// Interleave color-coded logs from all bundle processes on stdout (P2)
     ///
     /// Each process's stdout/stderr is prefixed with `[name] ` in a distinct color.
-    /// Implies foreground mode; incompatible with --bg.
+    /// Runs under the invoking terminal or AgentCTL operation.
     #[arg(long, global = true)]
     pub logs: bool,
 
@@ -807,7 +805,6 @@ struct LocalRuntimeCoordinates {
     database_url: String,
     nats_url: String,
     api_url: Option<String>,
-    jobs_dir: String,
 }
 
 impl LocalRuntimeCoordinates {
@@ -825,7 +822,6 @@ impl LocalRuntimeCoordinates {
                 .unwrap_or_else(|| stack.database_url()),
             nats_url: cfg.nats_url.clone().unwrap_or_else(|| stack.nats_url()),
             api_url: cfg.gateway_url.clone(),
-            jobs_dir: cfg.jobs_dir().display().to_string(),
         })
     }
 
@@ -841,7 +837,6 @@ impl LocalRuntimeCoordinates {
             "  api:         {}",
             self.api_url.as_deref().unwrap_or("not configured")
         );
-        println!("  jobs:        {}", self.jobs_dir);
         println!("  inspect:     xtask infra status");
     }
 }
@@ -852,25 +847,13 @@ impl XtaskCommand for RunCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        if ctx.is_background()
-            && let Some(operation) = self.agentctl_owned_background_operation()
-        {
-            return Ok(CommandResult::failure(
-                crate::output::StructuredError::new(
-                    "XTASK_RUN_BACKGROUND_UNSUPPORTED",
-                    format!("background mode is unsupported for this xtask run shape; use AgentCTL's {operation} operation"),
-                )
-                .with_suggestion(format!("start it with `agentctl job start sinex {operation}`")),
-            ));
-        }
-
         // Guard: xtask run invokes `cargo build` before starting binaries, which needs the
         // cargo target/ lock. If nextest is running, that lock is held and we'd deadlock.
         if std::env::var("NEXTEST_RUN_ID").is_ok() {
             return Err(color_eyre::eyre::eyre!(
                 "Cannot run `xtask run` inside an active nextest run — \
                  cargo build needs the cargo target/ lock which nextest holds.\n\
-                 Use `xtask run --bg ...` to spawn in background instead."
+                 Run it from a terminal after the active nextest run completes."
             ));
         }
 
@@ -921,18 +904,6 @@ impl XtaskCommand for RunCommand {
 }
 
 impl RunCommand {
-    fn agentctl_owned_background_operation(&self) -> Option<&'static str> {
-        if self.watch || self.dry_run || self.logs || self.metrics || self.dev_journal {
-            return None;
-        }
-
-        match &self.subcommand {
-            RunSubcommand::Core { instance_id: None } => Some("run_core"),
-            RunSubcommand::AllAutomatons { instance_id: None } => Some("run_all_automatons"),
-            _ => None,
-        }
-    }
-
     fn ensure_ready_staged(&self, ctx: &CommandContext) -> Result<()> {
         let stage = ctx.start_stage("preflight");
         let result = preflight::ensure_ready(ctx);
@@ -957,21 +928,13 @@ impl RunCommand {
         self.runs_single_binary() || self.runs_bundle()
     }
 
-    fn validate_flag_compatibility(&self, ctx: &CommandContext) -> Result<()> {
+    fn validate_flag_compatibility(&self, _ctx: &CommandContext) -> Result<()> {
         if self.watch && !self.runs_single_binary() {
             bail!("--watch only supports single local module targets");
         }
 
-        if self.watch && ctx.is_background() {
-            bail!("--watch is incompatible with --bg");
-        }
-
         if (self.logs || self.dev_journal) && !self.runs_local_processes() {
             bail!("--logs and --dev-journal only support local binary or bundle runs");
-        }
-
-        if (self.logs || self.dev_journal) && ctx.is_background() {
-            bail!("--logs and --dev-journal are incompatible with --bg");
         }
 
         if (self.logs || self.dev_journal) && self.watch {
@@ -980,10 +943,6 @@ impl RunCommand {
 
         if self.metrics && !self.runs_local_processes() {
             bail!("--metrics only supports local binary or bundle runs");
-        }
-
-        if self.metrics && ctx.is_background() {
-            bail!("--metrics is incompatible with --bg");
         }
 
         if let RunSubcommand::Tether {
@@ -1173,12 +1132,6 @@ impl RunCommand {
 
         self.print_local_runtime_coordinates(ctx)?;
 
-        if ctx.is_background() {
-            return self
-                .run_background(package, binary, &instance_id, *target, ctx)
-                .await;
-        }
-
         if self.watch {
             return self
                 .run_watch(package, binary, &instance_id, *target, ctx)
@@ -1204,9 +1157,6 @@ impl RunCommand {
         if self.dry_run {
             let runtime = self.local_runtime_coordinates()?;
             println!("Would run bundle: {binaries:?}");
-            if ctx.is_background() {
-                println!("  (background mode via JobManager)");
-            }
             if ctx.is_human() {
                 runtime.print_human();
             }
@@ -1219,12 +1169,6 @@ impl RunCommand {
         }
 
         self.print_local_runtime_coordinates(ctx)?;
-
-        if ctx.is_background() {
-            return self
-                .run_bundle_background(binaries, instance_prefix.as_deref(), ctx)
-                .await;
-        }
 
         self.run_bundle_foreground(binaries, instance_prefix.as_deref(), ctx)
             .await
@@ -1341,27 +1285,20 @@ impl RunCommand {
                 })));
         }
 
-        if ctx.is_background() {
-            return self
-                .run_source_bindings_background(
-                    &runnable_bindings,
-                    &excluded,
-                    &included_default_excluded,
-                    &already_running,
-                    reconcile,
-                    instance_prefix.as_deref(),
-                    runtime,
-                    ctx,
-                )
-                .await;
-        }
-
-        bail!(
-            "foreground all-sources is not supported for manifest-driven source bindings yet; use `xtask run all-sources --bg`"
+        self.run_source_bindings_foreground(
+            &runnable_bindings,
+            &excluded,
+            &included_default_excluded,
+            &already_running,
+            reconcile,
+            instance_prefix.as_deref(),
+            runtime,
+            ctx,
         )
+        .await
     }
 
-    async fn run_source_bindings_background(
+    async fn run_source_bindings_foreground(
         &self,
         bindings: &[DevSourceBinding],
         excluded: &[String],
@@ -1372,15 +1309,13 @@ impl RunCommand {
         runtime: LocalRuntimeCoordinates,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
-        let cfg = config();
-        let manager = JobManager::new(cfg.jobs_dir())?;
         let runtime_env = self.core_bundle_env_vars();
         self.build_packages(&["sinexd"], ctx).await?;
 
-        let binary_command = target_binary_path(self.release, "sinexd")
-            .to_string_lossy()
-            .into_owned();
-        let mut job_ids = Vec::with_capacity(bindings.len());
+        let binary_path = target_binary_path(self.release, "sinexd");
+        let pipe_output = self.logs || self.dev_journal;
+        let mut children = HashMap::with_capacity(bindings.len());
+        let mut log_streams = Vec::with_capacity(bindings.len());
         let mut sources = Vec::with_capacity(bindings.len());
         let mut service_names = Vec::with_capacity(bindings.len());
         for binding in bindings {
@@ -1389,18 +1324,62 @@ impl RunCommand {
                 format!("{prefix}-{default_service_name}")
             });
             let args = source_binding_runtime_args(binding, &run_identity);
-            let job =
-                manager.spawn_with_env_without_watchdog(&binary_command, &args, &runtime_env)?;
-            job_ids.push(job.id);
+            let mut command = Command::new(&binary_path);
+            configure_managed_child_tokio(&mut command);
+            let (stdout, stderr) = if pipe_output {
+                (Stdio::piped(), Stdio::piped())
+            } else {
+                (Stdio::inherit(), Stdio::inherit())
+            };
+            let mut child = command
+                .args(args)
+                .envs(runtime_env.clone())
+                .stdout(stdout)
+                .stderr(stderr)
+                .kill_on_drop(true)
+                .spawn()
+                .with_context(|| format!("failed to spawn source binding {run_identity}"))?;
+            register_tokio_child_process_group(&child, &run_identity);
+            if pipe_output {
+                let pid = require_spawned_pid(child.id(), &run_identity)?;
+                log_streams.push((
+                    run_identity.clone(),
+                    child.stdout.take(),
+                    child.stderr.take(),
+                    pid,
+                ));
+            }
+            children.insert(run_identity.clone(), child);
             sources.push(binding.source_id.clone());
             service_names.push(run_identity);
         }
 
+        if pipe_output && !log_streams.is_empty() {
+            let journal = self.dev_journal.then(|| config().state_dir.join("dev-journal.log"));
+            let journal = journal.as_deref().map(DevJournal::new).transpose()?;
+            spawn_output_handlers(log_streams, self.logs, &journal);
+        }
+        self.maybe_spawn_metrics_overlay(ctx);
+        let run_stage = ctx.start_stage("source-bindings-run");
+        let exited_name = wait_for_any_child_exit(&mut children, ctx).await;
+        let mut shutdown_failures = Vec::new();
+        for (name, child) in &mut children {
+            if Some(name) != exited_name.as_ref()
+                && let Err(error) = stop_bundle_child(name, child).await
+            {
+                shutdown_failures.push(format!("{name}: {error:#}"));
+            }
+        }
+        ctx.finish_stage(run_stage, shutdown_failures.is_empty());
+        if !shutdown_failures.is_empty() {
+            bail!(
+                "failed to stop remaining source bindings:\n{}",
+                shutdown_failures.join("\n")
+            );
+        }
+
         Ok(CommandResult::success()
-            .with_message(format!(
-                "Started {} source bindings in background",
-                bindings.len()
-            ))
+            .with_message(format!("Source bindings stopped (triggered by {})", exited_name.unwrap_or_else(|| "Ctrl+C".to_string())))
             .with_data(serde_json::json!({
                 "sources": sources,
                 "service_names": service_names,
@@ -1408,7 +1387,6 @@ impl RunCommand {
                 "included_default_excluded_sources": included_default_excluded,
                 "already_running_service_names": already_running,
                 "reconcile": reconcile,
-                "job_ids": job_ids,
                 "runtime": runtime,
             })))
     }
@@ -1442,18 +1420,6 @@ impl RunCommand {
 
         self.print_local_runtime_coordinates(ctx)?;
 
-        if ctx.is_background() {
-            return self
-                .run_background(
-                    "sinexd",
-                    "sinexd",
-                    &instance_id,
-                    RuntimeTarget::AllAutomata,
-                    ctx,
-                )
-                .await;
-        }
-
         self.run_direct(
             "sinexd",
             "sinexd",
@@ -1462,56 +1428,6 @@ impl RunCommand {
             ctx,
         )
         .await
-    }
-
-    async fn run_bundle_background(
-        &self,
-        binaries: &[&str],
-        instance_prefix: Option<&str>,
-        ctx: &CommandContext,
-    ) -> Result<CommandResult> {
-        let cfg = config();
-        let manager = JobManager::new(cfg.jobs_dir())?;
-        let mut job_ids = Vec::new();
-        let packages: Vec<&str> = binaries
-            .iter()
-            .map(|name| {
-                BINARIES
-                    .iter()
-                    .find(|(n, _, _, _)| n == name)
-                    .map(|(_, package, _, _)| *package)
-                    .ok_or_else(|| eyre!("Unknown binary: {name}"))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        self.build_packages(&packages, ctx).await?;
-
-        let runtime = self.local_runtime_coordinates()?;
-        for name in binaries {
-            let (_, package, binary, target) = BINARIES
-                .iter()
-                .find(|(n, _, _, _)| n == name)
-                .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
-
-            let instance_id = make_instance_id(name, instance_prefix);
-            let binary_command = target_binary_path(self.release, binary)
-                .to_string_lossy()
-                .into_owned();
-            let args = runtime_cli_args(package, &instance_id, *target);
-            let runtime_env = self.runtime_env_vars(*target);
-
-            let job =
-                manager.spawn_with_env_without_watchdog(&binary_command, &args, &runtime_env)?;
-            job_ids.push(job.id);
-        }
-
-        Ok(CommandResult::success()
-            .with_message(format!("Started {} binaries in background", binaries.len()))
-            .with_data(serde_json::json!({
-                "binaries": binaries,
-                "job_ids": job_ids,
-                "runtime": runtime,
-            })))
     }
 
     async fn run_bundle_foreground(
@@ -1852,38 +1768,6 @@ impl RunCommand {
             .with_data(serde_json::to_value(&run_result)?)
             .with_duration(ctx.elapsed()))
         }
-    }
-
-    async fn run_background(
-        &self,
-        package: &str,
-        binary: &str,
-        instance_id: &str,
-        target: RuntimeTarget,
-        ctx: &CommandContext,
-    ) -> Result<CommandResult> {
-        let cfg = config();
-        let manager = JobManager::new(cfg.jobs_dir())?;
-        self.build_packages(&[package], ctx).await?;
-
-        let binary_command = target_binary_path(self.release, binary)
-            .to_string_lossy()
-            .into_owned();
-        let args = runtime_cli_args(package, instance_id, target);
-        let runtime_env = self.runtime_env_vars(target);
-        let runtime = self.local_runtime_coordinates()?;
-
-        let job = manager.spawn_with_env_without_watchdog(&binary_command, &args, &runtime_env)?;
-
-        Ok(CommandResult::success()
-            .with_message(format!("Backgrounded {package} as job {}", job.id))
-            .with_data(serde_json::json!({
-                "job_id": job.id,
-                "package": package,
-                "instance_id": instance_id,
-                "runtime": runtime,
-            }))
-            .with_duration(ctx.elapsed()))
     }
 
     async fn run_watch(

@@ -49,7 +49,7 @@ pub struct Config {
     pub nats_url: Option<String>,
     /// Gateway base URL (without `/rpc`) for HTTP readiness checks
     pub gateway_url: Option<String>,
-    /// State directory for persistent data (history, jobs)
+    /// State directory for persistent data and invocation history.
     pub state_dir: PathBuf,
     /// Cache directory for temporary data
     pub cache_dir: PathBuf,
@@ -125,11 +125,6 @@ impl Config {
         self.state_dir.join("xtask-history.db")
     }
 
-    /// Directory for job output files.
-    pub(crate) fn jobs_dir(&self) -> PathBuf {
-        self.state_dir.join("jobs")
-    }
-
     /// Directory for preflight cache, hash, and lock state.
     pub(crate) fn preflight_state_dir(&self) -> PathBuf {
         self.state_dir.join("preflight")
@@ -140,10 +135,6 @@ impl Config {
         std::fs::create_dir_all(&self.state_dir)
     }
 
-    /// Ensure the jobs directory exists.
-    pub(crate) fn ensure_jobs_dir(&self) -> std::io::Result<()> {
-        std::fs::create_dir_all(self.jobs_dir())
-    }
 }
 
 impl Default for Config {
