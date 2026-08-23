@@ -354,6 +354,18 @@ fn command_dispatch_metadata(
     }
 }
 
+/// `run all-sources` owns cancellation until it has collected each managed
+/// source group's cleanup result into its terminal command output.
+fn command_owns_structured_source_cancellation(command: Option<&Commands>) -> bool {
+    matches!(
+        command,
+        Some(Commands::Run(commands::RunCommand {
+            subcommand: commands::run::RunSubcommand::AllSources { .. },
+            ..
+        }))
+    )
+}
+
 pub async fn run_cli() -> Result<()> {
     // Use try_get_matches so we can intercept parse errors and route them
     // through the JSON formatter when --json is present, instead of letting
@@ -366,7 +378,9 @@ pub async fn run_cli() -> Result<()> {
     if let Err(error) = process::arm_current_process_parent_death_signal() {
         eprintln!("⚠️  Failed to arm xtask parent-death signal: {error}");
     }
-    if let Err(error) = process::install_registered_process_group_signal_cleanup() {
+    if !command_owns_structured_source_cancellation(cli.command.as_ref())
+        && let Err(error) = process::install_registered_process_group_signal_cleanup()
+    {
         eprintln!("⚠️  Failed to install xtask signal cleanup: {error}");
     }
 
@@ -710,14 +724,16 @@ where
 
 fn open_history_db(history_access: HistoryAccessMode) -> Result<HistoryDb> {
     let cfg = config();
-    cfg.ensure_state_dir()
-        .map_err(|e| eyre!("Failed to create state directory: {e}"))?;
     match history_access {
         HistoryAccessMode::None => {
             bail!("history DB requested for command that declared no history access")
         }
         HistoryAccessMode::Query => HistoryDb::open_query(&cfg.history_db_path()),
-        HistoryAccessMode::ReadWrite => HistoryDb::open(&cfg.history_db_path()),
+        HistoryAccessMode::ReadWrite => {
+            cfg.ensure_state_dir()
+                .map_err(|e| eyre!("Failed to create state directory: {e}"))?;
+            HistoryDb::open(&cfg.history_db_path())
+        }
     }
 }
 

@@ -473,6 +473,9 @@ fn require_spawned_pid(pid: Option<u32>, binary: &str) -> Result<u32> {
 /// The terminal outcome of a foreground child bundle.
 #[derive(Debug)]
 enum ChildExit {
+    AllSucceeded {
+        completed: Vec<String>,
+    },
     Exited {
         name: String,
         status: std::process::ExitStatus,
@@ -482,6 +485,7 @@ enum ChildExit {
         error: std::io::Error,
     },
     TimedOut,
+    Cancelled,
 }
 
 /// Names and structured-error codes for one foreground bundle surface.
@@ -508,7 +512,7 @@ impl ChildExit {
     fn name(&self) -> Option<&str> {
         match self {
             Self::Exited { name, .. } | Self::WaitError { name, .. } => Some(name),
-            Self::TimedOut => None,
+            Self::AllSucceeded { .. } | Self::TimedOut | Self::Cancelled => None,
         }
     }
 
@@ -517,19 +521,33 @@ impl ChildExit {
     fn exited_name(&self) -> Option<&str> {
         match self {
             Self::Exited { name, .. } => Some(name),
-            Self::WaitError { .. } | Self::TimedOut => None,
+            Self::AllSucceeded { .. }
+            | Self::WaitError { .. }
+            | Self::TimedOut
+            | Self::Cancelled => None,
         }
     }
 
     fn is_success(&self) -> bool {
-        matches!(self, Self::Exited { status, .. } if status.success())
+        match self {
+            Self::AllSucceeded { .. } => true,
+            Self::Exited { status, .. } => status.success(),
+            Self::WaitError { .. } | Self::TimedOut | Self::Cancelled => false,
+        }
     }
 
     fn trigger(&self) -> String {
         match self {
+            Self::AllSucceeded { completed } => {
+                format!(
+                    "all {} managed children exited successfully",
+                    completed.len()
+                )
+            }
             Self::Exited { name, status } => format!("{name} exited with {status}"),
             Self::WaitError { name, error } => format!("waiting for {name} failed: {error}"),
             Self::TimedOut => "the 8-hour foreground deadline".to_string(),
+            Self::Cancelled => "foreground cancellation".to_string(),
         }
     }
 }
@@ -584,6 +602,121 @@ async fn wait_for_any_child_exit(
                 eprintln!("[run] 8-hour timeout reached — shutting down");
             }
             ChildExit::TimedOut
+        }
+    }
+}
+
+/// Signal receiver owned by the finite source-binding operation.
+///
+/// `run all-sources` installs this before spawning managed source groups, so a
+/// cancellation received during spawning remains pending until the operation
+/// can aggregate its trigger and every cleanup failure.
+#[cfg(unix)]
+struct ForegroundCancellation {
+    interrupt: tokio::signal::unix::Signal,
+    terminate: tokio::signal::unix::Signal,
+}
+
+#[cfg(unix)]
+impl ForegroundCancellation {
+    fn install() -> Result<Self> {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        Ok(Self {
+            interrupt: signal(SignalKind::interrupt())
+                .wrap_err("failed to register run all-sources SIGINT handler")?,
+            terminate: signal(SignalKind::terminate())
+                .wrap_err("failed to register run all-sources SIGTERM handler")?,
+        })
+    }
+
+    async fn cancelled(&mut self) {
+        tokio::select! {
+            _ = self.interrupt.recv() => {},
+            _ = self.terminate.recv() => {},
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct ForegroundCancellation;
+
+#[cfg(not(unix))]
+impl ForegroundCancellation {
+    fn install() -> Result<Self> {
+        Ok(Self)
+    }
+
+    async fn cancelled(&mut self) {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+/// Wait for every finite source binding to complete successfully.
+///
+/// A source binding is a finite all-bindings operation, unlike the generic
+/// foreground bundle which terminates when any managed child exits. The first
+/// failed wait, failed exit, deadline, or foreground cancellation returns the
+/// trigger so the caller can terminate every remaining managed process group.
+async fn wait_for_all_source_bindings(
+    children: &mut HashMap<String, Child>,
+    ctx: &CommandContext,
+    cancellation: &mut ForegroundCancellation,
+) -> ChildExit {
+    use futures::stream::{FuturesUnordered, StreamExt};
+
+    let child_count = children.len();
+    let mut completed = Vec::with_capacity(child_count);
+    let mut waiters: FuturesUnordered<_> = children
+        .iter_mut()
+        .map(|(name, child)| {
+            let name = name.clone();
+            Box::pin(async move {
+                let status = child.wait().await;
+                (name, status)
+            })
+        })
+        .collect();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(8);
+
+    loop {
+        tokio::select! {
+            result = waiters.next() => match result {
+                Some((name, Ok(status))) if status.success() => {
+                    if ctx.is_human() {
+                        println!("{name} exited successfully");
+                    }
+                    completed.push(name);
+                    if completed.len() == child_count {
+                        return ChildExit::AllSucceeded { completed };
+                    }
+                }
+                Some((name, Ok(status))) => {
+                    if ctx.is_human() {
+                        eprintln!("{name} exited with status: {status}");
+                    }
+                    return ChildExit::Exited { name, status };
+                }
+                Some((name, Err(error))) => {
+                    if ctx.is_human() {
+                        eprintln!("Error waiting on {name}: {error}");
+                    }
+                    return ChildExit::WaitError { name, error };
+                }
+                None => return ChildExit::AllSucceeded { completed },
+            },
+            () = tokio::time::sleep_until(deadline) => {
+                if ctx.is_human() {
+                    eprintln!("[run] 8-hour timeout reached; shutting down source bindings");
+                }
+                return ChildExit::TimedOut;
+            }
+            () = cancellation.cancelled() => {
+                if ctx.is_human() {
+                    eprintln!("[run] foreground cancellation received; shutting down source bindings");
+                }
+                return ChildExit::Cancelled;
+            }
         }
     }
 }
@@ -649,6 +782,20 @@ async fn stop_bundle_children(
         }
     }
     failures
+}
+
+async fn fail_source_binding_setup<T>(
+    children: &mut HashMap<String, Child>,
+    error: color_eyre::Report,
+) -> Result<T> {
+    let cleanup_failures = stop_bundle_children(children, None).await;
+    if cleanup_failures.is_empty() {
+        return Err(error.wrap_err("source-binding setup failed after managed children started"));
+    }
+    Err(eyre!(
+        "{error:#}; source-binding setup cleanup failures: {}",
+        cleanup_failures.join("; ")
+    ))
 }
 
 /// Known binary targets and their package names.
@@ -1289,6 +1436,9 @@ impl RunCommand {
         include_default_excluded: bool,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
+        // Install before manifest, reconciliation, preflight, or building so a
+        // cancellation is retained instead of falling through to hard exit.
+        let mut cancellation = ForegroundCancellation::install()?;
         let manifest = load_dev_source_bindings_manifest().ok_or_else(|| {
             eyre!("No dev source bindings manifest found. Run `xtask infra dev-bindings` first.")
         })?;
@@ -1401,6 +1551,7 @@ impl RunCommand {
             instance_prefix.as_deref(),
             runtime,
             ctx,
+            &mut cancellation,
         )
         .await
     }
@@ -1415,6 +1566,7 @@ impl RunCommand {
         instance_prefix: Option<&str>,
         runtime: LocalRuntimeCoordinates,
         ctx: &CommandContext,
+        cancellation: &mut ForegroundCancellation,
     ) -> Result<CommandResult> {
         let runtime_env = self.core_bundle_env_vars();
         self.build_packages(&["sinexd"], ctx).await?;
@@ -1438,17 +1590,24 @@ impl RunCommand {
             } else {
                 (Stdio::inherit(), Stdio::inherit())
             };
-            let mut child = command
+            let mut child = match command
                 .args(args)
                 .envs(runtime_env.clone())
                 .stdout(stdout)
                 .stderr(stderr)
                 .kill_on_drop(true)
                 .spawn()
-                .with_context(|| format!("failed to spawn source binding {run_identity}"))?;
+                .with_context(|| format!("failed to spawn source binding {run_identity}"))
+            {
+                Ok(child) => child,
+                Err(error) => return fail_source_binding_setup(&mut children, error).await,
+            };
             register_tokio_child_process_group(&child, &run_identity);
             if pipe_output {
-                let pid = require_spawned_pid(child.id(), &run_identity)?;
+                let pid = match require_spawned_pid(child.id(), &run_identity) {
+                    Ok(pid) => pid,
+                    Err(error) => return fail_source_binding_setup(&mut children, error).await,
+                };
                 log_streams.push((
                     run_identity.clone(),
                     child.stdout.take(),
@@ -1465,12 +1624,15 @@ impl RunCommand {
             let journal = self
                 .dev_journal
                 .then(|| config().state_dir.join("dev-journal.log"));
-            let journal = journal.as_deref().map(DevJournal::new).transpose()?;
+            let journal = match journal.as_deref().map(DevJournal::new).transpose() {
+                Ok(journal) => journal,
+                Err(error) => return fail_source_binding_setup(&mut children, error).await,
+            };
             spawn_output_handlers(log_streams, self.logs, &journal);
         }
         self.maybe_spawn_metrics_overlay(ctx);
         let run_stage = ctx.start_stage("source-bindings-run");
-        let exited = wait_for_any_child_exit(&mut children, ctx).await;
+        let exited = wait_for_all_source_bindings(&mut children, ctx, cancellation).await;
         let shutdown_failures = stop_bundle_children(&mut children, exited.exited_name()).await;
         let data = serde_json::json!({
                 "sources": sources,
@@ -1911,6 +2073,11 @@ fn foreground_bundle_terminal_result(
 ) -> CommandResult {
     let suggestion = "Inspect the AgentCTL operation result and process logs before restarting it.";
     let mut result = match exited {
+        ChildExit::AllSucceeded { completed } => CommandResult::success().with_message(format!(
+            "{} completed after all {} managed children exited successfully",
+            kind.name,
+            completed.len()
+        )),
         ChildExit::Exited { name, status } if status.success() => CommandResult::success()
             .with_message(format!(
                 "{} stopped after {name} exited successfully",
@@ -1936,6 +2103,14 @@ fn foreground_bundle_terminal_result(
             crate::output::StructuredError::new(
                 format!("{}_WAIT_TIMED_OUT", kind.error_prefix),
                 format!("{} exceeded the 8-hour foreground deadline", kind.name),
+            )
+            .with_location(kind.location)
+            .with_suggestion(suggestion),
+        ),
+        ChildExit::Cancelled => CommandResult::failure(
+            crate::output::StructuredError::new(
+                format!("{}_CANCELLED", kind.error_prefix),
+                format!("{} received foreground cancellation", kind.name),
             )
             .with_location(kind.location)
             .with_suggestion(suggestion),

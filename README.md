@@ -123,7 +123,7 @@ cd sinex
 direnv allow
 
 xtask infra start
-xtask run core --logs
+agentctl job start sinex run_core
 xtask run list
 sinexctl events recent -n 10
 ```

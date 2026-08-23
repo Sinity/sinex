@@ -92,6 +92,6 @@ sinexd scan-source-driver \
   --until <RFC3339-END-TIME>
 ```
 
-An ISO `--until` selects the historical horizon. The exact runtime binding and archive path must be recorded for each source in the deployment binding manifest; `xtask run all-sources` starts configured bindings but does not by itself rewind every source to `--from none`.
+An ISO `--until` selects the historical horizon. The exact runtime binding and archive path must be recorded for each source in the deployment binding manifest; `agentctl job start sinex run_all_sources` starts configured bindings but does not by itself rewind every source to `--from none`.
 
 The database wipe remains separately authorized and must not be inferred from this document. The authoritative pre-wipe sequence is: resolve or triage every applicable `sinex-kn14` dependency, capture and inspect the Phase-A snapshot, rehearse the selected routes against a clean dev stack, then obtain fresh operator authorization immediately before dropping `sinex_prod`.

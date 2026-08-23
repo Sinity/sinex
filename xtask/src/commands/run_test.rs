@@ -67,6 +67,25 @@ async fn spawn_managed_persistent_child(
 }
 
 #[cfg(unix)]
+async fn spawn_managed_completed_child(
+    name: &str,
+    script: &str,
+) -> ::xtask::sandbox::TestResult<Child> {
+    let mut command = tokio::process::Command::new("sh");
+    configure_managed_child_tokio(&mut command);
+    command
+        .arg("-c")
+        .arg(script)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+
+    let child = command.spawn()?;
+    crate::process::register_tokio_child_process_group(&child, name);
+    Ok(child)
+}
+
+#[cfg(unix)]
 async fn assert_managed_child_group_and_descendant_gone(
     process_group: nix::unistd::Pid,
     descendant_pid: i32,
@@ -444,20 +463,39 @@ async fn test_all_sources_subcommand_can_target_reconcile_service()
     Ok(())
 }
 
-#[sinex_test]
-async fn test_source_binding_child_success_is_preserved() -> ::xtask::sandbox::TestResult<()> {
-    let mut children = HashMap::from([(
-        "source-success".to_string(),
-        Command::new("sh").args(["-c", "exit 0"]).spawn()?,
-    )]);
-    let exit = wait_for_any_child_exit(&mut children, &test_context(false)).await;
+#[sinex_test(serial = true)]
+async fn test_source_bindings_wait_for_later_success_before_completing()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut children = HashMap::from([
+        (
+            "source-early".to_string(),
+            spawn_managed_completed_child("source-early", "exit 0").await?,
+        ),
+        (
+            "source-later".to_string(),
+            spawn_managed_completed_child("source-later", "sleep 1; exit 0").await?,
+        ),
+    ]);
+    let mut cancellation = ForegroundCancellation::install()?;
+    let exit =
+        wait_for_all_source_bindings(&mut children, &test_context(false), &mut cancellation).await;
 
-    assert!(exit.is_success());
-    assert_eq!(exit.name(), Some("source-success"));
+    let ChildExit::AllSucceeded { completed } = exit else {
+        bail!("an early successful source must not terminate a later source binding");
+    };
+    assert_eq!(completed.len(), 2, "both source bindings must complete");
+    assert!(completed.contains(&"source-early".to_string()));
+    assert!(completed.contains(&"source-later".to_string()));
+    for child in children.values_mut() {
+        assert!(
+            child.try_wait()?.is_some_and(|status| status.success()),
+            "each source binding must finish successfully instead of being terminated after an early sibling exit"
+        );
+    }
     assert!(
         foreground_bundle_terminal_result(
             SOURCE_BINDINGS_FOREGROUND_BUNDLE,
-            exit,
+            ChildExit::AllSucceeded { completed },
             Vec::new(),
             serde_json::json!({}),
         )
@@ -467,20 +505,30 @@ async fn test_source_binding_child_success_is_preserved() -> ::xtask::sandbox::T
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(serial = true)]
 async fn test_source_binding_child_failure_is_preserved() -> ::xtask::sandbox::TestResult<()> {
-    let mut children = HashMap::from([(
-        "source-failure".to_string(),
-        Command::new("sh").args(["-c", "exit 17"]).spawn()?,
-    )]);
-    let exit = wait_for_any_child_exit(&mut children, &test_context(false)).await;
+    let (sibling, process_group, descendant_pid) =
+        spawn_managed_persistent_child("source-sibling").await?;
+    let mut children = HashMap::from([
+        (
+            "source-failure".to_string(),
+            spawn_managed_completed_child("source-failure", "exit 17").await?,
+        ),
+        ("source-sibling".to_string(), sibling),
+    ]);
+    let mut cancellation = ForegroundCancellation::install()?;
+    let exit =
+        wait_for_all_source_bindings(&mut children, &test_context(false), &mut cancellation).await;
 
     assert!(!exit.is_success());
     assert!(exit.trigger().contains("source-failure"));
+    let shutdown_failures = stop_bundle_children(&mut children, exit.exited_name()).await;
+    assert!(shutdown_failures.is_empty());
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
     let result = foreground_bundle_terminal_result(
         SOURCE_BINDINGS_FOREGROUND_BUNDLE,
         exit,
-        Vec::new(),
+        shutdown_failures,
         serde_json::json!({}),
     );
     assert_eq!(result.errors[0].code, "SOURCE_BINDING_EXITED");
@@ -581,6 +629,61 @@ async fn test_wait_error_still_terminates_source_child_group() -> ::xtask::sandb
     for (process_group, descendant_pid) in managed_children {
         assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
     }
+    Ok(())
+}
+
+#[sinex_test(serial = true)]
+async fn test_source_binding_cancellation_preserves_trigger_and_tears_down_siblings()
+-> ::xtask::sandbox::TestResult<()> {
+    let (sibling, process_group, descendant_pid) =
+        spawn_managed_persistent_child("source-cancelled-sibling").await?;
+    let mut children = HashMap::from([("source-cancelled-sibling".to_string(), sibling)]);
+    let mut cancellation = ForegroundCancellation::install()?;
+    let signal = tokio::spawn(async {
+        tokio::task::yield_now().await;
+        let result = unsafe { libc::raise(libc::SIGTERM) };
+        assert_eq!(
+            result, 0,
+            "the test SIGTERM must reach the process receiver"
+        );
+    });
+    let exit = tokio::time::timeout(
+        std::time::Duration::from_secs(Timeouts::QUICK),
+        wait_for_all_source_bindings(&mut children, &test_context(false), &mut cancellation),
+    )
+    .await
+    .map_err(|_| color_eyre::eyre::eyre!("SIGTERM did not cancel the source-binding wait"))?;
+    signal.await?;
+    assert!(matches!(exit, ChildExit::Cancelled));
+    let shutdown_failures = stop_bundle_children(&mut children, exit.exited_name()).await;
+
+    assert!(shutdown_failures.is_empty());
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
+    let result = foreground_bundle_terminal_result(
+        SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+        exit,
+        shutdown_failures,
+        serde_json::json!({}),
+    );
+    assert!(result.is_failure());
+    assert_eq!(result.errors[0].code, "SOURCE_BINDING_CANCELLED");
+    assert!(result.errors[0].message.contains("cancellation"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_source_binding_setup_failure_terminates_started_groups()
+-> ::xtask::sandbox::TestResult<()> {
+    let (child, process_group, descendant_pid) =
+        spawn_managed_persistent_child("started-before-setup-failure").await?;
+    let mut children = HashMap::from([("started-before-setup-failure".to_string(), child)]);
+    let error =
+        fail_source_binding_setup::<()>(&mut children, eyre!("injected later spawn failure"))
+            .await
+            .expect_err("setup failure must be returned after child cleanup");
+
+    assert!(format!("{error:#}").contains("injected later spawn failure"));
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
     Ok(())
 }
 

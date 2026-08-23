@@ -149,14 +149,14 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 when: "you need to launch sinexd or a source/automaton runtime target during development",
                 examples: &[
                     "xtask run core --dry-run",
-                    "xtask run core --logs",
+                    "agentctl job start sinex run_core",
                     "xtask run module terminal-source --watch",
                 ],
                 notes: &[
                     "`xtask run` is the local unified-sinexd development surface; it replaces old multi-node dev-run assumptions.",
                     "Local sinexd execution is explicit. Build/check/test/help/pre-push flows must not start it as a side effect.",
                     "Dry-run and startup output report the checkout root, dev-state, log directory, database URL, NATS URL, and API URL when configured; use `xtask infra status` to inspect live dev-local processes.",
-                    "AgentCTL owns declared lifecycle operations, including `run_core`, `run_all_automatons`, and `run_all_sources`; foreground runs retain terminal-owned supervision when no declared operation fits.",
+                    "Use `agentctl job start sinex run_core`, `agentctl job start sinex run_all_automatons`, or `agentctl job start sinex run_all_sources` for declared lifecycle operations. Direct `xtask run` remains for dry-run coordinate inspection and undeclared module or argument cases.",
                 ],
             },
             GuideEntry {
@@ -488,7 +488,7 @@ pub fn render_command_guide(commands: &[CommandInfo]) -> String {
     );
     out.push_str("## Agent Defaults\n\n");
     out.push_str("- Prefer `--json` or `--format json` when another tool will parse the output.\n");
-    out.push_str("- Start declared `fix_default`, `run_core`, `run_all_automatons`, `run_all_sources`, `vm_smoke`, and `vm_validate` operations through AgentCTL when lifecycle ownership matters.\n");
+    out.push_str("- Start declared `fix_default`, `run_core`, `run_all_automatons`, `run_all_sources`, `vm_smoke`, and `vm_validate` operations through AgentCTL.\n");
     out.push_str("- Use `xtask <command> --help` only to confirm the exact live flags for commands already named below.\n\n");
 
     for section in GUIDE_SECTIONS {

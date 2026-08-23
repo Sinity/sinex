@@ -7,6 +7,30 @@ use rusqlite::Connection;
 use support::xtask_command;
 
 #[test]
+fn history_list_leaves_a_missing_state_dir_absent() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let state_dir = temp.path().join("state-must-stay-absent");
+
+    let output = xtask_command()?
+        .args(["history", "list", "--json"])
+        .env_remove("XTASK_HISTORY_DB")
+        .env("SINEX_STATE_DIR", &state_dir)
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "query-only history list must succeed without creating state: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !state_dir.exists(),
+        "query-only history list must not create a missing SINEX_STATE_DIR"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn history_list_rejects_an_old_schema_without_mutating_history_state() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let history_db = temp.path().join("xtask-history.db");

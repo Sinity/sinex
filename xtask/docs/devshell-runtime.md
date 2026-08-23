@@ -26,15 +26,17 @@ xtask infra smoke --dry-run
 
 xtask infra start
 xtask run core --dry-run
-xtask run core --logs
+agentctl job start sinex run_core
 xtask infra status
 xtask infra stop
 ```
 
-Use `xtask run core --dry-run` before a real run when you only need to inspect
-the checkout-local runtime coordinates. It prints the checkout root, dev-state
-directory, log directory, database URL, NATS URL, API URL when configured, and
-job directory without starting `sinexd`.
+Use `xtask run core --dry-run` when you only need to inspect the checkout-local
+runtime coordinates. It prints the checkout root, dev-state directory, log
+directory, database URL, NATS URL, API URL when configured, and job directory
+without starting `sinexd`. Start the declared core runtime with `agentctl job
+start sinex run_core`, then use the returned job ID for logs, cancellation, and
+results.
 
 Use `xtask infra smoke --reset-first` when changing devshell/runtime plumbing.
 The smoke verifies this sequence:
