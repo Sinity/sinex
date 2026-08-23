@@ -134,7 +134,6 @@ impl Config {
     pub(crate) fn ensure_state_dir(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.state_dir)
     }
-
 }
 
 impl Default for Config {

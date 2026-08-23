@@ -82,8 +82,7 @@ async fn invocation_id_from_env_rejects_invalid_integer() -> ::xtask::sandbox::T
         Some(std::ffi::OsString::from("not-a-number")),
     );
 
-    let error =
-        invocation_id_from_env().expect_err("invalid invocation ID should not be ignored");
+    let error = invocation_id_from_env().expect_err("invalid invocation ID should not be ignored");
 
     assert!(
         error
@@ -103,8 +102,7 @@ async fn invocation_id_from_env_rejects_non_utf8_value() -> ::xtask::sandbox::Te
         Some(std::ffi::OsString::from_vec(vec![0xff])),
     );
 
-    let error =
-        invocation_id_from_env().expect_err("non-utf8 invocation ID should not be ignored");
+    let error = invocation_id_from_env().expect_err("non-utf8 invocation ID should not be ignored");
 
     assert!(
         error

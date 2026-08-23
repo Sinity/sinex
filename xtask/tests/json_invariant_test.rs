@@ -59,16 +59,15 @@ async fn json_flag_on_unrecognized_subcommand() -> ::xtask::sandbox::TestResult<
 /// `command` field matching the invoked subcommand.
 #[sinex_test]
 async fn json_envelope_shape_for_valid_commands() -> ::xtask::sandbox::TestResult<()> {
-    // Use `xtask check --help` routed through --json isn't practical.
-    // Instead verify the status command which is fast and always available.
-    let (json, _exit_ok) = run_json(&["status", "--summary", "--json"])?;
+    // `doctor` is a supported, fast command with the standard output envelope.
+    let (json, _exit_ok) = run_json(&["doctor", "--json"])?;
 
     assert!(
         json["command"].is_string(),
         "envelope must have command field"
     );
     assert_eq!(
-        json["command"], "status",
+        json["command"], "doctor",
         "command must match invoked command"
     );
     assert!(

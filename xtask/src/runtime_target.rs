@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 const CHECKOUT_DEV_GATEWAY_URL: &str = "https://127.0.0.1:19086";
 
-/// Condensed target surface serialized by xtask status commands.
+/// Condensed target surface serialized by xtask development-runtime commands.
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeTargetSummary {
     pub name: String,

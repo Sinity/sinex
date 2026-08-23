@@ -50,7 +50,6 @@ const CHAOS_TESTS: &[&str] = &[
     "chaos-process-restart",
     "chaos-clock-skew",
     "chaos-spool-rename-durability",
-    "xtask-concurrency",
 ];
 /// Production-shape proofs: local database authentication plus source -> NATS -> event engine -> DB -> API.
 const PRODUCTION_SHAPE_TESTS: &[&str] = &["postgres-local-auth", "production-shape"];
@@ -72,7 +71,6 @@ const EXTENDED_TIMEOUT_TESTS: &[&str] = &[
     "chaos-network-partition",
     "chaos-process-restart",
     "chaos-clock-skew",
-    "xtask-concurrency",
 ];
 
 fn all_tests() -> Vec<&'static str> {
@@ -111,21 +109,22 @@ fn resolve_vm_tests_to_run<'a>(
 ) -> Result<Vec<&'a str>> {
     if explicit_tests.is_empty() {
         let catalogue = requested_vm_test_catalogue(category)?;
-        let tests_to_run: Vec<&str> = catalogue
+        let missing: Vec<&str> = catalogue
             .into_iter()
-            .filter(|name| available_tests.iter().any(|available| available == name))
+            .filter(|name| !available_tests.iter().any(|available| available == name))
             .collect();
 
-        if tests_to_run.is_empty() {
+        if !missing.is_empty() {
             let selected = category.unwrap_or("smoke");
             bail!(
-                "VM test category '{selected}' selected no exported checks for system {system}. \
-                 This is not a passing gate: restore the flake exports or choose an exported VM check. \
-                 Inspect with `xtask test vm --list`."
+                "VM test category '{selected}' has configured checks absent from flake exports for system {system}: {}. \
+                 This is not a passing gate: restore every configured flake export or choose an exported VM check. \
+                 Inspect with `xtask test vm --list`.",
+                missing.join(", ")
             );
         }
 
-        return Ok(tests_to_run);
+        return Ok(requested_vm_test_catalogue(category)?);
     }
 
     let available: Vec<&str> = available_tests.iter().map(String::as_str).collect();

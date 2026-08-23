@@ -1,6 +1,9 @@
 use super::*;
 use crate::output::{OutputFormat, OutputWriter};
-use crate::sandbox::sinex_test;
+use crate::sandbox::{
+    EnvGuard, sinex_test,
+    timing::{Timeouts, WaitHelpers},
+};
 
 fn test_context(background: bool) -> CommandContext {
     CommandContext::new(
@@ -9,6 +12,96 @@ fn test_context(background: bool) -> CommandContext {
         None,
         "test",
     )
+}
+
+#[cfg(unix)]
+async fn spawn_managed_persistent_child(
+    name: &str,
+) -> ::xtask::sandbox::TestResult<(Child, nix::unistd::Pid, i32)> {
+    let mut command = tokio::process::Command::new("sh");
+    configure_managed_child_tokio(&mut command);
+    command
+        .arg("-c")
+        .arg("sleep 30 & descendant=$!; echo $descendant; wait $descendant")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+
+    let mut child = command.spawn()?;
+    crate::process::register_tokio_child_process_group(&child, name);
+    let leader_pid = child.id().expect("managed child exposes a PID") as i32;
+    let stdout = child
+        .stdout
+        .take()
+        .expect("managed child stdout should be piped");
+    let mut lines = BufReader::new(stdout).lines();
+    let descendant_pid = lines
+        .next_line()
+        .await?
+        .expect("managed shell should print the persistent descendant PID")
+        .parse::<i32>()?;
+
+    let process_group = nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(leader_pid)))?;
+    assert_eq!(
+        process_group.as_raw(),
+        leader_pid,
+        "managed fixture must use the dedicated process-group configuration used in production"
+    );
+    assert_eq!(
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(descendant_pid)))?,
+        process_group,
+        "persistent descendant must join the managed child process group"
+    );
+    assert_eq!(
+        unsafe { libc::kill(-process_group.as_raw(), 0) },
+        0,
+        "managed process group must exist before cleanup injection"
+    );
+    assert_eq!(
+        unsafe { libc::kill(descendant_pid, 0) },
+        0,
+        "persistent descendant must exist before cleanup injection"
+    );
+
+    Ok((child, process_group, descendant_pid))
+}
+
+#[cfg(unix)]
+async fn spawn_managed_completed_child(
+    name: &str,
+    script: &str,
+) -> ::xtask::sandbox::TestResult<Child> {
+    let mut command = tokio::process::Command::new("sh");
+    configure_managed_child_tokio(&mut command);
+    command
+        .arg("-c")
+        .arg(script)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+
+    let child = command.spawn()?;
+    crate::process::register_tokio_child_process_group(&child, name);
+    Ok(child)
+}
+
+#[cfg(unix)]
+async fn assert_managed_child_group_and_descendant_gone(
+    process_group: nix::unistd::Pid,
+    descendant_pid: i32,
+) -> ::xtask::sandbox::TestResult<()> {
+    WaitHelpers::wait_for_condition(
+        move || async move {
+            let group_gone = unsafe { libc::kill(-process_group.as_raw(), 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            let descendant_gone = unsafe { libc::kill(descendant_pid, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            Ok::<_, std::io::Error>(group_gone && descendant_gone)
+        },
+        Timeouts::QUICK,
+    )
+    .await?;
+    Ok(())
 }
 
 fn base_command(subcommand: RunSubcommand) -> RunCommand {
@@ -370,6 +463,323 @@ async fn test_all_sources_subcommand_can_target_reconcile_service()
     Ok(())
 }
 
+#[sinex_test(serial = true)]
+async fn test_source_bindings_wait_for_later_success_before_completing()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut children = HashMap::from([
+        (
+            "source-early".to_string(),
+            spawn_managed_completed_child("source-early", "exit 0").await?,
+        ),
+        (
+            "source-later".to_string(),
+            spawn_managed_completed_child("source-later", "sleep 1; exit 0").await?,
+        ),
+    ]);
+    let mut cancellation = ForegroundCancellation::install()?;
+    let exit =
+        wait_for_all_source_bindings(&mut children, &test_context(false), &mut cancellation).await;
+
+    let ChildExit::AllSucceeded { completed } = exit else {
+        bail!("an early successful source must not terminate a later source binding");
+    };
+    assert_eq!(completed.len(), 2, "both source bindings must complete");
+    assert!(completed.contains(&"source-early".to_string()));
+    assert!(completed.contains(&"source-later".to_string()));
+    for child in children.values_mut() {
+        assert!(
+            child.try_wait()?.is_some_and(|status| status.success()),
+            "each source binding must finish successfully instead of being terminated after an early sibling exit"
+        );
+    }
+    assert!(
+        foreground_bundle_terminal_result(
+            SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+            ChildExit::AllSucceeded { completed },
+            Vec::new(),
+            serde_json::json!({}),
+        )
+        .errors
+        .is_empty()
+    );
+    Ok(())
+}
+
+#[sinex_test(serial = true)]
+async fn test_source_binding_child_failure_is_preserved() -> ::xtask::sandbox::TestResult<()> {
+    let (sibling, process_group, descendant_pid) =
+        spawn_managed_persistent_child("source-sibling").await?;
+    let mut children = HashMap::from([
+        (
+            "source-failure".to_string(),
+            spawn_managed_completed_child("source-failure", "exit 17").await?,
+        ),
+        ("source-sibling".to_string(), sibling),
+    ]);
+    let mut cancellation = ForegroundCancellation::install()?;
+    let exit =
+        wait_for_all_source_bindings(&mut children, &test_context(false), &mut cancellation).await;
+
+    assert!(!exit.is_success());
+    assert!(exit.trigger().contains("source-failure"));
+    let shutdown_failures = stop_bundle_children(&mut children, exit.exited_name()).await;
+    assert!(shutdown_failures.is_empty());
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
+    let result = foreground_bundle_terminal_result(
+        SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+        exit,
+        shutdown_failures,
+        serde_json::json!({}),
+    );
+    assert_eq!(result.errors[0].code, "SOURCE_BINDING_EXITED");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_source_binding_wait_error_is_preserved() -> ::xtask::sandbox::TestResult<()> {
+    let exit = ChildExit::WaitError {
+        name: "source-wait-error".to_string(),
+        error: std::io::Error::other("injected wait failure"),
+    };
+
+    assert!(!exit.is_success());
+    assert_eq!(exit.exited_name(), None);
+    assert!(exit.trigger().contains("injected wait failure"));
+    let result = foreground_bundle_terminal_result(
+        SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+        exit,
+        Vec::new(),
+        serde_json::json!({}),
+    );
+    assert_eq!(result.errors[0].code, "SOURCE_BINDING_WAIT_FAILED");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_bundle_child_failure_is_preserved_as_failed_result()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut children = HashMap::from([(
+        "core-child".to_string(),
+        Command::new("sh").args(["-c", "exit 23"]).spawn()?,
+    )]);
+    let exit = wait_for_any_child_exit(&mut children, &test_context(false)).await;
+
+    let result = foreground_bundle_terminal_result(
+        GENERIC_FOREGROUND_BUNDLE,
+        exit,
+        Vec::new(),
+        serde_json::json!({ "binaries": ["sinexd"] }),
+    );
+    assert!(result.is_failure(), "a nonzero child must fail run_core");
+    assert_eq!(result.errors[0].code, "BUNDLE_EXITED");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_trigger_failure_and_all_cleanup_failures_are_preserved()
+-> ::xtask::sandbox::TestResult<()> {
+    let result = foreground_bundle_terminal_result(
+        SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+        ChildExit::WaitError {
+            name: "trigger-source".to_string(),
+            error: std::io::Error::other("injected trigger wait failure"),
+        },
+        vec![
+            "sibling-a: injected cleanup failure".to_string(),
+            "sibling-b: another injected cleanup failure".to_string(),
+        ],
+        serde_json::json!({}),
+    );
+
+    assert!(result.is_failure());
+    assert_eq!(result.errors.len(), 3, "trigger plus every cleanup failure");
+    assert_eq!(result.errors[0].code, "SOURCE_BINDING_WAIT_FAILED");
+    assert_eq!(result.errors[1].code, "SOURCE_BINDING_CLEANUP_FAILED");
+    assert_eq!(result.errors[2].code, "SOURCE_BINDING_CLEANUP_FAILED");
+    assert!(
+        result.errors[0]
+            .message
+            .contains("injected trigger wait failure")
+    );
+    assert!(result.errors[1].message.contains("sibling-a"));
+    assert!(result.errors[2].message.contains("sibling-b"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_wait_error_still_terminates_source_child_group() -> ::xtask::sandbox::TestResult<()> {
+    let mut children = HashMap::new();
+    let mut managed_children = Vec::new();
+    for name in ["source-wait-error", "source-sibling"] {
+        let (child, process_group, descendant_pid) = spawn_managed_persistent_child(name).await?;
+        managed_children.push((process_group, descendant_pid));
+        children.insert(name.to_string(), child);
+    }
+
+    let exit = ChildExit::WaitError {
+        name: "source-wait-error".to_string(),
+        error: std::io::Error::other("injected wait failure"),
+    };
+    let failures = stop_bundle_children(&mut children, exit.exited_name()).await;
+
+    assert!(failures.is_empty());
+    for child in children.values_mut() {
+        assert!(child.try_wait()?.is_some(), "source child was reaped");
+    }
+    for (process_group, descendant_pid) in managed_children {
+        assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
+    }
+    Ok(())
+}
+
+#[sinex_test(serial = true)]
+async fn test_source_binding_cancellation_preserves_trigger_and_tears_down_siblings()
+-> ::xtask::sandbox::TestResult<()> {
+    let (sibling, process_group, descendant_pid) =
+        spawn_managed_persistent_child("source-cancelled-sibling").await?;
+    let mut children = HashMap::from([("source-cancelled-sibling".to_string(), sibling)]);
+    let mut cancellation = ForegroundCancellation::install()?;
+    let signal = tokio::spawn(async {
+        tokio::task::yield_now().await;
+        let result = unsafe { libc::raise(libc::SIGTERM) };
+        assert_eq!(
+            result, 0,
+            "the test SIGTERM must reach the process receiver"
+        );
+    });
+    let exit = tokio::time::timeout(
+        std::time::Duration::from_secs(Timeouts::QUICK),
+        wait_for_all_source_bindings(&mut children, &test_context(false), &mut cancellation),
+    )
+    .await
+    .map_err(|_| color_eyre::eyre::eyre!("SIGTERM did not cancel the source-binding wait"))?;
+    signal.await?;
+    assert!(matches!(exit, ChildExit::Cancelled));
+    let shutdown_failures = stop_bundle_children(&mut children, exit.exited_name()).await;
+
+    assert!(shutdown_failures.is_empty());
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
+    let result = foreground_bundle_terminal_result(
+        SOURCE_BINDINGS_FOREGROUND_BUNDLE,
+        exit,
+        shutdown_failures,
+        serde_json::json!({}),
+    );
+    assert!(result.is_failure());
+    assert_eq!(result.errors[0].code, "SOURCE_BINDING_CANCELLED");
+    assert!(result.errors[0].message.contains("cancellation"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_source_binding_setup_failure_terminates_started_groups()
+-> ::xtask::sandbox::TestResult<()> {
+    let (child, process_group, descendant_pid) =
+        spawn_managed_persistent_child("started-before-setup-failure").await?;
+    let mut children = HashMap::from([("started-before-setup-failure".to_string(), child)]);
+    let error =
+        fail_source_binding_setup::<()>(&mut children, eyre!("injected later spawn failure"))
+            .await
+            .expect_err("setup failure must be returned after child cleanup");
+
+    assert!(format!("{error:#}").contains("injected later spawn failure"));
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_poll_error_attempts_process_group_termination_before_returning()
+-> ::xtask::sandbox::TestResult<()> {
+    let (mut child, process_group, descendant_pid) =
+        spawn_managed_persistent_child("source-poll-error").await?;
+
+    let error = stop_bundle_child_after_poll(
+        "source-poll-error",
+        &mut child,
+        Some(std::io::Error::other("injected poll failure")),
+    )
+    .await
+    .expect_err("the polling failure remains visible after cleanup");
+
+    assert!(error.to_string().contains("injected poll failure"));
+    assert!(child.try_wait()?.is_some(), "source child was reaped");
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_agentctl_run_all_sources_inherits_selected_manifest()
+-> ::xtask::sandbox::TestResult<()> {
+    let descriptor: toml::Value = toml::from_str(include_str!("../../../.agentctl/project.toml"))?;
+    let inherit = descriptor["environment"]["inherit"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("AgentCTL environment.inherit must be an array"))?;
+    let inherited: Vec<&str> = inherit.iter().filter_map(toml::Value::as_str).collect();
+    assert_eq!(
+        inherited
+            .iter()
+            .filter(|value| **value == "SINEX_SOURCE_BINDINGS_PATH")
+            .count(),
+        1,
+        "the manifest path is an explicit, single-variable AgentCTL inheritance contract"
+    );
+    assert!(
+        !inherited.contains(&"SINEX_ARBITRARY_ENV_OVERLAY"),
+        "run_all_sources must not admit an arbitrary environment overlay"
+    );
+
+    let manifest_dir = tempfile::tempdir()?;
+    let manifest_path = manifest_dir.path().join("selected-bindings.json");
+    std::fs::write(
+        &manifest_path,
+        r#"{"bindings":[{"source_id":"selected.source","service_name":"selected-service"}]}"#,
+    )?;
+    let _env = EnvGuard::set_single("SINEX_SOURCE_BINDINGS_PATH", &manifest_path);
+    let manifest = load_dev_source_bindings_manifest().ok_or_else(|| {
+        color_eyre::eyre::eyre!("selected source-binding manifest was not loaded")
+    })?;
+
+    assert_eq!(manifest.bindings.len(), 1);
+    assert_eq!(manifest.bindings[0].source_id, "selected.source");
+    assert_eq!(
+        default_source_binding_service_name(&manifest.bindings[0]),
+        "selected-service"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_agentctl_runtime_operations_are_non_cacheable_with_eight_hour_leases()
+-> ::xtask::sandbox::TestResult<()> {
+    let descriptor: toml::Value = toml::from_str(include_str!("../../../.agentctl/project.toml"))?;
+    let operations = descriptor["operations"]
+        .as_table()
+        .ok_or_else(|| color_eyre::eyre::eyre!("AgentCTL operations must be a TOML table"))?;
+
+    for operation_name in ["run_core", "run_all_automatons", "run_all_sources"] {
+        let operation = operations
+            .get(operation_name)
+            .and_then(toml::Value::as_table)
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!("missing AgentCTL runtime operation {operation_name}")
+            })?;
+        assert_eq!(
+            operation.get("cache").and_then(toml::Value::as_str),
+            Some("none"),
+            "{operation_name} must relaunch instead of reusing a terminal runtime result"
+        );
+        assert_eq!(
+            operation
+                .get("timeout_seconds")
+                .and_then(toml::Value::as_integer),
+            Some(28_800),
+            "{operation_name} keeps the declared eight-hour foreground lease"
+        );
+    }
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn test_build_cargo_run_args_target_sinexd() -> ::xtask::sandbox::TestResult<()> {
     let command = base_command(RunSubcommand::RuntimeModule {
@@ -654,22 +1064,8 @@ async fn test_stop_bundle_child_succeeds_for_exited_process() -> ::xtask::sandbo
 async fn test_stop_bundle_child_kills_child_process_group() -> ::xtask::sandbox::TestResult<()> {
     use std::os::unix::process::ExitStatusExt;
 
-    let mut command = tokio::process::Command::new("sh");
-    configure_managed_child_tokio(&mut command);
-    command
-        .arg("-c")
-        .arg("sleep 30 & echo $!; wait")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-
-    let mut child = command.spawn()?;
-    let stdout = child.stdout.take().expect("stdout should be piped");
-    let mut lines = BufReader::new(stdout).lines();
-    let sleep_pid = lines
-        .next_line()
-        .await?
-        .expect("shell should print background child pid")
-        .parse::<i32>()?;
+    let (mut child, process_group, descendant_pid) =
+        spawn_managed_persistent_child("test bundle child").await?;
 
     stop_bundle_child("test child", &mut child).await?;
 
@@ -677,11 +1073,7 @@ async fn test_stop_bundle_child_kills_child_process_group() -> ::xtask::sandbox:
         child.try_wait()?.is_some(),
         "terminated bundle child should be reaped"
     );
-    assert_ne!(
-        unsafe { libc::kill(sleep_pid, 0) },
-        0,
-        "background process in the bundle child group should be gone"
-    );
+    assert_managed_child_group_and_descendant_gone(process_group, descendant_pid).await?;
 
     let status = child.wait().await?;
     assert!(

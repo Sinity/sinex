@@ -4,7 +4,6 @@
 //! hard to exercise at the unit-test level:
 //!
 //! - D11.3: provenance chain traversal (raw → derived lineage)
-//! - D11.4: `xtask status --summary --json` reports event_engine health
 //! - D11.6: binaries started with `--log-format json` produce valid JSON logs
 
 mod support;
@@ -115,58 +114,6 @@ async fn test_provenance_trace_scenario(ctx: TestContext) -> ::xtask::sandbox::T
         raw_lineage.ancestors.len(),
         0,
         "raw (material-provenance) event should have no ancestors"
-    );
-
-    Ok(())
-}
-
-// ============================================================================
-// D11.4 — event_engine_runtime_health scenario
-// ============================================================================
-
-/// D11.4: `xtask status --summary --json` reports event_engine as non-healthy when
-/// the checkout-local event_engine process is not running. The summary line should
-/// surface either a missing heartbeat (`event_engine:down`) or a stale heartbeat
-/// (`event_engine:stale`), and lag / batch fields should remain unavailable.
-#[sinex_test]
-async fn test_event_engine_runtime_health_when_down() -> ::xtask::sandbox::TestResult<()> {
-    let dir = tempfile::tempdir()?;
-    let output = xtask_command()?
-        .env("SINEX_STATE_DIR", dir.path())
-        .env("NO_COLOR", "1")
-        .args(["status", "--summary", "--json"])
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "xtask status --summary --json should succeed"
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: Value = serde_json::from_str(&stdout)
-        .map_err(|e| color_eyre::eyre::eyre!("invalid JSON from status: {e}"))?;
-
-    let summary = json["data"]["summary"]
-        .as_str()
-        .ok_or_else(|| color_eyre::eyre::eyre!("data.summary missing or not a string"))?;
-
-    // event_engine is not running in the test environment. Depending on whether the
-    // checkout-local runtime database still contains an old heartbeat row,
-    // status may surface the service as down or stale.
-    assert!(
-        summary.contains("event_engine:down") || summary.contains("event_engine:stale"),
-        "summary should contain 'event_engine:down' or 'event_engine:stale' when event_engine is not running, got: {summary}"
-    );
-
-    // Lag and batch should be absent ("-") when event_engine is not healthy
-    assert!(
-        summary.contains("lag:-"),
-        "summary should contain 'lag:-' when event_engine is not healthy, got: {summary}"
-    );
-
-    assert!(
-        summary.contains("batch:-"),
-        "summary should contain 'batch:-' when event_engine is not healthy, got: {summary}"
     );
 
     Ok(())

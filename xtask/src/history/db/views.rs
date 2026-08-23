@@ -389,6 +389,10 @@ impl HistoryDb {
     fn resolve_current_invocation(&self, command: Option<&str>) -> Result<Option<i64>> {
         let host = crate::config::config().hostname.clone();
         let cwd = capture_working_directory(std::env::current_dir());
+        let current_running_cutoff = (time::OffsetDateTime::now_utc()
+            - super::CURRENT_RUNNING_INVOCATION_GRACE)
+            .format(&time::format_description::well_known::Rfc3339)
+            .context("failed to format current running invocation cutoff")?;
         let id = if let Some(cmd) = command {
             self.conn
                 .query_row(
@@ -398,10 +402,11 @@ impl HistoryDb {
                     WHERE host = ?1
                       AND cwd = ?2
                       AND command = ?3
+                      AND (status != 'running' OR started_at >= ?4)
                     ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, id DESC
                     LIMIT 1
                     ",
-                    params![host, cwd, cmd],
+                    params![host, cwd, cmd, current_running_cutoff],
                     |row| row.get(0),
                 )
                 .optional()?
@@ -413,10 +418,11 @@ impl HistoryDb {
                     FROM invocations
                     WHERE host = ?1
                       AND cwd = ?2
+                      AND (status != 'running' OR started_at >= ?3)
                     ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, id DESC
                     LIMIT 1
                     ",
-                    params![host, cwd],
+                    params![host, cwd, current_running_cutoff],
                     |row| row.get(0),
                 )
                 .optional()?
@@ -440,9 +446,7 @@ impl HistoryDb {
             InvocationSelector::Latest => self.resolve_completed_invocation_offset(command, 0),
             InvocationSelector::Previous => self.resolve_completed_invocation_offset(command, 1),
             InvocationSelector::Current => self.resolve_current_invocation(command),
-            InvocationSelector::InvocationId(invocation_id) => {
-                Ok(Some(invocation_id))
-            }
+            InvocationSelector::InvocationId(invocation_id) => Ok(Some(invocation_id)),
         }
     }
 

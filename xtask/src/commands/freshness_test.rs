@@ -74,7 +74,10 @@ async fn freshness_explain_test_queries_foreground_proof_units() -> TestResult<(
 
     assert_eq!(data["reuse"]["decision"], "hit");
     assert_eq!(data["reuse"]["last_completed"]["source"], "test_proof_unit");
-    assert_eq!(data["reuse"]["last_completed"]["invocation_id"], invocation_id);
+    assert_eq!(
+        data["reuse"]["last_completed"]["invocation_id"],
+        invocation_id
+    );
     Ok(())
 }
 
@@ -146,7 +149,10 @@ async fn freshness_explain_test_uses_semantic_scope_diagnostics() -> TestResult<
 
     assert_eq!(data["scope_key"], key.scope_key);
     assert_eq!(data["reuse"]["decision"], "hit");
-    assert_eq!(data["reuse"]["last_completed"]["invocation_id"], invocation_id);
+    assert_eq!(
+        data["reuse"]["last_completed"]["invocation_id"],
+        invocation_id
+    );
     Ok(())
 }
 

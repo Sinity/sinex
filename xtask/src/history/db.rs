@@ -64,13 +64,15 @@ use sinex_primitives::temporal::Timestamp;
 pub use types::{
     CommandStats, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession,
     ImpactAuditRunRow, Invocation, InvocationFull, InvocationProgress, InvocationStatus,
-    InvocationTimelineEntry, InvocationWithFingerprint, ProofEvidence,
-    ResourceUsage, StagePressure, StageStats, StageTiming, StageTrendPoint, TestProofUnit,
-    TraceEventRow, WorkingSession, WrapperEventRow,
+    InvocationTimelineEntry, InvocationWithFingerprint, ProofEvidence, ResourceUsage,
+    StagePressure, StageStats, StageTiming, StageTrendPoint, TestProofUnit, TraceEventRow,
+    WorkingSession, WrapperEventRow,
 };
 
 use std::path::Path;
 use time::OffsetDateTime;
+
+pub(super) const CURRENT_RUNNING_INVOCATION_GRACE: time::Duration = time::Duration::hours(24);
 
 fn capture_working_directory(current_dir: std::io::Result<std::path::PathBuf>) -> String {
     match current_dir {
@@ -191,9 +193,10 @@ impl HistoryDb {
 
     /// Open an existing history database for read-only observational queries.
     ///
-    /// Query surfaces like `xtask status`, `xtask history`, and `xtask analytics`
-    /// should not pay integrity sweeps or stale-cleanup work just to read recent
-    /// rows. If the database does not exist yet, return an empty in-memory view.
+    /// Observational surfaces such as `xtask analytics` and `xtask history`
+    /// should not pay writer-open side effects just to read recent rows.
+    /// Selectors, including `current`, exclude stale invocations at query time.
+    /// If the database does not exist yet, return an empty in-memory view.
     pub fn open_query(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Self::open_in_memory();

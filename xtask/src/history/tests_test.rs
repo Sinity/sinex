@@ -1354,3 +1354,70 @@ async fn test_parse_nextest_output_ignores_started_events() -> TestResult<()> {
     assert!(results.is_empty(), "Started events should be skipped");
     Ok(())
 }
+
+#[sinex_test]
+async fn test_open_preserves_aged_running_invocation_without_liveness_proof() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let db_path = dir.path().join("history.db");
+    let invocation_id = {
+        let db = HistoryDb::open(&db_path)?;
+        db.start_invocation("check", None, None, None)?
+    };
+
+    let old_started_at = (time::OffsetDateTime::now_utc() - time::Duration::hours(48))
+        .format(&time::format_description::well_known::Rfc3339)?;
+    rusqlite::Connection::open(&db_path)?.execute(
+        "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+        rusqlite::params![old_started_at, invocation_id],
+    )?;
+
+    let db = HistoryDb::open(&db_path)?;
+    let invocation = db
+        .get_invocation(invocation_id)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("aged invocation disappeared"))?;
+    assert_eq!(invocation.status, InvocationStatus::Running);
+    assert!(invocation.finished_at.is_none());
+    assert_eq!(invocation.duration_secs, None);
+    assert_eq!(
+        db.resolve_invocation_id("current", Some("check"))?,
+        None,
+        "an aged running row has no terminal or liveness proof, so it cannot claim current"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_current_excludes_aged_running_rows_before_terminal_work() -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let db_path = dir.path().join("history.db");
+    let (terminal_invocation, aged_running_invocation) = {
+        let db = HistoryDb::open(&db_path)?;
+        let terminal_invocation = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(terminal_invocation, InvocationStatus::Success, Some(0), 0.1)?;
+        let aged_running_invocation = db.start_invocation("check", None, None, None)?;
+        (terminal_invocation, aged_running_invocation)
+    };
+
+    let old_started_at = (time::OffsetDateTime::now_utc() - time::Duration::hours(48))
+        .format(&time::format_description::well_known::Rfc3339)?;
+    rusqlite::Connection::open(&db_path)?.execute(
+        "UPDATE invocations SET started_at = ?1 WHERE id = ?2",
+        rusqlite::params![old_started_at, aged_running_invocation],
+    )?;
+
+    let db = HistoryDb::open(&db_path)?;
+    assert_eq!(
+        db.resolve_invocation_id("current", Some("check"))?,
+        Some(terminal_invocation),
+        "an aged running row with a newer ID must not outrank terminal work"
+    );
+    assert_eq!(
+        db.get_invocation(aged_running_invocation)?
+            .expect("aged running invocation remains in history")
+            .status,
+        InvocationStatus::Running,
+        "history must not manufacture terminal state from an age threshold"
+    );
+    Ok(())
+}

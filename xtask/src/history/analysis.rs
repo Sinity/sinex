@@ -1060,7 +1060,7 @@ impl<'db> HistoryAnalysis<'db> {
 ///
 /// Returned by `HistoryAnalysis::analytics_snapshot` and `status_summary_snapshot`. The two
 /// methods compute the same shape via different paths: `analytics_snapshot` is the full fan-out
-/// that walks every package; `status_summary_snapshot` is the fast path used by `xtask status`.
+/// that walks every package; `status_summary_snapshot` remains the fast summary path.
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyticsSnapshot {
     pub health: WorkspaceHealthReport,

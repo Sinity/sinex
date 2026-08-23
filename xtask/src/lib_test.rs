@@ -56,6 +56,39 @@ async fn open_history_db_uses_declared_access_mode() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn source_bindings_own_structured_cancellation() -> TestResult<()> {
+    let all_sources = Commands::Run(commands::RunCommand {
+        subcommand: commands::run::RunSubcommand::AllSources {
+            instance_id: None,
+            reconcile: false,
+            service_name: None,
+            include_default_excluded: false,
+        },
+        watch: false,
+        release: false,
+        dry_run: false,
+        logs: false,
+        metrics: false,
+        dev_journal: false,
+    });
+    let core = Commands::Run(commands::RunCommand {
+        subcommand: commands::run::RunSubcommand::Core { instance_id: None },
+        watch: false,
+        release: false,
+        dry_run: false,
+        logs: false,
+        metrics: false,
+        dev_journal: false,
+    });
+
+    assert!(command_owns_structured_source_cancellation(Some(
+        &all_sources
+    )));
+    assert!(!command_owns_structured_source_cancellation(Some(&core)));
+    Ok(())
+}
+
+#[sinex_test]
 async fn observational_metadata_uses_query_history_without_tracking() -> TestResult<()> {
     let history = commands::history::HistoryCommand {
         subcommand: commands::history::HistorySubcommand::List {

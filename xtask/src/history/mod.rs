@@ -14,12 +14,12 @@ pub use analysis::{
     Recommendation, Regression, VelocityTrend, WorkspaceHealthReport,
 };
 pub use db::{
-    CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle,
-    DiagnosticTrendPoint, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession,
-    HistoryDb, ImpactAuditRunRow, Invocation, InvocationFull, InvocationProgress, InvocationStatus,
-    InvocationTimelineEntry, InvocationWithFingerprint, LifecycleStatus,
-    ProofEvidence, ResourceUsage, StagePressure, StageStats, StageTiming, StageTrendPoint,
-    StoredDiagnostic, TestProofUnit, TraceEventRow, WorkingSession, WrapperEventRow,
+    CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle, DiagnosticTrendPoint,
+    DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession, HistoryDb, ImpactAuditRunRow,
+    Invocation, InvocationFull, InvocationProgress, InvocationStatus, InvocationTimelineEntry,
+    InvocationWithFingerprint, LifecycleStatus, ProofEvidence, ResourceUsage, StagePressure,
+    StageStats, StageTiming, StageTrendPoint, StoredDiagnostic, TestProofUnit, TraceEventRow,
+    WorkingSession, WrapperEventRow,
 };
 pub use query::{DiagnosticQuery, DiagnosticScope, InvocationQuery, TestResultQuery};
 pub use seed::SeedOptions;

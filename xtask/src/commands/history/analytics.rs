@@ -1354,14 +1354,7 @@ fn print_overlap_report(report: &InvocationOverlapReport) {
         println!("  none recorded");
     } else {
         let mut builder = Builder::new();
-        builder.push_record([
-            "ID",
-            "CMD",
-            "STATUS",
-            "OVERLAP",
-            "TARGET %",
-            "ARGS",
-        ]);
+        builder.push_record(["ID", "CMD", "STATUS", "OVERLAP", "TARGET %", "ARGS"]);
         for row in &report.overlapping_invocations {
             builder.push_record([
                 row.id.to_string(),

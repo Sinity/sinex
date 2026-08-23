@@ -1134,7 +1134,7 @@ impl HistoryDb {
                         "Invocation #{invocation_id} has no stored test results"
                     ))
                 }
-            }
+            },
         }
     }
 

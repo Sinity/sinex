@@ -76,12 +76,6 @@
     inherit pkgs sinex;
   };
 
-  # ─── xtask concurrency (requires pre-built xtask binary) ─────────────────────
-
-  "xtask-concurrency" = import ./test-scenarios/xtask-concurrency.nix {
-    inherit pkgs pg_jsonschema sinex sinexCli xtask sinexVmTestSuite;
-  };
-
   # ─── Environmental hostility ──────────────────────────────────────────────────
 
   "hostile-host" = import ./test-scenarios/hostile-host.nix {

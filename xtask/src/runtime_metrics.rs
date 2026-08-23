@@ -2,7 +2,7 @@
 //!
 //! Provides single-shot queries against runtime heartbeat state and telemetry
 //! events to surface event_engine health, consumer lag, and batch latency in
-//! xtask status/doctor/run commands.
+//! xtask infra-status, doctor, and run commands.
 
 use serde::Serialize;
 use sinex_primitives::events::{EventEngineBatchStatsPayload, EventPayload};

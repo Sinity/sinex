@@ -273,10 +273,9 @@ impl XtaskCommand for AnalyticsCommand {
                 }
                 AnalyticsSubcommand::Velocity => execute_velocity(&analysis, ctx),
                 AnalyticsSubcommand::Recommend => execute_recommend(&analysis, ctx),
-                AnalyticsSubcommand::Resources {
-                    command,
-                    limit,
-                } => execute_resources(db, command.as_deref(), *limit, ctx),
+                AnalyticsSubcommand::Resources { command, limit } => {
+                    execute_resources(db, command.as_deref(), *limit, ctx)
+                }
                 AnalyticsSubcommand::Pressure { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::Store { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::StorageGrowth { .. } => unreachable!("handled before DB open"),

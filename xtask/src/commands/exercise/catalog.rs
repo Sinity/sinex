@@ -42,8 +42,7 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
             step("list", &["--list-commands"])
                 .v(v_contains("check"))
                 .v(v_contains("test"))
-                .v(v_contains("build"))
-                .v(v_contains("status")),
+                .v(v_contains("build")),
         ),
     );
 
@@ -56,20 +55,7 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     v.push(
-        def("t1.status_summary_human", "Status summary (human)", T1)
-            .step(step("summary", &["status", "--summary"]).v(v_lines(Some(1), None))),
-    );
-
-    v.push(
-        def("t1.status_summary_json", "Status summary (JSON)", T1).step(
-            step("summary", &["status", "--summary", "--json"])
-                .v(v_json())
-                .v(v_has(&["status"])),
-        ),
-    );
-
-    v.push(
-        def("t1.status_doctor_json", "Status doctor (JSON)", T1).step(
+        def("t1.doctor_json", "Doctor report (JSON)", T1).step(
             step("doctor", &["doctor", "--json"])
                 .v(v_json())
                 .v(v_has(&["status", "data"])),
@@ -102,32 +88,13 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     v.push(
-        def("t1.jobs_list_human", "Jobs list (human)", T1).step(step("jobs", &["jobs", "list"])),
-    );
-
-    v.push(
-        def("t1.jobs_list_json", "Jobs list (JSON)", T1).step(
-            step("jobs", &["jobs", "list", "--json"])
-                .v(v_json())
-                .v(v_has(&["status", "data"])),
-        ),
-    );
-
-    v.push(
-        def("t1.jobs_active_json", "Jobs active (JSON)", T1)
-            .step(step("active", &["jobs", "active", "--json"]).v(v_json())),
-    );
-
-    v.push(
         def("t1.format_silent", "Silent format produces no output", T1)
-            .step(step("silent", &["status", "--summary", "--format", "silent"]).v(v_empty())),
+            .step(step("silent", &["doctor", "--format", "silent"]).v(v_empty())),
     );
 
     v.push(
-        def("t1.format_compact", "Compact format is 1-3 lines", T1).step(
-            step("compact", &["status", "--summary", "--format", "compact"])
-                .v(v_lines(Some(1), Some(3))),
-        ),
+        def("t1.format_compact", "Compact format is 1-3 lines", T1)
+            .step(step("compact", &["doctor", "--format", "compact"]).v(v_lines(Some(1), Some(3)))),
     );
 
     v.push(
@@ -313,14 +280,6 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     v.push(
-        def("t2.status_full_json", "Full status (JSON)", T2).step(
-            step("status", &["status", "--json"])
-                .v(v_json())
-                .v(v_has(&["status", "data"])),
-        ),
-    );
-
-    v.push(
         def("t2.history_stats", "History stats (JSON)", T2).step(
             step(
                 "stats",
@@ -349,17 +308,14 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
 
     v.push(
         def("t2.json_vs_human", "JSON vs human consistency", T2)
-            .step(step("json", &["status", "--doctor", "--json"]).v(v_json()))
-            .step(step("human", &["status", "--doctor"])),
+            .step(step("json", &["doctor", "--json"]).v(v_json()))
+            .step(step("human", &["doctor"])),
     );
 
     v.push(
         def("t2.json_vs_compact", "JSON vs compact format", T2)
-            .step(
-                step("compact", &["status", "--doctor", "--format", "compact"])
-                    .v(v_lines(Some(1), Some(5))),
-            )
-            .step(step("json", &["status", "--doctor", "--json"]).v(v_json())),
+            .step(step("compact", &["doctor", "--format", "compact"]).v(v_lines(Some(1), Some(5))))
+            .step(step("json", &["doctor", "--json"]).v(v_json())),
     );
 
     v.push(
@@ -462,8 +418,6 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
     );
     v.push(def("t4.history_roundtrip", "History tracking roundtrip", T4).custom());
     v.push(def("t4.output_format_matrix", "Output format matrix", T4).custom());
-    v.push(def("t4.jobs_prune", "Jobs prune safety boundary", T4).custom());
-
     // Extended affected exercise
     v.push(
         def(

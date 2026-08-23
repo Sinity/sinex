@@ -54,7 +54,9 @@ async fn dev_bindings_manifest_contains_dogfood_source_families()
         "manifest comment should include the env var needed to start the dogfood loop"
     );
     assert!(
-        manifest.comment.contains("agentctl job start sinex run_all_sources"),
+        manifest
+            .comment
+            .contains("agentctl job start sinex run_all_sources"),
         "manifest comment should name the source-binding runner, not core"
     );
     assert!(

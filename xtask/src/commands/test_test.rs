@@ -809,7 +809,6 @@ async fn test_nextest_invocation_args_include_reuse_and_impact_flags()
     Ok(())
 }
 
-
 #[sinex_test]
 async fn foreground_test_keeps_exact_proof_reuse() -> ::xtask::sandbox::TestResult<()> {
     assert!(TestCommand::default().can_consume_exact_test_proof());

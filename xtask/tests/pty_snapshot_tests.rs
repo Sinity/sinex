@@ -186,13 +186,13 @@ fn seed_exercise_db(state_dir: &Path) -> Result<i64> {
             output_dir: "/tmp/qa".to_string(),
             results: vec![
                 ReportEntry {
-                    id: "t1.status-summary".to_string(),
+                    id: "t1.doctor".to_string(),
                     tier: "t1".to_string(),
                     passed: true,
                     duration_secs: 1.2,
                     error: None,
                     steps: vec![StepEntry {
-                        label: "xtask status --summary".to_string(),
+                        label: "xtask doctor".to_string(),
                         passed: true,
                         exit_code: 0,
                         duration_secs: 1.2,
