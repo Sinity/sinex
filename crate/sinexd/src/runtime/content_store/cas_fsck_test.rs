@@ -93,6 +93,159 @@ async fn cas_publish_boundaries_survive_restart_and_retry(_ctx: TestContext) -> 
 }
 
 #[sinex_test]
+async fn fsck_removes_only_stale_associated_staging(ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let old_source = root_path.join("old-source.txt");
+    let active_source = root_path.join("active-source.txt");
+    tokio::fs::write(&old_source, b"stale staging payload").await?;
+    tokio::fs::write(&active_source, b"active staging payload").await?;
+
+    let old_injector = FaultInjector::default();
+    old_injector.fail_once(FaultPoint::CasRename);
+    let old_store = MaterialContentStore::new_with_fault_injector(
+        ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        },
+        old_injector,
+    );
+    assert!(old_store.store_file_with_lease(&old_source).await.is_err());
+    let mut old_lease = old_store
+        .list_write_leases()
+        .await?
+        .pop()
+        .expect("pre-rename interruption must persist its lease");
+    let old_staging = old_lease
+        .staging_path
+        .clone()
+        .expect("new leases must identify their staging path");
+    assert!(old_staging.exists());
+    let old_time = SystemTime::now()
+        .checked_sub(Duration::from_secs(11 * 60))
+        .expect("old staging timestamp must be representable");
+    std::fs::File::open(old_staging.as_std_path())?
+        .set_times(std::fs::FileTimes::new().set_modified(old_time))?;
+    old_lease.created_at_unix_secs = old_time
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("old lease timestamp must be after epoch")
+        .as_secs()
+        .saturating_sub(24 * 60 * 60);
+    tokio::fs::write(&old_lease.record_path, serde_json::to_vec(&old_lease)?).await?;
+
+    let active_injector = FaultInjector::default();
+    active_injector.fail_once(FaultPoint::CasRename);
+    let active_store = MaterialContentStore::new_with_fault_injector(
+        ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        },
+        active_injector,
+    );
+    assert!(
+        active_store
+            .store_file_with_lease(&active_source)
+            .await
+            .is_err()
+    );
+    let active_staging = active_store
+        .list_write_leases()
+        .await?
+        .into_iter()
+        .find_map(|lease| lease.staging_path.filter(|path| path != &old_staging))
+        .expect("active interrupted publish must identify staging");
+    assert!(active_staging.exists());
+
+    let authority_hash = blake3::hash(b"fsck authority").to_hex().to_string();
+    ctx.pool
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(authority_hash.clone())
+                .size_bytes(14)
+                .checksum_blake3(authority_hash)
+                .build(),
+        )
+        .await?;
+
+    let (dry_report, dry_statuses) = check_cas(ctx.pool(), &old_store, false).await?;
+    assert_eq!(dry_report.staged_abandoned, 1);
+    assert_eq!(dry_report.staged, 1);
+    assert!(
+        dry_statuses
+            .iter()
+            .any(|status| status.path == old_staging.to_string()
+                && status.status == CasStatus::StagedAbandoned)
+    );
+    assert!(
+        dry_statuses
+            .iter()
+            .any(|status| status.path == active_staging.to_string()
+                && status.status == CasStatus::Staged)
+    );
+
+    let (apply_report, _) = check_cas(ctx.pool(), &old_store, true).await?;
+    assert_eq!(apply_report.staged_removed, 1);
+    assert!(!old_staging.exists());
+    assert!(active_staging.exists());
+    Ok(())
+}
+
+#[sinex_test]
+async fn malformed_ingest_lease_fails_closed(ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let lease_root = root_path
+        .join(super::CAS_LIFECYCLE_DIR)
+        .join("ingest-leases");
+    tokio::fs::create_dir_all(&lease_root).await?;
+    tokio::fs::write(lease_root.join("malformed.json"), b"not-json").await?;
+    let store = MaterialContentStore::new(ContentStoreConfig {
+        root_path,
+        ..Default::default()
+    })?;
+    let result = check_cas(ctx.pool(), &store, false).await;
+    assert!(result.is_err(), "malformed lease records must fail closed");
+    Ok(())
+}
+
+#[sinex_test]
+async fn out_of_tree_staging_lease_fails_closed(ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let source = root_path.join("source.txt");
+    tokio::fs::write(&source, b"staging path validation").await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::CasRename);
+    let store = MaterialContentStore::new_with_fault_injector(
+        ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        },
+        injector,
+    );
+    assert!(store.store_file_with_lease(&source).await.is_err());
+    let mut lease = store
+        .list_write_leases()
+        .await?
+        .pop()
+        .expect("interrupted publish must persist its lease");
+    lease.staging_path = Some(root_path.join("outside.tmp-malicious"));
+    tokio::fs::write(&lease.record_path, serde_json::to_vec(&lease)?).await?;
+
+    let result = check_cas(ctx.pool(), &store, false).await;
+    assert!(
+        result.is_err(),
+        "out-of-tree staging records must fail closed"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn cancelled_fsck_reports_incomplete_without_scanning(ctx: TestContext) -> TestResult<()> {
     let store_dir = tempfile::tempdir()?;
     let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())

@@ -63,6 +63,9 @@ pub enum CasStatus {
     Missing,
     /// A content-store staging file that has not been atomically published.
     Staged,
+    /// A staging file whose exact lease is stale and whose file grace period
+    /// has elapsed; apply mode may remove it after a final lease recheck.
+    StagedAbandoned,
     /// A published object still held by a live durable ingest lease.
     Leased,
 }
@@ -88,6 +91,12 @@ pub struct CasFsckReport {
     pub protected_recent: usize,
     /// In-flight staging files retained regardless of age.
     pub staged: usize,
+    /// Staging files with an exact stale lease and elapsed file grace period.
+    #[serde(default)]
+    pub staged_abandoned: usize,
+    /// Abandoned staging files removed during apply.
+    #[serde(default)]
+    pub staged_removed: usize,
     /// Published objects protected by a live ingest lease.
     pub leased: usize,
     /// Ingest leases older than the recovery grace period.
@@ -113,6 +122,19 @@ pub struct CasFsckReport {
 const CAS_ORPHAN_GRACE: StdDuration = StdDuration::from_secs(10 * 60);
 const CAS_INGEST_LEASE_GRACE: StdDuration = StdDuration::from_secs(24 * 60 * 60);
 static CAS_FSCK_ADMISSION: OnceLock<WorkAdmission> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+struct StagingLease {
+    path: camino::Utf8PathBuf,
+    created_at_unix_secs: u64,
+}
+
+#[derive(Debug, Default)]
+struct IngestLeaseState {
+    active_hash_references: Vec<(String, String)>,
+    staging: Vec<StagingLease>,
+    stale_leases: usize,
+}
 
 fn cas_fsck_admission() -> &'static WorkAdmission {
     CAS_FSCK_ADMISSION.get_or_init(|| WorkAdmission::new(1))
@@ -239,11 +261,13 @@ pub async fn check_cas_with_options_and_control(
     for (hash, authority) in load_sinexblake3_hashes(pool, content_store).await? {
         known_blake3_hashes.entry(hash).or_insert(authority);
     }
+    let mut staging_leases = Vec::new();
     let mut continue_work = fsck_work_boundary(&mut work, &mut report)?;
     if continue_work {
-        let (lease_references, stale_leases) = load_ingest_lease_references(content_store).await?;
-        report.stale_leases = stale_leases;
-        for (hash, authority) in lease_references {
+        let lease_state = load_ingest_lease_state(content_store).await?;
+        report.stale_leases = lease_state.stale_leases;
+        staging_leases = lease_state.staging;
+        for (hash, authority) in lease_state.active_hash_references {
             known_blake3_hashes.entry(hash).or_insert(authority);
         }
         continue_work = fsck_work_boundary(&mut work, &mut report)?;
@@ -286,12 +310,17 @@ pub async fn check_cas_with_options_and_control(
             }
             report.entries_scanned += 1;
             if hash.contains(".tmp-") {
-                report.staged += 1;
+                let status = classify_staging_path(&path, &staging_leases).await;
+                if status == CasStatus::StagedAbandoned {
+                    report.staged_abandoned += 1;
+                } else {
+                    report.staged += 1;
+                }
                 file_statuses.push(CasFileStatus {
                     hash,
                     path: path.to_string(),
                     size_bytes: size,
-                    status: CasStatus::Staged,
+                    status,
                     blob_id: None,
                 });
                 continue;
@@ -549,6 +578,7 @@ where
         report.stop_reason = Some(CasFsckStopReason::Cancelled);
         return Ok((report, progress_checkpoint));
     }
+    let staging_leases = load_ingest_lease_state(content_store).await?.staging;
 
     'scan: loop {
         let batch = match walker.next_batch(256).await {
@@ -579,12 +609,17 @@ where
             }
             report.entries_scanned += 1;
             if hash.contains(".tmp-") {
-                report.staged += 1;
+                let status = classify_staging_path(&path, &staging_leases).await;
+                if status == CasStatus::StagedAbandoned {
+                    report.staged_abandoned += 1;
+                } else {
+                    report.staged += 1;
+                }
                 on_status(CasFileStatus {
                     hash,
                     path: path.to_string(),
                     size_bytes: size,
-                    status: CasStatus::Staged,
+                    status,
                     blob_id: None,
                 });
                 continue;
@@ -892,16 +927,37 @@ async fn apply_orphan_deletions(
     work: &mut WorkController,
     admission: Option<&WorkFileAdmission>,
 ) -> RuntimeResult<()> {
-    for status in file_statuses
-        .iter()
-        .filter(|status| status.status == CasStatus::Orphaned)
-    {
+    for status in file_statuses.iter().filter(|status| {
+        matches!(
+            status.status,
+            CasStatus::Orphaned | CasStatus::StagedAbandoned
+        )
+    }) {
         if !fsck_work_boundary(work, report)? {
             return Ok(());
         }
         let hash = &status.hash;
         let path = &status.path;
         let size = status.size_bytes;
+        if status.status == CasStatus::StagedAbandoned {
+            if staging_path_is_protected(content_store, path).await? {
+                continue;
+            }
+            if !fsck_destructive_boundary(work, report)? {
+                return Ok(());
+            }
+            match tokio::fs::remove_file(path).await {
+                Ok(()) => report.staged_removed += 1,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(SinexError::io(error).with_context("path", path.clone()));
+                }
+            }
+            if let Some(parent) = camino::Utf8Path::new(path).parent() {
+                MaterialContentStore::sync_directory(parent).await?;
+            }
+            continue;
+        }
         let is_recent = tokio::fs::metadata(path)
             .await
             .ok()
@@ -1084,23 +1140,101 @@ async fn material_manifest_hash_authority(
     Ok(None)
 }
 
-async fn load_ingest_lease_references(
+async fn load_ingest_lease_state(
     content_store: &MaterialContentStore,
-) -> RuntimeResult<(Vec<(String, String)>, usize)> {
+) -> RuntimeResult<IngestLeaseState> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let mut references = Vec::new();
-    let mut stale = 0;
+    let mut state = IngestLeaseState::default();
     for lease in content_store.list_write_leases().await? {
+        if let Some(path) = lease.staging_path {
+            validate_staging_lease_path(content_store, &lease.key, &path).await?;
+            state.staging.push(StagingLease {
+                path,
+                created_at_unix_secs: lease.created_at_unix_secs,
+            });
+        }
         if now.saturating_sub(lease.created_at_unix_secs) < CAS_INGEST_LEASE_GRACE.as_secs() {
-            references.push((lease.key.digest, format!("lease:{}", lease.operation_id)));
+            state
+                .active_hash_references
+                .push((lease.key.digest, format!("lease:{}", lease.operation_id)));
         } else {
-            stale += 1;
+            state.stale_leases += 1;
         }
     }
-    Ok((references, stale))
+    Ok(state)
+}
+
+async fn validate_staging_lease_path(
+    content_store: &MaterialContentStore,
+    key: &ContentStoreKey,
+    staging_path: &camino::Utf8Path,
+) -> RuntimeResult<()> {
+    let target = content_store
+        .path_if_local(&key.key)?
+        .ok_or_else(|| SinexError::validation("CAS lease staging path has non-local key"))?;
+    let expected_parent = target
+        .parent()
+        .ok_or_else(|| SinexError::validation("CAS lease target has no parent"))?;
+    let filename = staging_path
+        .file_name()
+        .ok_or_else(|| SinexError::validation("CAS lease staging path has no filename"))?;
+    if staging_path.parent() != Some(expected_parent)
+        || !filename.starts_with(&format!("{}.tmp-", key.digest))
+    {
+        return Err(SinexError::validation(
+            "CAS lease staging path escapes its expected digest directory",
+        )
+        .with_context("path", staging_path.to_string())
+        .with_context("target", target.to_string()));
+    }
+    if tokio::fs::try_exists(staging_path)
+        .await
+        .map_err(SinexError::io)?
+    {
+        content_store
+            .canonicalize_local_cas_path(staging_path)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn classify_staging_path(path: &camino::Utf8Path, leases: &[StagingLease]) -> CasStatus {
+    let Some(lease) = leases.iter().find(|lease| lease.path == path) else {
+        // Legacy leases have no staging_path and therefore cannot authorize a
+        // destructive decision. Unknown staging remains retained.
+        return CasStatus::Staged;
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let lease_active =
+        now.saturating_sub(lease.created_at_unix_secs) < CAS_INGEST_LEASE_GRACE.as_secs();
+    let file_in_grace = tokio::fs::metadata(path)
+        .await
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_none_or(|age| age < CAS_ORPHAN_GRACE);
+    if lease_active || file_in_grace {
+        CasStatus::Staged
+    } else {
+        CasStatus::StagedAbandoned
+    }
+}
+
+async fn staging_path_is_protected(
+    content_store: &MaterialContentStore,
+    path: &str,
+) -> RuntimeResult<bool> {
+    let state = load_ingest_lease_state(content_store).await?;
+    Ok(
+        classify_staging_path(camino::Utf8Path::new(path), &state.staging).await
+            != CasStatus::StagedAbandoned,
+    )
 }
 
 /// Load all BLAKE3 hashes that have a durable database authority.
