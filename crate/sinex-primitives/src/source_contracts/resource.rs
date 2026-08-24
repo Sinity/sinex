@@ -1,15 +1,5 @@
 use serde::Serialize;
 
-/// Concrete resource ceiling a binding declares, used to derive the systemd
-/// unit's `MemoryMax`/`CPUWeight` when the deployment unit is generated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct ResourceLimits {
-    /// Hard memory ceiling in MiB.
-    pub memory_max_mib: u32,
-    /// systemd `CPUWeight` (1–10000; 100 = default share).
-    pub cpu_weight: u16,
-}
-
 /// Runtime work class used to group package budget expectations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -41,9 +31,9 @@ pub enum BudgetPressureAction {
 
 /// Package-level resource budget derived from a [`ResourceProfile`].
 ///
-/// [`ResourceLimits`] remains the deployment ceiling consumed by the Nix catalog.
-/// This richer budget is the Sinex-side contract for package completeness,
-/// pressure visibility, and future runtime controls.
+/// This is the Sinex-side contract for package completeness, pressure
+/// visibility, and future runtime controls. It does not configure systemd
+/// resource controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WorkBudgetSpec {
     pub work_class: WorkClass,
@@ -65,9 +55,8 @@ pub struct WorkBudgetSpec {
 
 /// Resource profile of a source binding.
 ///
-/// Replaces the former free-form `resource_shape` string. Each variant maps to a
-/// concrete [`ResourceLimits`] ceiling so the deployment unit's limits are a
-/// typed function of the declared profile rather than a hand-set number.
+/// Replaces the former free-form `resource_shape` string. Each variant maps to
+/// a semantic [`WorkBudgetSpec`] for package-completeness and pressure handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceProfile {
@@ -114,43 +103,15 @@ const THROTTLE_DEFER_RETRY_INSPECT: &[BudgetPressureAction] = &[
 ];
 
 impl ResourceProfile {
-    /// Concrete systemd resource ceiling for this profile.
-    #[must_use]
-    pub const fn limits(self) -> ResourceLimits {
-        match self {
-            Self::BoundedFile | Self::Oneshot => ResourceLimits {
-                memory_max_mib: 256,
-                cpu_weight: 100,
-            },
-            Self::BoundedStream => ResourceLimits {
-                memory_max_mib: 512,
-                cpu_weight: 100,
-            },
-            Self::LiveWatcher | Self::EmbeddedEmitter => ResourceLimits {
-                memory_max_mib: 128,
-                cpu_weight: 80,
-            },
-            Self::DirectoryScan => ResourceLimits {
-                memory_max_mib: 1024,
-                cpu_weight: 120,
-            },
-            Self::EventStreamConsumer => ResourceLimits {
-                memory_max_mib: 512,
-                cpu_weight: 120,
-            },
-        }
-    }
-
     /// Package budget contract derived from this profile.
     #[must_use]
     pub const fn budget_spec(self) -> WorkBudgetSpec {
-        let limits = self.limits();
         match self {
             Self::BoundedFile | Self::Oneshot => WorkBudgetSpec {
                 work_class: WorkClass::BulkImport,
                 steady_memory_mib: 128,
-                burst_memory_mib: limits.memory_max_mib,
-                cpu_weight: limits.cpu_weight,
+                burst_memory_mib: 256,
+                cpu_weight: 100,
                 max_input_bytes_per_sec: Some(16 * 1024 * 1024),
                 max_input_events_per_sec: None,
                 max_pending_material_bytes: 64 * 1024 * 1024,
@@ -166,8 +127,8 @@ impl ResourceProfile {
             Self::BoundedStream => WorkBudgetSpec {
                 work_class: WorkClass::AdmissionHot,
                 steady_memory_mib: 256,
-                burst_memory_mib: limits.memory_max_mib,
-                cpu_weight: limits.cpu_weight,
+                burst_memory_mib: 512,
+                cpu_weight: 100,
                 max_input_bytes_per_sec: Some(32 * 1024 * 1024),
                 max_input_events_per_sec: Some(10_000),
                 max_pending_material_bytes: 128 * 1024 * 1024,
@@ -183,8 +144,8 @@ impl ResourceProfile {
             Self::LiveWatcher | Self::EmbeddedEmitter => WorkBudgetSpec {
                 work_class: WorkClass::CaptureLive,
                 steady_memory_mib: 64,
-                burst_memory_mib: limits.memory_max_mib,
-                cpu_weight: limits.cpu_weight,
+                burst_memory_mib: 128,
+                cpu_weight: 80,
                 max_input_bytes_per_sec: Some(1024 * 1024),
                 max_input_events_per_sec: Some(1_000),
                 max_pending_material_bytes: 8 * 1024 * 1024,
@@ -200,8 +161,8 @@ impl ResourceProfile {
             Self::DirectoryScan => WorkBudgetSpec {
                 work_class: WorkClass::BulkImport,
                 steady_memory_mib: 512,
-                burst_memory_mib: limits.memory_max_mib,
-                cpu_weight: limits.cpu_weight,
+                burst_memory_mib: 1024,
+                cpu_weight: 120,
                 max_input_bytes_per_sec: Some(64 * 1024 * 1024),
                 max_input_events_per_sec: None,
                 max_pending_material_bytes: 256 * 1024 * 1024,
@@ -217,8 +178,8 @@ impl ResourceProfile {
             Self::EventStreamConsumer => WorkBudgetSpec {
                 work_class: WorkClass::ProjectionHot,
                 steady_memory_mib: 256,
-                burst_memory_mib: limits.memory_max_mib,
-                cpu_weight: limits.cpu_weight,
+                burst_memory_mib: 512,
+                cpu_weight: 120,
                 max_input_bytes_per_sec: Some(16 * 1024 * 1024),
                 max_input_events_per_sec: Some(20_000),
                 max_pending_material_bytes: 32 * 1024 * 1024,

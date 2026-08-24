@@ -158,10 +158,8 @@ async fn resource_profile_budget_spec_preserves_operational_bounds() -> TestResu
     let live_budget = ResourceProfile::LiveWatcher.budget_spec();
     assert_eq!(live_budget.work_class, WorkClass::CaptureLive);
     assert!(live_budget.steady_memory_mib <= live_budget.burst_memory_mib);
-    assert_eq!(
-        live_budget.burst_memory_mib,
-        ResourceProfile::LiveWatcher.limits().memory_max_mib
-    );
+    assert_eq!(live_budget.burst_memory_mib, 128);
+    assert_eq!(live_budget.cpu_weight, 80);
     assert!(
         live_budget
             .pressure_actions

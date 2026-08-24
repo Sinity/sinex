@@ -8,7 +8,7 @@ root_markers = ["Cargo.toml", "flake.nix", "xtask"]
 [environment]
 kind = "nix-develop"
 command = ["nix", "develop", "--accept-flake-config", "--command"]
-inherit = ["HOME", "USER", "LANG", "TERM", "SSH_AUTH_SOCK", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "SINEX_SOURCE_BINDINGS_PATH"]
+inherit = ["HOME", "USER", "LANG", "TERM", "SSH_AUTH_SOCK", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "SINEX_SOURCE_BINDINGS_PATH", "SINEX_DEV_POSTGRES_PORT", "SINEX_DEV_NATS_PORT"]
 unset = ["PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "_PYTHON_SYSCONFIGDATA_NAME", "_PYTHON_HOST_PLATFORM", "PYTHONPYCACHEPREFIX"]
 
 [workspace]
@@ -21,7 +21,7 @@ verification_operations = ["check_default"]
 
 [operations.dev_services]
 description = "Run lease-owned Sinex development Postgres and NATS"
-exec = ["xtask", "infra", "lease-services"]
+exec = ["nix", "run", ".#xtask", "--", "infra", "lease-services"]
 pool = "normal"
 result = "exit"
 cache = "none"

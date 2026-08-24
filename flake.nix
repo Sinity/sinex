@@ -567,7 +567,7 @@
                     echo "✗ AgentCTL development Postgres is unavailable. Start: agentctl job start sinex dev_services" >&2
                     exit 1
                   fi
-                  export PGHOST="$pgrun" PGPORT="$pgport" DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres"
+                  export PGHOST="$pgrun" PGPORT="$pgport" DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&port=$pgport&user=postgres"
                 fi
 
                 exec "$real_cargo" "$@"
@@ -614,13 +614,13 @@
                   export SINEX_DEV_STATE_DIR="$checkout_dev_state_dir"
                   export SINEX_STATE_DIR="$root_dir/.sinex/state"
                   export PGHOST="$checkout_pg_run_dir"
-                  export PGPORT=5432
-                  export DATABASE_URL="postgresql:///sinex_dev?host=$checkout_pg_run_dir"
-                  export SINEX_DEV_PG_PORT="$PGPORT"
-                  export SINEX_DEV_NATS_PORT="$checkout_nats_port"
+                  export SINEX_DEV_POSTGRES_PORT="''${SINEX_DEV_POSTGRES_PORT:-5432}"
+                  export PGPORT="$SINEX_DEV_POSTGRES_PORT"
+                  export DATABASE_URL="postgresql:///sinex_dev?host=$checkout_pg_run_dir&port=$SINEX_DEV_POSTGRES_PORT"
+                  export SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-$checkout_nats_port}"
                   export SINEX_DEV_GATEWAY_PORT="$checkout_gateway_port"
                   export SINEX_NATS_DIR="$checkout_dev_state_dir/nats"
-                  export SINEX_NATS_URL="nats://127.0.0.1:$checkout_nats_port"
+                  export SINEX_NATS_URL="nats://127.0.0.1:$SINEX_DEV_NATS_PORT"
                 fi
 
                 cargo_target_dir="''${CARGO_TARGET_DIR:-''${SINEX_DEV_CACHE_ROOT:-$root_dir/.sinex/cache}/target}"
@@ -1575,14 +1575,14 @@
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 # NATS runtime scratch (JetStream WAL) stays on the relocated NVMe dir.
                 export SINEX_NATS_DIR="$SINEX_DEV_STATE_DIR/nats"
-                export SINEX_DEV_PG_PORT="${toString pgPort}"
-                export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
+                export SINEX_DEV_POSTGRES_PORT="''${SINEX_DEV_POSTGRES_PORT:-${toString pgPort}}"
+                export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run&port=$SINEX_DEV_POSTGRES_PORT"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
-                export PGPORT="${toString pgPort}"
+                export PGPORT="$SINEX_DEV_POSTGRES_PORT"
                 _sinex_checkout_hash_hex="$(printf '%s' "$_sinex_checkout_hash" | cut -c1-2)"
                 _sinex_checkout_hash_byte="$((16#$_sinex_checkout_hash_hex))"
                 export SINEX_DEV_GATEWAY_PORT="$((19000 + _sinex_checkout_hash_byte))"
-                export SINEX_DEV_NATS_PORT="$((4222 + (_sinex_checkout_hash_byte % 100)))"
+                export SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-$((4222 + (_sinex_checkout_hash_byte % 100)))}"
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
                 export SINEX_API_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_API_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
@@ -1668,7 +1668,7 @@
                     local test_tmp="$SINEX_TEST_TMPDIR"
                     local test_pgdata="''${SINEX_TEST_PGDATA_DIR:-unset}"
 
-                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && pg_state="up"
+                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "$SINEX_DEV_POSTGRES_PORT" 2>/dev/null && pg_state="up"
                     _sinex_tcp_ready "$SINEX_DEV_NATS_PORT" && nats_state="up"
                     history_line="$(_sinex_recent_history_line)"
 

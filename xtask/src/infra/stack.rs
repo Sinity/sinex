@@ -129,9 +129,10 @@ impl StackConfig {
     #[must_use]
     pub fn database_url(&self) -> String {
         format!(
-            "postgresql:///{}?host={}",
+            "postgresql:///{}?host={}&port={}",
             self.postgres.database,
-            self.run_dir().display()
+            self.run_dir().display(),
+            self.postgres.port,
         )
     }
 

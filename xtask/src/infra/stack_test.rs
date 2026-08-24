@@ -10,6 +10,10 @@ async fn stack_config_uses_agentctl_lease_ports() -> TestResult<()> {
     let config = StackConfig::for_current_checkout()?;
     assert_eq!(config.postgres.port, 45_432);
     assert_eq!(config.nats.port, 44_308);
+    assert!(
+        config.database_url().contains("port=45432"),
+        "database consumers must use the leased PostgreSQL port"
+    );
     assert_eq!(config.nats_url(), "nats://localhost:44308");
     Ok(())
 }

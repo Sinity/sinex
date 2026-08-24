@@ -1,5 +1,6 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::fs;
+use std::io::Read;
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::Command;
@@ -52,12 +53,12 @@ impl NatsManager {
         let mut child = command.arg("-js").arg("-c").arg(&self.config.config_file)
             .stdout(log.try_clone()?).stderr(log).spawn().wrap_err("start lease-owned NATS")?;
         for _ in 0..30 {
+            if let Some(status) = child.try_wait()? {
+                bail!("NATS exited before readiness ({status}); inspect {}", self.config.log_file.display());
+            }
             if self.is_ready() {
                 if verbose { println!("NATS is ready on lease port {}", self.config.port); }
                 return Ok(());
-            }
-            if let Some(status) = child.try_wait()? {
-                bail!("NATS exited before readiness ({status}); inspect {}", self.config.log_file.display());
             }
             std::thread::sleep(Duration::from_millis(500));
         }
@@ -66,7 +67,17 @@ impl NatsManager {
 
     #[must_use]
     pub fn is_ready(&self) -> bool {
-        TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], self.config.port)), Duration::from_millis(200)).is_ok()
+        let Ok(mut stream) = TcpStream::connect_timeout(
+            &SocketAddr::from(([127, 0, 0, 1], self.config.port)),
+            Duration::from_millis(200),
+        ) else {
+            return false;
+        };
+        if stream.set_read_timeout(Some(Duration::from_millis(200))).is_err() {
+            return false;
+        }
+        let mut greeting = [0; 5];
+        stream.read_exact(&mut greeting).is_ok() && greeting == *b"INFO "
     }
 
 }
