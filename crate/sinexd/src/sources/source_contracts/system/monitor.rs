@@ -45,7 +45,7 @@ use sinex_primitives::{
     recovery_policy = sinex_primitives::source_contracts::SourceRecoveryPolicy::live_observation("live source has no recoverable history", "sinex-r6d.8"),
     monitor_emit_fn = "emit_system_monitor",
     monitor_phase = "ServiceStart",
-    // sinex-sn6s: telemetry.sqlite (/realm/data/captures/machine) is the
+    // sinex-sn6s: telemetry.sqlite (/realm/data/machine) is the
     // canonical copy; Sinex's rows are a downstream projection.
     criticality = SourceCriticality::Reconstructable,
 )]

@@ -10,7 +10,7 @@
 //! - `session.cast` — terminal output frames; deferred (out of scope).
 //!
 //! The adapter config's `roots` should include the asciinema captures root,
-//! e.g. `/realm/data/captures/asciinema`.
+//! e.g. `/realm/data/activity/asciinema`.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

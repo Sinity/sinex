@@ -1,7 +1,7 @@
 //! Document library index payloads.
 //!
 //! Metadata-only inventory events for the local document library
-//! (`/realm/data/libraries/doc/` and sibling directories).  Content
+//! (the document library, formerly `/realm/data/libraries/doc/`).  Content
 //! extraction is out of scope here — that is the domain of
 //! `DocumentParsedPayload` / `DocumentChunkedPayload` in `document.rs`.
 //!
