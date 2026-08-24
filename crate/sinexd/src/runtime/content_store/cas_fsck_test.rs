@@ -4,7 +4,8 @@ use super::{
     reconcile_pending_deletions,
 };
 use crate::runtime::content_store::{
-    CasWalkCheckpoint, ContentStoreConfig, ContentStoreKey, MaterialContentStore,
+    CAS_LIFECYCLE_DIR, CasWalkCheckpoint, ContentStoreConfig, ContentStoreKey,
+    MaterialContentStore,
     gc::{sweep_orphans, sweep_orphans_detailed},
 };
 use crate::runtime::work_control::{WorkBudget, WorkCancellation, WorkController, WorkIdentity};
@@ -17,6 +18,9 @@ use sinex_primitives::{MaterialManifestV1, Timestamp, Uuid};
 use std::time::{Duration, SystemTime};
 use xtask::sandbox::prelude::*;
 
+const CAS_CRASH_ROOT_ENV: &str = "SINEX_CAS_CRASH_ROOT";
+const CAS_CRASH_SOURCE: &str = "crash-boundary-source.txt";
+
 #[test]
 fn default_fsck_options_do_not_impose_arbitrary_limits() {
     let options = CasFsckOptions::default();
@@ -27,6 +31,18 @@ fn default_fsck_options_do_not_impose_arbitrary_limits() {
 
 #[sinex_test]
 async fn cas_publish_boundaries_survive_restart_and_retry(_ctx: TestContext) -> TestResult<()> {
+    if let Ok(root_path) = std::env::var(CAS_CRASH_ROOT_ENV) {
+        let root_path = Utf8PathBuf::from(root_path);
+        let store = MaterialContentStore::new(ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        })?;
+        let _ = store
+            .store_file_with_lease(root_path.join(CAS_CRASH_SOURCE))
+            .await?;
+        panic!("CAS crash-boundary child returned without aborting");
+    }
+
     for (fault_point, object_published) in [
         (FaultPoint::CasRename, false),
         (FaultPoint::CasParentDirectoryFsync, true),
@@ -35,28 +51,45 @@ async fn cas_publish_boundaries_survive_restart_and_retry(_ctx: TestContext) -> 
         let store_dir = tempfile::tempdir()?;
         let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
             .expect("temporary content-store path must be UTF-8");
-        let source = root_path.join("crash-boundary-source.txt");
+        let source = root_path.join(CAS_CRASH_SOURCE);
         let payload = b"CAS crash-boundary recovery payload";
         tokio::fs::write(&source, payload).await?;
+        MaterialContentStore::init_with_config(&root_path, None, false).await?;
         let expected_key = ContentStoreKey::local_blake3(
             payload.len() as u64,
             blake3::hash(payload).to_hex().to_string(),
         )?;
-        let injector = FaultInjector::default();
-        injector.fail_once(fault_point);
-        let store = MaterialContentStore::new_with_fault_injector(
-            ContentStoreConfig {
-                root_path: root_path.clone(),
-                ..Default::default()
-            },
-            injector,
+        let exe = std::env::current_exe()?;
+        let module_path_without_crate = module_path!()
+            .split_once("::")
+            .map_or(module_path!(), |(_, rest)| rest);
+        let qualified_name = format!(
+            "{module_path_without_crate}::cas_publish_boundaries_survive_restart_and_retry"
         );
-
-        let failed = store.store_file_with_lease(&source).await;
+        let child = tokio::process::Command::new(exe)
+            .arg(&qualified_name)
+            .arg("--exact")
+            .arg("--nocapture")
+            .env(CAS_CRASH_ROOT_ENV, &root_path)
+            .env("SINEX_FAULT_INJECTION", format!("{fault_point}=abort"))
+            .output()
+            .await?;
         assert!(
-            failed.is_err(),
-            "fault point {fault_point} must interrupt the publish boundary"
+            !child.status.success(),
+            "fault point {fault_point} must terminate the child process; stdout={} stderr={}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr),
         );
+        #[cfg(unix)]
+        assert_eq!(
+            std::os::unix::process::ExitStatusExt::signal(&child.status),
+            Some(libc::SIGABRT),
+            "fault point {fault_point} must abort rather than return an ordinary test failure"
+        );
+        let store = MaterialContentStore::new(ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        })?;
         let target = store
             .path_if_local(&expected_key.key)?
             .expect("local CAS key must resolve to a path");
@@ -101,6 +134,7 @@ async fn fsck_removes_only_stale_associated_staging(ctx: TestContext) -> TestRes
     let active_source = root_path.join("active-source.txt");
     tokio::fs::write(&old_source, b"stale staging payload").await?;
     tokio::fs::write(&active_source, b"active staging payload").await?;
+    MaterialContentStore::init_with_config(&root_path, None, false).await?;
 
     let old_injector = FaultInjector::default();
     old_injector.fail_once(FaultPoint::CasRename);
@@ -186,10 +220,42 @@ async fn fsck_removes_only_stale_associated_staging(ctx: TestContext) -> TestRes
                 && status.status == CasStatus::Staged)
     );
 
+    let mut duplicate_lease = old_lease.clone();
+    duplicate_lease.operation_id = "duplicate-staging-owner".to_string();
+    let duplicate_record = old_lease
+        .record_path
+        .parent()
+        .expect("lease record must have a parent")
+        .join("duplicate-staging-owner.json");
+    tokio::fs::write(&duplicate_record, serde_json::to_vec(&duplicate_lease)?).await?;
+    let ambiguous_apply = check_cas(ctx.pool(), &old_store, true).await;
+    assert!(
+        ambiguous_apply.is_err(),
+        "multiple lifecycle owners must fail before staging removal"
+    );
+    assert!(
+        old_staging.exists(),
+        "ambiguous lifecycle ownership must leave staging untouched"
+    );
+    tokio::fs::remove_file(duplicate_record).await?;
+
     let (apply_report, _) = check_cas(ctx.pool(), &old_store, true).await?;
     assert_eq!(apply_report.staged_removed, 1);
     assert!(!old_staging.exists());
     assert!(active_staging.exists());
+    let remaining_leases = old_store.list_write_leases().await?;
+    assert!(
+        remaining_leases
+            .iter()
+            .all(|lease| lease.staging_path.as_deref() != Some(old_staging.as_path())),
+        "reconciled staging must not leave a stale lifecycle lease"
+    );
+    assert!(
+        remaining_leases
+            .iter()
+            .any(|lease| lease.staging_path.as_deref() == Some(active_staging.as_path())),
+        "active staging lease must remain protected"
+    );
     Ok(())
 }
 
@@ -198,9 +264,7 @@ async fn malformed_ingest_lease_fails_closed(ctx: TestContext) -> TestResult<()>
     let store_dir = tempfile::tempdir()?;
     let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
         .expect("temporary content-store path must be UTF-8");
-    let lease_root = root_path
-        .join(super::CAS_LIFECYCLE_DIR)
-        .join("ingest-leases");
+    let lease_root = root_path.join(CAS_LIFECYCLE_DIR).join("ingest-leases");
     tokio::fs::create_dir_all(&lease_root).await?;
     tokio::fs::write(lease_root.join("malformed.json"), b"not-json").await?;
     let store = MaterialContentStore::new(ContentStoreConfig {
@@ -219,6 +283,7 @@ async fn out_of_tree_staging_lease_fails_closed(ctx: TestContext) -> TestResult<
         .expect("temporary content-store path must be UTF-8");
     let source = root_path.join("source.txt");
     tokio::fs::write(&source, b"staging path validation").await?;
+    MaterialContentStore::init_with_config(&root_path, None, false).await?;
     let injector = FaultInjector::default();
     injector.fail_once(FaultPoint::CasRename);
     let store = MaterialContentStore::new_with_fault_injector(

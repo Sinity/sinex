@@ -23,8 +23,8 @@ use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 
 use super::{
-    CasWalkCheckpoint, ContentStoreKey, LOCAL_BLAKE3_CAS_BACKEND, LOCAL_BLAKE3_CAS_DIR,
-    MaterialContentStore,
+    CasWalkCheckpoint, CasWriteLease, ContentStoreKey, LOCAL_BLAKE3_CAS_BACKEND,
+    LOCAL_BLAKE3_CAS_DIR, MaterialContentStore,
 };
 use crate::runtime::work_control::{
     WorkAdmission, WorkBudget, WorkCancellation, WorkController, WorkFileAdmission, WorkIdentity,
@@ -184,7 +184,13 @@ pub async fn check_cas(
     content_store: &MaterialContentStore,
     apply: bool,
 ) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>)> {
-    check_cas_with_options(pool, content_store, apply, CasFsckOptions::default()).await
+    Box::pin(check_cas_with_options(
+        pool,
+        content_store,
+        apply,
+        CasFsckOptions::default(),
+    ))
+    .await
 }
 
 /// Run a bounded CAS fsck pass with explicit work limits.
@@ -194,14 +200,14 @@ pub async fn check_cas_with_options(
     apply: bool,
     options: CasFsckOptions,
 ) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>)> {
-    let (report, statuses, _) = check_cas_with_options_and_control(
+    let (report, statuses, _) = Box::pin(check_cas_with_options_and_control(
         pool,
         content_store,
         apply,
         options,
         None,
         WorkCancellation::new(),
-    )
+    ))
     .await?;
     Ok((report, statuses))
 }
@@ -493,14 +499,18 @@ pub async fn check_cas_with_options_and_control(
     // The returned statuses are also the bounded walk's classification output,
     // so no separate orphan-candidate list is retained.
     if apply && !report.incomplete {
-        apply_orphan_deletions(
+        // Keep the destructive state machine off this already-large scan
+        // future's stack. Lease reconciliation performs several filesystem
+        // awaits and otherwise inflates even dry-run callers because Rust
+        // reserves space for every branch of an async state machine.
+        Box::pin(apply_orphan_deletions(
             pool,
             content_store,
             &file_statuses,
             &mut report,
             &mut work,
             _destructive_admission.as_ref(),
-        )
+        ))
         .await?;
     }
 
@@ -943,6 +953,9 @@ async fn apply_orphan_deletions(
             if staging_path_is_protected(content_store, path).await? {
                 continue;
             }
+            let staging_path = camino::Utf8Path::new(path);
+            let lease_to_release =
+                abandoned_staging_lease_to_release(content_store, staging_path).await?;
             if !fsck_destructive_boundary(work, report)? {
                 return Ok(());
             }
@@ -953,8 +966,11 @@ async fn apply_orphan_deletions(
                     return Err(SinexError::io(error).with_context("path", path.clone()));
                 }
             }
-            if let Some(parent) = camino::Utf8Path::new(path).parent() {
+            if let Some(parent) = staging_path.parent() {
                 MaterialContentStore::sync_directory(parent).await?;
+            }
+            if let Some(lease) = lease_to_release {
+                content_store.release_write_lease(&lease).await?;
             }
             continue;
         }
@@ -1235,6 +1251,41 @@ async fn staging_path_is_protected(
         classify_staging_path(camino::Utf8Path::new(path), &state.staging).await
             != CasStatus::StagedAbandoned,
     )
+}
+
+/// Validate the exact stale lifecycle record before authorizing removal, and
+/// return it for retirement after the staging-file deletion is durable. A
+/// landed target is retained because it may still need a metadata commit;
+/// ambiguous or malformed records fail before any filesystem mutation.
+async fn abandoned_staging_lease_to_release(
+    content_store: &MaterialContentStore,
+    staging_path: &camino::Utf8Path,
+) -> RuntimeResult<Option<CasWriteLease>> {
+    let mut matches = content_store
+        .list_write_leases()
+        .await?
+        .into_iter()
+        .filter(|lease| lease.staging_path.as_deref() == Some(staging_path));
+    let Some(lease) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(SinexError::validation(
+            "multiple CAS ingest leases claim one abandoned staging path",
+        )
+        .with_context("path", staging_path.to_string()));
+    }
+    validate_staging_lease_path(content_store, &lease.key, staging_path).await?;
+    let target = content_store
+        .path_if_local(&lease.key.key)?
+        .ok_or_else(|| SinexError::validation("CAS lease staging path has non-local key"))?;
+    if tokio::fs::try_exists(&target)
+        .await
+        .map_err(SinexError::io)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(lease))
 }
 
 /// Load all BLAKE3 hashes that have a durable database authority.
