@@ -276,7 +276,7 @@ the binary is on PATH).
 | tests | `xtask test` (impact-planned) · `-p <pkg>` · `-E 'test(name)'` · `--heavy` · `--impact-mode=off --all` for deliberate full pass |
 | list tests | `xtask test --list -p <pkg>` |
 | build | `xtask build -p <pkg>` |
-| local stack | `agentctl job start sinex dev_services`, `xtask doctor`, `agentctl job start sinex run_core` |
+| local stack | `agentctl job start sinex dev_services --workspace <workspace-id>`, `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID=<job-id> git push`, `xtask doctor`, `agentctl job start sinex run_core --workspace <workspace-id>` |
 | lifecycle | Start declared `fix_default`, `run_core`, `run_all_automatons`, `run_all_sources`, `vm_smoke`, and `vm_validate` operations through AgentCTL; use `agentctl job get/logs/result/cancel` with its returned ID |
 | failure forensics | `xtask history diagnostics --level error`, `xtask history tests analyze` |
 | generated surfaces | `xtask docs sync` / `xtask docs check` |
@@ -300,7 +300,9 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
   Canonical matrix: `TESTING.md`.
 - **PR flow to master, ready for review, squash-merge, title = permanent history line ending `(#N)`.** Do not open draft PRs in this repository. A branch is pushed only after its scoped checks and PR body are ready for review. PR body needs Summary / Problem / Solution / Verification (exact commands + the line that matters). No resolver keywords next to issue numbers — `Ref #N` only.
 - Pre-push drift guard (`.githooks/pre-push`): schema-bundle check + `--changed-strict` when
-  Rust changed. Bypass only in emergencies with `SINEX_SKIP_DRIFT_GUARD=1`, documented.
+  Rust changed. With an active AgentCTL `dev_services` lease, pass its exact job ID as
+  `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID` so the hook validates and propagates the leased ports
+  and PostgreSQL socket. Bypass only in emergencies with `SINEX_SKIP_DRIFT_GUARD=1`, documented.
 - **Closure honesty**: Bead `close_reason` text includes a Closure Evidence Manifest;
   `xtask verify closure <bead-id>` checks every AC disposition and executes its commands.
   Deferred rows name follow-up Beads. Never claim "closed by PRs #X–#Y" without checking
@@ -315,7 +317,9 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
   minutes. Worktree devshells inherit a broken `DATABASE_URL`; read the real one from the
   main checkout's devshell and `env DATABASE_URL=... ` explicitly (also for `git push` —
   the pre-push drift guard inherits the same broken URL, so sqlx compile errors masquerade
-  as drift-guard rejections). The exact recipe (moved here from the global agent contract):
+  as drift-guard rejections). For an AgentCTL-backed push, pass the exact lease job ID with
+  `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID`; the hook validates the live lease before preserving its
+  coordinates through sanitation. The exact recipe (moved here from the global agent contract):
 
   ```bash
   SINEX_MAIN_DATABASE_URL="$(

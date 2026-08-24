@@ -34,6 +34,17 @@ The devshell auto-installs this hook on first entry. To install manually:
 git config core.hooksPath .githooks
 ```
 
+When pushing from a checkout with an active AgentCTL development-service lease, bind the job to the workspace for the current checkout and pass the exact job ID to the hook. The hook then re-reads and validates that exact lease before using its ports:
+
+```bash
+checkout_root="$(git rev-parse --show-toplevel)"
+workspace_id="$(agentctl workspace list --project sinex | jq -er --arg path "$checkout_root" '.payload.value.workspaces[] | select(.path == $path) | .workspace_id')"
+lease_job_id="$(agentctl job start sinex dev_services --workspace "$workspace_id" | jq -er '.payload.value.job_id')"
+SINEX_PRE_PUSH_AGENTCTL_LEASE_ID="$lease_job_id" git push
+```
+
+`agentctl workspace list` must return the registered workspace whose path equals `git rev-parse --show-toplevel`. For a new linked checkout, create it with `agentctl workspace create sinex <name> --branch <branch>`, change into the path returned by that workspace record, and run the same lookup. The hook accepts only a running `sinex/dev_services` lease for that exact checkout, with the descriptor-declared ports and protocol-ready PostgreSQL and NATS endpoints. Without `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID`, the existing checkout-local fallback remains in effect.
+
 Emergency bypass (force-push during recovery, etc.):
 
 ```bash

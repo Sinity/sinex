@@ -283,7 +283,7 @@ fn reset_db(config: &StackConfig, verbose: bool) -> Result<()> {
     let mgr = PostgresManager::new(config.to_shared_pg());
     if !mgr.accepting_connections_probe()? {
         return Err(eyre!(
-            "development Postgres is not ready; start the bounded lease with `agentctl job start sinex dev_services`"
+            "development Postgres is not ready; start the bounded lease with `agentctl job start sinex dev_services --workspace <workspace-id>`"
         ));
     }
 
@@ -322,7 +322,7 @@ fn reset_db(config: &StackConfig, verbose: bool) -> Result<()> {
 fn reset_nats(config: &StackConfig, verbose: bool) -> Result<()> {
     if crate::infra::services::nats::NatsManager::new(config.to_shared_nats()).is_ready() {
         return Err(eyre!(
-            "NATS is lease-owned; cancel `agentctl job start sinex dev_services` before wiping JetStream data"
+            "NATS is lease-owned; cancel the matching `agentctl job` before wiping JetStream data"
         ));
     }
 

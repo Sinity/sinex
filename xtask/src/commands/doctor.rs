@@ -518,7 +518,7 @@ impl XtaskCommand for DoctorCommand {
             let nats_probe = probe_nats();
             let remediation_warnings = (!pg_probe.ready() || !nats_probe.ready())
                 .then(|| {
-                    "Doctor --fix does not start development services; run `agentctl job start sinex dev_services`".to_string()
+                    "Doctor --fix does not start development services; run `agentctl job start sinex dev_services --workspace <workspace-id>`".to_string()
                 })
                 .into_iter()
                 .collect::<Vec<_>>();

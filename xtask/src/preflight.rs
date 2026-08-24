@@ -670,11 +670,15 @@ impl InfraStatus {
 /// Kills the subprocess if it runs longer than `SINEX_INFRA_START_TIMEOUT`
 /// seconds (default: 120s) to prevent indefinite hangs.
 pub fn auto_start_stack(_verbose: bool) -> Result<()> {
-    bail!("development services are lease-owned; start agentctl job start sinex dev_services")
+    bail!(
+        "development services are lease-owned; start agentctl job start sinex dev_services --workspace <workspace-id>"
+    )
 }
 
 pub fn auto_start_postgres(_verbose: bool) -> Result<()> {
-    bail!("development PostgreSQL is lease-owned; start agentctl job start sinex dev_services")
+    bail!(
+        "development PostgreSQL is lease-owned; start agentctl job start sinex dev_services --workspace <workspace-id>"
+    )
 }
 
 /// Generate TLS certificates if they don't exist and set environment variables.
@@ -1221,7 +1225,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         let started = auto_start_stack(is_interactive);
         ctx.finish_stage(stage, started.is_ok());
         started.wrap_err(
-            "Development services are unavailable. Start: agentctl job start sinex dev_services",
+            "Development services are unavailable. Start: agentctl job start sinex dev_services --workspace <workspace-id>",
         )?;
         status = InfraStatus::capture();
     }
@@ -1290,7 +1294,7 @@ pub fn ensure_compile_ready(ctx: &crate::command::CommandContext) -> Result<Comp
         let started = auto_start_postgres(is_interactive);
         ctx.finish_stage(stage, started.is_ok());
         started.wrap_err(
-            "Development Postgres is unavailable. Start: agentctl job start sinex dev_services",
+            "Development Postgres is unavailable. Start: agentctl job start sinex dev_services --workspace <workspace-id>",
         )?;
         status = InfraStatus::capture();
     }

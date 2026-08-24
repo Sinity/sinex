@@ -122,8 +122,10 @@ git clone https://github.com/sinity/sinex.git
 cd sinex
 direnv allow
 
-agentctl job start sinex dev_services
-agentctl job start sinex run_core
+checkout_root="$(git rev-parse --show-toplevel)"
+workspace_id="$(agentctl workspace list --project sinex | jq -er --arg path "$checkout_root" '.payload.value.workspaces[] | select(.path == $path) | .workspace_id')"
+agentctl job start sinex dev_services --workspace "$workspace_id"
+agentctl job start sinex run_core --workspace "$workspace_id"
 xtask run list
 sinexctl events recent -n 10
 ```

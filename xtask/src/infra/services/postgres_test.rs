@@ -15,6 +15,10 @@ fn test_manager(root: &tempfile::TempDir) -> PostgresManager {
         superuser: "postgres".to_string(),
         app_user: "sinex".to_string(),
         listen_addresses: String::new(),
+        durability: PostgresDurabilityMode::Durable,
+    })
+}
+
 #[sinex_test]
 async fn postgres_identifier_rendering_rejects_sql_fragments() -> TestResult<()> {
     assert_eq!(
@@ -257,7 +261,7 @@ async fn test_ensure_runtime_config_replaces_existing_managed_block() -> TestRes
 
 #[cfg(unix)]
 #[sinex_test]
-async fn test_pg_commands_preserve_non_utf8_paths() -> TestResult<()> {
+async fn test_pg_client_commands_preserve_non_utf8_paths() -> TestResult<()> {
     let temp = tempfile::tempdir()?;
     let data_dir = PathBuf::from(OsString::from_vec(b"/tmp/pg-data-\xff".to_vec()));
     let run_dir = PathBuf::from(OsString::from_vec(b"/tmp/pg-run-\xfe".to_vec()));
@@ -272,13 +276,6 @@ async fn test_pg_commands_preserve_non_utf8_paths() -> TestResult<()> {
         listen_addresses: String::new(),
         durability: PostgresDurabilityMode::Durable,
     });
-
-    let stop_args: Vec<OsString> = manager
-        .pg_ctl_stop_command("fast")
-        .get_args()
-        .map(OsStr::to_os_string)
-        .collect();
-    assert!(stop_args.iter().any(|arg| arg == data_dir.as_os_str()));
 
     let ready_args: Vec<OsString> = manager
         .pg_isready_command()

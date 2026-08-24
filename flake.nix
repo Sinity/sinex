@@ -564,7 +564,7 @@
 
                 if _sinex_cargo_requires_sqlx_database "$@"; then
                   if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
-                    echo "✗ AgentCTL development Postgres is unavailable. Start: agentctl job start sinex dev_services" >&2
+                    echo "✗ AgentCTL development Postgres is unavailable. Start: agentctl job start sinex dev_services --workspace <workspace-id>" >&2
                     exit 1
                   fi
                   export PGHOST="$pgrun" PGPORT="$pgport" DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&port=$pgport&user=postgres"
@@ -1681,7 +1681,7 @@
                       fi
                       printf '  inspect: agentctl job list | xtask history explain --day today --against yesterday\n'
                       printf '  prod: sinexctl-prod (SINEX_API_URL=:9999) | dev: sinexctl (SINEX_API_URL=:%s)\n' "$SINEX_DEV_GATEWAY_PORT"
-                      printf '  services: agentctl job start sinex dev_services; SINEX_MOTD=0 hides this\n'
+                      printf '  services: agentctl job start sinex dev_services --workspace <workspace-id>; SINEX_MOTD=0 hides this\n'
                     } >&2
                   }
 

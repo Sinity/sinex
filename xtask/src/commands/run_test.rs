@@ -4,6 +4,8 @@ use crate::sandbox::{
     EnvGuard, sinex_test,
     timing::{Timeouts, WaitHelpers},
 };
+use std::sync::{Arc, Barrier};
+use std::thread;
 
 fn test_context(background: bool) -> CommandContext {
     CommandContext::new(
@@ -812,6 +814,257 @@ async fn test_agentctl_runtime_operations_are_non_cacheable_with_eight_hour_leas
     }
 
     Ok(())
+}
+
+#[sinex_test]
+async fn test_agentctl_dev_services_use_shared_checkout_service_lease_contract()
+-> ::xtask::sandbox::TestResult<()> {
+    let descriptor: toml::Value = toml::from_str(include_str!("../../../.agentctl/project.toml"))?;
+    let operations = descriptor["operations"]
+        .as_table()
+        .ok_or_else(|| eyre!("AgentCTL operations must be a TOML table"))?;
+    let dev_services = operations
+        .get("dev_services")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| eyre!("missing AgentCTL dev_services operation"))?;
+
+    assert_eq!(
+        dev_services["exec"]
+            .as_array()
+            .ok_or_else(|| eyre!("dev_services exec must be an argv array"))?
+            .iter()
+            .map(|value| value.as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        ["nix", "run", ".#xtask", "--", "infra", "lease-services"]
+    );
+    assert_eq!(
+        dev_services.get("cache").and_then(toml::Value::as_str),
+        Some("tree+environment"),
+        "matching starts in one checkout must share the running service job and lease"
+    );
+    assert_eq!(
+        dev_services.get("result").and_then(toml::Value::as_str),
+        Some("exit")
+    );
+    assert_eq!(
+        dev_services
+            .get("timeout_seconds")
+            .and_then(toml::Value::as_integer),
+        Some(28_800),
+        "the shared foreground service keeps its eight-hour lease"
+    );
+    assert!(
+        dev_services.get("parameters").is_none(),
+        "the service contract must not expose caller-controlled inputs"
+    );
+    assert!(
+        dev_services.get("exclusive_keys").is_none(),
+        "same-checkout sharing must not become global exclusivity"
+    );
+
+    let inherit = descriptor["environment"]["inherit"]
+        .as_array()
+        .ok_or_else(|| eyre!("AgentCTL environment.inherit must be an array"))?;
+    for output in ["SINEX_DEV_POSTGRES_PORT", "SINEX_DEV_NATS_PORT"] {
+        assert!(
+            !inherit.iter().any(|value| value.as_str() == Some(output)),
+            "allocated service output {output} must not affect cache identity"
+        );
+    }
+
+    let service = dev_services
+        .get("service")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| eyre!("dev_services must declare its service contract"))?;
+    assert_eq!(
+        service.get("readiness").and_then(toml::Value::as_str),
+        Some("project-command")
+    );
+    assert_eq!(
+        service.get("lifetime").and_then(toml::Value::as_str),
+        Some("job")
+    );
+
+    let ports = service["ports"]
+        .as_table()
+        .ok_or_else(|| eyre!("dev_services service ports must be a TOML table"))?;
+    for (slot, environment, lower, upper) in [
+        (
+            "postgres",
+            "SINEX_DEV_POSTGRES_PORT",
+            45_432_i64,
+            45_559_i64,
+        ),
+        ("nats", "SINEX_DEV_NATS_PORT", 44_308_i64, 44_435_i64),
+    ] {
+        let port = ports
+            .get(slot)
+            .and_then(toml::Value::as_table)
+            .ok_or_else(|| eyre!("missing dev_services {slot} port slot"))?;
+        assert_eq!(
+            port.get("environment").and_then(toml::Value::as_str),
+            Some(environment)
+        );
+        let range = port
+            .get("range")
+            .and_then(toml::Value::as_array)
+            .ok_or_else(|| eyre!("dev_services {slot} port range must be an array"))?;
+        assert_eq!(
+            range
+                .iter()
+                .map(|value| value.as_integer().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            [lower, upper]
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore = "read-only integration test; run when the live AgentCTL project registration has been refreshed from this checkout"]
+fn test_live_agentctl_descriptor_exposes_service_cache_identity_without_starting_services() {
+    let output = std::process::Command::new("agentctl")
+        .args(["project", "operations", "sinex"])
+        .output()
+        .expect("AgentCTL must be installed for the opt-in live descriptor test");
+    assert!(
+        output.status.success(),
+        "AgentCTL project operation inspection failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("AgentCTL operation inspection must return JSON");
+    let operations = response["payload"]["value"]["operations"]
+        .as_array()
+        .expect("AgentCTL operation inspection must expose operations");
+    let dev_services = operations
+        .iter()
+        .find(|operation| operation["name"] == "dev_services")
+        .expect("live AgentCTL must expose dev_services");
+    assert_eq!(
+        dev_services["cache"], "tree+environment",
+        "the running AgentCTL must load same-checkout coalescing semantics"
+    );
+    assert_eq!(dev_services["service"]["lifetime"], "job");
+    assert_eq!(dev_services["service"]["readiness"], "project-command");
+    assert_eq!(dev_services["parameters"], serde_json::json!([]));
+}
+
+#[test]
+#[ignore = "service integration test; starts and then cancels the current checkout's dev_services lease"]
+fn test_live_agentctl_coalesces_matching_workspace_jobs() {
+    let operations = std::process::Command::new("agentctl")
+        .args(["project", "operations", "sinex"])
+        .output()
+        .expect("inspect AgentCTL operations for the opt-in coalescing test");
+    assert!(
+        operations.status.success(),
+        "operation inspection failed: {}",
+        String::from_utf8_lossy(&operations.stderr)
+    );
+    let operations: serde_json::Value =
+        serde_json::from_slice(&operations.stdout).expect("operation inspection must return JSON");
+    let dev_services = operations["payload"]["value"]["operations"]
+        .as_array()
+        .expect("operation inspection must expose operations")
+        .iter()
+        .find(|operation| operation["name"] == "dev_services")
+        .expect("live AgentCTL must expose dev_services");
+    assert_eq!(dev_services["cache"], "tree+environment");
+    assert_eq!(dev_services["parameters"], serde_json::json!([]));
+    assert_eq!(dev_services["service"]["lifetime"], "job");
+
+    let workspace_list = std::process::Command::new("agentctl")
+        .args(["workspace", "list", "--project", "sinex"])
+        .output()
+        .expect("AgentCTL must be installed for the opt-in coalescing test");
+    assert!(
+        workspace_list.status.success(),
+        "workspace inspection failed: {}",
+        String::from_utf8_lossy(&workspace_list.stderr)
+    );
+    let response: serde_json::Value = serde_json::from_slice(&workspace_list.stdout)
+        .expect("workspace inspection must return JSON");
+    let checkout = crate::config::workspace_root()
+        .to_string_lossy()
+        .to_string();
+    let workspace_id = response["payload"]["value"]["workspaces"]
+        .as_array()
+        .expect("workspace inspection must expose workspaces")
+        .iter()
+        .find(|workspace| workspace["path"] == checkout)
+        .and_then(|workspace| workspace["workspace_id"].as_str())
+        .expect("current checkout must have a registered workspace")
+        .to_string();
+
+    let gate = Arc::new(Barrier::new(2));
+    let starts = (0..2)
+        .map(|_| {
+            let gate = Arc::clone(&gate);
+            let workspace_id = workspace_id.clone();
+            thread::spawn(move || {
+                gate.wait();
+                std::process::Command::new("agentctl")
+                    .args([
+                        "job",
+                        "start",
+                        "sinex",
+                        "dev_services",
+                        "--workspace",
+                        &workspace_id,
+                    ])
+                    .output()
+                    .expect("start dev_services through AgentCTL")
+            })
+        })
+        .collect::<Vec<_>>();
+    let outputs = starts
+        .into_iter()
+        .map(|thread| thread.join().expect("AgentCTL start thread must not panic"))
+        .collect::<Vec<_>>();
+    let job_ids = outputs
+        .iter()
+        .map(|output| {
+            assert!(
+                output.status.success(),
+                "AgentCTL start failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let response: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("AgentCTL start must return JSON");
+            response["payload"]["value"]["job_id"]
+                .as_str()
+                .expect("AgentCTL start must return a job ID")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    let mut unique_job_ids = job_ids.clone();
+    unique_job_ids.sort();
+    unique_job_ids.dedup();
+    for job_id in &unique_job_ids {
+        let cancel = std::process::Command::new("agentctl")
+            .args(["job", "cancel", job_id])
+            .output()
+            .expect("cancel started dev_services job");
+        assert!(
+            cancel.status.success(),
+            "failed to cancel dev_services job {job_id}: {}",
+            String::from_utf8_lossy(&cancel.stderr)
+        );
+    }
+    let wait = std::process::Command::new("agentctl")
+        .args(["job", "wait", &job_ids[0], "--timeout-seconds", "60"])
+        .status()
+        .expect("wait for cancelled dev_services job");
+    assert!(
+        wait.success(),
+        "cancelled dev_services job did not become terminal"
+    );
+    assert_eq!(
+        job_ids[0], job_ids[1],
+        "matching same-workspace starts must coalesce to one AgentCTL job"
+    );
 }
 
 #[sinex_test]
