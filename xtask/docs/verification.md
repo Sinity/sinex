@@ -6,6 +6,12 @@ renders generated surfaces, and aggregates release or closure reports. It should
 not become a second truth ledger for invariants that ordinary Rust tests,
 integration tests, schema strict-diff, or generated-surface checks can own.
 
+## AgentCTL verification operations
+
+The canonical AgentCTL descriptor exposes `verify_plan`, which runs `xtask verify plan --check`, and `verify_closure`, which runs `xtask verify closure` with a required positional `bead_id`. Both operations have an 1800-second limit and return their process result. `verify_plan` uses the tree and environment cache because it validates the checkout manifest. `verify_closure` is never cached because its Bead record and evidence commands are live inputs.
+
+`verify_closure` accepts only the safe-token Bead ID (128 characters maximum) plus optional `json` and `dry_run` booleans. It does not expose caller-selected argv, environment, or working-directory input.
+
 ## Verification Map
 
 | Surface | Behavior owner | Gate or command | Notes |
