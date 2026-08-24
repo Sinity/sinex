@@ -5,6 +5,8 @@ use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 
@@ -184,6 +186,38 @@ fn lease_port_value(value: &str, range: &std::ops::RangeInclusive<u16>) -> Resul
     Ok(port)
 }
 
+fn write_service_ready(path: &Path, job_id: &str) -> Result<()> {
+    if !path.is_absolute() || job_id.is_empty() {
+        bail!("AgentCTL service readiness coordinates are invalid");
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| eyre!("AgentCTL service readiness path has no parent"))?;
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| eyre!("AgentCTL service readiness path has no UTF-8 file name"))?;
+    let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .wrap_err("create AgentCTL service readiness marker")?;
+    writeln!(file, "{job_id}")?;
+    file.sync_all()?;
+    std::fs::rename(&temporary, path)?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn publish_service_ready() -> Result<()> {
+    let path = std::env::var("SINNIXD_SERVICE_READY_FILE")
+        .wrap_err("SINNIXD_SERVICE_READY_FILE is injected by the AgentCTL service contract")?;
+    let job_id = std::env::var("SINNIXD_JOB_ID")
+        .wrap_err("SINNIXD_JOB_ID is injected by the AgentCTL service contract")?;
+    write_service_ready(Path::new(&path), &job_id)
+}
+
 fn execute_lease_services(ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("infra lease-services");
     let postgres_port = lease_port("SINEX_DEV_POSTGRES_PORT", &LEASE_POSTGRES_PORT_RANGE)?;
@@ -201,6 +235,7 @@ fn execute_lease_services(ctx: &CommandContext) -> Result<CommandResult> {
     stack::pg_setup_database(&config, ctx.is_human())?;
     stack::pg_apply_schema(&config, ctx.is_human())?;
     stack::nats_start(&config, ctx.is_human())?;
+    publish_service_ready()?;
 
     println!("lease services ready: postgres=127.0.0.1:{postgres_port} nats=127.0.0.1:{nats_port}");
     println!(

@@ -2426,6 +2426,16 @@ async fn event_replacements_record_and_query(ctx: TestContext) -> TestResult<()>
         .await?;
     assert_eq!(count, 3, "should insert all 3 replacement records");
 
+    let replayed_count = ctx
+        .pool
+        .events()
+        .record_replacements(operation_id, &replacements)
+        .await?;
+    assert_eq!(
+        replayed_count, 0,
+        "redelivery of the same operation must preserve one lineage edge per identity"
+    );
+
     // Query by operation
     let by_op = ctx
         .pool

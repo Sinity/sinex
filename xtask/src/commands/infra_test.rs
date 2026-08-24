@@ -12,3 +12,16 @@ async fn lease_ports_require_the_declared_agentctl_ranges() -> crate::sandbox::T
     assert!(lease_port_value("not-a-port", &LEASE_NATS_PORT_RANGE).is_err());
     Ok(())
 }
+
+#[sinex_test]
+async fn service_readiness_marker_is_atomic_and_job_bound() -> crate::sandbox::TestResult<()> {
+    let directory = tempfile::tempdir()?;
+    let marker = directory.path().join("ready");
+    let job_id = "11111111-1111-4111-8111-111111111111";
+
+    write_service_ready(&marker, job_id)?;
+
+    assert_eq!(std::fs::read_to_string(&marker)?, format!("{job_id}\n"));
+    assert_eq!(std::fs::read_dir(directory.path())?.count(), 1);
+    Ok(())
+}
