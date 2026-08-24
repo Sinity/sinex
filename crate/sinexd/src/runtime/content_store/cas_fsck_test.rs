@@ -4,10 +4,12 @@ use super::{
     reconcile_pending_deletions,
 };
 use crate::runtime::content_store::{
-    CasWalkCheckpoint, ContentStoreConfig, MaterialContentStore,
+    CAS_LIFECYCLE_DIR, CasWalkCheckpoint, ContentStoreConfig, ContentStoreKey,
+    MaterialContentStore,
     gc::{sweep_orphans, sweep_orphans_detailed},
 };
 use crate::runtime::work_control::{WorkBudget, WorkCancellation, WorkController, WorkIdentity};
+use crate::runtime::{FaultInjector, FaultPoint};
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_db::models::Blob;
@@ -16,12 +18,296 @@ use sinex_primitives::{MaterialManifestV1, Timestamp, Uuid};
 use std::time::{Duration, SystemTime};
 use xtask::sandbox::prelude::*;
 
+const CAS_CRASH_ROOT_ENV: &str = "SINEX_CAS_CRASH_ROOT";
+const CAS_CRASH_SOURCE: &str = "crash-boundary-source.txt";
+
 #[test]
 fn default_fsck_options_do_not_impose_arbitrary_limits() {
     let options = CasFsckOptions::default();
     assert_eq!(options.max_runtime, None);
     assert_eq!(options.max_entries, None);
     assert_eq!(options.verify_bytes_per_sec, None);
+}
+
+#[sinex_test]
+async fn cas_publish_boundaries_survive_restart_and_retry(_ctx: TestContext) -> TestResult<()> {
+    if let Ok(root_path) = std::env::var(CAS_CRASH_ROOT_ENV) {
+        let root_path = Utf8PathBuf::from(root_path);
+        let store = MaterialContentStore::new(ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        })?;
+        let _ = store
+            .store_file_with_lease(root_path.join(CAS_CRASH_SOURCE))
+            .await?;
+        panic!("CAS crash-boundary child returned without aborting");
+    }
+
+    for (fault_point, object_published) in [
+        (FaultPoint::CasRename, false),
+        (FaultPoint::CasParentDirectoryFsync, true),
+        (FaultPoint::CasPublish, true),
+    ] {
+        let store_dir = tempfile::tempdir()?;
+        let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+            .expect("temporary content-store path must be UTF-8");
+        let source = root_path.join(CAS_CRASH_SOURCE);
+        let payload = b"CAS crash-boundary recovery payload";
+        tokio::fs::write(&source, payload).await?;
+        MaterialContentStore::init_with_config(&root_path, None, false).await?;
+        let expected_key = ContentStoreKey::local_blake3(
+            payload.len() as u64,
+            blake3::hash(payload).to_hex().to_string(),
+        )?;
+        let exe = std::env::current_exe()?;
+        let module_path_without_crate = module_path!()
+            .split_once("::")
+            .map_or(module_path!(), |(_, rest)| rest);
+        let qualified_name = format!(
+            "{module_path_without_crate}::cas_publish_boundaries_survive_restart_and_retry"
+        );
+        let child = tokio::process::Command::new(exe)
+            .arg(&qualified_name)
+            .arg("--exact")
+            .arg("--nocapture")
+            .env(CAS_CRASH_ROOT_ENV, &root_path)
+            .env("SINEX_FAULT_INJECTION", format!("{fault_point}=abort"))
+            .output()
+            .await?;
+        assert!(
+            !child.status.success(),
+            "fault point {fault_point} must terminate the child process; stdout={} stderr={}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr),
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            std::os::unix::process::ExitStatusExt::signal(&child.status),
+            Some(libc::SIGABRT),
+            "fault point {fault_point} must abort rather than return an ordinary test failure"
+        );
+        let store = MaterialContentStore::new(ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        })?;
+        let target = store
+            .path_if_local(&expected_key.key)?
+            .expect("local CAS key must resolve to a path");
+        assert_eq!(
+            target.exists(),
+            object_published,
+            "fault point {fault_point}"
+        );
+        assert_eq!(store.list_write_leases().await?.len(), 1);
+
+        // A fresh store instance models process restart. The lease is the
+        // durable recovery authority; no in-memory state may be required to
+        // retry the same source after a publish-boundary interruption.
+        let restarted_store = MaterialContentStore::new(ContentStoreConfig {
+            root_path,
+            ..Default::default()
+        })?;
+        let lease = restarted_store
+            .list_write_leases()
+            .await?
+            .pop()
+            .expect("interrupted publish must leave a durable lease");
+        restarted_store.release_write_lease(&lease).await?;
+        let recovered_key = restarted_store.store_file(&source).await?;
+        assert_eq!(recovered_key, expected_key, "fault point {fault_point}");
+        let recovered = tokio::fs::read(&target).await?;
+        assert_eq!(recovered, payload, "fault point {fault_point}");
+        assert!(
+            restarted_store.list_write_leases().await?.is_empty(),
+            "retry must release its replacement lease at {fault_point}"
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn fsck_removes_only_stale_associated_staging(ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let old_source = root_path.join("old-source.txt");
+    let active_source = root_path.join("active-source.txt");
+    tokio::fs::write(&old_source, b"stale staging payload").await?;
+    tokio::fs::write(&active_source, b"active staging payload").await?;
+    MaterialContentStore::init_with_config(&root_path, None, false).await?;
+
+    let old_injector = FaultInjector::default();
+    old_injector.fail_once(FaultPoint::CasRename);
+    let old_store = MaterialContentStore::new_with_fault_injector(
+        ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        },
+        old_injector,
+    );
+    assert!(old_store.store_file_with_lease(&old_source).await.is_err());
+    let mut old_lease = old_store
+        .list_write_leases()
+        .await?
+        .pop()
+        .expect("pre-rename interruption must persist its lease");
+    let old_staging = old_lease
+        .staging_path
+        .clone()
+        .expect("new leases must identify their staging path");
+    assert!(old_staging.exists());
+    let old_time = SystemTime::now()
+        .checked_sub(Duration::from_secs(11 * 60))
+        .expect("old staging timestamp must be representable");
+    std::fs::File::open(old_staging.as_std_path())?
+        .set_times(std::fs::FileTimes::new().set_modified(old_time))?;
+    old_lease.created_at_unix_secs = old_time
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("old lease timestamp must be after epoch")
+        .as_secs()
+        .saturating_sub(24 * 60 * 60);
+    tokio::fs::write(&old_lease.record_path, serde_json::to_vec(&old_lease)?).await?;
+
+    let active_injector = FaultInjector::default();
+    active_injector.fail_once(FaultPoint::CasRename);
+    let active_store = MaterialContentStore::new_with_fault_injector(
+        ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        },
+        active_injector,
+    );
+    assert!(
+        active_store
+            .store_file_with_lease(&active_source)
+            .await
+            .is_err()
+    );
+    let active_staging = active_store
+        .list_write_leases()
+        .await?
+        .into_iter()
+        .find_map(|lease| lease.staging_path.filter(|path| path != &old_staging))
+        .expect("active interrupted publish must identify staging");
+    assert!(active_staging.exists());
+
+    let authority_hash = blake3::hash(b"fsck authority").to_hex().to_string();
+    ctx.pool
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(authority_hash.clone())
+                .size_bytes(14)
+                .checksum_blake3(authority_hash)
+                .build(),
+        )
+        .await?;
+
+    let (dry_report, dry_statuses) = check_cas(ctx.pool(), &old_store, false).await?;
+    assert_eq!(dry_report.staged_abandoned, 1);
+    assert_eq!(dry_report.staged, 1);
+    assert!(
+        dry_statuses
+            .iter()
+            .any(|status| status.path == old_staging.to_string()
+                && status.status == CasStatus::StagedAbandoned)
+    );
+    assert!(
+        dry_statuses
+            .iter()
+            .any(|status| status.path == active_staging.to_string()
+                && status.status == CasStatus::Staged)
+    );
+
+    let mut duplicate_lease = old_lease.clone();
+    duplicate_lease.operation_id = "duplicate-staging-owner".to_string();
+    let duplicate_record = old_lease
+        .record_path
+        .parent()
+        .expect("lease record must have a parent")
+        .join("duplicate-staging-owner.json");
+    tokio::fs::write(&duplicate_record, serde_json::to_vec(&duplicate_lease)?).await?;
+    let ambiguous_apply = check_cas(ctx.pool(), &old_store, true).await;
+    assert!(
+        ambiguous_apply.is_err(),
+        "multiple lifecycle owners must fail before staging removal"
+    );
+    assert!(
+        old_staging.exists(),
+        "ambiguous lifecycle ownership must leave staging untouched"
+    );
+    tokio::fs::remove_file(duplicate_record).await?;
+
+    let (apply_report, _) = check_cas(ctx.pool(), &old_store, true).await?;
+    assert_eq!(apply_report.staged_removed, 1);
+    assert!(!old_staging.exists());
+    assert!(active_staging.exists());
+    let remaining_leases = old_store.list_write_leases().await?;
+    assert!(
+        remaining_leases
+            .iter()
+            .all(|lease| lease.staging_path.as_deref() != Some(old_staging.as_path())),
+        "reconciled staging must not leave a stale lifecycle lease"
+    );
+    assert!(
+        remaining_leases
+            .iter()
+            .any(|lease| lease.staging_path.as_deref() == Some(active_staging.as_path())),
+        "active staging lease must remain protected"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn malformed_ingest_lease_fails_closed(ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let lease_root = root_path.join(CAS_LIFECYCLE_DIR).join("ingest-leases");
+    tokio::fs::create_dir_all(&lease_root).await?;
+    tokio::fs::write(lease_root.join("malformed.json"), b"not-json").await?;
+    let store = MaterialContentStore::new(ContentStoreConfig {
+        root_path,
+        ..Default::default()
+    })?;
+    let result = check_cas(ctx.pool(), &store, false).await;
+    assert!(result.is_err(), "malformed lease records must fail closed");
+    Ok(())
+}
+
+#[sinex_test]
+async fn out_of_tree_staging_lease_fails_closed(ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let source = root_path.join("source.txt");
+    tokio::fs::write(&source, b"staging path validation").await?;
+    MaterialContentStore::init_with_config(&root_path, None, false).await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::CasRename);
+    let store = MaterialContentStore::new_with_fault_injector(
+        ContentStoreConfig {
+            root_path: root_path.clone(),
+            ..Default::default()
+        },
+        injector,
+    );
+    assert!(store.store_file_with_lease(&source).await.is_err());
+    let mut lease = store
+        .list_write_leases()
+        .await?
+        .pop()
+        .expect("interrupted publish must persist its lease");
+    lease.staging_path = Some(root_path.join("outside.tmp-malicious"));
+    tokio::fs::write(&lease.record_path, serde_json::to_vec(&lease)?).await?;
+
+    let result = check_cas(ctx.pool(), &store, false).await;
+    assert!(
+        result.is_err(),
+        "out-of-tree staging records must fail closed"
+    );
+    Ok(())
 }
 
 #[sinex_test]

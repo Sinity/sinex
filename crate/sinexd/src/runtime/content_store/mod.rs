@@ -394,6 +394,11 @@ pub struct CasWriteLease {
     pub key: ContentStoreKey,
     pub source_path: Utf8PathBuf,
     pub target_path: Utf8PathBuf,
+    /// Exact temporary CAS path, when this lease owns a not-yet-published
+    /// local object. Missing in older records; those records cannot authorize
+    /// deletion of any staging file.
+    #[serde(default)]
+    pub staging_path: Option<Utf8PathBuf>,
     pub created_at_unix_secs: u64,
     #[serde(skip)]
     pub(crate) record_path: Utf8PathBuf,
@@ -1281,9 +1286,6 @@ impl MaterialContentStore {
             size: file_size,
             digest: hash.clone(),
         };
-        let lease = self
-            .create_ingest_lease(&key, resolved_path, &target)
-            .await?;
         if target.exists() {
             self.canonicalize_local_cas_path(&target).await?;
         } else {
@@ -1303,6 +1305,9 @@ impl MaterialContentStore {
             restrict_permissions(parent.as_std_path(), CONTENT_STORE_DIR_MODE);
 
             let tmp = parent.join(format!("{hash}.tmp-{}", Uuid::now_v7()));
+            let lease = self
+                .create_ingest_lease(&key, resolved_path, &target, Some(&tmp))
+                .await?;
             tokio::fs::copy(resolved_path, &tmp)
                 .await
                 .map_err(SinexError::io)?;
@@ -1344,6 +1349,7 @@ impl MaterialContentStore {
             if target.exists() {
                 tokio::fs::remove_file(&tmp).await.map_err(SinexError::io)?;
             } else {
+                self.fault_injector.inject(FaultPoint::CasRename)?;
                 tokio::fs::rename(&tmp, &target)
                     .await
                     .map_err(SinexError::io)?;
@@ -1351,11 +1357,17 @@ impl MaterialContentStore {
                 // directory fsync makes the atomic name publication durable.
                 // Without the latter, a power loss can lose the directory
                 // entry after callers have acknowledged the material.
+                self.fault_injector
+                    .inject(FaultPoint::CasParentDirectoryFsync)?;
                 (self.sync_parent_directory)(parent.as_std_path()).map_err(SinexError::io)?;
                 self.fault_injector.inject(FaultPoint::CasPublish)?;
             }
+            return Ok((key, lease));
         }
 
+        let lease = self
+            .create_ingest_lease(&key, resolved_path, &target, None)
+            .await?;
         Ok((key, lease))
     }
 
@@ -1364,6 +1376,7 @@ impl MaterialContentStore {
         key: &ContentStoreKey,
         source_path: &Utf8Path,
         target_path: &Utf8Path,
+        staging_path: Option<&Utf8Path>,
     ) -> RuntimeResult<CasWriteLease> {
         let root = self.ingest_lease_root();
         tokio::fs::create_dir_all(&root)
@@ -1382,6 +1395,7 @@ impl MaterialContentStore {
             key: key.clone(),
             source_path: source_path.to_owned(),
             target_path: target_path.to_owned(),
+            staging_path: staging_path.map(Utf8Path::to_owned),
             created_at_unix_secs,
             record_path,
         };
