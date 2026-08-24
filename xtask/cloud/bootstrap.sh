@@ -120,8 +120,6 @@ export DATABASE_URL="${DATABASE_URL:-postgres://sinex:dev@localhost:5432/sinex_d
 # xtask reads SINEX_NATS_URL; plain NATS_URL is kept for compose/tools parity.
 export SINEX_NATS_URL="${SINEX_NATS_URL:-nats://localhost:4222}"
 export NATS_URL="${NATS_URL:-${SINEX_NATS_URL}}"
-export SINEX_AUTO_INFRA=0
-export SINEX_AUTO_STATUS=0
 export SINEX_CLOUD_PROFILE="$PROFILE"
 
 # PATH: prepend once, idempotently (a naive prefix grows on every run).
@@ -155,8 +153,6 @@ persist_env() {
     echo "export DATABASE_URL=\"${DATABASE_URL}\""
     echo "export SINEX_NATS_URL=\"${SINEX_NATS_URL}\""
     echo "export NATS_URL=\"${NATS_URL}\""
-    echo "export SINEX_AUTO_INFRA=0"
-    echo "export SINEX_AUTO_STATUS=0"
     echo "export SINEX_CLOUD_PROFILE=\"${PROFILE}\""
     # Idempotent PATH prepends (guarded, so re-sourcing never grows PATH).
     echo 'case ":${PATH}:" in *":'"${HOME}"'/.cargo/bin:"*) ;; *) PATH="'"${HOME}"'/.cargo/bin:${PATH}" ;; esac'
@@ -180,8 +176,6 @@ persist_env() {
     "DATABASE_URL": "${DATABASE_URL}",
     "SINEX_NATS_URL": "${SINEX_NATS_URL}",
     "NATS_URL": "${NATS_URL}",
-    "SINEX_AUTO_INFRA": "0",
-    "SINEX_AUTO_STATUS": "0",
     "SINEX_CLOUD_PROFILE": "${PROFILE}",
     "PATH": "${PATH}",
     "RUSTC_WRAPPER": ""

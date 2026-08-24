@@ -52,7 +52,6 @@ pub fn probe_postgres() -> PostgresProbe {
     };
 
     let manager = PostgresManager::new(config.to_shared_pg());
-    let running = manager.is_running();
     let (accepting_connections, accepting_issue) = match manager.accepting_connections_probe() {
         Ok(accepting_connections) => (accepting_connections, None),
         Err(error) => (
@@ -63,17 +62,12 @@ pub fn probe_postgres() -> PostgresProbe {
         ),
     };
     let latency_ms = start.elapsed().as_millis() as u64;
-    let message = accepting_issue.or_else(|| match (running, accepting_connections) {
-        (true, true) => None,
-        (true, false) => Some("postmaster is running but not accepting connections".to_string()),
-        (false, true) => {
-            Some("Postgres socket responds but no managed postmaster is tracked".to_string())
-        }
-        (false, false) => Some("Postgres is not running for this checkout".to_string()),
-    });
+    let message = accepting_issue.or_else(|| (!accepting_connections).then(|| {
+        "Postgres is unavailable for this AgentCTL lease".to_string()
+    }));
 
     PostgresProbe {
-        running,
+        running: accepting_connections,
         accepting_connections,
         latency_ms,
         message,
@@ -97,8 +91,6 @@ pub fn probe_nats() -> NatsProbe {
     };
 
     let port = config.nats.port;
-    let manager = NatsManager::new(config.to_shared_nats());
-    let running = manager.is_running();
     let reachability = TcpStream::connect_timeout(
         &SocketAddr::from(([127, 0, 0, 1], port)),
         Duration::from_millis(500),
@@ -106,10 +98,10 @@ pub fn probe_nats() -> NatsProbe {
     let reachable = reachability.is_ok();
     let reachability_issue = reachability.err().map(|error| error.to_string());
     let latency_ms = start.elapsed().as_millis() as u64;
-    let message = nats_probe_message(running, reachable, port, reachability_issue.as_deref());
+    let message = nats_probe_message(reachable, reachable, port, reachability_issue.as_deref());
 
     NatsProbe {
-        running,
+        running: reachable,
         reachable,
         latency_ms,
         port,

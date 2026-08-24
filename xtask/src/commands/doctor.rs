@@ -513,19 +513,15 @@ impl XtaskCommand for DoctorCommand {
                 println!("Invalidated preflight cache");
             }
 
-            // Check infra status and restart if needed
+            // AgentCTL is the only lifecycle authority for development services.
             let pg_probe = probe_postgres();
             let nats_probe = probe_nats();
-
-            let remediation_warnings = remediate_stack_services(
-                pg_probe.ready(),
-                nats_probe.ready(),
-                crate::infra::stack::StackConfig::for_current_checkout()
-                    .map_err(|error| error.to_string()),
-                ctx.is_human(),
-                crate::infra::stack::pg_start,
-                crate::infra::stack::nats_start,
-            );
+            let remediation_warnings = (!pg_probe.ready() || !nats_probe.ready())
+                .then(|| {
+                    "Doctor --fix does not start development services; run `agentctl job start sinex dev_services`".to_string()
+                })
+                .into_iter()
+                .collect::<Vec<_>>();
             if !remediation_warnings.is_empty() {
                 if result.status == Status::Success {
                     result.status = Status::Partial;
@@ -2146,46 +2142,6 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
         assessment,
         warnings,
     })
-}
-
-fn remediate_stack_services<T, PgStart, NatsStart>(
-    pg_ready: bool,
-    nats_ready: bool,
-    stack_config: std::result::Result<T, String>,
-    verbose: bool,
-    mut pg_start: PgStart,
-    mut nats_start: NatsStart,
-) -> Vec<String>
-where
-    PgStart: FnMut(&T, bool) -> Result<()>,
-    NatsStart: FnMut(&T, bool) -> Result<()>,
-{
-    if pg_ready && nats_ready {
-        return Vec::new();
-    }
-
-    let cfg = match stack_config {
-        Ok(cfg) => cfg,
-        Err(error) => {
-            return vec![format!(
-                "Doctor --fix could not load stack config for infra remediation: {error}"
-            )];
-        }
-    };
-
-    let mut warnings = Vec::new();
-    if !pg_ready && let Err(error) = pg_start(&cfg, verbose) {
-        warnings.push(format!(
-            "Doctor --fix failed to start Postgres during infra remediation: {error}"
-        ));
-    }
-    if !nats_ready && let Err(error) = nats_start(&cfg, verbose) {
-        warnings.push(format!(
-            "Doctor --fix failed to start NATS during infra remediation: {error}"
-        ));
-    }
-
-    warnings
 }
 
 /// Primitives-based deployment helpers used by the default doctor and status

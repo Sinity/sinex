@@ -1263,41 +1263,11 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 /// macros. They do not need NATS, TLS certificates, or runtime contract
 /// deployment, so using the full runtime preflight here creates hidden dev
 /// processes and RAM cost during ordinary verification.
-pub struct CompileReadyGuard {
-    stop_postgres_on_drop: bool,
-    verbose: bool,
-}
+pub struct CompileReadyGuard;
 
 impl CompileReadyGuard {
     fn noop() -> Self {
-        Self {
-            stop_postgres_on_drop: false,
-            verbose: false,
-        }
-    }
-}
-
-impl Drop for CompileReadyGuard {
-    fn drop(&mut self) {
-        if !self.stop_postgres_on_drop {
-            return;
-        }
-
-        let Ok(config) = crate::infra::stack::StackConfig::for_current_checkout() else {
-            eprintln!(
-                "⚠ failed to resolve checkout-local stack while stopping compile preflight Postgres"
-            );
-            return;
-        };
-
-        if let Err(error) = crate::infra::stack::pg_stop(&config, self.verbose) {
-            eprintln!("⚠ failed to stop compile preflight Postgres: {error}");
-        }
-        if let Ok(checkout_state) = crate::infra::state::CheckoutState::for_current_checkout()
-            && let Err(error) = checkout_state.release_lock()
-        {
-            eprintln!("⚠ failed to release compile preflight infra lock: {error}");
-        }
+        Self
     }
 }
 
@@ -1311,20 +1281,16 @@ pub fn ensure_compile_ready(ctx: &crate::command::CommandContext) -> Result<Comp
     check_required_tools()?;
 
     let is_interactive = ctx.is_human();
-    let mut guard = CompileReadyGuard {
-        stop_postgres_on_drop: std::env::var_os("SINEX_XTASK_BOOTSTRAP_POSTGRES_OWNED").is_some(),
-        verbose: is_interactive,
-    };
+    let guard = CompileReadyGuard;
     check_disk_pressure(ctx, is_interactive)?;
 
     let mut status = InfraStatus::capture();
     if !status.postgres {
-        guard.stop_postgres_on_drop = true;
         let stage = ctx.start_stage("postgres-start");
         let started = auto_start_postgres(is_interactive);
         ctx.finish_stage(stage, started.is_ok());
         started.wrap_err(
-            "Failed to auto-start Postgres. Check logs or start manually: xtask infra start postgres",
+            "Development Postgres is unavailable. Start: agentctl job start sinex dev_services",
         )?;
         status = InfraStatus::capture();
     }

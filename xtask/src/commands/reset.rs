@@ -18,7 +18,7 @@ use time::OffsetDateTime;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::infra::services::postgres::PostgresManager;
-use crate::infra::stack::{StackConfig, nats_stop, pg_stop};
+use crate::infra::stack::StackConfig;
 
 /// Reset developer state for a fresh start.
 #[derive(Args)]
@@ -280,21 +280,14 @@ fn reset_history_db(path: &std::path::Path, seed: bool, verbose: bool) -> Result
 }
 
 fn reset_db(config: &StackConfig, verbose: bool) -> Result<()> {
-    // Stop postgres so we can drop the database cleanly
-    if config.pg_pid_file().exists() {
-        if verbose {
-            println!("Stopping PostgreSQL...");
-        }
-        pg_stop(config, verbose)?;
+    let mgr = PostgresManager::new(config.to_shared_pg());
+    if !mgr.accepting_connections_probe()? {
+        return Err(eyre!(
+            "development Postgres is not ready; start the bounded lease with `agentctl job start sinex dev_services`"
+        ));
     }
 
-    use crate::infra::stack::{ensure_directories, pg_init, pg_start};
-    ensure_directories(config)?;
-    pg_init(config, verbose)?;
-    pg_start(config, verbose)?;
-
-    // Drop and recreate
-    let mgr = PostgresManager::new(config.to_shared_pg());
+    // The lease keeps PostgreSQL alive; reset only changes the selected database.
     let superuser = &config.postgres.superuser;
     let db = &config.postgres.database;
     let owner = &config.postgres.user;
@@ -327,12 +320,10 @@ fn reset_db(config: &StackConfig, verbose: bool) -> Result<()> {
 }
 
 fn reset_nats(config: &StackConfig, verbose: bool) -> Result<()> {
-    // Stop NATS if running
-    if config.nats_pid_file().exists() {
-        if verbose {
-            println!("Stopping NATS...");
-        }
-        nats_stop(config, verbose)?;
+    if crate::infra::services::nats::NatsManager::new(config.to_shared_nats()).is_ready() {
+        return Err(eyre!(
+            "NATS is lease-owned; cancel `agentctl job start sinex dev_services` before wiping JetStream data"
+        ));
     }
 
     // Wipe JetStream data directory

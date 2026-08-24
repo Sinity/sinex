@@ -1091,7 +1091,7 @@ impl LocalRuntimeCoordinates {
             "  api:         {}",
             self.api_url.as_deref().unwrap_or("not configured")
         );
-        println!("  inspect:     xtask infra status");
+        println!("  inspect:     agentctl job list");
     }
 }
 

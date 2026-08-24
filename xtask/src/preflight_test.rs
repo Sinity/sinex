@@ -335,7 +335,7 @@ async fn test_auto_start_stack_uses_default_for_invalid_timeout_override() -> Te
         crate::parse_positive_u64_env_or_default(
             "SINEX_INFRA_START_TIMEOUT",
             120,
-            "infra start timeout"
+            "AgentCTL lease start timeout"
         ),
         120
     );

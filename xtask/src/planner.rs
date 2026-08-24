@@ -180,7 +180,7 @@ fn check_resource_pressure() -> Option<Vec<PlannedAction>> {
 
     if cpu_10s > 30.0 || (load_1m / ncpus as f64) > 4.0 {
         return Some(vec![PlannedAction {
-            command: "xtask infra status".to_string(),
+            command: "agentctl job list".to_string(),
             reason: format!(
                 "system under pressure: CPU pressure {cpu_10s:.1}% (10s), load {load_1m:.1} / {ncpus} CPUs"
             ),

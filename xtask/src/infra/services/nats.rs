@@ -69,17 +69,6 @@ impl NatsManager {
         TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], self.config.port)), Duration::from_millis(200)).is_ok()
     }
 
-    /// Retained only so obsolete callers fail safely while the command surface
-    /// is being removed. AgentCTL owns termination of the lease cgroup.
-    pub fn stop(&self, _verbose: bool) -> Result<()> {
-        bail!("AgentCTL owns lease service termination; cancel the dev_services job")
-    }
-
-    #[must_use]
-    pub fn is_running(&self) -> bool { self.is_ready() }
-
-    #[must_use]
-    pub fn read_pid(&self) -> Option<u32> { None }
 }
 
 #[cfg(test)]

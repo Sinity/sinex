@@ -607,7 +607,7 @@ async fn closure_evidence_manifest_parses_behavior_rows() -> ::xtask::sandbox::T
 
 | AC | Evidence kind | Surface | Evidence | Command | Artifact | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| AC-1 | runtime | xtask infra status JSON | `sinexd` current-checkout state is emitted in JSON and warning paths. | xtask test -p xtask -E 'test(current_checkout_status_reports_dev_local_sinexd)' | - | Satisfied |
+| AC-1 | runtime | AgentCTL lease | The declared development-service lease has bounded ports and foreground readiness. | xtask test -p xtask -E 'test(lease_ports_require_the_declared_agentctl_ranges)' | - | Satisfied |
 | AC-2 | docs | command guide | Guide documents the explicit local runtime surface. | xtask docs command-guide --check | xtask/docs/command-guide.md | Satisfied |
 ";
     let items = extract_closure_evidence_manifest_items(body, "body");
@@ -616,7 +616,7 @@ async fn closure_evidence_manifest_parses_behavior_rows() -> ::xtask::sandbox::T
     assert_eq!(items[0].evidence_kind, "runtime");
     assert_eq!(
         items[0].command.as_deref(),
-        Some("xtask test -p xtask -E 'test(current_checkout_status_reports_dev_local_sinexd)'")
+        Some("xtask test -p xtask -E 'test(lease_ports_require_the_declared_agentctl_ranges)'")
     );
     assert!(validate_closure_evidence_manifest(&items).is_empty());
     Ok(())

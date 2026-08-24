@@ -15,64 +15,6 @@ fn test_manager(root: &tempfile::TempDir) -> PostgresManager {
         superuser: "postgres".to_string(),
         app_user: "sinex".to_string(),
         listen_addresses: String::new(),
-        durability: PostgresDurabilityMode::Durable,
-    })
-}
-
-#[sinex_test]
-async fn test_postmaster_pid_state_reports_malformed_pid_file() -> TestResult<()> {
-    let temp = tempfile::tempdir()?;
-    let manager = test_manager(&temp);
-    fs::create_dir_all(&manager.config.data_dir)?;
-    fs::write(
-        manager.config.data_dir.join("postmaster.pid"),
-        "not-a-pid\n",
-    )?;
-
-    let error = manager.postmaster_pid_state().unwrap_err();
-    assert!(format!("{error:#}").contains("failed to parse postmaster pid"));
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_force_cleanup_reports_socket_cleanup_failure() -> TestResult<()> {
-    let temp = tempfile::tempdir()?;
-    let manager = test_manager(&temp);
-    fs::create_dir_all(&manager.config.data_dir)?;
-    fs::create_dir_all(&manager.config.run_dir)?;
-    fs::write(manager.config.data_dir.join("postmaster.pid"), "999999\n")?;
-    fs::create_dir(
-        manager
-            .config
-            .run_dir
-            .join(format!(".s.PGSQL.{}", manager.config.port)),
-    )?;
-
-    let error = manager.force_cleanup(false).unwrap_err();
-    assert!(format!("{error:#}").contains("failed to remove postgres socket"));
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_read_pid_returns_parsed_postmaster_pid() -> TestResult<()> {
-    let temp = tempfile::tempdir()?;
-    let manager = test_manager(&temp);
-    fs::create_dir_all(&manager.config.data_dir)?;
-    fs::write(manager.config.data_dir.join("postmaster.pid"), "4321\n")?;
-
-    assert_eq!(manager.read_pid(), Some(4321));
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_read_pid_returns_none_for_missing_postmaster_pid() -> TestResult<()> {
-    let temp = tempfile::tempdir()?;
-    let manager = test_manager(&temp);
-
-    assert_eq!(manager.read_pid(), None);
-    Ok(())
-}
-
 #[sinex_test]
 async fn postgres_identifier_rendering_rejects_sql_fragments() -> TestResult<()> {
     assert_eq!(

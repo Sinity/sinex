@@ -70,45 +70,6 @@ pub enum PostgresDurabilityMode {
     EphemeralFast,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PostmasterPidState {
-    Missing,
-    Running(i32),
-    Stale(i32),
-}
-
-fn remove_service_file(path: &Path, label: &str) -> Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => {
-            Err(error).wrap_err_with(|| format!("failed to remove {label} {}", path.display()))
-        }
-    }
-}
-
-fn read_postmaster_pid(path: &Path) -> Result<Option<i32>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let content = fs::read_to_string(path)
-        .wrap_err_with(|| format!("failed to read postmaster pid file {}", path.display()))?;
-    let Some(first_line) = content
-        .lines()
-        .next()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    else {
-        bail!("postmaster pid file {} is empty", path.display());
-    };
-
-    let pid = first_line
-        .parse::<i32>()
-        .wrap_err_with(|| format!("failed to parse postmaster pid from {}", path.display()))?;
-    Ok(Some(pid))
-}
-
 fn format_command_output(output: &std::process::Output) -> String {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -300,192 +261,25 @@ impl PostgresManager {
         )
     }
 
-    pub fn stop(&self, verbose: bool) -> Result<()> {
-        match self.postmaster_pid_state()? {
-            PostmasterPidState::Missing => {
-                if verbose {
-                    println!("PostgreSQL not running");
-                }
-                return Ok(());
-            }
-            PostmasterPidState::Stale(pid) => {
-                if verbose {
-                    println!("Cleaning up stale PostgreSQL state for dead PID {pid}");
-                }
-                self.force_cleanup(verbose)?;
-                return Ok(());
-            }
-            PostmasterPidState::Running(_) => {}
-        }
-
-        if verbose {
-            println!("Stopping PostgreSQL...");
-        }
-
-        let fast_output = self
-            .pg_ctl_stop_command("fast")
-            .output()
-            .context("failed to run pg_ctl stop -m fast")?;
-
-        if fast_output.status.success() && self.wait_until_stopped(verbose)? {
-            return Ok(());
-        }
-
-        match self.postmaster_pid_state()? {
-            PostmasterPidState::Missing | PostmasterPidState::Stale(_) => {
-                if verbose {
-                    println!("PostgreSQL stopped");
-                }
-                return Ok(());
-            }
-            PostmasterPidState::Running(pid) if verbose => {
-                eprintln!(
-                    "  pg_ctl fast stop did not stop PostgreSQL pid {pid}: status {}{}",
-                    fast_output.status,
-                    format_command_output(&fast_output)
-                );
-                eprintln!("  Retrying PostgreSQL stop with immediate shutdown...");
-            }
-            PostmasterPidState::Running(_) => {}
-        }
-
-        let immediate_output = self
-            .pg_ctl_stop_command("immediate")
-            .output()
-            .context("failed to run pg_ctl stop -m immediate")?;
-
-        if immediate_output.status.success() && self.wait_until_stopped(verbose)? {
-            return Ok(());
-        }
-
-        match self.postmaster_pid_state()? {
-            PostmasterPidState::Missing | PostmasterPidState::Stale(_) => {
-                if verbose {
-                    println!("PostgreSQL stopped");
-                }
-                Ok(())
-            }
-            PostmasterPidState::Running(pid) => {
-                if verbose {
-                    eprintln!(
-                        "  pg_ctl immediate stop did not stop PostgreSQL pid {pid}: status {}{}",
-                        immediate_output.status,
-                        format_command_output(&immediate_output)
-                    );
-                    eprintln!("  Forcing cleanup of checkout-local PostgreSQL pid {pid}...");
-                }
-
-                self.force_cleanup(verbose)?;
-
-                match self.postmaster_pid_state()? {
-                    PostmasterPidState::Missing | PostmasterPidState::Stale(_) => {
-                        if verbose {
-                            println!("PostgreSQL stopped");
-                        }
-                        Ok(())
-                    }
-                    PostmasterPidState::Running(pid) => {
-                        bail!(
-                            "PostgreSQL pid {pid} remained alive after fast, immediate, and forced stop; fast status {}{}; immediate status {}{}",
-                            fast_output.status,
-                            format_command_output(&fast_output),
-                            immediate_output.status,
-                            format_command_output(&immediate_output)
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    #[must_use]
-    pub fn is_running(&self) -> bool {
-        match self.postmaster_pid_state() {
-            Ok(PostmasterPidState::Running(_)) => true,
-            Ok(PostmasterPidState::Missing | PostmasterPidState::Stale(_)) => false,
-            Err(error) => {
-                tracing::warn!(path = %self.config.data_dir.join("postmaster.pid").display(), error = %error, "failed to inspect postgres pid file");
-                false
-            }
-        }
-    }
-
-    #[must_use]
-    pub fn read_pid(&self) -> Option<u32> {
-        match read_postmaster_pid(&self.config.data_dir.join("postmaster.pid")) {
-            Ok(Some(pid)) => Some(pid as u32),
-            Ok(None) => None,
-            Err(error) => {
-                tracing::warn!(path = %self.config.data_dir.join("postmaster.pid").display(), error = %error, "failed to read postgres pid file");
-                None
-            }
-        }
-    }
-
-    /// Check if PostgreSQL is accepting connections via pg_isready.
     pub fn accepting_connections_probe(&self) -> Result<bool> {
         pg_isready_probe(self.pg_isready_command().output())
     }
 
-    /// Force-clean a stale PostgreSQL: kill the process, remove PID file and socket.
-    fn force_cleanup(&self, verbose: bool) -> Result<()> {
-        let pid_file = self.config.data_dir.join("postmaster.pid");
-        if let Some(pid) = read_postmaster_pid(&pid_file)?
-            && unsafe { libc::kill(pid, 0) == 0 }
-        {
-            if verbose {
-                eprintln!("  Sending SIGKILL to stale PID {pid}");
-            }
-            unsafe { libc::kill(pid, libc::SIGKILL) };
-
-            for _ in 0..20 {
-                if unsafe { libc::kill(pid, 0) } != 0 {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(250));
-            }
-
-            if unsafe { libc::kill(pid, 0) } == 0 {
-                bail!("PostgreSQL pid {pid} remained alive after SIGKILL");
-            }
+    /// Stop only an ephemeral test database created by the sandbox harness.
+    /// Development-service cancellation is owned by AgentCTL, not this method.
+    pub(crate) fn shutdown_ephemeral(&self) -> Result<()> {
+        let output = self
+            .pg_command("pg_ctl")
+            .arg("-D")
+            .arg(&self.config.data_dir)
+            .args(["stop", "-w", "-t", "10", "-m", "immediate"])
+            .output()
+            .context("stop ephemeral sandbox PostgreSQL")?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            bail!("ephemeral sandbox PostgreSQL stop failed: {}", format_command_output(&output))
         }
-
-        // Clean up stale files so pg_ctl start succeeds
-        remove_service_file(&pid_file, "postgres pid file")?;
-        let socket = self
-            .config
-            .run_dir
-            .join(format!(".s.PGSQL.{}", self.config.port));
-        let lock = self
-            .config
-            .run_dir
-            .join(format!(".s.PGSQL.{}.lock", self.config.port));
-        remove_service_file(&socket, "postgres socket")?;
-        remove_service_file(&lock, "postgres socket lock")?;
-
-        if verbose {
-            eprintln!("  Cleaned up stale PID file and sockets");
-        }
-
-        Ok(())
-    }
-
-    fn wait_until_stopped(&self, verbose: bool) -> Result<bool> {
-        for _ in 0..40 {
-            match self.postmaster_pid_state()? {
-                PostmasterPidState::Missing | PostmasterPidState::Stale(_) => {
-                    if verbose {
-                        println!("PostgreSQL stopped");
-                    }
-                    return Ok(true);
-                }
-                PostmasterPidState::Running(_) => {
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                }
-            }
-        }
-
-        Ok(false)
     }
 
     pub fn psql(&self, user: &str, db: &str, sql: &str) -> Result<String> {
@@ -580,20 +374,6 @@ impl PostgresManager {
         Ok(pg_ctl)
     }
 
-    fn pg_ctl_stop_command(&self, mode: &str) -> Command {
-        let mut pg_ctl = self.pg_command("pg_ctl");
-        pg_ctl
-            .arg("-D")
-            .arg(&self.config.data_dir)
-            .arg("stop")
-            .arg("-w")
-            .arg("-t")
-            .arg("10")
-            .arg("-m")
-            .arg(mode);
-        pg_ctl
-    }
-
     fn pg_isready_command(&self) -> Command {
         let run_dir =
             absolute_path(&self.config.run_dir).unwrap_or_else(|_| self.config.run_dir.clone());
@@ -621,18 +401,6 @@ impl PostgresManager {
         cmd
     }
 
-    fn postmaster_pid_state(&self) -> Result<PostmasterPidState> {
-        let pid_file = self.config.data_dir.join("postmaster.pid");
-        let Some(pid) = read_postmaster_pid(&pid_file)? else {
-            return Ok(PostmasterPidState::Missing);
-        };
-
-        if unsafe { libc::kill(pid, 0) == 0 } {
-            Ok(PostmasterPidState::Running(pid))
-        } else {
-            Ok(PostmasterPidState::Stale(pid))
-        }
-    }
 
     fn install_extensions_with<F>(superuser: &str, db: &str, mut psql: F) -> Result<()>
     where
