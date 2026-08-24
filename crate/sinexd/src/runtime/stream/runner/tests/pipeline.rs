@@ -36,6 +36,7 @@ mod lk67_invalidation_reachability {
 
     struct InvalidationSpyAutomaton {
         invalidations_applied: Arc<AtomicU64>,
+        fail_once: Option<Arc<AtomicU64>>,
     }
 
     impl ScopeReconciler for InvalidationSpyAutomaton {
@@ -76,6 +77,13 @@ mod lk67_invalidation_reachability {
             _working_set: Vec<Self::Input>,
             _context: &AutomatonContext,
         ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
+            if let Some(fail_once) = &self.fail_once
+                && fail_once.fetch_add(1, Ordering::SeqCst) == 0
+            {
+                return Err(AutomatonLogicError::Processing(
+                    "injected invalidation failure".into(),
+                ));
+            }
             self.invalidations_applied.fetch_add(1, Ordering::SeqCst);
             Ok(Vec::new())
         }
@@ -91,6 +99,7 @@ mod lk67_invalidation_reachability {
         let invalidations_applied = Arc::new(AtomicU64::new(0));
         let automaton = InvalidationSpyAutomaton {
             invalidations_applied: invalidations_applied.clone(),
+            fail_once: None,
         };
         let module = AutomatonRuntime::new(ScopeReconcilerWrapper(automaton));
         let mut runner = RuntimeRunner::new(module);
@@ -149,6 +158,92 @@ mod lk67_invalidation_reachability {
             invalidations_applied.load(Ordering::SeqCst),
             1,
             "the real bridge must dispatch the published invalidation to recompute_scope"
+        );
+
+        let stream = js
+            .get_stream(&env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS"))
+            .await?;
+        let consumer = stream
+            .get_consumer(&RuntimeRunner::invalidation_consumer_name(
+                "lk67-invalidation-reachability-spy",
+            ))
+            .await?;
+        assert_eq!(
+            consumer.info().await?.num_ack_pending,
+            0,
+            "a successfully processed invalidation must be acknowledged"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn bridge_leaves_failed_invalidation_unacked(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let invalidations_applied = Arc::new(AtomicU64::new(0));
+        let automaton = InvalidationSpyAutomaton {
+            invalidations_applied,
+            fail_once: Some(Arc::new(AtomicU64::new(0))),
+        };
+        let module = AutomatonRuntime::new(ScopeReconcilerWrapper(automaton));
+        let mut runner = RuntimeRunner::new(module);
+        let work_dir = tempdir()?;
+        runner
+            .initialize_with_transport(
+                "lk67-invalidation-failure".to_string(),
+                HashMap::new(),
+                Some(ctx.pool().clone()),
+                EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
+                    ctx.nats_client(),
+                ))),
+                work_dir.path().to_path_buf(),
+                false,
+            )
+            .await?;
+
+        let js = ctx.jetstream().await?;
+        let env = sinex_primitives::environment::environment().clone();
+        let invalidation_subject = env.nats_subject(INVALIDATION_SUBJECT);
+        js.get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS"),
+            subjects: vec![invalidation_subject.clone()],
+            ..Default::default()
+        })
+        .await?;
+        let invalidation = DerivedScopeInvalidation::archived(
+            vec![Uuid::now_v7()],
+            EventSource::new("test-source")?,
+            EventType::new("measurement.taken")?,
+        )
+        .with_operation(Uuid::now_v7())
+        .with_scope_keys(vec!["default".to_string()]);
+        let payload = serde_json::to_vec(&invalidation)?;
+        let mut headers = async_nats::HeaderMap::new();
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Invalidation);
+        js.publish_with_headers(invalidation_subject, headers, payload.into())
+            .await?;
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            runner.run_automaton_event_bridge(Checkpoint::None),
+        )
+        .await;
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "processing failure must stop the bridge without acknowledging the invalidation"
+        );
+
+        let stream = js
+            .get_stream(&env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS"))
+            .await?;
+        let consumer = stream
+            .get_consumer(&RuntimeRunner::invalidation_consumer_name(
+                "lk67-invalidation-failure",
+            ))
+            .await?;
+        assert_eq!(
+            consumer.info().await?.num_ack_pending,
+            1,
+            "failed invalidation processing must leave the durable delivery pending"
         );
         Ok(())
     }

@@ -333,35 +333,13 @@ where
 /// When `sub` is `None` (no NATS available), pends forever — effectively
 /// disabling the select arm without needing `#[cfg]` inside `tokio::select!`.
 #[cfg(feature = "messaging")]
-pub(crate) async fn recv_invalidation(
+pub(crate) async fn recv_invalidation_message(
     sub: &mut Option<async_nats::jetstream::consumer::push::Messages>,
-    fail_point_after_ack: Option<&Arc<std::sync::atomic::AtomicBool>>,
-) -> Option<Vec<u8>> {
+) -> Option<async_nats::jetstream::Message> {
     use futures::StreamExt;
     match sub.as_mut() {
         Some(s) => match s.next().await {
-            Some(Ok(msg)) => {
-                let payload = msg.payload.to_vec();
-                // Ack so the JetStream consumer does not redeliver this
-                // invalidation message after the ack wait timeout.
-                if let Err(e) = msg.ack().await {
-                    warn!("Failed to ack invalidation message: {e}");
-                }
-                // sinex-r6d.9 crash-window harness: this ack is exactly the
-                // sinex-r6d.7 window — the invalidation is durably,
-                // permanently removed from the stream here, before
-                // debounce/recompute/checkpoint ever runs. Exit here (not a
-                // catchable panic) so a harness can prove restart does NOT
-                // repair a lost invalidation on pre-fix code. `fail_point_after_ack`
-                // is always `None` outside test/harness builds (see
-                // `AutomatonRuntime::invalidation_ack_fail_point`).
-                if let Some(flag) = fail_point_after_ack
-                    && flag.load(std::sync::atomic::Ordering::SeqCst)
-                {
-                    std::process::exit(98);
-                }
-                Some(payload)
-            }
+            Some(Ok(msg)) => Some(msg),
             Some(Err(e)) => {
                 warn!("Error receiving invalidation message: {e}");
                 None
@@ -370,6 +348,29 @@ pub(crate) async fn recv_invalidation(
         },
         None => std::future::pending().await,
     }
+}
+
+/// Receive and acknowledge an invalidation for the legacy scan-driven loop.
+///
+/// The live event-bridge path uses [`recv_invalidation_message`] so it can
+/// acknowledge only after processing succeeds. This wrapper remains for the
+/// non-production scan-driven path until that path is removed or migrated.
+#[cfg(feature = "messaging")]
+pub(crate) async fn recv_invalidation(
+    sub: &mut Option<async_nats::jetstream::consumer::push::Messages>,
+    fail_point_after_ack: Option<&Arc<std::sync::atomic::AtomicBool>>,
+) -> Option<Vec<u8>> {
+    let msg = recv_invalidation_message(sub).await?;
+    let payload = msg.payload.to_vec();
+    if let Err(e) = msg.ack().await {
+        warn!("Failed to ack invalidation message: {e}");
+    }
+    if let Some(flag) = fail_point_after_ack
+        && flag.load(std::sync::atomic::Ordering::SeqCst)
+    {
+        std::process::exit(98);
+    }
+    Some(payload)
 }
 
 /// Stub when messaging feature is disabled — always pends.
