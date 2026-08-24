@@ -54,6 +54,7 @@ exec = ["xtask", "check"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"
+dependencies = ["dev_services"]
 
 [operations.check_default.parameters.all]
 type = "bool"

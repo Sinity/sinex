@@ -840,6 +840,16 @@ fn dev_services_cache_identity_excludes_allocated_ports() {
     let dev_services = &descriptor["operations"]["dev_services"];
     assert_eq!(dev_services["cache"].as_str(), Some("tree+environment"));
     assert_eq!(
+        descriptor["operations"]["check_default"]["dependencies"]
+            .as_array()
+            .expect("check dependencies")
+            .iter()
+            .map(|value| value.as_str().expect("dependency name"))
+            .collect::<Vec<_>>(),
+        vec!["dev_services"],
+        "the workspace verifier must consume the declared development-service lease"
+    );
+    assert_eq!(
         descriptor["workspace"]["provider"].as_str(),
         Some("git-worktree")
     );
