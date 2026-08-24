@@ -781,6 +781,8 @@ async fn tui_surfaces_multiple_panel_failures_and_stale_titles() -> TestResult<(
         persistent_pending_messages: 0,
         aggregate_pending_messages: 11,
         aggregate_pressure_level: RuntimePressureLevel::Critical,
+        aggregate_recommended_action: "ops dlq triage --tail 20".to_string(),
+        aggregate_action_reason: "pressure requires paced triage".to_string(),
     };
     app.dlq_stats = Some(dlq);
     let mut terminal = Terminal::new(TestBackend::new(96, 24))?;
