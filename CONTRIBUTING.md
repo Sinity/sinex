@@ -34,6 +34,15 @@ The devshell auto-installs this hook on first entry. To install manually:
 git config core.hooksPath .githooks
 ```
 
+When pushing from a checkout with an active AgentCTL development-service lease, pass the exact job ID to the hook so it can re-read and validate the lease before using its ports:
+
+```bash
+lease_job_id="<job-id from agentctl job start or job get>"
+SINEX_PRE_PUSH_AGENTCTL_LEASE_ID="$lease_job_id" git push
+```
+
+The hook accepts only a running `sinex/dev_services` lease for the current checkout, with the descriptor-declared ports and reachable PostgreSQL socket and NATS port. It then passes those validated coordinates through the sanitized environment. Without `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID`, the existing checkout-local fallback remains in effect.
+
 Emergency bypass (force-push during recovery, etc.):
 
 ```bash

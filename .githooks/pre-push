@@ -60,6 +60,70 @@ _sinex_pre_push_nats_port() {
   printf '%s' "$((4222 + (first_byte % 100)))"
 }
 
+_sinex_pre_push_agentctl_lease_ports() {
+  local lease_id lease_json lease_ports
+  lease_id="${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}"
+  [[ -n "$lease_id" ]] || return 1
+  if [[ ! "$lease_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    echo "[pre-push] Rejecting AgentCTL lease: lease ID is not a UUID." >&2
+    return 1
+  fi
+  if ! lease_json="$(agentctl job get "$lease_id" 2>/dev/null)"; then
+    echo "[pre-push] Rejecting AgentCTL lease $lease_id: job lookup failed or the lease is stale." >&2
+    return 1
+  fi
+
+  if ! lease_ports="$(jq -er --arg checkout "$REPO_ROOT" --arg job_id "$lease_id" '
+    .payload.value as $job
+    | ($job.lease.ports // []) as $ports
+    | ($ports | map(select(.name == "postgres" and .environment == "SINEX_DEV_POSTGRES_PORT"))) as $postgres
+    | ($ports | map(select(.name == "nats" and .environment == "SINEX_DEV_NATS_PORT"))) as $nats
+    | select(
+        $job.job_id == $job_id
+        and $job.project_id == "sinex"
+        and $job.operation == "dev_services"
+        and $job.checkout.project_id == "sinex"
+        and $job.checkout.path == $checkout
+        and $job.state.phase == "running"
+        and $job.state.terminal == false
+        and $job.state.systemd.ActiveState == "active"
+        and $job.state.systemd.SubState == "running"
+        and $job.lease.id == $job_id
+        and $job.lease.host == "127.0.0.1"
+        and $job.lease.readiness == "project-command"
+        and $job.lease.lifetime == "job"
+        and $job.lease.state == "active"
+        and ($postgres | length) == 1
+        and ($nats | length) == 1
+        and ($postgres[0].port | type) == "number"
+        and ($nats[0].port | type) == "number"
+        and ($postgres[0].port >= 45432 and $postgres[0].port <= 45559)
+        and ($nats[0].port >= 44308 and $nats[0].port <= 44435)
+      )
+    | [$postgres[0].port, $nats[0].port]
+    | @tsv
+  ' <<<"$lease_json")"; then
+    echo "[pre-push] Rejecting AgentCTL lease $lease_id: it is not the active dev_services lease for this checkout." >&2
+    return 1
+  fi
+
+  printf '%s\n' "$lease_ports"
+}
+
+_sinex_pre_push_probe_agentctl_lease() {
+  local pg_run_dir="$1"
+  local pg_port="$2"
+  local nats_port="$3"
+  if ! command -v pg_isready >/dev/null 2>&1 || ! pg_isready -q -h "$pg_run_dir" -p "$pg_port" >/dev/null 2>&1; then
+    echo "[pre-push] Rejecting AgentCTL lease: PostgreSQL is not reachable at socket $pg_run_dir on port $pg_port." >&2
+    return 1
+  fi
+  if ! timeout 1 bash -c '>/dev/tcp/127.0.0.1/$1' bash "$nats_port" 2>/dev/null; then
+    echo "[pre-push] Rejecting AgentCTL lease: NATS is not reachable at 127.0.0.1:$nats_port." >&2
+    return 1
+  fi
+}
+
 _sinex_pre_push_pg_bin() {
   local rc candidate
   if [[ -n "${SINEX_PG_BIN:-}" && -x "${SINEX_PG_BIN}/postgres" ]]; then
@@ -83,6 +147,7 @@ _sinex_pre_push_devshell_rc() {
 
 _sinex_pre_push_checkout_env() {
   local cache_root dev_state_dir target_dir pg_run_dir pg_port pg_bin devshell_rc nats_port gateway_port
+  local lease_ports
   cache_root="$(_sinex_pre_push_cache_root)"
   dev_state_dir="$cache_root/dev-state"
   target_dir="$cache_root/target"
@@ -93,6 +158,11 @@ _sinex_pre_push_checkout_env() {
   nats_port="$(_sinex_pre_push_nats_port)"
   gateway_port="$(_sinex_pre_push_gateway_port)"
 
+  if [[ -n "${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}" ]]; then
+    lease_ports="$(_sinex_pre_push_agentctl_lease_ports)" || return 1
+    IFS=$'\t' read -r pg_port nats_port <<<"$lease_ports"
+  fi
+
   mkdir -p "$cache_root" "$target_dir" "$dev_state_dir" "$REPO_ROOT/.sinex/state"
 
   if [[ -z "$pg_bin" || -z "$devshell_rc" ]]; then
@@ -102,9 +172,13 @@ _sinex_pre_push_checkout_env() {
 
   (
     source "$devshell_rc"
+    if [[ -n "${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}" ]]; then
+      _sinex_pre_push_probe_agentctl_lease "$pg_run_dir" "$pg_port" "$nats_port" || exit 1
+    fi
     env \
+      -u SINEX_PRE_PUSH_AGENTCTL_LEASE_ID \
       CARGO_TARGET_DIR="$target_dir" \
-      DATABASE_URL="postgresql:///sinex_dev?host=$pg_run_dir" \
+      DATABASE_URL="postgresql:///sinex_dev?host=$pg_run_dir&port=$pg_port" \
       PGHOST="$pg_run_dir" \
       PGPORT="$pg_port" \
       SINEX_PG_BIN="$pg_bin" \
@@ -113,6 +187,7 @@ _sinex_pre_push_checkout_env() {
       SINEX_DEV_CACHE_ROOT="$cache_root" \
       SINEX_DEV_GATEWAY_PORT="$gateway_port" \
       SINEX_DEV_NATS_PORT="$nats_port" \
+      SINEX_DEV_POSTGRES_PORT="$pg_port" \
       SINEX_DEV_PG_PORT="$pg_port" \
       SINEX_DEV_ROOT="$REPO_ROOT" \
       SINEX_DEV_STATE_DIR="$dev_state_dir" \
@@ -296,6 +371,14 @@ _sinex_pre_push_explain_xtask_rejection() {
 }
 
 _sinex_pre_push_clean_env() {
+  local lease_env=()
+  local lease_ports pg_port nats_port
+  if [[ -n "${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}" ]]; then
+    lease_ports="$(_sinex_pre_push_agentctl_lease_ports)" || return 1
+    IFS=$'\t' read -r pg_port nats_port <<<"$lease_ports"
+    _sinex_pre_push_probe_agentctl_lease "$(_sinex_pre_push_cache_root)/dev-state/run" "$pg_port" "$nats_port" || return 1
+    lease_env=("SINEX_DEV_POSTGRES_PORT=$pg_port" "SINEX_DEV_NATS_PORT=$nats_port")
+  fi
   env \
     -u CARGO_TARGET_DIR \
     -u DATABASE_URL \
@@ -314,6 +397,7 @@ _sinex_pre_push_clean_env() {
     -u SINEX_DEV_PG_PORT \
     -u SINEX_DEV_ROOT \
     -u SINEX_DEV_STATE_DIR \
+    -u SINEX_PRE_PUSH_AGENTCTL_LEASE_ID \
     -u SINEX_NATS_DIR \
     -u SINEX_NATS_URL \
     -u SINEX_ROOT \
@@ -321,6 +405,7 @@ _sinex_pre_push_clean_env() {
     -u SINEX_TEST_PGDATA_DIR \
     -u SINEX_TEST_RESULTS_DIR \
     -u SINEX_TEST_TMPDIR \
+    "${lease_env[@]}" \
     "$@"
 }
 
@@ -446,6 +531,7 @@ _sinex_pre_push_record_drift_bypass() {
   echo "[pre-push] Drift-bypass audit recording skipped: no usable xtask binary outside Nix." >&2
 }
 
+_sinex_pre_push_main() {
 if [[ "${SINEX_SKIP_DRIFT_GUARD:-}" == "1" ]]; then
   echo "[pre-push] SINEX_SKIP_DRIFT_GUARD=1 — drift guard bypassed." >&2
   # Record the bypass in xtask history (#1565)
@@ -523,3 +609,8 @@ if [[ -n "$changed_rust_inputs" ]]; then
 fi
 
 echo "[pre-push] Pre-push drift guards passed." >&2
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  _sinex_pre_push_main "$@"
+fi
