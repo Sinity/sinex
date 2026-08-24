@@ -1887,3 +1887,51 @@ async fn r6d9_invalidation_deliver_group_does_not_share_ack_state(
 
     Ok(())
 }
+
+/// The production bridge uses one durable consumer per automaton and leaves
+/// invalidations unacked until `process_invalidation_message` succeeds. An
+/// unacked delivery must therefore redeliver after the ACK wait expires.
+#[sinex_test]
+async fn durable_invalidation_consumer_redelivers_unacked_message(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let js = ctx.jetstream().await?;
+    let nats_client = ctx.nats_client();
+    let (stream, invalidation_subject) = r6d9_invalidation_stream(&js).await?;
+    let payload = serde_json::to_vec(&DerivedScopeInvalidation::archived(
+        vec![Uuid::now_v7()],
+        sinex_primitives::domain::EventSource::from_static("test.durable-invalidation"),
+        sinex_primitives::domain::EventType::from_static("test.durable-invalidation"),
+    ))?;
+    let deliver_subject = nats_client.new_inbox();
+    let durable_name = format!("r6d9-durable-invalidation-{}", Uuid::now_v7());
+    let consumer = stream
+        .create_consumer(async_nats::jetstream::consumer::push::Config {
+            durable_name: Some(durable_name),
+            deliver_subject,
+            deliver_group: Some("derived.invalidation.r6d9-durable-test".to_string()),
+            ack_wait: Duration::from_millis(100),
+            deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
+            ..Default::default()
+        })
+        .await?;
+    let mut messages = consumer.messages().await?;
+    js.publish(invalidation_subject, payload.clone().into())
+        .await?
+        .await?;
+    use futures::StreamExt;
+    let first = tokio::time::timeout(Duration::from_secs(2), messages.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("durable consumer ended before first delivery"))??;
+    assert_eq!(first.payload.to_vec(), payload);
+
+    let redelivered = tokio::time::timeout(Duration::from_secs(2), messages.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("durable consumer ended before redelivery"))??;
+    assert_eq!(redelivered.payload.to_vec(), payload);
+    redelivered.ack().await.map_err(|error| {
+        color_eyre::eyre::eyre!("failed to ack redelivered invalidation: {error}")
+    })?;
+    Ok(())
+}

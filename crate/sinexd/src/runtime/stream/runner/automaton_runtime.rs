@@ -150,13 +150,17 @@ impl RuntimeRunner {
         let mut invalidation_sub = {
             let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS");
             let queue_group = format!("derived.invalidation.{}", self.module.module_name());
-            let deliver_subject = nats_client.new_inbox();
+            let deliver_subject =
+                Self::invalidation_delivery_subject(&env, self.module.module_name());
             let js = async_nats::jetstream::new(nats_client.clone());
             match js.get_stream(&stream_name).await {
                 Ok(stream) => {
                     let config = async_nats::jetstream::consumer::push::Config {
                         deliver_subject,
                         deliver_group: Some(queue_group.clone()),
+                        durable_name: Some(Self::invalidation_consumer_name(
+                            self.module.module_name(),
+                        )),
                         ..Default::default()
                     };
                     match stream.create_consumer(config).await {
@@ -311,7 +315,7 @@ impl RuntimeRunner {
             enum LoopAction {
                 Event(Option<super::RunnerConfirmedEvent>),
                 FlushTick,
-                Invalidation(Option<Vec<u8>>),
+                Invalidation(RuntimeResult<async_nats::jetstream::Message>),
             }
 
             let action = if drain_controller.is_requested() {
@@ -320,9 +324,9 @@ impl RuntimeRunner {
                 tokio::select! {
                     event = receiver.recv() => LoopAction::Event(event),
                     _ = flush_ticker.tick() => LoopAction::FlushTick,
-                    payload = crate::runtime::automaton::recv_invalidation(
-                        &mut invalidation_sub, None,
-                    ) => LoopAction::Invalidation(payload),
+                    message = crate::runtime::automaton::recv_invalidation_message(
+                        &mut invalidation_sub,
+                    ) => LoopAction::Invalidation(message),
                 }
             };
 
@@ -337,12 +341,21 @@ impl RuntimeRunner {
                         );
                     }
                 }
-                LoopAction::Invalidation(Some(payload)) => {
-                    self.module.process_invalidation_message(&payload).await?;
+                LoopAction::Invalidation(Ok(message)) => {
+                    let payload = message.payload.to_vec();
+                    let processed = self.module.process_invalidation_message(&payload).await?;
+                    if processed.is_none() {
+                        return Err(SinexError::processing(
+                            "invalidation processing did not complete; leaving message unacked for redelivery",
+                        ));
+                    }
+                    message.ack().await.map_err(|error| {
+                        SinexError::processing(format!(
+                            "failed to acknowledge processed invalidation: {error}"
+                        ))
+                    })?;
                 }
-                LoopAction::Invalidation(None) => {
-                    invalidation_sub = None;
-                }
+                LoopAction::Invalidation(Err(error)) => return Err(error),
                 LoopAction::Event(next_event) => {
                     let Some(first) = next_event else {
                         if let Some(error) = consumer_failure.lock().await.take() {
@@ -467,6 +480,28 @@ impl RuntimeRunner {
         }
 
         Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    pub(crate) fn invalidation_consumer_name(module_name: &str) -> String {
+        format!(
+            "{}-invalidation",
+            sinex_primitives::environment::SinexEnvironment::nats_subject_token(module_name)
+        )
+    }
+
+    #[cfg(feature = "messaging")]
+    fn invalidation_delivery_subject(
+        env: &sinex_primitives::environment::SinexEnvironment,
+        module_name: &str,
+    ) -> String {
+        env.nats_subject_with_namespace(
+            Some("automaton"),
+            &format!(
+                "invalidation.{}",
+                sinex_primitives::environment::SinexEnvironment::nats_subject_token(module_name)
+            ),
+        )
     }
 
     /// NATS `max_ack_pending` for an automaton's confirmed-events consumer.
