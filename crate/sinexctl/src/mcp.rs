@@ -89,6 +89,14 @@ pub struct McpTool {
     pub description: &'static str,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    pub annotations: McpToolAnnotations,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolAnnotations {
+    pub read_only_hint: bool,
+    pub destructive_hint: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -131,6 +139,10 @@ fn mcp_tool(name: &'static str, input_schema: Value) -> McpTool {
         name,
         description: catalog_description(name),
         input_schema,
+        annotations: McpToolAnnotations {
+            read_only_hint: true,
+            destructive_hint: false,
+        },
     }
 }
 

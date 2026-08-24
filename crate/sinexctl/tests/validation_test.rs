@@ -248,6 +248,16 @@ async fn mcp_catalog_backing_methods_are_typed_read_only_rpc() -> TestResult<()>
     Ok(())
 }
 
+#[test]
+fn mcp_wire_tools_declare_read_only_annotations() -> TestResult<()> {
+    for tool in tools() {
+        let encoded = serde_json::to_value(&tool)?;
+        assert_eq!(encoded["annotations"]["readOnlyHint"], true, "{}", tool.name);
+        assert_eq!(encoded["annotations"]["destructiveHint"], false, "{}", tool.name);
+    }
+    Ok(())
+}
+
 #[sinex_test]
 async fn mcp_catalog_serializes_as_machine_readable_matrix() -> TestResult<()> {
     let value = serde_json::to_value(tool_catalog())?;
