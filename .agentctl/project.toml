@@ -20,11 +20,11 @@ checkpoint_untracked = true
 verification_operations = ["check_default"]
 
 [operations.dev_services]
-description = "Run lease-owned Sinex development Postgres and NATS"
+description = "Run or share lease-owned Sinex development Postgres and NATS"
 exec = ["nix", "run", ".#xtask", "--", "infra", "lease-services"]
 pool = "normal"
 result = "exit"
-cache = "none"
+cache = "tree+environment"
 timeout_seconds = 28800
 
 [operations.dev_services.service]

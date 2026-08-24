@@ -104,6 +104,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "agentctl job cancel <job-id>",
                 ],
                 notes: &[
+                    "The descriptor uses tree+environment caching so matching starts in one checkout share one running job and service lease; cancellation is shared, while different worktrees retain isolated leases and can run concurrently.",
                     "The descriptor injects bounded loopback ports and the command remains foreground after PostgreSQL and NATS pass readiness checks.",
                     "Systemd owns process-tree cancellation and lease release. Xtask does not write owner files, retain PIDs, or stop arbitrary processes.",
                 ],

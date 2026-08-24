@@ -8,6 +8,6 @@ agentctl job get <job-id>
 agentctl job cancel <job-id>
 ```
 
-The descriptor leases bounded loopback ports and `xtask infra lease-services` initializes the worktree state, applies the schema, waits for both services, then remains foreground. Systemd owns the job cgroup, process-tree cancellation, logs, terminal result, and lease release. Xtask does not keep PIDs, locks, owner files, or a detached service supervisor.
+The descriptor uses `tree+environment` caching for the service operation. Matching starts in the same checkout share one running AgentCTL job, one systemd service, and one bounded loopback service lease, so cancellation is shared. Different worktrees remain isolated and may run concurrently. `xtask infra lease-services` initializes the worktree state, applies the schema, waits for both services, then remains foreground. Systemd owns the job cgroup, process-tree cancellation, logs, terminal result, and lease release. Xtask does not keep PIDs, locks, owner files, or a detached service supervisor.
 
 The devshell never auto-starts services. Use the lease metadata returned by AgentCTL when a consumer needs the assigned database or NATS address. Production `sinexd` remains outside this route.
