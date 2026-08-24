@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 pub enum FaultPoint {
     CasStagedFile,
     CasLease,
+    CasRename,
+    CasParentDirectoryFsync,
     CasPublish,
     CasQuarantine,
     CasPendingDelete,
@@ -37,6 +39,8 @@ impl FaultPoint {
         match self {
             Self::CasStagedFile => "cas-staged-file",
             Self::CasLease => "cas-lease",
+            Self::CasRename => "cas-rename",
+            Self::CasParentDirectoryFsync => "cas-parent-directory-fsync",
             Self::CasPublish => "cas-publish",
             Self::CasQuarantine => "cas-quarantine",
             Self::CasPendingDelete => "cas-pending-delete",
@@ -64,6 +68,8 @@ impl FromStr for FaultPoint {
         match value.trim() {
             "cas-staged-file" => Ok(Self::CasStagedFile),
             "cas-lease" => Ok(Self::CasLease),
+            "cas-rename" => Ok(Self::CasRename),
+            "cas-parent-directory-fsync" => Ok(Self::CasParentDirectoryFsync),
             "cas-publish" => Ok(Self::CasPublish),
             "cas-quarantine" => Ok(Self::CasQuarantine),
             "cas-pending-delete" => Ok(Self::CasPendingDelete),

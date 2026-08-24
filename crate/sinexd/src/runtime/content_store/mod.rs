@@ -1344,6 +1344,7 @@ impl MaterialContentStore {
             if target.exists() {
                 tokio::fs::remove_file(&tmp).await.map_err(SinexError::io)?;
             } else {
+                self.fault_injector.inject(FaultPoint::CasRename)?;
                 tokio::fs::rename(&tmp, &target)
                     .await
                     .map_err(SinexError::io)?;
@@ -1351,6 +1352,8 @@ impl MaterialContentStore {
                 // directory fsync makes the atomic name publication durable.
                 // Without the latter, a power loss can lose the directory
                 // entry after callers have acknowledged the material.
+                self.fault_injector
+                    .inject(FaultPoint::CasParentDirectoryFsync)?;
                 (self.sync_parent_directory)(parent.as_std_path()).map_err(SinexError::io)?;
                 self.fault_injector.inject(FaultPoint::CasPublish)?;
             }

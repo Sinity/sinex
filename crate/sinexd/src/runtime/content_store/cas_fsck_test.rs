@@ -4,10 +4,11 @@ use super::{
     reconcile_pending_deletions,
 };
 use crate::runtime::content_store::{
-    CasWalkCheckpoint, ContentStoreConfig, MaterialContentStore,
+    CasWalkCheckpoint, ContentStoreConfig, ContentStoreKey, MaterialContentStore,
     gc::{sweep_orphans, sweep_orphans_detailed},
 };
 use crate::runtime::work_control::{WorkBudget, WorkCancellation, WorkController, WorkIdentity};
+use crate::runtime::{FaultInjector, FaultPoint};
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_db::models::Blob;
@@ -22,6 +23,73 @@ fn default_fsck_options_do_not_impose_arbitrary_limits() {
     assert_eq!(options.max_runtime, None);
     assert_eq!(options.max_entries, None);
     assert_eq!(options.verify_bytes_per_sec, None);
+}
+
+#[sinex_test]
+async fn cas_publish_boundaries_survive_restart_and_retry(_ctx: TestContext) -> TestResult<()> {
+    for (fault_point, object_published) in [
+        (FaultPoint::CasRename, false),
+        (FaultPoint::CasParentDirectoryFsync, true),
+        (FaultPoint::CasPublish, true),
+    ] {
+        let store_dir = tempfile::tempdir()?;
+        let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+            .expect("temporary content-store path must be UTF-8");
+        let source = root_path.join("crash-boundary-source.txt");
+        let payload = b"CAS crash-boundary recovery payload";
+        tokio::fs::write(&source, payload).await?;
+        let expected_key = ContentStoreKey::local_blake3(
+            payload.len() as u64,
+            blake3::hash(payload).to_hex().to_string(),
+        )?;
+        let injector = FaultInjector::default();
+        injector.fail_once(fault_point);
+        let store = MaterialContentStore::new_with_fault_injector(
+            ContentStoreConfig {
+                root_path: root_path.clone(),
+                ..Default::default()
+            },
+            injector,
+        );
+
+        let failed = store.store_file_with_lease(&source).await;
+        assert!(
+            failed.is_err(),
+            "fault point {fault_point} must interrupt the publish boundary"
+        );
+        let target = store
+            .path_if_local(&expected_key.key)?
+            .expect("local CAS key must resolve to a path");
+        assert_eq!(
+            target.exists(),
+            object_published,
+            "fault point {fault_point}"
+        );
+        assert_eq!(store.list_write_leases().await?.len(), 1);
+
+        // A fresh store instance models process restart. The lease is the
+        // durable recovery authority; no in-memory state may be required to
+        // retry the same source after a publish-boundary interruption.
+        let restarted_store = MaterialContentStore::new(ContentStoreConfig {
+            root_path,
+            ..Default::default()
+        })?;
+        let lease = restarted_store
+            .list_write_leases()
+            .await?
+            .pop()
+            .expect("interrupted publish must leave a durable lease");
+        restarted_store.release_write_lease(&lease).await?;
+        let recovered_key = restarted_store.store_file(&source).await?;
+        assert_eq!(recovered_key, expected_key, "fault point {fault_point}");
+        let recovered = tokio::fs::read(&target).await?;
+        assert_eq!(recovered, payload, "fault point {fault_point}");
+        assert!(
+            restarted_store.list_write_leases().await?.is_empty(),
+            "retry must release its replacement lease at {fault_point}"
+        );
+    }
+    Ok(())
 }
 
 #[sinex_test]
