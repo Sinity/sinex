@@ -75,6 +75,7 @@ async fn privacy_audit_summarizes_posture_without_source_identifier_leak()
             pending_sequence_span: 2,
             recommended_action: "ops dlq peek".to_string(),
             action_reason: "inspect failures before running paced requeue or purge".to_string(),
+            ..Default::default()
         },
         &SourcesReadinessListResponse {
             sources: vec![SourceReadiness {

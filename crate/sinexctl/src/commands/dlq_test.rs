@@ -23,6 +23,7 @@ async fn dlq_stats_table_renders_structured_pressure_signal() -> xtask::sandbox:
         pending_sequence_span: 11,
         recommended_action: "ops dlq peek".to_string(),
         action_reason: "inspect failures before running paced requeue or purge".to_string(),
+        ..Default::default()
     });
 
     assert!(rendered.contains("Pressure: critical"));
@@ -92,6 +93,7 @@ async fn dlq_all_retained_uses_pending_sequence_span() -> xtask::sandbox::TestRe
         pending_sequence_span: 303,
         recommended_action: "ops dlq peek".to_string(),
         action_reason: "inspect failures before running paced requeue or purge".to_string(),
+        ..Default::default()
     };
 
     assert_eq!(dlq_inspected_tail(20, false, &stats), 20);
@@ -119,6 +121,7 @@ async fn dlq_triage_extracts_material_ids_and_group_commands() -> xtask::sandbox
         pending_sequence_span: 298,
         recommended_action: "ops dlq peek".to_string(),
         action_reason: "inspect failures before running paced requeue or purge".to_string(),
+        ..Default::default()
     };
     let peek = DlqPeekResponse {
         messages: vec![
@@ -217,6 +220,7 @@ async fn dlq_cleanup_plan_marks_only_terminal_contiguous_groups_as_candidates()
         pending_sequence_span: 298,
         recommended_action: "ops dlq peek".to_string(),
         action_reason: "inspect failures before running paced requeue or purge".to_string(),
+        ..Default::default()
     };
     let peek = DlqPeekResponse {
         messages: vec![
@@ -345,6 +349,7 @@ async fn dlq_cleanup_plan_allows_duplicate_buckets_without_material_ids()
         pending_sequence_span: 2,
         recommended_action: "ops dlq peek".to_string(),
         action_reason: "inspect failures before running paced requeue or purge".to_string(),
+        ..Default::default()
     };
     let peek = DlqPeekResponse {
         messages: vec![
@@ -426,6 +431,7 @@ async fn dlq_cleanup_plan_regroups_messages_when_server_groups_are_stale()
         pending_sequence_span: 2,
         recommended_action: "ops dlq peek".to_string(),
         action_reason: "inspect failures before running paced requeue or purge".to_string(),
+        ..Default::default()
     };
     let peek = DlqPeekResponse {
         messages: vec![
@@ -508,6 +514,7 @@ async fn dlq_cleanup_plan_allows_completed_duplicate_blob_upsert() -> xtask::san
         pending_sequence_span: 1,
         recommended_action: "ops dlq peek".to_string(),
         action_reason: "inspect failures before running paced requeue or purge".to_string(),
+        ..Default::default()
     };
     let preview = format!(
         "{{\"error\":\"material_persist_failed\",\"material_id\":\"{material_id}\",\
@@ -799,6 +806,9 @@ fn fixture_dlq_list(
         pending_sequence_span: total_messages,
         recommended_action: recommended_action.to_string(),
         action_reason: action_reason.to_string(),
+        persistent_pending_messages: 0,
+        aggregate_pending_messages: total_messages,
+        aggregate_pressure_level: pressure_level,
     }
 }
 

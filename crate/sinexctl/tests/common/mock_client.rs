@@ -345,6 +345,7 @@ impl MockGatewayClient {
                 pending_sequence_span: 0,
                 recommended_action: "none".to_string(),
                 action_reason: "raw-ingest DLQ is empty".to_string(),
+                ..Default::default()
             }))
     }
 

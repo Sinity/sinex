@@ -875,6 +875,9 @@ fn fixture_dlq(total_messages: u64) -> DlqListResponse {
         pending_sequence_span: total_messages,
         recommended_action: recommended_action.to_string(),
         action_reason: action_reason.to_string(),
+        persistent_pending_messages: 0,
+        aggregate_pending_messages: total_messages,
+        aggregate_pressure_level: pressure_level,
     }
 }
 
