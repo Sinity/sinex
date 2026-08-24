@@ -952,7 +952,7 @@ fn test_live_agentctl_descriptor_exposes_service_cache_identity_without_starting
 }
 
 #[test]
-#[ignore = "service-safe integration test; starts only the non-service verify_plan operation"]
+#[ignore = "service integration test; starts and then cancels the current checkout's dev_services lease"]
 fn test_live_agentctl_coalesces_matching_workspace_jobs() {
     let operations = std::process::Command::new("agentctl")
         .args(["project", "operations", "sinex"])
@@ -965,14 +965,15 @@ fn test_live_agentctl_coalesces_matching_workspace_jobs() {
     );
     let operations: serde_json::Value =
         serde_json::from_slice(&operations.stdout).expect("operation inspection must return JSON");
-    let verify_plan = operations["payload"]["value"]["operations"]
+    let dev_services = operations["payload"]["value"]["operations"]
         .as_array()
         .expect("operation inspection must expose operations")
         .iter()
-        .find(|operation| operation["name"] == "verify_plan")
-        .expect("live AgentCTL must expose verify_plan");
-    assert_eq!(verify_plan["cache"], "tree+environment");
-    assert_eq!(verify_plan["parameters"], serde_json::json!([]));
+        .find(|operation| operation["name"] == "dev_services")
+        .expect("live AgentCTL must expose dev_services");
+    assert_eq!(dev_services["cache"], "tree+environment");
+    assert_eq!(dev_services["parameters"], serde_json::json!([]));
+    assert_eq!(dev_services["service"]["lifetime"], "job");
 
     let workspace_list = std::process::Command::new("agentctl")
         .args(["workspace", "list", "--project", "sinex"])
@@ -1009,12 +1010,12 @@ fn test_live_agentctl_coalesces_matching_workspace_jobs() {
                         "job",
                         "start",
                         "sinex",
-                        "verify_plan",
+                        "dev_services",
                         "--workspace",
                         &workspace_id,
                     ])
                     .output()
-                    .expect("start verify_plan through AgentCTL")
+                    .expect("start dev_services through AgentCTL")
             })
         })
         .collect::<Vec<_>>();
@@ -1038,16 +1039,32 @@ fn test_live_agentctl_coalesces_matching_workspace_jobs() {
                 .to_string()
         })
         .collect::<Vec<_>>();
+    let mut unique_job_ids = job_ids.clone();
+    unique_job_ids.sort();
+    unique_job_ids.dedup();
+    for job_id in &unique_job_ids {
+        let cancel = std::process::Command::new("agentctl")
+            .args(["job", "cancel", job_id])
+            .output()
+            .expect("cancel started dev_services job");
+        assert!(
+            cancel.status.success(),
+            "failed to cancel dev_services job {job_id}: {}",
+            String::from_utf8_lossy(&cancel.stderr)
+        );
+    }
+    let wait = std::process::Command::new("agentctl")
+        .args(["job", "wait", &job_ids[0], "--timeout-seconds", "60"])
+        .status()
+        .expect("wait for cancelled dev_services job");
+    assert!(
+        wait.success(),
+        "cancelled dev_services job did not become terminal"
+    );
     assert_eq!(
         job_ids[0], job_ids[1],
         "matching same-workspace starts must coalesce to one AgentCTL job"
     );
-
-    let wait = std::process::Command::new("agentctl")
-        .args(["job", "wait", &job_ids[0], "--timeout-seconds", "60"])
-        .status()
-        .expect("wait for coalesced verify_plan job");
-    assert!(wait.success(), "coalesced verify_plan job did not finish");
 }
 
 #[sinex_test]

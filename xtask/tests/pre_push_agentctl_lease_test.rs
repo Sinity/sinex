@@ -112,9 +112,16 @@ fn mutate_lease(lease: &str, mutate: impl FnOnce(&mut serde_json::Value)) -> Str
 }
 
 fn free_nats_port() -> u16 {
-    (44308..=44435)
-        .find(|port| TcpListener::bind(("127.0.0.1", *port)).is_ok())
-        .expect("find a free AgentCTL NATS port")
+    const FIRST: u16 = 44308;
+    const COUNT: u16 = 128;
+    let start = (std::process::id() as u16) % COUNT;
+    for offset in 0..COUNT {
+        let port = FIRST + ((start + offset) % COUNT);
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    panic!("find a unique free AgentCTL NATS port")
 }
 
 fn run_checkout_env(
@@ -134,7 +141,7 @@ fn run_checkout_env(
     executable(&pg_bin.join("postgres"), "#!/usr/bin/env bash\nexit 0\n");
     executable(
         &bin.join("agentctl"),
-        "#!/usr/bin/env bash\nif [[ \"$1 $2 $3\" != \"job get $FAKE_AGENTCTL_EXPECTED_ID\" ]]; then exit 2; fi\nif [[ \"${FAKE_AGENTCTL_STATUS:-0}\" != 0 ]]; then exit \"$FAKE_AGENTCTL_STATUS\"; fi\ncall_number=$(wc -l < \"$FAKE_AGENTCTL_CALLS\")\ncall_number=$((call_number + 1))\nprintf '%s\\n' \"$call_number\" >> \"$FAKE_AGENTCTL_CALLS\"\nresponse=\"$FAKE_AGENTCTL_JSON\"\nif [[ -n \"${FAKE_AGENTCTL_AFTER:-}\" && \"$call_number\" -ge \"${FAKE_AGENTCTL_AFTER_CALL:-3}\" ]]; then response=\"$FAKE_AGENTCTL_AFTER\"; fi\nif [[ -n \"${FAKE_AGENTCTL_SWITCH_MARKER:-}\" && -f \"$FAKE_AGENTCTL_SWITCH_MARKER\" ]]; then response=\"$FAKE_AGENTCTL_AFTER\"; fi\ncat \"$response\"\nif [[ -n \"${FAKE_AGENTCTL_SWITCH_AFTER_CALL:-}\" && \"$call_number\" == \"$FAKE_AGENTCTL_SWITCH_AFTER_CALL\" ]]; then : > \"$FAKE_AGENTCTL_SWITCH_MARKER\"; fi\n",
+        "#!/usr/bin/env bash\nif [[ \"$1 $2 $3\" != \"job get $FAKE_AGENTCTL_EXPECTED_ID\" ]]; then exit 2; fi\nif [[ \"${FAKE_AGENTCTL_STATUS:-0}\" != 0 ]]; then exit \"$FAKE_AGENTCTL_STATUS\"; fi\ncall_number=$(wc -l < \"$FAKE_AGENTCTL_CALLS\")\ncall_number=$((call_number + 1))\nprintf '%s\\n' \"$call_number\" >> \"$FAKE_AGENTCTL_CALLS\"\nresponse=\"$FAKE_AGENTCTL_JSON\"\nif [[ -n \"${FAKE_AGENTCTL_AFTER:-}\" && \"$call_number\" -ge \"${FAKE_AGENTCTL_AFTER_CALL:-3}\" ]]; then response=\"$FAKE_AGENTCTL_AFTER\"; fi\nif [[ -n \"${FAKE_AGENTCTL_SWITCH_MARKER:-}\" && -f \"$FAKE_AGENTCTL_SWITCH_MARKER\" ]]; then response=\"$FAKE_AGENTCTL_AFTER\"; fi\n[[ -s \"$response\" ]] || exit 1\ncat \"$response\"\nif [[ -n \"${FAKE_AGENTCTL_SWITCH_AFTER_CALL:-}\" && \"$call_number\" == \"$FAKE_AGENTCTL_SWITCH_AFTER_CALL\" ]]; then : > \"$FAKE_AGENTCTL_SWITCH_MARKER\"; fi\n",
     );
     executable(
         &bin.join("pg_isready"),
@@ -142,13 +149,13 @@ fn run_checkout_env(
     );
     executable(
         &bin.join("psql"),
-        "#!/usr/bin/env bash\nport=\nwhile (($#)); do case \"$1\" in -p) port=$2; shift 2;; *) shift;; esac; done\ncase \"$FAKE_PSQL_MODE\" in ready) printf 'sinex_dev|%s\\n' \"$port\";; foreign) printf 'other_db|%s\\n' \"$port\";; malformed) printf 'not-a-postgres-identity\\n';; absent) exit 1;; esac\n",
+        "#!/usr/bin/env bash\nport=${PGPORT:-}\nwhile (($#)); do case \"$1\" in -p) port=$2; shift 2;; *) shift;; esac; done\ncase \"$FAKE_PSQL_MODE\" in ready) printf 'sinex_dev|%s\\n' \"$port\";; foreign) printf 'other_db|%s\\n' \"$port\";; malformed) printf 'not-a-postgres-identity\\n';; absent) exit 1;; esac\n",
     );
     executable(
         &bin.join("nix"),
-        "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$FAKE_NIX_CAPTURE\"\nif [[ \"$1\" == develop ]]; then\n  while (($#)) && [[ \"$1\" != --command ]]; do shift; done\n  [[ \"$1\" == --command ]] || exit 2\n  shift\n  exec \"$@\"\nfi\nenv | sort > \"$FAKE_XTASK_CAPTURE\"\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$FAKE_NIX_CAPTURE\"\nif [[ \"$1\" == develop ]]; then\n  while (($#)) && [[ \"$1\" != --command ]]; do shift; done\n  [[ \"$1\" == --command ]] || exit 2\n  shift\n  PATH=\"$FAKE_BIN:$PATH\" exec \"$@\"\nfi\nenv | sort > \"$FAKE_XTASK_CAPTURE\"\n",
     );
-    let xtask = fixture.path().join("xtask");
+    let xtask = bin.join("xtask");
     executable(
         &xtask,
         "#!/usr/bin/env bash\nenv | sort > \"$FAKE_XTASK_CAPTURE\"\n",
@@ -167,7 +174,8 @@ fn run_checkout_env(
     let agentctl_switch_marker = fixture.path().join("agentctl-switch");
     fs::write(&agentctl_calls, "").expect("create AgentCTL call log");
     let rc = fixture.path().join("devshell.rc");
-    fs::write(&rc, "# test devshell\n").expect("write fake devshell rc");
+    fs::write(&rc, format!("export PATH='{}':$PATH\n", bin.display()))
+        .expect("write fake devshell rc");
 
     let listener = (!matches!(nats_mode, NatsMode::Absent))
         .then(|| TcpListener::bind(("127.0.0.1", nats_port)).expect("bind fake NATS"));
@@ -245,7 +253,16 @@ FAKE_DEVSHELL_RC="$4"
 _sinex_pre_push_devshell_rc() { printf '%s\n' "$FAKE_DEVSHELL_RC"; }
 case "$6" in
   selected) _sinex_pre_push_selected_xtask "test selected binary" "$5" test ;;
-  fallback) _sinex_pre_push_clean_env nix develop "$REPO_ROOT" --command xtask test ;;
+  fallback)
+    _sinex_pre_push_xtask_env_matches_checkout() { return 1; }
+    _sinex_pre_push_checkout_xtask_binary() { return 1; }
+    _sinex_pre_push_path_xtask_binary() { return 1; }
+    _sinex_pre_push_cached_xtask_binary() { return 1; }
+    _sinex_pre_push_checkout_xtask_wrapper() { return 1; }
+    PATH="$FAKE_BIN:$PATH"
+    hash -r
+    _sinex_pre_push_run_xtask test
+    ;;
   *) echo "unknown execution path" >&2; exit 2 ;;
 esac
 "#;
@@ -254,6 +271,7 @@ esac
         "PATH",
         format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
     );
+    env.insert("FAKE_BIN", bin.display().to_string());
     env.insert("SINEX_PRE_PUSH_AGENTCTL_LEASE_ID", lease_id.to_string());
     env.insert("FAKE_AGENTCTL_EXPECTED_ID", lease_id.to_string());
     env.insert("FAKE_AGENTCTL_JSON", lease_file.display().to_string());
@@ -531,14 +549,15 @@ fn malformed_port_value_is_rejected() {
 
 #[test]
 fn wrong_operation_and_checkout_are_rejected() {
-    for (index, mutate) in [
+    let cases: [(usize, fn(&mut serde_json::Value)); 2] = [
         (0, |value: &mut serde_json::Value| {
             value["payload"]["value"]["operation"] = json!("check_default");
         }),
         (1, |value: &mut serde_json::Value| {
             value["payload"]["value"]["checkout"]["path"] = json!("/foreign/checkout");
         }),
-    ] {
+    ];
+    for (index, mutate) in cases {
         let fixture = tempfile::tempdir().expect("create fixture directory");
         let lease_id = format!("66666666-6666-4666-8666-66666666666{index}");
         let lease = mutate_lease(&lease_json(&repo_root(), &lease_id, 45559, 44308), mutate);
@@ -640,7 +659,7 @@ fn cancellation_during_final_validation_is_rejected_before_launch() {
     );
     assert!(!output.status.success());
     assert!(!fixture.path().join("xtask-capture").exists());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("changed before execution"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not the active dev_services lease"));
 }
 
 #[test]
@@ -693,8 +712,9 @@ fn fallback_execution_path_revalidates_before_launch() {
     );
     assert!(output.status.success(), "fallback failed: {output:?}");
     assert!(fixture.path().join("nix-capture").exists());
-    let captured: HashMap<_, _> = fs::read_to_string(fixture.path().join("xtask-capture"))
-        .expect("read fallback xtask environment")
+    let captured_environment = fs::read_to_string(fixture.path().join("xtask-capture"))
+        .expect("read fallback xtask environment");
+    let captured: HashMap<_, _> = captured_environment
         .lines()
         .filter_map(|line| line.split_once('='))
         .collect();
@@ -759,6 +779,7 @@ _sinex_pre_push_run_xtask check
         .arg("-c")
         .arg(command)
         .arg("selector-test")
+        .arg(repo_root().join(".githooks/pre-push"))
         .arg(repo_root())
         .arg(route_name)
         .arg(&capture)
@@ -815,7 +836,7 @@ fn selector_routes_choose_each_independent_candidate() {
 #[test]
 fn dev_services_cache_identity_excludes_allocated_ports() {
     let descriptor: toml::Value =
-        toml::from_str(include_str!("../../../.agentctl/project.toml")).expect("parse descriptor");
+        toml::from_str(include_str!("../../.agentctl/project.toml")).expect("parse descriptor");
     let dev_services = &descriptor["operations"]["dev_services"];
     assert_eq!(dev_services["cache"].as_str(), Some("tree+environment"));
     assert_eq!(
