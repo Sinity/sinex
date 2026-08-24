@@ -1,7 +1,7 @@
 //! Sleep merged-summary CSV parser (#1052).
 //!
 //! Reads `sleep_merged_summary.csv` from
-//! `/realm/data/exports/health/processed/` — a join of Samsung Health
+//! `/realm/data/health/processed/` — a join of Samsung Health
 //! and Sleep As Android session rows — and emits one
 //! `samsung-health`/`sleep.session` event per row.
 //!
