@@ -777,6 +777,151 @@ async fn test_agentctl_runtime_operations_are_non_cacheable_with_eight_hour_leas
         );
     }
 
+    for operation_name in ["run_core", "run_all_automatons"] {
+        let parameters = operations[operation_name]["parameters"]
+            .as_table()
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "{operation_name} must declare the bounded instance-id parameter"
+                )
+            })?;
+        assert_eq!(
+            parameters.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["instance_id", "release"],
+            "{operation_name} admits only its declared release and instance-id inputs"
+        );
+        let instance_id = &parameters["instance_id"];
+        assert_eq!(
+            instance_id.get("type").and_then(toml::Value::as_str),
+            Some("string")
+        );
+        assert_eq!(
+            instance_id.get("flag").and_then(toml::Value::as_str),
+            Some("--instance-id")
+        );
+        assert_eq!(
+            instance_id
+                .get("max_length")
+                .and_then(toml::Value::as_integer),
+            Some(128)
+        );
+        assert_eq!(
+            instance_id.get("grammar").and_then(toml::Value::as_str),
+            Some("safe-token")
+        );
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_agentctl_verification_operations_bind_only_typed_inputs()
+-> ::xtask::sandbox::TestResult<()> {
+    let descriptor: toml::Value = toml::from_str(include_str!("../../../.agentctl/project.toml"))?;
+    let operations = descriptor["operations"]
+        .as_table()
+        .ok_or_else(|| color_eyre::eyre::eyre!("AgentCTL operations must be a TOML table"))?;
+
+    let verify_plan = operations
+        .get("verify_plan")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing AgentCTL verify_plan operation"))?;
+    assert_eq!(
+        verify_plan["exec"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("verify_plan exec must be an argv array"))?
+            .iter()
+            .map(|value| value.as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        ["xtask", "verify", "plan", "--check"]
+    );
+    assert_eq!(
+        verify_plan.get("result").and_then(toml::Value::as_str),
+        Some("exit")
+    );
+    assert_eq!(
+        verify_plan.get("cache").and_then(toml::Value::as_str),
+        Some("tree+environment")
+    );
+    assert_eq!(
+        verify_plan
+            .get("timeout_seconds")
+            .and_then(toml::Value::as_integer),
+        Some(1_800)
+    );
+    assert!(
+        verify_plan.get("parameters").is_none(),
+        "verify_plan exposes no caller-controlled argv, environment, or cwd input"
+    );
+
+    let verify_closure = operations
+        .get("verify_closure")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing AgentCTL verify_closure operation"))?;
+    assert_eq!(
+        verify_closure["exec"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("verify_closure exec must be an argv array"))?
+            .iter()
+            .map(|value| value.as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        ["xtask", "verify", "closure"]
+    );
+    assert_eq!(
+        verify_closure.get("result").and_then(toml::Value::as_str),
+        Some("exit")
+    );
+    assert_eq!(
+        verify_closure.get("cache").and_then(toml::Value::as_str),
+        Some("none")
+    );
+    assert_eq!(
+        verify_closure
+            .get("timeout_seconds")
+            .and_then(toml::Value::as_integer),
+        Some(1_800)
+    );
+
+    let parameters = verify_closure["parameters"]
+        .as_table()
+        .ok_or_else(|| color_eyre::eyre::eyre!("verify_closure parameters must be a table"))?;
+    assert_eq!(
+        parameters.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["bead_id", "dry_run", "json"],
+        "verify_closure exposes only its typed positional id and boolean flags"
+    );
+    let bead_id = &parameters["bead_id"];
+    assert_eq!(
+        bead_id.get("type").and_then(toml::Value::as_str),
+        Some("string")
+    );
+    assert_eq!(
+        bead_id.get("position").and_then(toml::Value::as_integer),
+        Some(1)
+    );
+    assert_eq!(
+        bead_id.get("required").and_then(toml::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        bead_id.get("max_length").and_then(toml::Value::as_integer),
+        Some(128)
+    );
+    assert_eq!(
+        bead_id.get("grammar").and_then(toml::Value::as_str),
+        Some("safe-token")
+    );
+    for (name, flag) in [("json", "--json"), ("dry_run", "--dry-run")] {
+        assert_eq!(
+            parameters[name].get("type").and_then(toml::Value::as_str),
+            Some("bool")
+        );
+        assert_eq!(
+            parameters[name].get("flag").and_then(toml::Value::as_str),
+            Some(flag)
+        );
+    }
+
     Ok(())
 }
 
