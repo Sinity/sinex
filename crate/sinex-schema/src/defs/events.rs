@@ -1595,6 +1595,19 @@ impl EventReplacements {
                 .table(Self::table_iden())
                 .col(EventReplacements::OperationId)
                 .to_owned(),
+            // Redelivery of one invalidation operation must be able to replay
+            // replacement-link persistence without creating a second lineage
+            // edge for the same old/new interpretation pair.
+            Index::create()
+                .if_not_exists()
+                .unique()
+                .name("ux_event_replacements_identity")
+                .table(Self::table_iden())
+                .col(EventReplacements::OldEventId)
+                .col(EventReplacements::NewEventId)
+                .col(EventReplacements::OperationId)
+                .col(EventReplacements::RelationKind)
+                .to_owned(),
         ]
     }
 }

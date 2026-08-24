@@ -1,4 +1,4 @@
-use super::EventRepository;
+use super::{EventRepository, EventRepositoryTx};
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::events::{EquivalenceKey, ScopeKey};
 use sqlx::{Postgres, QueryBuilder};
@@ -59,14 +59,10 @@ impl EventRepository<'_> {
              (old_event_id, new_event_id, operation_id, relation_kind, scope_key, equivalence_key) ",
         );
 
-        builder.push_values(replacements, |mut b, r| {
-            b.push_bind(r.old_event_id)
-                .push_bind(r.new_event_id)
-                .push_bind(operation_id)
-                .push_bind(r.relation_kind.as_str())
-                .push_bind(r.scope_key.as_deref())
-                .push_bind(r.equivalence_key.as_deref());
-        });
+        push_replacement_values(&mut builder, operation_id, replacements);
+        builder.push(
+            " ON CONFLICT (old_event_id, new_event_id, operation_id, relation_kind) DO NOTHING",
+        );
 
         let result = builder
             .build()
@@ -108,4 +104,53 @@ impl EventRepository<'_> {
         .map_err(|e| db_error(e, "get replacements for event"))?;
         Ok(rows)
     }
+}
+
+impl EventRepositoryTx<'_, '_> {
+    /// Record replacement relations in the caller's archive transaction.
+    ///
+    /// Scope invalidation uses this to make the planned relation and removal
+    /// of the stale event one atomic database state transition. A crash can
+    /// therefore leave both changes absent or both present, never an archived
+    /// event whose replacement identity was forgotten.
+    pub async fn record_replacements(
+        &mut self,
+        operation_id: Uuid,
+        replacements: &[ReplacementRecord],
+    ) -> DbResult<u64> {
+        if replacements.is_empty() {
+            return Ok(0);
+        }
+
+        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO audit.event_replacements \
+             (old_event_id, new_event_id, operation_id, relation_kind, scope_key, equivalence_key) ",
+        );
+        push_replacement_values(&mut builder, operation_id, replacements);
+        builder.push(
+            " ON CONFLICT (old_event_id, new_event_id, operation_id, relation_kind) DO NOTHING",
+        );
+
+        let result = builder
+            .build()
+            .execute(&mut **self.transaction())
+            .await
+            .map_err(|e| db_error(e, "record event replacements in transaction"))?;
+        Ok(result.rows_affected())
+    }
+}
+
+fn push_replacement_values<'a>(
+    builder: &mut QueryBuilder<'a, Postgres>,
+    operation_id: Uuid,
+    replacements: &'a [ReplacementRecord],
+) {
+    builder.push_values(replacements, |mut b, r| {
+        b.push_bind(r.old_event_id)
+            .push_bind(r.new_event_id)
+            .push_bind(operation_id)
+            .push_bind(r.relation_kind.as_str())
+            .push_bind(r.scope_key.as_deref())
+            .push_bind(r.equivalence_key.as_deref());
+    });
 }

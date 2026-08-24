@@ -693,11 +693,13 @@ async fn handle_invalidation_archives_before_output_emit_and_retries_without_dup
     adapter.host = runtime.service_info().host().to_string();
     adapter.runtime = Some(runtime);
 
+    let operation_id = Uuid::now_v7();
     let invalidation = DerivedScopeInvalidation::replaced(
         vec![*input_id.as_uuid()],
         EventSource::from_static("measurements"),
         EventType::from_static("measurement.taken"),
     )
+    .with_operation(operation_id)
     .with_scope_keys(vec![scope_key.to_string()]);
     let payload = serde_json::to_vec(&invalidation)?;
 
@@ -742,6 +744,17 @@ async fn handle_invalidation_archives_before_output_emit_and_retries_without_dup
         archived_output_count, 1,
         "the archive marker must survive a failed replacement emission"
     );
+    let planned_replacement = sqlx::query_scalar!(
+        r#"
+            SELECT new_event_id as "new_event_id!"
+            FROM audit.event_replacements
+            WHERE operation_id = $1 AND scope_key = $2
+            "#,
+        operation_id,
+        scope_key
+    )
+    .fetch_one(ctx.pool())
+    .await?;
     let (retry_sender, mut retry_receiver) = mpsc::channel(4);
     adapter.event_emitter = Some(EventEmitter::new(retry_sender, false));
     let retry = adapter.handle_invalidation_message(&payload).await?;
@@ -753,11 +766,31 @@ async fn handle_invalidation_archives_before_output_emit_and_retries_without_dup
     let emitted = tokio::time::timeout(std::time::Duration::from_secs(1), retry_receiver.recv())
         .await?
         .expect("redelivery should emit the recomputed replacement");
+    assert_eq!(
+        emitted.id.map(|id| *id.as_uuid()),
+        Some(planned_replacement),
+        "redelivery must reuse the replacement identity committed with the archive"
+    );
     assert_eq!(emitted.scope_key.as_deref(), Some(scope_key));
     assert_eq!(
         retry_receiver.try_recv(),
         Err(mpsc::error::TryRecvError::Empty),
         "redelivery must not emit a duplicate replacement"
+    );
+    let replacement_count = sqlx::query_scalar!(
+        r#"
+            SELECT COUNT(*)::bigint as "count!"
+            FROM audit.event_replacements
+            WHERE operation_id = $1 AND scope_key = $2
+            "#,
+        operation_id,
+        scope_key
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(
+        replacement_count, 1,
+        "redelivery must not duplicate lineage"
     );
     Ok(())
 }
@@ -818,6 +851,7 @@ async fn handle_invalidation_message_checkpoints_state_only_mutations(
         EventSource::from_static("measurements"),
         EventType::from_static("measurement.taken"),
     )
+    .with_operation(Uuid::now_v7())
     .with_scope_keys(vec![scope_key.to_string()]);
     let payload = serde_json::to_vec(&invalidation)?;
 

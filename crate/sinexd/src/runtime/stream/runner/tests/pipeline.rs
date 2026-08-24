@@ -125,6 +125,7 @@ mod lk67_invalidation_reachability {
             EventSource::new("test-source")?,
             EventType::new("measurement.taken")?,
         )
+        .with_operation(Uuid::now_v7())
         .with_scope_keys(vec!["default".to_string()]);
         let payload = serde_json::to_vec(&invalidation)?;
         let mut headers = async_nats::HeaderMap::new();

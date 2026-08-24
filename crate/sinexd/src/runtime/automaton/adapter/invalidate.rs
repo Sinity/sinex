@@ -90,12 +90,12 @@ where
             runtime.db_pool().clone()
         };
 
-        let operation_id = invalidation
-            .operation_id
-            .map(Id::<OperationMarker>::from_uuid);
-        let operation_uuid = invalidation
-            .operation_id
-            .unwrap_or_else(|| *Id::<OperationMarker>::new().as_uuid());
+        let operation_uuid = invalidation.operation_id.ok_or_else(|| {
+            SinexError::validation("scope invalidation recompute requires a durable operation id")
+                .with_context("automaton", self.automaton.name())
+                .with_context("action", invalidation.action.to_string())
+        })?;
+        let operation_id = Some(Id::<OperationMarker>::from_uuid(operation_uuid));
         let trigger_event_id = invalidation
             .affected_event_ids
             .first()
@@ -249,7 +249,23 @@ where
             let mut new_event_ids = Vec::new();
             for (output_index, output) in outputs.into_iter().enumerate() {
                 let equivalence_key = output.equivalence_key.clone();
-                let output_event = self.build_output_event(output, output_index, None, &context)?;
+                let mut output_event =
+                    self.build_output_event(output, output_index, None, &context)?;
+                let retry_identity = format!(
+                    "sinex.invalidation-output.v1/{}/{}/{}/{}/{}",
+                    self.automaton.name(),
+                    output_source,
+                    output_type,
+                    scope_key,
+                    equivalence_key.as_deref().map_or_else(
+                        || format!("index:{output_index}"),
+                        |key| format!("key:{key}")
+                    ),
+                );
+                output_event.id = Some(Id::from_uuid(Uuid::new_v5(
+                    &operation_uuid,
+                    retry_identity.as_bytes(),
+                )));
                 let new_id = match output_event.id {
                     Some(id) => *id.as_uuid(),
                     None => {
@@ -279,7 +295,7 @@ where
     }
 
     #[cfg(feature = "db")]
-    pub(super) async fn archive_prepared_invalidation(
+    pub(super) async fn finalize_prepared_invalidation(
         &self,
         operation_uuid: Uuid,
         scopes: &[PreparedInvalidationScope],
@@ -295,23 +311,68 @@ where
 
         for scope in scopes {
             if !scope.stale_ids.is_empty() {
-                let archived = pool
-                    .events()
-                    .execute_cascade_archive(
-                        &scope.stale_ids,
-                        "scope_invalidation_recompute",
-                        &operation_uuid.to_string(),
-                        &format!("derived:{}", self.automaton.name()),
-                    )
-                    .await
-                    .map_err(|error| {
-                        SinexError::processing(
-                            "Failed to archive stale outputs after recomputation",
-                        )
+                use sinex_db::repositories::{ReplacementKind, ReplacementRecord};
+
+                let replacements: Vec<ReplacementRecord> = scope
+                    .stale_ids
+                    .iter()
+                    .flat_map(|old_id| {
+                        let scope_key = scope.scope_key.clone();
+                        scope
+                            .new_event_ids
+                            .iter()
+                            .map(move |(new_id, eq_key)| ReplacementRecord {
+                                old_event_id: *old_id,
+                                new_event_id: *new_id,
+                                relation_kind: ReplacementKind::Recomputed,
+                                scope_key: Some(ScopeKey::from(scope_key.clone())),
+                                equivalence_key: eq_key.clone().map(EquivalenceKey::from),
+                            })
+                    })
+                    .collect();
+                let mut tx = pool.begin().await.map_err(|error| {
+                    SinexError::database("Failed to begin scope invalidation finalization")
                         .with_context("scope_key", scope.scope_key.clone())
                         .with_context("automaton", self.automaton.name())
                         .with_source(error)
-                    })?;
+                })?;
+                let archived = {
+                    let event_repository = pool.events();
+                    let mut events = event_repository.as_tx(&mut tx);
+                    events
+                        .record_replacements(operation_uuid, &replacements)
+                        .await
+                        .map_err(|error| {
+                            SinexError::database(
+                                "Failed to record planned invalidation replacements",
+                            )
+                            .with_context("scope_key", scope.scope_key.clone())
+                            .with_context("automaton", self.automaton.name())
+                            .with_source(error)
+                        })?;
+                    events
+                        .execute_cascade_archive(
+                            &scope.stale_ids,
+                            "scope_invalidation_recompute",
+                            &operation_uuid.to_string(),
+                            &format!("derived:{}", self.automaton.name()),
+                        )
+                        .await
+                        .map_err(|error| {
+                            SinexError::processing(
+                                "Failed to archive stale outputs after recomputation",
+                            )
+                            .with_context("scope_key", scope.scope_key.clone())
+                            .with_context("automaton", self.automaton.name())
+                            .with_source(error)
+                        })?
+                };
+                tx.commit().await.map_err(|error| {
+                    SinexError::database("Failed to commit scope invalidation finalization")
+                        .with_context("scope_key", scope.scope_key.clone())
+                        .with_context("automaton", self.automaton.name())
+                        .with_source(error)
+                })?;
 
                 info!(
                     automaton = %self.automaton.name(),
@@ -345,74 +406,17 @@ where
         Ok(())
     }
 
-    #[cfg(feature = "db")]
-    pub(super) async fn record_prepared_replacements(
-        &self,
-        operation_uuid: Uuid,
-        scopes: &[PreparedInvalidationScope],
-    ) -> RuntimeResult<()> {
-        use sinex_db::repositories::{DbPoolExt, ReplacementKind, ReplacementRecord};
-
-        let pool = {
-            let runtime = self.runtime.as_ref().ok_or_else(|| {
-                SinexError::lifecycle(
-                    "Cannot record invalidation replacements: runtime not initialized",
-                )
-            })?;
-            runtime.db_pool().clone()
-        };
-
-        for scope in scopes {
-            if !scope.stale_ids.is_empty() && !scope.new_event_ids.is_empty() {
-                let scope_key = scope.scope_key.clone();
-                let replacements: Vec<ReplacementRecord> = scope
-                    .stale_ids
-                    .iter()
-                    .flat_map(|old_id| {
-                        let scope_key = scope_key.clone();
-                        scope
-                            .new_event_ids
-                            .iter()
-                            .map(move |(new_id, eq_key)| ReplacementRecord {
-                                old_event_id: *old_id,
-                                new_event_id: *new_id,
-                                relation_kind: ReplacementKind::Recomputed,
-                                scope_key: Some(ScopeKey::from(scope_key.clone())),
-                                equivalence_key: eq_key.clone().map(EquivalenceKey::from),
-                            })
-                    })
-                    .collect();
-
-                if let Err(error) = pool
-                    .events()
-                    .record_replacements(operation_uuid, &replacements)
-                    .await
-                {
-                    warn!(
-                        automaton = %self.automaton.name(),
-                        scope_key = %scope.scope_key,
-                        error = %error,
-                        "Failed to record replacement relations — events still correct"
-                    );
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Process a scope invalidation signal.
     ///
     /// For each affected scope:
     /// 1. Loads the current working set from DB (events matching `scope_key` + `input_event_type`)
     /// 2. Calls `process_invalidation_derived()` to recompute
-    /// 3. Archives existing derived outputs for that scope (moves to `audit.archived_events`)
-    /// 4. Records replacement relations in `audit.event_replacements` (old→new linkage)
+    /// 3. Atomically records replacement relations and archives the stale outputs
     /// 5. Returns replacement events for emission
     ///
-    /// `handle_invalidation_message()` archives stale outputs before emitting replacements. A
-    /// crash or redelivery can therefore recompute a temporarily empty scope, but it cannot emit
-    /// a second replacement set for still-live stale outputs.
+    /// Replacement event IDs are derived from the durable operation and output
+    /// identity. Redelivery therefore re-emits the same interpretation IDs,
+    /// while the atomic archive/link transition preserves the stale lineage.
     ///
     /// Transducers return empty — their outputs are archived with their inputs.
     #[cfg(feature = "db")]
@@ -423,9 +427,7 @@ where
         let prepared = self.prepare_invalidation(invalidation).await?;
         let scope_count = prepared.scopes.len();
         let output_count = prepared.outputs.len();
-        self.archive_prepared_invalidation(prepared.operation_uuid, &prepared.scopes)
-            .await?;
-        self.record_prepared_replacements(prepared.operation_uuid, &prepared.scopes)
+        self.finalize_prepared_invalidation(prepared.operation_uuid, &prepared.scopes)
             .await?;
 
         info!(
@@ -507,7 +509,7 @@ where
                         operation_uuid,
                     } = prepared;
                     if let Err(error) = self
-                        .archive_prepared_invalidation(operation_uuid, &scopes)
+                        .finalize_prepared_invalidation(operation_uuid, &scopes)
                         .await
                     {
                         error!(
@@ -559,31 +561,6 @@ where
                             return Ok(None);
                         }
                     };
-                    if let Err(error) = self
-                        .record_prepared_replacements(operation_uuid, &scopes)
-                        .await
-                    {
-                        error!(
-                            target: "sinex_metrics",
-                            metric = "derive.invalidation_errors_total",
-                            automaton = %module_name,
-                            error = %error,
-                            action = %invalidation.action,
-                            "Invalidation replacement recording failed after output emission"
-                        );
-                        #[cfg(feature = "messaging")]
-                        if let Some(ref obs) = self.self_observer
-                            && let Err(obs_error) =
-                                obs.emit_counter("invalidation.errors", 1, None).await
-                        {
-                            log_self_observation_failure(
-                                module_name,
-                                "invalidation.errors",
-                                &obs_error,
-                            );
-                        }
-                        return Ok(None);
-                    }
                     self.record_state_mutation();
                     let duration_ms = processing_start.elapsed().as_millis() as f64;
 
