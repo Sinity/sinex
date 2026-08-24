@@ -1930,6 +1930,8 @@ async fn durable_invalidation_consumer_redelivers_unacked_message(
         .await?
         .ok_or_else(|| color_eyre::eyre::eyre!("durable consumer ended before redelivery"))??;
     assert_eq!(redelivered.payload.to_vec(), payload);
-    redelivered.ack().await?;
+    redelivered.ack().await.map_err(|error| {
+        color_eyre::eyre::eyre!("failed to ack redelivered invalidation: {error}")
+    })?;
     Ok(())
 }

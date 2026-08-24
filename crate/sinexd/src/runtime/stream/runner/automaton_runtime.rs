@@ -483,7 +483,7 @@ impl RuntimeRunner {
     }
 
     #[cfg(feature = "messaging")]
-    fn invalidation_consumer_name(module_name: &str) -> String {
+    pub(crate) fn invalidation_consumer_name(module_name: &str) -> String {
         format!(
             "{}-invalidation",
             sinex_primitives::environment::SinexEnvironment::nats_subject_token(module_name)

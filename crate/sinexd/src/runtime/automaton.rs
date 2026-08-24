@@ -17,11 +17,11 @@ pub mod invalidation;
 mod output;
 pub mod traits;
 
-pub(crate) use adapter::recv_invalidation;
 pub use adapter::{
     AutomatonRuntime, DeclaresOutputs, MultiOutputTransducerAdapter, ScopeReconcilerAdapter,
     TransducerAdapter, WindowedAdapter,
 };
+pub(crate) use adapter::{recv_invalidation, recv_invalidation_message};
 pub use context::AutomatonContext;
 pub use invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
 pub use output::{DerivedAggregationMeta, DerivedOutput};

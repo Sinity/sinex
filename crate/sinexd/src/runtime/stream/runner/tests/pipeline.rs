@@ -35,6 +35,7 @@ mod lk67_invalidation_reachability {
     }
 
     struct InvalidationSpyAutomaton {
+        name: &'static str,
         invalidations_applied: Arc<AtomicU64>,
         fail_once: Option<Arc<AtomicU64>>,
     }
@@ -45,7 +46,7 @@ mod lk67_invalidation_reachability {
         type Output = SpyOutput;
 
         fn name(&self) -> &'static str {
-            "lk67-invalidation-reachability-spy"
+            self.name
         }
 
         fn input_event_type(&self) -> &'static str {
@@ -98,6 +99,7 @@ mod lk67_invalidation_reachability {
         let ctx = ctx.with_nats().shared().await?;
         let invalidations_applied = Arc::new(AtomicU64::new(0));
         let automaton = InvalidationSpyAutomaton {
+            name: "lk67-invalidation-success",
             invalidations_applied: invalidations_applied.clone(),
             fail_once: None,
         };
@@ -163,11 +165,14 @@ mod lk67_invalidation_reachability {
         let stream = js
             .get_stream(&env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS"))
             .await?;
-        let consumer = stream
-            .get_consumer(&RuntimeRunner::invalidation_consumer_name(
-                "lk67-invalidation-reachability-spy",
-            ))
-            .await?;
+        let mut consumer = stream
+            .get_consumer::<async_nats::jetstream::consumer::push::Config>(
+                &RuntimeRunner::invalidation_consumer_name("lk67-invalidation-success"),
+            )
+            .await
+            .map_err(|error| {
+                color_eyre::eyre::eyre!("failed to load invalidation consumer: {error}")
+            })?;
         assert_eq!(
             consumer.info().await?.num_ack_pending,
             0,
@@ -181,6 +186,7 @@ mod lk67_invalidation_reachability {
         let ctx = ctx.with_nats().shared().await?;
         let invalidations_applied = Arc::new(AtomicU64::new(0));
         let automaton = InvalidationSpyAutomaton {
+            name: "lk67-invalidation-failure",
             invalidations_applied,
             fail_once: Some(Arc::new(AtomicU64::new(0))),
         };
@@ -235,11 +241,14 @@ mod lk67_invalidation_reachability {
         let stream = js
             .get_stream(&env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS"))
             .await?;
-        let consumer = stream
-            .get_consumer(&RuntimeRunner::invalidation_consumer_name(
-                "lk67-invalidation-failure",
-            ))
-            .await?;
+        let mut consumer = stream
+            .get_consumer::<async_nats::jetstream::consumer::push::Config>(
+                &RuntimeRunner::invalidation_consumer_name("lk67-invalidation-failure"),
+            )
+            .await
+            .map_err(|error| {
+                color_eyre::eyre::eyre!("failed to load invalidation consumer: {error}")
+            })?;
         assert_eq!(
             consumer.info().await?.num_ack_pending,
             1,
