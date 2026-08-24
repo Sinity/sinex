@@ -24,6 +24,14 @@ enum NatsMode {
 }
 
 #[derive(Clone, Copy)]
+enum PostgresMode {
+    Ready,
+    Foreign,
+    Malformed,
+    Absent,
+}
+
+#[derive(Clone, Copy)]
 enum ExecutionPath {
     SelectedBinary,
     NixFallback,
@@ -115,6 +123,7 @@ fn run_checkout_env(
     lease: Option<&str>,
     nats_port: u16,
     nats_mode: NatsMode,
+    postgres_mode: PostgresMode,
     lease_after: Option<&str>,
     execution_path: ExecutionPath,
 ) -> Output {
@@ -125,15 +134,19 @@ fn run_checkout_env(
     executable(&pg_bin.join("postgres"), "#!/usr/bin/env bash\nexit 0\n");
     executable(
         &bin.join("agentctl"),
-        "#!/usr/bin/env bash\nif [[ \"$1 $2 $3\" != \"job get $FAKE_AGENTCTL_EXPECTED_ID\" ]]; then exit 2; fi\nif [[ \"${FAKE_AGENTCTL_STATUS:-0}\" != 0 ]]; then exit \"$FAKE_AGENTCTL_STATUS\"; fi\ncall_number=$(wc -l < \"$FAKE_AGENTCTL_CALLS\")\ncall_number=$((call_number + 1))\nprintf '%s\\n' \"$call_number\" >> \"$FAKE_AGENTCTL_CALLS\"\nif [[ -n \"${FAKE_AGENTCTL_AFTER:-}\" && \"$call_number\" -ge \"${FAKE_AGENTCTL_AFTER_CALL:-3}\" ]]; then cat \"$FAKE_AGENTCTL_AFTER\"; else cat \"$FAKE_AGENTCTL_JSON\"; fi\n",
+        "#!/usr/bin/env bash\nif [[ \"$1 $2 $3\" != \"job get $FAKE_AGENTCTL_EXPECTED_ID\" ]]; then exit 2; fi\nif [[ \"${FAKE_AGENTCTL_STATUS:-0}\" != 0 ]]; then exit \"$FAKE_AGENTCTL_STATUS\"; fi\ncall_number=$(wc -l < \"$FAKE_AGENTCTL_CALLS\")\ncall_number=$((call_number + 1))\nprintf '%s\\n' \"$call_number\" >> \"$FAKE_AGENTCTL_CALLS\"\nresponse=\"$FAKE_AGENTCTL_JSON\"\nif [[ -n \"${FAKE_AGENTCTL_AFTER:-}\" && \"$call_number\" -ge \"${FAKE_AGENTCTL_AFTER_CALL:-3}\" ]]; then response=\"$FAKE_AGENTCTL_AFTER\"; fi\nif [[ -n \"${FAKE_AGENTCTL_SWITCH_MARKER:-}\" && -f \"$FAKE_AGENTCTL_SWITCH_MARKER\" ]]; then response=\"$FAKE_AGENTCTL_AFTER\"; fi\ncat \"$response\"\nif [[ -n \"${FAKE_AGENTCTL_SWITCH_AFTER_CALL:-}\" && \"$call_number\" == \"$FAKE_AGENTCTL_SWITCH_AFTER_CALL\" ]]; then : > \"$FAKE_AGENTCTL_SWITCH_MARKER\"; fi\n",
     );
     executable(
         &bin.join("pg_isready"),
         "#!/usr/bin/env bash\nhost= port=\nwhile (($#)); do case \"$1\" in -h) host=$2; shift 2;; -p) port=$2; shift 2;; *) shift;; esac; done\nprintf '%s\\t%s\\n' \"$host\" \"$port\" > \"$FAKE_PG_CAPTURE\"\nexit 0\n",
     );
     executable(
+        &bin.join("psql"),
+        "#!/usr/bin/env bash\nport=\nwhile (($#)); do case \"$1\" in -p) port=$2; shift 2;; *) shift;; esac; done\ncase \"$FAKE_PSQL_MODE\" in ready) printf 'sinex_dev|%s\\n' \"$port\";; foreign) printf 'other_db|%s\\n' \"$port\";; malformed) printf 'not-a-postgres-identity\\n';; absent) exit 1;; esac\n",
+    );
+    executable(
         &bin.join("nix"),
-        "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$FAKE_NIX_CAPTURE\"\nenv | sort > \"$FAKE_XTASK_CAPTURE\"\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$FAKE_NIX_CAPTURE\"\nif [[ \"$1\" == develop ]]; then\n  while (($#)) && [[ \"$1\" != --command ]]; do shift; done\n  [[ \"$1\" == --command ]] || exit 2\n  shift\n  exec \"$@\"\nfi\nenv | sort > \"$FAKE_XTASK_CAPTURE\"\n",
     );
     let xtask = fixture.path().join("xtask");
     executable(
@@ -151,6 +164,7 @@ fn run_checkout_env(
     let xtask_capture = fixture.path().join("xtask-capture");
     let nix_capture = fixture.path().join("nix-capture");
     let agentctl_calls = fixture.path().join("agentctl-calls");
+    let agentctl_switch_marker = fixture.path().join("agentctl-switch");
     fs::write(&agentctl_calls, "").expect("create AgentCTL call log");
     let rc = fixture.path().join("devshell.rc");
     fs::write(&rc, "# test devshell\n").expect("write fake devshell rc");
@@ -163,9 +177,16 @@ fn run_checkout_env(
             .expect("set fake NATS nonblocking");
         thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(2);
+            let expected_connections = if matches!(nats_mode, NatsMode::Ready) {
+                2
+            } else {
+                1
+            };
+            let mut connections = 0;
             while Instant::now() < deadline {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        connections += 1;
                         if matches!(nats_mode, NatsMode::Ready) {
                             stream
                                 .write_all(b"INFO {\"server_id\":\"fixture\"}\r\n")
@@ -202,7 +223,9 @@ fn run_checkout_env(
                                 .write_all(b"HTTP/1.1 200 OK\r\n\r\n")
                                 .expect("write foreign listener response");
                         }
-                        return;
+                        if connections >= expected_connections {
+                            return;
+                        }
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::yield_now();
@@ -236,6 +259,16 @@ esac
     env.insert("FAKE_AGENTCTL_JSON", lease_file.display().to_string());
     env.insert("FAKE_AGENTCTL_CALLS", agentctl_calls.display().to_string());
     env.insert("FAKE_PG_CAPTURE", pg_capture.display().to_string());
+    env.insert(
+        "FAKE_PSQL_MODE",
+        match postgres_mode {
+            PostgresMode::Ready => "ready",
+            PostgresMode::Foreign => "foreign",
+            PostgresMode::Malformed => "malformed",
+            PostgresMode::Absent => "absent",
+        }
+        .to_string(),
+    );
     env.insert("FAKE_XTASK_CAPTURE", xtask_capture.display().to_string());
     env.insert("FAKE_NIX_CAPTURE", nix_capture.display().to_string());
     if lease_after.is_some() {
@@ -244,6 +277,14 @@ esac
             lease_after_file.display().to_string(),
         );
         env.insert("FAKE_AGENTCTL_AFTER_CALL", "3".to_string());
+    }
+    if lease_id == "77777777-7777-4777-8777-777777777777" {
+        env.insert(
+            "FAKE_AGENTCTL_SWITCH_MARKER",
+            agentctl_switch_marker.display().to_string(),
+        );
+        env.insert("FAKE_AGENTCTL_SWITCH_AFTER_CALL", "3".to_string());
+        env.insert("FAKE_AGENTCTL_AFTER_CALL", "999".to_string());
     }
     let mut process = Command::new("bash");
     process
@@ -267,14 +308,14 @@ esac
     output
 }
 
-fn assert_three_identity_reads(fixture: &TempDir) {
+fn assert_five_identity_reads(fixture: &TempDir) {
     assert_eq!(
         fs::read_to_string(fixture.path().join("agentctl-calls"))
             .expect("read AgentCTL call log")
             .lines()
             .count(),
-        3,
-        "execution must perform initial, endpoint, and final identity reads"
+        5,
+        "execution must perform identity reads before and after the command"
     );
 }
 
@@ -290,6 +331,7 @@ fn active_lease_propagates_exact_ports_and_postgres_socket() {
         Some(&lease),
         nats_port,
         NatsMode::Ready,
+        PostgresMode::Ready,
         None,
         ExecutionPath::SelectedBinary,
     );
@@ -321,7 +363,7 @@ fn active_lease_propagates_exact_ports_and_postgres_socket() {
         fs::read_to_string(fixture.path().join("pg-capture")).expect("read postgres probe"),
         format!("{pg_host}\t45559\n")
     );
-    assert_three_identity_reads(&fixture);
+    assert_five_identity_reads(&fixture);
 }
 
 #[test]
@@ -334,6 +376,7 @@ fn stale_lease_is_rejected_before_xtask_runs() {
         None,
         44308,
         NatsMode::Absent,
+        PostgresMode::Absent,
         None,
         ExecutionPath::SelectedBinary,
     );
@@ -359,6 +402,7 @@ fn unreachable_active_lease_is_rejected_before_xtask_runs() {
         Some(&lease),
         nats_port,
         NatsMode::Absent,
+        PostgresMode::Ready,
         None,
         ExecutionPath::SelectedBinary,
     );
@@ -382,12 +426,55 @@ fn foreign_tcp_listener_is_rejected_before_xtask_runs() {
         Some(&lease),
         nats_port,
         NatsMode::Foreign,
+        PostgresMode::Ready,
         None,
         ExecutionPath::SelectedBinary,
     );
     assert!(!output.status.success());
     assert!(!fixture.path().join("xtask-capture").exists());
     assert!(String::from_utf8_lossy(&output.stderr).contains("NATS protocol readiness failed"));
+}
+
+#[test]
+fn foreign_postgres_database_is_rejected_by_protocol_identity() {
+    let fixture = tempfile::tempdir().expect("create fixture directory");
+    let lease_id = "49494949-4949-4949-8494-949494949494";
+    let nats_port = free_nats_port();
+    let lease = lease_json(&repo_root(), lease_id, 45559, nats_port);
+    let output = run_checkout_env(
+        &fixture,
+        lease_id,
+        Some(&lease),
+        nats_port,
+        NatsMode::Absent,
+        PostgresMode::Foreign,
+        None,
+        ExecutionPath::SelectedBinary,
+    );
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("xtask-capture").exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("PostgreSQL protocol identity"));
+}
+
+#[test]
+fn malformed_postgres_protocol_identity_is_rejected() {
+    let fixture = tempfile::tempdir().expect("create fixture directory");
+    let lease_id = "48484848-4848-4848-8484-848484848484";
+    let nats_port = free_nats_port();
+    let lease = lease_json(&repo_root(), lease_id, 45559, nats_port);
+    let output = run_checkout_env(
+        &fixture,
+        lease_id,
+        Some(&lease),
+        nats_port,
+        NatsMode::Absent,
+        PostgresMode::Malformed,
+        None,
+        ExecutionPath::SelectedBinary,
+    );
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("xtask-capture").exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("PostgreSQL protocol identity"));
 }
 
 #[test]
@@ -409,6 +496,7 @@ fn malformed_duplicate_ports_are_rejected() {
         Some(&duplicate),
         nats_port,
         NatsMode::Absent,
+        PostgresMode::Ready,
         None,
         ExecutionPath::SelectedBinary,
     );
@@ -432,6 +520,7 @@ fn malformed_port_value_is_rejected() {
         Some(&malformed),
         nats_port,
         NatsMode::Absent,
+        PostgresMode::Ready,
         None,
         ExecutionPath::SelectedBinary,
     );
@@ -459,6 +548,7 @@ fn wrong_operation_and_checkout_are_rejected() {
             Some(&lease),
             44308,
             NatsMode::Absent,
+            PostgresMode::Ready,
             None,
             ExecutionPath::SelectedBinary,
         );
@@ -468,7 +558,93 @@ fn wrong_operation_and_checkout_are_rejected() {
 }
 
 #[test]
-fn cancellation_during_final_validation_is_rejected() {
+fn malformed_state_project_and_lease_identities_are_rejected() {
+    let cases: [(&str, fn(&mut serde_json::Value)); 3] = [
+        ("state", |value: &mut serde_json::Value| {
+            value["payload"]["value"]["state"]["phase"] = json!("not-a-phase");
+        }),
+        ("project", |value: &mut serde_json::Value| {
+            value["payload"]["value"]["project_id"] = json!("foreign-project");
+        }),
+        ("lease", |value: &mut serde_json::Value| {
+            value["payload"]["value"]["lease"]["id"] =
+                json!("99999999-9999-4999-8999-999999999999");
+        }),
+    ];
+    for (index, (identity, mutate)) in cases.into_iter().enumerate() {
+        let fixture = tempfile::tempdir().expect("create fixture directory");
+        let lease_id = format!("9{index}999999-9999-4999-8999-99999999999{index}");
+        let lease = mutate_lease(&lease_json(&repo_root(), &lease_id, 45559, 44308), mutate);
+        let output = run_checkout_env(
+            &fixture,
+            &lease_id,
+            Some(&lease),
+            44308,
+            NatsMode::Absent,
+            PostgresMode::Ready,
+            None,
+            ExecutionPath::SelectedBinary,
+        );
+        assert!(
+            !output.status.success(),
+            "malformed {identity} identity passed"
+        );
+        assert!(!fixture.path().join("xtask-capture").exists());
+    }
+}
+
+#[test]
+fn malformed_agentctl_response_is_rejected() {
+    let fixture = tempfile::tempdir().expect("create fixture directory");
+    let lease_id = "90909090-9090-4990-8990-909090909090";
+    let output = run_checkout_env(
+        &fixture,
+        lease_id,
+        Some("not-json"),
+        44308,
+        NatsMode::Absent,
+        PostgresMode::Absent,
+        None,
+        ExecutionPath::SelectedBinary,
+    );
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("xtask-capture").exists());
+}
+
+#[test]
+fn cancellation_during_final_validation_is_rejected_before_launch() {
+    let fixture = tempfile::tempdir().expect("create fixture directory");
+    let lease_id = "79797979-7979-4797-8797-979797979797";
+    let nats_port = free_nats_port();
+    let active = lease_json(&repo_root(), lease_id, 45559, nats_port);
+    let cancelled = lease_json_with_state(
+        &repo_root(),
+        lease_id,
+        45559,
+        nats_port,
+        "cancelled",
+        true,
+        "released",
+        "inactive",
+        "dead",
+    );
+    let output = run_checkout_env(
+        &fixture,
+        lease_id,
+        Some(&active),
+        nats_port,
+        NatsMode::Ready,
+        PostgresMode::Ready,
+        Some(&cancelled),
+        ExecutionPath::SelectedBinary,
+    );
+    assert!(!output.status.success());
+    assert!(!fixture.path().join("xtask-capture").exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("changed before execution"));
+}
+
+#[test]
+fn cancellation_between_final_identity_read_and_launch_cannot_pass() {
     let fixture = tempfile::tempdir().expect("create fixture directory");
     let lease_id = "77777777-7777-4777-8777-777777777777";
     let nats_port = free_nats_port();
@@ -490,12 +666,13 @@ fn cancellation_during_final_validation_is_rejected() {
         Some(&active),
         nats_port,
         NatsMode::Ready,
+        PostgresMode::Ready,
         Some(&cancelled),
         ExecutionPath::SelectedBinary,
     );
     assert!(!output.status.success());
-    assert!(!fixture.path().join("xtask-capture").exists());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("job or lease coordinates changed"));
+    assert!(fixture.path().join("xtask-capture").exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("changed during execution"));
 }
 
 #[test]
@@ -510,10 +687,159 @@ fn fallback_execution_path_revalidates_before_launch() {
         Some(&lease),
         nats_port,
         NatsMode::Ready,
+        PostgresMode::Ready,
         None,
         ExecutionPath::NixFallback,
     );
     assert!(output.status.success(), "fallback failed: {output:?}");
     assert!(fixture.path().join("nix-capture").exists());
-    assert_three_identity_reads(&fixture);
+    let captured: HashMap<_, _> = fs::read_to_string(fixture.path().join("xtask-capture"))
+        .expect("read fallback xtask environment")
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect();
+    assert!(!captured.contains_key("SINEX_PRE_PUSH_AGENTCTL_LEASE_ID"));
+    assert!(!captured.contains_key("SINEX_PRE_PUSH_AGENTCTL_PG_RUN_DIR"));
+    assert_five_identity_reads(&fixture);
+}
+
+#[derive(Clone, Copy)]
+enum SelectorRoute {
+    ActiveBinary,
+    PathBinary,
+    CachedBinary,
+    CheckoutWrapper,
+}
+
+fn run_selector_route(route: SelectorRoute) -> String {
+    let fixture = tempfile::tempdir().expect("create selector fixture directory");
+    let active = fixture.path().join("active");
+    let path = fixture.path().join("path");
+    let cache = fixture.path().join("cache");
+    let wrapper = fixture.path().join(".direnv/bin");
+    for directory in [&active, &path, &cache, &wrapper] {
+        fs::create_dir_all(directory).expect("create selector directory");
+    }
+    for candidate in [
+        active.join("xtask"),
+        path.join("xtask"),
+        cache.join("xtask"),
+        wrapper.join("xtask"),
+    ] {
+        executable(&candidate, "#!/usr/bin/env bash\nexit 0\n");
+    }
+    let capture = fixture.path().join("selector-capture");
+    let route_name = match route {
+        SelectorRoute::ActiveBinary => "active",
+        SelectorRoute::PathBinary => "path",
+        SelectorRoute::CachedBinary => "cache",
+        SelectorRoute::CheckoutWrapper => "wrapper",
+    };
+    let command = r#"
+source "$1"
+REPO_ROOT="$2"
+ROUTE="$3"
+CAPTURE="$4"
+PATH="$5:$PATH"
+PATH_CANDIDATE="$6"
+CACHE_CANDIDATE="$7"
+WRAPPER_CANDIDATE="$8"
+_sinex_pre_push_branch_changes_xtask_build_inputs() { return 1; }
+_sinex_pre_push_xtask_binary_is_usable_for_branch() { return 0; }
+_sinex_pre_push_xtask_env_matches_checkout() { [[ "$ROUTE" == active ]]; }
+_sinex_pre_push_checkout_xtask_binary() { return 1; }
+_sinex_pre_push_path_xtask_binary() { [[ "$ROUTE" == path ]] && printf '%s\n' "$PATH_CANDIDATE"; }
+_sinex_pre_push_cached_xtask_binary() { [[ "$ROUTE" == cache ]] && printf '%s\n' "$CACHE_CANDIDATE"; }
+_sinex_pre_push_checkout_xtask_wrapper() { [[ "$ROUTE" == wrapper ]] && printf '%s\n' "$WRAPPER_CANDIDATE"; }
+_sinex_pre_push_selected_xtask() { printf 'selected|%s|%s\n' "$1" "$2" > "$CAPTURE"; }
+_sinex_pre_push_checkout_env() { printf 'wrapper|%s\n' "$1" > "$CAPTURE"; }
+_sinex_pre_push_run_xtask check
+"#;
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(command)
+        .arg("selector-test")
+        .arg(repo_root())
+        .arg(route_name)
+        .arg(&capture)
+        .arg(&active)
+        .arg(&path.join("xtask"))
+        .arg(&cache.join("xtask"))
+        .arg(&wrapper.join("xtask"))
+        .env(
+            "SINEX_DEV_ROOT",
+            if matches!(route, SelectorRoute::ActiveBinary) {
+                repo_root()
+            } else {
+                PathBuf::from("/foreign/checkout")
+            },
+        )
+        .output()
+        .expect("run selector route");
+    assert!(
+        output.status.success(),
+        "selector route failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::read_to_string(capture).expect("read selector capture")
+}
+
+#[test]
+fn selector_routes_choose_each_independent_candidate() {
+    let active = run_selector_route(SelectorRoute::ActiveBinary);
+    assert!(
+        active.starts_with("selected|active devshell xtask|"),
+        "{active}"
+    );
+    assert!(active.ends_with("/active/xtask\n"), "{active}");
+
+    let path = run_selector_route(SelectorRoute::PathBinary);
+    assert!(
+        path.starts_with("selected|read-only PATH xtask fallback|"),
+        "{path}"
+    );
+    assert!(path.ends_with("/path/xtask\n"), "{path}");
+
+    let cache = run_selector_route(SelectorRoute::CachedBinary);
+    assert!(
+        cache.starts_with("selected|read-only cached xtask fallback|"),
+        "{cache}"
+    );
+    assert!(cache.ends_with("/cache/xtask\n"), "{cache}");
+
+    let wrapper = run_selector_route(SelectorRoute::CheckoutWrapper);
+    assert!(wrapper.starts_with("wrapper|"), "{wrapper}");
+    assert!(wrapper.ends_with("/.direnv/bin/xtask\n"), "{wrapper}");
+}
+
+#[test]
+fn dev_services_cache_identity_excludes_allocated_ports() {
+    let descriptor: toml::Value =
+        toml::from_str(include_str!("../../../.agentctl/project.toml")).expect("parse descriptor");
+    let dev_services = &descriptor["operations"]["dev_services"];
+    assert_eq!(dev_services["cache"].as_str(), Some("tree+environment"));
+    assert_eq!(
+        descriptor["workspace"]["provider"].as_str(),
+        Some("git-worktree")
+    );
+    assert_eq!(
+        descriptor["workspace"]["verification_operations"]
+            .as_array()
+            .expect("verification operations")
+            .iter()
+            .map(|value| value.as_str().expect("operation name"))
+            .collect::<Vec<_>>(),
+        vec!["check_default"]
+    );
+    let inherited = descriptor["environment"]["inherit"]
+        .as_array()
+        .expect("inherited environment");
+    for allocated in ["SINEX_DEV_POSTGRES_PORT", "SINEX_DEV_NATS_PORT"] {
+        assert!(
+            !inherited
+                .iter()
+                .any(|value| value.as_str() == Some(allocated)),
+            "allocated service output {allocated} must not enter cache identity"
+        );
+    }
 }
