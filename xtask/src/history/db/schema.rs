@@ -161,6 +161,20 @@ impl HistoryDb {
                 launch_mode TEXT DEFAULT 'foreground'
             );
 
+            CREATE TABLE IF NOT EXISTS invocation_agentctl_provenance (
+                invocation_id INTEGER PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
+                job_id TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                checkout_id TEXT NOT NULL,
+                checkout_head TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_invocation_agentctl_job
+                ON invocation_agentctl_provenance(job_id);
+            CREATE INDEX IF NOT EXISTS idx_invocation_agentctl_correlation
+                ON invocation_agentctl_provenance(correlation_id);
+
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -767,6 +781,7 @@ impl HistoryDb {
     }
 
     pub(super) fn ensure_compat_schema(&self) -> Result<()> {
+        self.ensure_agentctl_provenance_schema()?;
         self.ensure_proof_schema()?;
         self.ensure_impact_schema()?;
         self.ensure_column_exists("coverage_regions", "content_hash", "TEXT")?;
@@ -850,6 +865,25 @@ impl HistoryDb {
         self.ensure_column_exists("stage_timings", "io_full_stall_us", "INTEGER")?;
         self.ensure_column_exists("stage_timings", "cpu_some_stall_us", "INTEGER")?;
         self.ensure_column_exists("stage_timings", "memory_some_stall_us", "INTEGER")?;
+        Ok(())
+    }
+
+    fn ensure_agentctl_provenance_schema(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS invocation_agentctl_provenance (
+                invocation_id INTEGER PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
+                job_id TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                checkout_id TEXT NOT NULL,
+                checkout_head TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_invocation_agentctl_job
+                ON invocation_agentctl_provenance(job_id);
+             CREATE INDEX IF NOT EXISTS idx_invocation_agentctl_correlation
+                ON invocation_agentctl_provenance(correlation_id);",
+        )?;
         Ok(())
     }
 }

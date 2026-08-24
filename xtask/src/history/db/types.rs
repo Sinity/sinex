@@ -75,6 +75,21 @@ pub struct Invocation {
     pub live_stage: Option<String>,
 }
 
+/// Generic AgentCTL envelope attached to one project-owned invocation.
+///
+/// The optional row is only a correlation seam. Stage, test, proof, and
+/// semantic outcome authority remain in the surrounding xtask history tables.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentctlProvenance {
+    pub invocation_id: i64,
+    pub job_id: String,
+    pub correlation_id: String,
+    pub project_id: String,
+    pub operation: String,
+    pub checkout_id: String,
+    pub checkout_head: String,
+}
+
 /// A recorded drift guard bypass event (#1565).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriftGuardBypass {

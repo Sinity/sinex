@@ -442,7 +442,7 @@ Deliberate: fresh-rebuild campaign, bead sinex-poma (P0)</code></pre></template>
   <div class="tablewrap"><table>
     <thead><tr><th class="nosort">Module</th><th class="nosort">Owns</th></tr></thead>
     <tbody>
-      <tr><td><code>default.nix</code> + <code>lib/</code></td><td>service composition; per-automaton and per-source <code>sinexd</code> systemd instances (<code>lib/automata.nix</code>, <code>lib/source-catalog.nix</code>)</td></tr>
+      <tr><td><code>default.nix</code> + <code>lib/</code></td><td>service composition for the shared <code>sinexd</code> runtime and product-owned work controls (<code>lib/automata.nix</code>, <code>lib/source-catalog.nix</code>); source bindings are not independent systemd workloads</td></tr>
       <tr><td><code>database.nix</code></td><td>PostgreSQL (TimescaleDB + pgvector) provisioning, schema-apply ordering</td></tr>
       <tr><td><code>nats.nix</code></td><td>canonical JetStream topology: streams, lanes, consumers, retention</td></tr>
       <tr><td><code>sources.nix</code> + <code>source-bindings.nix</code></td><td>source deployment glue incl. scheduled static imports; bindings as Nix configuration</td></tr>

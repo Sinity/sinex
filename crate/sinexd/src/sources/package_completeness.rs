@@ -192,6 +192,10 @@ pub struct RuntimeBindingRef {
     pub adapter: String,
     pub output_event_type: String,
     pub privacy_context: Value,
+    /// Internal authoring input for source-skeleton generation. The external
+    /// package report exposes only the derived product `work_budget`.
+    #[serde(skip)]
+    pub(crate) resource_profile: Value,
     pub capabilities: Vec<String>,
     pub work_budget: Value,
     pub material_lifecycle: Value,
@@ -747,12 +751,7 @@ fn finalize_mode(
         binding.is_none() && mode_state == PackageModeState::Accepted,
         binding.map_or_else(
             || "no binding; WorkBudgetSpec cannot be derived".to_string(),
-            |binding| {
-                format!(
-                    "work budget {}",
-                    to_json_value(binding.work_budget())
-                )
-            },
+            |binding| format!("work budget {}", to_json_value(binding.work_budget())),
         ),
     );
     diagnostics.require(
@@ -1260,6 +1259,7 @@ fn runtime_binding_ref(binding: &SourceRuntimeBinding) -> RuntimeBindingRef {
         adapter: binding.adapter.to_string(),
         output_event_type: binding.output_event_type.to_string(),
         privacy_context: to_json_value(binding.privacy_context),
+        resource_profile: to_json_value(binding.resource_profile),
         capabilities: binding
             .capabilities
             .iter()

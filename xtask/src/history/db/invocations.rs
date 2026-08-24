@@ -15,12 +15,13 @@ impl HistoryDb {
         let host = crate::config::config().hostname.clone();
         let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
+        let agentctl_provenance = AgentctlProvenance::from_environment()?;
 
         // Transition from synthetic to real: clear the marker and insert the
         // invocation row atomically so a crash between the two cannot leave the
         // DB in a state where the synthetic marker is gone but no real row exists.
         let is_synthetic = self.is_synthetic;
-        with_sqlite_lock_retry("start invocation history row", || {
+        let invocation_id = with_sqlite_lock_retry("start invocation history row", || {
             self.conn.execute("BEGIN", [])?;
             if is_synthetic {
                 match self
@@ -44,17 +45,25 @@ impl HistoryDb {
             );
             match result {
                 Ok(_) => {
+                    let invocation_id = self.conn.last_insert_rowid();
+                    if let Some(provenance) = &agentctl_provenance {
+                        if let Err(err) = self.insert_agentctl_provenance(invocation_id, provenance)
+                        {
+                            let _ = self.conn.execute("ROLLBACK", []);
+                            return Err(err).wrap_err("failed to attach AgentCTL provenance");
+                        }
+                    }
                     self.conn.execute("COMMIT", [])?;
+                    Ok(invocation_id)
                 }
                 Err(err) => {
                     let _ = self.conn.execute("ROLLBACK", []);
-                    return Err(err.into());
+                    Err(err.into())
                 }
             }
-            Ok(())
         })?;
 
-        Ok(self.conn.last_insert_rowid())
+        Ok(invocation_id)
     }
 
     /// Finish an invocation with the given status and exit code.

@@ -33,6 +33,7 @@ mod integrity;
 mod invocations;
 mod metrics;
 mod prediction;
+mod provenance;
 mod rows;
 mod sandbox_meta;
 mod schema;
@@ -62,11 +63,11 @@ use schema::{
 };
 use sinex_primitives::temporal::Timestamp;
 pub use types::{
-    CommandStats, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession,
-    ImpactAuditRunRow, Invocation, InvocationFull, InvocationProgress, InvocationStatus,
-    InvocationTimelineEntry, InvocationWithFingerprint, ProofEvidence, ResourceUsage,
-    StagePressure, StageStats, StageTiming, StageTrendPoint, TestProofUnit, TraceEventRow,
-    WorkingSession, WrapperEventRow,
+    AgentctlProvenance, CommandStats, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow,
+    FixSession, ImpactAuditRunRow, Invocation, InvocationFull, InvocationProgress,
+    InvocationStatus, InvocationTimelineEntry, InvocationWithFingerprint, ProofEvidence,
+    ResourceUsage, StagePressure, StageStats, StageTiming, StageTrendPoint, TestProofUnit,
+    TraceEventRow, WorkingSession, WrapperEventRow,
 };
 
 use std::path::Path;

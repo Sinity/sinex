@@ -4,8 +4,8 @@
 //! `SourceRuntimeBinding`, populated at link time by the source registrations
 //! this binary hosts) is the authoring source of truth. This module serializes
 //! that inventory into a committed JSON artifact that the NixOS deployment layer
-//! consumes via `builtins.fromJSON` to derive per-source `services.sinex.sources`
-//! defaults and systemd unit limits — so deployment shape is generated from the
+//! consumes via `builtins.fromJSON` to derive source-binding defaults and
+//! product work budgets — so deployment shape is generated from the
 //! Rust catalog rather than hand-maintained twice.
 //!
 //! `xtask` cannot enumerate this inventory (it does not link the source
@@ -59,8 +59,8 @@ impl From<&SourceRuntimeBinding> for CatalogBinding {
     fn from(binding: &SourceRuntimeBinding) -> Self {
         Self {
             source_id: binding.source_id.to_string(),
-            runner_pack: binding.runner_pack.to_string(),
-            runtime_shape: binding.runtime_shape.to_string(),
+            runner_pack: serialized_variant(binding.runner_pack),
+            runtime_shape: serialized_variant(binding.runtime_shape),
             proposed: binding.proposed,
         }
     }
@@ -72,7 +72,14 @@ struct SourceCatalog<'a> {
     entries: Vec<CatalogEntry<'a>>,
 }
 
-fn skip_binding_projection(bindings: &[&SourceRuntimeBinding]) -> bool {
+fn serialized_variant(value: impl Serialize) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .expect("source binding enums serialize as strings")
+}
+
+fn skip_binding_projection(bindings: &[CatalogBinding]) -> bool {
     bindings.len() <= 1
 }
 
