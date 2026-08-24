@@ -335,16 +335,18 @@ where
 #[cfg(feature = "messaging")]
 pub(crate) async fn recv_invalidation_message(
     sub: &mut Option<async_nats::jetstream::consumer::push::Messages>,
-) -> Option<async_nats::jetstream::Message> {
+) -> RuntimeResult<async_nats::jetstream::Message> {
     use futures::StreamExt;
     match sub.as_mut() {
         Some(s) => match s.next().await {
-            Some(Ok(msg)) => Some(msg),
-            Some(Err(e)) => {
-                warn!("Error receiving invalidation message: {e}");
-                None
-            }
-            None => None,
+            Some(Ok(msg)) => Ok(msg),
+            Some(Err(error)) => Err(SinexError::processing(
+                "durable invalidation consumer receive failed; restarting bridge for redelivery",
+            )
+            .with_source(error)),
+            None => Err(SinexError::lifecycle(
+                "durable invalidation consumer ended; restarting bridge for redelivery",
+            )),
         },
         None => std::future::pending().await,
     }
@@ -360,7 +362,13 @@ pub(crate) async fn recv_invalidation(
     sub: &mut Option<async_nats::jetstream::consumer::push::Messages>,
     fail_point_after_ack: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Option<Vec<u8>> {
-    let msg = recv_invalidation_message(sub).await?;
+    let msg = match recv_invalidation_message(sub).await {
+        Ok(message) => message,
+        Err(error) => {
+            warn!(error = %error, "Invalidation consumer stopped");
+            return None;
+        }
+    };
     let payload = msg.payload.to_vec();
     if let Err(e) = msg.ack().await {
         warn!("Failed to ack invalidation message: {e}");

@@ -315,7 +315,7 @@ impl RuntimeRunner {
             enum LoopAction {
                 Event(Option<super::RunnerConfirmedEvent>),
                 FlushTick,
-                Invalidation(Option<async_nats::jetstream::Message>),
+                Invalidation(RuntimeResult<async_nats::jetstream::Message>),
             }
 
             let action = if drain_controller.is_requested() {
@@ -341,7 +341,7 @@ impl RuntimeRunner {
                         );
                     }
                 }
-                LoopAction::Invalidation(Some(message)) => {
+                LoopAction::Invalidation(Ok(message)) => {
                     let payload = message.payload.to_vec();
                     let processed = self.module.process_invalidation_message(&payload).await?;
                     if processed.is_none() {
@@ -355,9 +355,7 @@ impl RuntimeRunner {
                         ))
                     })?;
                 }
-                LoopAction::Invalidation(None) => {
-                    invalidation_sub = None;
-                }
+                LoopAction::Invalidation(Err(error)) => return Err(error),
                 LoopAction::Event(next_event) => {
                     let Some(first) = next_event else {
                         if let Some(error) = consumer_failure.lock().await.take() {
