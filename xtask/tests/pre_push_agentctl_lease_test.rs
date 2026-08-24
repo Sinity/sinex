@@ -188,7 +188,7 @@ fn active_lease_propagates_exact_ports_and_postgres_socket() {
 fn stale_lease_is_rejected_before_xtask_runs() {
     let fixture = tempfile::tempdir().expect("create fixture directory");
     let lease_id = "22222222-2222-4222-8222-222222222222";
-    let output = run_checkout_env(fixture.as_ref(), lease_id, None, 44308, false);
+    let output = run_checkout_env(&fixture, lease_id, None, 44308, false);
     assert!(
         !output.status.success(),
         "stale lease unexpectedly passed: {output:?}"
