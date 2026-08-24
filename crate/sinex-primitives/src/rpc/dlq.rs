@@ -53,6 +53,7 @@ pub struct DlqPressureSignal {
 /// Response: dlq.list
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DlqListResponse {
+    /// Messages retained in the raw-ingest NATS DLQ stream.
     pub total_messages: u64,
     pub total_bytes: u64,
     pub first_seq: u64,
@@ -72,6 +73,63 @@ pub struct DlqListResponse {
     pub recommended_action: String,
     /// Human-readable reason for the recommended action or its absence.
     pub action_reason: String,
+    /// Unresolved durable DLQ evidence in `sinex_schemas.dlq_events`.
+    #[serde(default)]
+    pub persistent_pending_messages: u64,
+    /// Total pending failures across the NATS stream and durable DLQ table.
+    #[serde(default)]
+    pub aggregate_pending_messages: u64,
+    /// Aggregate health across both DLQ authorities. Stream pressure/action
+    /// fields above remain scoped to the NATS stream.
+    #[serde(default = "default_aggregate_pressure_level")]
+    pub aggregate_pressure_level: RuntimePressureLevel,
+    /// Operator action for the combined stream and persistent authorities.
+    #[serde(default = "default_aggregate_recommended_action")]
+    pub aggregate_recommended_action: String,
+    /// Reason for the combined-authority action.
+    #[serde(default = "default_aggregate_action_reason")]
+    pub aggregate_action_reason: String,
+}
+
+fn default_aggregate_pressure_level() -> RuntimePressureLevel {
+    RuntimePressureLevel::Nominal
+}
+
+fn default_aggregate_recommended_action() -> String {
+    "none".to_string()
+}
+
+fn default_aggregate_action_reason() -> String {
+    "no pending DLQ failures".to_string()
+}
+
+impl Default for DlqListResponse {
+    fn default() -> Self {
+        Self {
+            total_messages: 0,
+            total_bytes: 0,
+            first_seq: 0,
+            last_seq: 0,
+            pressure_level: RuntimePressureLevel::Nominal,
+            resource_pressure: DlqPressureSignal {
+                pressure_level: RuntimePressureLevel::Nominal,
+                runtime_action: RuntimePressureAction::Admit,
+                pending_messages: 0,
+                pending_bytes: 0,
+                retry_batch_size: 0,
+                recommended_action: "none".to_string(),
+                reason: "raw-ingest DLQ is empty".to_string(),
+            },
+            pending_sequence_span: 0,
+            recommended_action: "none".to_string(),
+            action_reason: "raw-ingest DLQ is empty".to_string(),
+            persistent_pending_messages: 0,
+            aggregate_pending_messages: 0,
+            aggregate_pressure_level: RuntimePressureLevel::Nominal,
+            aggregate_recommended_action: default_aggregate_recommended_action(),
+            aggregate_action_reason: default_aggregate_action_reason(),
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────

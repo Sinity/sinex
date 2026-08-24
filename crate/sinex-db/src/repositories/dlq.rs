@@ -21,6 +21,22 @@ impl<'a> Repository<'a> for DlqEventRepository<'a> {
 }
 
 impl DlqEventRepository<'_> {
+    /// Count unresolved durable DLQ evidence for operator health surfaces.
+    pub async fn pending_count(&self) -> DbResult<u64> {
+        let row = sqlx::query!(
+            r#"
+            SELECT COUNT(*)::bigint AS "count!"
+            FROM sinex_schemas.dlq_events
+            WHERE resolved_at IS NULL
+            "#,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|error| db_error(error, "count pending durable DLQ evidence"))?;
+
+        Ok(row.count as u64)
+    }
+
     /// Insert the witness that must exist before a raw message is settled.
     pub async fn insert_failure_evidence(
         &self,

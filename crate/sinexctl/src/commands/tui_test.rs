@@ -778,6 +778,11 @@ async fn tui_surfaces_multiple_panel_failures_and_stale_titles() -> TestResult<(
         pending_sequence_span: 11,
         recommended_action: "ops dlq triage --tail 20".to_string(),
         action_reason: "pressure requires paced triage".to_string(),
+        persistent_pending_messages: 0,
+        aggregate_pending_messages: 11,
+        aggregate_pressure_level: RuntimePressureLevel::Critical,
+        aggregate_recommended_action: "ops dlq triage --tail 20".to_string(),
+        aggregate_action_reason: "pressure requires paced triage".to_string(),
     };
     app.dlq_stats = Some(dlq);
     let mut terminal = Terminal::new(TestBackend::new(96, 24))?;
@@ -786,5 +791,40 @@ async fn tui_surfaces_multiple_panel_failures_and_stale_titles() -> TestResult<(
     assert!(rendered.contains("Pressure: critical"));
     assert!(rendered.contains("Recommended action: ops dlq triage --tail 20"));
     assert!(rendered.contains("Action reason: pressure requires paced triage"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn tui_dashboard_marks_persistent_only_dlq_as_non_green() -> TestResult<()> {
+    let mut app = App::new(
+        GatewayClient::new(ClientConfig {
+            token: Some("fixture-token".to_string()),
+            ..ClientConfig::default()
+        })?,
+        Tab::Dashboard,
+        0,
+    );
+    app.dlq_stats = Some(DlqListResponse {
+        persistent_pending_messages: 2,
+        aggregate_pending_messages: 2,
+        aggregate_pressure_level: RuntimePressureLevel::Warning,
+        aggregate_recommended_action: "ops dlq list".to_string(),
+        aggregate_action_reason: "inspect 2 unresolved durable failure records".to_string(),
+        ..Default::default()
+    });
+
+    let mut terminal = Terminal::new(TestBackend::new(96, 24))?;
+    terminal.draw(|f| render_dashboard(f, f.area(), &app))?;
+    let rendered = buffer_to_text(terminal.backend().buffer());
+
+    assert!(rendered.contains("DLQ Messages: 2 ⚠"));
+    assert!(!rendered.contains("DLQ Messages: 0 ✓"));
+
+    terminal.draw(|f| render_dlq(f, f.area(), &app))?;
+    let panel = buffer_to_text(terminal.backend().buffer());
+    assert!(panel.contains("Persistent Messages: 2"));
+    assert!(panel.contains("Aggregate Pressure: warning"));
+    assert!(panel.contains("Aggregate Action: ops dlq list"));
+    assert!(panel.contains("Aggregate Action reason: inspect 2 unresolved"));
     Ok(())
 }

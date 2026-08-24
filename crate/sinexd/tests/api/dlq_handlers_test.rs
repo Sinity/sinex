@@ -12,12 +12,12 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::Operation as DbOperation;
 use sinex_primitives::Id;
-use sinex_primitives::Timestamp;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::{ErrorClass, SinexError};
 use sinex_primitives::rpc::dlq::{
     DlqListRequest, DlqPeekRequest, DlqPurgeRequest, DlqRequeueRequest,
 };
+use sinex_primitives::{Timestamp, Uuid};
 use sinexd::api::handlers::dlq::{
     handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
     recover_stale_dlq_requeue_operations,
@@ -233,6 +233,59 @@ async fn dlq_list_returns_empty_for_new_stream(ctx: TestContext) -> TestResult<(
     assert_eq!(response.pending_sequence_span, 0);
     assert_eq!(response.recommended_action, "none");
     assert_eq!(response.action_reason, "raw-ingest DLQ is empty");
+    assert_eq!(response.persistent_pending_messages, 0);
+    assert_eq!(response.aggregate_pending_messages, 0);
+    assert_eq!(
+        response.aggregate_pressure_level,
+        sinex_primitives::RuntimePressureLevel::Nominal
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_list_marks_persistent_only_failures_as_pending(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
+    harness
+        .services
+        .pool()
+        .dlq_events()
+        .insert_failure_evidence(
+            Uuid::now_v7(),
+            "fixture-automaton",
+            "fixture-source",
+            "fixture-event",
+            "permanent",
+            "fixture persistent failure",
+            json!({"fixture": true}),
+            json!({"test": true}),
+            0,
+        )
+        .await?;
+
+    let response = handle_dlq_list(&harness.services, DlqListRequest {}).await?;
+
+    assert_eq!(response.total_messages, 0);
+    assert_eq!(response.persistent_pending_messages, 1);
+    assert_eq!(response.aggregate_pending_messages, 1);
+    assert_eq!(
+        response.aggregate_pressure_level,
+        sinex_primitives::RuntimePressureLevel::Warning
+    );
+    assert_eq!(
+        response.pressure_level,
+        sinex_primitives::RuntimePressureLevel::Nominal
+    );
+    assert_eq!(response.recommended_action, "none");
+    assert_eq!(response.aggregate_recommended_action, "ops dlq list");
+    assert!(response.aggregate_action_reason.contains("1 unresolved"));
 
     Ok(())
 }
@@ -266,6 +319,12 @@ async fn dlq_list_counts_messages_correctly(ctx: TestContext) -> TestResult<()> 
     let response = handle_dlq_list(&harness.services, DlqListRequest {}).await?;
 
     assert_eq!(response.total_messages, 3);
+    assert_eq!(response.persistent_pending_messages, 0);
+    assert_eq!(response.aggregate_pending_messages, 3);
+    assert_eq!(
+        response.aggregate_pressure_level,
+        sinex_primitives::RuntimePressureLevel::Warning
+    );
     assert!(response.total_bytes > 0);
     assert_eq!(
         response.pressure_level,

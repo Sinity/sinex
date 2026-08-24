@@ -1192,7 +1192,15 @@ fn format_dlq_purge_table(response: &sinex_primitives::rpc::dlq::DlqPurgeRespons
 fn format_dlq_stats_table(stats: &DlqListResponse) -> String {
     let mut output = String::new();
     output.push_str("DLQ Statistics:\n");
-    output.push_str(&format!("  Total messages: {}\n", stats.total_messages));
+    output.push_str(&format!(
+        "  Aggregate pending messages: {}\n",
+        stats.aggregate_pending_messages
+    ));
+    output.push_str(&format!("  NATS messages: {}\n", stats.total_messages));
+    output.push_str(&format!(
+        "  Persistent messages: {}\n",
+        stats.persistent_pending_messages
+    ));
     output.push_str(&format!(
         "  Total bytes: {}\n",
         format_bytes(stats.total_bytes)
@@ -1217,6 +1225,18 @@ fn format_dlq_stats_table(stats: &DlqListResponse) -> String {
         stats.recommended_action
     ));
     output.push_str(&format!("  Action reason: {}\n", stats.action_reason));
+    output.push_str(&format!(
+        "  Aggregate pressure: {}\n",
+        stats.aggregate_pressure_level
+    ));
+    output.push_str(&format!(
+        "  Aggregate recommended action: {}\n",
+        stats.aggregate_recommended_action
+    ));
+    output.push_str(&format!(
+        "  Aggregate action reason: {}\n",
+        stats.aggregate_action_reason
+    ));
     output
 }
 

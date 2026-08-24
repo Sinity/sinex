@@ -99,6 +99,13 @@ fn dlq_operator_action(total_messages: u64) -> (&'static str, &'static str) {
     }
 }
 
+fn dlq_aggregate_pressure_level(
+    total_messages: u64,
+    retry_batch_size: usize,
+) -> RuntimePressureLevel {
+    dlq_pressure_level(total_messages, retry_batch_size)
+}
+
 fn dlq_pressure_signal(
     total_messages: u64,
     total_bytes: u64,
@@ -270,6 +277,30 @@ pub async fn handle_dlq_list(
         .get_stats()
         .await
         .map_err(|error| SinexError::service("Failed to get DLQ statistics").with_source(error))?;
+    let persistent_pending_messages =
+        services
+            .pool()
+            .dlq_events()
+            .pending_count()
+            .await
+            .map_err(|error| {
+                SinexError::service("Failed to get persistent DLQ statistics").with_source(error)
+            })?;
+    let aggregate_pending_messages = stats
+        .total_messages
+        .saturating_add(persistent_pending_messages);
+    let (aggregate_recommended_action, aggregate_action_reason) = if persistent_pending_messages > 0
+    {
+        (
+            "ops dlq list".to_string(),
+            format!(
+                "inspect {persistent_pending_messages} unresolved durable failure records; NATS cleanup alone cannot clear them"
+            ),
+        )
+    } else {
+        let (action, reason) = dlq_operator_action(stats.total_messages);
+        (action.to_string(), reason.to_string())
+    };
 
     let pressure = dlq_pressure_signal(stats.total_messages, stats.total_bytes, retry_batch_size);
     let response = DlqListResponse {
@@ -286,6 +317,14 @@ pub async fn handle_dlq_list(
         ),
         recommended_action: pressure.recommended_action,
         action_reason: pressure.reason,
+        persistent_pending_messages,
+        aggregate_pending_messages,
+        aggregate_pressure_level: dlq_aggregate_pressure_level(
+            aggregate_pending_messages,
+            retry_batch_size,
+        ),
+        aggregate_recommended_action,
+        aggregate_action_reason,
     };
 
     Ok(response)

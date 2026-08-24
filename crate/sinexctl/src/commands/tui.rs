@@ -800,7 +800,10 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .filter(|module| module_liveness(module, now).is_live())
         .count();
     let total_modules = app.modules.len();
-    let dlq_total = app.dlq_stats.as_ref().map_or(0, |s| s.total_messages);
+    let dlq_total = app
+        .dlq_stats
+        .as_ref()
+        .map_or(0, |s| s.aggregate_pending_messages);
     let events_count = app.recent_events.len();
 
     let overview_items = vec![
@@ -817,7 +820,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         } else if dlq_total > 0 {
             format!("DLQ Messages: {dlq_total} ⚠")
         } else {
-            "DLQ Messages: 0 ✓ (NATS only; persistent DLQ not exposed)".to_string()
+            "DLQ Messages: 0 ✓".to_string()
         }),
     ];
 
@@ -2280,15 +2283,35 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 
 fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
     let (block_title, items) = match &app.dlq_stats {
-        Some(stats) if stats.total_messages > 0 => {
+        Some(stats) if stats.aggregate_pending_messages > 0 => {
             let title = format!(
                 "{} ({} messages) ⚠",
                 app.panel_title("Raw Ingest DLQ", RefreshPanel::Dlq),
-                stats.total_messages
+                stats.aggregate_pending_messages
             );
             let items = vec![
-                ListItem::new(format!("Total Messages: {}", stats.total_messages))
-                    .style(Style::default().fg(Color::Yellow)),
+                ListItem::new(format!(
+                    "Total Messages: {}",
+                    stats.aggregate_pending_messages
+                ))
+                .style(Style::default().fg(Color::Yellow)),
+                ListItem::new(format!("NATS Messages: {}", stats.total_messages)),
+                ListItem::new(format!(
+                    "Persistent Messages: {}",
+                    stats.persistent_pending_messages
+                )),
+                ListItem::new(format!(
+                    "Aggregate Pressure: {}",
+                    stats.aggregate_pressure_level
+                )),
+                ListItem::new(format!(
+                    "Aggregate Action: {}",
+                    stats.aggregate_recommended_action
+                )),
+                ListItem::new(format!(
+                    "Aggregate Action reason: {}",
+                    stats.aggregate_action_reason
+                )),
                 ListItem::new(format!("Total Size: {}", format_bytes(stats.total_bytes))),
                 ListItem::new(format!("First Sequence: {}", stats.first_seq)),
                 ListItem::new(format!("Last Sequence: {}", stats.last_seq)),
