@@ -2304,6 +2304,14 @@ fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
                     "Aggregate Pressure: {}",
                     stats.aggregate_pressure_level
                 )),
+                ListItem::new(format!(
+                    "Aggregate Action: {}",
+                    stats.aggregate_recommended_action
+                )),
+                ListItem::new(format!(
+                    "Aggregate Action reason: {}",
+                    stats.aggregate_action_reason
+                )),
                 ListItem::new(format!("Total Size: {}", format_bytes(stats.total_bytes))),
                 ListItem::new(format!("First Sequence: {}", stats.first_seq)),
                 ListItem::new(format!("Last Sequence: {}", stats.last_seq)),

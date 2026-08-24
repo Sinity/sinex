@@ -289,6 +289,18 @@ pub async fn handle_dlq_list(
     let aggregate_pending_messages = stats
         .total_messages
         .saturating_add(persistent_pending_messages);
+    let (aggregate_recommended_action, aggregate_action_reason) = if persistent_pending_messages > 0
+    {
+        (
+            "ops dlq list".to_string(),
+            format!(
+                "inspect {persistent_pending_messages} unresolved durable failure records; NATS cleanup alone cannot clear them"
+            ),
+        )
+    } else {
+        let (action, reason) = dlq_operator_action(stats.total_messages);
+        (action.to_string(), reason.to_string())
+    };
 
     let pressure = dlq_pressure_signal(stats.total_messages, stats.total_bytes, retry_batch_size);
     let response = DlqListResponse {
@@ -311,6 +323,8 @@ pub async fn handle_dlq_list(
             aggregate_pending_messages,
             retry_batch_size,
         ),
+        aggregate_recommended_action,
+        aggregate_action_reason,
     };
 
     Ok(response)

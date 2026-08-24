@@ -806,6 +806,8 @@ async fn tui_dashboard_marks_persistent_only_dlq_as_non_green() -> TestResult<()
         persistent_pending_messages: 2,
         aggregate_pending_messages: 2,
         aggregate_pressure_level: RuntimePressureLevel::Warning,
+        aggregate_recommended_action: "ops dlq list".to_string(),
+        aggregate_action_reason: "inspect 2 unresolved durable failure records".to_string(),
         ..Default::default()
     });
 
@@ -814,7 +816,13 @@ async fn tui_dashboard_marks_persistent_only_dlq_as_non_green() -> TestResult<()
     let rendered = buffer_to_text(terminal.backend().buffer());
 
     assert!(rendered.contains("DLQ Messages: 2 ⚠"));
-    assert!(rendered.contains("Aggregate Pressure: warning"));
     assert!(!rendered.contains("DLQ Messages: 0 ✓"));
+
+    terminal.draw(|f| render_dlq(f, f.area(), &app))?;
+    let panel = buffer_to_text(terminal.backend().buffer());
+    assert!(panel.contains("Persistent Messages: 2"));
+    assert!(panel.contains("Aggregate Pressure: warning"));
+    assert!(panel.contains("Aggregate Action: ops dlq list"));
+    assert!(panel.contains("Aggregate Action reason: inspect 2 unresolved"));
     Ok(())
 }

@@ -284,6 +284,8 @@ async fn dlq_list_marks_persistent_only_failures_as_pending(ctx: TestContext) ->
         sinex_primitives::RuntimePressureLevel::Nominal
     );
     assert_eq!(response.recommended_action, "none");
+    assert_eq!(response.aggregate_recommended_action, "ops dlq list");
+    assert!(response.aggregate_action_reason.contains("1 unresolved"));
 
     Ok(())
 }
