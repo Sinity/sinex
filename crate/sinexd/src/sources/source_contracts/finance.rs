@@ -1,7 +1,7 @@
 //! hledger plain-text journal parser (#1074).
 //!
 //! Reads `journal_clean` (or any `*.journal` / `*.hledger` file) from
-//! `/realm/data/libraries/finance/` and emits one `ledger`/`transaction.posted`
+//! `/realm/data/self/finance/` and emits one `ledger`/`transaction.posted`
 //! event per transaction block.
 //!
 //! The personal journal uses a `YYYY-MM-DD Payee|Narration` convention on the
