@@ -33,6 +33,27 @@ async fn dlq_stats_table_renders_structured_pressure_signal() -> xtask::sandbox:
 }
 
 #[sinex_test]
+async fn dlq_stats_table_renders_persistent_and_aggregate_health() -> xtask::sandbox::TestResult<()>
+{
+    let rendered = format_dlq_stats_table(&DlqListResponse {
+        persistent_pending_messages: 2,
+        aggregate_pending_messages: 2,
+        aggregate_pressure_level: RuntimePressureLevel::Warning,
+        aggregate_recommended_action: "ops dlq list".to_string(),
+        aggregate_action_reason: "review unresolved durable failure evidence".to_string(),
+        ..Default::default()
+    });
+
+    assert!(rendered.contains("Aggregate pending messages: 2"));
+    assert!(rendered.contains("NATS messages: 0"));
+    assert!(rendered.contains("Persistent messages: 2"));
+    assert!(rendered.contains("Aggregate pressure: warning"));
+    assert!(rendered.contains("Aggregate recommended action: ops dlq list"));
+    assert!(rendered.contains("review unresolved durable failure evidence"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn dlq_peek_table_renders_grouped_explanations() -> xtask::sandbox::TestResult<()> {
     let rendered = format_dlq_peek_table(&DlqPeekResponse {
         messages: vec![DlqMessagePeek {
