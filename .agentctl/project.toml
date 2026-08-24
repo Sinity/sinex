@@ -256,6 +256,7 @@ exec = ["xtask", "test"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"
+dependencies = ["dev_services"]
 
 [operations.test_default.parameters.all]
 type = "bool"
@@ -284,6 +285,11 @@ type = "string-list"
 flag = "--features"
 max_items = 32
 max_length = 128
+
+[operations.test_default.parameters.filter]
+type = "string"
+flag = "--filter"
+max_length = 256
 
 [operations.test_default.parameters.heavy]
 type = "bool"
