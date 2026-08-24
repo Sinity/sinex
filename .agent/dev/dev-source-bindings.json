@@ -108,7 +108,7 @@
       "instance_idx": 1,
       "service_name": "source-driver-raindrop-bookmarks-1",
       "runtime_config": {
-        "path": "/realm/data/exports/raindrop/processed/bookmarks.csv",
+        "path": "/realm/data/accounts/raindrop/processed/bookmarks.csv",
         "source_identifier": "raindrop-bookmarks"
       },
       "extra_args": [],

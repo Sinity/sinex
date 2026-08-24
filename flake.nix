@@ -402,7 +402,7 @@
                   if raindropStaticImport == null then
                     throw "source catalog consumer omitted raindrop-bookmarks from SINEX_SOURCE_BINDINGS_PATH"
                   else if raindropStaticImport.runtime_config != {
-                    path = "/realm/data/exports/raindrop/processed/bookmarks.csv";
+                    path = "/realm/data/accounts/raindrop/processed/bookmarks.csv";
                     source_identifier = "raindrop-bookmarks";
                   } then
                     throw "source catalog consumer rendered the wrong raindrop-bookmarks runtime_config"

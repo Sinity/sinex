@@ -426,7 +426,7 @@ enforced checks.
   service.
 - **Live-deploy parity proof.** Parser acceptance may require
   "query parity against Lynchpin export counts." That is operator work:
-  stage the export under `/realm/data/exports/<provider>/`, run the
+  stage the export under `/realm/data/accounts/<provider>/`, run the
   parser job, compare counts. Not part of the PR.
 
 ## See also

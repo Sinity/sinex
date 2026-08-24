@@ -30,7 +30,7 @@ fn record_for(bytes: &[u8]) -> SourceRecord {
     }
 }
 
-// Real fixture row from /realm/data/exports/health/processed.
+// Real fixture row from /realm/data/health/processed.
 const SAMPLE_CSV: &str = "sh_datauuid,start_local,end_local,sh_duration_minutes,start_delta_minutes,end_delta_minutes,sa_vs_sh_duration_minutes,trimmed_event_count,hr_avg,hr_min,hr_max,events_hr,events_light,events_deep,events_rem,sa_comment\n\
     e86b7115-e01d-45ce-98ed-b8c7248b93a3,2024-03-21T10:50:00+01:00,2024-03-21T12:40:00+01:00,110.0,0.0,-49.0,-49.4,6,,,,0,1,0,0,\n\
     4416b87f-9aae-45b9-8795-fb9e76c86345,2024-10-26T03:40:00+02:00,2024-10-26T06:07:00+02:00,147.0,1.0,248.0,246.6,45,70.02,57.00,87.00,29,2,2,2,#watch\n";
