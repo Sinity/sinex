@@ -1321,12 +1321,13 @@ async fn missing_cas_report_uses_configured_hash_path(ctx: TestContext) -> TestR
                 .build(),
         )
         .await?;
+    let blob_id = blob.id.to_string();
 
     let (report, statuses) = check_cas(ctx.pool(), &content_store, false).await?;
     assert_eq!(report.missing, 1);
     let status = statuses
         .iter()
-        .find(|status| status.blob_id.as_deref() == Some(blob.id.to_string().as_str()))
+        .find(|status| status.blob_id.as_deref() == Some(blob_id.as_str()))
         .expect("missing blob must be reported");
     let expected_path = content_store
         .path_if_local(&format!("{LOCAL_BLAKE3_CAS_BACKEND}-s42--{hash}"))?
@@ -1337,5 +1338,61 @@ async fn missing_cas_report_uses_configured_hash_path(ctx: TestContext) -> TestR
         !status.path.contains("XX/YY"),
         "anti-vacuity: missing-CAS diagnostics must identify the actual configured path"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn registered_cas_blob_with_mutated_bytes_is_reported_corrupt(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("registered-source.txt");
+    let original = b"registered authority";
+    tokio::fs::write(&source, original).await?;
+    let key = content_store.store_file(&source).await?;
+    let blob = ctx
+        .pool()
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(key.digest.clone())
+                .size_bytes(original.len() as i64)
+                .checksum_blake3(key.digest.clone())
+                .build(),
+        )
+        .await?;
+    let blob_id = blob.id.to_string();
+    let object_path = content_store
+        .path_if_local(&key.key)?
+        .expect("stored local CAS key must resolve to a path");
+
+    let corrupted = b"corrupted authority!";
+    assert_eq!(corrupted.len(), original.len());
+    tokio::fs::write(&object_path, corrupted).await?;
+
+    for apply in [false, true] {
+        let (report, statuses) = check_cas(ctx.pool(), &content_store, apply).await?;
+        assert_eq!(report.corrupt, 1, "apply={apply}");
+        assert_eq!(report.missing, 0, "the registered path still exists");
+        assert_eq!(report.orphaned, 0, "the database still owns the hash");
+        assert_eq!(report.removed, 0, "corrupt authority is never orphan cleanup");
+        let status = statuses
+            .iter()
+            .find(|status| status.blob_id.as_deref() == Some(blob_id.as_str()))
+            .expect("corrupt registered blob must retain its database identity");
+        assert_eq!(status.status, CasStatus::Corrupt);
+        assert_eq!(status.hash, key.digest);
+        assert_eq!(status.path, object_path.as_str());
+        assert_eq!(status.size_bytes, corrupted.len() as u64);
+        assert!(object_path.exists(), "fsck must not silently delete corrupt authority");
+        assert_eq!(tokio::fs::read(&object_path).await?, corrupted);
+    }
     Ok(())
 }
