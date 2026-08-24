@@ -62,9 +62,10 @@ pub fn probe_postgres() -> PostgresProbe {
         ),
     };
     let latency_ms = start.elapsed().as_millis() as u64;
-    let message = accepting_issue.or_else(|| (!accepting_connections).then(|| {
-        "Postgres is unavailable for this AgentCTL lease".to_string()
-    }));
+    let message = accepting_issue.or_else(|| {
+        (!accepting_connections)
+            .then(|| "Postgres is unavailable for this AgentCTL lease".to_string())
+    });
 
     PostgresProbe {
         running: accepting_connections,

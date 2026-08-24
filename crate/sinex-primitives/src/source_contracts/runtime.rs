@@ -4,9 +4,9 @@ use serde::Serialize;
 
 use crate::privacy::ProcessingContext;
 use crate::source_contracts::{
-    CheckpointFamily, MaterialLifecyclePolicy, WorkBudgetSpec, ResourceProfile, RunnerPack,
-    RuntimeShape, SourceCapabilityRef, SourceCriticality, SourceRecoveryPolicy, SubjectRef,
-    TransportSemantics,
+    CheckpointFamily, MaterialLifecyclePolicy, ResourceProfile, RunnerPack, RuntimeShape,
+    SourceCapabilityRef, SourceCriticality, SourceRecoveryPolicy, SubjectRef, TransportSemantics,
+    WorkBudgetSpec,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

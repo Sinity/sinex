@@ -23,46 +23,75 @@ pub struct NatsManager {
 
 impl NatsManager {
     #[must_use]
-    pub fn new(config: NatsConfig) -> Self { Self { config } }
+    pub fn new(config: NatsConfig) -> Self {
+        Self { config }
+    }
 
     pub fn generate_config(&self) -> Result<()> {
         let store_dir = self.config.data_dir.join("jetstream");
         let config = format!(
             "# AgentCTL lease-owned Sinex development NATS\nhost = \"127.0.0.1\"\nport = {}\njetstream {{\n    store_dir = \"{}\"\n    max_mem = {}\n    max_file = {}\n}}\n",
-            self.config.port, store_dir.display(), NATS_JETSTREAM_MAX_MEM, NATS_JETSTREAM_MAX_FILE,
+            self.config.port,
+            store_dir.display(),
+            NATS_JETSTREAM_MAX_MEM,
+            NATS_JETSTREAM_MAX_FILE,
         );
-        if self.config.config_file.exists() && fs::read_to_string(&self.config.config_file).ok().as_deref() == Some(&config) {
+        if self.config.config_file.exists()
+            && fs::read_to_string(&self.config.config_file).ok().as_deref() == Some(&config)
+        {
             return Ok(());
         }
         fs::create_dir_all(&store_dir)?;
-        if let Some(parent) = self.config.config_file.parent() { fs::create_dir_all(parent)?; }
+        if let Some(parent) = self.config.config_file.parent() {
+            fs::create_dir_all(parent)?;
+        }
         fs::write(&self.config.config_file, config)?;
         Ok(())
     }
 
     pub fn start(&self, verbose: bool) -> Result<()> {
         if self.is_ready() {
-            bail!("AgentCTL leased NATS port {} is already accepting connections", self.config.port);
+            bail!(
+                "AgentCTL leased NATS port {} is already accepting connections",
+                self.config.port
+            );
         }
-        if let Some(parent) = self.config.log_file.parent() { fs::create_dir_all(parent)?; }
+        if let Some(parent) = self.config.log_file.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let log = fs::File::create(&self.config.log_file)?;
         let mut command = match std::env::var("NATS_SERVER_BIN") {
             Ok(path) => Command::new(path),
             Err(_) => Command::new("nats-server"),
         };
-        let mut child = command.arg("-js").arg("-c").arg(&self.config.config_file)
-            .stdout(log.try_clone()?).stderr(log).spawn().wrap_err("start lease-owned NATS")?;
+        let mut child = command
+            .arg("-js")
+            .arg("-c")
+            .arg(&self.config.config_file)
+            .stdout(log.try_clone()?)
+            .stderr(log)
+            .spawn()
+            .wrap_err("start lease-owned NATS")?;
         for _ in 0..30 {
             if let Some(status) = child.try_wait()? {
-                bail!("NATS exited before readiness ({status}); inspect {}", self.config.log_file.display());
+                bail!(
+                    "NATS exited before readiness ({status}); inspect {}",
+                    self.config.log_file.display()
+                );
             }
             if self.is_ready() {
-                if verbose { println!("NATS is ready on lease port {}", self.config.port); }
+                if verbose {
+                    println!("NATS is ready on lease port {}", self.config.port);
+                }
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(500));
         }
-        bail!("NATS did not bind lease port {} within 15 seconds; inspect {}", self.config.port, self.config.log_file.display())
+        bail!(
+            "NATS did not bind lease port {} within 15 seconds; inspect {}",
+            self.config.port,
+            self.config.log_file.display()
+        )
     }
 
     #[must_use]
@@ -73,13 +102,15 @@ impl NatsManager {
         ) else {
             return false;
         };
-        if stream.set_read_timeout(Some(Duration::from_millis(200))).is_err() {
+        if stream
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .is_err()
+        {
             return false;
         }
         let mut greeting = [0; 5];
         stream.read_exact(&mut greeting).is_ok() && greeting == *b"INFO "
     }
-
 }
 
 #[cfg(test)]

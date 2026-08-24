@@ -234,10 +234,7 @@ async fn source_coverage_view_marks_ready_when_catalog_material_and_events_exist
     assert!(view.gaps.is_empty());
     assert_eq!(view.privacy.tier, "sensitive");
     assert_eq!(view.privacy.context, "command");
-    let budget = view
-        .work_budget
-        .as_ref()
-        .expect("resource budget expected");
+    let budget = view.work_budget.as_ref().expect("resource budget expected");
     assert_eq!(budget.work_class, "bulk_import");
     assert!(budget.pressure_actions.contains(&"inspect".to_string()));
     assert!(

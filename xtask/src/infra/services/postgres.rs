@@ -201,7 +201,10 @@ impl PostgresManager {
         self.ensure_runtime_config()?;
 
         if self.accepting_connections_probe()? {
-            bail!("AgentCTL leased PostgreSQL port {} is already accepting connections", self.config.port);
+            bail!(
+                "AgentCTL leased PostgreSQL port {} is already accepting connections",
+                self.config.port
+            );
         }
         if self.config.data_dir.join("postmaster.pid").exists() {
             bail!(
@@ -278,7 +281,10 @@ impl PostgresManager {
         if output.status.success() {
             Ok(())
         } else {
-            bail!("ephemeral sandbox PostgreSQL stop failed: {}", format_command_output(&output))
+            bail!(
+                "ephemeral sandbox PostgreSQL stop failed: {}",
+                format_command_output(&output)
+            )
         }
     }
 
@@ -400,7 +406,6 @@ impl PostgresManager {
             .args(["-tAc", sql]);
         cmd
     }
-
 
     fn install_extensions_with<F>(superuser: &str, db: &str, mut psql: F) -> Result<()>
     where

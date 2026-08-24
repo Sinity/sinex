@@ -170,8 +170,9 @@ const LEASE_POSTGRES_PORT_RANGE: std::ops::RangeInclusive<u16> = 45432..=45559;
 const LEASE_NATS_PORT_RANGE: std::ops::RangeInclusive<u16> = 44308..=44435;
 
 fn lease_port(name: &str, range: &std::ops::RangeInclusive<u16>) -> Result<u16> {
-    let value = std::env::var(name)
-        .wrap_err_with(|| format!("{name} is injected only by the AgentCTL dev_services operation"))?;
+    let value = std::env::var(name).wrap_err_with(|| {
+        format!("{name} is injected only by the AgentCTL dev_services operation")
+    })?;
     lease_port_value(&value, range).wrap_err_with(|| format!("{name} must be a port"))
 }
 
@@ -202,7 +203,9 @@ fn execute_lease_services(ctx: &CommandContext) -> Result<CommandResult> {
     stack::nats_start(&config, ctx.is_human())?;
 
     println!("lease services ready: postgres=127.0.0.1:{postgres_port} nats=127.0.0.1:{nats_port}");
-    println!("AgentCTL owns this foreground job and its systemd cgroup; cancellation releases both leases.");
+    println!(
+        "AgentCTL owns this foreground job and its systemd cgroup; cancellation releases both leases."
+    );
     loop {
         std::thread::park();
     }

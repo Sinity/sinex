@@ -17,9 +17,9 @@ use sinex_primitives::rpc::{
 };
 use sinex_primitives::source_contracts::{
     AcceptedLossPolicy, AccessScope, BudgetPressureAction, CatchUpAuthority, CheckpointFamily,
-    DeliverySemantics, MaterialLifecyclePolicy, OrderingSemantics, WorkBudgetSpec,
-    RunnerPack, SourceCapabilityKind, SourceContract, SourceCriticality,
-    SourceReplayabilityClass, SourceRuntimeBinding, TransportKind, WorkClass, all_source_contracts,
+    DeliverySemantics, MaterialLifecyclePolicy, OrderingSemantics, RunnerPack,
+    SourceCapabilityKind, SourceContract, SourceCriticality, SourceReplayabilityClass,
+    SourceRuntimeBinding, TransportKind, WorkBudgetSpec, WorkClass, all_source_contracts,
     source_runtime_bindings,
 };
 use sinex_primitives::sources::source_identity_matches_family;

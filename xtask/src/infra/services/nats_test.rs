@@ -36,7 +36,12 @@ async fn readiness_requires_the_nats_protocol_greeting() -> crate::sandbox::Test
         log_file: temp.path().join("nats.log"),
     });
 
-    assert!(!manager.is_ready(), "a foreign TCP listener is not NATS readiness");
-    server.join().expect("test listener thread must not panic")?;
+    assert!(
+        !manager.is_ready(),
+        "a foreign TCP listener is not NATS readiness"
+    );
+    server
+        .join()
+        .expect("test listener thread must not panic")?;
     Ok(())
 }

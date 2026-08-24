@@ -18,7 +18,10 @@ impl CheckoutState {
     pub fn for_current_checkout() -> Result<Self> {
         let checkout_root = Self::find_checkout_root()?;
         let state_dir = Self::resolve_state_dir(&checkout_root);
-        Ok(Self { checkout_root, state_dir })
+        Ok(Self {
+            checkout_root,
+            state_dir,
+        })
     }
 
     fn resolve_state_dir(checkout_root: &Path) -> PathBuf {
@@ -35,16 +38,22 @@ impl CheckoutState {
                 return Ok(current.to_path_buf());
             }
             current = current.parent().ok_or_else(|| {
-                color_eyre::eyre::eyre!("not in a git repository; run from within the sinex checkout")
+                color_eyre::eyre::eyre!(
+                    "not in a git repository; run from within the sinex checkout"
+                )
             })?;
         }
     }
 
     #[must_use]
-    pub fn checkout_root(&self) -> &Path { &self.checkout_root }
+    pub fn checkout_root(&self) -> &Path {
+        &self.checkout_root
+    }
 
     #[must_use]
-    pub fn state_dir(&self) -> &Path { &self.state_dir }
+    pub fn state_dir(&self) -> &Path {
+        &self.state_dir
+    }
 
     pub fn ensure_directories(&self) -> Result<()> {
         fs::create_dir_all(self.config_dir().join("nats"))?;
@@ -58,19 +67,35 @@ impl CheckoutState {
     }
 
     #[must_use]
-    pub fn data_dir(&self) -> PathBuf { self.state_dir.join("data") }
+    pub fn data_dir(&self) -> PathBuf {
+        self.state_dir.join("data")
+    }
     #[must_use]
-    pub fn run_dir(&self) -> PathBuf { self.state_dir.join("run") }
+    pub fn run_dir(&self) -> PathBuf {
+        self.state_dir.join("run")
+    }
     #[must_use]
-    pub fn logs_dir(&self) -> PathBuf { self.run_dir().join("logs") }
+    pub fn logs_dir(&self) -> PathBuf {
+        self.run_dir().join("logs")
+    }
     #[must_use]
-    pub fn snapshots_dir(&self) -> PathBuf { self.state_dir.join("snapshots") }
+    pub fn snapshots_dir(&self) -> PathBuf {
+        self.state_dir.join("snapshots")
+    }
     #[must_use]
-    pub fn config_dir(&self) -> PathBuf { self.state_dir.join("config") }
+    pub fn config_dir(&self) -> PathBuf {
+        self.state_dir.join("config")
+    }
     #[must_use]
-    pub fn pg_data(&self) -> PathBuf { self.data_dir().join("postgres") }
+    pub fn pg_data(&self) -> PathBuf {
+        self.data_dir().join("postgres")
+    }
     #[must_use]
-    pub fn nats_data(&self) -> PathBuf { self.data_dir().join("nats") }
+    pub fn nats_data(&self) -> PathBuf {
+        self.data_dir().join("nats")
+    }
     #[must_use]
-    pub fn annex_data(&self) -> PathBuf { self.data_dir().join("annex") }
+    pub fn annex_data(&self) -> PathBuf {
+        self.data_dir().join("annex")
+    }
 }

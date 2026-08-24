@@ -60,14 +60,17 @@ impl StackConfig {
     }
 
     fn from_state_dir(state_dir: PathBuf) -> Self {
-
         Self {
             state_dir,
             postgres: PostgresConfig {
                 port: std::env::var("SINEX_DEV_POSTGRES_PORT")
                     .ok()
                     .and_then(|value| value.parse().ok())
-                    .or_else(|| std::env::var("PGPORT").ok().and_then(|value| value.parse().ok()))
+                    .or_else(|| {
+                        std::env::var("PGPORT")
+                            .ok()
+                            .and_then(|value| value.parse().ok())
+                    })
                     .unwrap_or(5432),
                 database: "sinex_dev".to_string(),
                 user: std::env::var("USER").unwrap_or_else(|_| "sinity".to_string()),
@@ -86,7 +89,6 @@ impl StackConfig {
             },
         }
     }
-
 
     /// Derived paths
     #[must_use]

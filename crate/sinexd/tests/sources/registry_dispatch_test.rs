@@ -644,10 +644,7 @@ async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResul
         mode.missing
     );
     assert!(
-        !mode
-            .missing
-            .iter()
-            .any(|field| field == "work_budget_spec"),
+        !mode.missing.iter().any(|field| field == "work_budget_spec"),
         "runtime bindings derive WorkBudgetSpec from the current ResourceProfile model"
     );
     let operations_requirement = mode
