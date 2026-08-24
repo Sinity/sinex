@@ -76,6 +76,7 @@ _sinex_pre_push_agentctl_lease_ports() {
   if ! lease_ports="$(jq -er --arg checkout "$REPO_ROOT" --arg job_id "$lease_id" '
     .payload.value as $job
     | ($job.lease.ports // []) as $ports
+    | select(($ports | type) == "array")
     | ($ports | map(select(.name == "postgres" and .environment == "SINEX_DEV_POSTGRES_PORT"))) as $postgres
     | ($ports | map(select(.name == "nats" and .environment == "SINEX_DEV_NATS_PORT"))) as $nats
     | select(
@@ -93,10 +94,16 @@ _sinex_pre_push_agentctl_lease_ports() {
         and $job.lease.readiness == "project-command"
         and $job.lease.lifetime == "job"
         and $job.lease.state == "active"
+        and ($ports | length) == 2
         and ($postgres | length) == 1
         and ($nats | length) == 1
+        and (($ports | map(.name) | sort) == ["nats", "postgres"])
+        and (($ports | map(.environment) | sort) == ["SINEX_DEV_NATS_PORT", "SINEX_DEV_POSTGRES_PORT"])
+        and (all($ports[]; (. | type) == "object"))
         and ($postgres[0].port | type) == "number"
         and ($nats[0].port | type) == "number"
+        and ($postgres[0].port == ($postgres[0].port | floor))
+        and ($nats[0].port == ($nats[0].port | floor))
         and ($postgres[0].port >= 45432 and $postgres[0].port <= 45559)
         and ($nats[0].port >= 44308 and $nats[0].port <= 44435)
       )
@@ -118,8 +125,50 @@ _sinex_pre_push_probe_agentctl_lease() {
     echo "[pre-push] Rejecting AgentCTL lease: PostgreSQL is not reachable at socket $pg_run_dir on port $pg_port." >&2
     return 1
   fi
-  if ! timeout 1 bash -c '>/dev/tcp/127.0.0.1/$1' bash "$nats_port" 2>/dev/null; then
-    echo "[pre-push] Rejecting AgentCTL lease: NATS is not reachable at 127.0.0.1:$nats_port." >&2
+  if ! timeout 2 bash -c '
+    exec 3<>"/dev/tcp/127.0.0.1/$1"
+    IFS= read -r -t 1 info <&3 || exit 1
+    case "$info" in
+      INFO\ *) ;;
+      *) exit 1 ;;
+    esac
+    printf "%s\r\n%s\r\n" \
+      "CONNECT {\"verbose\":false,\"pedantic\":false,\"lang\":\"sinex-pre-push\",\"version\":\"1\",\"protocol\":1,\"echo\":true}" \
+      "PING" >&3
+    while IFS= read -r -t 1 line <&3; do
+      case "$line" in
+        PONG*) exit 0 ;;
+        INFO\ *|+OK*) ;;
+        -ERR*) exit 1 ;;
+        *) exit 1 ;;
+      esac
+    done
+    exit 1
+  ' bash "$nats_port" 2>/dev/null; then
+    echo "[pre-push] Rejecting AgentCTL lease: NATS protocol readiness failed at 127.0.0.1:$nats_port." >&2
+    return 1
+  fi
+}
+
+_sinex_pre_push_revalidate_agentctl_lease() {
+  local pg_run_dir="$1"
+  local expected_pg_port="$2"
+  local expected_nats_port="$3"
+  local first_ports final_ports pg_port nats_port
+
+  first_ports="$(_sinex_pre_push_agentctl_lease_ports)" || return 1
+  IFS=$'\t' read -r pg_port nats_port <<<"$first_ports"
+  if [[ "$pg_port" != "$expected_pg_port" || "$nats_port" != "$expected_nats_port" ]]; then
+    echo "[pre-push] Rejecting AgentCTL lease: lease coordinates changed before execution." >&2
+    return 1
+  fi
+  _sinex_pre_push_probe_agentctl_lease "$pg_run_dir" "$pg_port" "$nats_port" || return 1
+
+  # Re-read after endpoint probing. A released lease may have its ports
+  # reallocated, so port reachability alone is never an identity check.
+  final_ports="$(_sinex_pre_push_agentctl_lease_ports)" || return 1
+  if [[ "$final_ports" != "$first_ports" ]]; then
+    echo "[pre-push] Rejecting AgentCTL lease: job or lease coordinates changed during final validation." >&2
     return 1
   fi
 }
@@ -173,7 +222,7 @@ _sinex_pre_push_checkout_env() {
   (
     source "$devshell_rc"
     if [[ -n "${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}" ]]; then
-      _sinex_pre_push_probe_agentctl_lease "$pg_run_dir" "$pg_port" "$nats_port" || exit 1
+      _sinex_pre_push_revalidate_agentctl_lease "$pg_run_dir" "$pg_port" "$nats_port" || exit 1
     fi
     env \
       -u SINEX_PRE_PUSH_AGENTCTL_LEASE_ID \
@@ -376,7 +425,7 @@ _sinex_pre_push_clean_env() {
   if [[ -n "${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}" ]]; then
     lease_ports="$(_sinex_pre_push_agentctl_lease_ports)" || return 1
     IFS=$'\t' read -r pg_port nats_port <<<"$lease_ports"
-    _sinex_pre_push_probe_agentctl_lease "$(_sinex_pre_push_cache_root)/dev-state/run" "$pg_port" "$nats_port" || return 1
+    _sinex_pre_push_revalidate_agentctl_lease "$(_sinex_pre_push_cache_root)/dev-state/run" "$pg_port" "$nats_port" || return 1
     lease_env=("SINEX_DEV_POSTGRES_PORT=$pg_port" "SINEX_DEV_NATS_PORT=$nats_port")
   fi
   env \

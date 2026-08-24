@@ -276,7 +276,7 @@ the binary is on PATH).
 | tests | `xtask test` (impact-planned) · `-p <pkg>` · `-E 'test(name)'` · `--heavy` · `--impact-mode=off --all` for deliberate full pass |
 | list tests | `xtask test --list -p <pkg>` |
 | build | `xtask build -p <pkg>` |
-| local stack | `agentctl job start sinex dev_services`, `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID=<job-id> git push`, `xtask doctor`, `agentctl job start sinex run_core` |
+| local stack | `agentctl job start sinex dev_services --workspace <workspace-id>`, `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID=<job-id> git push`, `xtask doctor`, `agentctl job start sinex run_core --workspace <workspace-id>` |
 | lifecycle | Start declared `fix_default`, `run_core`, `run_all_automatons`, `run_all_sources`, `vm_smoke`, and `vm_validate` operations through AgentCTL; use `agentctl job get/logs/result/cancel` with its returned ID |
 | failure forensics | `xtask history diagnostics --level error`, `xtask history tests analyze` |
 | generated surfaces | `xtask docs sync` / `xtask docs check` |

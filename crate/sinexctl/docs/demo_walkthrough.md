@@ -10,8 +10,10 @@ dataset (`sinexctl ops demo --confirm`). Issue #1172 AC-10.
 ## Quick run
 
 ```bash
-# 1. Make sure the gateway and Postgres are reachable.
-agentctl job start sinex dev_services
+# 1. Bind the lease to this checkout's registered workspace.
+checkout_root="$(git rev-parse --show-toplevel)"
+workspace_id="$(agentctl workspace list --project sinex | jq -er --arg path "$checkout_root" '.payload.value.workspaces[] | select(.path == $path) | .workspace_id')"
+agentctl job start sinex dev_services --workspace "$workspace_id"
 
 # 2. Run the walkthrough. If the database is empty, this also seeds
 #    deterministic events via the explicitly confirmed `sinexctl ops demo`
