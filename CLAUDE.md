@@ -1,4 +1,4 @@
-# Sinex Agent Memory
+# Sinex Agent Contract
 
 > Local-first event-driven capture platform. Rust nightly / edition 2024,
 > NATS JetStream, PostgreSQL (TimescaleDB + pgvector). One workspace, one daemon (`sinexd`),
@@ -9,23 +9,6 @@
 > This file is the complete always-loaded agent surface. `AGENTS.md` is a symlink to it.
 > Deep-dives live in `docs/architecture.md`, `docs/glossary.md`, and `crate/**/docs/`
 > (map at the bottom). Keep this file dense; move detail to owned docs.
-
-## Operator Contract
-
-- **Full autonomy is granted**: diagnose → fix → build → deploy → verify solo. Merge PRs,
-  deploy, restart prod without asking. Destructive operations (data deletion, history
-  rewrite, wipes) still get stated intent first.
-- **Solve fundamentally, not fast-unlock.** Prod-being-up is NOT required; take it down and
-  build the root-cause fix rather than cgroup bumps / temp swap / let-it-grind.
-- **Finish end-to-end.** "Foundation for X" means build X now. Don't commit stubs silently;
-  finish or declare incomplete. Don't halt mid-plan to ask "continue?" — take the next step
-  and record assumptions.
-- **Cleanliness beats entropy**: modify directly, delete replaced paths in the same change.
-  No deprecation shims, no parallel old/new paths, no "removed in a follow-up".
-- **Facts beat assumptions**: act on code and live systems, not memory or invented
-  constraints ("time", "safety", "won't run in CI" are not reasons to skip building).
-- **Use general mechanisms.** Before inventing a per-source field/policy/scope, map the need
-  onto the existing privacy / disclosure / lifecycle / coverage / session-state planes.
 
 ## Public Repository Boundary
 
@@ -65,23 +48,6 @@ GitHub discussion as public.
   event ids.** If you reach for any of these you've misread the identity model (below).
 - **Don't trust closing comments / issue text over `master`.** Verify landing claims with
   `git log`/`gh pr view --json state,mergedAt` before building on them.
-
-## Session Orientation (do this before substantive work)
-
-1. `bd prime` — Beads is the task substrate AND the devloop: `bd ready` → claim
-   (`bd update <id> --claim`) → work → PR → close with reasons + verification commands;
-   create linked beads for discovered follow-ups. No markdown TODO lists as shared truth.
-   The former bespoke conductor packet is archived at `.agent/archive/devloop-2026-07/`
-   (evidence corpus, never scaffold — do not resurrect it or `devloop-*` scripts).
-2. The **current code-grok entry point** is recorded in the bd memory `code-grok-*` key and
-   lives at `.agent/scratch/NNN-grok-*.md` (highest NNN wins; each note says what it
-   supersedes). Read it before trusting older scratch/audit claims — external audit line
-   numbers are usually stale against master.
-3. `.agent/scratch/` is the session-notes plane (gitignored thinking space);
-   `.agent/scratch/new/` is an inbox for external analysis batches (verify before trusting).
-   `.agent/CONVENTIONS.md` holds the execution-grade bead bar and repo agent conventions.
-4. Reconcile-on-claim: when claiming a bead, re-verify its cited file:line facts against
-   current master before coding.
 
 ## Architecture Core
 
@@ -161,17 +127,6 @@ Sources of truth that drift-proof this section: automata census = `AutomatonSpec
 `event_engine/jetstream_consumer/bootstrap.rs` + `nixos/modules/nats.nix`; telemetry
 relations = `TELEMETRY_*` constants in `crate/sinex-schema/src/apply.rs`.
 
-### Known open correctness seams (verified; tracked in bd epic r6d)
-
-- Emission-before-durability windows are mostly closed (r6d.4, r6d.7 both closed; vxu closed
-  for the live-bridge path, historical replay/timer_flush/shutdown still open) via the
-  durable-emission-receipt primitive. w4i (multi-intent partial-record re-emit duplicates) is
-  still open. DLQ requeue can silently destroy the only surviving copy of a message when it
-  collides with the DLQ stream's dupeWindow (sinex-3kqx); the material-assembler's own DLQ
-  publish is unconfirmed core-NATS, not JetStream-acked (sinex-wb1, reopened 2026-08-10).
-- Do not "fix" these ad-hoc in passing — they are sequenced campaign work with a shared
-  primitive; check bd state first.
-
 ### Schema map
 
 | Schema | Holds |
@@ -222,47 +177,6 @@ Import decisions: types/errors/ids from `sinex_primitives::prelude::*`; DB via
 `sqlx::query!` on a pool outside repositories; runtime traits from `crate::runtime::*`
 inside sinexd.
 
-## Code Patterns
-
-Event creation — typed payload + provenance, nothing else:
-
-```rust
-let ev = FileCreatedPayload { .. }.from_material(material_id).build()?;      // ingestor
-let ev = SummaryPayload { .. }.from_parents(parent_ids)?.build()?;           // automaton
-// escape hatch: EventBuilder::dynamic("source", "type", json!(..)).from_material(m, anchor)
-```
-
-Errors — always `SinexError` with context; `public_payload()` for API/CLI surfaces
-(Display/Debug are internal and may leak paths/SQL). `with_error_source(&e)` at typed
-boundaries. xtask uses `color_eyre`.
-
-| Situation | Use | Never |
-|---|---|---|
-| Event id / timestamps / source+type | `Id<Event>`, `Timestamp`, `EventSource`/`EventType` newtypes | raw Uuid/String/OffsetDateTime |
-| Status/tier/field values | domain enums (`sinex_primitives::domain`, `events::enums`) | string comparison |
-| DB queries | `sqlx::query!` (compile-checked) inside repositories | bare-string `sqlx::query` |
-| Lazy/once | `std::sync::LazyLock` / `OnceLock` | lazy_static / once_cell |
-| Async closures (single call) | `F: AsyncFnOnce() -> T` | boxed future gymnastics |
-| Async closures (polling) | `F: Fn() -> Fut` + `\|\| async {..}` | `async \|\| {..}` (breaks Send) |
-| Tests | `#[sinex_test]`, per-crate `tests/`, `Timeouts::*`, `wait_for_condition` | `#[tokio::test]`, sleeps, magic numbers |
-| Test events needing DB | `ctx.publish(payload)` | manual insert (FK violation) |
-
-Edition 2024: `std::env::set_var` is `unsafe`; let-chains are in; RPIT capture via
-`+ use<'a>`.
-
-Runtime shapes (registration: `register_source_contract!` / `register_source_runtime_binding!`
-for sources, `AutomatonSpec` in `automata/registry.rs` for automata):
-
-| Building | Implement | Model |
-|---|---|---|
-| raw capture from the world | `SourceDriver` (+ adapter/parser split: `InputShapeAdapter` yields anchored records, `MaterialParser` yields intents) | snapshot / historical / continuous scans |
-| 1:1 derived transform | `Transducer` | stateless |
-| accumulate-then-emit | `Windowed` | window_complete + periodic flush |
-| per-scope reconciliation | `ScopeReconciler` | scope state |
-
-Every automaton emits ONE `output_event_type()`. Derived events carry `automaton_model`,
-`semantics_version`, `equivalence_key` — set them.
-
 ## Toolchain: xtask is the only cargo frontend
 
 **Never bare `cargo` — no exceptions, a hook blocks it.** If xtask lacks a surface, extend
@@ -271,23 +185,23 @@ the binary is on PATH).
 
 | Task | Command |
 |---|---|
-| fast verify | `xtask check` (`--lint`, `--full` for broad) |
-| autofix | `xtask fix` / `xtask fix --smart` |
-| tests | `xtask test` (impact-planned) · `-p <pkg>` · `-E 'test(name)'` · `--heavy` · `--impact-mode=off --all` for deliberate full pass |
+| fast verify | `xtask check` locally or AgentCTL `check_default` |
+| autofix | `xtask fix` locally or AgentCTL `fix_default` |
+| tests | `xtask test` locally or AgentCTL `test_default`; use `--impact-mode=off --all` for a deliberate full pass |
 | list tests | `xtask test --list -p <pkg>` |
-| build | `xtask build -p <pkg>` |
+| build | `xtask build -p <pkg>` locally or AgentCTL `build_default` |
 | local stack | `agentctl job start sinex dev_services --workspace <workspace-id>`, `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID=<job-id> git push`, `xtask doctor`, `agentctl job start sinex run_core --workspace <workspace-id>` |
-| lifecycle | Start declared `fix_default`, `run_core`, `run_all_automatons`, `run_all_sources`, `vm_smoke`, and `vm_validate` operations through AgentCTL; use `agentctl job get/logs/result/cancel` with its returned ID |
+| lifecycle | Start declared `check_default`, `build_default`, `fix_default`, `test_default`, `run_core`, `run_all_automatons`, `run_all_sources`, `vm_smoke`, and `vm_validate` operations through AgentCTL; use `agentctl job get/logs/result/cancel` with its returned ID |
 | failure forensics | `xtask history diagnostics --level error`, `xtask history tests analyze` |
 | generated surfaces | `xtask docs sync` / `xtask docs check` |
 | schema | `xtask schema strict-diff`, `xtask schema backfill` |
 | VM coverage | `xtask test vm --category smoke\|integration` |
 
-AgentCTL owns launch, logs, cancellation, results, checkout identity, and process trees for
-its declared operations. `xtask run` and `xtask test vm` retain foreground semantics for
-custom module/source names, instance IDs, VM categories/test names, and scalar VM timeouts:
-the current descriptor contract has no arbitrary-string, enum, or integer parameter types.
-Never pipe xtask through `head`/`tail` (hook blocks it). Never combine `--workspace` with `-p`.
+AgentCTL owns launch, logs, cancellation, results, checkout identity, service leases, and
+process trees for declared operations. The descriptor supports bounded booleans, strings,
+string lists, integers, and enums; add typed parameters when a recurring semantic command
+needs them. Keep one-off custom source/module selectors as foreground `xtask` runs. Never
+pipe xtask through `head` or `tail` because the hook blocks it.
 
 `$SINEX_STATE_DIR` = durable checkout state (`<checkout>/.sinex/state`, holds
 `xtask-history.db` — evidence, never delete); `$SINEX_CACHE_DIR`/`CARGO_TARGET_DIR` =
@@ -309,55 +223,19 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
   each merge.
 - No hosted PR-blocking CI: **the local gate is the gate.**
 
-## Traps (verified the hard way)
+## Runtime and worktree traps
 
-- **Worktrees**: put compile-heavy worktrees under `/realm/tmp/worktrees/` (never `/tmp` —
-  wear-limited disk). An inherited `CARGO_TARGET_DIR` pointing at the main checkout makes
-  worktree checks false-pass in <1s; xtask self-corrects with a WARNING — a real check takes
-  minutes. Worktree devshells inherit a broken `DATABASE_URL`; read the real one from the
-  main checkout's devshell and `env DATABASE_URL=... ` explicitly (also for `git push` —
-  the pre-push drift guard inherits the same broken URL, so sqlx compile errors masquerade
-  as drift-guard rejections). For an AgentCTL-backed push, pass the exact lease job ID with
-  `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID`; the hook validates the live lease before preserving its
-  coordinates through sanitation. The exact recipe (moved here from the global agent contract):
-
-  ```bash
-  SINEX_MAIN_DATABASE_URL="$(
-    git -C /realm/project/sinex status --short >/dev/null &&
-    nix develop /realm/project/sinex --command sh -c 'printf %s "$DATABASE_URL"'
-  )"
-
-  env DATABASE_URL="$SINEX_MAIN_DATABASE_URL" \
-    nix develop --command cargo test -p <crate> --lib <filter>
-  ```
-
-  Plain `nix develop` relocates each checkout's dev database under
-  `/var/cache/sinex/$USER/<checkout-hash>/dev-state`, which is why a worktree's own
-  devshell URL points at an empty database.
-- **Memory pressure**: earlyoom SIGTERMs rustc when free <15% (exit 144 ≠ code error). One
-  heavy compile at a time; do not overlap heavy `xtask test` runs (target-lock collision).
-  Clippy on the full workspace can exceed the 600s cargo timeout under load —
-  `SINEX_CARGO_TIMEOUT=1800`, not lock-contention theories.
-- **Dev runtime**: start `agentctl job start sinex run_core` and use the returned AgentCTL job
-  ID for logs or cancellation. Dev gateway/token/TLS coordinates come from `xtask run core --dry-run`.
-- **Prod**: sinexd is a SYSTEM service (`sudo systemctl stop/start sinexd`); prod DB is the
-  system PostgreSQL on TCP 5432 (`sinex_prod`), not the dev socket. Deploy = pin sinex rev
-  in the sinnix flake, then `nix develop --command switch` from `/realm/project/sinnix`.
-  **`switch` alone does NOT restart sinexd on this host** — sinnix's
-  `bridge.nix` sets `runtime.restartOnSwitch = false` (workstations avoid
-  activation-triggered restart I/O pressure), so the new NixOS generation's
-  binary/config sits inactive until an explicit `sudo systemctl restart
-  sinexd`, which is also when `SINEX_SCHEMA_APPLY_ON_STARTUP=1`-driven schema
-  convergence actually runs. A `switch` with no follow-up restart leaves the
-  old binary running against the old schema indefinitely — verify with
-  `systemctl status sinexd` (check the active binary's start time / unit
-  generation) whenever a deploy is expected to take effect immediately, and
-  restart explicitly rather than assuming `switch` did it (confirmed via
-  audit 2026-08-11, see `sinex-*` beads on schema-apply DDL safety).
-- **git**: `git branch --show-current` before committing (sessions have committed to the
-  wrong branch). Stage by path. Agent-authored text never puts resolver keywords next to
-  issue numbers.
-- **zsh**: no word-splitting — `bash -c` for scripts that assume it; `${=var}` to split.
+- Compile-heavy worktrees live under `/realm/worktrees/`. Use the declared
+  `dev_services` dependency for database-backed checks and pass its exact job
+  ID as `SINEX_PRE_PUSH_AGENTCTL_LEASE_ID` when pushing from that workspace.
+- SQLx compiles against the live dev database. Never create an offline cache or
+  set `SQLX_OFFLINE`; repair the declared development service instead.
+- Start runtime operations through AgentCTL and use the returned job ID for
+  logs, results, and cancellation. Do not infer ownership from process names.
+- Production `sinexd` is a system service. A Sinnix `switch` does not restart
+  it because `runtime.restartOnSwitch = false`; when deployment is intended to
+  take effect immediately, explicitly restart it and verify the active binary,
+  unit generation, and schema convergence.
 
 ## Docs Map (content owned elsewhere)
 
