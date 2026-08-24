@@ -35,7 +35,7 @@ async fn skeleton_uses_package_completeness_contract_fields() -> xtask::sandbox:
     assert!(rendered.contains("SourceMeta"));
     assert!(rendered.contains("EventContract refs:"));
     assert!(rendered.contains("AdmissionPolicy refs:"));
-    assert!(rendered.contains("resource_budget"));
+    assert!(rendered.contains("work_budget"));
     assert!(rendered.contains("coverage_and_debt_views"));
     assert!(rendered.contains("compile_error!"));
     assert!(rendered.contains("event_source ="));

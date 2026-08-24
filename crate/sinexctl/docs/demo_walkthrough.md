@@ -11,7 +11,7 @@ dataset (`sinexctl ops demo --confirm`). Issue #1172 AC-10.
 
 ```bash
 # 1. Make sure the gateway and Postgres are reachable.
-xtask infra start
+agentctl job start sinex dev_services
 
 # 2. Run the walkthrough. If the database is empty, this also seeds
 #    deterministic events via the explicitly confirmed `sinexctl ops demo`

@@ -95,40 +95,17 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
         intro: "Use these when the local stack or a running process is part of the work.",
         entries: &[
             GuideEntry {
-                path: "infra start",
-                fallback_summary: "Start local infrastructure",
-                when: "local Postgres and NATS need to be available for checks, tests, or manual runs",
+                path: "infra lease-services",
+                fallback_summary: "Run AgentCTL lease-owned development services",
+                when: "a worktree needs isolated PostgreSQL and NATS under AgentCTL ownership",
                 examples: &[
-                    "xtask infra start",
-                    "xtask infra status",
-                    "xtask infra status --all-checkouts",
-                    "xtask infra stop",
-                    "xtask infra stop --all-checkouts --stale-only",
-                    "xtask infra stop --all-checkouts --orphaned-only",
-                    "xtask infra stop --all-checkouts --dry-run",
+                    "agentctl job start sinex dev_services",
+                    "agentctl job get <job-id>",
+                    "agentctl job cancel <job-id>",
                 ],
                 notes: &[
-                    "`xtask infra status`, `xtask run list`, and help/listing commands are read-only probes; the devshell wrapper must not start checkout-local Postgres, NATS, or sinexd for them.",
-                    "`xtask infra stop` is not read-only, but it is bootstrap-free: stopping/cleanup must not start SQLx Postgres first.",
-                    "`xtask infra stop --all-checkouts --stale-only` removes stale checkout-local locks and PID files without stopping live processes.",
-                    "`xtask infra stop --all-checkouts --orphaned-only` (sinex-grlv) stops only checkout-local Postgres/NATS/sinexd whose owning checkout no longer exists on disk — unconditionally safe, no idle window, never touches a live checkout. `xtask infra start` also runs this sweep automatically and opportunistically before starting its own infra.",
-                    "`xtask infra stop --all-checkouts` (no filter) stops every checkout-local process whose /proc command line proves ownership of the matching dev-state root, regardless of whether its checkout still exists — broad and deliberate, for a human operator.",
-                    "Commands that compile or execute SQLx-backed code still bootstrap the checkout-local Postgres schema through the xtask wrapper.",
-                ],
-            },
-            GuideEntry {
-                path: "infra smoke",
-                fallback_summary: "Verify the explicit local devshell/runtime lifecycle",
-                when: "you need to prove a checkout can work locally without a Sinnix deployment or hidden runtime starts",
-                examples: &[
-                    "xtask infra smoke --dry-run",
-                    "xtask infra smoke --reset-first",
-                    "xtask infra smoke --reset-first --skip-start",
-                ],
-                notes: &[
-                    "`xtask infra smoke` starts services only in its explicit start phase, then stops them before returning.",
-                    "Use `--dry-run` for a no-service plan and current coordinate/RSS inventory.",
-                    "Use `--skip-start` when you only want to recheck read-only probes and all-checkout inventory.",
+                    "The descriptor injects bounded loopback ports and the command remains foreground after PostgreSQL and NATS pass readiness checks.",
+                    "Systemd owns process-tree cancellation and lease release. Xtask does not write owner files, retain PIDs, or stop arbitrary processes.",
                 ],
             },
             GuideEntry {
@@ -155,7 +132,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[
                     "`xtask run` is the local unified-sinexd development surface; it replaces old multi-node dev-run assumptions.",
                     "Local sinexd execution is explicit. Build/check/test/help/pre-push flows must not start it as a side effect.",
-                    "Dry-run and startup output report the checkout root, dev-state, log directory, database URL, NATS URL, and API URL when configured; use `xtask infra status` to inspect live dev-local processes.",
+                    "Dry-run and startup output report the checkout root, dev-state, log directory, database URL, NATS URL, and API URL when configured. Inspect declared service jobs through AgentCTL.",
                     "Use `agentctl job start sinex run_core`, `agentctl job start sinex run_all_automatons`, or `agentctl job start sinex run_all_sources` for declared lifecycle operations. Direct `xtask run` remains for dry-run coordinate inspection and undeclared module or argument cases.",
                 ],
             },

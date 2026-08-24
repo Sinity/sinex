@@ -235,10 +235,9 @@ async fn source_coverage_view_marks_ready_when_catalog_material_and_events_exist
     assert_eq!(view.privacy.tier, "sensitive");
     assert_eq!(view.privacy.context, "command");
     let budget = view
-        .resource_budget
+        .work_budget
         .as_ref()
         .expect("resource budget expected");
-    assert_eq!(budget.resource_profile, "bounded_file");
     assert_eq!(budget.work_class, "bulk_import");
     assert!(budget.pressure_actions.contains(&"inspect".to_string()));
     assert!(
@@ -1079,7 +1078,7 @@ async fn media_package_operations_surface_operator_actions() -> xtask::TestResul
     assert_eq!(local_model_mode.runtime_shape, "on_demand");
     assert_eq!(local_model_mode.material_lifecycle, "derived_only");
     assert_eq!(local_model_mode.transport, "direct");
-    assert_eq!(local_model_mode.resource_budget.work_class, "bulk_import");
+    assert_eq!(local_model_mode.work_budget.work_class, "bulk_import");
     assert!(
         local_model_mode
             .actions
@@ -1384,7 +1383,7 @@ async fn email_package_operations_surface_operator_actions() -> xtask::TestResul
         .find(|mode| mode.mode_id == "source:email.mailbox.imap-idle-live")
         .expect("IMAP IDLE mode expected");
     assert_eq!(imap_idle.runtime_shape, "continuous");
-    assert_eq!(imap_idle.resource_budget.work_class, "capture_live");
+    assert_eq!(imap_idle.work_budget.work_class, "capture_live");
     assert!(
         imap_idle
             .actions

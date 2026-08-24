@@ -546,7 +546,7 @@ async fn ops_start_records_media_operation_as_pending_executor(ctx: TestContext)
         "local_queue"
     );
     assert_eq!(
-        scope["mode_contract"]["resource_budget"]["work_class"],
+        scope["mode_contract"]["work_budget"]["work_class"],
         "capture_live"
     );
     let preview = response
@@ -1255,7 +1255,7 @@ async fn ops_start_records_email_sync_for_provider_mode(ctx: TestContext) -> Tes
         "external_api"
     );
     assert_eq!(
-        scope["mode_contract"]["resource_budget"]["work_class"],
+        scope["mode_contract"]["work_budget"]["work_class"],
         "admission_hot"
     );
     assert_eq!(scope["account_ref"], "operator-mailbox:primary");

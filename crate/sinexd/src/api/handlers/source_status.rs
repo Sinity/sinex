@@ -17,8 +17,8 @@ use sinex_primitives::rpc::{
 };
 use sinex_primitives::source_contracts::{
     AcceptedLossPolicy, AccessScope, BudgetPressureAction, CatchUpAuthority, CheckpointFamily,
-    DeliverySemantics, MaterialLifecyclePolicy, OrderingSemantics, ResourceBudgetSpec,
-    ResourceProfile, RunnerPack, SourceCapabilityKind, SourceContract, SourceCriticality,
+    DeliverySemantics, MaterialLifecyclePolicy, OrderingSemantics, WorkBudgetSpec,
+    RunnerPack, SourceCapabilityKind, SourceContract, SourceCriticality,
     SourceReplayabilityClass, SourceRuntimeBinding, TransportKind, WorkClass, all_source_contracts,
     source_runtime_bindings,
 };
@@ -29,7 +29,7 @@ use sinex_primitives::views::{
     ReadinessCaveatId, SOURCE_DEDUP_EXAMPLE_LIMIT, SinexObjectKind, SinexObjectRef,
     SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
     SourceDedupBreakdownView, SourceDedupExampleView, SourceDedupSummaryView,
-    SourceDedupWindowView, SourceModeStatusView, SourcePrivacyPosture, SourceResourceBudgetView,
+    SourceDedupWindowView, SourceModeStatusView, SourcePrivacyPosture, SourceWorkBudgetView,
     ViewEnvelope,
 };
 use sinex_primitives::{
@@ -689,7 +689,7 @@ fn source_coverage_view_with_stale_after(
     let privacy_context = selected_binding.map_or("none".to_string(), |binding| {
         format!("{:?}", binding.privacy_context).to_ascii_lowercase()
     });
-    let resource_budget = selected_binding.map(source_resource_budget_view);
+    let work_budget = selected_binding.map(source_work_budget_view);
     let modes = bindings
         .iter()
         .map(|binding| {
@@ -723,7 +723,7 @@ fn source_coverage_view_with_stale_after(
             context: privacy_context,
             proposed: accepted_binding_count == 0 && proposed_binding_count > 0,
         },
-        resource_budget,
+        work_budget,
         modes,
         actions: source_actions(contract.id, bindings),
     }
@@ -1242,7 +1242,7 @@ fn source_mode_status_view(
         dlq: binding.transport_semantics.dlq,
         backpressure: binding.transport_semantics.backpressure,
         privacy_context: format!("{:?}", binding.privacy_context).to_ascii_lowercase(),
-        resource_budget: source_resource_budget_view(binding),
+        work_budget: source_work_budget_view(binding),
         criticality: binding
             .criticality
             .map(criticality_name)
@@ -1488,10 +1488,9 @@ fn optional_timestamp(timestamp: Option<Timestamp>) -> String {
     timestamp.map_or_else(|| "unknown".to_string(), |timestamp| timestamp.to_string())
 }
 
-fn source_resource_budget_view(binding: &SourceRuntimeBinding) -> SourceResourceBudgetView {
-    let budget = binding.resource_budget();
-    SourceResourceBudgetView {
-        resource_profile: resource_profile_name(binding.resource_profile).to_string(),
+fn source_work_budget_view(binding: &SourceRuntimeBinding) -> SourceWorkBudgetView {
+    let budget = binding.work_budget();
+    SourceWorkBudgetView {
         work_class: work_class_name(&budget).to_string(),
         steady_memory_mib: budget.steady_memory_mib,
         burst_memory_mib: budget.burst_memory_mib,
@@ -1512,19 +1511,7 @@ fn source_resource_budget_view(binding: &SourceRuntimeBinding) -> SourceResource
     }
 }
 
-fn resource_profile_name(profile: ResourceProfile) -> &'static str {
-    match profile {
-        ResourceProfile::BoundedFile => "bounded_file",
-        ResourceProfile::BoundedStream => "bounded_stream",
-        ResourceProfile::LiveWatcher => "live_watcher",
-        ResourceProfile::DirectoryScan => "directory_scan",
-        ResourceProfile::Oneshot => "oneshot",
-        ResourceProfile::EventStreamConsumer => "event_stream_consumer",
-        ResourceProfile::EmbeddedEmitter => "embedded_emitter",
-    }
-}
-
-fn work_class_name(budget: &ResourceBudgetSpec) -> &'static str {
+fn work_class_name(budget: &WorkBudgetSpec) -> &'static str {
     match budget.work_class {
         WorkClass::Interactive => "interactive",
         WorkClass::AdmissionHot => "admission_hot",

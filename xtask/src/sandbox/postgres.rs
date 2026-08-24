@@ -50,7 +50,7 @@ pub struct PgInstance {
 impl Drop for PgInstance {
     fn drop(&mut self) {
         // Best effort stop
-        let _ = self.manager.stop(false);
+        let _ = self.manager.shutdown_ephemeral();
         if !self.keep_data {
             let _ = fs::remove_dir_all(&self.data_dir);
             if self.cleanup_socket_dir {

@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::privacy::ProcessingContext;
 use crate::source_contracts::{
-    CheckpointFamily, MaterialLifecyclePolicy, ResourceBudgetSpec, ResourceProfile, RunnerPack,
+    CheckpointFamily, MaterialLifecyclePolicy, WorkBudgetSpec, ResourceProfile, RunnerPack,
     RuntimeShape, SourceCapabilityRef, SourceCriticality, SourceRecoveryPolicy, SubjectRef,
     TransportSemantics,
 };
@@ -19,7 +19,7 @@ pub struct SourceRuntimeBinding {
     pub output_event_type: &'static str,
     /// Source-level default redaction context for the privacy engine.
     pub privacy_context: ProcessingContext,
-    /// Resource ceiling profile; derives the deployment unit's systemd limits.
+    /// Internal work-shape profile; derives Sinex's semantic work budget.
     pub resource_profile: ResourceProfile,
     pub capabilities: &'static [&'static str],
     /// Stable id of the [`SourceContract`] this binding belongs to.
@@ -134,7 +134,7 @@ impl SourceRuntimeBinding {
 
     /// Package budget contract derived from this binding's resource profile.
     #[must_use]
-    pub const fn resource_budget(self) -> ResourceBudgetSpec {
+    pub const fn work_budget(self) -> WorkBudgetSpec {
         self.resource_profile.budget_spec()
     }
 

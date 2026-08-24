@@ -5,7 +5,7 @@ use crate::fmt::render_finite_envelope;
 use sinex_primitives::views::{
     ActionAvailability, CaveatView, CoverageGapView, SourceCoverageListView,
     SourceDedupBreakdownView, SourceDedupExampleView, SourceDedupSummaryView, SourcePrivacyPosture,
-    SourceResourceBudgetView, VIEW_ENVELOPE_SCHEMA_VERSION,
+    SourceWorkBudgetView, VIEW_ENVELOPE_SCHEMA_VERSION,
 };
 use xtask::sandbox::sinex_test;
 
@@ -30,7 +30,7 @@ fn fixture_source() -> SourceCoverageView {
             context: "command".to_string(),
             proposed: false,
         },
-        resource_budget: None,
+        work_budget: None,
         modes: vec![fixture_mode()],
         actions: Vec::new(),
     }
@@ -58,8 +58,7 @@ fn fixture_mode() -> SourceModeStatusView {
         dlq: false,
         backpressure: false,
         privacy_context: "metadata".to_string(),
-        resource_budget: SourceResourceBudgetView {
-            resource_profile: "bounded_file".to_string(),
+        work_budget: SourceWorkBudgetView {
             work_class: "bulk_import".to_string(),
             steady_memory_mib: 16,
             burst_memory_mib: 32,

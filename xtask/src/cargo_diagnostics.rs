@@ -279,7 +279,7 @@ fn run_cargo_with_timeout(
             "cargo timed out after {timeout_secs}s — possible cargo target/ lock contention \
              from a concurrent cargo process. \
              Set SINEX_CARGO_TIMEOUT env var to adjust. \
-             Check for other running xtask/cargo processes with: xtask infra status"
+             Check AgentCTL development-service leases with: agentctl job list"
         ))
         .into());
     }
@@ -443,7 +443,7 @@ where
             "cargo timed out after {timeout_secs}s — possible cargo target/ lock contention \
              from a concurrent cargo process. \
              Set SINEX_CARGO_TIMEOUT env var to adjust. \
-             Check for other running xtask/cargo processes with: xtask infra status"
+             Check AgentCTL development-service leases with: agentctl job list"
         ))
         .into());
     }

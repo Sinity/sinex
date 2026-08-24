@@ -414,11 +414,11 @@
               consumerAssertions =
                 if !hasSourceManifestEnv then
                   throw "source catalog consumer did not render SINEX_SOURCE_BINDINGS_PATH"
-                else if !(sinexdServiceConfig ? MemoryMax) then
-                  throw "source catalog consumer did not render catalog-derived sinexd MemoryMax"
+                else if sinexdServiceConfig ? MemoryMax then
+                  throw "source catalog consumer retained a catalog-derived sinexd MemoryMax"
                 else if !(builtins.all (value: value) staticImportAssertions) then
                   throw "source catalog consumer failed static-import manifest assertions"
-                else { sinexdMemoryMax = sinexdServiceConfig.MemoryMax; };
+                else { noCatalogDerivedMemoryMax = true; };
               requiredSources = catalog.requireFieldsFor [
                 "fs"
                 "terminal.atuin-history"
@@ -439,7 +439,7 @@
               ];
               evalSummary = builtins.toJSON {
                 inherit (catalog) entryCount schemaVersion;
-                inherit (consumerAssertions) sinexdMemoryMax;
+                inherit (consumerAssertions) noCatalogDerivedMemoryMax;
                 staticImports = [
                   gitStaticImport.source_id
                   raindropStaticImport.source_id
@@ -475,92 +475,8 @@
                 fi
 
                 real_cargo="${fenixPkgs.toolchain}/bin/cargo"
-                pgdata="$SINEX_DEV_STATE_DIR/data/postgres"
                 pgrun="$SINEX_DEV_STATE_DIR/run"
-                pglog="$SINEX_DEV_STATE_DIR/run/logs"
                 pgport="''${PGPORT:-5432}"
-                runtime_conf="$pgdata/sinex-dev.conf"
-                include_line="include_if_exists = '$runtime_conf'"
-                dev_user="''${USER:-$(id -un)}"
-                bootstrap_lock_dir="$SINEX_DEV_STATE_DIR/cargo-sqlx-bootstrap.lock"
-                bootstrap_log="$pglog/cargo-sqlx-bootstrap.log"
-
-                _sinex_schema_apply_bootstrap_bin() {
-                  local bootstrap_bin bootstrap_out cached_path cache_fingerprint cache_fingerprint_file cache_path_file current_fingerprint
-
-                  if ! command -v nix >/dev/null 2>&1; then
-                    echo "nix is required to build schema-apply-bootstrap lazily" >>"$bootstrap_log"
-                    return 127
-                  fi
-
-                  cache_fingerprint_file="$SINEX_DEV_STATE_DIR/schema-apply-bootstrap.fingerprint"
-                  cache_path_file="$SINEX_DEV_STATE_DIR/schema-apply-bootstrap.path"
-                  current_fingerprint="$(_sinex_schema_apply_bootstrap_fingerprint || true)"
-
-                  if [ -n "$current_fingerprint" ] \
-                    && [ -r "$cache_fingerprint_file" ] \
-                    && [ -r "$cache_path_file" ]
-                  then
-                    cache_fingerprint="$(cat "$cache_fingerprint_file" 2>/dev/null || true)"
-                    cached_path="$(cat "$cache_path_file" 2>/dev/null || true)"
-                    if [ "$cache_fingerprint" = "$current_fingerprint" ] && [ -x "$cached_path" ]; then
-                      printf '%s\n' "$cached_path"
-                      return 0
-                    fi
-                  fi
-
-                  bootstrap_out="$(
-                    nix --no-warn-dirty \
-                      --extra-experimental-features 'nix-command flakes' \
-                      build \
-                      --no-link \
-                      --print-out-paths \
-                      "$root_dir#schema-apply-bootstrap" \
-                      2>>"$bootstrap_log"
-                  )" || return $?
-
-                  bootstrap_bin="$bootstrap_out/bin/schema-apply-bootstrap"
-                  if [ ! -x "$bootstrap_bin" ]; then
-                    echo "schema-apply-bootstrap output is missing executable: $bootstrap_bin" >>"$bootstrap_log"
-                    return 1
-                  fi
-                  if [ -n "$current_fingerprint" ]; then
-                    mkdir -p "$SINEX_DEV_STATE_DIR"
-                    printf '%s\n' "$current_fingerprint" >"$cache_fingerprint_file"
-                    printf '%s\n' "$bootstrap_bin" >"$cache_path_file"
-                  fi
-                  printf '%s\n' "$bootstrap_bin"
-                }
-
-                _sinex_schema_apply_bootstrap_fingerprint() {
-                  (
-                    cd "$root_dir"
-                    {
-                      printf '%s\n' schema-apply-bootstrap-cache-v1
-                      git ls-files \
-                        Cargo.toml \
-                        Cargo.lock \
-                        flake.nix \
-                        crate/sinex-schema \
-                        crate/sinex-primitives
-                      git ls-files --others --exclude-standard \
-                        Cargo.toml \
-                        Cargo.lock \
-                        flake.nix \
-                        crate/sinex-schema \
-                        crate/sinex-primitives
-                    } \
-                      | LC_ALL=C sort -u \
-                      | while IFS= read -r rel_path; do
-                        [ -n "$rel_path" ] || continue
-                        [ -f "$rel_path" ] || continue
-                        printf '%s\n' "$rel_path"
-                        sha256sum "$rel_path"
-                      done \
-                      | sha256sum \
-                      | awk '{print $1}'
-                  )
-                }
 
                 _sinex_cargo_command_name() {
                   while [ "$#" -gt 0 ]; do
@@ -644,195 +560,17 @@
                   return 0
                 }
 
-                _sinex_cargo_write_runtime_config() {
-                  {
-                    printf "unix_socket_directories = '%s'\n" "$pgrun"
-                    printf "%s = '%s'\n" "listen_addresses" ""
-                    printf "port = %s\n" "$pgport"
-                    printf "max_connections = 128\n"
-                    printf "max_worker_processes = 6\n"
-                    printf "shared_buffers = '32MB'\n"
-                    printf "shared_preload_libraries = 'timescaledb'\n"
-                    printf "timescaledb.max_background_workers = 2\n"
-                    printf "log_destination = 'stderr'\n"
-                    printf "logging_collector = on\n"
-                    printf "log_directory = '%s'\n" "$pglog"
-                    printf "log_filename = 'postgres.log'\n"
-                  } >"$runtime_conf"
-
-                  if ! grep -Fqx "$include_line" "$pgdata/postgresql.conf"; then
-                    printf '\n%s\n' "$include_line" >>"$pgdata/postgresql.conf"
-                  fi
-                }
-
-                _sinex_cargo_postgres_log_tail() {
-                  local log_path="$1"
-                  if [ -r "$log_path" ]; then
-                    echo "--- postgres log tail: $log_path ---" >&2
-                    tail -n 40 "$log_path" >&2 || true
-                    echo "--- end postgres log tail ---" >&2
-                  else
-                    echo "(postgres log is not readable: $log_path)" >&2
-                  fi
-                }
-
-                _sinex_cargo_cleanup_stale_postgres_pid() {
-                  local pid_file pid cmdline socket lock
-                  pid_file="$pgdata/postmaster.pid"
-                  [ -e "$pid_file" ] || return 0
-
-                  pid="$(head -n 1 "$pid_file" 2>/dev/null | tr -d '[:space:]' || true)"
-                  socket="$pgrun/.s.PGSQL.$pgport"
-                  lock="$pgrun/.s.PGSQL.$pgport.lock"
-
-                  case "$pid" in
-                    ""|*[!0-9]*)
-                      echo "⚠️  Removing malformed checkout-local PostgreSQL pid file: $pid_file" >&2
-                      rm -f "$pid_file" "$socket" "$lock"
-                      return 0
-                      ;;
-                  esac
-
-                  if ! kill -0 "$pid" 2>/dev/null; then
-                    echo "⚠️  Removing stale checkout-local PostgreSQL pid file for dead PID $pid" >&2
-                    rm -f "$pid_file" "$socket" "$lock"
-                    return 0
-                  fi
-
-                  cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
-                  case "$cmdline" in
-                    *"$pgdata"*)
-                      return 0
-                      ;;
-                    *)
-                      echo "⚠️  Removing checkout-local PostgreSQL pid file for unrelated live PID $pid" >&2
-                      rm -f "$pid_file" "$socket" "$lock"
-                      return 0
-                      ;;
-                  esac
-                }
-
-                _sinex_cargo_start_postgres() {
-                  local start_log start_rc
-                  start_log="$pglog/postgres-start.log"
-
-                  _sinex_cargo_cleanup_stale_postgres_pid
-
-                  echo "ℹ  Starting checkout-local Postgres for SQLx validation..." >&2
-                  start_rc=0
-                  ${postgresForSqlx}/bin/pg_ctl \
-                    -D "$pgdata" \
-                    start \
-                    -w \
-                    -l "$start_log" \
-                    -o "-k $pgrun -p $pgport" >>"$bootstrap_log" 2>&1 || start_rc=$?
-
-                  if [ "$start_rc" -ne 0 ]; then
-                    echo "✗ checkout-local Postgres failed to start (status $start_rc)" >&2
-                    _sinex_cargo_postgres_log_tail "$start_log"
-                    return "$start_rc"
-                  fi
-                }
-
-                _sinex_cargo_bootstrap_sqlx_database_unlocked() {
-                  mkdir -p "$pgdata" "$pgrun" "$pglog"
-
-                  if [ ! -f "$pgdata/PG_VERSION" ]; then
-                    echo "ℹ  Initializing checkout-local Postgres for SQLx validation..." >&2
-                    ${postgresForSqlx}/bin/initdb \
-                      --auth=trust \
-                      --no-locale \
-                      --encoding=UTF8 \
-                      -U postgres \
-                      -D "$pgdata" >>"$bootstrap_log" 2>&1
-                  fi
-
-                  _sinex_cargo_write_runtime_config
-
-                  if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
-                    _sinex_cargo_start_postgres
-                  fi
-
-                  ${postgresForSqlx}/bin/psql \
-                    -h "$pgrun" \
-                    -p "$pgport" \
-                    -U postgres \
-                    -d postgres \
-                    -v ON_ERROR_STOP=1 \
-                    -v dev_user="$dev_user" >>"$bootstrap_log" 2>&1 <<'SQL'
-SELECT format('CREATE ROLE %I LOGIN SUPERUSER CREATEDB', :'dev_user')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')\gexec
-SELECT format('ALTER ROLE %I WITH SUPERUSER CREATEDB LOGIN', :'dev_user')
-WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')\gexec
-SELECT format('CREATE DATABASE sinex_dev OWNER %I', :'dev_user')
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev')\gexec
-SQL
-
-                  echo "ℹ  Applying checkout-local schema for SQLx validation..." >&2
-                  _sinex_schema_apply_bootstrap_bin="$(_sinex_schema_apply_bootstrap_bin)" || return $?
-                  DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres" \
-                    "$_sinex_schema_apply_bootstrap_bin" >>"$bootstrap_log" 2>&1
-                }
-
-                _sinex_cargo_bootstrap_sqlx_database() {
-                  mkdir -p "$SINEX_DEV_STATE_DIR" "$pglog"
-                  while ! mkdir "$bootstrap_lock_dir" 2>/dev/null; do
-                    if [ -r "$bootstrap_lock_dir/pid" ]; then
-                      _lock_pid="$(cat "$bootstrap_lock_dir/pid" 2>/dev/null || true)"
-                      if [ -n "$_lock_pid" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
-                        rm -rf "$bootstrap_lock_dir"
-                        continue
-                      fi
-                    fi
-                    sleep 0.1
-                  done
-                  printf '%s\n' "$$" > "$bootstrap_lock_dir/pid"
-                  trap 'rm -rf "$bootstrap_lock_dir"' EXIT INT TERM
-
-                  : >"$bootstrap_log"
-                  if ! _sinex_cargo_bootstrap_sqlx_database_unlocked; then
-                    echo "✗ cargo SQLx bootstrap failed; log: $bootstrap_log" >&2
-                    cat "$bootstrap_log" >&2 || true
-                    rm -rf "$bootstrap_lock_dir"
-                    trap - EXIT INT TERM
-                    return 1
-                  fi
-
-                  rm -rf "$bootstrap_lock_dir"
-                  trap - EXIT INT TERM
-                }
-
-                _sinex_cargo_stop_bootstrap_postgres() {
-                  if [ "''${_sinex_cargo_bootstrap_postgres_owned:-0}" != 1 ]; then
-                    return 0
-                  fi
-
-                  ${postgresForSqlx}/bin/pg_ctl -D "$pgdata" -m fast stop >/dev/null 2>&1 || true
-                }
-
                 _sinex_cargo_guard_xtask_surface "$@"
 
-                _sinex_cargo_bootstrap_postgres_owned=0
-
                 if _sinex_cargo_requires_sqlx_database "$@"; then
-                  if [ "''${SINEX_CARGO_SQLX_BOOTSTRAP:-1}" = 1 ]; then
-                    echo "ℹ  cargo $(_sinex_cargo_command_name "$@" || printf command) uses SQLx compile-time validation; bootstrapping checkout-local Postgres/schema..." >&2
-                    if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
-                      _sinex_cargo_bootstrap_postgres_owned=1
-                    fi
-                    _sinex_cargo_bootstrap_sqlx_database
+                  if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
+                    echo "✗ AgentCTL development Postgres is unavailable. Start: agentctl job start sinex dev_services" >&2
+                    exit 1
                   fi
-                  export PGHOST="$pgrun"
-                  export PGPORT="$pgport"
-                  export DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres"
+                  export PGHOST="$pgrun" PGPORT="$pgport" DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&port=$pgport&user=postgres"
                 fi
 
-                set +e
-                "$real_cargo" "$@"
-                cargo_status="$?"
-                set -e
-                _sinex_cargo_stop_bootstrap_postgres
-                exit "$cargo_status"
+                exec "$real_cargo" "$@"
               '';
               xtaskCommand = pkgs.writeShellScriptBin "xtask" ''
                 set -euo pipefail
@@ -876,13 +614,13 @@ SQL
                   export SINEX_DEV_STATE_DIR="$checkout_dev_state_dir"
                   export SINEX_STATE_DIR="$root_dir/.sinex/state"
                   export PGHOST="$checkout_pg_run_dir"
-                  export PGPORT=5432
-                  export DATABASE_URL="postgresql:///sinex_dev?host=$checkout_pg_run_dir"
-                  export SINEX_DEV_PG_PORT="$PGPORT"
-                  export SINEX_DEV_NATS_PORT="$checkout_nats_port"
+                  export SINEX_DEV_POSTGRES_PORT="''${SINEX_DEV_POSTGRES_PORT:-5432}"
+                  export PGPORT="$SINEX_DEV_POSTGRES_PORT"
+                  export DATABASE_URL="postgresql:///sinex_dev?host=$checkout_pg_run_dir&port=$SINEX_DEV_POSTGRES_PORT"
+                  export SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-$checkout_nats_port}"
                   export SINEX_DEV_GATEWAY_PORT="$checkout_gateway_port"
                   export SINEX_NATS_DIR="$checkout_dev_state_dir/nats"
-                  export SINEX_NATS_URL="nats://127.0.0.1:$checkout_nats_port"
+                  export SINEX_NATS_URL="nats://127.0.0.1:$SINEX_DEV_NATS_PORT"
                 fi
 
                 cargo_target_dir="''${CARGO_TARGET_DIR:-''${SINEX_DEV_CACHE_ROOT:-$root_dir/.sinex/cache}/target}"
@@ -898,8 +636,6 @@ SQL
                 build_failure_log="$build_state_dir/xtask-build.failed.log"
                 build_stage_metrics="$build_state_dir/xtask-build-stages.json"
                 build_rebuild_trigger="$build_state_dir/xtask-build-rebuild-trigger.json"
-                build_postgres_owned_marker="$build_state_dir/xtask-bootstrap-postgres-owned"
-                schema_bootstrap_lock_file="$build_state_dir/xtask-sqlx-bootstrap.lock"
                 wrapper_event_log="$build_state_dir/xtask-wrapper-events.jsonl"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
 
@@ -1557,19 +1293,8 @@ SQL
 
                 _sinex_xtask_exec_checkout_binary() {
                   _sinex_xtask_stamp_binary_provenance "$@"
-                  if [ -f "$build_postgres_owned_marker" ]; then
-                    export SINEX_XTASK_BOOTSTRAP_POSTGRES_OWNED=1
-                    rm -f "$build_postgres_owned_marker"
-                  fi
-                  if _sinex_xtask_requires_sqlx_database "$@"; then
-                    if ! _sinex_xtask_postgres_ready; then
-                      export SINEX_XTASK_BOOTSTRAP_POSTGRES_OWNED=1
-                    fi
-                    _sinex_xtask_ensure_sqlx_database || exit $?
-                  fi
                   exec "$bin_path" "$@"
                 }
-
                 _sinex_xtask_exec_observability_with_existing_binary() {
                   local observed_at
                   observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1653,7 +1378,7 @@ SQL
                     stage_started_ns="$(_sinex_xtask_stage_start)"
                     _sinex_xtask_write_current_rebuild_trigger
                     _sinex_xtask_stage_record "rebuild_trigger_capture" "$stage_started_ns"
-                    echo "ℹ  Rebuilding checkout-local xtask (bootstraps SQLx Postgres/schema first)..." >&2
+                    echo "ℹ  Rebuilding checkout-local xtask (requires an active AgentCTL lease)..." >&2
                     if _sinex_xtask_build_checkout_binary >"$build_failure_log" 2>&1; then
                       rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                       rebuild_finished_ns="$(date +%s%N)"
@@ -1678,291 +1403,8 @@ SQL
                 }
 
                 _sinex_xtask_build_checkout_binary() {
-                  (
-                    local build_rc
-
-                    _sinex_xtask_postgres_preexisting=0
-                    rm -f "$build_postgres_owned_marker"
-                    stage_started_ns="$(_sinex_xtask_stage_start)"
-                    if _sinex_xtask_postgres_ready; then
-                      _sinex_xtask_postgres_preexisting=1
-                    else
-                      touch "$build_postgres_owned_marker"
-                    fi
-                    _sinex_xtask_stage_record "sqlx_postgres_probe" "$stage_started_ns"
-                    trap '_sinex_xtask_stop_bootstrap_postgres' EXIT
-
-                    build_rc=0
-                    _sinex_xtask_ensure_sqlx_database || return $?
-                    _stage_started_ns="$(_sinex_xtask_stage_start)"
-                    SINEX_XTASK_MANAGED_CARGO=1 cargo build --quiet -p xtask || build_rc=$?
-                    _sinex_xtask_stage_record "xtask_build" "$_stage_started_ns"
-                    if [ "$build_rc" -eq 0 ]; then
-                      touch "$bin_path" "$cargo_target_dir/debug/xtask.d" 2>/dev/null || true
-                    fi
-                    stage_started_ns="$(_sinex_xtask_stage_start)"
-                    _sinex_xtask_stop_bootstrap_postgres
-                    _sinex_xtask_stage_record "sqlx_postgres_stop" "$stage_started_ns"
-                    trap - EXIT
-                    return "$build_rc"
-                  )
+                  SINEX_XTASK_MANAGED_CARGO=1 cargo build --quiet -p xtask
                 }
-
-                _sinex_xtask_stop_bootstrap_postgres() {
-                  if [ "''${_sinex_xtask_postgres_preexisting:-1}" = 1 ]; then
-                    return 0
-                  fi
-
-                  local pgdata
-                  pgdata="$SINEX_DEV_STATE_DIR/data/postgres"
-                  ${postgresForSqlx}/bin/pg_ctl -D "$pgdata" -m fast stop >/dev/null 2>&1 || true
-                }
-
-                _sinex_xtask_postgres_ready() {
-                  local pgrun pgport
-                  pgrun="$SINEX_DEV_STATE_DIR/run"
-                  pgport="''${PGPORT:-5432}"
-                  ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1
-                }
-
-                _sinex_xtask_schema_apply_bootstrap_bin() {
-                  local bootstrap_bin bootstrap_out cached_path cache_fingerprint cache_fingerprint_file cache_path_file current_fingerprint
-
-                  if ! command -v nix >/dev/null 2>&1; then
-                    echo "nix is required to build schema-apply-bootstrap lazily" >&2
-                    return 127
-                  fi
-
-                  cache_fingerprint_file="$SINEX_DEV_STATE_DIR/schema-apply-bootstrap.fingerprint"
-                  cache_path_file="$SINEX_DEV_STATE_DIR/schema-apply-bootstrap.path"
-                  current_fingerprint="$(_sinex_xtask_schema_apply_bootstrap_fingerprint || true)"
-
-                  if [ -n "$current_fingerprint" ] \
-                    && [ -r "$cache_fingerprint_file" ] \
-                    && [ -r "$cache_path_file" ]
-                  then
-                    cache_fingerprint="$(cat "$cache_fingerprint_file" 2>/dev/null || true)"
-                    cached_path="$(cat "$cache_path_file" 2>/dev/null || true)"
-                    if [ "$cache_fingerprint" = "$current_fingerprint" ] && [ -x "$cached_path" ]; then
-                      printf '%s\n' "$cached_path"
-                      return 0
-                    fi
-                  fi
-
-                  bootstrap_out="$(
-                    nix --no-warn-dirty \
-                      --extra-experimental-features 'nix-command flakes' \
-                      build \
-                      --no-link \
-                      --print-out-paths \
-                      "$root_dir#schema-apply-bootstrap"
-                  )" || return $?
-
-                  bootstrap_bin="$bootstrap_out/bin/schema-apply-bootstrap"
-                  if [ ! -x "$bootstrap_bin" ]; then
-                    echo "schema-apply-bootstrap output is missing executable: $bootstrap_bin" >&2
-                    return 1
-                  fi
-                  if [ -n "$current_fingerprint" ]; then
-                    mkdir -p "$SINEX_DEV_STATE_DIR"
-                    printf '%s\n' "$current_fingerprint" >"$cache_fingerprint_file"
-                    printf '%s\n' "$bootstrap_bin" >"$cache_path_file"
-                  fi
-                  printf '%s\n' "$bootstrap_bin"
-                }
-
-                _sinex_xtask_schema_apply_bootstrap_fingerprint() {
-                  (
-                    cd "$root_dir"
-                    {
-                      printf '%s\n' schema-apply-bootstrap-cache-v1
-                      git ls-files \
-                        Cargo.toml \
-                        Cargo.lock \
-                        flake.nix \
-                        crate/sinex-schema \
-                        crate/sinex-primitives
-                      git ls-files --others --exclude-standard \
-                        Cargo.toml \
-                        Cargo.lock \
-                        flake.nix \
-                        crate/sinex-schema \
-                        crate/sinex-primitives
-                    } \
-                      | LC_ALL=C sort -u \
-                      | while IFS= read -r rel_path; do
-                        [ -n "$rel_path" ] || continue
-                        [ -f "$rel_path" ] || continue
-                        printf '%s\n' "$rel_path"
-                        sha256sum "$rel_path"
-                      done \
-                      | sha256sum \
-                      | awk '{print $1}'
-                  )
-                }
-
-                _sinex_xtask_postgres_log_tail() {
-                  local log_path="$1"
-                  if [ -r "$log_path" ]; then
-                    echo "--- postgres log tail: $log_path ---" >&2
-                    tail -n 40 "$log_path" >&2 || true
-                    echo "--- end postgres log tail ---" >&2
-                  else
-                    echo "(postgres log is not readable: $log_path)" >&2
-                  fi
-                }
-
-                _sinex_xtask_cleanup_stale_postgres_pid() {
-                  local pgdata pgrun pgport pid_file pid cmdline socket lock
-                  pgdata="$1"
-                  pgrun="$2"
-                  pgport="$3"
-                  pid_file="$pgdata/postmaster.pid"
-                  [ -e "$pid_file" ] || return 0
-
-                  pid="$(head -n 1 "$pid_file" 2>/dev/null | tr -d '[:space:]' || true)"
-                  socket="$pgrun/.s.PGSQL.$pgport"
-                  lock="$pgrun/.s.PGSQL.$pgport.lock"
-
-                  case "$pid" in
-                    ""|*[!0-9]*)
-                      echo "⚠️  Removing malformed checkout-local PostgreSQL pid file: $pid_file" >&2
-                      rm -f "$pid_file" "$socket" "$lock"
-                      return 0
-                      ;;
-                  esac
-
-                  if ! kill -0 "$pid" 2>/dev/null; then
-                    echo "⚠️  Removing stale checkout-local PostgreSQL pid file for dead PID $pid" >&2
-                    rm -f "$pid_file" "$socket" "$lock"
-                    return 0
-                  fi
-
-                  cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
-                  case "$cmdline" in
-                    *"$pgdata"*)
-                      return 0
-                      ;;
-                    *)
-                      echo "⚠️  Removing checkout-local PostgreSQL pid file for unrelated live PID $pid" >&2
-                      rm -f "$pid_file" "$socket" "$lock"
-                      return 0
-                      ;;
-                  esac
-                }
-
-                _sinex_xtask_start_postgres() {
-                  local pgdata pgrun pglog pgport start_log start_rc
-                  pgdata="$1"
-                  pgrun="$2"
-                  pglog="$3"
-                  pgport="$4"
-                  start_log="$pglog/postgres-start.log"
-
-                  _sinex_xtask_cleanup_stale_postgres_pid "$pgdata" "$pgrun" "$pgport"
-
-                  echo "ℹ  Starting checkout-local Postgres for SQLx validation..." >&2
-                  start_rc=0
-                  ${postgresForSqlx}/bin/pg_ctl \
-                    -D "$pgdata" \
-                    start \
-                    -w \
-                    -l "$start_log" \
-                    -o "-k $pgrun -p $pgport" || start_rc=$?
-
-                  if [ "$start_rc" -ne 0 ]; then
-                    echo "✗ checkout-local Postgres failed to start (status $start_rc)" >&2
-                    _sinex_xtask_postgres_log_tail "$start_log"
-                    return "$start_rc"
-                  fi
-                }
-
-                _sinex_xtask_ensure_sqlx_database_unlocked() {
-                  local pgdata pgrun pglog pgport runtime_conf include_line dev_user schema_apply_bootstrap_bin
-
-                  pgdata="$SINEX_DEV_STATE_DIR/data/postgres"
-                  pgrun="$SINEX_DEV_STATE_DIR/run"
-                  pglog="$SINEX_DEV_STATE_DIR/run/logs"
-                  pgport="''${PGPORT:-5432}"
-                  runtime_conf="$pgdata/sinex-dev.conf"
-                  include_line="include_if_exists = '$runtime_conf'"
-                  dev_user="''${USER:-$(id -un)}"
-
-                  mkdir -p "$pgdata" "$pgrun" "$pglog"
-
-                  if [ ! -f "$pgdata/PG_VERSION" ]; then
-                    echo "ℹ  Initializing checkout-local Postgres for SQLx validation..." >&2
-                    ${postgresForSqlx}/bin/initdb \
-                      --auth=trust \
-                      --no-locale \
-                      --encoding=UTF8 \
-                      -U postgres \
-                      -D "$pgdata"
-                  fi
-
-                  {
-                    printf "unix_socket_directories = '%s'\n" "$pgrun"
-                    printf "%s = '%s'\n" "listen_addresses" ""
-                    printf "port = %s\n" "$pgport"
-                    printf "max_connections = 128\n"
-                    printf "max_worker_processes = 6\n"
-                    printf "shared_buffers = '32MB'\n"
-                    printf "shared_preload_libraries = 'timescaledb'\n"
-                    printf "timescaledb.max_background_workers = 2\n"
-                    printf "log_destination = 'stderr'\n"
-                    printf "logging_collector = on\n"
-                    printf "log_directory = '%s'\n" "$pglog"
-                    printf "log_filename = 'postgres.log'\n"
-                  } >"$runtime_conf"
-
-                  if ! grep -Fqx "$include_line" "$pgdata/postgresql.conf"; then
-                    printf '\n%s\n' "$include_line" >>"$pgdata/postgresql.conf"
-                  fi
-
-                  if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
-                    _sinex_xtask_start_postgres "$pgdata" "$pgrun" "$pglog" "$pgport"
-                  fi
-
-                  ${postgresForSqlx}/bin/psql \
-                    -h "$pgrun" \
-                    -p "$pgport" \
-                    -U postgres \
-                    -d postgres \
-                    -v ON_ERROR_STOP=1 \
-                    -v dev_user="$dev_user" <<'SQL'
-SELECT format('CREATE ROLE %I LOGIN SUPERUSER CREATEDB', :'dev_user')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')\gexec
-SELECT format('ALTER ROLE %I WITH SUPERUSER CREATEDB LOGIN', :'dev_user')
-WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')\gexec
-SELECT format('CREATE DATABASE sinex_dev OWNER %I', :'dev_user')
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev')\gexec
-SQL
-
-                  echo "ℹ  Applying checkout-local schema for SQLx validation..." >&2
-                  schema_apply_bootstrap_bin="$(_sinex_xtask_schema_apply_bootstrap_bin)" || return $?
-                  DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres" \
-                    "$schema_apply_bootstrap_bin"
-
-                  export PGHOST="$pgrun"
-                  export PGPORT="$pgport"
-                  export DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres"
-                }
-
-                _sinex_xtask_ensure_sqlx_database() {
-                  local ensure_rc
-
-                  mkdir -p "$build_state_dir"
-                  exec 9>"$schema_bootstrap_lock_file"
-                  ${pkgs.util-linux}/bin/flock 9
-
-                  ensure_rc=0
-                  _sinex_xtask_ensure_sqlx_database_unlocked || ensure_rc=$?
-
-                  ${pkgs.util-linux}/bin/flock -u 9 >/dev/null 2>&1 || true
-                  exec 9>&-
-                  return "$ensure_rc"
-                }
-
                 cd "$root_dir"
                 _normalized_args=()
                 while IFS= read -r _arg; do
@@ -2133,14 +1575,14 @@ SQL
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 # NATS runtime scratch (JetStream WAL) stays on the relocated NVMe dir.
                 export SINEX_NATS_DIR="$SINEX_DEV_STATE_DIR/nats"
-                export SINEX_DEV_PG_PORT="${toString pgPort}"
-                export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
+                export SINEX_DEV_POSTGRES_PORT="''${SINEX_DEV_POSTGRES_PORT:-${toString pgPort}}"
+                export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run&port=$SINEX_DEV_POSTGRES_PORT"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
-                export PGPORT="${toString pgPort}"
+                export PGPORT="$SINEX_DEV_POSTGRES_PORT"
                 _sinex_checkout_hash_hex="$(printf '%s' "$_sinex_checkout_hash" | cut -c1-2)"
                 _sinex_checkout_hash_byte="$((16#$_sinex_checkout_hash_hex))"
                 export SINEX_DEV_GATEWAY_PORT="$((19000 + _sinex_checkout_hash_byte))"
-                export SINEX_DEV_NATS_PORT="$((4222 + (_sinex_checkout_hash_byte % 100)))"
+                export SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-$((4222 + (_sinex_checkout_hash_byte % 100)))}"
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
                 export SINEX_API_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_API_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
@@ -2226,7 +1668,7 @@ SQL
                     local test_tmp="$SINEX_TEST_TMPDIR"
                     local test_pgdata="''${SINEX_TEST_PGDATA_DIR:-unset}"
 
-                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && pg_state="up"
+                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "$SINEX_DEV_POSTGRES_PORT" 2>/dev/null && pg_state="up"
                     _sinex_tcp_ready "$SINEX_DEV_NATS_PORT" && nats_state="up"
                     history_line="$(_sinex_recent_history_line)"
 
@@ -2237,78 +1679,17 @@ SQL
                       if [ -n "$history_line" ]; then
                         printf '  last xtask: %s\n' "$history_line"
                       fi
-                      printf '  inspect: xtask infra status | xtask history explain --day today --against yesterday\n'
+                      printf '  inspect: agentctl job list | xtask history explain --day today --against yesterday\n'
                       printf '  prod: sinexctl-prod (SINEX_API_URL=:9999) | dev: sinexctl (SINEX_API_URL=:%s)\n' "$SINEX_DEV_GATEWAY_PORT"
-                      printf '  controls: SINEX_AUTO_INFRA=1 starts infra; SINEX_AUTO_STATUS=1 runs full infra status; SINEX_MOTD=0 hides this\n'
+                      printf '  services: agentctl job start sinex dev_services; SINEX_MOTD=0 hides this\n'
                     } >&2
                   }
-
-                  # Keep shell entry cheap by default. Heavy dev conveniences are
-                  # opt-in so direnv, one-shot commands, and fresh shells do not
-                  # silently compile xtask or launch infra.
-                  # When SINEX_AUTO_INFRA=1 does start the stack, it is a
-                  # persistent dev service by design: it detaches (setsid below)
-                  # and deliberately outlives the launching shell or one-shot
-                  # command, listening on loopback only (#1725).
-                  _sinex_infra_starting=0
 
                   if [ "''${SINEX_AUTO_DOCS_SYNC:-0}" = 1 ]; then
                     xtask --format silent docs sync >/dev/null 2>&1 || true
                   fi
 
-                  if [ "''${SINEX_AUTO_INFRA:-0}" = 1 ]; then
-                    _pg_running=0
-                    _nats_running=0
-                    _sinex_infra_start_lock="$SINEX_DEV_STATE_DIR/infra-start.lock"
-                    _sinex_infra_start_log="$SINEX_DEV_STATE_DIR/infra-start.log"
-                    _sinex_infra_start_current_log="$SINEX_DEV_STATE_DIR/infra-start.current.log"
-
-                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_running=1
-                    (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_running=1
-
-                    if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
-                      echo "✓  Infrastructure already running (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT)" >&2
-                    else
-                      if mkdir "$_sinex_infra_start_lock" 2>/dev/null; then
-                        # Detach from direnv and close inherited extra FDs so long-lived
-                        # daemons do not keep direnv's private pipes open.
-                        (
-                          trap 'if [ -f "$_sinex_infra_start_current_log" ]; then mv -f "$_sinex_infra_start_current_log" "$_sinex_infra_start_log" 2>/dev/null || cp "$_sinex_infra_start_current_log" "$_sinex_infra_start_log" 2>/dev/null || true; fi; rmdir "$_sinex_infra_start_lock"' EXIT
-                          : >"$_sinex_infra_start_current_log"
-                          exec </dev/null >>"$_sinex_infra_start_current_log" 2>&1
-                          for _fd_path in /proc/$$/fd/*; do
-                            _fd_num="''${_fd_path##*/}"
-                            [ "$_fd_num" -le 2 ] && continue
-                            eval "exec ''${_fd_num}>&-"
-                          done
-                          # This log is for operators inspecting shell-hook startup,
-                          # so keep it human-readable instead of JSON-fragment prone.
-                          setsid xtask --format human infra start
-                        ) &
-                        _sinex_infra_starting=1
-                        echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2
-                      else
-                        _sinex_infra_starting=1
-                        echo "ℹ  Infrastructure already starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2
-                      fi
-                    fi
-                  fi
-
-                  if [ "''${SINEX_AUTO_STATUS:-0}" = 1 ]; then
-                    # If infra was just launched, poll for readiness before the status probe
-                    # so the summary reflects actual state.
-                    if [ "''${_sinex_infra_starting:-0}" -eq 1 ]; then
-                      _deadline=$((SECONDS + 8))
-                      while [ $SECONDS -lt $_deadline ]; do
-                        _pg_up=0; _nats_up=0
-                        pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_up=1
-                        (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_up=1
-                        [ "$_pg_up" -eq 1 ] && [ "$_nats_up" -eq 1 ] && break
-                        sleep 0.3
-                      done
-                    fi
-                    xtask infra status || true
-                  elif [ "''${SINEX_MOTD:-1}" = 1 ] && [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
+                  if [ "''${SINEX_MOTD:-1}" = 1 ] && [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
                     _sinex_print_motd
                   fi
                 fi

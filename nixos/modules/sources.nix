@@ -342,8 +342,8 @@ let
   resolveResources = nodeResources:
     if nodeResources == null then runtimeCfg.defaults.resources else nodeResources;
 
-  resolveSourceResources = sourceId: nodeResources:
-    if nodeResources == null then sourceCatalog.resourceDefaultsFor sourceId else nodeResources;
+  resolveSourceResources = _sourceId: nodeResources:
+    if nodeResources == null then runtimeCfg.defaults.resources else nodeResources;
 
   resolveInstances = nodeInstances:
     if nodeInstances == null then runtimeCfg.defaults.instances else nodeInstances;
@@ -2048,24 +2048,6 @@ let
         )
         (attrNames allDomainBindings);
 
-  activeCatalogSourceIds =
-    if !sourceRuntimeEnabled then [ ]
-    else
-      concatMap
-        (id:
-          let
-            binding = allDomainBindings.${id} or { };
-            sourceId = binding.sourceId or id;
-            enable = binding.enable or false;
-            gated = binding.gated or false;
-            instances = binding.instances or 1;
-          in
-          if enable && !gated then map (_: sourceId) (range 1 instances) else [ ]
-        )
-        (attrNames allDomainBindings);
-
-  activeCatalogUnitLimits = sourceCatalog.unitMemoryLimitFor activeCatalogSourceIds;
-
   sourceBindingsManifestFile =
     if activeManifestBindings == [ ] then null
     else
@@ -2079,9 +2061,7 @@ let
   coreServices = mkCoreServices {
     automataEnabledList = automataEnabledNames;
     inherit sourceBindingsManifestFile;
-    runtimeOverlay = runtimeOverlay // {
-      serviceConfig = activeCatalogUnitLimits;
-    };
+    runtimeOverlay = runtimeOverlay;
   };
 
   # Preflight only needs to guard the collapsed sinexd unit. Source

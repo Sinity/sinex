@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "entries": [
     {
       "contract": {
@@ -28,53 +28,12 @@
         }
       },
       "binding": {
-        "subject": "source:ai-session-chatgpt",
-        "id": "ai-session-chatgpt",
-        "domain": "ai_session",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "ai.message",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "ai-session-chatgpt",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -123,53 +82,12 @@
         }
       },
       "binding": {
-        "subject": "source:ai-session-claude",
-        "id": "ai-session-claude",
-        "domain": "ai_session",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "ai.message",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "ai-session-claude",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -218,53 +136,12 @@
         }
       },
       "binding": {
-        "subject": "source:analytics",
-        "id": "analytics",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "activity.window.summary",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "analytics",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -314,53 +191,12 @@
         }
       },
       "binding": {
-        "subject": "source:attention-stream",
-        "id": "attention-stream",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "attention.span",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "attention-stream",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -421,55 +257,12 @@
         }
       },
       "binding": {
-        "subject": "source:blob-storage",
-        "id": "blob-storage",
-        "domain": "infra",
-        "implementation": "sinex-primitives::blob",
-        "adapter": "EmbeddedEmitter",
-        "output_event_type": "blob.retrieved",
-        "privacy_context": "metadata",
-        "resource_profile": "embedded_emitter",
-        "capabilities": [],
         "source_id": "blob-storage",
-        "proposed": true,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "in-process blob lifecycle has no recoverable source history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": true
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -521,64 +314,12 @@
         }
       },
       "binding": {
-        "subject": "source:browser.history",
-        "id": "browser.history",
-        "domain": "web",
-        "implementation": "sinexd",
-        "adapter": "ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>",
-        "output_event_type": "page.visited",
-        "privacy_context": "metadata",
-        "resource_profile": "bounded_stream",
-        "capabilities": [
-          "coverage:source-coverage",
-          "debt:unified-debt-view",
-          "operation:browser.web.check",
-          "operation:browser.web.reconnect",
-          "operation:browser.web.pause",
-          "operation:browser.web.resume",
-          "operation:browser.web.drain",
-          "operation:browser.web.inspect"
-        ],
         "source_id": "browser.history",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "mutable_snapshot",
-          "backing_store_kind": "sqlite",
-          "occurrence_anchor": "visit_id"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "material_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "mutable_snapshot",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": "reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "admission_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -628,53 +369,12 @@
         }
       },
       "binding": {
-        "subject": "source:browser.takeout-history",
-        "id": "browser.takeout-history",
-        "domain": "web",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "page.visited",
-        "privacy_context": "metadata",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "browser.takeout-history",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": "reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -723,53 +423,12 @@
         }
       },
       "binding": {
-        "subject": "source:daily-summarizer",
-        "id": "daily-summarizer",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "activity.summary.daily",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "daily-summarizer",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -828,55 +487,12 @@
         }
       },
       "binding": {
-        "subject": "source:desktop.activitywatch",
-        "id": "desktop.activitywatch",
-        "domain": "desktop",
-        "implementation": "sinexd",
-        "adapter": "SqliteRowAdapter",
-        "output_event_type": "window.active",
-        "privacy_context": "document",
-        "resource_profile": "bounded_stream",
-        "capabilities": [],
         "source_id": "desktop.activitywatch",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "mutable_snapshot",
-          "backing_store_kind": "sqlite",
-          "occurrence_anchor": "bucket_event_timestamp"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "material_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "mutable_snapshot",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": "reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "admission_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -930,55 +546,12 @@
         }
       },
       "binding": {
-        "subject": "source:desktop.clipboard",
-        "id": "desktop.clipboard",
-        "domain": "desktop",
-        "implementation": "sinexd",
-        "adapter": "ClipboardPollingAdapter",
-        "output_event_type": "clipboard.copied",
-        "privacy_context": "clipboard",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "desktop.clipboard",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -1028,55 +601,12 @@
         }
       },
       "binding": {
-        "subject": "source:desktop.notification",
-        "id": "desktop.notification",
-        "domain": "desktop",
-        "implementation": "live-capture",
-        "adapter": "DbusStreamAdapter",
-        "output_event_type": "notification.sent",
-        "privacy_context": "notification",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "desktop.notification",
-        "proposed": false,
         "runner_pack": "live",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -1126,55 +656,12 @@
         }
       },
       "binding": {
-        "subject": "source:desktop.notification.action",
-        "id": "desktop.notification.action",
-        "domain": "desktop",
-        "implementation": "live-capture",
-        "adapter": "DbusStreamAdapter",
-        "output_event_type": "notification.action_invoked",
-        "privacy_context": "notification",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "desktop.notification.action",
-        "proposed": false,
         "runner_pack": "live",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -1224,55 +711,12 @@
         }
       },
       "binding": {
-        "subject": "source:desktop.notification.closed",
-        "id": "desktop.notification.closed",
-        "domain": "desktop",
-        "implementation": "live-capture",
-        "adapter": "DbusStreamAdapter",
-        "output_event_type": "notification.closed",
-        "privacy_context": "notification",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "desktop.notification.closed",
-        "proposed": false,
         "runner_pack": "live",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -1354,55 +798,12 @@
         }
       },
       "binding": {
-        "subject": "source:desktop.window-manager",
-        "id": "desktop.window-manager",
-        "domain": "desktop",
-        "implementation": "sinexd",
-        "adapter": "UnixSocketStreamAdapter",
-        "output_event_type": "window.opened",
-        "privacy_context": "document",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "desktop.window-manager",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": "not_reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -1452,53 +853,12 @@
         }
       },
       "binding": {
-        "subject": "source:docs-library-index",
-        "id": "docs-library-index",
-        "domain": "library",
-        "implementation": "sinexd",
-        "adapter": "DirectoryWalkAdapter",
-        "output_event_type": "document.indexed",
-        "privacy_context": "metadata",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "docs-library-index",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -1551,53 +911,12 @@
         }
       },
       "binding": {
-        "subject": "source:document-parser",
-        "id": "document-parser",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "document.parsed",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "document-parser",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -1647,53 +966,12 @@
         }
       },
       "binding": {
-        "subject": "source:document.staging",
-        "id": "document.staging",
-        "domain": "document",
-        "implementation": "sinexd",
-        "adapter": "DocumentStagingParser",
-        "output_event_type": "document.ingested",
-        "privacy_context": "document",
-        "resource_profile": "oneshot",
-        "capabilities": [],
         "source_id": "document.staging",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -1766,445 +1044,56 @@
         }
       },
       "binding": {
-        "subject": "source:email.mailbox",
-        "id": "email.mailbox",
-        "domain": "email",
-        "implementation": "staged-parser",
-        "adapter": "FileContentDropAdapter",
-        "output_event_type": "email.message.received",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [
-          "coverage:source-coverage",
-          "debt:unified-debt-view",
-          "operation:email.mailbox.check",
-          "operation:email.mailbox.import-rfc822",
-          "operation:email.mailbox.inspect",
-          "operation:email.mailbox.replay",
-          "operation:email.mailbox.export",
-          "operation:email.mailbox.fetch-attachments",
-          "operation:email.mailbox.rebuild-projection"
-        ],
         "source_id": "email.mailbox",
-        "proposed": false,
         "runner_pack": "staged",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "scheduled",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
       "runtime_bindings": [
         {
-          "subject": "source:email.mailbox",
-          "id": "email.mailbox",
-          "domain": "email",
-          "implementation": "staged-parser",
-          "adapter": "FileContentDropAdapter",
-          "output_event_type": "email.message.received",
-          "privacy_context": "document",
-          "resource_profile": "bounded_file",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:email.mailbox.check",
-            "operation:email.mailbox.import-rfc822",
-            "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay",
-            "operation:email.mailbox.export",
-            "operation:email.mailbox.fetch-attachments",
-            "operation:email.mailbox.rebuild-projection"
-          ],
           "source_id": "email.mailbox",
-          "proposed": false,
           "runner_pack": "staged",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "retain_raw",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "append_stream",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": null
+          "proposed": false
         },
         {
-          "subject": "source:email.mailbox.gmail-api-scheduled-sync",
-          "id": "email.mailbox",
-          "domain": "email",
-          "implementation": "gmail-api-scheduled-sync",
-          "adapter": "GmailApiCursorAdapter",
-          "output_event_type": "email.sync_cursor.observed",
-          "privacy_context": "document",
-          "resource_profile": "bounded_stream",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:email.mailbox.authorize",
-            "operation:email.mailbox.check",
-            "operation:email.mailbox.sync",
-            "operation:email.mailbox.pause",
-            "operation:email.mailbox.resume",
-            "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay",
-            "operation:email.mailbox.export",
-            "operation:email.mailbox.fetch-attachments",
-            "operation:email.mailbox.rebuild-projection"
-          ],
           "source_id": "email.mailbox",
-          "proposed": false,
           "runner_pack": "sinexd_source",
-          "checkpoint_family": {
-            "kind": "journal"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "external_reference_only",
-          "transport_semantics": {
-            "transport": "external_api",
-            "delivery": "at_most_once",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": true,
-            "backpressure": true
-          },
-          "recovery_policy": {
-            "replayability_class": "journal_cursor",
-            "catch_up_authority": "journal_retention",
-            "accepted_loss_policy": {
-              "kind": "bounded_by_authority",
-              "boundary": "upstream journal retention"
-            }
-          },
-          "criticality": null
+          "proposed": false
         },
         {
-          "subject": "source:email.mailbox.imap-idle-live",
-          "id": "email.mailbox",
-          "domain": "email",
-          "implementation": "imap-idle-live",
-          "adapter": "ImapSyncAdapter",
-          "output_event_type": "email.capture_runtime.observed",
-          "privacy_context": "document",
-          "resource_profile": "live_watcher",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:email.mailbox.authorize",
-            "operation:email.mailbox.check",
-            "operation:email.mailbox.sync",
-            "operation:email.mailbox.pause",
-            "operation:email.mailbox.resume",
-            "operation:email.mailbox.inspect",
-            "operation:email.mailbox.export",
-            "operation:email.mailbox.fetch-attachments",
-            "operation:email.mailbox.rebuild-projection"
-          ],
           "source_id": "email.mailbox",
-          "proposed": false,
           "runner_pack": "live",
-          "checkpoint_family": {
-            "kind": "live_observation"
-          },
           "runtime_shape": "continuous",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "external_reference_only",
-          "transport_semantics": {
-            "transport": "external_api",
-            "delivery": "at_most_once",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": true,
-            "backpressure": true
-          },
-          "recovery_policy": {
-            "replayability_class": "live_observation",
-            "catch_up_authority": "none",
-            "accepted_loss_policy": {
-              "kind": "accepted",
-              "rationale": "IMAP IDLE observations have no recoverable source history",
-              "record": "sinex-r6d.8"
-            }
-          },
-          "criticality": null
+          "proposed": false
         },
         {
-          "subject": "source:email.mailbox.imap-scheduled-sync",
-          "id": "email.mailbox",
-          "domain": "email",
-          "implementation": "imap-scheduled-sync",
-          "adapter": "ImapSyncAdapter",
-          "output_event_type": "email.sync_cursor.observed",
-          "privacy_context": "document",
-          "resource_profile": "bounded_stream",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:email.mailbox.authorize",
-            "operation:email.mailbox.check",
-            "operation:email.mailbox.sync",
-            "operation:email.mailbox.pause",
-            "operation:email.mailbox.resume",
-            "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay",
-            "operation:email.mailbox.export",
-            "operation:email.mailbox.fetch-attachments",
-            "operation:email.mailbox.rebuild-projection"
-          ],
           "source_id": "email.mailbox",
-          "proposed": false,
           "runner_pack": "sinexd_source",
-          "checkpoint_family": {
-            "kind": "polling"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "external_reference_only",
-          "transport_semantics": {
-            "transport": "external_api",
-            "delivery": "at_most_once",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": true,
-            "backpressure": true
-          },
-          "recovery_policy": {
-            "replayability_class": "mutable_snapshot",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": null
+          "proposed": false
         },
         {
-          "subject": "source:email.mailbox.maildir-staged",
-          "id": "email.mailbox",
-          "domain": "email",
-          "implementation": "staged-maildir-parser",
-          "adapter": "FileContentDropAdapter",
-          "output_event_type": "email.message.received",
-          "privacy_context": "document",
-          "resource_profile": "bounded_file",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:email.mailbox.import-maildir",
-            "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay",
-            "operation:email.mailbox.export",
-            "operation:email.mailbox.fetch-attachments",
-            "operation:email.mailbox.rebuild-projection"
-          ],
           "source_id": "email.mailbox",
-          "proposed": false,
           "runner_pack": "staged",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "retain_raw",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "append_stream",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": null
+          "proposed": false
         },
         {
-          "subject": "source:email.mailbox.mbox-staged",
-          "id": "email.mailbox",
-          "domain": "email",
-          "implementation": "staged-mbox-parser",
-          "adapter": "EmailMboxFileAdapter",
-          "output_event_type": "email.message.received",
-          "privacy_context": "document",
-          "resource_profile": "bounded_file",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:email.mailbox.import-mbox",
-            "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay",
-            "operation:email.mailbox.export",
-            "operation:email.mailbox.fetch-attachments",
-            "operation:email.mailbox.rebuild-projection"
-          ],
           "source_id": "email.mailbox",
-          "proposed": false,
           "runner_pack": "staged",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "retain_raw",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "append_stream",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": null
+          "proposed": false
         },
         {
-          "subject": "source:email.mailbox.sent",
-          "id": "email.mailbox",
-          "domain": "email",
-          "implementation": "staged-parser",
-          "adapter": "FileContentDropAdapter",
-          "output_event_type": "email.message.sent",
-          "privacy_context": "document",
-          "resource_profile": "bounded_file",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:email.mailbox.check",
-            "operation:email.mailbox.import-rfc822",
-            "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay",
-            "operation:email.mailbox.export",
-            "operation:email.mailbox.fetch-attachments",
-            "operation:email.mailbox.rebuild-projection"
-          ],
           "source_id": "email.mailbox",
-          "proposed": true,
           "runner_pack": "staged",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "retain_raw",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "append_stream",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": null
+          "proposed": true
         }
       ],
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -2253,53 +1142,12 @@
         }
       },
       "binding": {
-        "subject": "source:entity-enricher",
-        "id": "entity-enricher",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "entity.enriched",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "entity-enricher",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -2349,53 +1197,12 @@
         }
       },
       "binding": {
-        "subject": "source:entity-extractor",
-        "id": "entity-extractor",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "entity.extracted",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "entity-extractor",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -2445,53 +1252,12 @@
         }
       },
       "binding": {
-        "subject": "source:entity-resolver",
-        "id": "entity-resolver",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "entity.resolved",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "entity-resolver",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -2541,53 +1307,12 @@
         }
       },
       "binding": {
-        "subject": "source:facebook-messenger-thread",
-        "id": "facebook-messenger-thread",
-        "domain": "messaging",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "message.sent",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "facebook-messenger-thread",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -2648,53 +1373,12 @@
         }
       },
       "binding": {
-        "subject": "source:fs",
-        "id": "fs",
-        "domain": "filesystem",
-        "implementation": "sinexd",
-        "adapter": "FileContentDropAdapter",
-        "output_event_type": "file.created",
-        "privacy_context": "metadata",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "fs",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": "not_reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -2744,53 +1428,12 @@
         }
       },
       "binding": {
-        "subject": "source:git-commit-history",
-        "id": "git-commit-history",
-        "domain": "vcs",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "commit.created",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "git-commit-history",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": "reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -2839,53 +1482,12 @@
         }
       },
       "binding": {
-        "subject": "source:health",
-        "id": "health",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "health.aggregated_report",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "health",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -2935,53 +1537,12 @@
         }
       },
       "binding": {
-        "subject": "source:hledger-journal",
-        "id": "hledger-journal",
-        "domain": "finance",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "transaction.posted",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "hledger-journal",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -3030,53 +1591,12 @@
         }
       },
       "binding": {
-        "subject": "source:hourly-summarizer",
-        "id": "hourly-summarizer",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "activity.summary.hourly",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "hourly-summarizer",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -3126,53 +1646,12 @@
         }
       },
       "binding": {
-        "subject": "source:instruction-expectation-reconciler",
-        "id": "instruction-expectation-reconciler",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "expectation.status",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "instruction-expectation-reconciler",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -3223,53 +1702,12 @@
         }
       },
       "binding": {
-        "subject": "source:integration.polylogue",
-        "id": "integration.polylogue",
-        "domain": "integration",
-        "implementation": "polylogue-daemon",
-        "adapter": "ExternalProducer",
-        "output_event_type": "integration.polylogue.session_indexed",
-        "privacy_context": "document",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "integration.polylogue",
-        "proposed": false,
         "runner_pack": "external",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "jet_stream",
-          "delivery": "at_least_once",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "external_producer",
-          "catch_up_authority": "external_producer",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -3319,53 +1757,12 @@
         }
       },
       "binding": {
-        "subject": "source:interval-lift",
-        "id": "interval-lift",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "state.interval",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "interval-lift",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -3415,53 +1812,12 @@
         }
       },
       "binding": {
-        "subject": "source:knowledgebase-vault",
-        "id": "knowledgebase-vault",
-        "domain": "knowledge",
-        "implementation": "sinexd",
-        "adapter": "DirectoryWalkAdapter",
-        "output_event_type": "note.observed",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "knowledgebase-vault",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -3526,321 +1882,44 @@
         }
       },
       "binding": {
-        "subject": "source:media.audio-transcript",
-        "id": "media.audio-transcript",
-        "domain": "media",
-        "implementation": "staged-parser",
-        "adapter": "FileContentDropAdapter",
-        "output_event_type": "media.audio.transcript_segment_observed",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [
-          "coverage:source-coverage",
-          "debt:unified-debt-view",
-          "operation:media.audio-transcript.check",
-          "operation:media.audio-transcript.import-transcript",
-          "operation:media.audio-transcript.inspect",
-          "operation:media.audio-transcript.replay",
-          "operation:media.audio-transcript.export"
-        ],
         "source_id": "media.audio-transcript",
-        "proposed": false,
         "runner_pack": "staged",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "scheduled",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
       "runtime_bindings": [
         {
-          "subject": "source:media.audio-transcript",
-          "id": "media.audio-transcript",
-          "domain": "media",
-          "implementation": "staged-parser",
-          "adapter": "FileContentDropAdapter",
-          "output_event_type": "media.audio.transcript_segment_observed",
-          "privacy_context": "document",
-          "resource_profile": "bounded_file",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.audio-transcript.check",
-            "operation:media.audio-transcript.import-transcript",
-            "operation:media.audio-transcript.inspect",
-            "operation:media.audio-transcript.replay",
-            "operation:media.audio-transcript.export"
-          ],
           "source_id": "media.audio-transcript",
-          "proposed": false,
           "runner_pack": "staged",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "retain_raw",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "append_stream",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": null
+          "proposed": false
         },
         {
-          "subject": "source:media.audio-transcript.audio-bundle-staged",
-          "id": "media.audio-transcript",
-          "domain": "media",
-          "implementation": "staged-audio-bundle",
-          "adapter": "FileContentDropAdapter",
-          "output_event_type": "media.audio.recording_observed",
-          "privacy_context": "document",
-          "resource_profile": "oneshot",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.audio-transcript.import-bundle",
-            "operation:media.audio-transcript.inspect",
-            "operation:media.audio-transcript.delete-material",
-            "operation:media.audio-transcript.export"
-          ],
           "source_id": "media.audio-transcript",
-          "proposed": false,
           "runner_pack": "staged",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "retain_raw",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "append_stream",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": "reconstructable"
+          "proposed": false
         },
         {
-          "subject": "source:media.audio-transcript.live-session",
-          "id": "media.audio-transcript",
-          "domain": "media",
-          "implementation": "live-capture",
-          "adapter": "AudioSessionCaptureAdapter",
-          "output_event_type": "media.audio.capture_session_ended",
-          "privacy_context": "document",
-          "resource_profile": "live_watcher",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.audio-transcript.enable-session",
-            "operation:media.audio-transcript.disable-session",
-            "operation:media.audio-transcript.pause",
-            "operation:media.audio-transcript.resume",
-            "operation:media.audio-transcript.retry",
-            "operation:media.audio-transcript.inspect"
-          ],
           "source_id": "media.audio-transcript",
-          "proposed": false,
           "runner_pack": "live",
-          "checkpoint_family": {
-            "kind": "live_observation"
-          },
           "runtime_shape": "continuous",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "ephemeral_raw",
-          "transport_semantics": {
-            "transport": "local_queue",
-            "delivery": "at_most_once",
-            "ordering": "best_effort",
-            "replayable": false,
-            "dlq": true,
-            "backpressure": true
-          },
-          "recovery_policy": {
-            "replayability_class": "live_observation",
-            "catch_up_authority": "none",
-            "accepted_loss_policy": {
-              "kind": "accepted",
-              "rationale": "live audio capture has no recoverable source history",
-              "record": "sinex-r6d.8"
-            }
-          },
-          "criticality": "not_reconstructable"
+          "proposed": false
         },
         {
-          "subject": "source:media.audio-transcript.local-model-batch",
-          "id": "media.audio-transcript",
-          "domain": "media",
-          "implementation": "local-transcription-worker",
-          "adapter": "MediaWorkerCommandExecutor",
-          "output_event_type": "media.audio.transcription_run_observed",
-          "privacy_context": "document",
-          "resource_profile": "oneshot",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.audio-transcript.run-model",
-            "operation:media.audio-transcript.retry",
-            "operation:media.audio-transcript.rebuild-artifact",
-            "operation:media.audio-transcript.inspect"
-          ],
           "source_id": "media.audio-transcript",
-          "proposed": false,
           "runner_pack": "sinexd_source",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "on_demand",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "derived_only",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "derived_internal",
-            "catch_up_authority": "parent_events",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": "reconstructable"
+          "proposed": false
         },
         {
-          "subject": "source:media.audio-transcript.on-demand-session",
-          "id": "media.audio-transcript",
-          "domain": "media",
-          "implementation": "live-capture",
-          "adapter": "AudioSessionCaptureAdapter",
-          "output_event_type": "media.audio.capture_session_started",
-          "privacy_context": "document",
-          "resource_profile": "live_watcher",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.audio-transcript.enable-session",
-            "operation:media.audio-transcript.disable-session",
-            "operation:media.audio-transcript.pause",
-            "operation:media.audio-transcript.resume",
-            "operation:media.audio-transcript.inspect"
-          ],
           "source_id": "media.audio-transcript",
-          "proposed": false,
           "runner_pack": "live",
-          "checkpoint_family": {
-            "kind": "live_observation"
-          },
           "runtime_shape": "on_demand",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "ephemeral_raw",
-          "transport_semantics": {
-            "transport": "local_queue",
-            "delivery": "at_most_once",
-            "ordering": "best_effort",
-            "replayable": false,
-            "dlq": true,
-            "backpressure": true
-          },
-          "recovery_policy": {
-            "replayability_class": "live_observation",
-            "catch_up_authority": "none",
-            "accepted_loss_policy": {
-              "kind": "accepted",
-              "rationale": "on-demand audio capture has no recoverable source history",
-              "record": "sinex-r6d.8"
-            }
-          },
-          "criticality": "not_reconstructable"
+          "proposed": false
         }
       ],
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -3909,422 +1988,56 @@
         }
       },
       "binding": {
-        "subject": "source:media.screen-ocr",
-        "id": "media.screen-ocr",
-        "domain": "media",
-        "implementation": "staged-parser",
-        "adapter": "FileContentDropAdapter",
-        "output_event_type": "media.screen.ocr_segment_observed",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [
-          "coverage:source-coverage",
-          "debt:unified-debt-view",
-          "operation:media.screen-ocr.check",
-          "operation:media.screen-ocr.import-ocr",
-          "operation:media.screen-ocr.inspect",
-          "operation:media.screen-ocr.replay",
-          "operation:media.screen-ocr.export"
-        ],
         "source_id": "media.screen-ocr",
-        "proposed": false,
         "runner_pack": "staged",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "scheduled",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
       "runtime_bindings": [
         {
-          "subject": "source:media.screen-ocr",
-          "id": "media.screen-ocr",
-          "domain": "media",
-          "implementation": "staged-parser",
-          "adapter": "FileContentDropAdapter",
-          "output_event_type": "media.screen.ocr_segment_observed",
-          "privacy_context": "document",
-          "resource_profile": "bounded_file",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.screen-ocr.check",
-            "operation:media.screen-ocr.import-ocr",
-            "operation:media.screen-ocr.inspect",
-            "operation:media.screen-ocr.replay",
-            "operation:media.screen-ocr.export"
-          ],
           "source_id": "media.screen-ocr",
-          "proposed": false,
           "runner_pack": "staged",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "retain_raw",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "append_stream",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": null
+          "proposed": false
         },
         {
-          "subject": "source:media.screen-ocr.live-session",
-          "id": "media.screen-ocr",
-          "domain": "media",
-          "implementation": "live-capture",
-          "adapter": "ScreenRegionCaptureAdapter",
-          "output_event_type": "media.screen.ocr_segment_observed",
-          "privacy_context": "document",
-          "resource_profile": "live_watcher",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.screen-ocr.enable-session",
-            "operation:media.screen-ocr.disable-session",
-            "operation:media.screen-ocr.pause",
-            "operation:media.screen-ocr.resume",
-            "operation:media.screen-ocr.retry",
-            "operation:media.screen-ocr.inspect"
-          ],
           "source_id": "media.screen-ocr",
-          "proposed": false,
           "runner_pack": "live",
-          "checkpoint_family": {
-            "kind": "live_observation"
-          },
           "runtime_shape": "continuous",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "ephemeral_raw",
-          "transport_semantics": {
-            "transport": "local_queue",
-            "delivery": "at_most_once",
-            "ordering": "best_effort",
-            "replayable": false,
-            "dlq": true,
-            "backpressure": true
-          },
-          "recovery_policy": {
-            "replayability_class": "live_observation",
-            "catch_up_authority": "none",
-            "accepted_loss_policy": {
-              "kind": "accepted",
-              "rationale": "live screen capture has no recoverable source history",
-              "record": "sinex-r6d.8"
-            }
-          },
-          "criticality": "not_reconstructable"
+          "proposed": false
         },
         {
-          "subject": "source:media.screen-ocr.local-model-batch",
-          "id": "media.screen-ocr",
-          "domain": "media",
-          "implementation": "local-ocr-worker",
-          "adapter": "MediaWorkerCommandExecutor",
-          "output_event_type": "media.screen.ocr_run_observed",
-          "privacy_context": "document",
-          "resource_profile": "oneshot",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.screen-ocr.run-ocr",
-            "operation:media.screen-ocr.retry",
-            "operation:media.screen-ocr.rebuild-artifact",
-            "operation:media.screen-ocr.inspect"
-          ],
           "source_id": "media.screen-ocr",
-          "proposed": false,
           "runner_pack": "sinexd_source",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "on_demand",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "derived_only",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "derived_internal",
-            "catch_up_authority": "parent_events",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": "reconstructable"
+          "proposed": false
         },
         {
-          "subject": "source:media.screen-ocr.on-demand-region",
-          "id": "media.screen-ocr",
-          "domain": "media",
-          "implementation": "live-capture",
-          "adapter": "ScreenRegionCaptureAdapter",
-          "output_event_type": "media.screen.screenshot_observed",
-          "privacy_context": "document",
-          "resource_profile": "live_watcher",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.screen-ocr.capture-region",
-            "operation:media.screen-ocr.pause",
-            "operation:media.screen-ocr.resume",
-            "operation:media.screen-ocr.inspect"
-          ],
           "source_id": "media.screen-ocr",
-          "proposed": false,
           "runner_pack": "live",
-          "checkpoint_family": {
-            "kind": "live_observation"
-          },
           "runtime_shape": "on_demand",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "ephemeral_raw",
-          "transport_semantics": {
-            "transport": "local_queue",
-            "delivery": "at_most_once",
-            "ordering": "best_effort",
-            "replayable": false,
-            "dlq": true,
-            "backpressure": true
-          },
-          "recovery_policy": {
-            "replayability_class": "live_observation",
-            "catch_up_authority": "none",
-            "accepted_loss_policy": {
-              "kind": "accepted",
-              "rationale": "on-demand screen capture has no recoverable source history",
-              "record": "sinex-r6d.8"
-            }
-          },
-          "criticality": "not_reconstructable"
+          "proposed": false
         },
         {
-          "subject": "source:media.screen-ocr.on-demand-video",
-          "id": "media.screen-ocr",
-          "domain": "media",
-          "implementation": "live-capture",
-          "adapter": "ScreenVideoCaptureAdapter",
-          "output_event_type": "media.screen.video_segment_observed",
-          "privacy_context": "document",
-          "resource_profile": "live_watcher",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.screen-ocr.record-video",
-            "operation:media.screen-ocr.pause",
-            "operation:media.screen-ocr.resume",
-            "operation:media.screen-ocr.inspect"
-          ],
           "source_id": "media.screen-ocr",
-          "proposed": true,
           "runner_pack": "live",
-          "checkpoint_family": {
-            "kind": "live_observation"
-          },
           "runtime_shape": "on_demand",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "ephemeral_raw",
-          "transport_semantics": {
-            "transport": "local_queue",
-            "delivery": "at_most_once",
-            "ordering": "best_effort",
-            "replayable": false,
-            "dlq": true,
-            "backpressure": true
-          },
-          "recovery_policy": {
-            "replayability_class": "live_observation",
-            "catch_up_authority": "none",
-            "accepted_loss_policy": {
-              "kind": "accepted",
-              "rationale": "on-demand video capture has no recoverable source history",
-              "record": "sinex-r6d.8"
-            }
-          },
-          "criticality": null
+          "proposed": true
         },
         {
-          "subject": "source:media.screen-ocr.screenshot-ocr-staged",
-          "id": "media.screen-ocr",
-          "domain": "media",
-          "implementation": "staged-screenshot-bundle",
-          "adapter": "FileContentDropAdapter",
-          "output_event_type": "media.screen.screenshot_observed",
-          "privacy_context": "document",
-          "resource_profile": "oneshot",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.screen-ocr.import-screenshots",
-            "operation:media.screen-ocr.inspect",
-            "operation:media.screen-ocr.delete-material",
-            "operation:media.screen-ocr.export"
-          ],
           "source_id": "media.screen-ocr",
-          "proposed": false,
           "runner_pack": "staged",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "retain_raw",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "append_stream",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": "reconstructable"
+          "proposed": false
         },
         {
-          "subject": "source:media.screen-ocr.video-staged",
-          "id": "media.screen-ocr",
-          "domain": "media",
-          "implementation": "staged-screen-video-bundle",
-          "adapter": "FileContentDropAdapter",
-          "output_event_type": "media.screen.video_segment_observed",
-          "privacy_context": "document",
-          "resource_profile": "oneshot",
-          "capabilities": [
-            "coverage:source-coverage",
-            "debt:unified-debt-view",
-            "operation:media.screen-ocr.import-video",
-            "operation:media.screen-ocr.inspect",
-            "operation:media.screen-ocr.delete-material",
-            "operation:media.screen-ocr.export"
-          ],
           "source_id": "media.screen-ocr",
-          "proposed": false,
           "runner_pack": "staged",
-          "checkpoint_family": {
-            "kind": "append_stream"
-          },
           "runtime_shape": "scheduled",
-          "build_impact": {
-            "crate_impact": "0",
-            "binary_impact": "0",
-            "nix_output_impact": "0",
-            "derivation_impact": "0",
-            "sqlx_validation_impact": "0",
-            "dedicated_build_rationale": null
-          },
-          "material_lifecycle": "retain_raw",
-          "transport_semantics": {
-            "transport": "direct",
-            "delivery": "same_process",
-            "ordering": "cursor_order",
-            "replayable": true,
-            "dlq": false,
-            "backpressure": false
-          },
-          "recovery_policy": {
-            "replayability_class": "append_stream",
-            "catch_up_authority": "backing_store",
-            "accepted_loss_policy": {
-              "kind": "no_silent_loss"
-            }
-          },
-          "criticality": "reconstructable"
+          "proposed": false
         }
       ],
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -4368,55 +2081,12 @@
         }
       },
       "binding": {
-        "subject": "source:noop",
-        "id": "noop",
-        "domain": "sinex",
-        "implementation": "sinexd",
-        "adapter": "SourceDriverRuntime",
-        "output_event_type": "noop",
-        "privacy_context": "metadata",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "noop",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "noop source has no recoverable observation history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -4466,53 +2136,12 @@
         }
       },
       "binding": {
-        "subject": "source:privacy.fixture.sensitive-record",
-        "id": "privacy.fixture.sensitive-record",
-        "domain": "privacy",
-        "implementation": "fixture-metadata",
-        "adapter": "AppendOnlyFileAdapter",
-        "output_event_type": "privacy.fixture.record",
-        "privacy_context": "metadata",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "privacy.fixture.sensitive-record",
-        "proposed": true,
         "runner_pack": "staged",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": true
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -4561,53 +2190,12 @@
         }
       },
       "binding": {
-        "subject": "source:raindrop-bookmarks",
-        "id": "raindrop-bookmarks",
-        "domain": "web",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "bookmark.created",
-        "privacy_context": "metadata",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "raindrop-bookmarks",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": "reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -4656,53 +2244,12 @@
         }
       },
       "binding": {
-        "subject": "source:reddit-gdpr-comments",
-        "id": "reddit-gdpr-comments",
-        "domain": "social",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "social.comment.posted",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "reddit-gdpr-comments",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -4751,53 +2298,12 @@
         }
       },
       "binding": {
-        "subject": "source:reddit-gdpr-posts",
-        "id": "reddit-gdpr-posts",
-        "domain": "social",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "social.post.created",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "reddit-gdpr-posts",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -4846,53 +2352,12 @@
         }
       },
       "binding": {
-        "subject": "source:relation-extractor",
-        "id": "relation-extractor",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "entity.related",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "relation-extractor",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -4942,53 +2407,12 @@
         }
       },
       "binding": {
-        "subject": "source:session-detector",
-        "id": "session-detector",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "activity.session.boundary",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "session-detector",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -5037,55 +2461,12 @@
         }
       },
       "binding": {
-        "subject": "source:sinex-automaton-error",
-        "id": "sinex-automaton-error",
-        "domain": "infra",
-        "implementation": "sinexd",
-        "adapter": "EmbeddedEmitter",
-        "output_event_type": "automaton.error",
-        "privacy_context": "metadata",
-        "resource_profile": "embedded_emitter",
-        "capabilities": [],
         "source_id": "sinex-automaton-error",
-        "proposed": true,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "in-process automaton errors have no recoverable source history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": true
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -5146,55 +2527,12 @@
         }
       },
       "binding": {
-        "subject": "source:sinex-metrics",
-        "id": "sinex-metrics",
-        "domain": "infra",
-        "implementation": "sinex-primitives::metrics",
-        "adapter": "EmbeddedEmitter",
-        "output_event_type": "metric.counter",
-        "privacy_context": "metadata",
-        "resource_profile": "embedded_emitter",
-        "capabilities": [],
         "source_id": "sinex-metrics",
-        "proposed": true,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "in-process metrics have no recoverable source history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": true
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -5243,55 +2581,12 @@
         }
       },
       "binding": {
-        "subject": "source:sinex-runtime-telemetry",
-        "id": "sinex-runtime-telemetry",
-        "domain": "infra",
-        "implementation": "sinexd",
-        "adapter": "EmbeddedEmitter",
-        "output_event_type": "processing.stats",
-        "privacy_context": "metadata",
-        "resource_profile": "embedded_emitter",
-        "capabilities": [],
         "source_id": "sinex-runtime-telemetry",
-        "proposed": true,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "runtime telemetry has no recoverable source history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": true
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -5356,55 +2651,12 @@
         }
       },
       "binding": {
-        "subject": "source:sinexd-api-telemetry",
-        "id": "sinexd-api-telemetry",
-        "domain": "infra",
-        "implementation": "sinexd",
-        "adapter": "EmbeddedEmitter",
-        "output_event_type": "request.stats",
-        "privacy_context": "metadata",
-        "resource_profile": "embedded_emitter",
-        "capabilities": [],
         "source_id": "sinexd-api-telemetry",
-        "proposed": true,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "API telemetry has no recoverable source history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": true
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -5469,55 +2721,12 @@
         }
       },
       "binding": {
-        "subject": "source:sinexd-event-engine-telemetry",
-        "id": "sinexd-event-engine-telemetry",
-        "domain": "infra",
-        "implementation": "sinexd",
-        "adapter": "EmbeddedEmitter",
-        "output_event_type": "stream.stats",
-        "privacy_context": "metadata",
-        "resource_profile": "embedded_emitter",
-        "capabilities": [],
         "source_id": "sinexd-event-engine-telemetry",
-        "proposed": true,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "event-engine telemetry has no recoverable source history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": true
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -5578,55 +2787,12 @@
         }
       },
       "binding": {
-        "subject": "source:sinexd-lifecycle",
-        "id": "sinexd-lifecycle",
-        "domain": "infra",
-        "implementation": "sinex-primitives::process",
-        "adapter": "EmbeddedEmitter",
-        "output_event_type": "process.started",
-        "privacy_context": "metadata",
-        "resource_profile": "embedded_emitter",
-        "capabilities": [],
         "source_id": "sinexd-lifecycle",
-        "proposed": true,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "in-process lifecycle telemetry has no recoverable source history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": true
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -5676,53 +2842,12 @@
         }
       },
       "binding": {
-        "subject": "source:sleep-merged-summary",
-        "id": "sleep-merged-summary",
-        "domain": "health",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "sleep.session",
-        "privacy_context": "metadata",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "sleep-merged-summary",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -5771,53 +2896,12 @@
         }
       },
       "binding": {
-        "subject": "source:spotify-extended-history",
-        "id": "spotify-extended-history",
-        "domain": "music",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "track.played",
-        "privacy_context": "metadata",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "spotify-extended-history",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -5897,55 +2981,12 @@
         }
       },
       "binding": {
-        "subject": "source:system.dbus",
-        "id": "system.dbus",
-        "domain": "system",
-        "implementation": "sinexd",
-        "adapter": "DbusStreamAdapter",
-        "output_event_type": "signal.received",
-        "privacy_context": "dbus",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "system.dbus",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": "not_reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -6000,54 +3041,12 @@
         }
       },
       "binding": {
-        "subject": "source:system.journald",
-        "id": "system.journald",
-        "domain": "system",
-        "implementation": "sinexd",
-        "adapter": "JournalctlStreamAdapter",
-        "output_event_type": "entry.written",
-        "privacy_context": "journal",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "system.journald",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "journal"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "journal_cursor",
-          "catch_up_authority": "journal_retention",
-          "accepted_loss_policy": {
-            "kind": "bounded_by_authority",
-            "boundary": "upstream journal retention"
-          }
-        },
-        "criticality": "not_reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -6096,55 +3095,12 @@
         }
       },
       "binding": {
-        "subject": "source:system.monitor",
-        "id": "system.monitor",
-        "domain": "system",
-        "implementation": "sinexd",
-        "adapter": "MonitorDriver",
-        "output_event_type": "monitoring.started",
-        "privacy_context": "metadata",
-        "resource_profile": "oneshot",
-        "capabilities": [],
         "source_id": "system.monitor",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": "reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -6208,54 +3164,12 @@
         }
       },
       "binding": {
-        "subject": "source:system.systemd",
-        "id": "system.systemd",
-        "domain": "system",
-        "implementation": "sinexd",
-        "adapter": "JournalctlStreamAdapter",
-        "output_event_type": "unit.started",
-        "privacy_context": "journal",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "system.systemd",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "journal"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "journal_cursor",
-          "catch_up_authority": "journal_retention",
-          "accepted_loss_policy": {
-            "kind": "bounded_by_authority",
-            "boundary": "upstream journal retention"
-          }
-        },
-        "criticality": "not_reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -6320,55 +3234,12 @@
         }
       },
       "binding": {
-        "subject": "source:system.udev",
-        "id": "system.udev",
-        "domain": "system",
-        "implementation": "sinexd",
-        "adapter": "FileDropAdapter",
-        "output_event_type": "device.connected",
-        "privacy_context": "metadata",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "system.udev",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": "not_reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -6418,53 +3289,12 @@
         }
       },
       "binding": {
-        "subject": "source:tag-applier",
-        "id": "tag-applier",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "knowledge.tag_applied",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "tag-applier",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -6514,53 +3344,12 @@
         }
       },
       "binding": {
-        "subject": "source:terminal-canonicalizer",
-        "id": "terminal-canonicalizer",
-        "domain": "derived",
-        "implementation": "sinexd",
-        "adapter": "AutomatonRuntime",
-        "output_event_type": "command.canonical",
-        "privacy_context": "metadata",
-        "resource_profile": "event_stream_consumer",
-        "capabilities": [],
         "source_id": "terminal-canonicalizer",
-        "proposed": false,
         "runner_pack": "in_process",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "derived_internal",
-          "catch_up_authority": "parent_events",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "projection_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -6615,55 +3404,12 @@
         }
       },
       "binding": {
-        "subject": "source:terminal.asciinema",
-        "id": "terminal.asciinema",
-        "domain": "terminal",
-        "implementation": "sinexd",
-        "adapter": "DirectoryWalkAdapter",
-        "output_event_type": "session.recorded",
-        "privacy_context": "command",
-        "resource_profile": "directory_scan",
-        "capabilities": [],
         "source_id": "terminal.asciinema",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "mutable_snapshot",
-          "backing_store_kind": "directory",
-          "occurrence_anchor": "file_path_fingerprint"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "material_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "mutable_snapshot",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 1024,
-        "cpu_weight": 120
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 512,
         "burst_memory_mib": 1024,
@@ -6713,55 +3459,12 @@
         }
       },
       "binding": {
-        "subject": "source:terminal.atuin-history",
-        "id": "terminal.atuin-history",
-        "domain": "terminal",
-        "implementation": "sinexd",
-        "adapter": "SqliteRowAdapter",
-        "output_event_type": "command.executed",
-        "privacy_context": "command",
-        "resource_profile": "bounded_stream",
-        "capabilities": [],
         "source_id": "terminal.atuin-history",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "mutable_snapshot",
-          "backing_store_kind": "sqlite",
-          "occurrence_anchor": "atuin_history_id"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "material_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "mutable_snapshot",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": "reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "admission_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -6812,53 +3515,12 @@
         }
       },
       "binding": {
-        "subject": "source:terminal.bash-history",
-        "id": "terminal.bash-history",
-        "domain": "terminal",
-        "implementation": "sinexd",
-        "adapter": "AppendOnlyFileAdapter",
-        "output_event_type": "command.imported",
-        "privacy_context": "command",
-        "resource_profile": "bounded_stream",
-        "capabilities": [],
         "source_id": "terminal.bash-history",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "admission_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -6909,55 +3571,12 @@
         }
       },
       "binding": {
-        "subject": "source:terminal.fish-history",
-        "id": "terminal.fish-history",
-        "domain": "terminal",
-        "implementation": "sinexd",
-        "adapter": "SqliteRowAdapter",
-        "output_event_type": "command.imported",
-        "privacy_context": "command",
-        "resource_profile": "bounded_stream",
-        "capabilities": [],
         "source_id": "terminal.fish-history",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "mutable_snapshot",
-          "backing_store_kind": "sqlite",
-          "occurrence_anchor": "fish_history_row_id"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "material_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "mutable_snapshot",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "admission_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -7008,64 +3627,12 @@
         }
       },
       "binding": {
-        "subject": "source:terminal.kitty-osc-live",
-        "id": "terminal.kitty-osc-live",
-        "domain": "terminal",
-        "implementation": "live-capture",
-        "adapter": "UnixSocketStreamAdapter",
-        "output_event_type": "command.executed",
-        "privacy_context": "command",
-        "resource_profile": "live_watcher",
-        "capabilities": [
-          "coverage:source-coverage",
-          "debt:unified-debt-view",
-          "operation:terminal.activity.check",
-          "operation:terminal.activity.reconnect",
-          "operation:terminal.activity.pause",
-          "operation:terminal.activity.resume",
-          "operation:terminal.activity.drain",
-          "operation:terminal.activity.inspect"
-        ],
         "source_id": "terminal.kitty-osc-live",
-        "proposed": false,
         "runner_pack": "live",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -7114,55 +3681,12 @@
         }
       },
       "binding": {
-        "subject": "source:terminal.monitor",
-        "id": "terminal.monitor",
-        "domain": "terminal",
-        "implementation": "sinexd",
-        "adapter": "MonitorDriver",
-        "output_event_type": "shell.terminal_monitoring_started",
-        "privacy_context": "metadata",
-        "resource_profile": "oneshot",
-        "capabilities": [],
         "source_id": "terminal.monitor",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "live_observation"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "best_effort",
-          "replayable": false,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "live_observation",
-          "catch_up_authority": "none",
-          "accepted_loss_policy": {
-            "kind": "accepted",
-            "rationale": "live source has no recoverable history",
-            "record": "sinex-r6d.8"
-          }
-        },
-        "criticality": "not_reconstructable"
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -7212,53 +3736,12 @@
         }
       },
       "binding": {
-        "subject": "source:terminal.text-history",
-        "id": "terminal.text-history",
-        "domain": "terminal",
-        "implementation": "sinexd",
-        "adapter": "AppendOnlyFileAdapter",
-        "output_event_type": "command.imported",
-        "privacy_context": "command",
-        "resource_profile": "bounded_stream",
-        "capabilities": [],
         "source_id": "terminal.text-history",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "admission_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -7309,53 +3792,12 @@
         }
       },
       "binding": {
-        "subject": "source:terminal.zsh-history",
-        "id": "terminal.zsh-history",
-        "domain": "terminal",
-        "implementation": "sinexd",
-        "adapter": "AppendOnlyFileAdapter",
-        "output_event_type": "command.imported",
-        "privacy_context": "command",
-        "resource_profile": "bounded_stream",
-        "capabilities": [],
         "source_id": "terminal.zsh-history",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "continuous",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "local_queue",
-          "delivery": "at_most_once",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": true,
-          "backpressure": true
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 512,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "admission_hot",
         "steady_memory_mib": 256,
         "burst_memory_mib": 512,
@@ -7416,53 +3858,12 @@
         }
       },
       "binding": {
-        "subject": "source:weechat",
-        "id": "weechat",
-        "domain": "irc",
-        "implementation": "sinexd",
-        "adapter": "AppendOnlyFileAdapter",
-        "output_event_type": "irc.message",
-        "privacy_context": "command",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "weechat",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -7511,53 +3912,12 @@
         }
       },
       "binding": {
-        "subject": "source:weechat.message",
-        "id": "weechat.message",
-        "domain": "irc",
-        "implementation": "sinexd",
-        "adapter": "AppendOnlyFileAdapter",
-        "output_event_type": "irc.message",
-        "privacy_context": "command",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
         "source_id": "weechat.message",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "ephemeral_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "capture_live",
         "steady_memory_mib": 64,
         "burst_memory_mib": 128,
@@ -7607,53 +3967,12 @@
         }
       },
       "binding": {
-        "subject": "source:wykop-entries",
-        "id": "wykop-entries",
-        "domain": "social",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "social.entry.created",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "wykop-entries",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,
@@ -7702,53 +4021,12 @@
         }
       },
       "binding": {
-        "subject": "source:wykop-entry-comments",
-        "id": "wykop-entry-comments",
-        "domain": "social",
-        "implementation": "sinexd",
-        "adapter": "StaticFileAdapter",
-        "output_event_type": "social.entry_comment.posted",
-        "privacy_context": "document",
-        "resource_profile": "bounded_file",
-        "capabilities": [],
         "source_id": "wykop-entry-comments",
-        "proposed": false,
         "runner_pack": "sinexd_source",
-        "checkpoint_family": {
-          "kind": "append_stream"
-        },
         "runtime_shape": "on_demand",
-        "build_impact": {
-          "crate_impact": "0",
-          "binary_impact": "0",
-          "nix_output_impact": "0",
-          "derivation_impact": "0",
-          "sqlx_validation_impact": "0",
-          "dedicated_build_rationale": null
-        },
-        "material_lifecycle": "retain_raw",
-        "transport_semantics": {
-          "transport": "direct",
-          "delivery": "same_process",
-          "ordering": "cursor_order",
-          "replayable": true,
-          "dlq": false,
-          "backpressure": false
-        },
-        "recovery_policy": {
-          "replayability_class": "append_stream",
-          "catch_up_authority": "backing_store",
-          "accepted_loss_policy": {
-            "kind": "no_silent_loss"
-          }
-        },
-        "criticality": null
+        "proposed": false
       },
-      "resource_limits": {
-        "memory_max_mib": 256,
-        "cpu_weight": 100
-      },
-      "resource_budget": {
+      "work_budget": {
         "work_class": "bulk_import",
         "steady_memory_mib": 128,
         "burst_memory_mib": 256,

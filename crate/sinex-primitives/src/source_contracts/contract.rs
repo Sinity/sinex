@@ -9,7 +9,7 @@ use crate::sources::SourceRole;
 ///
 /// This is strictly a *semantic* descriptor: identity, emitted event-type
 /// pairs, privacy tier, time horizons, retention, occurrence identity, and
-/// access scope. Deployment-shape fields (`runner_pack`, `resource_profile`,
+/// access scope. Runtime-shape fields (`runner_pack`, `resource_profile`,
 /// `checkpoint_family`, `runtime_shape`, `build_impact`) live on the matching
 /// [`SourceRuntimeBinding`]. See issue #1175.
 ///

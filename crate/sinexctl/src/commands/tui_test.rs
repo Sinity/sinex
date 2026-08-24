@@ -377,7 +377,7 @@ fn coverage_fixture(
             context: "metadata".to_string(),
             proposed: false,
         },
-        resource_budget: None,
+        work_budget: None,
         modes: Vec::new(),
         actions,
     }
@@ -405,8 +405,7 @@ fn mode_fixture() -> SourceModeStatusView {
         dlq: false,
         backpressure: false,
         privacy_context: "metadata".to_string(),
-        resource_budget: sinex_primitives::views::SourceResourceBudgetView {
-            resource_profile: "bounded_file".to_string(),
+        work_budget: sinex_primitives::views::SourceWorkBudgetView {
             work_class: "bulk_import".to_string(),
             steady_memory_mib: 16,
             burst_memory_mib: 32,

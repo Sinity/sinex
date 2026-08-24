@@ -604,8 +604,7 @@ async fn source_coverage_list_view_serializes_status_shape() -> xtask::TestResul
             context: "command".to_string(),
             proposed: false,
         },
-        resource_budget: Some(SourceResourceBudgetView {
-            resource_profile: "bounded_stream".to_string(),
+        work_budget: Some(SourceWorkBudgetView {
             work_class: "admission_hot".to_string(),
             steady_memory_mib: 256,
             burst_memory_mib: 512,
@@ -656,11 +655,11 @@ async fn source_coverage_list_view_serializes_status_shape() -> xtask::TestResul
         json!({})
     );
     assert_eq!(
-        value["payload"]["sources"][0]["resource_budget"]["work_class"],
+        value["payload"]["sources"][0]["work_budget"]["work_class"],
         "admission_hot"
     );
     assert_eq!(
-        value["payload"]["sources"][0]["resource_budget"]["pressure_actions"][2],
+        value["payload"]["sources"][0]["work_budget"]["pressure_actions"][2],
         "retry"
     );
     Ok(())
@@ -688,7 +687,7 @@ async fn source_coverage_summary_counts_coverage_error_evidence() -> xtask::Test
             context: "metadata".to_string(),
             proposed: false,
         },
-        resource_budget: None,
+        work_budget: None,
         modes: Vec::new(),
         actions: Vec::new(),
     };
@@ -715,7 +714,7 @@ async fn source_coverage_summary_counts_coverage_error_evidence() -> xtask::Test
             context: "metadata".to_string(),
             proposed: false,
         },
-        resource_budget: None,
+        work_budget: None,
         modes: Vec::new(),
         actions: Vec::new(),
     };

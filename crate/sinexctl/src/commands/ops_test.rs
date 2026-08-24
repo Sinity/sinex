@@ -924,7 +924,7 @@ fn fixture_source_status_coverage(
             context: "command".to_string(),
             proposed: false,
         },
-        resource_budget: None,
+        work_budget: None,
         modes: Vec::new(),
         actions: Vec::new(),
     }

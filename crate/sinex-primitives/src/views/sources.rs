@@ -82,8 +82,7 @@ pub struct SourcePrivacyPosture {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct SourceResourceBudgetView {
-    pub resource_profile: String,
+pub struct SourceWorkBudgetView {
     pub work_class: String,
     pub steady_memory_mib: u32,
     pub burst_memory_mib: u32,
@@ -135,7 +134,7 @@ pub struct SourceModeStatusView {
     pub dlq: bool,
     pub backpressure: bool,
     pub privacy_context: String,
-    pub resource_budget: SourceResourceBudgetView,
+    pub work_budget: SourceWorkBudgetView,
     /// sinex-sn6s: whether wiping Sinex's own copy of this source's data is
     /// safe (`reconstructable`, `not_reconstructable`), or `None` when
     /// undeclared. Undeclared + non-proposed + deployed is a startup-time
@@ -281,7 +280,7 @@ pub struct SourceCoverageView {
     pub caveats: Vec<CaveatView>,
     pub privacy: SourcePrivacyPosture,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_budget: Option<SourceResourceBudgetView>,
+    pub work_budget: Option<SourceWorkBudgetView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modes: Vec<SourceModeStatusView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

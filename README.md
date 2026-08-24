@@ -122,7 +122,7 @@ git clone https://github.com/sinity/sinex.git
 cd sinex
 direnv allow
 
-xtask infra start
+agentctl job start sinex dev_services
 agentctl job start sinex run_core
 xtask run list
 sinexctl events recent -n 10
@@ -132,7 +132,7 @@ Useful operator commands:
 
 ```bash
 xtask doctor
-xtask infra status
+agentctl job list --project sinex
 journalctl -u sinexd -f
 ```
 

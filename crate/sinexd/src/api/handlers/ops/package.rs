@@ -728,7 +728,7 @@ pub(super) fn package_mode_contract_metadata(mode_id: &str) -> Option<serde_json
     let binding = source_runtime_bindings().find(|binding| binding.subject.as_str() == mode_id)?;
     Some(serde_json::json!({
         "binding": binding,
-        "resource_budget": binding.resource_budget(),
+        "work_budget": binding.work_budget(),
     }))
 }
 
