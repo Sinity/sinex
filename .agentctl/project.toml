@@ -289,7 +289,7 @@ max_length = 128
 [operations.test_default.parameters.filter]
 type = "string"
 flag = "--filter"
-max_length = 256
+max_length = 128
 
 [operations.test_default.parameters.heavy]
 type = "bool"
