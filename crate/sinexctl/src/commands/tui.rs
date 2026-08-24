@@ -1559,11 +1559,10 @@ fn mode_detail_lines(mode: &SourceModeStatusView) -> Vec<Line<'static>> {
         mode.mode_id, state, mode.runtime_shape, mode.transport, mode.output_event_type
     ))];
     lines.push(Line::from(format!(
-        "  adapter={} lifecycle={} budget={}/{}",
+        "  adapter={} lifecycle={} work_class={}",
         mode.adapter,
         mode.material_lifecycle,
-        mode.resource_budget.work_class,
-        mode.resource_budget.resource_profile
+        mode.work_budget.work_class
     )));
     lines.push(Line::from(format!(
         "  delivery={} ordering={} replay={} dlq={} pressure={}",

@@ -669,192 +669,12 @@ impl InfraStatus {
 ///
 /// Kills the subprocess if it runs longer than `SINEX_INFRA_START_TIMEOUT`
 /// seconds (default: 120s) to prevent indefinite hangs.
-pub fn auto_start_stack(verbose: bool) -> Result<()> {
-    let status = InfraStatus::capture();
-
-    if status.stack_running() {
-        return Ok(());
-    }
-
-    // Always report what we're starting (even in quiet mode)
-    if !status.postgres && !status.nats {
-        eprintln!("⚡ Auto-starting stack (Postgres + NATS)...");
-    } else if !status.postgres {
-        eprintln!("⚡ Auto-starting Postgres...");
-    } else {
-        eprintln!("⚡ Auto-starting NATS...");
-    }
-
-    let timeout_secs = crate::parse_positive_u64_env_or_default(
-        "SINEX_INFRA_START_TIMEOUT",
-        120,
-        "infra start timeout",
-    );
-
-    let start = std::time::Instant::now();
-    let _watchdog = spawn_watchdog("Starting stack", 5);
-
-    let mut command = std::process::Command::new("xtask");
-    command
-        .args(["infra", "start"])
-        .stdout(if verbose {
-            std::process::Stdio::inherit()
-        } else {
-            std::process::Stdio::null()
-        })
-        .stderr(std::process::Stdio::inherit());
-
-    let mut child = match spawn_process_group_leader(&mut command) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("✗ Failed to start stack: {e}");
-            return Err(eyre!("failed to spawn infra start: {e}"));
-        }
-    };
-
-    let timeout = std::time::Duration::from_secs(timeout_secs);
-    let exit_status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .wrap_err("failed to poll infra start status")?
-        {
-            break Ok(status);
-        }
-
-        if start.elapsed() >= timeout {
-            eprintln!(
-                "✗ Stack start timed out after {timeout_secs}s — terminating subprocess tree"
-            );
-            terminate_child_process_tree(&mut child)?;
-            break Err(eyre!("infra start timed out after {timeout_secs}s"));
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    };
-
-    let elapsed = start.elapsed();
-    match exit_status {
-        Ok(exit) if exit.success() => {
-            eprintln!("✓ Stack started ({:.1}s)", elapsed.as_secs_f64());
-            Ok(())
-        }
-        Ok(status) => {
-            eprintln!("✗ Failed to start stack ({:.1}s)", elapsed.as_secs_f64());
-            Err(eyre!("infra start exited with {status}"))
-        }
-        Err(e) => {
-            eprintln!("✗ Failed to start stack: {e}");
-            Err(e).wrap_err("failed to wait for infra start")
-        }
-    }
+pub fn auto_start_stack(_verbose: bool) -> Result<()> {
+    bail!("development services are lease-owned; start agentctl job start sinex dev_services")
 }
 
-/// Auto-start only checkout-local Postgres if it is not already running.
-pub fn auto_start_postgres(verbose: bool) -> Result<()> {
-    let status = InfraStatus::capture();
-
-    if status.postgres {
-        return Ok(());
-    }
-
-    eprintln!("⚡ Auto-starting Postgres...");
-
-    let timeout_secs = crate::parse_positive_u64_env_or_default(
-        "SINEX_INFRA_START_TIMEOUT",
-        120,
-        "infra start timeout",
-    );
-
-    let start = std::time::Instant::now();
-    let _watchdog = spawn_watchdog("Starting Postgres", 5);
-
-    let mut command = std::process::Command::new("xtask");
-    command
-        .args(["infra", "start", "postgres"])
-        .stdout(if verbose {
-            std::process::Stdio::inherit()
-        } else {
-            std::process::Stdio::null()
-        })
-        .stderr(std::process::Stdio::inherit());
-
-    let mut child = match spawn_process_group_leader(&mut command) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("✗ Failed to start Postgres: {e}");
-            return Err(eyre!("failed to spawn infra start postgres: {e}"));
-        }
-    };
-
-    let timeout = std::time::Duration::from_secs(timeout_secs);
-    let exit_status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .wrap_err("failed to poll infra start postgres status")?
-        {
-            break Ok(status);
-        }
-
-        if start.elapsed() >= timeout {
-            eprintln!(
-                "✗ Postgres start timed out after {timeout_secs}s — terminating subprocess tree"
-            );
-            terminate_child_process_tree(&mut child)?;
-            break Err(eyre!(
-                "infra start postgres timed out after {timeout_secs}s"
-            ));
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    };
-
-    let elapsed = start.elapsed();
-    match exit_status {
-        Ok(exit) if exit.success() => {
-            eprintln!("✓ Postgres started ({:.1}s)", elapsed.as_secs_f64());
-            Ok(())
-        }
-        Ok(status) => {
-            eprintln!("✗ Failed to start Postgres ({:.1}s)", elapsed.as_secs_f64());
-            Err(eyre!("infra start postgres exited with {status}"))
-        }
-        Err(e) => {
-            eprintln!("✗ Failed to start Postgres: {e}");
-            Err(e).wrap_err("failed to wait for infra start postgres")
-        }
-    }
-}
-
-fn spawn_process_group_leader(
-    command: &mut std::process::Command,
-) -> std::io::Result<std::process::Child> {
-    crate::process::spawn_managed_std_child(command, "preflight")
-}
-
-fn terminate_child_process_tree(child: &mut std::process::Child) -> Result<()> {
-    #[cfg(unix)]
-    {
-        crate::process::terminate_std_child_process_group(
-            child,
-            "infra start",
-            "infra start timeout",
-        )?;
-        child
-            .wait()
-            .wrap_err("failed to reap timed-out infra start process")?;
-        Ok(())
-    }
-
-    #[cfg(not(unix))]
-    {
-        child
-            .kill()
-            .wrap_err("failed to kill timed-out infra start process")?;
-        child
-            .wait()
-            .wrap_err("failed to reap timed-out infra start process")?;
-        Ok(())
-    }
+pub fn auto_start_postgres(_verbose: bool) -> Result<()> {
+    bail!("development PostgreSQL is lease-owned; start agentctl job start sinex dev_services")
 }
 
 /// Generate TLS certificates if they don't exist and set environment variables.
@@ -1394,15 +1214,14 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 
     let mut status = InfraStatus::capture();
 
-    // 1. Auto-start stack if not running
-    // Note: infra start also applies schema, so we only need to check schema apply
-    // in the case where the stack was already running
+    // 1. Development services are an explicit AgentCTL lease. Preflight never
+    // creates a second lifecycle owner.
     if !status.stack_running() {
         let stage = ctx.start_stage("stack-start");
         let started = auto_start_stack(is_interactive);
         ctx.finish_stage(stage, started.is_ok());
         started.wrap_err(
-            "Failed to auto-start infrastructure. Check logs or start manually: xtask infra start",
+            "Development services are unavailable. Start: agentctl job start sinex dev_services",
         )?;
         status = InfraStatus::capture();
     }

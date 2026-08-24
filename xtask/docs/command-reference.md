@@ -316,11 +316,7 @@ Manage local infrastructure (Postgres, NATS, VMs)
 
 | Command | Purpose |
 |---|---|
-| `start` | Start the infrastructure |
-| `stop` | Stop the infrastructure |
-| `smoke` | Run the explicit local devshell/runtime lifecycle smoke |
-| `status` | Show infrastructure status |
-| `logs` | View logs |
+| `lease-services` | Run AgentCTL lease-owned development Postgres and NATS in the foreground |
 | `schema-apply` | Apply the declarative schema to a database |
 | `tls-init-gateway` | Generate gateway TLS certificates using rcgen |
 | `vm` | Manage VM integration |
@@ -328,70 +324,9 @@ Manage local infrastructure (Postgres, NATS, VMs)
 | `dev-bindings` | Generate the dogfood dev-loop source-bindings manifest |
 | `runtime-target` | Write the checkout-local runtime target descriptor for sinexctl/MCP clients |
 
-### `xtask infra start`
+### `xtask infra lease-services`
 
-Start the infrastructure
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--all` | no | no | Start all processes |
-| `processes` | yes | no | Specific processes to start |
-
-
-### `xtask infra stop`
-
-Stop the infrastructure
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--all-checkouts` | no | no | Stop/clean every checkout-local dev-state root under /var/cache/sinex/$USER |
-| `--stale-only` | no | no | Only remove stale/malformed lock and PID files; do not stop live processes |
-| `--orphaned-only` | no | no | Only stop instances whose owning checkout no longer exists on disk (sinex-grlv). Unconditionally safe: a deleted checkout can never be legitimately in use, so this needs no idle window and never touches a live checkout elsewhere |
-| `--dry-run` | no | no | Print planned actions without stopping processes or removing files |
-| `processes` | yes | no | Specific processes to stop |
-
-
-### `xtask infra smoke`
-
-Run the explicit local devshell/runtime lifecycle smoke
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--dry-run` | no | no | Print the smoke plan and current coordinates without starting or stopping services |
-| `--reset-first` | no | no | Stop current-checkout infra before the smoke if it is already running |
-| `--allow-running` | no | no | Preserve already-running current-checkout infra while running smoke probes |
-| `--skip-start` | no | no | Skip the explicit infra start/stop phase and only verify read-only probes |
-
-
-### `xtask infra status`
-
-Show infrastructure status
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `-w, --watch` | no | no | Watch mode |
-| `--all-checkouts` | no | no | Show every checkout-local dev-state root under /var/cache/sinex/$USER |
-
-
-### `xtask infra logs`
-
-View logs
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `process` | yes | no | Process name |
-| `-l, --lines` | yes | no | Lines to show |
-| `-f, --follow` | no | no | Follow output |
+Run AgentCTL lease-owned development Postgres and NATS in the foreground
 
 
 ### `xtask infra schema-apply`

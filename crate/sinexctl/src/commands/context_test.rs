@@ -858,7 +858,7 @@ fn source_coverage_with_gap(
             context: "metadata".to_string(),
             proposed: false,
         },
-        resource_budget: None,
+        work_budget: None,
         modes: Vec::new(),
         actions: Vec::new(),
     }

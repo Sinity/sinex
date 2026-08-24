@@ -647,8 +647,8 @@ async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResul
         !mode
             .missing
             .iter()
-            .any(|field| field == "resource_budget_spec"),
-        "runtime bindings derive ResourceBudgetSpec from the current ResourceProfile model"
+            .any(|field| field == "work_budget_spec"),
+        "runtime bindings derive WorkBudgetSpec from the current ResourceProfile model"
     );
     let operations_requirement = mode
         .requirements
@@ -716,8 +716,8 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
         mode.sources
             .runtime_binding
             .as_ref()
-            .is_some_and(|binding| !binding.resource_budget.is_null()),
-        "runtime binding rows should expose the derived ResourceBudgetSpec"
+            .is_some_and(|binding| !binding.work_budget.is_null()),
+        "runtime binding rows should expose the derived WorkBudgetSpec"
     );
     let binding = mode
         .sources
@@ -770,8 +770,8 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
             .sources
             .runtime_binding
             .as_ref()
-            .is_some_and(|binding| !binding.resource_budget.is_null()),
-        "browser runtime binding rows should expose the derived ResourceBudgetSpec"
+            .is_some_and(|binding| !binding.work_budget.is_null()),
+        "browser runtime binding rows should expose the derived WorkBudgetSpec"
     );
 
     let email = report
@@ -868,8 +868,8 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
             .sources
             .runtime_binding
             .as_ref()
-            .is_some_and(|binding| !binding.resource_budget.is_null()),
-        "email runtime binding rows should expose the derived ResourceBudgetSpec"
+            .is_some_and(|binding| !binding.work_budget.is_null()),
+        "email runtime binding rows should expose the derived WorkBudgetSpec"
     );
 
     for (package_id, event_source, event_type, contract_id, package_contract_ids) in [
@@ -937,8 +937,8 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
                 .sources
                 .runtime_binding
                 .as_ref()
-                .is_some_and(|binding| !binding.resource_budget.is_null()),
-            "media runtime binding rows should expose the derived ResourceBudgetSpec"
+                .is_some_and(|binding| !binding.work_budget.is_null()),
+            "media runtime binding rows should expose the derived WorkBudgetSpec"
         );
     }
 

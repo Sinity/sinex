@@ -49,7 +49,6 @@ pub struct PrivacyCoverageEntry {
 #[derive(Debug, Serialize)]
 pub struct SourceMaterialClass {
     access_scope: Value,
-    resource_profile: Option<Value>,
     capture_class: &'static str,
     caveat: &'static str,
 }
@@ -144,13 +143,12 @@ pub fn build_privacy_coverage_matrix() -> PrivacyCoverageMatrix {
 
 fn derive_source_material_class(
     contract: &SourceContract,
-    binding: Option<&SourceRuntimeBinding>,
+    _binding: Option<&SourceRuntimeBinding>,
 ) -> SourceMaterialClass {
     SourceMaterialClass {
         access_scope: to_json_value(contract.access_scope),
-        resource_profile: binding.map(|binding| to_json_value(binding.resource_profile)),
         capture_class: "static_catalog_material_source",
-        caveat: "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile",
+        caveat: "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope",
     }
 }
 

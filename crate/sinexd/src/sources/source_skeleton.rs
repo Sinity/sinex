@@ -289,7 +289,7 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
         "event_contract_refs",
         "admission_policy_refs",
         "operator_controlled_disclosure_refs",
-        "resource_budget",
+        "work_budget",
         "occurrence_identity",
         "fixtures_and_tests",
         "coverage_and_debt_views",

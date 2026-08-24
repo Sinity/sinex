@@ -45,7 +45,7 @@ pub enum BudgetPressureAction {
 /// This richer budget is the Sinex-side contract for package completeness,
 /// pressure visibility, and future runtime controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct ResourceBudgetSpec {
+pub struct WorkBudgetSpec {
     pub work_class: WorkClass,
     pub steady_memory_mib: u32,
     pub burst_memory_mib: u32,
@@ -143,10 +143,10 @@ impl ResourceProfile {
 
     /// Package budget contract derived from this profile.
     #[must_use]
-    pub const fn budget_spec(self) -> ResourceBudgetSpec {
+    pub const fn budget_spec(self) -> WorkBudgetSpec {
         let limits = self.limits();
         match self {
-            Self::BoundedFile | Self::Oneshot => ResourceBudgetSpec {
+            Self::BoundedFile | Self::Oneshot => WorkBudgetSpec {
                 work_class: WorkClass::BulkImport,
                 steady_memory_mib: 128,
                 burst_memory_mib: limits.memory_max_mib,
@@ -163,7 +163,7 @@ impl ResourceProfile {
                 expected_wal_write_bytes_per_min: Some(256 * 1024 * 1024),
                 pressure_actions: THROTTLE_DEFER_INSPECT,
             },
-            Self::BoundedStream => ResourceBudgetSpec {
+            Self::BoundedStream => WorkBudgetSpec {
                 work_class: WorkClass::AdmissionHot,
                 steady_memory_mib: 256,
                 burst_memory_mib: limits.memory_max_mib,
@@ -180,7 +180,7 @@ impl ResourceProfile {
                 expected_wal_write_bytes_per_min: Some(512 * 1024 * 1024),
                 pressure_actions: THROTTLE_DEFER_RETRY_INSPECT,
             },
-            Self::LiveWatcher | Self::EmbeddedEmitter => ResourceBudgetSpec {
+            Self::LiveWatcher | Self::EmbeddedEmitter => WorkBudgetSpec {
                 work_class: WorkClass::CaptureLive,
                 steady_memory_mib: 64,
                 burst_memory_mib: limits.memory_max_mib,
@@ -197,7 +197,7 @@ impl ResourceProfile {
                 expected_wal_write_bytes_per_min: Some(64 * 1024 * 1024),
                 pressure_actions: THROTTLE_PAUSE_DRAIN_INSPECT,
             },
-            Self::DirectoryScan => ResourceBudgetSpec {
+            Self::DirectoryScan => WorkBudgetSpec {
                 work_class: WorkClass::BulkImport,
                 steady_memory_mib: 512,
                 burst_memory_mib: limits.memory_max_mib,
@@ -214,7 +214,7 @@ impl ResourceProfile {
                 expected_wal_write_bytes_per_min: Some(1024 * 1024 * 1024),
                 pressure_actions: PAUSE_DRAIN_INSPECT,
             },
-            Self::EventStreamConsumer => ResourceBudgetSpec {
+            Self::EventStreamConsumer => WorkBudgetSpec {
                 work_class: WorkClass::ProjectionHot,
                 steady_memory_mib: 256,
                 burst_memory_mib: limits.memory_max_mib,

@@ -129,10 +129,6 @@ async fn privacy_coverage_matrix_includes_sensitive_fixture_source() -> TestResu
         fixture["source_material_class"]["capture_class"],
         "static_catalog_material_source"
     );
-    assert_eq!(
-        fixture["source_material_class"]["resource_profile"],
-        "bounded_file"
-    );
     assert_eq!(fixture["field_metadata_status"], "available");
     assert_eq!(
         fixture["surface_behaviors"]["privacy_export"],

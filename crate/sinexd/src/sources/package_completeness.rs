@@ -192,10 +192,8 @@ pub struct RuntimeBindingRef {
     pub adapter: String,
     pub output_event_type: String,
     pub privacy_context: Value,
-    pub resource_profile: Value,
     pub capabilities: Vec<String>,
-    pub resource_limits: Value,
-    pub resource_budget: Value,
+    pub work_budget: Value,
     pub material_lifecycle: Value,
     pub transport_semantics: Value,
     pub replayability_class: Value,
@@ -584,9 +582,9 @@ fn finalize_mode(
             },
             |binding| {
                 format!(
-                    "access scope {}; resource profile {}",
+                    "access scope {}; work budget {}",
                     to_json_value(contract.access_scope),
-                    to_json_value(binding.resource_profile)
+                    to_json_value(binding.work_budget())
                 )
             },
         ),
@@ -740,7 +738,7 @@ fn finalize_mode(
         ),
     );
     diagnostics.require(
-        "resource_budget_spec",
+        "work_budget_spec",
         if binding.is_some() {
             RequirementStatus::Present
         } else {
@@ -748,13 +746,11 @@ fn finalize_mode(
         },
         binding.is_none() && mode_state == PackageModeState::Accepted,
         binding.map_or_else(
-            || "no binding/resource profile; ResourceBudgetSpec cannot be derived".to_string(),
+            || "no binding; WorkBudgetSpec cannot be derived".to_string(),
             |binding| {
                 format!(
-                    "ResourceProfile `{}` has limits {} and budget {}",
-                    to_json_value(binding.resource_profile),
-                    to_json_value(binding.resource_profile.limits()),
-                    to_json_value(binding.resource_budget())
+                    "work budget {}",
+                    to_json_value(binding.work_budget())
                 )
             },
         ),
@@ -999,7 +995,7 @@ fn requirement_owner_file(id: &str) -> &'static str {
             "crate/sinex-primitives/src/source_contracts/lifecycle.rs"
         }
         "criticality_declaration" => "crate/sinexd/src/sources/bindings.rs",
-        "resource_budget_spec" => "crate/sinex-primitives/src/source_contracts/resource.rs",
+        "work_budget_spec" => "crate/sinex-primitives/src/source_contracts/resource.rs",
         "parser_binding" => "crate/sinexd/src/sources/source_contracts/",
         "source_factory" => "crate/sinexd/src/sources/source_factory.rs",
         "payload_schema" => "crate/sinex-primitives/src/events/payloads/",
@@ -1032,7 +1028,7 @@ fn requirement_next_action(id: &str) -> &'static str {
         "storage_material_lifecycle_policy" => {
             "declare material lifecycle semantics on the runtime binding"
         }
-        "resource_budget_spec" => "select a ResourceProfile that derives the budget spec",
+        "work_budget_spec" => "declare the source's semantic work budget",
         "transport_semantics" => "declare transport semantics on the runtime binding",
         "criticality_declaration" => {
             "declare .criticality(SourceCriticality::Reconstructable | NotReconstructable) \
@@ -1264,14 +1260,12 @@ fn runtime_binding_ref(binding: &SourceRuntimeBinding) -> RuntimeBindingRef {
         adapter: binding.adapter.to_string(),
         output_event_type: binding.output_event_type.to_string(),
         privacy_context: to_json_value(binding.privacy_context),
-        resource_profile: to_json_value(binding.resource_profile),
         capabilities: binding
             .capabilities
             .iter()
             .map(|capability| (*capability).to_string())
             .collect(),
-        resource_limits: to_json_value(binding.resource_profile.limits()),
-        resource_budget: to_json_value(binding.resource_budget()),
+        work_budget: to_json_value(binding.work_budget()),
         material_lifecycle: to_json_value(binding.material_lifecycle),
         transport_semantics: to_json_value(binding.transport_semantics),
         replayability_class: to_json_value(binding.recovery_policy.replayability_class),

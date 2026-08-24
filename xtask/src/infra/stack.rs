@@ -86,13 +86,19 @@ impl StackConfig {
         Self {
             state_dir,
             postgres: PostgresConfig {
-                port: 5432, // PostgreSQL default - only used in Unix socket filename (TCP disabled)
+                port: std::env::var("SINEX_DEV_POSTGRES_PORT")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(5432),
                 database: "sinex_dev".to_string(),
                 user: std::env::var("USER").unwrap_or_else(|_| "sinity".to_string()),
                 superuser: "postgres".to_string(),
             },
             nats: NatsConfig {
-                port: nats_port,
+                port: std::env::var("SINEX_DEV_NATS_PORT")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(nats_port),
                 jetstream: true,
             },
             annex: AnnexConfig {
@@ -183,9 +189,8 @@ impl StackConfig {
             database: self.postgres.database.clone(),
             superuser: self.postgres.superuser.clone(),
             app_user: self.postgres.user.clone(),
-            // Dev infra connects via Unix socket (DATABASE_URL=postgresql:///...?host=...).
-            // Disable TCP to avoid contending with a system Postgres on port 5432.
-            listen_addresses: String::new(),
+            // AgentCTL assigns a private loopback lease for this foreground job.
+            listen_addresses: "127.0.0.1".to_string(),
             durability: PostgresDurabilityMode::Durable,
         }
     }
@@ -196,7 +201,6 @@ impl StackConfig {
             port: self.nats.port,
             config_file: self.nats_config(),
             data_dir: self.nats_data(),
-            pid_file: self.nats_pid_file(),
             log_file: self.logs_dir().join("nats.log"),
         }
     }

@@ -457,18 +457,3 @@ async fn test_local_runtime_env_overrides_include_dev_token_and_tls_defaults() -
     );
     Ok(())
 }
-
-#[cfg(unix)]
-#[sinex_test]
-async fn test_spawn_process_group_leader_creates_dedicated_group() -> TestResult<()> {
-    let mut command = std::process::Command::new("sh");
-    command.args(["-c", "sleep 30"]);
-    let mut child = spawn_process_group_leader(&mut command)?;
-    let pid = nix::unistd::Pid::from_raw(child.id() as i32);
-    let process_group = nix::unistd::getpgid(Some(pid))?;
-
-    assert_eq!(process_group, pid);
-
-    terminate_child_process_tree(&mut child)?;
-    Ok(())
-}

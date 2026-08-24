@@ -21,12 +21,12 @@ let
 
   requiredTopLevel =
     (isAttrs raw)
-    && (raw.schema_version or null) == 2
+    && (raw.schema_version or null) == 3
     && isList (raw.entries or null);
 
   entries =
     if requiredTopLevel then raw.entries
-    else throw "source-catalog.generated.json must be an object with schema_version = 2 and entries = [ ... ]";
+    else throw "source-catalog.generated.json must be an object with schema_version = 3 and entries = [ ... ]";
 
   hasRequiredContract = entry:
     let contract = entry.contract or null;
@@ -49,26 +49,12 @@ let
       && isString (binding.runtime_shape or null)
     );
 
-  hasRequiredLimits = entry:
-    let
-      binding = entry.binding or null;
-      limits = entry.resource_limits or null;
-    in
-    binding == null || (
-      isAttrs limits
-      && isInt (limits.memory_max_mib or null)
-      && limits.memory_max_mib > 0
-      && isInt (limits.cpu_weight or null)
-      && limits.cpu_weight >= 1
-      && limits.cpu_weight <= 10000
-    );
-
   isOptionalInt = value: value == null || isInt value;
 
   hasRequiredBudget = entry:
     let
       binding = entry.binding or null;
-      budget = entry.resource_budget or null;
+      budget = entry.work_budget or null;
     in
     binding == null || (
       isAttrs budget
@@ -97,7 +83,7 @@ let
 
   invalidEntries =
     filter
-      (entry: !(hasRequiredContract entry && hasRequiredBinding entry && hasRequiredLimits entry && hasRequiredBudget entry))
+      (entry: !(hasRequiredContract entry && hasRequiredBinding entry && hasRequiredBudget entry))
       entries;
 
   duplicateIds =
@@ -133,9 +119,7 @@ let
 
   runtimeShapeFor = sourceId: (boundEntryFor sourceId).binding.runtime_shape;
 
-  resourceLimitsFor = sourceId: (boundEntryFor sourceId).resource_limits;
-
-  resourceBudgetFor = sourceId: (boundEntryFor sourceId).resource_budget;
+  workBudgetFor = sourceId: (boundEntryFor sourceId).work_budget;
 
   shutdownTimeoutFor = sourceId:
     let shape = runtimeShapeFor sourceId;
@@ -150,25 +134,6 @@ let
     in
     if sourceId == "fs" || scope == "configured_roots" then 524288 else null;
 
-  resourceDefaultsFor = sourceId:
-    let
-      limits = resourceLimitsFor sourceId;
-      memory = "${toString limits.memory_max_mib}M";
-      openFilesLimit = openFilesLimitFor sourceId;
-    in
-    {
-      memoryHigh = memory;
-      memoryMax = memory;
-      cpuQuota = null;
-      cpuWeight = limits.cpu_weight;
-      ioWeight = 10;
-      ioSchedulingClass = "idle";
-      nice = 10;
-      startupTimeoutSec = startupTimeoutFor sourceId;
-      shutdownTimeoutSec = shutdownTimeoutFor sourceId;
-      inherit openFilesLimit;
-    };
-
   instanceDefaultFor = sourceId:
     let shape = runtimeShapeFor sourceId;
     in
@@ -178,29 +143,14 @@ let
   manifestMetadataFor = sourceId:
     let
       entry = boundEntryFor sourceId;
-      limits = entry.resource_limits;
     in
     {
       runner_pack = entry.binding.runner_pack;
       runtime_shape = entry.binding.runtime_shape;
       access_scope = entry.contract.access_scope;
       privacy_tier = entry.contract.privacy_tier;
-      resource_limits = limits;
-      resource_budget = entry.resource_budget;
+      work_budget = entry.work_budget;
     };
-
-  memoryFor = sourceId: (resourceLimitsFor sourceId).memory_max_mib;
-
-  aggregateMemoryFor = sourceIds:
-    foldl' (total: sourceId: total + memoryFor sourceId) 0 sourceIds;
-
-  sinexdBaseMemoryMiB = 4096;
-
-  unitMemoryLimitFor = sourceIds:
-    let total = sinexdBaseMemoryMiB + aggregateMemoryFor sourceIds;
-    in
-    if sourceIds == [ ] then { }
-    else { MemoryMax = "${toString total}M"; };
 
   allSourceIds = map (entry: entry.contract.id) entries;
 
@@ -213,10 +163,7 @@ validation // {
     entryFor
     instanceDefaultFor
     manifestMetadataFor
-    resourceDefaultsFor
-    resourceBudgetFor
-    resourceLimitsFor
-    unitMemoryLimitFor
+    workBudgetFor
     ;
 
   requireFieldsFor = sourceIds:

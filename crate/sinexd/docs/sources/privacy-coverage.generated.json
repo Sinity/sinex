@@ -139,7 +139,6 @@
         "output_event_type": "ai.message",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "ai-session-chatgpt",
@@ -175,7 +174,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -241,7 +239,6 @@
         "output_event_type": "ai.message",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "ai-session-claude",
@@ -277,7 +274,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -343,7 +339,6 @@
         "output_event_type": "activity.window.summary",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "analytics",
@@ -362,7 +357,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -428,7 +422,6 @@
         "output_event_type": "attention.span",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "attention-stream",
@@ -447,7 +440,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -524,7 +516,6 @@
         "output_event_type": "blob.retrieved",
         "privacy_context": "metadata",
         "proposed": true,
-        "resource_profile": "embedded_emitter",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "blob-storage",
@@ -543,7 +534,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "embedded_emitter",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -622,7 +612,6 @@
         "output_event_type": "page.visited",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "bounded_stream",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "browser.history",
@@ -661,7 +650,6 @@
           "path": "browser_history",
           "scope": "target_home"
         },
-        "resource_profile": "bounded_stream",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -727,7 +715,6 @@
         "output_event_type": "page.visited",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "browser.takeout-history",
@@ -763,7 +750,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -829,7 +815,6 @@
         "output_event_type": "activity.summary.daily",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "daily-summarizer",
@@ -848,7 +833,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -925,7 +909,6 @@
         "output_event_type": "window.active",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_stream",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "desktop.activitywatch",
@@ -974,7 +957,6 @@
           "path": "activitywatch_sqlite",
           "scope": "target_home"
         },
-        "resource_profile": "bounded_stream",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -1044,7 +1026,6 @@
         "output_event_type": "clipboard.copied",
         "privacy_context": "clipboard",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "desktop.clipboard",
@@ -1085,7 +1066,6 @@
           "scope": "runtime_bridge",
           "surface": "clipboard"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -1151,7 +1131,6 @@
         "output_event_type": "notification.sent",
         "privacy_context": "notification",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "live",
         "runtime_shape": "continuous",
         "source_id": "desktop.notification",
@@ -1185,7 +1164,6 @@
         "access_scope": {
           "scope": "session_bus"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -1251,7 +1229,6 @@
         "output_event_type": "notification.action_invoked",
         "privacy_context": "notification",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "live",
         "runtime_shape": "continuous",
         "source_id": "desktop.notification.action",
@@ -1285,7 +1262,6 @@
         "access_scope": {
           "scope": "session_bus"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -1351,7 +1327,6 @@
         "output_event_type": "notification.closed",
         "privacy_context": "notification",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "live",
         "runtime_shape": "continuous",
         "source_id": "desktop.notification.closed",
@@ -1385,7 +1360,6 @@
         "access_scope": {
           "scope": "session_bus"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -1483,7 +1457,6 @@
         "output_event_type": "window.opened",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "desktop.window-manager",
@@ -1556,7 +1529,6 @@
           "scope": "runtime_bridge",
           "surface": "window_manager"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -1622,7 +1594,6 @@
         "output_event_type": "document.indexed",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "docs-library-index",
@@ -1658,7 +1629,6 @@
         "access_scope": {
           "scope": "library_root"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -1728,7 +1698,6 @@
         "output_event_type": "document.parsed",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "document-parser",
@@ -1747,7 +1716,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -1813,7 +1781,6 @@
         "output_event_type": "document.ingested",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "oneshot",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "document.staging",
@@ -1858,7 +1825,6 @@
         "access_scope": {
           "scope": "configured_roots"
         },
-        "resource_profile": "oneshot",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -1958,7 +1924,6 @@
         "output_event_type": "email.message.received",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "staged",
         "runtime_shape": "scheduled",
         "source_id": "email.mailbox",
@@ -2024,7 +1989,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2090,7 +2054,6 @@
         "output_event_type": "entity.enriched",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "entity-enricher",
@@ -2109,7 +2072,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2175,7 +2137,6 @@
         "output_event_type": "entity.extracted",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "entity-extractor",
@@ -2194,7 +2155,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2260,7 +2220,6 @@
         "output_event_type": "entity.resolved",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "entity-resolver",
@@ -2279,7 +2238,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2345,7 +2303,6 @@
         "output_event_type": "message.sent",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "facebook-messenger-thread",
@@ -2381,7 +2338,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2459,7 +2415,6 @@
         "output_event_type": "file.created",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "fs",
@@ -2507,7 +2462,6 @@
         "access_scope": {
           "scope": "configured_roots"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2573,7 +2527,6 @@
         "output_event_type": "commit.created",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "git-commit-history",
@@ -2609,7 +2562,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2675,7 +2627,6 @@
         "output_event_type": "health.aggregated_report",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "health",
@@ -2694,7 +2645,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2760,7 +2710,6 @@
         "output_event_type": "transaction.posted",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "hledger-journal",
@@ -2796,7 +2745,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2862,7 +2810,6 @@
         "output_event_type": "activity.summary.hourly",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "hourly-summarizer",
@@ -2881,7 +2828,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2947,7 +2893,6 @@
         "output_event_type": "expectation.status",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "instruction-expectation-reconciler",
@@ -2966,7 +2911,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -3033,7 +2977,6 @@
         "output_event_type": "integration.polylogue.session_indexed",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "external",
         "runtime_shape": "continuous",
         "source_id": "integration.polylogue",
@@ -3052,7 +2995,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -3118,7 +3060,6 @@
         "output_event_type": "state.interval",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "interval-lift",
@@ -3137,7 +3078,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -3203,7 +3143,6 @@
         "output_event_type": "note.observed",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "knowledgebase-vault",
@@ -3239,7 +3178,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -3328,7 +3266,6 @@
         "output_event_type": "media.audio.recording_observed",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "oneshot",
         "runner_pack": "staged",
         "runtime_shape": "scheduled",
         "source_id": "media.audio-transcript",
@@ -3376,7 +3313,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "oneshot",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -3470,7 +3406,6 @@
         "output_event_type": "media.screen.ocr_segment_observed",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "staged",
         "runtime_shape": "scheduled",
         "source_id": "media.screen-ocr",
@@ -3530,7 +3465,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -3591,7 +3525,6 @@
         "output_event_type": "noop",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "noop",
@@ -3610,7 +3543,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -3676,7 +3608,6 @@
         "output_event_type": "privacy.fixture.record",
         "privacy_context": "metadata",
         "proposed": true,
-        "resource_profile": "bounded_file",
         "runner_pack": "staged",
         "runtime_shape": "on_demand",
         "source_id": "privacy.fixture.sensitive-record",
@@ -3720,7 +3651,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -3822,7 +3752,6 @@
         "output_event_type": "bookmark.created",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "raindrop-bookmarks",
@@ -3858,7 +3787,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -3924,7 +3852,6 @@
         "output_event_type": "social.comment.posted",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "reddit-gdpr-comments",
@@ -3960,7 +3887,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4026,7 +3952,6 @@
         "output_event_type": "social.post.created",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "reddit-gdpr-posts",
@@ -4062,7 +3987,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4128,7 +4052,6 @@
         "output_event_type": "entity.related",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "relation-extractor",
@@ -4147,7 +4070,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4213,7 +4135,6 @@
         "output_event_type": "activity.session.boundary",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "session-detector",
@@ -4232,7 +4153,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4297,7 +4217,6 @@
         "output_event_type": "automaton.error",
         "privacy_context": "metadata",
         "proposed": true,
-        "resource_profile": "embedded_emitter",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinex-automaton-error",
@@ -4316,7 +4235,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "embedded_emitter",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4393,7 +4311,6 @@
         "output_event_type": "metric.counter",
         "privacy_context": "metadata",
         "proposed": true,
-        "resource_profile": "embedded_emitter",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinex-metrics",
@@ -4412,7 +4329,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "embedded_emitter",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4477,7 +4393,6 @@
         "output_event_type": "processing.stats",
         "privacy_context": "metadata",
         "proposed": true,
-        "resource_profile": "embedded_emitter",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinex-runtime-telemetry",
@@ -4496,7 +4411,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "embedded_emitter",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4577,7 +4491,6 @@
         "output_event_type": "request.stats",
         "privacy_context": "metadata",
         "proposed": true,
-        "resource_profile": "embedded_emitter",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinexd-api-telemetry",
@@ -4596,7 +4509,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "embedded_emitter",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4677,7 +4589,6 @@
         "output_event_type": "stream.stats",
         "privacy_context": "metadata",
         "proposed": true,
-        "resource_profile": "embedded_emitter",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinexd-event-engine-telemetry",
@@ -4696,7 +4607,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "embedded_emitter",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4773,7 +4683,6 @@
         "output_event_type": "process.started",
         "privacy_context": "metadata",
         "proposed": true,
-        "resource_profile": "embedded_emitter",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinexd-lifecycle",
@@ -4792,7 +4701,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "embedded_emitter",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4858,7 +4766,6 @@
         "output_event_type": "sleep.session",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "sleep-merged-summary",
@@ -4894,7 +4801,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -4960,7 +4866,6 @@
         "output_event_type": "track.played",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "spotify-extended-history",
@@ -4996,7 +4901,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -5093,7 +4997,6 @@
         "output_event_type": "signal.received",
         "privacy_context": "dbus",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "system.dbus",
@@ -5162,7 +5065,6 @@
         "access_scope": {
           "scope": "session_bus"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -5233,7 +5135,6 @@
         "output_event_type": "entry.written",
         "privacy_context": "journal",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "system.journald",
@@ -5274,7 +5175,6 @@
         "access_scope": {
           "scope": "systemd_journal"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -5339,7 +5239,6 @@
         "output_event_type": "monitoring.started",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "oneshot",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "system.monitor",
@@ -5358,7 +5257,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "oneshot",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -5439,7 +5337,6 @@
         "output_event_type": "unit.started",
         "privacy_context": "journal",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "system.systemd",
@@ -5491,7 +5388,6 @@
         "access_scope": {
           "scope": "systemd_journal"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -5572,7 +5468,6 @@
         "output_event_type": "device.connected",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "system.udev",
@@ -5624,7 +5519,6 @@
         "access_scope": {
           "scope": "kernel_uevents"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -5690,7 +5584,6 @@
         "output_event_type": "knowledge.tag_applied",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "tag-applier",
@@ -5709,7 +5602,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -5775,7 +5667,6 @@
         "output_event_type": "command.canonical",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "event_stream_consumer",
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "terminal-canonicalizer",
@@ -5794,7 +5685,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -5867,7 +5757,6 @@
         "output_event_type": "session.recorded",
         "privacy_context": "command",
         "proposed": false,
-        "resource_profile": "directory_scan",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.asciinema",
@@ -5909,7 +5798,6 @@
           "path": "captures/asciinema",
           "scope": "target_data"
         },
-        "resource_profile": "directory_scan",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -5978,7 +5866,6 @@
         "output_event_type": "command.executed",
         "privacy_context": "command",
         "proposed": false,
-        "resource_profile": "bounded_stream",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.atuin-history",
@@ -6020,7 +5907,6 @@
           "path": ".local/share/atuin/history.db",
           "scope": "target_home"
         },
-        "resource_profile": "bounded_stream",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -6174,7 +6060,6 @@
         "output_event_type": "command.imported",
         "privacy_context": "command",
         "proposed": false,
-        "resource_profile": "bounded_stream",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.bash-history",
@@ -6211,7 +6096,6 @@
           "path": ".bash_history",
           "scope": "target_home"
         },
-        "resource_profile": "bounded_stream",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -6280,7 +6164,6 @@
         "output_event_type": "command.imported",
         "privacy_context": "command",
         "proposed": false,
-        "resource_profile": "bounded_stream",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.fish-history",
@@ -6321,7 +6204,6 @@
           "path": ".local/share/fish/fish_history",
           "scope": "target_home"
         },
-        "resource_profile": "bounded_stream",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -6427,7 +6309,6 @@
         "output_event_type": "command.executed",
         "privacy_context": "command",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "live",
         "runtime_shape": "continuous",
         "source_id": "terminal.kitty-osc-live",
@@ -6464,7 +6345,6 @@
           "scope": "runtime_bridge",
           "surface": "kitty_osc"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -6529,7 +6409,6 @@
         "output_event_type": "shell.terminal_monitoring_started",
         "privacy_context": "metadata",
         "proposed": false,
-        "resource_profile": "oneshot",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "terminal.monitor",
@@ -6548,7 +6427,6 @@
         "access_scope": {
           "scope": "internal"
         },
-        "resource_profile": "oneshot",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -6615,7 +6493,6 @@
         "output_event_type": "command.imported",
         "privacy_context": "command",
         "proposed": false,
-        "resource_profile": "bounded_stream",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.text-history",
@@ -6652,7 +6529,6 @@
           "path": "shell_history_text",
           "scope": "target_home"
         },
-        "resource_profile": "bounded_stream",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -6719,7 +6595,6 @@
         "output_event_type": "command.imported",
         "privacy_context": "command",
         "proposed": false,
-        "resource_profile": "bounded_stream",
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.zsh-history",
@@ -6756,7 +6631,6 @@
           "path": ".zsh_history",
           "scope": "target_home"
         },
-        "resource_profile": "bounded_stream",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -6833,7 +6707,6 @@
         "output_event_type": "irc.message",
         "privacy_context": "command",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "weechat",
@@ -6881,7 +6754,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -6946,7 +6818,6 @@
         "output_event_type": "irc.message",
         "privacy_context": "command",
         "proposed": false,
-        "resource_profile": "live_watcher",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "weechat.message",
@@ -6982,7 +6853,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "live_watcher",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -7074,7 +6944,6 @@
         "output_event_type": "social.entry.created",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "wykop-entries",
@@ -7110,7 +6979,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -7176,7 +7044,6 @@
         "output_event_type": "social.entry_comment.posted",
         "privacy_context": "document",
         "proposed": false,
-        "resource_profile": "bounded_file",
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "wykop-entry-comments",
@@ -7212,7 +7079,6 @@
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },

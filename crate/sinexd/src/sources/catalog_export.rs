@@ -16,7 +16,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use sinex_primitives::source_contracts::{
-    ResourceBudgetSpec, ResourceLimits, SourceContract, SourceRuntimeBinding, all_source_contracts,
+    SourceContract, SourceRuntimeBinding, WorkBudgetSpec, all_source_contracts,
     source_runtime_bindings,
 };
 
@@ -24,29 +24,46 @@ use sinex_primitives::source_contracts::{
 pub const CATALOG_ARTIFACT_PATH: &str = "nixos/modules/source-catalog.generated.json";
 
 /// Bumped when the catalog *shape* changes (not its contents).
-const CATALOG_SCHEMA_VERSION: u32 = 2;
+const CATALOG_SCHEMA_VERSION: u32 = 3;
 
-/// One source's full typed declaration: semantic contract + deployment binding,
-/// the concrete resource ceiling, and the richer package budget derived from
-/// the binding's `ResourceProfile`.
+/// One source's full typed declaration: semantic contract, deployment binding,
+/// and the product work budget derived from the binding's internal profile.
 #[derive(Debug, Serialize)]
 struct CatalogEntry<'a> {
     contract: &'a SourceContract,
-    binding: Option<&'a SourceRuntimeBinding>,
+    binding: Option<CatalogBinding>,
     /// Full binding projection for package-completeness/reporting consumers.
     ///
     /// `binding` remains the deployment default consumed by the Nix module,
     /// which keys the catalog by unique contract id. Multi-binding packages use
     /// this list so the generated catalog still represents each declared mode.
     #[serde(skip_serializing_if = "skip_binding_projection")]
-    runtime_bindings: Vec<&'a SourceRuntimeBinding>,
-    /// `binding.resource_profile.limits()` lifted into the artifact so Nix does
-    /// not need to re-encode the profile→limits mapping.
-    resource_limits: Option<ResourceLimits>,
-    /// `binding.resource_budget()` lifted into the artifact so package
+    runtime_bindings: Vec<CatalogBinding>,
+    /// `binding.work_budget()` lifted into the artifact so package
     /// completeness and runtime-pressure tooling can consume the same typed
     /// budget contract as the Rust runtime.
-    resource_budget: Option<ResourceBudgetSpec>,
+    work_budget: Option<WorkBudgetSpec>,
+}
+
+/// Deployment fields that the Nix module consumes. Internal profile selection
+/// stays in Sinex and is represented externally only by `work_budget`.
+#[derive(Debug, Serialize)]
+struct CatalogBinding {
+    source_id: String,
+    runner_pack: String,
+    runtime_shape: String,
+    proposed: bool,
+}
+
+impl From<&SourceRuntimeBinding> for CatalogBinding {
+    fn from(binding: &SourceRuntimeBinding) -> Self {
+        Self {
+            source_id: binding.source_id.to_string(),
+            runner_pack: binding.runner_pack.to_string(),
+            runtime_shape: binding.runtime_shape.to_string(),
+            proposed: binding.proposed,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -83,10 +100,13 @@ fn build_catalog() -> SourceCatalog<'static> {
                 .or_else(|| runtime_bindings.first().copied());
             CatalogEntry {
                 contract,
-                binding,
-                runtime_bindings,
-                resource_limits: binding.map(|b| b.resource_profile.limits()),
-                resource_budget: binding.map(|b| b.resource_budget()),
+                binding: binding.map(CatalogBinding::from),
+                runtime_bindings: runtime_bindings
+                    .iter()
+                    .copied()
+                    .map(CatalogBinding::from)
+                    .collect(),
+                work_budget: binding.map(|b| b.work_budget()),
             }
         })
         .collect();

@@ -64,7 +64,7 @@ async fn source_runtime_binding_builder_accepts_all_required_fields() -> TestRes
     assert_eq!(descriptor.privacy_context, ProcessingContext::Command);
     assert_eq!(descriptor.resource_profile, ResourceProfile::BoundedStream);
     assert_eq!(
-        descriptor.resource_budget(),
+        descriptor.work_budget(),
         ResourceProfile::BoundedStream.budget_spec()
     );
     assert_eq!(

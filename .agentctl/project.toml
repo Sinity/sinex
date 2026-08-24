@@ -19,6 +19,26 @@ identity_check = ["git", "diff", "--quiet", "--", "Cargo.toml", "Cargo.lock", "f
 checkpoint_untracked = true
 verification_operations = ["check_default"]
 
+[operations.dev_services]
+description = "Run lease-owned Sinex development Postgres and NATS"
+exec = ["xtask", "infra", "lease-services"]
+pool = "normal"
+result = "exit"
+cache = "none"
+timeout_seconds = 28800
+
+[operations.dev_services.service]
+readiness = "project-command"
+lifetime = "job"
+
+[operations.dev_services.service.ports.postgres]
+environment = "SINEX_DEV_POSTGRES_PORT"
+range = [45432, 45559]
+
+[operations.dev_services.service.ports.nats]
+environment = "SINEX_DEV_NATS_PORT"
+range = [44308, 44435]
+
 [conflicts]
 exact_files = ["Cargo.toml", "Cargo.lock", "flake.nix", "flake.lock"]
 generated_surfaces = [".config/ast-grep/README.md", "xtask/docs/command-guide.md", "xtask/docs/command-reference.md", "schemas/v1/registry.json", "schemas/v2/registry.json"]

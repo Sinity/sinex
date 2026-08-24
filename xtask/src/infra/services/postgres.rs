@@ -239,27 +239,15 @@ impl PostgresManager {
         fs::create_dir_all(&self.config.logs_dir).context("failed to create logs dir")?;
         self.ensure_runtime_config()?;
 
-        match self.postmaster_pid_state()? {
-            PostmasterPidState::Missing => {}
-            PostmasterPidState::Running(_) => {
-                if self.accepting_connections_probe()? {
-                    if verbose {
-                        println!("PostgreSQL already running");
-                    }
-                    return Ok(());
-                }
-
-                eprintln!(
-                    "⚠️  Stale PostgreSQL detected (PID alive but not accepting connections). Recovering..."
-                );
-                self.force_cleanup(verbose)?;
-            }
-            PostmasterPidState::Stale(pid) => {
-                eprintln!(
-                    "⚠️  Stale PostgreSQL pid file detected for dead PID {pid}. Recovering..."
-                );
-                self.force_cleanup(verbose)?;
-            }
+        if self.accepting_connections_probe()? {
+            bail!("AgentCTL leased PostgreSQL port {} is already accepting connections", self.config.port);
+        }
+        if self.config.data_dir.join("postmaster.pid").exists() {
+            bail!(
+                "PostgreSQL state {} has a postmaster.pid but lease port {} is not ready; AgentCTL owns cancellation and cleanup, so xtask will not signal or remove it",
+                self.config.data_dir.display(),
+                self.config.port
+            );
         }
 
         if verbose {

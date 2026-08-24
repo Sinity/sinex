@@ -414,11 +414,11 @@
               consumerAssertions =
                 if !hasSourceManifestEnv then
                   throw "source catalog consumer did not render SINEX_SOURCE_BINDINGS_PATH"
-                else if !(sinexdServiceConfig ? MemoryMax) then
-                  throw "source catalog consumer did not render catalog-derived sinexd MemoryMax"
+                else if sinexdServiceConfig ? MemoryMax then
+                  throw "source catalog consumer retained a catalog-derived sinexd MemoryMax"
                 else if !(builtins.all (value: value) staticImportAssertions) then
                   throw "source catalog consumer failed static-import manifest assertions"
-                else { sinexdMemoryMax = sinexdServiceConfig.MemoryMax; };
+                else { noCatalogDerivedMemoryMax = true; };
               requiredSources = catalog.requireFieldsFor [
                 "fs"
                 "terminal.atuin-history"
@@ -439,7 +439,7 @@
               ];
               evalSummary = builtins.toJSON {
                 inherit (catalog) entryCount schemaVersion;
-                inherit (consumerAssertions) sinexdMemoryMax;
+                inherit (consumerAssertions) noCatalogDerivedMemoryMax;
                 staticImports = [
                   gitStaticImport.source_id
                   raindropStaticImport.source_id
@@ -815,7 +815,7 @@ SQL
                 _sinex_cargo_bootstrap_postgres_owned=0
 
                 if _sinex_cargo_requires_sqlx_database "$@"; then
-                  if [ "''${SINEX_CARGO_SQLX_BOOTSTRAP:-1}" = 1 ]; then
+                  if [ "''${SINEX_CARGO_SQLX_BOOTSTRAP:-0}" = 1 ]; then
                     echo "ℹ  cargo $(_sinex_cargo_command_name "$@" || printf command) uses SQLx compile-time validation; bootstrapping checkout-local Postgres/schema..." >&2
                     if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
                       _sinex_cargo_bootstrap_postgres_owned=1
@@ -2237,78 +2237,17 @@ SQL
                       if [ -n "$history_line" ]; then
                         printf '  last xtask: %s\n' "$history_line"
                       fi
-                      printf '  inspect: xtask infra status | xtask history explain --day today --against yesterday\n'
+                      printf '  inspect: agentctl job list | xtask history explain --day today --against yesterday\n'
                       printf '  prod: sinexctl-prod (SINEX_API_URL=:9999) | dev: sinexctl (SINEX_API_URL=:%s)\n' "$SINEX_DEV_GATEWAY_PORT"
-                      printf '  controls: SINEX_AUTO_INFRA=1 starts infra; SINEX_AUTO_STATUS=1 runs full infra status; SINEX_MOTD=0 hides this\n'
+                      printf '  services: agentctl job start sinex dev_services; SINEX_MOTD=0 hides this\n'
                     } >&2
                   }
-
-                  # Keep shell entry cheap by default. Heavy dev conveniences are
-                  # opt-in so direnv, one-shot commands, and fresh shells do not
-                  # silently compile xtask or launch infra.
-                  # When SINEX_AUTO_INFRA=1 does start the stack, it is a
-                  # persistent dev service by design: it detaches (setsid below)
-                  # and deliberately outlives the launching shell or one-shot
-                  # command, listening on loopback only (#1725).
-                  _sinex_infra_starting=0
 
                   if [ "''${SINEX_AUTO_DOCS_SYNC:-0}" = 1 ]; then
                     xtask --format silent docs sync >/dev/null 2>&1 || true
                   fi
 
-                  if [ "''${SINEX_AUTO_INFRA:-0}" = 1 ]; then
-                    _pg_running=0
-                    _nats_running=0
-                    _sinex_infra_start_lock="$SINEX_DEV_STATE_DIR/infra-start.lock"
-                    _sinex_infra_start_log="$SINEX_DEV_STATE_DIR/infra-start.log"
-                    _sinex_infra_start_current_log="$SINEX_DEV_STATE_DIR/infra-start.current.log"
-
-                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_running=1
-                    (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_running=1
-
-                    if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
-                      echo "✓  Infrastructure already running (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT)" >&2
-                    else
-                      if mkdir "$_sinex_infra_start_lock" 2>/dev/null; then
-                        # Detach from direnv and close inherited extra FDs so long-lived
-                        # daemons do not keep direnv's private pipes open.
-                        (
-                          trap 'if [ -f "$_sinex_infra_start_current_log" ]; then mv -f "$_sinex_infra_start_current_log" "$_sinex_infra_start_log" 2>/dev/null || cp "$_sinex_infra_start_current_log" "$_sinex_infra_start_log" 2>/dev/null || true; fi; rmdir "$_sinex_infra_start_lock"' EXIT
-                          : >"$_sinex_infra_start_current_log"
-                          exec </dev/null >>"$_sinex_infra_start_current_log" 2>&1
-                          for _fd_path in /proc/$$/fd/*; do
-                            _fd_num="''${_fd_path##*/}"
-                            [ "$_fd_num" -le 2 ] && continue
-                            eval "exec ''${_fd_num}>&-"
-                          done
-                          # This log is for operators inspecting shell-hook startup,
-                          # so keep it human-readable instead of JSON-fragment prone.
-                          setsid xtask --format human infra start
-                        ) &
-                        _sinex_infra_starting=1
-                        echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2
-                      else
-                        _sinex_infra_starting=1
-                        echo "ℹ  Infrastructure already starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2
-                      fi
-                    fi
-                  fi
-
-                  if [ "''${SINEX_AUTO_STATUS:-0}" = 1 ]; then
-                    # If infra was just launched, poll for readiness before the status probe
-                    # so the summary reflects actual state.
-                    if [ "''${_sinex_infra_starting:-0}" -eq 1 ]; then
-                      _deadline=$((SECONDS + 8))
-                      while [ $SECONDS -lt $_deadline ]; do
-                        _pg_up=0; _nats_up=0
-                        pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_up=1
-                        (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_up=1
-                        [ "$_pg_up" -eq 1 ] && [ "$_nats_up" -eq 1 ] && break
-                        sleep 0.3
-                      done
-                    fi
-                    xtask infra status || true
-                  elif [ "''${SINEX_MOTD:-1}" = 1 ] && [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
+                  if [ "''${SINEX_MOTD:-1}" = 1 ] && [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
                     _sinex_print_motd
                   fi
                 fi
