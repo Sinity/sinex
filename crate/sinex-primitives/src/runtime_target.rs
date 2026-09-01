@@ -68,6 +68,8 @@ pub struct RuntimeTargetGateway {
     #[serde(default)]
     pub token_file: Option<PathBuf>,
     #[serde(default)]
+    pub readonly_token_file: Option<PathBuf>,
+    #[serde(default)]
     pub token_role: Option<RuntimeTargetGatewayTokenRole>,
     #[serde(default)]
     pub ca_cert_file: Option<PathBuf>,
@@ -102,13 +104,11 @@ impl RuntimeTargetGatewayTokenRole {
     #[must_use]
     pub fn apply_to_token(self, token: &str) -> String {
         let trimmed = token.trim();
-        if let Some((_base, suffix)) = trimmed.rsplit_once(':')
-            && Self::from_suffix(suffix).is_some()
-        {
-            return trimmed.to_string();
-        }
-
-        format!("{trimmed}:{}", self.as_suffix())
+        let base = trimmed
+            .rsplit_once(':')
+            .and_then(|(base, suffix)| Self::from_suffix(suffix).map(|_| base))
+            .unwrap_or(trimmed);
+        format!("{base}:{}", self.as_suffix())
     }
 
     fn from_suffix(suffix: &str) -> Option<Self> {
@@ -271,6 +271,7 @@ impl RuntimeTargetDescriptor {
             gateway: RuntimeTargetGateway {
                 base_url: readiness.gateway.base_url.clone(),
                 token_file: readiness.secrets.api_admin_token_file.clone(),
+                readonly_token_file: readiness.secrets.api_readonly_token_file.clone(),
                 token_role: Some(RuntimeTargetGatewayTokenRole::Admin),
                 ca_cert_file: readiness.secrets.gateway_tls_trust_anchor_file.clone(),
                 client_cert_file: None,

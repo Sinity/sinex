@@ -88,6 +88,7 @@ pub fn checkout_runtime_target(cfg: &Config) -> Result<RuntimeTargetDescriptor> 
                     .unwrap_or_else(|| CHECKOUT_DEV_GATEWAY_URL.to_string()),
             ),
             token_file,
+            readonly_token_file: None,
             token_role: None,
             ca_cert_file,
             client_cert_file,

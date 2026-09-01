@@ -202,6 +202,8 @@ pub struct DeploymentSecrets {
     #[serde(default)]
     pub api_admin_token_file: Option<PathBuf>,
     #[serde(default)]
+    pub api_readonly_token_file: Option<PathBuf>,
+    #[serde(default)]
     pub gateway_tls_cert_file: Option<PathBuf>,
     #[serde(default)]
     pub gateway_tls_key_file: Option<PathBuf>,

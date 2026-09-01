@@ -203,6 +203,7 @@ async fn runtime_target_override_populates_config() -> TestResult<()> {
           "gateway": {
             "base_url": "https://127.0.0.1:9999",
             "token_file": "/run/agenix/sinex-api-admin-token",
+            "readonly_token_file": "/run/agenix/sinex-api-readonly-token",
             "token_role": "admin",
             "ca_cert_file": "/var/lib/sinex/run/gateway-ca.pem"
           }
@@ -222,6 +223,15 @@ async fn runtime_target_override_populates_config() -> TestResult<()> {
     assert_eq!(
         config.token_role,
         Some(sinex_primitives::RuntimeTargetGatewayTokenRole::Admin)
+    );
+    config.apply_runtime_target_for_readonly();
+    assert_eq!(
+        config.token_file.as_deref(),
+        Some("/run/agenix/sinex-api-readonly-token")
+    );
+    assert_eq!(
+        config.token_role,
+        Some(sinex_primitives::RuntimeTargetGatewayTokenRole::Readonly)
     );
     assert_eq!(
         config.ca_cert.as_deref(),

@@ -288,6 +288,16 @@ impl Config {
         self.runtime_target = Some(target);
     }
 
+    pub fn apply_runtime_target_for_readonly(&mut self) {
+        if let Some(target) = &self.runtime_target {
+            if let Some(token_file) = target.gateway.readonly_token_file.as_ref() {
+                self.token_file = Some(path_to_string(token_file));
+                self.token = None;
+            }
+        }
+        self.token_role = Some(RuntimeTargetGatewayTokenRole::Readonly);
+    }
+
     fn apply_runtime_env_overrides(&mut self) {
         env_override(env_vars::RPC_URL, &mut self.rpc_url);
         env_option_override("SINEX_API_TOKEN", &mut self.token);

@@ -64,6 +64,8 @@ async fn main() -> color_eyre::Result<()> {
         )?);
     }
 
+    config.apply_runtime_target_for_readonly();
+
     config.merge_cli_args(
         args.rpc_url,
         args.token,
