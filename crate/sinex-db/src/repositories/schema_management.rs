@@ -9,7 +9,9 @@ use crate::{DbResult, Event, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::events::schema_registry::{SchemaBundleEntry, calculate_schema_content_hash};
+use sinex_primitives::events::schema_registry::{
+    SchemaBundleEntry, annotate_schema_bundle_json, calculate_schema_content_hash,
+};
 use sinex_primitives::{Id, Timestamp};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -32,11 +34,17 @@ pub struct NewEventSchema {
 impl NewEventSchema {
     /// Calculate the content hash for the schema
     pub fn calculate_content_hash(&self) -> Result<String, sinex_primitives::error::SinexError> {
+        let schema_content = annotate_schema_bundle_json(
+            self.schema_content.clone(),
+            self.source.as_str(),
+            self.event_type.as_str(),
+            &self.schema_version,
+        )?;
         calculate_schema_content_hash(
             self.source.as_str(),
             self.event_type.as_str(),
             &self.schema_version,
-            &self.schema_content,
+            &schema_content,
         )
     }
 }
@@ -857,7 +865,18 @@ impl<'a> SchemaManagementRepository<'a> {
                 &row.source,
                 &row.event_type,
                 &row.schema_version,
-                &row.schema_content,
+                &annotate_schema_bundle_json(
+                    row.schema_content.clone(),
+                    &row.source,
+                    &row.event_type,
+                    &row.schema_version,
+                )
+                .map_err(|error| {
+                    SinexError::database(format!(
+                        "failed to annotate live schema content for {}/{}@{}: {error}",
+                        row.source, row.event_type, row.schema_version
+                    ))
+                })?,
             )
             .map_err(|error| {
                 SinexError::database(format!(
