@@ -214,6 +214,18 @@ struct PerfContractsFile {
     defaults: PerfThresholds,
     #[serde(default)]
     scenarios: BTreeMap<String, PerfThresholds>,
+    /// Named latency tiers document the product surfaces covered by the gate.
+    #[serde(default)]
+    tiers: BTreeMap<String, PerfTier>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct PerfTier {
+    description: Option<String>,
+    #[serde(default)]
+    scenario_keys: Vec<String>,
+    #[serde(default)]
+    budgets: BTreeMap<String, PerfThresholds>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -810,7 +822,22 @@ fn resolve_report_path(path: Option<PathBuf>) -> Result<PathBuf> {
 fn load_contracts(path: &Path) -> Result<PerfContractsFile> {
     let data = fs::read_to_string(path)
         .with_context(|| format!("failed to read contracts file {}", path.display()))?;
-    toml::from_str(&data).with_context(|| format!("failed to parse {}", path.display()))
+    let contracts: PerfContractsFile =
+        toml::from_str(&data).with_context(|| format!("failed to parse {}", path.display()))?;
+    for (name, tier) in &contracts.tiers {
+        if tier.budgets.is_empty() {
+            bail!("perf tier `{name}` must define at least one named budget");
+        }
+        if tier.scenario_keys.is_empty() {
+            bail!("perf tier `{name}` must name at least one benchmark scenario");
+        }
+        for scenario_key in &tier.scenario_keys {
+            if !contracts.scenarios.contains_key(scenario_key) {
+                bail!("perf tier `{name}` references unknown benchmark scenario `{scenario_key}`");
+            }
+        }
+    }
+    Ok(contracts)
 }
 
 fn load_latest_run_rows(history_db: &Path) -> Result<(i64, Vec<ScenarioRow>)> {

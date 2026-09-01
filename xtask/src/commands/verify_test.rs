@@ -11,6 +11,55 @@ async fn percentage_helpers_are_stable() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
+async fn interactive_contract_rejects_a_deliberate_regression() -> ::xtask::sandbox::TestResult<()>
+{
+    let contracts: PerfContractsFile = toml::from_str(
+        r#"
+            [tiers.interactive]
+            scenario_keys = ["t=12"]
+            [tiers.interactive.budgets.recall_window_render]
+            max_p95_ms = 200.0
+
+            [scenarios."t=12"]
+            max_p95_ms = 200.0
+            enforce_baseline = false
+        "#,
+    )?;
+    let row = ScenarioRow {
+        scenario_key: "t=12".to_string(),
+        threads: 12,
+        current: ScenarioMeasurement {
+            median_ms: 100.0,
+            p95_ms: 201.0,
+            throughput_runs_per_sec: 1.0,
+            sample_count: 3,
+        },
+        baseline: None,
+    };
+
+    let result = evaluate_scenario(&row, &contracts);
+    assert_eq!(
+        contracts
+            .tiers
+            .get("interactive")
+            .and_then(|tier| tier.budgets.get("recall_window_render"))
+            .and_then(|budget| budget.max_p95_ms),
+        Some(200.0)
+    );
+    assert!(
+        !result.passed,
+        "p95 regression must trip the interactive budget"
+    );
+    assert!(
+        result
+            .checks
+            .iter()
+            .any(|check| { check.name == "max_p95_ms" && !check.passed })
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn prometheus_render_contains_expected_metrics() -> ::xtask::sandbox::TestResult<()> {
     let report = PerfVerificationReport {
         generated_at: "2026-01-01T00:00:00Z".to_string(),

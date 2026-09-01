@@ -48,6 +48,9 @@ surfaces.
 - [Contributing](../CONTRIBUTING.md) defines the Beads, branch, review, and
   merge workflow.
 - [Testing](../TESTING.md) maps test tiers and protected contracts.
+- [Interactive performance contracts](interactive-performance-contracts.md)
+  records named latency budgets and the escalation rule for occurrence-time
+  read models.
 - [xtask](../xtask/docs/README.md) is the repository automation and
   verification entry point.
 - [Architecture authority map](../.github/authority-surfaces.md) identifies
