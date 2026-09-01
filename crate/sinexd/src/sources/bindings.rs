@@ -150,14 +150,15 @@ impl SourceBindingsManifest {
 /// Known limitation: matching is by `source_id`, which is coarser than the
 /// specific runtime-binding subject the manifest entry deploys. A
 /// multi-mode source contract with several non-proposed
-/// `SourceRuntimeBinding`s sharing one `source_id` (none of the 12 sources
-/// currently deployed are multi-mode) requires *every* such binding to
-/// declare criticality before *any* of its modes can be enabled, which can
-/// over-block a fully-declared mode on an unrelated sibling mode's missing
-/// declaration. `SourceBinding` doesn't currently carry which runtime
-/// binding/subject it deploys, so per-mode scoping isn't expressible yet;
-/// tightening this to per-mode matching once the manifest schema can name a
-/// binding is left for a follow-up.
+/// `SourceRuntimeBinding`s sharing one `source_id` requires *every* such
+/// binding to declare criticality before *any* of its modes can be enabled.
+/// The media audio-transcript and screen-ocr contracts are examples of this
+/// shape: each combines staged, worker, and live-capture modes under one
+/// source id. Missing declarations on a sibling mode can therefore over-block
+/// a fully-declared mode. `SourceBinding` doesn't currently carry which
+/// runtime binding/subject it deploys, so per-mode scoping isn't expressible
+/// yet; tightening this to per-mode matching once the manifest schema can name
+/// a binding is left for a follow-up.
 pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
     let registry = SourceContractRegistry::from_inventory();
     let mut errors = Vec::new();
