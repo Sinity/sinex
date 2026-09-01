@@ -369,7 +369,10 @@ impl ScopeReconciler for HealthAggregator {
                         component.clone(),
                     )
                     .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
-                    .with_equivalence_key(format!("alert:{component}:{}", now.format_rfc3339()))
+                    .with_derived_equivalence_key(
+                        declaration,
+                        format!("{component}:{}", now.format_rfc3339()),
+                    )
                     .with_declaration_id(declaration.declaration_id)
                     .with_product_class(declaration.product_class)
                     .with_claim_support(

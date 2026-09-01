@@ -280,7 +280,7 @@ impl Windowed for HourlySummarizer {
         let output = DerivedOutput::windowed(payload, event_timestamp, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("2.0.0")
-            .with_equivalence_key(hour_id)
+            .with_derived_equivalence_key(&HOURLY_OUTPUT_DECLARATIONS[0], hour_id)
             .with_aggregation(DerivedAggregationMeta::new(
                 "activity.summary.hourly",
                 state.summary_counter - 1,

@@ -256,10 +256,13 @@ fn drain_and_emit_pairs(
             )
             .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("1.0.0")
-            .with_equivalence_key(format!(
-                "relation:{}:{}:co_occurs_with",
-                entries[i].entity_id, entries[j].entity_id
-            ))
+            .with_derived_equivalence_key(
+                declaration,
+                format!(
+                    "{}:{}:co_occurs_with",
+                    entries[i].entity_id, entries[j].entity_id
+                ),
+            )
             .with_declaration_id(declaration.declaration_id)
             .with_product_class(declaration.product_class)
             .with_claim_support(declaration.default_support.instantiate(2, 0, 1, 0));

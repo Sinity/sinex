@@ -290,7 +290,7 @@ impl Windowed for SessionDetector {
         let output = DerivedOutput::windowed(payload, end_time, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("2.0.0")
-            .with_equivalence_key(session_id)
+            .with_derived_equivalence_key(&SESSION_OUTPUT_DECLARATIONS[0], session_id)
             .with_aggregation(DerivedAggregationMeta::new(
                 "activity.session",
                 1,

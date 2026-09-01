@@ -286,10 +286,10 @@ fn reconcile_workspace_observation(
             )
             .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
             .with_semantics_version(SEMANTICS_VERSION)
-            .with_equivalence_key(format!(
-                "hyprland-workspace-expectation:{}",
-                candidate.instruction.instruction_id
-            ))
+            .with_derived_equivalence_key(
+                &INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0],
+                format!("{}", candidate.instruction.instruction_id),
+            )
             .with_declaration_id(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].declaration_id)
             .with_product_class(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].product_class)
             .with_claim_support(
@@ -351,10 +351,10 @@ fn flush_timed_out_workspace_instructions(
             )
             .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
             .with_semantics_version(SEMANTICS_VERSION)
-            .with_equivalence_key(format!(
-                "hyprland-workspace-expectation:{}",
-                candidate.instruction.instruction_id
-            ))
+            .with_derived_equivalence_key(
+                &INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0],
+                format!("{}", candidate.instruction.instruction_id),
+            )
             .with_declaration_id(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].declaration_id)
             .with_product_class(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].product_class)
             .with_claim_support(

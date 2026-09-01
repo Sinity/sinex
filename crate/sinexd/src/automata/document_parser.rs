@@ -254,7 +254,7 @@ impl DocumentParserAutomaton {
             .with_product_class(parsed_declaration.product_class)
             .with_claim_support(parsed_declaration.default_support.instantiate(1, 1, 1, 0))
             .with_semantics_version(parsed_declaration.semantics_version)
-            .with_equivalence_key(format!("document-parser:parsed:{document_id}"));
+            .with_derived_equivalence_key(parsed_declaration, document_id);
 
         outputs.push(parsed_output);
 
@@ -295,7 +295,7 @@ impl DocumentParserAutomaton {
                 .with_product_class(chunk_declaration.product_class)
                 .with_claim_support(chunk_declaration.default_support.instantiate(1, 1, 1, 0))
                 .with_semantics_version(chunk_declaration.semantics_version)
-                .with_equivalence_key(format!("document-parser:chunk:{document_id}:{i}"));
+                .with_derived_equivalence_key(chunk_declaration, format!("{document_id}:{i}"));
 
             outputs.push(chunk_output);
         }
@@ -363,7 +363,7 @@ impl DocumentParserAutomaton {
                 .with_product_class(parsed_declaration.product_class)
                 .with_claim_support(parsed_declaration.default_support.instantiate(1, 1, 1, 0))
                 .with_semantics_version(parsed_declaration.semantics_version)
-                .with_equivalence_key(format!("document-parser:parsed:{document_id}")),
+                .with_derived_equivalence_key(parsed_declaration, document_id),
         );
 
         // `byte_offset_start/end` are the chunk's real byte span within
@@ -391,7 +391,7 @@ impl DocumentParserAutomaton {
                     .with_product_class(chunk_declaration.product_class)
                     .with_claim_support(chunk_declaration.default_support.instantiate(1, 1, 1, 0))
                     .with_semantics_version(chunk_declaration.semantics_version)
-                    .with_equivalence_key(format!("document-parser:chunk:{document_id}:{i}")),
+                    .with_derived_equivalence_key(chunk_declaration, format!("{document_id}:{i}")),
             );
         }
 

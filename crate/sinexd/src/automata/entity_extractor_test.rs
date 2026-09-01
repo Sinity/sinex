@@ -31,7 +31,7 @@ fn material_context() -> AutomatonContext {
 // on every persisted event. equivalence_key is the SOLE occurrence-dedup
 // mechanism (event_engine admission returns early on None), so a restart
 // during catch-up would reprocess and re-emit permanent duplicates with no
-// dedup safety net. Mutating either `.with_equivalence_key(...)` or
+// dedup safety net. Mutating either `.with_derived_equivalence_key(...)` or
 // `.with_semantics_version(...)` call site in entity_extractor.rs back out
 // (or reverting to the pre-fix construction with neither call) makes this
 // test fail.
@@ -191,7 +191,7 @@ async fn extraction_falls_back_to_wall_clock_ts_orig_when_context_lacks_one() ->
 /// SOLE occurrence-dedup mechanism (per output.rs docs), so its absence makes
 /// every `entity.extracted` structurally un-dedupable, minting duplicates on
 /// any restart-during-catchup. Failing by design until entity_extractor.rs
-/// calls `.with_equivalence_key(...)` (and ideally `.with_semantics_version`)
+/// calls `.with_derived_equivalence_key(...)` (and ideally `.with_semantics_version`)
 /// on its `DerivedOutput::transduced(...)` output.
 #[sinex_test]
 #[ignore = "sinex-im80 open: entity.extracted carries no equivalence_key -- fails until fixed"]

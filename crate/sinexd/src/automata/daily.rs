@@ -284,7 +284,7 @@ impl Windowed for DailySummarizer {
         let output = DerivedOutput::windowed(payload, event_timestamp, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("2.0.0")
-            .with_equivalence_key(day_id)
+            .with_derived_equivalence_key(&DAILY_OUTPUT_DECLARATIONS[0], day_id)
             .with_aggregation(DerivedAggregationMeta::new(
                 "activity.summary.daily",
                 state.summary_counter - 1,

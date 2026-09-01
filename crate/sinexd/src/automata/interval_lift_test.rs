@@ -253,7 +253,17 @@ async fn interval_lift_equivalence_key_is_start_occurrence_not_parent_ids()
     // the end's (200), and not either parent event interpretation id.
     let expected = format!("interval:desktop.focus:0xabc:{material}:100");
     assert_eq!(output.payload.interval_id, expected);
-    assert_eq!(output.equivalence_key.as_deref(), Some(expected.as_str()));
+    assert_eq!(
+        output.equivalence_key.as_deref(),
+        Some(
+            sinex_primitives::derivation::derived_equivalence_key(
+                INTERVAL_LIFT_OUTPUT_DECLARATIONS[0].declaration_id,
+                SEMANTICS_VERSION,
+                &expected,
+            )
+            .as_str(),
+        )
+    );
     let key = output
         .equivalence_key
         .expect("interval carries an equivalence key");

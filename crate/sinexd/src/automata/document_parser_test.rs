@@ -447,9 +447,14 @@ async fn document_parser_terminal_outputs_stamp_equivalence_key_and_semantics_ve
         .equivalence_key
         .as_deref()
         .expect("document.parsed equivalence_key must be set");
-    assert!(
-        parsed_key.starts_with("document-parser:parsed:"),
-        "unexpected document.parsed equivalence_key shape: {parsed_key:?}"
+    let document_id = parsed.payload.get("document_id").and_then(|value| value.as_str()).expect("document_id");
+    assert_eq!(
+        parsed_key,
+        sinex_primitives::derivation::derived_equivalence_key(
+            DOCUMENT_PARSER_OUTPUT_DECLARATIONS[0].declaration_id,
+            "1.0.0",
+            document_id,
+        )
     );
 
     let chunk = outputs
@@ -465,17 +470,16 @@ async fn document_parser_terminal_outputs_stamp_equivalence_key_and_semantics_ve
         .equivalence_key
         .as_deref()
         .expect("document.chunked equivalence_key must be set");
-    assert!(
-        chunk_key.starts_with("document-parser:chunk:") && chunk_key.ends_with(":0"),
-        "unexpected document.chunked equivalence_key shape: {chunk_key:?}"
+    assert_eq!(
+        chunk_key,
+        sinex_primitives::derivation::derived_equivalence_key(
+            DOCUMENT_PARSER_OUTPUT_DECLARATIONS[1].declaration_id,
+            "1.0.0",
+            &format!("{document_id}:0"),
+        )
     );
     // Both outputs derive their key from the same document_id, keeping the
     // parsed event and its chunks correlated under restart/replay.
-    let document_id_from_parsed = parsed_key.trim_start_matches("document-parser:parsed:");
-    assert!(
-        chunk_key.contains(document_id_from_parsed),
-        "chunk equivalence_key {chunk_key:?} should embed the same document_id as \
-         the parsed event's key {parsed_key:?}"
-    );
+    assert_ne!(parsed_key, chunk_key);
     Ok(())
 }

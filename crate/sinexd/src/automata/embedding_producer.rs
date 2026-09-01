@@ -696,7 +696,6 @@ impl Transducer for EmbeddingProducer {
         let ts_orig = ctx.require_ts_orig()?;
         let source_id = ctx.trigger_uuid();
         let declaration = &EMBEDDING_PRODUCER_OUTPUT_DECLARATIONS[0];
-        let equivalence_key = format!("embedding-producer:{chunk_id}");
         Ok(Some(
             DerivedOutput::transduced(
                 serde_json::json!({
@@ -716,7 +715,7 @@ impl Transducer for EmbeddingProducer {
             // until sinex-5v6 lands real model effects).
             .with_claim_support(declaration.default_support.instantiate(0, 0, 0, 0))
             .with_semantics_version(declaration.semantics_version)
-            .with_equivalence_key(equivalence_key),
+            .with_derived_equivalence_key(declaration, chunk_id),
         ))
     }
 }

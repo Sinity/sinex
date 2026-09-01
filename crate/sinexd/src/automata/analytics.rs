@@ -434,7 +434,7 @@ impl Windowed for AnalyticsAutomaton {
         let output = DerivedOutput::windowed(payload, end_time, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("2.0.0")
-            .with_equivalence_key(window_id)
+            .with_derived_equivalence_key(&ANALYTICS_OUTPUT_DECLARATIONS[0], window_id)
             .with_aggregation(DerivedAggregationMeta::new(
                 "activity.window",
                 0,

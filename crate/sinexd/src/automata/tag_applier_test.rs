@@ -48,7 +48,11 @@ async fn tag_applier_stamps_equivalence_key_and_semantics_version() -> TestResul
         .as_deref()
         .expect("equivalence_key must be set so a restart-during-catchup reprocess dedupes");
     assert!(
-        key.starts_with("tag-applier:") && key.contains(&trigger_id.to_string()),
+        key == sinex_primitives::derivation::derived_equivalence_key(
+            TAG_APPLIER_OUTPUT_DECLARATIONS[0].declaration_id,
+            "1.0.0",
+            &format!("{trigger_id}:sys.source.browser"),
+        ),
         "equivalence_key {key:?} should be deterministically derived from the trigger event id"
     );
     Ok(())

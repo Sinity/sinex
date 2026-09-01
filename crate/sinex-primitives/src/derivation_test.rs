@@ -6,6 +6,32 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use xtask::sandbox::sinex_test;
 
+#[sinex_test]
+async fn derived_equivalence_key_changes_with_semantics_version() -> TestResult<()> {
+    let v1 = derived_equivalence_key("document.parsed", "1.0.0", "document-42");
+    let v2 = derived_equivalence_key("document.parsed", "2.0.0", "document-42");
+
+    assert_ne!(v1, v2);
+    assert!(v1.starts_with("document.parsed:"));
+    assert!(v2.starts_with("document.parsed:"));
+    assert!(v1.len() <= 512);
+    assert!(v2.len() <= 512);
+    Ok(())
+}
+
+#[sinex_test]
+async fn derived_equivalence_key_is_stable_for_same_inputs() -> TestResult<()> {
+    assert_eq!(
+        derived_equivalence_key("tag-applier.knowledge.tag_applied", "1.0.0", "event-42"),
+        derived_equivalence_key("tag-applier.knowledge.tag_applied", "1.0.0", "event-42")
+    );
+    assert_ne!(
+        derived_equivalence_key("tag-applier.knowledge.tag_applied", "1.0.0", "event-42"),
+        derived_equivalence_key("other-kind", "1.0.0", "event-42")
+    );
+    Ok(())
+}
+
 // ─── DerivedProductClass ───────────────────────────────────────────────────
 
 #[sinex_test]

@@ -94,7 +94,7 @@ impl Transducer for AttentionStream {
             DerivedOutput::transduced(payload, input.window_end, context.trigger_uuid())
                 .with_temporal_policy(SyntheticTemporalPolicy::InheritParent)
                 .with_semantics_version("1.0.0")
-                .with_equivalence_key(span_id)
+                .with_derived_equivalence_key(declaration, span_id)
                 .with_declaration_id(declaration.declaration_id)
                 .with_product_class(declaration.product_class)
                 .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0)),

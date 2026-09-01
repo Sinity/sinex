@@ -144,13 +144,12 @@ impl Transducer for EntityExtractor {
                 .ts_orig
                 .unwrap_or_else(sinex_primitives::Timestamp::now);
             let declaration = &ENTITY_EXTRACTOR_OUTPUT_DECLARATIONS[0];
-            let equivalence_key = format!("entity-extractor:{}", context.trigger_uuid());
             let output = DerivedOutput::transduced(entity, ts_orig, context.trigger_uuid())
                 .with_declaration_id(declaration.declaration_id)
                 .with_product_class(declaration.product_class)
                 .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0))
                 .with_semantics_version(declaration.semantics_version)
-                .with_equivalence_key(equivalence_key);
+                .with_derived_equivalence_key(declaration, context.trigger_uuid().to_string());
             Ok(Some(output))
         } else {
             Ok(None)

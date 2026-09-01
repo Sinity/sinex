@@ -48,7 +48,14 @@ async fn canonicalizer_stamps_equivalence_key_and_semantics_version() -> TestRes
     );
     assert_eq!(
         output.equivalence_key.as_deref(),
-        Some(format!("canonicalizer:{trigger_id}").as_str()),
+        Some(
+            sinex_primitives::derivation::derived_equivalence_key(
+                CANONICALIZER_OUTPUT_DECLARATIONS[0].declaration_id,
+                "1.0.0",
+                &trigger_id.to_string(),
+            )
+            .as_str(),
+        ),
         "equivalence_key must be deterministic per trigger event so a restart-during-catchup \
          reprocess of the same input dedupes instead of minting a permanent duplicate"
     );

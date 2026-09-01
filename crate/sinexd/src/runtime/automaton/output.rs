@@ -1,7 +1,10 @@
 //! Derived output type for synthetic events.
 
 use sinex_primitives::Uuid;
-use sinex_primitives::derivation::{ClaimSupport, DerivationDeclarationId, DerivedProductClass};
+use sinex_primitives::derivation::{
+    ClaimSupport, DerivationDeclarationId, DerivationOutputDeclaration, DerivedProductClass,
+    derived_equivalence_key,
+};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::temporal::Timestamp;
 
@@ -226,6 +229,22 @@ impl<T> DerivedOutput<T> {
     #[must_use]
     pub fn with_equivalence_key(mut self, key: impl Into<String>) -> Self {
         self.equivalence_key = Some(key.into());
+        self
+    }
+
+    /// Derive the persisted occurrence key from the output declaration and
+    /// the automaton's logical occurrence key.
+    #[must_use]
+    pub fn with_derived_equivalence_key(
+        mut self,
+        declaration: &DerivationOutputDeclaration,
+        key: impl AsRef<str>,
+    ) -> Self {
+        self.equivalence_key = Some(derived_equivalence_key(
+            declaration.declaration_id,
+            declaration.semantics_version,
+            key.as_ref(),
+        ));
         self
     }
 

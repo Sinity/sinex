@@ -109,7 +109,6 @@ impl Transducer for TerminalCommandCanonicalizer {
         payload.source_events = vec![context.trigger_uuid().to_string()];
 
         let declaration = &CANONICALIZER_OUTPUT_DECLARATIONS[0];
-        let equivalence_key = format!("canonicalizer:{}", context.trigger_uuid());
         Ok(Some(
             DerivedOutput::transduced(payload, ts_orig, context.trigger_uuid())
                 .with_temporal_policy(SyntheticTemporalPolicy::InheritParent)
@@ -117,7 +116,7 @@ impl Transducer for TerminalCommandCanonicalizer {
                 .with_product_class(declaration.product_class)
                 .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0))
                 .with_semantics_version(declaration.semantics_version)
-                .with_equivalence_key(equivalence_key),
+                .with_derived_equivalence_key(declaration, context.trigger_uuid().to_string()),
         ))
     }
 }

@@ -44,6 +44,16 @@ use crate::ids::Id;
 use crate::primitives::Uuid;
 use crate::temporal::Timestamp;
 
+/// Derive the persisted occurrence key for a derived output.
+///
+/// The declaration identity and semantics version are part of the key so a
+/// semantic change cannot reuse or collide with an older interpretation.
+#[must_use]
+pub fn derived_equivalence_key(kind: &str, semantics_version: &str, key: &str) -> String {
+    let material = format!("{kind}\0{semantics_version}\0{key}");
+    format!("{kind}:{}", blake3::hash(material.as_bytes()).to_hex())
+}
+
 // ─── DerivedProductClass ───────────────────────────────────────────────────
 
 /// The output-layer epistemic-class axis every derived output must declare.
