@@ -75,6 +75,17 @@ pub struct Invocation {
     pub live_stage: Option<String>,
 }
 
+/// A failed test/check node that has not been cleared by a later green run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnresolvedFailure {
+    pub invocation_id: i64,
+    pub command: String,
+    pub node: String,
+    pub message: Option<String>,
+    pub started_at: String,
+    pub postmortem: String,
+}
+
 /// Generic AgentCTL envelope attached to one project-owned invocation.
 ///
 /// The optional row is only a correlation seam. Stage, test, proof, and

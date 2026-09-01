@@ -197,6 +197,13 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
         intro: "Reach for these after failures or when you need to understand impact and trends.",
         entries: &[
             GuideEntry {
+                path: "history context",
+                fallback_summary: "Surface unresolved verification failures",
+                when: "a fresh agent session needs the latest failed test/check nodes and postmortem pointers",
+                examples: &["xtask history context", "xtask history context --limit 20 --format json"],
+                notes: &["A later green test/check run clears the corresponding unresolved failures."],
+            },
+            GuideEntry {
                 path: "history diagnostics",
                 fallback_summary: "Inspect recorded diagnostics",
                 when: "a check or build failed and you want package-scoped errors, trends, or fixable subsets",

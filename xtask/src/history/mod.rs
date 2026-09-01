@@ -19,7 +19,7 @@ pub use db::{
     Invocation, InvocationFull, InvocationProgress, InvocationStatus, InvocationTimelineEntry,
     InvocationWithFingerprint, LifecycleStatus, ProofEvidence, ResourceUsage, StagePressure,
     StageStats, StageTiming, StageTrendPoint, StoredDiagnostic, TestProofUnit, TraceEventRow,
-    WorkingSession, WrapperEventRow,
+    UnresolvedFailure, WorkingSession, WrapperEventRow,
 };
 pub use query::{DiagnosticQuery, DiagnosticScope, InvocationQuery, TestResultQuery};
 pub use seed::SeedOptions;

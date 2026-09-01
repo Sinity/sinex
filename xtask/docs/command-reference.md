@@ -622,6 +622,7 @@ Query build, test, and runtime history recorded by xtask
 
 | Command | Purpose |
 |---|---|
+| `context` | Emit unresolved verification failures for session-start context. |
 | `list` | List recent invocations |
 | `stats` | Show statistics for a command (or all commands / all packages) |
 | `cost` | Summarise dev-loop wallclock cost without double-counting wrappers |
@@ -646,6 +647,16 @@ Query build, test, and runtime history recorded by xtask
 | `progress` | Show live or final progress for an invocation |
 | `eta` | Show ETA estimates for a command based on recorded phase timings |
 | `exercise` | Show exercise run history with pass/fail counts and regression detection |
+
+### `xtask history context`
+
+Emit unresolved verification failures for session-start context.
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--limit` | yes | no | Maximum number of failure nodes to emit. |
 
 ### `xtask history list`
 

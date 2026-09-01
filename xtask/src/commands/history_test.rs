@@ -8,6 +8,52 @@ use color_eyre::eyre::eyre;
 use std::collections::HashSet;
 use tempfile::tempdir;
 
+#[sinex_test]
+async fn context_surfaces_failed_test_and_green_rerun_clears_it() -> ::xtask::sandbox::TestResult<()>
+{
+    let db = HistoryDb::open_in_memory()?;
+    let failed = db.start_invocation("test", None, None, None)?;
+    db.record_test_result(
+        failed,
+        "crate::regression",
+        "xtask",
+        "fail",
+        0.1,
+        Some("boom"),
+        "nextest",
+    )?;
+    db.finish_invocation(
+        failed,
+        crate::history::InvocationStatus::Failed,
+        Some(1),
+        0.1,
+    )?;
+
+    let unresolved = db.get_unresolved_failures(8)?;
+    assert_eq!(unresolved.len(), 1);
+    assert_eq!(unresolved[0].node, "crate::regression");
+    assert!(unresolved[0].postmortem.contains("history tests failures"));
+
+    let green = db.start_invocation("test", None, None, None)?;
+    db.record_test_result(
+        green,
+        "crate::regression",
+        "xtask",
+        "pass",
+        0.1,
+        None,
+        "nextest",
+    )?;
+    db.finish_invocation(
+        green,
+        crate::history::InvocationStatus::Success,
+        Some(0),
+        0.1,
+    )?;
+    assert!(db.get_unresolved_failures(8)?.is_empty());
+    Ok(())
+}
+
 fn silent_ctx() -> CommandContext {
     CommandContext::new(
         OutputWriter::new(OutputFormat::Silent),

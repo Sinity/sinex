@@ -70,6 +70,12 @@ use wrapper_events::{
 /// History command variants
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum HistorySubcommand {
+    /// Emit unresolved verification failures for session-start context.
+    Context {
+        /// Maximum number of failure nodes to emit.
+        #[arg(long, default_value = "8")]
+        limit: usize,
+    },
     /// List recent invocations
     List {
         #[arg(long, default_value = "20")]
@@ -427,6 +433,36 @@ impl XtaskCommand for HistoryCommand {
         ctx.try_with_history_db_query(|db| {
             db.warn_if_synthetic(ctx.history_db_path());
             match &self.subcommand {
+                HistorySubcommand::Context { limit } => {
+                    let failures = db.get_unresolved_failures(*limit)?;
+                    if ctx.is_human() {
+                        if failures.is_empty() {
+                            println!("No unresolved verification failures.");
+                        } else {
+                            println!("Unresolved verification failures:");
+                            for failure in &failures {
+                                println!(
+                                    "- {} {} (invocation #{}) — {}",
+                                    failure.command,
+                                    failure.node,
+                                    failure.invocation_id,
+                                    failure.postmortem
+                                );
+                                if let Some(message) = &failure.message {
+                                    println!("  {}", message.lines().next().unwrap_or(message));
+                                }
+                            }
+                        }
+                    } else {
+                        ctx.print_json(&failures)?;
+                    }
+                    Ok(CommandResult::success()
+                        .with_message(format!(
+                            "{} unresolved verification failures",
+                            failures.len()
+                        ))
+                        .with_duration(ctx.elapsed()))
+                }
                 HistorySubcommand::List {
                     limit,
                     command,

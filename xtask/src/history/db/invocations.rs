@@ -1,6 +1,58 @@
 use super::*;
 
 impl HistoryDb {
+    /// Return failed test/check nodes not cleared by a later successful run.
+    pub fn get_unresolved_failures(&self, limit: usize) -> Result<Vec<UnresolvedFailure>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT invocation_id, command, node, message, started_at, postmortem
+            FROM (
+                SELECT i.id AS invocation_id, i.command AS command, tr.test_name AS node,
+                       COALESCE(tr.failure_message, tr.output) AS message, i.started_at AS started_at,
+                       'xtask history tests failures --invocation inv:' || i.id || ' --output' AS postmortem
+                FROM invocations i
+                JOIN test_results tr ON tr.invocation_id = i.id
+                WHERE i.command = 'test' AND i.status = 'failed'
+                  AND tr.status IN ('fail', 'failed')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM invocations green
+                      JOIN test_results passed ON passed.invocation_id = green.id
+                      WHERE green.command = 'test' AND green.status = 'success'
+                        AND green.id > i.id AND passed.test_name = tr.test_name
+                        AND passed.status IN ('pass', 'passed', 'ok')
+                  )
+                UNION ALL
+                SELECT i.id AS invocation_id, i.command AS command,
+                       COALESCE(bd.file_path || ':' || COALESCE(bd.line, 0) || ':' || COALESCE(bd.col, 0),
+                                COALESCE(bd.code, 'check')),
+                       bd.message AS message, i.started_at AS started_at,
+                       'xtask history diagnostics --scope ' || i.id || ' --level error' AS postmortem
+                FROM invocations i
+                JOIN build_diagnostics bd ON bd.invocation_id = i.id
+                WHERE i.command = 'check' AND i.status = 'failed' AND bd.level = 'error'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM invocations green
+                      WHERE green.command = 'check' AND green.status = 'success' AND green.id > i.id
+                  )
+            )
+            ORDER BY invocation_id DESC, command, node
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt.query_map([limit as i64], |row| {
+            Ok(UnresolvedFailure {
+                invocation_id: row.get(0)?,
+                command: row.get(1)?,
+                node: row.get(2)?,
+                message: row.get(3)?,
+                started_at: row.get(4)?,
+                postmortem: row.get(5)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     /// Start a new invocation record. Returns the invocation ID.
     pub fn start_invocation(
         &self,

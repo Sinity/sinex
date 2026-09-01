@@ -67,7 +67,7 @@ pub use types::{
     FixSession, ImpactAuditRunRow, Invocation, InvocationFull, InvocationProgress,
     InvocationStatus, InvocationTimelineEntry, InvocationWithFingerprint, ProofEvidence,
     ResourceUsage, StagePressure, StageStats, StageTiming, StageTrendPoint, TestProofUnit,
-    TraceEventRow, WorkingSession, WrapperEventRow,
+    TraceEventRow, UnresolvedFailure, WorkingSession, WrapperEventRow,
 };
 
 use std::path::Path;
