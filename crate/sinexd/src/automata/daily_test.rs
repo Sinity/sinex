@@ -22,13 +22,8 @@ fn hourly(hour_start: Timestamp) -> ActivityHourlySummaryPayload {
     }
 }
 
-/// sinex-audit-outoforder-pattern: a late hourly summary whose bucket is
-/// BEFORE the currently-open day must not be treated as a forward bucket
-/// transition. Reverting the direction check (`bucket_start < current_bucket`
-/// back to `current_bucket != bucket_start`) makes this test fail: the late
-/// hour would spuriously mark the day complete after only the second
-/// `accumulate` call, forcing a premature flush of the still-open current day
-/// and reopening the already-elapsed earlier day as "current".
+/// A late bucket is durable failure evidence instead of a successfully
+/// consumed input.
 #[sinex_test]
 async fn daily_late_hour_does_not_reopen_earlier_bucket() -> xtask::sandbox::TestResult<()> {
     let mut summarizer = DailySummarizer;
@@ -45,19 +40,20 @@ async fn daily_late_hour_does_not_reopen_earlier_bucket() -> xtask::sandbox::Tes
     assert!(!summarizer.window_complete(&state));
 
     let ctx2 = AutomatonContext::timer_flush(late)?;
-    summarizer
+    let error = summarizer
         .accumulate(&mut state, hourly(late), &ctx2)
-        .await?;
+        .await
+        .expect_err("a late hourly summary must become durable failure evidence");
 
     assert_eq!(
         state.hour_count, 1,
-        "the late hour must be dropped, not accumulated into the current day"
+        "the late hour must not mutate the current day"
     );
     assert!(
         !summarizer.window_complete(&state),
-        "a late (earlier-bucket) hour must not mark the current day complete -- \
-         doing so would force a premature flush and reopen an already-elapsed day"
+        "a late hour must not mark the current day complete"
     );
+    assert!(error.to_string().contains("late hourly summary"));
     Ok(())
 }
 

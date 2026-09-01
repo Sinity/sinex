@@ -20,7 +20,7 @@ use sinex_primitives::events::{
 };
 use sinex_primitives::temporal::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
-use tracing::{debug, warn};
+use tracing::debug;
 
 fn floor_to_hour(timestamp: Timestamp) -> Timestamp {
     // sinex-2ged: bucket on the operator-local civil hour (DST-aware), not UTC.
@@ -179,16 +179,11 @@ impl Windowed for HourlySummarizer {
             // the currently-open hour must never be treated as a forward bucket
             // transition -- that would reopen an already-elapsed (possibly
             // already-emitted) hour and truncate the genuinely current one via a
-            // premature flush. Record durable debt and drop it from this
-            // accumulation instead (never silently folded into the wrong bucket).
-            warn!(
-                module = "hourly-summarizer",
-                current_bucket = %current_bucket,
-                late_bucket = %bucket_start,
-                window_end = %input.window_end,
-                "hourly summarizer dropped a late window whose bucket precedes the currently-open hour (durable debt)"
-            );
-            return Ok(());
+            // premature flush. Return a data error so the runtime records the
+            // input as durable processing-failure evidence.
+            return Err(AutomatonLogicError::InputParsing(format!(
+                "hourly summarizer received late window: bucket {bucket_start} precedes open hour {current_bucket}"
+            )));
         }
 
         if let Some(current_bucket) = state.hour_start

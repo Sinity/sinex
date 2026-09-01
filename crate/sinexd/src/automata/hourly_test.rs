@@ -20,13 +20,8 @@ fn window(window_start: Timestamp, window_end: Timestamp) -> ActivityWindowSumma
     }
 }
 
-/// sinex-audit-outoforder-pattern: a late window whose bucket is BEFORE the
-/// currently-open hour must not be treated as a forward bucket transition.
-/// Reverting the direction check (`bucket_start < current_bucket` back to
-/// `current_bucket != bucket_start`) makes this test fail: the late window
-/// would spuriously mark the window complete after only the second
-/// `accumulate` call, forcing a premature flush of the still-open current
-/// hour and reopening the already-elapsed earlier hour as "current".
+/// A late bucket is durable failure evidence instead of a successfully
+/// consumed input.
 #[sinex_test]
 async fn hourly_late_window_does_not_reopen_earlier_bucket() -> xtask::sandbox::TestResult<()> {
     let mut summarizer = HourlySummarizer;
@@ -43,19 +38,20 @@ async fn hourly_late_window_does_not_reopen_earlier_bucket() -> xtask::sandbox::
     assert!(!summarizer.window_complete(&state));
 
     let ctx2 = AutomatonContext::timer_flush(late)?;
-    summarizer
+    let error = summarizer
         .accumulate(&mut state, window(late, late), &ctx2)
-        .await?;
+        .await
+        .expect_err("a late window must become durable failure evidence");
 
     assert_eq!(
         state.window_count, 1,
-        "the late window must be dropped, not accumulated into the current hour"
+        "the late window must not mutate the current hour"
     );
     assert!(
         !summarizer.window_complete(&state),
-        "a late (earlier-bucket) window must not mark the current hour complete -- \
-         doing so would force a premature flush and reopen an already-elapsed hour"
+        "a late window must not mark the current hour complete"
     );
+    assert!(error.to_string().contains("late window"));
     Ok(())
 }
 

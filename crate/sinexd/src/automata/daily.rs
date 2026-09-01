@@ -20,7 +20,7 @@ use sinex_primitives::events::{
 };
 use sinex_primitives::temporal::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
-use tracing::{debug, warn};
+use tracing::debug;
 
 fn floor_to_day(timestamp: Timestamp) -> Timestamp {
     // sinex-2ged: bucket on the operator-local civil day (DST-aware 23h/25h days),
@@ -182,16 +182,11 @@ impl Windowed for DailySummarizer {
             // BEFORE the currently-open day must never be treated as a forward
             // bucket transition -- that would reopen an already-elapsed (possibly
             // already-emitted) day and truncate the genuinely current one via a
-            // premature flush. Record durable debt and drop it from this
-            // accumulation instead (never silently folded into the wrong bucket).
-            warn!(
-                module = "daily-summarizer",
-                current_bucket = %current_bucket,
-                late_bucket = %bucket_start,
-                hour_start = %input.hour_start,
-                "daily summarizer dropped a late hourly summary whose bucket precedes the currently-open day (durable debt)"
-            );
-            return Ok(());
+            // premature flush. Return a data error so the runtime records the
+            // input as durable processing-failure evidence.
+            return Err(AutomatonLogicError::InputParsing(format!(
+                "daily summarizer received late hourly summary: bucket {bucket_start} precedes open day {current_bucket}"
+            )));
         }
 
         if let Some(current_bucket) = state.day_start

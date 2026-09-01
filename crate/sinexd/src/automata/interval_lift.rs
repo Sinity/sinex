@@ -1089,16 +1089,12 @@ impl IntervalLift {
             }
             std::cmp::Ordering::Less => {
                 // sinex-uzc(a): a transition older than the open state cannot fold into a
-                // forward stream without reordering — record durable debt (warn), never a
-                // silent drop.
-                warn!(
-                    module = "interval-lift",
-                    state_kind = %current.state_kind,
-                    current_ts = %current.ts_orig,
-                    open_ts = %previous.ts_orig,
-                    "interval-lift skipped out-of-order transition (durable debt)"
-                );
-                return Ok(None);
+                // forward stream without reordering. Return a data error so the
+                // runtime records durable processing-failure evidence.
+                return Err(AutomatonLogicError::InputParsing(format!(
+                    "interval-lift received out-of-order {} transition at {} before open transition at {}",
+                    current.state_kind, current.ts_orig, previous.ts_orig
+                )));
             }
         }
 

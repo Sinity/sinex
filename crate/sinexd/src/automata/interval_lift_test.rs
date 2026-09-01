@@ -1190,10 +1190,9 @@ async fn interval_lift_uzc_tie_supersedes_open_state_in_place() -> xtask::sandbo
 }
 
 #[sinex_test]
-async fn interval_lift_uzc_out_of_order_transition_is_skipped() -> xtask::sandbox::TestResult<()> {
-    // sinex-uzc(a): a transition older than the open state is skipped (durable debt),
-    // never silently folded — the open state survives and closes on the next in-order
-    // transition.
+async fn interval_lift_uzc_out_of_order_transition_is_debt() -> xtask::sandbox::TestResult<()> {
+    // sinex-uzc(a): a transition older than the open state becomes durable
+    // failure evidence, never a silently consumed input.
     let t10 = Timestamp::from_unix_timestamp(1_700_000_010)
         .ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
     let t0 = Timestamp::from_unix_timestamp(1_700_000_000)
@@ -1208,12 +1207,11 @@ async fn interval_lift_uzc_out_of_order_transition_is_skipped() -> xtask::sandbo
             .await?
             .is_none()
     );
-    assert!(
-        automaton
-            .process_single(&mut state, uzc_focus("0xB")?, &focus_context(t0))
-            .await?
-            .is_none()
-    );
+    let error = automaton
+        .process_single(&mut state, uzc_focus("0xB")?, &focus_context(t0))
+        .await
+        .expect_err("an out-of-order transition must become durable failure evidence");
+    assert!(error.to_string().contains("out-of-order"));
     let out = automaton
         .process_single(&mut state, uzc_focus("0xC")?, &focus_context(t20))
         .await?
