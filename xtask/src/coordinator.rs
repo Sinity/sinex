@@ -31,8 +31,135 @@ pub struct FreshnessExplanation {
     pub proof_kind: String,
     pub scope_key: String,
     pub tree_fingerprint: String,
+    pub substrate_seal: String,
     pub scope: FreshnessScopeExplanation,
     pub shared_inputs: Vec<String>,
+}
+
+const SEAL_ENVIRONMENT: &[&str] = &[
+    "DATABASE_URL",
+    "DATABASE_URL_APP",
+    "DATABASE_URL_SUPERUSER",
+    "SINEX_NATS_URL",
+    "RUSTFLAGS",
+    "RUSTC_WRAPPER",
+    "CARGO_TARGET_DIR",
+    "SINEX_CACHE_DIR",
+    "SINEX_DEV_STATE_DIR",
+    "IN_NIX_SHELL",
+    "name",
+];
+
+fn command_version(command: &str, args: &[&str]) -> String {
+    std::process::Command::new(command)
+        .args(args)
+        .output()
+        .map(|output| {
+            if output.status.success() {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            } else {
+                format!("unavailable:{}", output.status)
+            }
+        })
+        .unwrap_or_else(|error| format!("unavailable:{error}"))
+}
+
+fn live_schema_digest() -> String {
+    let Some(database_url) = std::env::var_os("DATABASE_URL") else {
+        return "unavailable:no-database-url".to_string();
+    };
+    let query = "SELECT COALESCE(string_agg(format('%s.%s:%s:%s', table_schema, table_name, column_name, data_type), ',' ORDER BY table_schema, table_name, ordinal_position), '') FROM information_schema.columns WHERE table_schema IN ('core', 'raw', 'audit', 'reflection', 'sinex_schemas', 'sinex_telemetry')";
+    let output = std::process::Command::new("psql")
+        .args([
+            "--no-psqlrc",
+            "--tuples-only",
+            "--no-align",
+            "--command",
+            query,
+        ])
+        .arg(database_url)
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            format!("{:x}", Sha256::digest(output.stdout))
+        }
+        Ok(output) => format!("unavailable:{}", summarize_git_error(&output)),
+        Err(error) => format!("unavailable:{error}"),
+    }
+}
+
+fn hash_repo_inputs(hasher: &mut Sha256, paths: &[&str]) {
+    for path in paths {
+        let value = Path::new(path)
+            .is_file()
+            .then(|| fs::read(path).ok())
+            .flatten()
+            .unwrap_or_default();
+        hash_labeled_bytes(hasher, path, &value);
+    }
+}
+
+/// Return the identity of the substrate against which a proof is valid.
+///
+/// Values are hashed so connection URLs and other environment values never enter
+/// freshness explanations or history rows in plaintext.
+pub fn substrate_seal() -> Result<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"sinex-substrate-seal-v1\0");
+    for name in SEAL_ENVIRONMENT {
+        hash_labeled_bytes(
+            &mut hasher,
+            name,
+            std::env::var(name).unwrap_or_default().trim().as_bytes(),
+        );
+    }
+    for (command, args) in [
+        ("rustc", vec!["-Vv"]),
+        ("cargo", vec!["--version"]),
+        ("cargo-nextest", vec!["--version"]),
+    ] {
+        hash_labeled_bytes(
+            &mut hasher,
+            command,
+            command_version(command, &args).as_bytes(),
+        );
+    }
+    hash_repo_inputs(
+        &mut hasher,
+        &[
+            "Cargo.toml",
+            "Cargo.lock",
+            "flake.lock",
+            "crate/sinex-schema/src/apply.rs",
+            "crate/sinex-schema/src/registry.rs",
+            "nixos/modules/nats.nix",
+            "crate/sinexd/src/event_engine/jetstream_consumer/bootstrap.rs",
+        ],
+    );
+    let preflight_cache = crate::config::config()
+        .preflight_state_dir()
+        .join("preflight-cache.json");
+    hash_labeled_bytes(
+        &mut hasher,
+        "preflight-outcome-id",
+        &fs::read(preflight_cache).unwrap_or_default(),
+    );
+    hash_labeled_bytes(
+        &mut hasher,
+        "live-schema-digest",
+        live_schema_digest().as_bytes(),
+    );
+    hash_labeled_bytes(
+        &mut hasher,
+        "postgres-ready",
+        crate::preflight::is_postgres_ready().to_string().as_bytes(),
+    );
+    hash_labeled_bytes(
+        &mut hasher,
+        "nats-ready",
+        crate::preflight::is_nats_ready().to_string().as_bytes(),
+    );
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Scope inputs that feed a freshness fingerprint.
@@ -194,6 +321,7 @@ fn tree_fingerprint_in(cwd: &Path) -> Result<String> {
         "rev-parse HEAD for whole-tree fingerprint",
     )?;
     hash_dirty_content(cwd, &mut hasher, &[])?;
+    hash_labeled_bytes(&mut hasher, "substrate-seal", substrate_seal()?.as_bytes());
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -395,6 +523,7 @@ fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Res
         hash_dirty_content(cwd, &mut hasher, &[&prefix])?;
     }
     hash_dirty_content(cwd, &mut hasher, SHARED_FINGERPRINT_INPUTS)?;
+    hash_labeled_bytes(&mut hasher, "substrate-seal", substrate_seal()?.as_bytes());
 
     Ok(format!("{:x}", hasher.finalize()))
 }
@@ -435,6 +564,7 @@ pub fn explain_freshness(command: &str, args: &[String]) -> Result<FreshnessExpl
         proof_kind: proof_kind(command, args),
         scope_key: scope_key(command, args),
         tree_fingerprint: scoped_tree_fingerprint(command, args)?,
+        substrate_seal: substrate_seal()?,
         scope,
         shared_inputs: SHARED_FINGERPRINT_INPUTS
             .iter()

@@ -1829,6 +1829,7 @@ impl XtaskCommand for TestCommand {
                             "ignored": stats.ignored,
                             "impact_plan": impact_plan.clone(),
                             "reused_package_proofs": reused_package_proofs.clone(),
+                            "substrate_seal": crate::coordinator::substrate_seal()?,
                         });
                         match serde_json::to_string(&manifest)
                             .map_err(color_eyre::eyre::Report::from)

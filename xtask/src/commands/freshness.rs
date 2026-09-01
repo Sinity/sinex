@@ -242,6 +242,7 @@ fn print_explanation(key: &coordinator::FreshnessExplanation, reuse: &FreshnessR
         "  Tree fingerprint:   {}",
         short_hash(&key.tree_fingerprint)
     );
+    println!("  Substrate seal:     {}", short_hash(&key.substrate_seal));
     match &key.scope {
         FreshnessScopeExplanation::Workspace => {
             println!("  Scope:              workspace");

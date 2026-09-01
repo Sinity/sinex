@@ -942,7 +942,12 @@ impl CommandContext {
                             &scope,
                             &fingerprint,
                             Some(&scope_json),
-                            None,
+                            Some(
+                                &serde_json::json!({
+                                    "substrate_seal": crate::coordinator::substrate_seal()?,
+                                })
+                                .to_string(),
+                            ),
                         )
                     }) {
                         tracing::warn!(

@@ -24,6 +24,7 @@ async fn freshness_explain_reports_foreground_test_proof_reuse() -> TestResult<(
     assert_ne!(data["reuse"]["decision"], "disabled");
     assert_eq!(data["proof_kind"], "test.nextest.exact");
     assert_eq!(data["scope"]["kind"], "packages");
+    assert_eq!(data["substrate_seal"].as_str().map(str::len), Some(64));
     Ok(())
 }
 
