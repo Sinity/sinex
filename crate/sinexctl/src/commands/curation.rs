@@ -5,6 +5,7 @@ use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use sinex_primitives::Uuid;
 use sinex_primitives::query::EventQueryResult;
+use sinex_primitives::query::QueryResultEvent;
 use sinex_primitives::rpc::curation::{
     CurationFinalizeRequest, CurationFinalizeResponse, CurationListDuplicateCandidatesRequest,
     CurationListDuplicateCandidatesResponse, CurationListProposalsRequest,
@@ -36,6 +37,7 @@ impl CurationCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match &self.cmd {
             CurationSubcommand::Proposals(cmd) => cmd.execute(client, format).await,
+            CurationSubcommand::Triage(cmd) => cmd.execute(client, format).await,
             CurationSubcommand::Duplicates(cmd) => cmd.execute(client, format).await,
             CurationSubcommand::Judge(cmd) => cmd.execute(client, format).await,
             CurationSubcommand::DuplicateJudge(cmd) => cmd.execute(client, format).await,
@@ -48,6 +50,8 @@ impl CurationCommand {
 pub enum CurationSubcommand {
     /// List pending curation proposals.
     Proposals(CurationProposalsCommand),
+    /// Review pending proposals and optionally record an explicit batch judgment.
+    Triage(CurationTriageCommand),
     /// List cross-material duplicate candidate clusters.
     Duplicates(CurationDuplicatesCommand),
     /// Record an authority judgment over a proposal event.
@@ -56,6 +60,187 @@ pub enum CurationSubcommand {
     DuplicateJudge(CurationDuplicateJudgeCommand),
     /// Finalize an accepted or modified judgment.
     Finalize(CurationFinalizeCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct CurationTriageCommand {
+    /// Maximum pending proposals to load.
+    #[arg(long, default_value = "100")]
+    limit: i64,
+    /// Restrict the review to one proposal event UUID.
+    #[arg(long)]
+    proposal_event_id: Option<String>,
+    /// Decision to apply to every selected proposal. Requires --confirm.
+    #[arg(long)]
+    decision: Option<String>,
+    /// Confirm that the selected proposals should all receive the decision.
+    #[arg(long)]
+    confirm: bool,
+    /// Human/operator comment attached to each judgment.
+    #[arg(long)]
+    comment: Option<String>,
+    /// Corrected canonical payload JSON for a modify judgment.
+    #[arg(long)]
+    corrected_payload: Option<String>,
+}
+
+impl CurationTriageCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .curation_proposals_list(CurationListProposalsRequest {
+                status: "pending".to_string(),
+                limit: self.limit,
+            })
+            .await?;
+        let mut proposals = triage_proposals(response);
+        if let Some(selected) = &self.proposal_event_id {
+            proposals.retain(|proposal| &proposal.event_id == selected);
+            if proposals.is_empty() {
+                return Err(eyre!(
+                    "proposal event `{selected}` was not found in the pending queue"
+                ));
+            }
+        }
+        let Some(decision) = &self.decision else {
+            return render_triage(&proposals, format);
+        };
+        if !self.confirm {
+            return Err(eyre!("batch judgment requires --confirm"));
+        }
+        let decision = parse_serde_enum("decision", decision)?;
+        let corrected_payload = self
+            .corrected_payload
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|error| eyre!("invalid --corrected-payload JSON: {error}"))?;
+        let mut judgments = Vec::with_capacity(proposals.len());
+        for proposal in proposals {
+            judgments.push(
+                client
+                    .curation_judgments_record(CurationRecordJudgmentRequest {
+                        proposal_event_id: proposal.event_id,
+                        actor_kind:
+                            sinex_primitives::events::payloads::CurationJudgmentActorKind::Operator,
+                        actor_id: None,
+                        decision,
+                        corrected_payload: corrected_payload.clone(),
+                        comment: self.comment.clone(),
+                        authorization_context: None,
+                    })
+                    .await?,
+            );
+        }
+        render_value("Curation judgments recorded", &judgments, format)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TriageProposal {
+    event_id: String,
+    proposal_kind: String,
+    confidence: f64,
+    evidence_count: usize,
+    evidence_event_ids: Vec<String>,
+    evidence_material_ids: Vec<String>,
+    rationale: String,
+    candidate: serde_json::Value,
+}
+
+fn triage_proposals(response: EventQueryResult) -> Vec<TriageProposal> {
+    let EventQueryResult::Events { events, .. } = response else {
+        return Vec::new();
+    };
+    let mut proposals: Vec<_> = events.into_iter().filter_map(triage_proposal).collect();
+    proposals.sort_by(|left, right| {
+        let left_score = left.confidence * left.evidence_count.max(1) as f64;
+        let right_score = right.confidence * right.evidence_count.max(1) as f64;
+        right_score
+            .total_cmp(&left_score)
+            .then_with(|| left.event_id.cmp(&right.event_id))
+    });
+    proposals
+}
+
+fn triage_proposal(event: QueryResultEvent) -> Option<TriageProposal> {
+    let event_id = event.event.id?.to_string();
+    let payload = event.event.payload;
+    Some(TriageProposal {
+        event_id,
+        proposal_kind: payload.get("proposal_kind")?.as_str()?.to_string(),
+        confidence: payload.get("confidence")?.as_f64()?,
+        evidence_count: payload
+            .get("evidence_event_ids")
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, Vec::len)
+            + payload
+                .get("evidence_material_ids")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len),
+        evidence_event_ids: json_id_list(&payload, "evidence_event_ids"),
+        evidence_material_ids: json_id_list(&payload, "evidence_material_ids"),
+        rationale: payload
+            .get("rationale")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        candidate: payload
+            .get("candidate_payload")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn json_id_list(payload: &serde_json::Value, key: &str) -> Vec<String> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn render_triage(proposals: &[TriageProposal], format: OutputFormat) -> Result<()> {
+    let envelope = ViewEnvelope::new("sinexctl.semantic.curation.triage", proposals);
+    if print_finite_envelope(&envelope, format)? {
+        return Ok(());
+    }
+    println!("Pending curation proposals: {}", proposals.len());
+    for proposal in proposals {
+        println!(
+            "  {}  {}  confidence={:.2} evidence={}\n    {}\n    candidate={}",
+            proposal.event_id,
+            proposal.proposal_kind,
+            proposal.confidence,
+            proposal.evidence_count,
+            if proposal.rationale.is_empty() {
+                "(no rationale)"
+            } else {
+                &proposal.rationale
+            },
+            proposal.candidate
+        );
+        println!(
+            "    evidence_events={:?} evidence_materials={:?}",
+            proposal.evidence_event_ids, proposal.evidence_material_ids
+        );
+    }
+    Ok(())
+}
+
+fn render_value<T: serde::Serialize>(label: &str, value: &T, format: OutputFormat) -> Result<()> {
+    match format {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
+            println!("{}", format_json(value)?)
+        }
+        OutputFormat::Yaml => println!("{}", format_yaml(value)?),
+        OutputFormat::Table => println!("{label}: {}", serde_json::to_string(value)?),
+    }
+    Ok(())
 }
 
 #[derive(Debug, Args)]

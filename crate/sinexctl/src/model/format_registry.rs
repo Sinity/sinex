@@ -526,6 +526,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "semantic curation triage",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "semantic curation duplicates",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -907,6 +911,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "ops blob store",
         "ops blob sweep-orphans",
         "semantic curation duplicate-judge",
+        "semantic curation triage",
         "semantic curation finalize",
         "semantic curation judge",
         "record",
@@ -1082,6 +1087,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         "ops lifecycle tombstone approve" => &[RpcAuth, Confirmation],
         "events annotate"
         | "semantic curation duplicate-judge"
+        | "semantic curation triage"
         | "semantic curation finalize"
         | "semantic curation judge"
         | "record"
@@ -1274,6 +1280,10 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "semantic curation duplicates" => &[methods::CURATION_DUPLICATE_CANDIDATES_LIST],
         "semantic curation duplicate-judge" => &[methods::CURATION_DUPLICATE_JUDGMENTS_RECORD],
         "semantic curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
+        "semantic curation triage" => &[
+            methods::CURATION_PROPOSALS_LIST,
+            methods::CURATION_JUDGMENTS_RECORD,
+        ],
         "semantic curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
         "semantic curation finalize" => &[methods::CURATION_FINALIZE],
         "semantic epoch create" => &[methods::SEMANTIC_EPOCHS_CREATE],

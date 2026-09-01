@@ -11,6 +11,31 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
 use xtask::sandbox::sinex_test;
 
+fn triage_event(
+    confidence: f64,
+    evidence: usize,
+    id: sinex_primitives::ids::Id<sinex_primitives::events::Event<sinex_primitives::JsonValue>>,
+) -> QueryResultEvent {
+    let payload = serde_json::json!({
+        "proposal_kind": "fixture.kind",
+        "confidence": confidence,
+        "evidence_event_ids": (0..evidence).map(|_| sinex_primitives::Uuid::now_v7()).collect::<Vec<_>>(),
+        "rationale": "fixture rationale",
+        "candidate_payload": {"value": true}
+    });
+    let mut event =
+        sinex_primitives::events::DynamicPayload::new("fixture", "curation.proposal", payload)
+            .from_material(Id::new())
+            .build()
+            .expect("fixture proposal builds");
+    event.id = Some(id);
+    QueryResultEvent {
+        event,
+        relevance_score: None,
+        snippet: None,
+    }
+}
+
 fn empty_proposals() -> EventQueryResult {
     EventQueryResult::Events {
         events: Vec::new(),
@@ -132,5 +157,22 @@ async fn curation_duplicates_bounded_cluster_marks_partial_window() -> xtask::Te
         partial_count, 2,
         "cluster-limit and per-cluster event cap should both be explicit"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn curation_triage_ranks_confidence_by_evidence_volume() -> xtask::TestResult<()> {
+    let first = Id::new();
+    let second = Id::new();
+    let ranked = triage_proposals(EventQueryResult::Events {
+        events: vec![triage_event(0.95, 1, first), triage_event(0.7, 3, second)],
+        next_cursor: None,
+        total_estimate: Some(2),
+    });
+
+    assert_eq!(ranked[0].event_id, second.to_string());
+    assert_eq!(ranked[0].evidence_count, 3);
+    assert_eq!(ranked[0].rationale, "fixture rationale");
+    assert_eq!(ranked[0].candidate["value"], true);
     Ok(())
 }

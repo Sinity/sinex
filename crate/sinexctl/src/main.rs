@@ -752,6 +752,7 @@ fn curation_command_path(cmd: &sinexctl::commands::curation::CurationCommand) ->
     use sinexctl::commands::curation::CurationSubcommand;
     match cmd.subcommand() {
         CurationSubcommand::Proposals(_) => "curation proposals".to_string(),
+        CurationSubcommand::Triage(_) => "curation triage".to_string(),
         CurationSubcommand::Duplicates(_) => "curation duplicates".to_string(),
         CurationSubcommand::Judge(_) => "curation judge".to_string(),
         CurationSubcommand::DuplicateJudge(_) => "curation duplicate-judge".to_string(),
