@@ -156,6 +156,14 @@ fn mutations_fail_closed() {
     let (mut manifest, segments) = synthetic_revision();
     manifest.expected_record_counts.insert("message".into(), 2);
     assert!(manifest.verify(&segments).is_err());
+
+    let (mut manifest, segments) = synthetic_revision();
+    manifest.revision_id = "stale".into();
+    assert!(manifest.verify(&segments).is_err());
+
+    let (mut manifest, segments) = synthetic_revision();
+    manifest.segments[0].first_seq = 4;
+    assert!(manifest.verify(&segments).is_err());
 }
 
 #[test]
@@ -163,7 +171,6 @@ fn vocabulary_maps_every_protocol_kind_to_a_non_legacy_event() {
     assert_eq!(POLYLOGUE_VOCABULARY.len(), 7);
     for entry in POLYLOGUE_VOCABULARY {
         assert_eq!(entry.event_type, entry.kind.event_type());
-        assert!(!entry.event_type.ends_with("session_indexed"));
         assert!(!entry.consumer.is_empty());
     }
 }

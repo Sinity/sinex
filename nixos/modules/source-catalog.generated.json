@@ -1679,10 +1679,13 @@
         "id": "integration.polylogue",
         "namespace": "integration",
         "event_types": [
-          [
-            "integration.polylogue",
-            "integration.polylogue.session_indexed"
-          ]
+          ["integration.polylogue", "integration.polylogue.session.observed"],
+          ["integration.polylogue", "integration.polylogue.lineage.observed"],
+          ["integration.polylogue", "integration.polylogue.usage.observed"],
+          ["integration.polylogue", "integration.polylogue.message.observed"],
+          ["integration.polylogue", "integration.polylogue.block.observed"],
+          ["integration.polylogue", "integration.polylogue.attachment.observed"],
+          ["integration.polylogue", "integration.polylogue.session_event.observed"]
         ],
         "source_role": "activity",
         "privacy_tier": "sensitive",
@@ -1695,7 +1698,7 @@
         },
         "occurrence_identity": {
           "kind": "uuid5_from",
-          "key": "(content_hash, session_id)"
+          "key": "(revision_id, record_id)"
         },
         "access_scope": {
           "scope": "staged_export"

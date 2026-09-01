@@ -8,7 +8,7 @@
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::admission::{CURRENT_ENVELOPE_VERSION, EventIntent};
-use sinex_primitives::events::payloads::PolylogueSessionIndexedPayload;
+use sinex_primitives::events::payloads::PolylogueSessionObservedPayload;
 use sinex_primitives::{DynamicPayload, Id, JsonValue, Uuid};
 use sinexd::event_engine::IngestEventValidator;
 use sinexd::event_engine::admission::{
@@ -332,28 +332,33 @@ async fn external_producer_json_fixture_parses(ctx: TestContext) -> TestResult<(
 }
 
 #[sinex_test]
-async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -> TestResult<()> {
+async fn polylogue_external_producer_observation_fixture_admits(
+    ctx: TestContext,
+) -> TestResult<()> {
     let service = admission_service(&ctx);
     let material_id = Id::<sinex_primitives::events::SourceMaterial>::from_uuid(Uuid::now_v7());
-    let payload = PolylogueSessionIndexedPayload {
-        session_id: "claude-code:session-018f".into(),
-        origin: "claude_code".into(),
-        title: Some("source host drain review".into()),
-        tags: vec!["sinex".into(), "review".into()],
-        content_hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-            .into(),
-        created_at: sinex_primitives::Timestamp::now(),
-        updated_at: sinex_primitives::Timestamp::now(),
-        message_count: 42,
-        cost_usd: Some(0.12),
-        model_slug: Some("claude-opus-4-5".into()),
+    let payload = PolylogueSessionObservedPayload {
+        protocol_version: "polylogue.material-protocol/v1".into(),
+        semantics_version: 2,
+        manifest_digest: "a".repeat(64),
+        revision_id: "b".repeat(64),
+        session_id: "claude-code-session:session-018f".into(),
+        origin: "claude-code-session".into(),
+        native_id: "session-018f".into(),
+        record_id: "claude-code-session:session-018f".into(),
+        record_kind: "session".into(),
+        material_id: material_id.to_string(),
+        segment_index: -1,
+        line_index: 0,
+        seq: 0,
+        record_sha256: "c".repeat(64),
     };
     let payload_json = serde_json::to_value(payload)?;
 
     let rendered_payload = serde_json::to_string(&payload_json)?;
     assert!(
-        !rendered_payload.contains("messages"),
-        "Polylogue bridge fixture must stay metadata-only"
+        !rendered_payload.contains("text") && !rendered_payload.contains("messages"),
+        "Polylogue observation payload must stay content-free"
     );
     assert!(
         !rendered_payload.contains("raw_text"),
@@ -362,7 +367,7 @@ async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -
 
     let mut event = DynamicPayload::new(
         "integration.polylogue",
-        "integration.polylogue.session_indexed",
+        "integration.polylogue.session.observed",
         payload_json,
     )
     .from_material(material_id)
@@ -387,14 +392,10 @@ async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -
             assert_eq!(admitted.event.source.as_str(), "integration.polylogue");
             assert_eq!(
                 admitted.event.event_type.as_str(),
-                "integration.polylogue.session_indexed"
+                "integration.polylogue.session.observed"
             );
-            assert_eq!(
-                admitted.event.payload["raw_text_included"],
-                serde_json::Value::Null
-            );
-            assert_eq!(admitted.event.payload["message_count"], 42);
-            assert_eq!(admitted.event.payload["origin"], "claude_code");
+            assert_eq!(admitted.event.payload["record_kind"], "session");
+            assert_eq!(admitted.event.payload["origin"], "claude-code-session");
             assert_eq!(
                 admitted.event.payload["session_id"],
                 "claude-code:session-018f"

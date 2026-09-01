@@ -307,9 +307,24 @@ impl PolylogueRevisionManifest {
         {
             return Err(protocol_error("invalid head/transcript segment layout"));
         }
+        if self.revision_id != self.content_digest.polylogue_sha256 {
+            return Err(protocol_error("revision id does not match content digest"));
+        }
+        if self
+            .segments
+            .windows(2)
+            .any(|pair| pair[0].index >= pair[1].index)
+        {
+            return Err(protocol_error(
+                "transcript segments are not uniquely ordered",
+            ));
+        }
 
         let mut counts = BTreeMap::new();
         let mut anchors = BTreeMap::new();
+        if self.head_segment.first_seq != 0 {
+            return Err(protocol_error("head sequence must start at zero"));
+        }
         let head = self.verify_segment(
             &self.head_segment,
             segments,
@@ -318,7 +333,13 @@ impl PolylogueRevisionManifest {
             &mut anchors,
         )?;
         let mut transcript = Vec::new();
+        let mut expected_transcript_seq = 0;
         for descriptor in &self.segments {
+            if descriptor.first_seq != expected_transcript_seq {
+                return Err(protocol_error(
+                    "transcript sequence spaces are not contiguous",
+                ));
+            }
             transcript.extend(self.verify_segment(
                 descriptor,
                 segments,
@@ -326,6 +347,11 @@ impl PolylogueRevisionManifest {
                 &mut counts,
                 &mut anchors,
             )?);
+            expected_transcript_seq = if descriptor.record_count == 0 {
+                descriptor.first_seq
+            } else {
+                descriptor.last_seq + 1
+            };
         }
         let mut joined = segments
             .get(&HEAD_SEGMENT_INDEX)
