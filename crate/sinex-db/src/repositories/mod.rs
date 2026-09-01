@@ -71,7 +71,8 @@ pub use privacy_policy::{
     PrivacyPolicyRepository, PrivacyRuleRecord, RecognizerBackendRecord,
 };
 pub use projection_registry::{
-    ProjectionCoverageWindow, ProjectionRegistrationInput, ProjectionRegistryRepository,
+    ProjectionCoverageWindow, ProjectionDependencyInput, ProjectionRegistrationInput,
+    ProjectionRegistryRepository,
 };
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};

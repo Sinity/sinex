@@ -1,5 +1,6 @@
 //! Composable event query, provenance lineage, and event-annotation handlers.
 
+use crate::api::handlers::projection::projection_readiness_caveats;
 use crate::api::service_container::ServiceContainer;
 use crate::event_engine::policy::{
     DisclosureCaveat, DisclosureContext, DisclosureDecision, PolicyEngine,
@@ -62,11 +63,15 @@ pub async fn handle_events_relation_evidence(
     pool: &PgPool,
     req: EventsRelationEvidenceRequest,
 ) -> Result<ViewEnvelope<EvidenceWindow>> {
-    evaluate_relation_evidence_request(req, |query| async move {
+    let mut envelope = evaluate_relation_evidence_request(req, |query| async move {
         let result = pool.events().query(query).await?;
         events_from_query_result(result)
     })
-    .await
+    .await?;
+    envelope
+        .caveats
+        .extend(projection_readiness_caveats(pool).await?);
+    Ok(envelope)
 }
 
 /// `events.annotate` (#1172 AC-9): write a typed annotation to

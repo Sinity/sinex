@@ -55,6 +55,20 @@ pub async fn build_projection_readiness_view(pool: &PgPool) -> Result<Projection
     Ok(ProjectionReadinessView::from_rows(rows))
 }
 
+/// Flatten registry readiness into caveats for read surfaces whose payload
+/// already has its own stable shape. The registry remains the sole readiness
+/// authority; callers do not reimplement status checks.
+pub async fn projection_readiness_caveats(
+    pool: &PgPool,
+) -> Result<Vec<sinex_primitives::views::CaveatView>> {
+    Ok(build_projection_readiness_view(pool)
+        .await?
+        .projections
+        .into_iter()
+        .flat_map(|projection| projection.caveats)
+        .collect())
+}
+
 async fn registered_projection_rows(pool: &PgPool) -> Result<Vec<ProjectionReadinessInput>> {
     let records = pool
         .projection_registry()

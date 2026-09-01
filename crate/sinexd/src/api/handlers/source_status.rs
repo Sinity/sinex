@@ -1,5 +1,6 @@
 //! Operator-facing source status handler.
 
+use crate::api::handlers::projection::projection_readiness_caveats;
 use crate::api::service_container::ServiceContainer;
 use serde_json::Value;
 use sinex_db::DbPoolExt;
@@ -244,6 +245,9 @@ pub async fn handle_sources_status_view(
             ref_: None,
         });
     }
+    envelope
+        .caveats
+        .extend(projection_readiness_caveats(pool).await?);
     if let Some(caveat) = source_dedup_caveat(&envelope.payload.dedup) {
         envelope.caveats.push(caveat);
     }

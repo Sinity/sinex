@@ -67,7 +67,63 @@ pub struct ProjectionRegistrationInput<'a> {
     pub verification_command: &'a str,
 }
 
+/// A recorded input edge for a projection build.
+#[derive(Debug, Clone)]
+pub struct ProjectionDependencyInput<'a> {
+    pub projection_id: Uuid,
+    pub dependency_kind: &'a str,
+    pub dependency_key: &'a str,
+    pub event_source: Option<&'a str>,
+    pub event_type: Option<&'a str>,
+    pub scope_key: Option<&'a str>,
+    pub input_fingerprint: Option<&'a str>,
+    pub source_count: i64,
+}
+
 impl ProjectionRegistryRepository<'_> {
+    /// Replace the dependency edges captured by a build.
+    pub async fn replace_dependencies(
+        &self,
+        projection_id: Uuid,
+        dependencies: &[ProjectionDependencyInput<'_>],
+    ) -> DbResult<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin projection dependency update"))?;
+        sqlx::query("DELETE FROM derivation.projection_dependencies WHERE projection_id = $1")
+            .bind(projection_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "clear projection dependencies"))?;
+        for dependency in dependencies {
+            sqlx::query("INSERT INTO derivation.projection_dependencies (projection_id, dependency_kind, dependency_key, event_source, event_type, scope_key, input_fingerprint, source_count) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
+                .bind(dependency.projection_id).bind(dependency.dependency_kind)
+                .bind(dependency.dependency_key).bind(dependency.event_source)
+                .bind(dependency.event_type).bind(dependency.scope_key)
+                .bind(dependency.input_fingerprint).bind(dependency.source_count)
+                .execute(&mut *tx).await
+                .map_err(|e| db_error(e, "insert projection dependency"))?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit projection dependencies"))?;
+        Ok(())
+    }
+
+    /// Stale current projections depending on one changed control-plane input.
+    pub async fn mark_stale_by_dependency(
+        &self,
+        dependency_kind: &str,
+        dependency_key: &str,
+        reason: &str,
+    ) -> DbResult<u64> {
+        let result = sqlx::query("WITH latest AS (SELECT DISTINCT ON (r.projection_kind, r.scope_key) r.id FROM derivation.projection_registry r JOIN derivation.projection_dependencies d ON d.projection_id = r.id WHERE d.dependency_kind = $1 AND d.dependency_key = $2 ORDER BY r.projection_kind, r.scope_key, r.updated_at DESC) UPDATE derivation.projection_registry r SET status = 'stale', stale_reason = $3, updated_at = now() FROM latest WHERE r.id = latest.id AND r.status IN ('ready','partial','building')")
+            .bind(dependency_kind).bind(dependency_key).bind(reason).execute(self.pool).await
+            .map_err(|e| db_error(e, "mark dependent projections stale"))?;
+        Ok(result.rows_affected())
+    }
     /// Start a build: inserts a new row with `status = 'building'` (no
     /// `built_at`, no `stale_reason` — neither is required by the `building`
     /// state's CHECK constraints). Returns the new row's id, to be passed to
@@ -258,7 +314,9 @@ impl ProjectionRegistryRepository<'_> {
             WHERE id = $1
             RETURNING
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                status, freshness_class, built_at as "built_at: Timestamp",
+                coverage_window::text as coverage_window, status, freshness_class,
+                acceptable_staleness::text as acceptable_staleness,
+                built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
             "#,
@@ -287,7 +345,9 @@ impl ProjectionRegistryRepository<'_> {
             WHERE id = $1
             RETURNING
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                status, freshness_class, built_at as "built_at: Timestamp",
+                coverage_window::text as coverage_window, status, freshness_class,
+                acceptable_staleness::text as acceptable_staleness,
+                built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
             "#,
@@ -318,7 +378,9 @@ impl ProjectionRegistryRepository<'_> {
             WHERE id = $1
             RETURNING
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                status, freshness_class, built_at as "built_at: Timestamp",
+                coverage_window::text as coverage_window, status, freshness_class,
+                acceptable_staleness::text as acceptable_staleness,
+                built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
             "#,
@@ -350,7 +412,9 @@ impl ProjectionRegistryRepository<'_> {
             WHERE id = $1
             RETURNING
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                status, freshness_class, built_at as "built_at: Timestamp",
+                coverage_window::text as coverage_window, status, freshness_class,
+                acceptable_staleness::text as acceptable_staleness,
+                built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
             "#,
@@ -376,7 +440,9 @@ impl ProjectionRegistryRepository<'_> {
             r#"
             SELECT
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                status, freshness_class, built_at as "built_at: Timestamp",
+                coverage_window::text as coverage_window, status, freshness_class,
+                acceptable_staleness::text as acceptable_staleness,
+                built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
             FROM derivation.projection_registry
@@ -401,7 +467,9 @@ impl ProjectionRegistryRepository<'_> {
             r#"
             SELECT DISTINCT ON (projection_kind, scope_key)
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                status, freshness_class, built_at as "built_at: Timestamp",
+                coverage_window::text as coverage_window, status, freshness_class,
+                acceptable_staleness::text as acceptable_staleness,
+                built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
             FROM derivation.projection_registry
