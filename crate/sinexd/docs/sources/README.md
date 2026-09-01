@@ -19,6 +19,8 @@ This directory owns source and staged-source runtime docs for
   every new source/capture package issue follows.
 - `package_completeness_gate.md` - #1792 report shape, status rules, strict
   gate, and source/capture issue consumption guidance.
+- `polylogue_material_protocol.md` - public byte-backed Polylogue producer
+  contract and fail-closed manifest rules.
 
 ## Coverage error semantics
 

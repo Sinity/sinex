@@ -169,7 +169,7 @@ in
           https://github.com/sinity/polylogue for the companion PR).
 
           The sinex-side source contract (integration.polylogue) and
-          typed payload schema (PolylogueConversationIndexedPayload) land
+          typed anchored observation payload schemas land
           unconditionally; only the Polylogue daemon's runtime activation is
           gated here.
         '';

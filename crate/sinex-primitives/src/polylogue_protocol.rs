@@ -299,6 +299,13 @@ impl PolylogueRevisionManifest {
         if self.content_digest.canonicalizer_version != CANONICALIZER_VERSION {
             return Err(protocol_error("unsupported canonicalizer version"));
         }
+        if self.session_id.trim().is_empty()
+            || self.origin.trim().is_empty()
+            || self.native_id.trim().is_empty()
+            || self.revision_id.trim().is_empty()
+        {
+            return Err(protocol_error("manifest identity fields must be non-empty"));
+        }
         if self.head_segment.index != HEAD_SEGMENT_INDEX
             || self
                 .segments
@@ -318,6 +325,18 @@ impl PolylogueRevisionManifest {
             return Err(protocol_error(
                 "transcript segments are not uniquely ordered",
             ));
+        }
+        let declared_indexes = self
+            .segments
+            .iter()
+            .map(|segment| segment.index)
+            .collect::<std::collections::BTreeSet<_>>();
+        if segments.len() != self.segments.len() + 1
+            || segments.keys().any(|index| {
+                *index != HEAD_SEGMENT_INDEX && !declared_indexes.contains(index)
+            })
+        {
+            return Err(protocol_error("material contains undeclared segments"));
         }
 
         let mut counts = BTreeMap::new();

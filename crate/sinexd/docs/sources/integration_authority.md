@@ -13,7 +13,6 @@ projection, or uses an external project only as a transitional parity oracle.
 |---|---|---|
 | `SourceMaterialOnly` | External data is raw evidence. | Stage material, apply privacy/admission policy, and interpret it through source parsers. |
 | `EventNativeCanonical` | Sinex owns the domain facts. | Persist events and projections as the canonical personal record. |
-| `FederatedCanonicalMirror` | Another system owns the canonical domain. | Mirror metadata or source-backed signals for search, joins, context packs, and traceability. |
 | `ProjectionExport` | Sinex emits an external-compatible view. | Generate exports from Sinex-native projections without making the external format the ontology. |
 | `TransitionalReference` | External project is a migration or parity oracle. | Stage generated artefacts, compare representative windows, and retire the bridge once Sinex-native output exists. |
 | `BidirectionalAdapter` | Import and export both matter. | Require explicit conflict policy, proposal/judgment boundaries, and privacy policy before enabling writes. |
@@ -49,20 +48,17 @@ fixtures must be.
 
 ### Polylogue
 
-Authority: `FederatedCanonicalMirror` for archive metadata, with an optional
-`SourceMaterialOnly` path for raw provider exports.
+Authority: `SourceMaterialOnly` for exact provider bytes and normalized
+Polylogue segments.
 
-Polylogue remains authoritative for normalized AI conversation archives,
-message hashes, provider detection, renderers, and its MCP surface. Sinex may
-mirror metadata-only conversation/session/work-event signals for joins with
-terminal, filesystem, issue, project, and context-pack data. Raw conversation
-text is not duplicated into event payloads by default; if Sinex needs native
-AI-session interpretation, raw exports or rendered artefacts are staged as
-source material and parsed by a dedicated source parser.
+Polylogue remains authoritative for archive normalization, message hashes,
+provider detection, renderers, and its MCP surface. Sinex stages the exact
+provider and normalized bytes, then records content-free anchored observations
+for joins with terminal, filesystem, issue, project, and context-pack data.
 
 First implementation slice: #1122. A Polylogue-style producer should publish a
-metadata-only event intent or material-staged signal through the admitted
-envelope, preserve Polylogue IDs and content hashes, receive event-engine
+ anchored event intent through the admitted envelope, preserve Polylogue IDs
+ and content hashes, receive event-engine
 confirmation/rejection, and avoid linking `sinexd` internals.
 
 ### Lynchpin

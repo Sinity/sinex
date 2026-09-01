@@ -25,7 +25,7 @@
 //!     {
 //!       "id": "018f9e4b-...",
 //!       "source": "integration.polylogue",
-//!       "event_type": "integration.polylogue.conversation_indexed",
+//!       "event_type": "integration.polylogue.session.observed",
 //!       "payload": { "...": "..." },
 //!       "ts_orig": "2026-05-07T20:00:00Z",
 //!       "host": "sinnix-prime",
@@ -59,18 +59,16 @@
 //! |-------|------|----------|-------|
 //! | `id` | `UUIDv7` | yes | Event identifier — a random `UUIDv7` minted at creation (interpretation identity; new on replay, not content-derived) |
 //! | `source` | string | yes | Event source, typically matching `source_id` |
-//! | `event_type` | string | yes | Dotted event type, e.g. `"integration.polylogue.conversation_indexed"` |
+//! | `event_type` | string | yes | Dotted event type, e.g. `"integration.polylogue.session.observed"` |
 //! | `payload` | JSON object | yes | Free-form event payload |
 //! | `ts_orig` | ISO 8601 | no | Real-world occurrence timestamp |
 //! | `host` | string | yes | Originating hostname |
-//! | `Material` | object | XOR * | Material provenance (external producers use a virtual material) |
+//! | `Material` | object | XOR * | Material provenance for a confirmed registered material |
 //! | `Derived` | object | XOR * | Derived provenance (derived from parent events) |
 //!
-//! For external producers emitting metadata-only events, use `Material`
-//! provenance with a deterministic `UUIDv5` material ID derived from a
-//! producer-specific namespace and a stable key (e.g. the archive database
-//! path). This gives the event an occurrence identity without requiring a
-//! pre-registered source material.
+//! External producers must finalize and confirm exact source material before
+//! publishing. `Material` provenance names that registered material and its
+//! byte anchor; virtual material IDs are not accepted.
 //!
 //! ### NATS headers
 //!
@@ -83,8 +81,7 @@
 //!
 //! | Pattern | Use |
 //! |---------|-----|
-//! | `{env}.sinex.events.raw.integration.polylogue.conversation_indexed` | Conversation indexed |
-//! | `{env}.sinex.events.raw.integration.polylogue.conversation_updated` | Conversation updated |
+//! | `{env}.sinex.events.raw.integration.polylogue.<kind>.observed` | Anchored Polylogue observation |
 //! | `{env}.sinex.events.raw.analysis.lynchpin.artifact_staged` | Lynchpin artifact staged |
 //!
 //! ## Known external producer identifiers

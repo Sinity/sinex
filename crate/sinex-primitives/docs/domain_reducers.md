@@ -174,7 +174,6 @@ substrate. External systems enter through the authority categories in
 | Adapter category | Reducer treatment |
 | --- | --- |
 | `EventNativeCanonical` | Fold emitted lifecycle events directly. |
-| `FederatedCanonicalMirror` | Fold mirrored events and retain adapter authority in trace. |
 | `ProjectionExport` | Do not fold exported state back unless a separate import adapter admits events. |
 | `TransitionalReference` | Treat as comparison evidence, not domain truth. |
 | `BidirectionalAdapter` | Requires explicit conflict policy before activation. |
