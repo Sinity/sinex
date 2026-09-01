@@ -687,6 +687,7 @@ let
                 "SINEX_MATERIAL_ASSEMBLER_DIR=${ingestSpool}"
                 # Schema and validation behaviour.
                 "SINEX_SCHEMA_APPLY_ON_STARTUP=${if cfg.database.enable && cfg.database.autoSetup then "1" else "0"}"
+                "SINEX_PRIVACY_SEED_BUILTIN=${if cfg.privacy.seedBuiltinRules then "1" else "0"}"
                 "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.event_engine.skipSchemaSync then "true" else "false"}"
                 "SINEX_EVENT_ENGINE_STRICT_VALIDATION=${if coreCfg.event_engine.strictValidation then "true" else "false"}"
                 "SINEX_VALIDATE_SCHEMAS=${if coreCfg.event_engine.validateSchemas then "true" else "false"}"

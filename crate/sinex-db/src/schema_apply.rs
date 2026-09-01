@@ -119,12 +119,7 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
                     "Converged built-in privacy catalog"
                 );
             }
-            Err(err) => {
-                // Non-fatal: schema DDL already converged successfully. A
-                // failed catalog seed should not block startup, but must be
-                // loud -- silent catalog emptiness is exactly sinex-t5sr.
-                warn!(error = %err, "Failed to converge built-in privacy catalog; redaction rules may be stale or absent");
-            }
+            Err(err) => return Err(err),
         }
     } else {
         info!(

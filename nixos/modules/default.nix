@@ -288,6 +288,23 @@ in
       description = "Global log level propagated to Sinex services.";
     };
 
+    privacy = mkOption {
+      type = submodule {
+        options = {
+          seedBuiltinRules = mkOption {
+            type = bool;
+            default = true;
+            description = ''
+              Converge the built-in privacy catalog during schema apply. Disable
+              only when privacy.rules is managed by an external policy owner.
+            '';
+          };
+        };
+      };
+      default = { };
+      description = "Declarative privacy policy convergence settings.";
+    };
+
     users = mkOption {
       type = submodule {
         options = {

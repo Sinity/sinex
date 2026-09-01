@@ -9,12 +9,30 @@ async fn catalog_has_expected_count() -> ::xtask::sandbox::TestResult<()> {
     // (password_entry_title, login_window_title, password_manager_title,
     // sensitive_file_title) are gone — WindowTitle is no longer a policy
     // concept — and former infrastructure rules fold into PII.
-    // 22 secret + 11 PII + 3 privacy = 36.
+    // 25 secret + 11 PII + 3 privacy = 39.
     let count = |cat: RuleCategory| rules.iter().filter(|r| r.category == cat).count();
-    assert_eq!(count(RuleCategory::Secret), 22, "secret rule count");
+    assert_eq!(count(RuleCategory::Secret), 25, "secret rule count");
     assert_eq!(count(RuleCategory::Pii), 11, "PII rule count");
     assert_eq!(count(RuleCategory::Privacy), 3, "privacy rule count");
-    assert_eq!(rules.len(), 36, "total built-in rule count");
+    assert_eq!(rules.len(), 39, "total built-in rule count");
+    Ok(())
+}
+
+#[sinex_test]
+async fn secret_rules_are_unscoped_and_include_gitleaks_snapshot()
+-> ::xtask::sandbox::TestResult<()> {
+    let rules = builtin_rules();
+    let secrets = rules
+        .iter()
+        .filter(|rule| rule.category == RuleCategory::Secret);
+    assert!(secrets.clone().all(|rule| rule.contexts.is_empty()));
+    for name in [
+        "gitleaks_mailchimp_api_key",
+        "gitleaks_sendgrid_api_token",
+        "gitleaks_twilio_api_key",
+    ] {
+        assert!(rules.iter().any(|rule| rule.name == name), "missing {name}");
+    }
     Ok(())
 }
 

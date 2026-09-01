@@ -8,7 +8,7 @@ use serde_json::json;
 
 /// All built-in privacy rules.
 pub fn builtin_rules() -> Vec<PatternRule> {
-    let mut rules = Vec::with_capacity(36);
+    let mut rules = Vec::with_capacity(39);
     rules.extend(secret_rules());
     rules.extend(pii_rules());
     rules.extend(infrastructure_rules());
@@ -90,7 +90,7 @@ fn policy_seed_rule(rule: PatternRule, enabled: bool) -> Option<PrivacyPolicySee
 // ─── Secrets ─────────────────────────────────────────────────
 
 fn secret_rules() -> Vec<PatternRule> {
-    vec![
+    let mut rules = vec![
         PatternRule {
             name: "aws_access_key".into(),
             description: "AWS access key IDs (AKIA/ASIA/ABIA/ACCA prefix)".into(),
@@ -275,12 +275,9 @@ fn secret_rules() -> Vec<PatternRule> {
             strategy: Strategy::Redact {
                 label: Some("$1=<REDACTED>".into()),
             },
-            contexts: vec![
-                ProcessingContext::Command,
-                ProcessingContext::Journal,
-                ProcessingContext::Document,
-                ProcessingContext::Clipboard,
-            ],
+            // Secret rules are global by default. Narrowing this rule would
+            // risk missing credentials in an unanticipated capture modality.
+            contexts: vec![],
             enabled: true,
         },
         PatternRule {
@@ -293,7 +290,7 @@ fn secret_rules() -> Vec<PatternRule> {
             strategy: Strategy::Redact {
                 label: Some("--$1 <REDACTED>".into()),
             },
-            contexts: vec![ProcessingContext::Command],
+            contexts: vec![],
             enabled: true,
         },
         PatternRule {
@@ -319,7 +316,7 @@ fn secret_rules() -> Vec<PatternRule> {
             strategy: Strategy::Redact {
                 label: Some("<BASIC_AUTH>".into()),
             },
-            contexts: vec![ProcessingContext::Command],
+            contexts: vec![],
             enabled: true,
         },
         PatternRule {
@@ -402,7 +399,52 @@ fn secret_rules() -> Vec<PatternRule> {
             contexts: vec![],
             enabled: true,
         },
-    ]
+    ];
+    rules.extend(gitleaks_rules());
+    rules
+}
+
+/// Rules imported from the maintained Gitleaks configuration snapshot.
+///
+/// The snapshot is a build input, not a second runtime engine. Its source and
+/// revision are recorded in `third_party/gitleaks.toml`; refresh it when the
+/// upstream ruleset changes and review the resulting rule diff.
+fn gitleaks_rules() -> Vec<PatternRule> {
+    #[derive(serde::Deserialize)]
+    struct Rule {
+        id: String,
+        description: String,
+        regex: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Config {
+        rules: Vec<Rule>,
+    }
+
+    let config: Config = toml::from_str(include_str!("third_party/gitleaks.toml"))
+        .expect("vendored Gitleaks privacy rules must be valid TOML");
+    config
+        .rules
+        .into_iter()
+        .map(|rule| PatternRule {
+            name: format!("gitleaks_{}", rule.id.replace('-', "_")),
+            description: format!("Gitleaks: {}", rule.description),
+            category: RuleCategory::Secret,
+            matcher: Matcher::Regex {
+                pattern: rule.regex,
+            },
+            strategy: Strategy::Redact {
+                label: Some(format!(
+                    "<GITLEAKS_{}>",
+                    rule.id.to_ascii_uppercase().replace('-', "_")
+                )),
+            },
+            // Empty means every ProcessingContext. Secret coverage must not
+            // depend on a finite list of capture modalities.
+            contexts: vec![],
+            enabled: true,
+        })
+        .collect()
 }
 
 // ─── PII ─────────────────────────────────────────────────────
