@@ -1,5 +1,7 @@
 # Performance budget contracts for `xtask test bench --contracts`.
 # Scenario keys must match benchmark scenario keys (e.g. t=12, t=24).
+# Tiers name the product surface budgets and list the benchmark scenarios that
+# provide their regression gate.
 
 [defaults]
 # Maximum allowed regression relative to the most recent baseline run.
@@ -20,3 +22,22 @@ min_throughput_runs_per_sec = 0.2
 max_median_ms = 600000.0
 max_p95_ms = 900000.0
 min_throughput_runs_per_sec = 0.2
+
+[tiers.interactive]
+description = "Interactive recall and operator-query latency"
+scenario_keys = ["t=12", "t=24"]
+
+[tiers.interactive.budgets.recall_window_render]
+max_p95_ms = 200.0
+
+[tiers.interactive.budgets.event_card_listing]
+max_p95_ms = 200.0
+
+[tiers.interactive.budgets.mcp_query_round_trip]
+max_p95_ms = 500.0
+
+[tiers.interactive.budgets.sinexctl_cold_start]
+max_p95_ms = 1000.0
+
+[tiers.interactive.budgets.ingest_to_queryable]
+max_p95_ms = 5000.0
