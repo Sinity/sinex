@@ -31,7 +31,7 @@ use sinex_primitives::rpc::{
     },
     events::{
         EVENTS_ANNOTATE_METHOD, EVENTS_CARDS_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD,
-        EVENTS_RELATION_EVIDENCE_METHOD,
+        EVENTS_RELATION_EVIDENCE_METHOD, EVENTS_STRUCTURAL_JOIN_METHOD,
     },
     health::{HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD},
     instructions::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
@@ -618,6 +618,10 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_llm_embedding_estimate),
         )
         .service_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
+        .service_typed_rpc(
+            EVENTS_STRUCTURAL_JOIN_METHOD,
+            boxed!(handle_events_structural_join),
+        )
         .pool_typed_rpc(TASKS_LIST_METHOD, boxed!(handle_tasks_list))
         .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
         .pool_typed_rpc(PREDICTIONS_REPORT_METHOD, boxed!(handle_predictions_report))

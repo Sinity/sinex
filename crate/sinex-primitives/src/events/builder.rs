@@ -548,6 +548,14 @@ impl<'de> Deserialize<'de> for Provenance {
 pub struct OperationMarker;
 
 impl Provenance {
+    #[must_use]
+    pub fn source_material_id(&self) -> Option<Id<SourceMaterial>> {
+        match self {
+            Self::Material { id, .. } => Some(*id),
+            Self::Derived { .. } => None,
+        }
+    }
+
     pub fn from_material(
         id: impl Into<Id<SourceMaterial>>,
         anchor_byte: i64,

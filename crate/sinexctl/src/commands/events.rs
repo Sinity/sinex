@@ -4,7 +4,7 @@ use crate::Result;
 use crate::client::GatewayClient;
 use crate::commands::{
     AnnotateCommand, ContextCommand, ErrorsCommand, ExplainCommand, QueryCommand, RecentCommand,
-    RelationsCommand, TimelineCommand, TraceCommand, WatchCommand,
+    RelationsCommand, StructuralJoinCommand, TimelineCommand, TraceCommand, WatchCommand,
 };
 use crate::model::OutputFormat;
 
@@ -28,6 +28,9 @@ pub enum EventsCommand {
 
     /// Trace event provenance chain.
     Trace(TraceCommand),
+
+    /// Evaluate a containment or provenance structural join.
+    StructuralJoin(StructuralJoinCommand),
 
     /// Explain a single event with immediate provenance context.
     ///
@@ -56,6 +59,7 @@ impl EventsCommand {
             Self::Watch(cmd) => cmd.execute(client, format).await,
             Self::Relations(cmd) => cmd.execute(client, format).await,
             Self::Trace(cmd) => cmd.execute(client, format).await,
+            Self::StructuralJoin(cmd) => cmd.execute(client, format).await,
             Self::Explain(cmd) => cmd.execute(client, format).await,
             Self::Timeline(cmd) => cmd.execute(client, format).await,
             Self::Context(cmd) => cmd.execute(client, format).await,
@@ -72,6 +76,7 @@ impl EventsCommand {
             Self::Watch(_) => "events watch",
             Self::Relations(cmd) => cmd.command_path_with_root("events relations"),
             Self::Trace(_) => "events trace",
+            Self::StructuralJoin(_) => "events structural-join",
             Self::Explain(_) => "events explain",
             Self::Timeline(_) => "events timeline",
             Self::Context(_) => "events context",

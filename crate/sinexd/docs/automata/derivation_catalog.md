@@ -126,9 +126,27 @@ list, state kinds, rule shapes, or consumer hints drift apart.
    snapshots.
 4. Interval lifting is L2's job — capture stays points/transitions; sources do
    not synthesize spans.
-5. Every L3+ composite is an automaton with a `semantics_version` and lane
-   testability; confidence values carry evidence provenance or are absent.
+5. Every semantic L3+ composite is an automaton with a `semantics_version` and
+   lane testability; structural composites are query-time products over
+   provenance columns. Confidence values carry evidence provenance or are
+   absent.
 6. Volume-class the kind up front; nothing joins the wildcard fan-out without a
    volume budget (the telemetry-lane lesson).
-7. Cross-source joins only through the two keys (time, entity); a third ad-hoc
-   key means a missing entity kind.
+7. Cross-source semantic joins use time and entity keys. Structural joins use
+   provenance reachability or source-material containment. A third ad-hoc key
+   means a missing entity kind or containment declaration.
+
+## 5. Structural query composites
+
+Structural composites are query-time products over existing provenance columns.
+They do not create automata, events, or provenance columns.
+
+| Composite | Operator | Query surface | Evidence |
+|---|---|---|---|
+| `capture.coincidence` | containment-join on `source_material_id` | `events.structural_join` with `capture_coincidence` | co-events share the requested event's registered source material |
+| `derivation.provenance_pack` | provenance-join on `source_event_ids` | `events.structural_join` with `provenance_pack` | ancestor events that are material roots |
+
+Both products return the requested root, bounded evidence events, and stable
+`event:<uuid>` refs. They are available to CLI and MCP consumers and can be
+embedded by recall/context renderers without treating the composite as an
+authority.

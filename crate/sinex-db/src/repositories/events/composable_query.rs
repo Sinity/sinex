@@ -16,7 +16,8 @@ use sinex_primitives::query::{
     EventQueryResult, GroupByField, GroupedCount, GroupedValue, GroupedValueAggregation,
     LineageDirection, LineageNode, LineageQuery, LineageResult, NumericField, PathOp,
     PayloadFilter, QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry,
-    TimeBucketEntry, TimeSeriesOrder,
+    StructuralJoinKind, StructuralJoinQuery, StructuralJoinResult, TimeBucketEntry,
+    TimeSeriesOrder,
 };
 use sinex_primitives::sources::{SourceRole, source_role_sql_predicate};
 use sinex_primitives::{Id, Pagination, Provenance, SinexError, Timestamp, Uuid};
@@ -118,6 +119,85 @@ impl EventRepository<'_> {
             ancestors,
             descendants,
             material_links,
+        })
+    }
+
+    /// Evaluate a structural join directly from provenance columns.
+    pub async fn structural_join(
+        &self,
+        mut query: StructuralJoinQuery,
+    ) -> DbResult<StructuralJoinResult> {
+        query
+            .validate()
+            .map_err(|e| e.with_operation("EventRepository::structural_join"))?;
+        let root = self.get_by_id(query.event_id).await?.ok_or_else(|| {
+            SinexError::not_found("Structural join root event not found")
+                .with_context("event_id", query.event_id.to_string())
+        })?;
+        let root = QueryResultEvent {
+            event: root,
+            relevance_score: None,
+            snippet: None,
+        };
+
+        let events = match query.kind {
+            StructuralJoinKind::CaptureCoincidence => {
+                match root.event.provenance.source_material_id() {
+                    Some(material_id) => {
+                        let result = self
+                            .query(EventQuery {
+                                limit: query.limit,
+                                has_lineage: Some(false),
+                                source_material_id: Some(*material_id.as_uuid()),
+                                ..Default::default()
+                            })
+                            .await?;
+                        match result {
+                            EventQueryResult::Events { events, .. } => events,
+                            _ => Vec::new(),
+                        }
+                    }
+                    None => Vec::new(),
+                }
+            }
+            StructuralJoinKind::ProvenancePack => {
+                let lineage = self
+                    .lineage(LineageQuery {
+                        event_id: query.event_id,
+                        direction: LineageDirection::Ancestors,
+                        max_depth: 50,
+                    })
+                    .await?;
+                lineage
+                    .ancestors
+                    .into_iter()
+                    .filter(|node| node.event.provenance.source_material_id().is_some())
+                    .take(query.limit as usize)
+                    .map(|node| QueryResultEvent {
+                        event: node.event,
+                        relevance_score: None,
+                        snippet: None,
+                    })
+                    .collect()
+            }
+        };
+
+        let mut evidence_refs = root
+            .event
+            .id
+            .map(|id| format!("event:{id}"))
+            .into_iter()
+            .collect::<Vec<_>>();
+        evidence_refs.extend(
+            events
+                .iter()
+                .filter_map(|event| event.event.id.map(|id| format!("event:{id}"))),
+        );
+        Ok(StructuralJoinResult {
+            kind: query.kind,
+            root,
+            events,
+            evidence_refs,
         })
     }
 }
@@ -805,6 +885,11 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, query: &EventQuery) {
     if let Some(ref equivalence_key) = query.equivalence_key {
         qb.push(" AND equivalence_key = ");
         qb.push_bind(equivalence_key.clone());
+    }
+
+    if let Some(source_material_id) = query.source_material_id {
+        qb.push(" AND source_material_id = ");
+        qb.push_bind(source_material_id);
     }
 }
 

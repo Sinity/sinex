@@ -8,7 +8,8 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::{
-    EventQuery, EventQueryResult, LineageQuery, LineageResult, QueryResultEvent, TimeRange,
+    EventQuery, EventQueryResult, LineageQuery, LineageResult, QueryResultEvent,
+    StructuralJoinQuery, StructuralJoinResult, TimeRange,
 };
 use sinex_primitives::relations::{EventRelationExpr, EvidenceWindow, ObservedRange, TimeBasis};
 use sinex_primitives::rpc::events::{
@@ -33,6 +34,28 @@ pub async fn handle_events_lineage(
 ) -> Result<LineageResult> {
     let result = services.pool().events().lineage(query).await?;
     Ok(lineage_result_with_policy(result, services.privacy_policy()).await)
+}
+
+pub async fn handle_events_structural_join(
+    services: &ServiceContainer,
+    query: StructuralJoinQuery,
+) -> Result<StructuralJoinResult> {
+    let result = services.pool().events().structural_join(query).await?;
+    let mut disclosed = result;
+    let root = disclosed.root.event.clone();
+    let root_decision = services
+        .privacy_policy()
+        .disclose_event_payload(&root, DisclosureContext::View)
+        .await;
+    disclosed.root.event.payload = root_decision.value;
+    for event in &mut disclosed.events {
+        event.event.payload = services
+            .privacy_policy()
+            .disclose_event_payload(&event.event, DisclosureContext::View)
+            .await
+            .value;
+    }
+    Ok(disclosed)
 }
 
 pub async fn handle_events_relation_evidence(

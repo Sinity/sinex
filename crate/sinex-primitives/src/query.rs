@@ -263,6 +263,10 @@ pub struct EventQuery {
     /// a scope reconciler automaton: all live events in that scope from that source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub equivalence_key: Option<String>,
+
+    /// Filter material-provenance events to one registered source material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_material_id: Option<Uuid>,
 }
 
 impl EventQuery {
@@ -305,6 +309,7 @@ impl Default for EventQuery {
             has_lineage: None,
             scope_key: None,
             equivalence_key: None,
+            source_material_id: None,
         }
     }
 }
@@ -963,6 +968,44 @@ pub struct LineageResult {
     /// events in this lineage result. These are not event edges.
     #[serde(default)]
     pub material_links: Vec<SourceMaterialLinkInfo>,
+}
+
+/// Query-time structural joins over an event's provenance columns.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuralJoinQuery {
+    pub event_id: Id<Event<JsonValue>>,
+    pub kind: StructuralJoinKind,
+    #[serde(default = "default_structural_join_limit")]
+    pub limit: i64,
+}
+
+impl StructuralJoinQuery {
+    pub fn validate(&mut self) -> Result<(), SinexError> {
+        self.limit = self.limit.clamp(1, 1000);
+        Ok(())
+    }
+}
+
+fn default_structural_join_limit() -> i64 {
+    100
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StructuralJoinKind {
+    /// Events anchored in the same source material as the requested event.
+    CaptureCoincidence,
+    /// Material-provenance ancestors of the requested event.
+    ProvenancePack,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuralJoinResult {
+    pub kind: StructuralJoinKind,
+    pub root: QueryResultEvent,
+    pub events: Vec<QueryResultEvent>,
+    /// Stable public refs for every returned evidence event.
+    pub evidence_refs: Vec<String>,
 }
 
 /// A single node in the provenance graph with its depth from the root.

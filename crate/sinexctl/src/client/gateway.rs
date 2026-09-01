@@ -39,8 +39,8 @@ use sinex_primitives::rpc::{
     },
     events::{
         EVENTS_ANNOTATE_METHOD, EVENTS_CARDS_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD,
-        EVENTS_RELATION_EVIDENCE_METHOD, EventsAnnotateRequest, EventsAnnotateResponse,
-        EventsRelationEvidenceRequest,
+        EVENTS_RELATION_EVIDENCE_METHOD, EVENTS_STRUCTURAL_JOIN_METHOD, EventsAnnotateRequest,
+        EventsAnnotateResponse, EventsRelationEvidenceRequest,
     },
     health::{
         HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD, HealthEffectRecordRequest,
@@ -207,7 +207,8 @@ use crate::client::RetryConfig;
 use crate::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
 use sinex_primitives::RuntimeTargetGatewayTokenRole;
 use sinex_primitives::query::{
-    EventQuery, EventQueryResult, LineageQuery, LineageResult, SubscriptionFilter,
+    EventQuery, EventQueryResult, LineageQuery, LineageResult, StructuralJoinQuery,
+    StructuralJoinResult, SubscriptionFilter,
 };
 use sinex_primitives::relations::EvidenceWindow;
 use sinex_primitives::views::{
@@ -1069,6 +1070,13 @@ impl GatewayClient {
     /// Trace provenance lineage for an event
     pub async fn trace_lineage(&self, query: LineageQuery) -> Result<LineageResult> {
         self.call_typed(EVENTS_LINEAGE_METHOD, &query).await
+    }
+
+    pub async fn structural_join(
+        &self,
+        query: StructuralJoinQuery,
+    ) -> Result<StructuralJoinResult> {
+        self.call_typed(EVENTS_STRUCTURAL_JOIN_METHOD, &query).await
     }
 
     /// Evaluate a relation expression over live events.

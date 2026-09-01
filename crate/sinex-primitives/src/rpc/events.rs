@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::query::{EventQuery, EventQueryResult, LineageQuery, LineageResult};
+use crate::query::{
+    EventQuery, EventQueryResult, LineageQuery, LineageResult, StructuralJoinQuery,
+    StructuralJoinResult,
+};
 use crate::relations::{EventRelationExpr, EvidenceWindow};
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::views::{EventCardListView, ViewEnvelope};
@@ -23,6 +26,15 @@ pub const EVENTS_LINEAGE_METHOD: RpcMethod<LineageQuery, LineageResult> = RpcMet
     RpcStability::Stable,
     RpcMutability::ReadOnly,
 );
+
+pub const EVENTS_STRUCTURAL_JOIN_METHOD: RpcMethod<StructuralJoinQuery, StructuralJoinResult> =
+    RpcMethod::new(
+        methods::EVENTS_STRUCTURAL_JOIN,
+        RpcRole::ReadOnly,
+        RpcDomain::Events,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
 
 pub const EVENTS_RELATION_EVIDENCE_METHOD: RpcMethod<
     EventsRelationEvidenceRequest,

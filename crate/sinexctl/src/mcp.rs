@@ -18,7 +18,10 @@ use sinex_primitives::domain::{EventSource, EventType, InstanceId, ModuleKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::SourceId;
-use sinex_primitives::query::{EventQuery, EventQueryResult, LineageDirection, LineageQuery};
+use sinex_primitives::query::{
+    EventQuery, EventQueryResult, LineageDirection, LineageQuery, StructuralJoinKind,
+    StructuralJoinQuery,
+};
 use sinex_primitives::query_units::{SinexQueryResultListView, parse_sinex_query};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::coordination::{
@@ -573,6 +576,14 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only provenance trace for one event.",
             backing_rpc_methods: &[methods::EVENTS_LINEAGE],
+            read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
+        },
+        McpCatalogEntry {
+            name: "sinex_structural_join",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only containment coincidence or material-root provenance pack for one event.",
+            backing_rpc_methods: &[methods::EVENTS_STRUCTURAL_JOIN],
             read_only: true,
             output_contract: McpOutputContract::ViewEnvelope,
         },
@@ -1199,6 +1210,19 @@ pub fn tools() -> Vec<McpTool> {
                         "maximum": 50,
                         "default": 10
                     }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
+            "sinex_structural_join",
+            json!({
+                "type": "object",
+                "required": ["event_id", "kind"],
+                "properties": {
+                    "event_id": {"type": "string", "format": "uuid"},
+                    "kind": {"type": "string", "enum": ["capture_coincidence", "provenance_pack"]},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100}
                 },
                 "additionalProperties": false
             }),
@@ -1969,6 +1993,7 @@ async fn call_tool_events_sources(
         "sinex_search_events" => search_events(client, arguments).await?,
         "sinex_query" => query(client, arguments).await?,
         "sinex_trace_lineage" => trace_lineage(client, arguments).await?,
+        "sinex_structural_join" => structural_join(client, arguments).await?,
         "sinex_relation_evidence" => relation_evidence(client, arguments).await?,
         "sinex_source_readiness" => source_readiness(client, arguments).await?,
         "sinex_source_continuity" => source_continuity(client, arguments).await?,
@@ -2154,6 +2179,28 @@ async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value
         &json!(args),
         &json!({ "result": result }),
     )?)
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct StructuralJoinArgs {
+    event_id: String,
+    kind: StructuralJoinKind,
+    limit: Option<i64>,
+}
+
+async fn structural_join(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: StructuralJoinArgs = serde_json::from_value(arguments)?;
+    let query = StructuralJoinQuery {
+        event_id: args.event_id.parse()?,
+        kind: args.kind,
+        limit: args.limit.unwrap_or(100),
+    };
+    let result = serde_json::to_value(client.structural_join(query).await?)?;
+    mcp_view_envelope(
+        "sinex_structural_join",
+        &json!(args),
+        &json!({"result": result}),
+    )
 }
 
 async fn relation_evidence(client: &GatewayClient, arguments: Value) -> Result<Value> {

@@ -41,7 +41,7 @@ pub use curation::{
 };
 pub use query::{
     handle_events_annotate, handle_events_cards, handle_events_lineage, handle_events_query,
-    handle_events_relation_evidence,
+    handle_events_relation_evidence, handle_events_structural_join,
 };
 pub use replay::{
     handle_replay_approve_operation, handle_replay_cancel_operation,
