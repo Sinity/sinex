@@ -175,6 +175,24 @@ async fn record_and_throttle_is_instant_when_unlimited() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn scan_pacer_accounts_the_durably_emitted_batch() -> TestResult<()> {
+    let mut pacer = ScanPacer::new(
+        RateBudget::unlimited(),
+        None,
+        None,
+        "test-historical-source",
+        None,
+    );
+
+    pacer.after_batch(3, 128, None).await?;
+
+    assert_eq!(pacer.work_controller().progress().items_done, 3);
+    assert_eq!(pacer.work_controller().progress().bytes_done, 128);
+    assert_eq!(pacer.work_controller().progress().phase, "historical-scan");
+    Ok(())
+}
+
+#[sinex_test]
 async fn backlog_gate_returns_immediately_when_no_signal() -> TestResult<()> {
     let gate = BacklogGate::new(100, 10);
     let result = gate.wait_for_capacity(|| async { Ok(None) }).await;

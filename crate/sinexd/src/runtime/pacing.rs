@@ -43,7 +43,7 @@ use std::time::{Duration, Instant};
 pub use sinex_primitives::pacing::RateBudget;
 
 use crate::runtime::RuntimeResult;
-use crate::runtime::work_control::WorkCancellation;
+use crate::runtime::work_control::{WorkCancellation, WorkController, WorkIdentity};
 
 const BACKLOG_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BURST_WINDOW: Duration = Duration::from_secs(1);
@@ -343,6 +343,10 @@ impl BacklogGate {
 /// mechanism exists to provide (sinex-2n9).
 pub struct ScanPacer {
     controller: PacingController,
+    /// Shared work accounting for the historical scan route. Rate pacing is
+    /// retained here because its backlog gate is source-specific; the work
+    /// controller owns operation progress and cancellation semantics.
+    work_controller: WorkController,
     backlog_gate: Option<BacklogGate>,
     nats_client: Option<async_nats::Client>,
     env: sinex_primitives::environment::SinexEnvironment,
@@ -369,13 +373,19 @@ impl ScanPacer {
         module_name: impl Into<String>,
         horizon: Option<sinex_primitives::temporal::Timestamp>,
     ) -> Self {
+        let module_name = module_name.into();
         Self {
             backlog_gate: BacklogGate::from_budget(&budget),
             controller: PacingController::new(budget),
+            work_controller: WorkController::new(
+                WorkIdentity::ephemeral("historical-scan", module_name.clone()),
+                Default::default(),
+                WorkCancellation::new(),
+            ),
             nats_client,
             env: sinex_primitives::environment::environment(),
             namespace,
-            module_name: module_name.into(),
+            module_name,
             started_at: sinex_primitives::temporal::Timestamp::now(),
             tracker: crate::runtime::scan_progress::ScanProgressTracker::new(horizon),
             progress_store: None,
@@ -398,6 +408,11 @@ impl ScanPacer {
     #[must_use]
     pub fn controller(&self) -> &PacingController {
         &self.controller
+    }
+
+    #[must_use]
+    pub fn work_controller(&self) -> &WorkController {
+        &self.work_controller
     }
 
     async fn ensure_progress_store(&mut self) {
@@ -485,6 +500,14 @@ impl ScanPacer {
         position: Option<sinex_primitives::temporal::Timestamp>,
     ) -> RuntimeResult<()> {
         self.controller.record_and_throttle(events, bytes).await;
+        self.work_controller
+            .record_batch(
+                "historical-scan",
+                events,
+                bytes,
+                position.map(|position| position.format_rfc3339()),
+            )
+            .await?;
         self.tracker.observe(position);
 
         let Some(gate) = &self.backlog_gate else {

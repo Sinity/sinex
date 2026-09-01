@@ -31,6 +31,9 @@ No third-party backend is currently selected as the canonical replay store. Sele
 
 ## Proof required before wipe
 
+- The shared work-control disposition is satisfied for every applicable replay,
+  import, rebuild, maintenance, and destructive route. See
+  [`work-control.md`](../work-control.md) and `sinex-0r01.1.1`.
 - Route-level source-removal replay for every source family in the frozen import manifest.
 - CAS write, rename, fsync, lease, quarantine, delete, reference-reappearance, and crash/response-ambiguity tests.
 - Portable export/import round trip through each selected adapter, with byte and manifest hashes compared.

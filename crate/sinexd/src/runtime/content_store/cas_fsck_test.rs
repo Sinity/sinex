@@ -1382,7 +1382,10 @@ async fn registered_cas_blob_with_mutated_bytes_is_reported_corrupt(
         assert_eq!(report.corrupt, 1, "apply={apply}");
         assert_eq!(report.missing, 0, "the registered path still exists");
         assert_eq!(report.orphaned, 0, "the database still owns the hash");
-        assert_eq!(report.removed, 0, "corrupt authority is never orphan cleanup");
+        assert_eq!(
+            report.removed, 0,
+            "corrupt authority is never orphan cleanup"
+        );
         let status = statuses
             .iter()
             .find(|status| status.blob_id.as_deref() == Some(blob_id.as_str()))
@@ -1391,7 +1394,10 @@ async fn registered_cas_blob_with_mutated_bytes_is_reported_corrupt(
         assert_eq!(status.hash, key.digest);
         assert_eq!(status.path, object_path.as_str());
         assert_eq!(status.size_bytes, corrupted.len() as u64);
-        assert!(object_path.exists(), "fsck must not silently delete corrupt authority");
+        assert!(
+            object_path.exists(),
+            "fsck must not silently delete corrupt authority"
+        );
         assert_eq!(tokio::fs::read(&object_path).await?, corrupted);
     }
     Ok(())

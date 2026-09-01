@@ -23,6 +23,8 @@ surfaces.
 - [Source documentation](../crate/sinexd/docs/sources/README.md) is the main
   entry point for source contracts, staged materials, parser packages,
   readiness, replay, and lifecycle.
+- [Shared work-control contract](../crate/sinexd/docs/work-control.md) maps
+  bounded, resumable, and intentionally unlimited maintenance callers.
 - [Automata documentation](../crate/sinexd/docs/automata/README.md) covers
   derived-event processing and lineage.
 - [Event taxonomy](../crate/sinex-db/docs/schema/event-taxonomy.md) documents

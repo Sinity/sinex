@@ -764,6 +764,16 @@ where
         let start = Instant::now();
         let mut emitted: u64 = 0;
         let mut skipped: u64 = 0;
+        let mut work = crate::runtime::work_control::WorkController::new(
+            crate::runtime::work_control::WorkIdentity {
+                operation_id: replay.operation_id.to_string(),
+                kind: "material-replay".to_owned(),
+                scope_fingerprint: format!("{} materials", replay.materials.len()),
+                generation: 0,
+            },
+            Default::default(),
+            crate::runtime::work_control::WorkCancellation::new(),
+        );
 
         for material in &replay.materials {
             if replay
@@ -868,6 +878,7 @@ where
                         "material replay occurrence range must not be empty",
                     ));
                 }
+                let replay_bytes = bytes.len() as u64;
                 /*
                  * Keep the original range check in the route even though the
                  * CAS helper validates it against the manifest.  This catches
@@ -915,6 +926,16 @@ where
                     self.process_materialized_record(record, replay.operation_id)
                         .await?,
                 );
+                work.record_batch(
+                    "material-replay",
+                    1,
+                    replay_bytes,
+                    Some(format!(
+                        "{}:{}",
+                        material.source_material_id, occurrence.anchor_byte
+                    )),
+                )
+                .await?;
             }
 
             if !found_occurrence {
