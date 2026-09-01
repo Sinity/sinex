@@ -915,6 +915,28 @@ fn lookup_binary(
         .find(|(candidate, _, _, _)| *candidate == name)
 }
 
+#[derive(Debug)]
+enum RuntimeModuleResolution {
+    Binary(&'static (&'static str, &'static str, &'static str, RuntimeTarget)),
+    SourceBinding(DevSourceBinding),
+}
+
+fn resolve_runtime_module(
+    name: &str,
+    manifest: Option<&DevSourceBindingsManifest>,
+) -> Option<RuntimeModuleResolution> {
+    if let Some(binary) = lookup_binary(name) {
+        return Some(RuntimeModuleResolution::Binary(binary));
+    }
+
+    manifest?
+        .bindings
+        .iter()
+        .find(|binding| binding.source_id == name)
+        .cloned()
+        .map(RuntimeModuleResolution::SourceBinding)
+}
+
 pub(crate) fn list_run_targets() -> Vec<String> {
     let mut targets: Vec<String> = BINARIES
         .iter()
@@ -1344,13 +1366,20 @@ impl RunCommand {
         instance_id: Option<String>,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
-        // Find binary info
-        let (_, package, binary, target) = BINARIES
-            .iter()
-            .find(|(n, _, _, _)| *n == name)
+        let resolution = resolve_runtime_module(name, load_dev_source_bindings_manifest().as_ref())
             .ok_or_else(|| {
                 eyre!("Unknown binary '{name}'. Use 'xtask run list' to see available binaries.")
             })?;
+
+        if let RuntimeModuleResolution::SourceBinding(binding) = &resolution {
+            return self
+                .run_source_binding(name, binding.clone(), instance_id, ctx)
+                .await;
+        }
+
+        let RuntimeModuleResolution::Binary((_, package, binary, target)) = resolution else {
+            unreachable!("source bindings return above")
+        };
 
         // Ensure infrastructure is ready (binaries need DB + NATS)
         preflight::ensure_ready(ctx)?;
@@ -1395,6 +1424,53 @@ impl RunCommand {
         // Direct run
         self.run_direct(package, binary, &instance_id, *target, ctx)
             .await
+    }
+
+    async fn run_source_binding(
+        &self,
+        name: &str,
+        binding: DevSourceBinding,
+        instance_id: Option<String>,
+        ctx: &CommandContext,
+    ) -> Result<CommandResult> {
+        preflight::ensure_ready(ctx)?;
+        let instance_id =
+            instance_id.unwrap_or_else(|| default_source_binding_service_name(&binding));
+        let args = source_binding_runtime_args(&binding, &instance_id);
+        let runtime = self.local_runtime_coordinates()?;
+
+        if self.dry_run {
+            if ctx.is_human() {
+                println!(
+                    "Would run: {name} (source binding: {}, package: sinexd, instance: {instance_id})",
+                    binding.source_id
+                );
+                runtime.print_human();
+            }
+            return Ok(CommandResult::success()
+                .with_detail("dry-run passed")
+                .with_data(serde_json::json!({
+                    "target": name,
+                    "source": binding.source_id,
+                    "package": "sinexd",
+                    "binary": "sinexd",
+                    "instance_id": instance_id,
+                    "args": args,
+                    "env": self.local_run_env_vars(),
+                    "runtime": runtime,
+                })));
+        }
+
+        self.print_local_runtime_coordinates(ctx)?;
+        self.run_direct_with_args(
+            "sinexd",
+            "sinexd",
+            &instance_id,
+            args,
+            self.local_run_env_vars(),
+            ctx,
+        )
+        .await
     }
 
     async fn run_bundle(
@@ -1824,6 +1900,26 @@ impl RunCommand {
         target: RuntimeTarget,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
+        self.run_direct_with_args(
+            package,
+            binary,
+            instance_id,
+            runtime_cli_args(package, instance_id, target),
+            self.runtime_env_vars(target),
+            ctx,
+        )
+        .await
+    }
+
+    async fn run_direct_with_args(
+        &self,
+        package: &str,
+        binary: &str,
+        instance_id: &str,
+        cli_args: Vec<String>,
+        runtime_env: Vec<(String, String)>,
+        ctx: &CommandContext,
+    ) -> Result<CommandResult> {
         if ctx.is_human() {
             println!("Building {package}...");
         }
@@ -1832,14 +1928,20 @@ impl RunCommand {
         // so we can pipe stdout/stderr through the journal shim.
         if self.dev_journal || self.logs {
             return self
-                .run_direct_piped(package, binary, instance_id, target, ctx)
+                .run_direct_piped(package, binary, instance_id, cli_args, runtime_env, ctx)
                 .await;
         }
 
-        let args = self.build_cargo_run_args(package, instance_id, target);
+        let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
+        if self.release {
+            args.push("--release".to_string());
+        }
+        if !cli_args.is_empty() {
+            args.push("--".to_string());
+            args.extend(cli_args);
+        }
 
         self.maybe_spawn_metrics_overlay(ctx);
-        let runtime_env = self.runtime_env_vars(target);
 
         let run_stage = ctx.start_stage("run");
         let status = ProcessBuilder::cargo()
@@ -1892,7 +1994,8 @@ impl RunCommand {
         package: &str,
         binary: &str,
         instance_id: &str,
-        target: RuntimeTarget,
+        cli_args: Vec<String>,
+        runtime_env: Vec<(String, String)>,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         // Step 1: build
@@ -1932,8 +2035,8 @@ impl RunCommand {
 
         let mut cmd = Command::new(&binary_path);
         configure_managed_child_tokio(&mut cmd);
-        cmd.args(runtime_cli_args(package, instance_id, target));
-        cmd.envs(self.runtime_env_vars(target));
+        cmd.args(cli_args);
+        cmd.envs(runtime_env);
 
         let mut child = cmd
             .stdout(Stdio::piped())

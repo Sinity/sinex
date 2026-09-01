@@ -421,6 +421,32 @@ async fn test_source_binding_runtime_args_uses_manifest_identity()
 }
 
 #[sinex_test]
+async fn test_runtime_module_resolution_distinguishes_binding_and_binary_names()
+-> ::xtask::sandbox::TestResult<()> {
+    let manifest = DevSourceBindingsManifest {
+        bindings: vec![DevSourceBinding {
+            source_id: "desktop.activitywatch".to_string(),
+            instance_idx: 1,
+            service_name: None,
+            runtime_config: None,
+            extra_args: Vec::new(),
+            extra_env: HashMap::new(),
+        }],
+    };
+
+    assert!(matches!(
+        resolve_runtime_module("desktop.activitywatch", Some(&manifest)),
+        Some(RuntimeModuleResolution::SourceBinding(binding))
+            if binding.source_id == "desktop.activitywatch"
+    ));
+    assert!(matches!(
+        resolve_runtime_module("desktop-source", Some(&manifest)),
+        Some(RuntimeModuleResolution::Binary(_))
+    ));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_source_binding_service_from_cmdline_args_requires_scan_driver()
 -> ::xtask::sandbox::TestResult<()> {
     let args = vec![
