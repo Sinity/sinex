@@ -33,6 +33,7 @@ use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
 use sinex_primitives::rpc::methods;
+use sinex_primitives::rpc::predictions::{PredictionReportRequest, PredictionReportResponse};
 use sinex_primitives::rpc::privacy::{PrivacyShadowAuditRequest, PrivateModeStateResponse};
 use sinex_primitives::rpc::replay::ReplayState;
 use sinex_primitives::rpc::runtime::{
@@ -262,6 +263,12 @@ struct TasksListArgs {
 #[derive(Debug, Deserialize, Serialize)]
 struct TaskStateArgs {
     task_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PredictionsReportArgs {
+    #[serde(default)]
+    predictor: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -660,6 +667,14 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only current state for one task workflow object.",
             backing_rpc_methods: &[methods::TASKS_STATE_GET],
+            read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
+        },
+        McpCatalogEntry {
+            name: "sinex_predictions_report",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only prediction calibration and Brier score report.",
+            backing_rpc_methods: &[methods::PREDICTIONS_REPORT],
             read_only: true,
             output_contract: McpOutputContract::ViewEnvelope,
         },
@@ -1344,6 +1359,10 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
+            "sinex_predictions_report",
+            json!({"type":"object","properties":{"predictor":{"type":"string"}},"additionalProperties":false}),
+        ),
+        mcp_tool(
             "sinex_replay_operations",
             json!({
                 "type": "object",
@@ -1972,6 +1991,7 @@ async fn call_tool_events_sources(
         "sinex_privacy_shadow_audit" => privacy_shadow_audit(client, arguments).await?,
         "sinex_tasks_list" => tasks_list(client, arguments).await?,
         "sinex_task_state" => task_state(client, arguments).await?,
+        "sinex_predictions_report" => predictions_report(client, arguments).await?,
         "sinex_replay_operations" => replay_operations(client, arguments).await?,
         "sinex_replay_status" => replay_status(client, arguments).await?,
         "sinex_documents_search" => documents_search(client, arguments).await?,
@@ -2335,6 +2355,20 @@ async fn task_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
         "sinex_task_state",
         &json!(args),
         &json!({ "result": response }),
+    ))
+}
+
+async fn predictions_report(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: PredictionsReportArgs = serde_json::from_value(arguments)?;
+    let response: PredictionReportResponse = client
+        .predictions_report(PredictionReportRequest {
+            predictor: args.predictor.clone(),
+        })
+        .await?;
+    Ok(envelope(
+        "sinex_predictions_report",
+        &json!(args),
+        &json!({"result": response}),
     ))
 }
 

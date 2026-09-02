@@ -9,9 +9,9 @@ use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::commands::{
     CompletionEndpointCommand, ConfigCommands, DlqCommands, DocumentsCommand, EventsCommand,
-    LifecycleCommands, MetricsCommands, OpsCommands, PrivacyCommand, QueryUnitsCommand,
-    RecallCommand, RecordCommand, ReplayCommands, RuntimeCommands, SemanticCommand, ShowCommand,
-    SourcesCommand, StateCommands, TasksCommand, TuiCommand,
+    LifecycleCommands, MetricsCommands, OpsCommands, PredictionsCommand, PrivacyCommand,
+    QueryUnitsCommand, RecallCommand, RecordCommand, ReplayCommands, RuntimeCommands,
+    SemanticCommand, ShowCommand, SourcesCommand, StateCommands, TasksCommand, TuiCommand,
 };
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -118,6 +118,9 @@ enum Commands {
 
     /// Privacy controls
     Privacy(PrivacyCommand),
+
+    /// Prediction calibration report
+    Predictions(PredictionsCommand),
 
     /// Launch interactive TUI dashboard
     Tui(TuiCommand),
@@ -286,6 +289,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Recall(cmd) => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
+                Commands::Predictions(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
@@ -636,6 +640,7 @@ fn command_path(cmd: &Commands) -> String {
             OpsCommands::Demo(_) => "ops demo".to_string(),
         },
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
+        Commands::Predictions(_) => "predictions".to_string(),
         Commands::Tui(_) => "tui".to_string(),
         Commands::Config { cmd } => match cmd {
             ConfigCommands::Init { .. } => "config init".to_string(),
@@ -681,6 +686,7 @@ fn command_path(cmd: &Commands) -> String {
                     }
                 }
                 RecordSubcommand::Task(_) => "record task".to_string(),
+                RecordSubcommand::Prediction(_) => "record prediction".to_string(),
             }
         }
         Commands::Tasks(cmd) => {

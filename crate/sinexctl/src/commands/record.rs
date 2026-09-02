@@ -8,6 +8,9 @@ use sinex_primitives::events::payloads::{HealthQuantity, HealthTimingQuality};
 use sinex_primitives::rpc::health::{
     HealthDeclarationResponse, HealthEffectRecordRequest, HealthIntakeRecordRequest,
 };
+use sinex_primitives::rpc::predictions::{
+    PredictionEventResponse, PredictionRegisterRequest, PredictionResolveRequest,
+};
 use sinex_primitives::rpc::tasks::{TaskCreateRequest, TaskEventResponse};
 use sinex_primitives::task_domain::TaskExternalRef;
 
@@ -32,6 +35,7 @@ impl RecordCommand {
         match &self.cmd {
             RecordSubcommand::Health(cmd) => cmd.execute(client, format).await,
             RecordSubcommand::Task(cmd) => cmd.execute(client, format).await,
+            RecordSubcommand::Prediction(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -42,6 +46,109 @@ pub enum RecordSubcommand {
     Health(RecordHealthCommand),
     /// Manually record a canonical task.
     Task(RecordTaskCommand),
+    /// Register or resolve a forecast.
+    Prediction(RecordPredictionCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct RecordPredictionCommand {
+    #[command(subcommand)]
+    cmd: RecordPredictionSubcommand,
+}
+#[derive(Debug, Subcommand)]
+enum RecordPredictionSubcommand {
+    Register(RecordPredictionRegisterCommand),
+    Resolve(RecordPredictionResolveCommand),
+}
+impl RecordPredictionCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match &self.cmd {
+            RecordPredictionSubcommand::Register(c) => c.execute(client, format).await,
+            RecordPredictionSubcommand::Resolve(c) => c.execute(client, format).await,
+        }
+    }
+}
+#[derive(Debug, Args)]
+pub struct RecordPredictionRegisterCommand {
+    #[arg(long)]
+    statement: String,
+    #[arg(long)]
+    probability: f64,
+    #[arg(long)]
+    resolution_criteria: String,
+    #[arg(long)]
+    due: String,
+    #[arg(long)]
+    predictor: Option<String>,
+    #[arg(long)]
+    horizon: Option<String>,
+}
+impl RecordPredictionRegisterCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .predictions_register(PredictionRegisterRequest {
+                prediction_id: None,
+                statement: non_empty("prediction --statement", &self.statement)?,
+                probability: self.probability,
+                resolution_criteria: non_empty(
+                    "prediction --resolution-criteria",
+                    &self.resolution_criteria,
+                )?,
+                due_at: parse_time_input(&self.due)?,
+                predictor: self.predictor.clone(),
+                horizon: self.horizon.clone(),
+            })
+            .await?;
+        render_prediction_response(&response, format, "Prediction registered")
+    }
+}
+#[derive(Debug, Args)]
+pub struct RecordPredictionResolveCommand {
+    prediction_id: sinex_primitives::Uuid,
+    #[arg(long)]
+    outcome: bool,
+    #[arg(long = "evidence-ref")]
+    evidence_refs: Vec<String>,
+    #[arg(long)]
+    at: Option<String>,
+}
+impl RecordPredictionResolveCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .predictions_resolve(PredictionResolveRequest {
+                prediction_id: self.prediction_id,
+                outcome: self.outcome,
+                resolved_at: self.at.as_deref().map(parse_time_input).transpose()?,
+                evidence_refs: self.evidence_refs.clone(),
+            })
+            .await?;
+        render_prediction_response(&response, format, "Prediction resolved")
+    }
+}
+fn render_prediction_response(
+    response: &PredictionEventResponse,
+    format: OutputFormat,
+    label: &str,
+) -> Result<()> {
+    match format {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
+            println!("{}", format_json(response)?)
+        }
+        OutputFormat::Yaml => println!("{}", format_yaml(response)?),
+        OutputFormat::Table => {
+            println!("{label}");
+            println!("  Prediction: {}", response.prediction.prediction_id);
+            println!("  Probability: {}", response.prediction.probability);
+            println!(
+                "  Outcome: {}",
+                response
+                    .prediction
+                    .outcome
+                    .map_or("unresolved".to_string(), |v| v.to_string())
+            );
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Args)]

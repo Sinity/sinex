@@ -34,6 +34,7 @@ pub mod pacing;
 pub mod parser;
 pub mod polylogue_protocol;
 pub mod primitives;
+pub mod prediction_domain;
 pub mod privacy;
 pub mod public_ref;
 pub mod query;

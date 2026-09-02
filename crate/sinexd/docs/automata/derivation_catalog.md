@@ -34,7 +34,7 @@ Semantic role (decides what derivations it feeds):
 | State (machine/world was) | context | good: system.monitor, journald, udev, systemd |
 | Communication (dyadic) | people, relationships | near-zero live — email/messaging dark |
 | Physiological | body | zero live (sleep export dark) |
-| Intentional (operator-authored) | goals, commitments | tasks, records, instructions exist; predictions missing |
+| Intentional (operator-authored) | goals, commitments | tasks, records, instructions, and predictions |
 | Reflexive (system about itself) | trust, health | over-complete → the telemetry-lane split |
 
 **Rule of thumb the registry violates when unguarded:** a kind earns existence

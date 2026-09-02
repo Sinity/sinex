@@ -47,6 +47,9 @@ use sinex_primitives::rpc::{
     },
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
+    predictions::{
+        PREDICTIONS_REGISTER_METHOD, PREDICTIONS_REPORT_METHOD, PREDICTIONS_RESOLVE_METHOD,
+    },
     privacy::{
         PRIVACY_POLICY_BACKEND_ADD_METHOD, PRIVACY_POLICY_DICTIONARY_ADD_METHOD,
         PRIVACY_POLICY_FIELD_BIND_METHOD, PRIVACY_POLICY_FIELD_UNBIND_METHOD,
@@ -535,6 +538,7 @@ fn build_registry_impl() -> RpcRegistry {
         handle_lifecycle_status, handle_link_entities, handle_llm_budget_report,
         handle_llm_embedding_estimate, handle_llm_prompts_list, handle_llm_route_explain,
         handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
+        handle_predictions_register, handle_predictions_report, handle_predictions_resolve,
         handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
         handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,
         handle_privacy_policy_list, handle_privacy_policy_rule_add,
@@ -616,6 +620,7 @@ fn build_registry_impl() -> RpcRegistry {
         .service_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
         .pool_typed_rpc(TASKS_LIST_METHOD, boxed!(handle_tasks_list))
         .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
+        .pool_typed_rpc(PREDICTIONS_REPORT_METHOD, boxed!(handle_predictions_report))
         .pool_typed_rpc(
             SEMANTIC_EPOCHS_LIST_METHOD,
             boxed!(handle_semantic_epoch_list),
@@ -819,6 +824,14 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_auth_typed_rpc(TASKS_STATUS_SET_METHOD, boxed!(handle_tasks_status_set, 3))
         .pool_auth_typed_rpc(TASKS_COMPLETE_METHOD, boxed!(handle_tasks_complete, 3))
         .pool_auth_typed_rpc(TASKS_CANCEL_METHOD, boxed!(handle_tasks_cancel, 3))
+        .pool_auth_typed_rpc(
+            PREDICTIONS_REGISTER_METHOD,
+            boxed!(handle_predictions_register, 3),
+        )
+        .pool_auth_typed_rpc(
+            PREDICTIONS_RESOLVE_METHOD,
+            boxed!(handle_predictions_resolve, 3),
+        )
         .pool_auth_typed_rpc(
             INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
             boxed!(handle_hyprland_workspace_switch, 3),

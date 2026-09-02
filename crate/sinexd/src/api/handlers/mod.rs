@@ -18,6 +18,7 @@ pub mod lifecycle;
 pub mod llm;
 pub mod ops;
 pub mod pkm;
+pub mod predictions;
 pub mod privacy;
 pub mod projection;
 pub mod query;
@@ -99,6 +100,9 @@ pub use documents::{
 };
 pub use health::{handle_health_effect_record, handle_health_intake_record};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
+pub use predictions::{
+    handle_predictions_register, handle_predictions_report, handle_predictions_resolve,
+};
 pub use privacy::{
     handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
     handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,

@@ -70,6 +70,11 @@ use sinex_primitives::rpc::{
         LlmRouteExplainRequest, LlmRouteExplainResponse,
     },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
+    predictions::{
+        PREDICTIONS_REGISTER_METHOD, PREDICTIONS_REPORT_METHOD, PREDICTIONS_RESOLVE_METHOD,
+        PredictionEventResponse, PredictionRegisterRequest, PredictionReportRequest,
+        PredictionReportResponse, PredictionResolveRequest,
+    },
     privacy::{
         PRIVACY_POLICY_BACKEND_ADD_METHOD, PRIVACY_POLICY_DICTIONARY_ADD_METHOD,
         PRIVACY_POLICY_FIELD_BIND_METHOD, PRIVACY_POLICY_FIELD_UNBIND_METHOD,
@@ -1140,6 +1145,25 @@ impl GatewayClient {
     /// List current task states.
     pub async fn tasks_list(&self, request: TaskListRequest) -> Result<TaskListResponse> {
         self.call_typed(TASKS_LIST_METHOD, &request).await
+    }
+
+    pub async fn predictions_register(
+        &self,
+        request: PredictionRegisterRequest,
+    ) -> Result<PredictionEventResponse> {
+        self.call_typed(PREDICTIONS_REGISTER_METHOD, &request).await
+    }
+    pub async fn predictions_resolve(
+        &self,
+        request: PredictionResolveRequest,
+    ) -> Result<PredictionEventResponse> {
+        self.call_typed(PREDICTIONS_RESOLVE_METHOD, &request).await
+    }
+    pub async fn predictions_report(
+        &self,
+        request: PredictionReportRequest,
+    ) -> Result<PredictionReportResponse> {
+        self.call_typed(PREDICTIONS_REPORT_METHOD, &request).await
     }
 
     // ==================== Instruction Commands ====================

@@ -65,6 +65,7 @@ pub enum RpcDomain {
     Sources,
     System,
     Tasks,
+    Predictions,
     Telemetry,
 }
 
@@ -163,6 +164,7 @@ pub mod llm;
 pub mod methods;
 pub mod ops;
 pub mod pkm;
+pub mod predictions;
 pub mod privacy;
 pub mod replay;
 pub mod runtime;
@@ -302,6 +304,9 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         tasks::TASKS_STATE_GET_METHOD.info(),
         tasks::TASKS_STATUS_SET_METHOD.info(),
         tasks::TASKS_UPDATE_METHOD.info(),
+        predictions::PREDICTIONS_REGISTER_METHOD.info(),
+        predictions::PREDICTIONS_REPORT_METHOD.info(),
+        predictions::PREDICTIONS_RESOLVE_METHOD.info(),
         telemetry::TELEMETRY_ASSEMBLY_STATS_METHOD.info(),
         telemetry::TELEMETRY_COMMAND_FREQUENCY_METHOD.info(),
         telemetry::TELEMETRY_CURRENT_DEVICE_STATE_METHOD.info(),
