@@ -96,8 +96,8 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
         entries: &[
             GuideEntry {
                 path: "infra lease-services",
-                fallback_summary: "Run AgentCTL lease-owned development services",
-                when: "a worktree needs isolated PostgreSQL and NATS under AgentCTL ownership",
+                fallback_summary: "Run the checkout's development services",
+                when: "a worktree needs its PostgreSQL and NATS running under AgentCTL ownership",
                 examples: &[
                     "workspace_id=\"$(agentctl workspace list --project sinex | jq -er --arg path \"$(git rev-parse --show-toplevel)\" '.payload.value.workspaces[] | select(.path == $path) | .workspace_id')\"",
                     "agentctl job start sinex dev_services --workspace \"$workspace_id\"",
@@ -105,9 +105,9 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "agentctl job cancel <job-id>",
                 ],
                 notes: &[
-                    "The descriptor uses tree+environment caching so matching starts in one checkout share one running job and service lease; cancellation is shared, while different worktrees retain isolated leases and can run concurrently.",
-                    "The descriptor injects bounded loopback ports and the command remains foreground after PostgreSQL and NATS pass protocol readiness checks.",
-                    "Systemd owns process-tree cancellation and lease release. Xtask does not write owner files, retain PIDs, or stop arbitrary processes.",
+                    "The descriptor uses tree+environment caching so matching starts in one checkout share one running job; cancellation is shared, while different worktrees stay isolated and can run concurrently.",
+                    "Ports come from the devshell's per-checkout SINEX_DEV_POSTGRES_PORT and SINEX_DEV_NATS_PORT; the command refuses a port another process holds, publishes both endpoints as JSON, and stays foreground.",
+                    "Systemd owns process-tree cancellation. Xtask does not write owner files, retain PIDs, or stop arbitrary processes.",
                 ],
             },
             GuideEntry {

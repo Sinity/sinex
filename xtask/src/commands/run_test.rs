@@ -843,7 +843,7 @@ async fn test_agentctl_runtime_operations_are_non_cacheable_with_eight_hour_leas
 }
 
 #[sinex_test]
-async fn test_agentctl_dev_services_use_shared_checkout_service_lease_contract()
+async fn test_agentctl_dev_services_shares_one_checkout_job_without_retired_keys()
 -> ::xtask::sandbox::TestResult<()> {
     let descriptor: toml::Value = toml::from_str(include_str!("../../../.agentctl/project.toml"))?;
     let operations = descriptor["operations"]
@@ -866,7 +866,7 @@ async fn test_agentctl_dev_services_use_shared_checkout_service_lease_contract()
     assert_eq!(
         dev_services.get("cache").and_then(toml::Value::as_str),
         Some("tree+environment"),
-        "matching starts in one checkout must share the running service job and lease"
+        "matching starts in one checkout must share the running service job"
     );
     assert_eq!(
         dev_services.get("result").and_then(toml::Value::as_str),
@@ -877,71 +877,40 @@ async fn test_agentctl_dev_services_use_shared_checkout_service_lease_contract()
             .get("timeout_seconds")
             .and_then(toml::Value::as_integer),
         Some(28_800),
-        "the shared foreground service keeps its eight-hour lease"
+        "the shared foreground service keeps its eight-hour budget"
     );
     assert!(
         dev_services.get("parameters").is_none(),
         "the service contract must not expose caller-controlled inputs"
     );
-    assert!(
-        dev_services.get("exclusive_keys").is_none(),
-        "same-checkout sharing must not become global exclusivity"
-    );
-
     let inherit = descriptor["environment"]["inherit"]
         .as_array()
         .ok_or_else(|| eyre!("AgentCTL environment.inherit must be an array"))?;
     for output in ["SINEX_DEV_POSTGRES_PORT", "SINEX_DEV_NATS_PORT"] {
         assert!(
             !inherit.iter().any(|value| value.as_str() == Some(output)),
-            "allocated service output {output} must not affect cache identity"
+            "the checkout-derived port {output} must not affect cache identity"
         );
     }
 
-    let service = dev_services
-        .get("service")
-        .and_then(toml::Value::as_table)
-        .ok_or_else(|| eyre!("dev_services must declare its service contract"))?;
-    assert_eq!(
-        service.get("readiness").and_then(toml::Value::as_str),
-        Some("project-command")
-    );
-    assert_eq!(
-        service.get("lifetime").and_then(toml::Value::as_str),
-        Some("job")
-    );
-
-    let ports = service["ports"]
-        .as_table()
-        .ok_or_else(|| eyre!("dev_services service ports must be a TOML table"))?;
-    for (slot, environment, lower, upper) in [
-        (
-            "postgres",
-            "SINEX_DEV_POSTGRES_PORT",
-            45_432_i64,
-            45_559_i64,
-        ),
-        ("nats", "SINEX_DEV_NATS_PORT", 44_308_i64, 44_435_i64),
-    ] {
-        let port = ports
-            .get(slot)
-            .and_then(toml::Value::as_table)
-            .ok_or_else(|| eyre!("missing dev_services {slot} port slot"))?;
-        assert_eq!(
-            port.get("environment").and_then(toml::Value::as_str),
-            Some(environment)
-        );
-        let range = port
-            .get("range")
-            .and_then(toml::Value::as_array)
-            .ok_or_else(|| eyre!("dev_services {slot} port range must be an array"))?;
-        assert_eq!(
-            range
-                .iter()
-                .map(|value| value.as_integer().unwrap_or_default())
-                .collect::<Vec<_>>(),
-            [lower, upper]
-        );
+    // sinnixd reads none of these; a descriptor that declares one is refused.
+    for name in operations.keys() {
+        let operation = operations[name]
+            .as_table()
+            .ok_or_else(|| eyre!("AgentCTL operation {name} must be a TOML table"))?;
+        for retired in [
+            "service",
+            "dependencies",
+            "estimate_memory_bytes",
+            "exclusive_keys",
+            "scratch",
+            "supersede",
+        ] {
+            assert!(
+                !operation.contains_key(retired),
+                "operation {name} declares retired descriptor key {retired}"
+            );
+        }
     }
 
     Ok(())
@@ -972,8 +941,6 @@ fn test_live_agentctl_descriptor_exposes_service_cache_identity_without_starting
         dev_services["cache"], "tree+environment",
         "the running AgentCTL must load same-checkout coalescing semantics"
     );
-    assert_eq!(dev_services["service"]["lifetime"], "job");
-    assert_eq!(dev_services["service"]["readiness"], "project-command");
     assert_eq!(dev_services["parameters"], serde_json::json!([]));
 }
 

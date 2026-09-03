@@ -21,24 +21,12 @@ checkpoint_untracked = true
 verification_operations = ["check_default"]
 
 [operations.dev_services]
-description = "Run or share lease-owned Sinex development Postgres and NATS"
+description = "Run Sinex development Postgres and NATS in the foreground"
 exec = ["nix", "run", ".#xtask", "--", "infra", "lease-services"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"
 timeout_seconds = 28800
-
-[operations.dev_services.service]
-readiness = "project-command"
-lifetime = "job"
-
-[operations.dev_services.service.ports.postgres]
-environment = "SINEX_DEV_POSTGRES_PORT"
-range = [45432, 45559]
-
-[operations.dev_services.service.ports.nats]
-environment = "SINEX_DEV_NATS_PORT"
-range = [44308, 44435]
 
 [conflicts]
 exact_files = ["Cargo.toml", "Cargo.lock", "flake.nix", "flake.lock"]
@@ -55,7 +43,6 @@ exec = ["xtask", "check"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"
-dependencies = ["dev_services"]
 
 [operations.check_default.parameters.all]
 type = "bool"
@@ -257,7 +244,6 @@ exec = ["xtask", "test"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"
-dependencies = ["dev_services"]
 
 [operations.test_default.parameters.all]
 type = "bool"

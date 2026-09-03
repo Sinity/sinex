@@ -53,160 +53,18 @@ _sinex_pre_push_gateway_port() {
   printf '%s' "$((19000 + first_byte))"
 }
 
+_sinex_pre_push_postgres_port() {
+  local checkout_hash first_byte
+  checkout_hash="$(_sinex_pre_push_checkout_hash)"
+  first_byte="$((16#${checkout_hash:0:2}))"
+  printf '%s' "$((45432 + (first_byte % 128)))"
+}
+
 _sinex_pre_push_nats_port() {
   local checkout_hash first_byte
   checkout_hash="$(_sinex_pre_push_checkout_hash)"
   first_byte="$((16#${checkout_hash:0:2}))"
   printf '%s' "$((4222 + (first_byte % 100)))"
-}
-
-_sinex_pre_push_agentctl_lease_ports() {
-  local lease_id lease_json lease_ports
-  lease_id="${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}"
-  [[ -n "$lease_id" ]] || return 1
-  if [[ ! "$lease_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-    echo "[pre-push] Rejecting AgentCTL lease: lease ID is not a UUID." >&2
-    return 1
-  fi
-  if ! lease_json="$(agentctl job get "$lease_id" 2>/dev/null)"; then
-    echo "[pre-push] Rejecting AgentCTL lease $lease_id: job lookup failed or the lease is stale." >&2
-    return 1
-  fi
-
-  if ! lease_ports="$(jq -er --arg checkout "$REPO_ROOT" --arg job_id "$lease_id" '
-    .payload.value as $job
-    | ($job.lease.ports // []) as $ports
-    | select(($ports | type) == "array")
-    | ($ports | map(select(.name == "postgres" and .environment == "SINEX_DEV_POSTGRES_PORT"))) as $postgres
-    | ($ports | map(select(.name == "nats" and .environment == "SINEX_DEV_NATS_PORT"))) as $nats
-    | select(
-        $job.job_id == $job_id
-        and $job.project_id == "sinex"
-        and $job.operation == "dev_services"
-        and $job.checkout.project_id == "sinex"
-        and $job.checkout.path == $checkout
-        and $job.state.phase == "running"
-        and $job.state.terminal == false
-        and $job.state.systemd.ActiveState == "active"
-        and $job.state.systemd.SubState == "running"
-        and $job.lease.id == $job_id
-        and $job.lease.host == "127.0.0.1"
-        and $job.lease.readiness == "project-command"
-        and $job.lease.lifetime == "job"
-        and $job.lease.state == "active"
-        and ($ports | length) == 2
-        and ($postgres | length) == 1
-        and ($nats | length) == 1
-        and (($ports | map(.name) | sort) == ["nats", "postgres"])
-        and (($ports | map(.environment) | sort) == ["SINEX_DEV_NATS_PORT", "SINEX_DEV_POSTGRES_PORT"])
-        and (all($ports[]; (. | type) == "object"))
-        and ($postgres[0].port | type) == "number"
-        and ($nats[0].port | type) == "number"
-        and ($postgres[0].port == ($postgres[0].port | floor))
-        and ($nats[0].port == ($nats[0].port | floor))
-        and ($postgres[0].port >= 45432 and $postgres[0].port <= 45559)
-        and ($nats[0].port >= 44308 and $nats[0].port <= 44435)
-      )
-    | [$postgres[0].port, $nats[0].port]
-    | @tsv
-  ' <<<"$lease_json")"; then
-    echo "[pre-push] Rejecting AgentCTL lease $lease_id: it is not the active dev_services lease for this checkout." >&2
-    return 1
-  fi
-
-  printf '%s\n' "$lease_ports"
-}
-
-_sinex_pre_push_probe_agentctl_lease() {
-  local pg_run_dir="$1"
-  local pg_port="$2"
-  local nats_port="$3"
-  local postgres_identity
-  if ! command -v pg_isready >/dev/null 2>&1 || ! pg_isready -q -h "$pg_run_dir" -p "$pg_port" >/dev/null 2>&1; then
-    echo "[pre-push] Rejecting AgentCTL lease: PostgreSQL is not reachable at socket $pg_run_dir on port $pg_port." >&2
-    return 1
-  fi
-  if ! command -v psql >/dev/null 2>&1; then
-    echo "[pre-push] Rejecting AgentCTL lease: psql is unavailable for PostgreSQL protocol validation." >&2
-    return 1
-  fi
-  if ! postgres_identity="$(
-    PGHOST="$pg_run_dir" PGPORT="$pg_port" PGDATABASE="sinex_dev" \
-      psql -X -A -t -v ON_ERROR_STOP=1 \
-        -c "SELECT current_database() || '|' || current_setting('port');" 2>/dev/null \
-      | tr -d '[:space:]'
-  )" || [[ "$postgres_identity" != "sinex_dev|$pg_port" ]]; then
-    echo "[pre-push] Rejecting AgentCTL lease: PostgreSQL protocol identity did not match sinex_dev|$pg_port." >&2
-    return 1
-  fi
-  if ! timeout 2 bash -c '
-    exec 3<>"/dev/tcp/127.0.0.1/$1"
-    IFS= read -r -t 1 info <&3 || exit 1
-    case "$info" in
-      INFO\ *) ;;
-      *) exit 1 ;;
-    esac
-    printf "%s\r\n%s\r\n" \
-      "CONNECT {\"verbose\":false,\"pedantic\":false,\"lang\":\"sinex-pre-push\",\"version\":\"1\",\"protocol\":1,\"echo\":true}" \
-      "PING" >&3
-    while IFS= read -r -t 1 line <&3; do
-      case "$line" in
-        PONG*) exit 0 ;;
-        INFO\ *|+OK*) ;;
-        -ERR*) exit 1 ;;
-        *) exit 1 ;;
-      esac
-    done
-    exit 1
-  ' bash "$nats_port" 2>/dev/null; then
-    echo "[pre-push] Rejecting AgentCTL lease: NATS protocol readiness failed at 127.0.0.1:$nats_port." >&2
-    return 1
-  fi
-}
-
-_sinex_pre_push_revalidate_agentctl_lease() {
-  local pg_run_dir="$1"
-  local expected_pg_port="$2"
-  local expected_nats_port="$3"
-  local first_ports final_ports pg_port nats_port
-
-  first_ports="$(_sinex_pre_push_agentctl_lease_ports)" || return 1
-  IFS=$'\t' read -r pg_port nats_port <<<"$first_ports"
-  if [[ "$pg_port" != "$expected_pg_port" || "$nats_port" != "$expected_nats_port" ]]; then
-    echo "[pre-push] Rejecting AgentCTL lease: lease coordinates changed before execution." >&2
-    return 1
-  fi
-  _sinex_pre_push_probe_agentctl_lease "$pg_run_dir" "$pg_port" "$nats_port" || return 1
-
-  # Re-read after endpoint probing. A released lease may have its ports
-  # reallocated, so port reachability alone is never an identity check.
-  final_ports="$(_sinex_pre_push_agentctl_lease_ports)" || return 1
-  if [[ "$final_ports" != "$first_ports" ]]; then
-    echo "[pre-push] Rejecting AgentCTL lease: job or lease coordinates changed during final validation." >&2
-    return 1
-  fi
-}
-
-_sinex_pre_push_run_agentctl_lease_command() {
-  local pg_run_dir="$1"
-  local expected_pg_port="$2"
-  local expected_nats_port="$3"
-  local status=0
-  shift 3
-
-  _sinex_pre_push_revalidate_agentctl_lease \
-    "$pg_run_dir" "$expected_pg_port" "$expected_nats_port" || return 1
-  "$@" || status=$?
-
-  # The lease is an execution witness, not a one-time readiness hint. A
-  # cancellation or port reallocation during the handoff or command must
-  # invalidate an otherwise successful command before the hook returns.
-  if ! _sinex_pre_push_revalidate_agentctl_lease \
-    "$pg_run_dir" "$expected_pg_port" "$expected_nats_port"; then
-    echo "[pre-push] Rejecting AgentCTL lease: job or lease identity changed during execution." >&2
-    return 1
-  fi
-  return "$status"
 }
 
 _sinex_pre_push_pg_bin() {
@@ -232,21 +90,15 @@ _sinex_pre_push_devshell_rc() {
 
 _sinex_pre_push_checkout_env() {
   local cache_root dev_state_dir target_dir pg_run_dir pg_port pg_bin devshell_rc nats_port gateway_port
-  local lease_ports
   cache_root="$(_sinex_pre_push_cache_root)"
   dev_state_dir="$cache_root/dev-state"
   target_dir="$cache_root/target"
   pg_run_dir="$dev_state_dir/run"
-  pg_port="5432"
+  pg_port="$(_sinex_pre_push_postgres_port)"
   pg_bin="$(_sinex_pre_push_pg_bin || true)"
   devshell_rc="$(_sinex_pre_push_devshell_rc || true)"
   nats_port="$(_sinex_pre_push_nats_port)"
   gateway_port="$(_sinex_pre_push_gateway_port)"
-
-  if [[ -n "${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}" ]]; then
-    lease_ports="$(_sinex_pre_push_agentctl_lease_ports)" || return 1
-    IFS=$'\t' read -r pg_port nats_port <<<"$lease_ports"
-  fi
 
   mkdir -p "$cache_root" "$target_dir" "$dev_state_dir" "$REPO_ROOT/.sinex/state"
 
@@ -257,34 +109,7 @@ _sinex_pre_push_checkout_env() {
 
   (
     source "$devshell_rc"
-    if [[ -n "${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}" ]]; then
-      _sinex_pre_push_run_agentctl_lease_command \
-        "$pg_run_dir" "$pg_port" "$nats_port" \
-        env \
-          -u SINEX_PRE_PUSH_AGENTCTL_LEASE_ID \
-          CARGO_TARGET_DIR="$target_dir" \
-          DATABASE_URL="postgresql:///sinex_dev?host=$pg_run_dir&port=$pg_port" \
-          PGHOST="$pg_run_dir" \
-          PGPORT="$pg_port" \
-          SINEX_PG_BIN="$pg_bin" \
-          PATH="$target_dir/debug:$PATH" \
-          SINEX_CACHE_DIR="$cache_root" \
-          SINEX_DEV_CACHE_ROOT="$cache_root" \
-          SINEX_DEV_GATEWAY_PORT="$gateway_port" \
-          SINEX_DEV_NATS_PORT="$nats_port" \
-          SINEX_DEV_POSTGRES_PORT="$pg_port" \
-          SINEX_DEV_PG_PORT="$pg_port" \
-          SINEX_DEV_ROOT="$REPO_ROOT" \
-          SINEX_DEV_STATE_DIR="$dev_state_dir" \
-          SINEX_NATS_DIR="$dev_state_dir/nats" \
-          SINEX_NATS_URL="nats://127.0.0.1:$nats_port" \
-          SINEX_ROOT="$REPO_ROOT" \
-          SINEX_STATE_DIR="$REPO_ROOT/.sinex/state" \
-          "$@"
-      exit $?
-    fi
     env \
-      -u SINEX_PRE_PUSH_AGENTCTL_LEASE_ID \
       CARGO_TARGET_DIR="$target_dir" \
       DATABASE_URL="postgresql:///sinex_dev?host=$pg_run_dir&port=$pg_port" \
       PGHOST="$pg_run_dir" \
@@ -479,18 +304,6 @@ _sinex_pre_push_explain_xtask_rejection() {
 }
 
 _sinex_pre_push_clean_env() {
-  local lease_env=()
-  local lease_ports pg_port nats_port
-  if [[ -n "${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}" ]]; then
-    lease_ports="$(_sinex_pre_push_agentctl_lease_ports)" || return 1
-    IFS=$'\t' read -r pg_port nats_port <<<"$lease_ports"
-    lease_env=(
-      "SINEX_DEV_POSTGRES_PORT=$pg_port"
-      "SINEX_DEV_NATS_PORT=$nats_port"
-      "SINEX_PRE_PUSH_AGENTCTL_LEASE_ID=$SINEX_PRE_PUSH_AGENTCTL_LEASE_ID"
-      "SINEX_PRE_PUSH_AGENTCTL_PG_RUN_DIR=$(_sinex_pre_push_cache_root)/dev-state/run"
-    )
-  fi
   env \
     -u CARGO_TARGET_DIR \
     -u DATABASE_URL \
@@ -509,7 +322,6 @@ _sinex_pre_push_clean_env() {
     -u SINEX_DEV_PG_PORT \
     -u SINEX_DEV_ROOT \
     -u SINEX_DEV_STATE_DIR \
-    -u SINEX_PRE_PUSH_AGENTCTL_LEASE_ID \
     -u SINEX_NATS_DIR \
     -u SINEX_NATS_URL \
     -u SINEX_ROOT \
@@ -517,28 +329,7 @@ _sinex_pre_push_clean_env() {
     -u SINEX_TEST_PGDATA_DIR \
     -u SINEX_TEST_RESULTS_DIR \
     -u SINEX_TEST_TMPDIR \
-    "${lease_env[@]}" \
     "$@"
-}
-
-_sinex_pre_push_agentctl_dev_shell_exec() {
-  local pg_run_dir="${SINEX_PRE_PUSH_AGENTCTL_PG_RUN_DIR:-}"
-  local pg_port="${SINEX_DEV_POSTGRES_PORT:-}"
-  local nats_port="${SINEX_DEV_NATS_PORT:-}"
-  local status=0
-  [[ -n "$pg_run_dir" && -n "$pg_port" && -n "$nats_port" ]] || {
-    echo "[pre-push] Rejecting AgentCTL lease: devshell handoff coordinates are incomplete." >&2
-    return 1
-  }
-
-  _sinex_pre_push_run_agentctl_lease_command \
-    "$pg_run_dir" "$pg_port" "$nats_port" \
-    env \
-      -u SINEX_PRE_PUSH_AGENTCTL_LEASE_ID \
-      -u SINEX_PRE_PUSH_AGENTCTL_PG_RUN_DIR \
-      "$@"
-  status=$?
-  return "$status"
 }
 
 _sinex_pre_push_selected_xtask() {
@@ -626,14 +417,8 @@ _sinex_pre_push_run_xtask() {
     return 0
   fi
   echo "[pre-push] No usable checkout wrapper or binary found; rebuilding through nix develop." >&2
-  if [[ -n "${SINEX_PRE_PUSH_AGENTCTL_LEASE_ID:-}" ]]; then
-    _sinex_pre_push_clean_env \
-      nix develop "$REPO_ROOT" --command bash "$REPO_ROOT/.githooks/pre-push" \
-        --agentctl-lease-exec xtask "$@"
-  else
-    _sinex_pre_push_clean_env \
-      nix develop "$REPO_ROOT" --command xtask "$@"
-  fi
+  _sinex_pre_push_clean_env \
+    nix develop "$REPO_ROOT" --command xtask "$@"
 }
 
 _sinex_pre_push_record_drift_bypass() {
@@ -748,12 +533,6 @@ fi
 
 echo "[pre-push] Pre-push drift guards passed." >&2
 }
-
-if [[ "${1:-}" == "--agentctl-lease-exec" ]]; then
-  shift
-  _sinex_pre_push_agentctl_dev_shell_exec "$@"
-  exit $?
-fi
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   _sinex_pre_push_main "$@"
