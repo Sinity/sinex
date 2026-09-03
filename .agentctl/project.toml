@@ -44,60 +44,6 @@ pool = "normal"
 result = "exit"
 cache = "tree+environment"
 
-[operations.check_default.parameters.all]
-type = "bool"
-flag = "--all"
-
-[operations.check_default.parameters.by_file]
-type = "bool"
-flag = "--by-file"
-
-[operations.check_default.parameters.changed_strict_default]
-type = "bool"
-flag = "--agentctl-changed-strict-default"
-
-[operations.check_default.parameters.fmt]
-type = "bool"
-flag = "--fmt"
-
-[operations.check_default.parameters.forbidden]
-type = "bool"
-flag = "--forbidden"
-
-[operations.check_default.parameters.full]
-type = "bool"
-flag = "--full"
-
-[operations.check_default.parameters.heavy]
-type = "bool"
-flag = "--heavy"
-
-[operations.check_default.parameters.lint]
-type = "bool"
-flag = "--lint"
-
-[operations.check_default.parameters.lint_breakdown]
-type = "bool"
-flag = "--lint-breakdown"
-
-[operations.check_default.parameters.nix]
-type = "bool"
-flag = "--nix"
-
-[operations.check_default.parameters.package]
-type = "string-list"
-flag = "--package"
-max_items = 32
-max_length = 128
-
-[operations.check_default.parameters.plan]
-type = "bool"
-flag = "--plan"
-
-[operations.check_default.parameters.skip_tests]
-type = "bool"
-flag = "--skip-tests"
-
 [operations.build_default]
 description = "Build Sinex packages through the foreground semantic build route"
 exec = ["xtask", "build"]
@@ -105,56 +51,12 @@ pool = "normal"
 result = "exit"
 cache = "tree+environment"
 
-[operations.build_default.parameters.all]
-type = "bool"
-flag = "--all"
-
-[operations.build_default.parameters.dry_run]
-type = "bool"
-flag = "--dry-run"
-
-[operations.build_default.parameters.package]
-type = "string-list"
-flag = "--package"
-max_items = 32
-max_length = 128
-
-[operations.build_default.parameters.release]
-type = "bool"
-flag = "--release"
-
 [operations.fix_default]
 description = "Apply Sinex fixes through the foreground semantic fix workflow"
 exec = ["xtask", "fix"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"
-
-[operations.fix_default.parameters.all]
-type = "bool"
-flag = "--all"
-
-[operations.fix_default.parameters.clippy]
-type = "bool"
-flag = "--clippy"
-
-[operations.fix_default.parameters.fmt_only]
-type = "bool"
-flag = "--fmt-only"
-
-[operations.fix_default.parameters.package]
-type = "string-list"
-flag = "--package"
-max_items = 32
-max_length = 128
-
-[operations.fix_default.parameters.smart]
-type = "bool"
-flag = "--smart"
-
-[operations.fix_default.parameters.thorough]
-type = "bool"
-flag = "--thorough"
 
 [operations.run_core]
 description = "Run the default local Sinex core bundle through AgentCTL"
@@ -164,16 +66,6 @@ result = "exit"
 cache = "none"
 timeout_seconds = 28800
 
-[operations.run_core.parameters.release]
-type = "bool"
-flag = "--release"
-
-[operations.run_core.parameters.instance_id]
-type = "string"
-flag = "--instance-id"
-max_length = 128
-grammar = "safe-token"
-
 [operations.run_all_automatons]
 description = "Run the default local Sinex automaton supervisor through AgentCTL"
 exec = ["xtask", "run", "all-automatons"]
@@ -182,16 +74,6 @@ result = "exit"
 cache = "none"
 timeout_seconds = 28800
 
-[operations.run_all_automatons.parameters.release]
-type = "bool"
-flag = "--release"
-
-[operations.run_all_automatons.parameters.instance_id]
-type = "string"
-flag = "--instance-id"
-max_length = 128
-grammar = "safe-token"
-
 [operations.run_all_sources]
 description = "Run Sinex's manifest-driven source bindings through AgentCTL"
 exec = ["xtask", "run", "all-sources"]
@@ -199,30 +81,6 @@ pool = "normal"
 result = "exit"
 cache = "none"
 timeout_seconds = 28800
-
-[operations.run_all_sources.parameters.release]
-type = "bool"
-flag = "--release"
-
-[operations.run_all_sources.parameters.instance_id]
-type = "string"
-flag = "--instance-id"
-max_length = 128
-grammar = "safe-token"
-
-[operations.run_all_sources.parameters.reconcile]
-type = "bool"
-flag = "--reconcile"
-
-[operations.run_all_sources.parameters.service_name]
-type = "string"
-flag = "--service-name"
-max_length = 128
-grammar = "safe-token"
-
-[operations.run_all_sources.parameters.include_default_excluded]
-type = "bool"
-flag = "--include-default-excluded"
 
 [operations.vm_smoke]
 description = "Run Sinex's default foreground NixOS VM smoke suite through AgentCTL"
@@ -245,83 +103,6 @@ pool = "normal"
 result = "exit"
 cache = "tree+environment"
 
-[operations.test_default.parameters.all]
-type = "bool"
-flag = "--all"
-
-[operations.test_default.parameters.debug]
-type = "bool"
-flag = "--debug"
-
-[operations.test_default.parameters.dry_run]
-type = "bool"
-flag = "--dry-run"
-
-[operations.test_default.parameters.exclude]
-type = "string-list"
-flag = "--exclude"
-max_items = 32
-max_length = 128
-
-[operations.test_default.parameters.fail_fast]
-type = "bool"
-flag = "--fail-fast"
-
-[operations.test_default.parameters.features]
-type = "string-list"
-flag = "--features"
-max_items = 32
-max_length = 128
-
-[operations.test_default.parameters.filter]
-type = "string"
-flag = "--filter"
-max_length = 128
-
-[operations.test_default.parameters.heavy]
-type = "bool"
-flag = "--heavy"
-
-[operations.test_default.parameters.include_ignored]
-type = "bool"
-flag = "--include-ignored"
-
-[operations.test_default.parameters.lib]
-type = "bool"
-flag = "--lib"
-
-[operations.test_default.parameters.list]
-type = "bool"
-flag = "--list"
-
-[operations.test_default.parameters.no_reuse]
-type = "bool"
-flag = "--no-reuse"
-
-[operations.test_default.parameters.package]
-type = "string-list"
-flag = "--package"
-max_items = 32
-max_length = 128
-
-[operations.test_default.parameters.prime]
-type = "bool"
-flag = "--prime"
-
-[operations.test_default.parameters.skip_preflight]
-type = "bool"
-flag = "--skip-preflight"
-
-[operations.test_default.parameters.test]
-type = "string-list"
-flag = "--test"
-max_items = 32
-max_length = 128
-
-[operations.test_default.parameters.update_snapshots]
-type = "bool"
-flag = "--update-snapshots"
-
 [operations.verify_plan]
 description = "Validate Sinex's phase verification manifest"
 exec = ["xtask", "verify", "plan", "--check"]
@@ -337,18 +118,3 @@ pool = "normal"
 result = "exit"
 cache = "none"
 timeout_seconds = 1800
-
-[operations.verify_closure.parameters.bead_id]
-type = "string"
-position = 1
-required = true
-max_length = 128
-grammar = "safe-token"
-
-[operations.verify_closure.parameters.json]
-type = "bool"
-flag = "--json"
-
-[operations.verify_closure.parameters.dry_run]
-type = "bool"
-flag = "--dry-run"
