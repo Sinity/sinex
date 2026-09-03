@@ -5,19 +5,13 @@ Worktree-local PostgreSQL and NATS run only through the declared AgentCTL servic
 ```bash
 checkout_root="$(git rev-parse --show-toplevel)"
 workspace_id="$(agentctl workspace list --project sinex | jq -er --arg path "$checkout_root" '.payload.value.workspaces[] | select(.path == $path) | .workspace_id')"
-lease_job_id="$(agentctl job start sinex dev_services --workspace "$workspace_id" | jq -er '.payload.value.job_id')"
+agentctl job start sinex dev_services --workspace "$workspace_id"
 agentctl job get <job-id>
 agentctl job cancel <job-id>
 ```
 
-For a pre-push from the leased checkout, pass the exact active job ID for validation:
+The devshell derives one PostgreSQL and one NATS port from the checkout hash and exports them as `SINEX_DEV_POSTGRES_PORT` and `SINEX_DEV_NATS_PORT`, so two worktrees never contend and nothing has to allocate ports for them. `xtask infra lease-services` reads that pair, refuses a port another process already holds, initializes the worktree state, applies the schema, starts both services, publishes their endpoints as one JSON line, and remains foreground.
 
-```bash
-SINEX_PRE_PUSH_AGENTCTL_LEASE_ID=<job-id> git push
-```
+The descriptor uses `tree+environment` caching for the service operation. Matching starts in the same checkout share one running AgentCTL job and one systemd service, so cancellation is shared. Different worktrees remain isolated and may run concurrently. Systemd owns the job cgroup, process-tree cancellation, logs, and terminal result. Xtask does not keep PIDs, locks, owner files, or a detached service supervisor.
 
-The pre-push hook re-reads the lease from AgentCTL, checks its checkout, operation, state, bounded port slots, and protocol-level endpoint readiness, then propagates the validated PostgreSQL port, PostgreSQL socket, and NATS port. A missing or stale lease ID fails closed; omitting the variable preserves the ordinary non-AgentCTL path. The exact lease witness is held by the hook across command launch and revalidated after the command returns. Cancellation or port reallocation during the handoff or execution therefore fails the push even when the command itself exits zero. The fallback performs the PostgreSQL and NATS probes inside `nix develop`, where the protocol clients are available. Systemd remains the lifecycle authority and AgentCTL releases the ports only after the service job reaches a terminal state.
-
-The descriptor uses `tree+environment` caching for the service operation. Matching starts in the same checkout share one running AgentCTL job, one systemd service, and one bounded loopback service lease, so cancellation is shared. Different worktrees remain isolated and may run concurrently. `xtask infra lease-services` initializes the worktree state, applies the schema, waits for both services, then remains foreground. Systemd owns the job cgroup, process-tree cancellation, logs, terminal result, and lease release. Xtask does not keep PIDs, locks, owner files, or a detached service supervisor.
-
-The devshell never auto-starts services. Use the lease metadata returned by AgentCTL when a consumer needs the assigned database or NATS address. Production `sinexd` remains outside this route.
+The devshell never auto-starts services. Production `sinexd` remains outside this route.

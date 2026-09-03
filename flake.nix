@@ -465,7 +465,8 @@
           devShells.default =
             let
               stateDir = ".sinex";
-              pgPort = 5432;
+              pgPortBase = 45432;
+              pgPortSpan = 128;
               cargoCommand = pkgs.writeShellScriptBin "cargo" ''
                 set -euo pipefail
 
@@ -614,7 +615,7 @@
                   export SINEX_DEV_STATE_DIR="$checkout_dev_state_dir"
                   export SINEX_STATE_DIR="$root_dir/.sinex/state"
                   export PGHOST="$checkout_pg_run_dir"
-                  export SINEX_DEV_POSTGRES_PORT="''${SINEX_DEV_POSTGRES_PORT:-5432}"
+                  export SINEX_DEV_POSTGRES_PORT="''${SINEX_DEV_POSTGRES_PORT:-$((${toString pgPortBase} + (checkout_first_byte % ${toString pgPortSpan})))}"
                   export PGPORT="$SINEX_DEV_POSTGRES_PORT"
                   export DATABASE_URL="postgresql:///sinex_dev?host=$checkout_pg_run_dir&port=$SINEX_DEV_POSTGRES_PORT"
                   export SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-$checkout_nats_port}"
@@ -1575,12 +1576,14 @@
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 # NATS runtime scratch (JetStream WAL) stays on the relocated NVMe dir.
                 export SINEX_NATS_DIR="$SINEX_DEV_STATE_DIR/nats"
-                export SINEX_DEV_POSTGRES_PORT="''${SINEX_DEV_POSTGRES_PORT:-${toString pgPort}}"
+                _sinex_checkout_hash_hex="$(printf '%s' "$_sinex_checkout_hash" | cut -c1-2)"
+                _sinex_checkout_hash_byte="$((16#$_sinex_checkout_hash_hex))"
+                # Every dev port is derived from the checkout hash, so two
+                # worktrees never contend and nothing has to allocate for them.
+                export SINEX_DEV_POSTGRES_PORT="''${SINEX_DEV_POSTGRES_PORT:-$((${toString pgPortBase} + (_sinex_checkout_hash_byte % ${toString pgPortSpan})))}"
                 export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run&port=$SINEX_DEV_POSTGRES_PORT"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
                 export PGPORT="$SINEX_DEV_POSTGRES_PORT"
-                _sinex_checkout_hash_hex="$(printf '%s' "$_sinex_checkout_hash" | cut -c1-2)"
-                _sinex_checkout_hash_byte="$((16#$_sinex_checkout_hash_hex))"
                 export SINEX_DEV_GATEWAY_PORT="$((19000 + _sinex_checkout_hash_byte))"
                 export SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-$((4222 + (_sinex_checkout_hash_byte % 100)))}"
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"

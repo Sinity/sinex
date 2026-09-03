@@ -316,7 +316,7 @@ Manage local infrastructure (Postgres, NATS, VMs)
 
 | Command | Purpose |
 |---|---|
-| `lease-services` | Run AgentCTL lease-owned development Postgres and NATS in the foreground |
+| `lease-services` | Run the checkout's development Postgres and NATS in the foreground |
 | `schema-apply` | Apply the declarative schema to a database |
 | `tls-init-gateway` | Generate gateway TLS certificates using rcgen |
 | `vm` | Manage VM integration |
@@ -326,7 +326,7 @@ Manage local infrastructure (Postgres, NATS, VMs)
 
 ### `xtask infra lease-services`
 
-Run AgentCTL lease-owned development Postgres and NATS in the foreground
+Run the checkout's development Postgres and NATS in the foreground
 
 
 ### `xtask infra schema-apply`

@@ -1,12 +1,10 @@
 //! Infra command - infrastructure management.
 
 use clap::Subcommand;
-use color_eyre::eyre::{Result, WrapErr, bail, eyre};
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{File, OpenOptions};
-use std::io::Write;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 
@@ -26,7 +24,7 @@ pub struct InfraCommand {
 
 #[derive(Subcommand)]
 pub enum InfraSubcommand {
-    /// Run AgentCTL lease-owned development Postgres and NATS in the foreground
+    /// Run the checkout's development Postgres and NATS in the foreground
     LeaseServices,
     /// Apply the declarative schema to a database
     SchemaApply {
@@ -168,64 +166,33 @@ fn resolve_database_url(database_url: Option<&str>) -> Result<String> {
     Ok(StackConfig::for_current_checkout()?.database_url())
 }
 
-const LEASE_POSTGRES_PORT_RANGE: std::ops::RangeInclusive<u16> = 45432..=45559;
-const LEASE_NATS_PORT_RANGE: std::ops::RangeInclusive<u16> = 44308..=44435;
-
-fn lease_port(name: &str, range: &std::ops::RangeInclusive<u16>) -> Result<u16> {
-    let value = std::env::var(name).wrap_err_with(|| {
-        format!("{name} is injected only by the AgentCTL dev_services operation")
-    })?;
-    lease_port_value(&value, range).wrap_err_with(|| format!("{name} must be a port"))
-}
-
-fn lease_port_value(value: &str, range: &std::ops::RangeInclusive<u16>) -> Result<u16> {
-    let port = value.parse::<u16>()?;
-    if !range.contains(&port) {
-        bail!("port must be within the declared AgentCTL lease range {range:?}, got {port}");
+/// Refuse a loopback port another process already holds.
+///
+/// The devshell derives one port pair per checkout, so a collision means a
+/// second stack for this checkout is already up, or an unrelated process owns
+/// the port. Both must fail before the stack half-starts.
+fn require_free_loopback_port(name: &str, port: u16) -> Result<()> {
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(listener) => {
+            drop(listener);
+            Ok(())
+        }
+        Err(error) => Err(error).wrap_err_with(|| {
+            format!("{name}={port} is already bound on 127.0.0.1; stop the process holding it")
+        }),
     }
-    Ok(port)
-}
-
-fn write_service_ready(path: &Path, job_id: &str) -> Result<()> {
-    if !path.is_absolute() || job_id.is_empty() {
-        bail!("AgentCTL service readiness coordinates are invalid");
-    }
-    let parent = path
-        .parent()
-        .ok_or_else(|| eyre!("AgentCTL service readiness path has no parent"))?;
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| eyre!("AgentCTL service readiness path has no UTF-8 file name"))?;
-    let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .wrap_err("create AgentCTL service readiness marker")?;
-    writeln!(file, "{job_id}")?;
-    file.sync_all()?;
-    std::fs::rename(&temporary, path)?;
-    File::open(parent)?.sync_all()?;
-    Ok(())
-}
-
-fn publish_service_ready() -> Result<()> {
-    let path = std::env::var("SINNIXD_SERVICE_READY_FILE")
-        .wrap_err("SINNIXD_SERVICE_READY_FILE is injected by the AgentCTL service contract")?;
-    let job_id = std::env::var("SINNIXD_JOB_ID")
-        .wrap_err("SINNIXD_JOB_ID is injected by the AgentCTL service contract")?;
-    write_service_ready(Path::new(&path), &job_id)
 }
 
 fn execute_lease_services(ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("infra lease-services");
-    let postgres_port = lease_port("SINEX_DEV_POSTGRES_PORT", &LEASE_POSTGRES_PORT_RANGE)?;
-    let nats_port = lease_port("SINEX_DEV_NATS_PORT", &LEASE_NATS_PORT_RANGE)?;
+    // The devshell derives SINEX_DEV_POSTGRES_PORT and SINEX_DEV_NATS_PORT per
+    // checkout, and every consumer of this stack reads the same pair from the
+    // environment. Choosing different ports here would strand them.
     let config = StackConfig::for_current_checkout()?;
-    if config.postgres.port != postgres_port || config.nats.port != nats_port {
-        bail!("lease coordinates changed while preparing development services");
-    }
+    let postgres_port = config.postgres.port;
+    let nats_port = config.nats.port;
+    require_free_loopback_port("SINEX_DEV_POSTGRES_PORT", postgres_port)?;
+    require_free_loopback_port("SINEX_DEV_NATS_PORT", nats_port)?;
 
     stack::ensure_directories(&config)?;
     stack::annex_init(&config, ctx.is_human())?;
@@ -235,11 +202,17 @@ fn execute_lease_services(ctx: &CommandContext) -> Result<CommandResult> {
     stack::pg_setup_database(&config, ctx.is_human())?;
     stack::pg_apply_schema(&config, ctx.is_human())?;
     stack::nats_start(&config, ctx.is_human())?;
-    publish_service_ready()?;
 
-    println!("lease services ready: postgres=127.0.0.1:{postgres_port} nats=127.0.0.1:{nats_port}");
     println!(
-        "AgentCTL owns this foreground job and its systemd cgroup; cancellation releases both leases."
+        "{}",
+        json!({
+            "state": "ready",
+            "postgres": {"host": "127.0.0.1", "port": postgres_port, "database": config.postgres.database},
+            "nats": {"host": "127.0.0.1", "port": nats_port},
+        })
+    );
+    println!(
+        "AgentCTL owns this foreground job and its systemd cgroup; cancellation stops both services."
     );
     loop {
         std::thread::park();
