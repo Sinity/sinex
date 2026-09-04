@@ -49,7 +49,7 @@ async fn tag_applier_stamps_equivalence_key_and_semantics_version() -> TestResul
         .expect("equivalence_key must be set so a restart-during-catchup reprocess dedupes");
     assert!(
         key == sinex_primitives::derivation::derived_equivalence_key(
-            TAG_APPLIER_OUTPUT_DECLARATIONS[0].declaration_id,
+            super::TAG_APPLIER_OUTPUT_DECLARATIONS[0].declaration_id,
             "1.0.0",
             &format!("{trigger_id}:sys.source.browser"),
         ),
