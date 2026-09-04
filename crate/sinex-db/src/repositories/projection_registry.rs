@@ -314,8 +314,8 @@ impl ProjectionRegistryRepository<'_> {
             WHERE id = $1
             RETURNING
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                coverage_window::text as coverage_window, status, freshness_class,
-                acceptable_staleness::text as acceptable_staleness,
+                coverage_window::text as "coverage_window!: String", status, freshness_class,
+                acceptable_staleness::text as "acceptable_staleness!: String",
                 built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
@@ -345,8 +345,8 @@ impl ProjectionRegistryRepository<'_> {
             WHERE id = $1
             RETURNING
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                coverage_window::text as coverage_window, status, freshness_class,
-                acceptable_staleness::text as acceptable_staleness,
+                coverage_window::text as "coverage_window!: String", status, freshness_class,
+                acceptable_staleness::text as "acceptable_staleness!: String",
                 built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
@@ -378,8 +378,8 @@ impl ProjectionRegistryRepository<'_> {
             WHERE id = $1
             RETURNING
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                coverage_window::text as coverage_window, status, freshness_class,
-                acceptable_staleness::text as acceptable_staleness,
+                coverage_window::text as "coverage_window!: String", status, freshness_class,
+                acceptable_staleness::text as "acceptable_staleness!: String",
                 built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
@@ -412,8 +412,8 @@ impl ProjectionRegistryRepository<'_> {
             WHERE id = $1
             RETURNING
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                coverage_window::text as coverage_window, status, freshness_class,
-                acceptable_staleness::text as acceptable_staleness,
+                coverage_window::text as "coverage_window!: String", status, freshness_class,
+                acceptable_staleness::text as "acceptable_staleness!: String",
                 built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
@@ -440,8 +440,8 @@ impl ProjectionRegistryRepository<'_> {
             r#"
             SELECT
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                coverage_window::text as coverage_window, status, freshness_class,
-                acceptable_staleness::text as acceptable_staleness,
+                coverage_window::text as "coverage_window!: String", status, freshness_class,
+                acceptable_staleness::text as "acceptable_staleness!: String",
                 built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
@@ -467,8 +467,8 @@ impl ProjectionRegistryRepository<'_> {
             r#"
             SELECT DISTINCT ON (projection_kind, scope_key)
                 id, projection_kind, scope_key, semantics_version, input_fingerprint,
-                coverage_window::text as coverage_window, status, freshness_class,
-                acceptable_staleness::text as acceptable_staleness,
+                coverage_window::text as "coverage_window!: String", status, freshness_class,
+                acceptable_staleness::text as "acceptable_staleness!: String",
                 built_at as "built_at: Timestamp",
                 source_counts, stale_reason,
                 last_error, verification_command, updated_at as "updated_at: Timestamp"
