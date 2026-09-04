@@ -839,16 +839,15 @@ fn dev_services_cache_identity_excludes_allocated_ports() {
         toml::from_str(include_str!("../../.agentctl/project.toml")).expect("parse descriptor");
     let dev_services = &descriptor["operations"]["dev_services"];
     assert_eq!(dev_services["cache"].as_str(), Some("tree+environment"));
+    let verify_quick = &descriptor["operations"]["verify_quick"];
     assert_eq!(
-        descriptor["operations"]["check_default"]["dependencies"]
-            .as_array()
-            .expect("check dependencies")
-            .iter()
-            .map(|value| value.as_str().expect("dependency name"))
+        verify_quick["exec"].as_array().expect("quick exec").iter()
+            .map(|value| value.as_str().expect("quick exec argument"))
             .collect::<Vec<_>>(),
-        vec!["dev_services"],
-        "the workspace verifier must consume the declared development-service lease"
+        vec!["nix", "fmt", "--", "--check", "flake.nix"]
     );
+    assert_eq!(verify_quick["pool"].as_str(), Some("normal"));
+    assert!(verify_quick.get("dependencies").is_none());
     assert_eq!(
         descriptor["workspace"]["provider"].as_str(),
         Some("git-worktree")
@@ -860,7 +859,7 @@ fn dev_services_cache_identity_excludes_allocated_ports() {
             .iter()
             .map(|value| value.as_str().expect("operation name"))
             .collect::<Vec<_>>(),
-        vec!["check_default"]
+        vec!["verify_quick"]
     );
     let inherited = descriptor["environment"]["inherit"]
         .as_array()
