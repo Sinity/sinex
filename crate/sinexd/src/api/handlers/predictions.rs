@@ -45,9 +45,11 @@ pub async fn handle_predictions_register(
         .at_time(Timestamp::now())
         .build()?;
     let inserted = pool.events().insert(event).await?;
-    let event_id = inserted
+    let event_id = *inserted
         .id
-        .ok_or_else(|| SinexError::invalid_state("prediction.registered event missing id"))?;
+        .as_ref()
+        .ok_or_else(|| SinexError::invalid_state("prediction.registered event missing id"))?
+        .as_uuid();
     let prediction = reduce_prediction_registered(
         event_id,
         payload.clone().into(),
@@ -88,9 +90,11 @@ pub async fn handle_predictions_resolve(
         .at_time(resolved_at)
         .build()?;
     let inserted = pool.events().insert(event).await?;
-    let event_id = inserted
+    let event_id = *inserted
         .id
-        .ok_or_else(|| SinexError::invalid_state("prediction.resolved event missing id"))?;
+        .as_ref()
+        .ok_or_else(|| SinexError::invalid_state("prediction.resolved event missing id"))?
+        .as_uuid();
     let prediction = reduce_prediction_resolved(prior, event_id, payload.clone().into())?;
     Ok(PredictionEventResponse {
         prediction,

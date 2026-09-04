@@ -106,7 +106,7 @@ impl Transducer for TagApplier {
             let output = DerivedOutput::transduced(
                 KnowledgeTagAppliedPayload {
                     entity_id: context.trigger_uuid(),
-                    tag_name,
+                    tag_name: tag_name.clone(),
                     tag_source: "rule".into(),
                 },
                 ts_orig,

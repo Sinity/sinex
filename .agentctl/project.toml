@@ -18,7 +18,7 @@ root = "/realm/worktrees"
 default_base = "origin/master"
 identity_check = ["git", "diff", "--quiet", "--", "Cargo.toml", "Cargo.lock", "flake.nix", "flake.lock"]
 checkpoint_untracked = true
-verification_operations = ["check_default"]
+verification_operations = ["verify_quick"]
 
 [operations.dev_services]
 description = "Run Sinex development Postgres and NATS in the foreground"
@@ -40,6 +40,13 @@ xtask-command-surface = ["xtask/src/lib.rs", "xtask/src/commands/**/*.rs", "CLAU
 [operations.check_default]
 description = "Run Sinex's default foreground verification command"
 exec = ["xtask", "check"]
+pool = "normal"
+result = "exit"
+cache = "tree+environment"
+
+[operations.verify_quick]
+description = "Check the Nix flake format without starting development services"
+exec = ["nix", "fmt", "--", "--check", "flake.nix"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"

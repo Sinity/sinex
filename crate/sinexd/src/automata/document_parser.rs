@@ -254,7 +254,7 @@ impl DocumentParserAutomaton {
             .with_product_class(parsed_declaration.product_class)
             .with_claim_support(parsed_declaration.default_support.instantiate(1, 1, 1, 0))
             .with_semantics_version(parsed_declaration.semantics_version)
-            .with_derived_equivalence_key(parsed_declaration, document_id);
+            .with_derived_equivalence_key(parsed_declaration, document_id.to_string());
 
         outputs.push(parsed_output);
 
@@ -363,7 +363,7 @@ impl DocumentParserAutomaton {
                 .with_product_class(parsed_declaration.product_class)
                 .with_claim_support(parsed_declaration.default_support.instantiate(1, 1, 1, 0))
                 .with_semantics_version(parsed_declaration.semantics_version)
-                .with_derived_equivalence_key(parsed_declaration, document_id),
+                .with_derived_equivalence_key(parsed_declaration, document_id.to_string()),
         );
 
         // `byte_offset_start/end` are the chunk's real byte span within
