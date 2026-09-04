@@ -45,8 +45,8 @@ result = "exit"
 cache = "tree+environment"
 
 [operations.verify_quick]
-description = "Check the Nix flake format without starting development services"
-exec = ["nix", "fmt", "--", "--check", "flake.nix"]
+description = "Run database-free compile, lint, format, pattern, and Nix checks"
+exec = ["xtask", "check", "--full", "--skip-preflight"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"
