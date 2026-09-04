@@ -252,8 +252,16 @@ async fn mcp_catalog_backing_methods_are_typed_read_only_rpc() -> TestResult<()>
 fn mcp_wire_tools_declare_read_only_annotations() -> TestResult<()> {
     for tool in tools() {
         let encoded = serde_json::to_value(&tool)?;
-        assert_eq!(encoded["annotations"]["readOnlyHint"], true, "{}", tool.name);
-        assert_eq!(encoded["annotations"]["destructiveHint"], false, "{}", tool.name);
+        assert_eq!(
+            encoded["annotations"]["readOnlyHint"], true,
+            "{}",
+            tool.name
+        );
+        assert_eq!(
+            encoded["annotations"]["destructiveHint"], false,
+            "{}",
+            tool.name
+        );
     }
     Ok(())
 }
