@@ -190,15 +190,15 @@ the binary is on PATH).
 | tests | `xtask test` locally or AgentCTL `test_default`; use `--impact-mode=off --all` for a deliberate full pass |
 | list tests | `xtask test --list -p <pkg>` |
 | build | `xtask build -p <pkg>` locally or AgentCTL `build_default` |
-| local stack | `agentctl job start sinex dev_services --workspace <workspace-id>`, `xtask doctor`, `agentctl job start sinex run_core --workspace <workspace-id>` |
+| local stack | `agentctl job start sinex dev_services --workspace <path>`, `xtask doctor`, `agentctl job start sinex run_core --workspace <path>` |
 | lifecycle | Start declared `check_default`, `build_default`, `fix_default`, `test_default`, `run_core`, `run_all_automatons`, `run_all_sources`, `vm_smoke`, and `vm_validate` operations through AgentCTL; use `agentctl job get/logs/result/cancel` with its returned ID |
 | failure forensics | `xtask history diagnostics --level error`, `xtask history tests analyze` |
 | generated surfaces | `xtask docs sync` / `xtask docs check` |
 | schema | `xtask schema strict-diff`, `xtask schema backfill` |
 | VM coverage | `xtask test vm --category smoke\|integration` |
 
-AgentCTL owns launch, logs, cancellation, results, checkout identity, service leases, and
-process trees for declared operations. The descriptor supports bounded booleans, strings,
+AgentCTL owns jobs, worktrees, checkout identity, and process trees for declared
+operations. The descriptor supports bounded booleans, strings,
 string lists, integers, and enums; add typed parameters when a recurring semantic command
 needs them. Keep one-off custom source/module selectors as foreground `xtask` runs. Never
 pipe xtask through `head` or `tail` because the hook blocks it.
