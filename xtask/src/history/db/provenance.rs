@@ -1,13 +1,25 @@
 use super::*;
 
+/// The runtime exports `AGENTCTL_<NAME>`; older hosts export the same values as
+/// `SINNIXD_<NAME>`. Every field is read through [`runtime_env`] so the fallback
+/// can be removed in one place.
+const RUNTIME_ENV_PREFIX: &str = "AGENTCTL_";
+const LEGACY_RUNTIME_ENV_PREFIX: &str = "SINNIXD_";
+
 const AGENTCTL_FIELDS: [(&str, &str); 6] = [
-    ("SINNIXD_JOB_ID", "job_id"),
-    ("SINNIXD_CORRELATION_ID", "correlation_id"),
-    ("SINNIXD_PROJECT_ID", "project_id"),
-    ("SINNIXD_OPERATION", "operation"),
-    ("SINNIXD_CHECKOUT_ID", "checkout_id"),
-    ("SINNIXD_CHECKOUT_HEAD", "checkout_head"),
+    ("JOB_ID", "job_id"),
+    ("CORRELATION_ID", "correlation_id"),
+    ("PROJECT_ID", "project_id"),
+    ("OPERATION", "operation"),
+    ("CHECKOUT_ID", "checkout_id"),
+    ("CHECKOUT_HEAD", "checkout_head"),
 ];
+
+/// `AGENTCTL_<name>`, or `SINNIXD_<name>` when only that is set.
+fn runtime_env(name: &str, lookup: &mut impl FnMut(&str) -> Option<String>) -> Option<String> {
+    lookup(&format!("{RUNTIME_ENV_PREFIX}{name}"))
+        .or_else(|| lookup(&format!("{LEGACY_RUNTIME_ENV_PREFIX}{name}")))
+}
 
 impl AgentctlProvenance {
     pub(super) fn from_environment() -> Result<Option<Self>> {
@@ -15,21 +27,21 @@ impl AgentctlProvenance {
     }
 
     fn from_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Result<Option<Self>> {
-        let values = AGENTCTL_FIELDS.map(|(environment, _)| lookup(environment));
+        let values = AGENTCTL_FIELDS.map(|(name, _)| runtime_env(name, &mut lookup));
         if values.iter().all(Option::is_none) {
             return Ok(None);
         }
 
         let mut required = Vec::with_capacity(AGENTCTL_FIELDS.len());
-        for ((environment, field), value) in AGENTCTL_FIELDS.into_iter().zip(values) {
+        for ((name, field), value) in AGENTCTL_FIELDS.into_iter().zip(values) {
             let value = value.ok_or_else(|| {
                 color_eyre::eyre::eyre!(
-                    "incomplete AgentCTL provenance: {environment} ({field}) is missing"
+                    "incomplete AgentCTL provenance: {RUNTIME_ENV_PREFIX}{name} ({field}) is missing"
                 )
             })?;
             if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
                 color_eyre::eyre::bail!(
-                    "invalid AgentCTL provenance value for {environment}: expected 1..=256 non-control characters"
+                    "invalid AgentCTL provenance value for {RUNTIME_ENV_PREFIX}{name}: expected 1..=256 non-control characters"
                 );
             }
             required.push(value);
@@ -121,11 +133,41 @@ mod tests {
 
     #[test]
     fn partial_agentctl_envelope_is_rejected() {
-        let error = AgentctlProvenance::from_lookup(|name| {
-            (name == "SINNIXD_JOB_ID").then(|| "job".to_string())
-        })
-        .expect_err("partial envelope must not silently create ambiguous provenance");
-        assert!(error.to_string().contains("SINNIXD_CORRELATION_ID"));
+        for job_id_name in ["AGENTCTL_JOB_ID", "SINNIXD_JOB_ID"] {
+            let error = AgentctlProvenance::from_lookup(|name| {
+                (name == job_id_name).then(|| "job".to_string())
+            })
+            .expect_err("partial envelope must not silently create ambiguous provenance");
+            assert!(error.to_string().contains("AGENTCTL_CORRELATION_ID"));
+        }
+    }
+
+    fn complete_envelope(prefix: &str) -> impl FnMut(&str) -> Option<String> + '_ {
+        move |name| {
+            name.strip_prefix(prefix)
+                .map(|suffix| format!("{}-value", suffix.to_ascii_lowercase()))
+        }
+    }
+
+    #[test]
+    fn either_runtime_name_family_yields_the_same_provenance() -> Result<()> {
+        let current = AgentctlProvenance::from_lookup(complete_envelope("AGENTCTL_"))?;
+        let legacy = AgentctlProvenance::from_lookup(complete_envelope("SINNIXD_"))?;
+        assert_eq!(current, legacy);
+        assert_eq!(current.expect("complete envelope").job_id, "job_id-value");
+        Ok(())
+    }
+
+    #[test]
+    fn the_current_name_wins_over_the_legacy_one() -> Result<()> {
+        let provenance = AgentctlProvenance::from_lookup(|name| match name {
+            "AGENTCTL_JOB_ID" => Some("new".to_string()),
+            "SINNIXD_JOB_ID" => Some("old".to_string()),
+            other => complete_envelope("AGENTCTL_")(other),
+        })?
+        .expect("complete envelope");
+        assert_eq!(provenance.job_id, "new");
+        Ok(())
     }
 
     #[test]
