@@ -893,7 +893,7 @@ async fn test_agentctl_dev_services_shares_one_checkout_job_without_retired_keys
         );
     }
 
-    // sinnixd reads none of these; a descriptor that declares one is refused.
+    // The runtime reads none of these; a descriptor that declares one is refused.
     for name in operations.keys() {
         let operation = operations[name]
             .as_table()
