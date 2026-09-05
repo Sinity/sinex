@@ -19,6 +19,8 @@ default_base = "origin/master"
 identity_check = ["git", "diff", "--quiet", "--", "Cargo.toml", "Cargo.lock", "flake.nix", "flake.lock"]
 checkpoint_untracked = true
 verification_operations = ["verify_quick"]
+verify = { focused = "verify_quick", candidate = "check_default" }
+publish = "pr"
 
 [operations.dev_services]
 description = "Run Sinex development Postgres and NATS in the foreground"
