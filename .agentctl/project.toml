@@ -8,17 +8,12 @@ root_markers = ["Cargo.toml", "flake.nix", "xtask"]
 [environment]
 kind = "nix-develop"
 command = ["nix", "develop", "--accept-flake-config", "--command"]
-preflight = ["cargo", "metadata", "--no-deps", "--format-version", "1"]
 inherit = ["HOME", "USER", "LANG", "TERM", "SSH_AUTH_SOCK", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "SINEX_SOURCE_BINDINGS_PATH"]
 unset = ["PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "_PYTHON_SYSCONFIGDATA_NAME", "_PYTHON_HOST_PLATFORM", "PYTHONPYCACHEPREFIX"]
 
 [workspace]
-provider = "git-worktree"
 root = "/realm/worktrees"
 default_base = "origin/master"
-identity_check = ["git", "diff", "--quiet", "--", "Cargo.toml", "Cargo.lock", "flake.nix", "flake.lock"]
-checkpoint_untracked = true
-verification_operations = ["verify_quick"]
 verify = { focused = "verify_quick", candidate = "check_default" }
 publish = "pr"
 
@@ -29,15 +24,6 @@ pool = "normal"
 result = "exit"
 cache = "tree+environment"
 timeout_seconds = 28800
-
-[conflicts]
-exact_files = ["Cargo.toml", "Cargo.lock", "flake.nix", "flake.lock"]
-generated_surfaces = [".config/ast-grep/README.md", "xtask/docs/command-guide.md", "xtask/docs/command-reference.md", "schemas/v1/registry.json", "schemas/v2/registry.json"]
-
-[conflicts.semantic_slots]
-schema-contract = ["crate/sinex-schema/src/**/*.rs", "schemas/**/*.json"]
-runtime-pipeline = ["crate/sinexd/src/event_engine/**/*.rs", "crate/sinexd/src/automata/registry.rs", "crate/sinexd/src/sources/**/*.rs"]
-xtask-command-surface = ["xtask/src/lib.rs", "xtask/src/commands/**/*.rs", "CLAUDE.md", "TESTING.md"]
 
 [operations.check_default]
 description = "Run Sinex's default foreground verification command"
