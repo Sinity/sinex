@@ -109,3 +109,6 @@ AGENTS.override.md
 .dolt/
 .beads-credential-key
 .beads.gate.lock
+# What agentctl writes into a worktree for its agent; project.toml is tracked.
+.agentctl/*
+!.agentctl/project.toml
