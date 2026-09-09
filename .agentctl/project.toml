@@ -28,9 +28,10 @@ timeout_seconds = 28800
 [operations.check_default]
 description = "Run Sinex's default foreground verification command"
 exec = ["xtask", "check"]
-pool = "normal"
+pool = "bulk"
 result = "exit"
 cache = "tree+environment"
+timeout_seconds = 7200
 
 [operations.verify_quick]
 description = "Check the Nix flake format without starting development services"

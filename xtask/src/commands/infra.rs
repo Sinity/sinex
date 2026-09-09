@@ -497,12 +497,12 @@ fn generate_dev_source_bindings_manifest_for_home(
 }
 
 fn default_browser_history_dump_path() -> Option<PathBuf> {
-    let path = PathBuf::from("/realm/data/activity/webhistory/gestalt/derived/full_history.ndjson");
+    let path = PathBuf::from("/realm/activity/webhistory/gestalt/derived/full_history.ndjson");
     path.exists().then_some(path)
 }
 
 fn default_raindrop_bookmarks_export_path() -> Option<PathBuf> {
-    let path = PathBuf::from("/realm/data/accounts/raindrop/processed/bookmarks.csv");
+    let path = PathBuf::from("/realm/accounts/raindrop/processed/bookmarks.csv");
     path.exists().then_some(path)
 }
 
