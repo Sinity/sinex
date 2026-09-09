@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, options, ... }:
 
 with lib;
 
@@ -95,11 +95,20 @@ in
     # The logDir path is kept for compatibility (other tooling may write there),
     # but log rotation is wired to journald SystemMaxUse / SystemMaxFiles / MaxRetentionSec.
     (mkIf enableLogging {
-      services.journald.extraConfig = lib.mkDefault ''
-        SystemMaxUse=${loggingCfg.retention.size}
-        SystemMaxFiles=${toString loggingCfg.retention.files}
-        MaxRetentionSec=${loggingCfg.retention.age}
-      '';
+      services.journald =
+        if options.services.journald ? settings then {
+          settings.Journal = {
+            SystemMaxUse = lib.mkDefault loggingCfg.retention.size;
+            SystemMaxFiles = lib.mkDefault loggingCfg.retention.files;
+            MaxRetentionSec = lib.mkDefault loggingCfg.retention.age;
+          };
+        } else {
+          extraConfig = lib.mkDefault ''
+            SystemMaxUse=${loggingCfg.retention.size}
+            SystemMaxFiles=${toString loggingCfg.retention.files}
+            MaxRetentionSec=${loggingCfg.retention.age}
+          '';
+        };
     })
 
     (mkIf enableNatsExporter {
