@@ -523,23 +523,58 @@ async fn execute_watch_dot_format_errors_on_replay_failed() -> TestResult<()> {
 }
 
 #[sinex_test]
-#[ignore = "sinex-pfsm open: no replay caveat discloses replay's non-idempotent-by-design \
-            semantics; un-ignore once a caveat is added for at least the Completed state"]
-async fn completed_replay_operation_caveats_never_disclose_non_idempotence() -> TestResult<()> {
+async fn replay_preview_and_operation_caveats_disclose_non_idempotence() -> TestResult<()> {
     let operation = fixture_replay_operation("op-completed-pfsm", ReplayState::Completed, 5);
 
     let caveats = replay_operation_caveats(&operation);
 
     assert!(
         caveats.iter().any(|c| {
-            let detail = format!("{c:?}").to_lowercase();
-            detail.contains("idempot") || detail.contains("re-run") || detail.contains("rerun")
+            c.id == "replay.non_idempotent"
+                && c.message.contains("current rules")
+                && c.message.contains("new event IDs")
+                && c.message.contains("ts_coided")
+                && c.message.contains("same occurrence coordinates")
         }),
-        "sinex-pfsm: none of sinexctl's replay-command caveat/table-formatting code discloses \
-         that replay is non-idempotent by design (re-derives under CURRENT rules, mints new ids) \
-         -- an operator reading a Completed operation's caveats has no way to learn this from the \
-         CLI, only from source or docs"
+        "completed replay operations must expose the stable non-idempotency caveat"
     );
+
+    let failed = fixture_replay_operation("op-failed-pfsm", ReplayState::Failed, 5);
+    let failed_caveats = replay_operation_caveats(&failed);
+    assert!(failed_caveats.iter().any(|c| {
+        c.id == "replay.non_idempotent"
+            && c.message.contains("new interpretations")
+            && c.message.contains("rather than resuming")
+    }));
+
+    let preview = replay_preview_envelope(
+        fixture_replay_operation("op-preview-pfsm", ReplayState::Previewed, 5),
+        json!({"total_events": 5}),
+        Vec::new(),
+        "op-preview-pfsm",
+    );
+    assert!(
+        preview
+            .caveats
+            .iter()
+            .any(|c| c.id == "replay.non_idempotent")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_operator_tables_disclose_non_idempotence() -> TestResult<()> {
+    let operation = fixture_replay_operation("op-table-pfsm", ReplayState::Approved, 5);
+    let preview = format_replay_preview_table(&operation, &json!({"total_events": 5}));
+    let execute = super::format_replay_execute_table(&operation);
+    let submit = super::format_replay_submit_table(&operation);
+
+    for rendered in [&preview, &execute, &submit] {
+        assert!(rendered.contains("non-idempotent"));
+        assert!(rendered.contains("new event IDs"));
+        assert!(rendered.contains("`ts_coided` values"));
+        assert!(rendered.contains("same occurrence coordinates"));
+    }
     Ok(())
 }
 

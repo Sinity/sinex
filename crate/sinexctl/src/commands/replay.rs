@@ -56,6 +56,13 @@ EXAMPLES:
     # List all operations
     sinexctl ops replay list
     sinexctl ops replay list -f json
+
+REPLAY SEMANTICS:
+    Replay is non-idempotent: every execution re-derives events under current
+    rules, minting new event IDs and new ts_coided values for the same occurrence
+    coordinates. Re-executing a Failed operation starts new interpretations;
+    it does not resume the prior execution. This also applies to execute,
+    submit, and run.
 ")]
 pub enum ReplayCommands {
     /// Create a replay plan (planning state)
@@ -94,6 +101,9 @@ pub enum ReplayCommands {
     },
 
     /// Execute an approved replay operation
+    #[command(
+        after_help = "Replay is non-idempotent: every execution mints new event IDs and new ts_coided values for the same occurrence coordinates under current rules; re-execution after Failed starts new interpretations instead of resuming."
+    )]
     Execute {
         /// Operation ID
         operation_id: String,
@@ -131,6 +141,9 @@ pub enum ReplayCommands {
     },
 
     /// Approve and execute in one step (convenience)
+    #[command(
+        after_help = "Replay is non-idempotent: every execution mints new event IDs and new ts_coided values for the same occurrence coordinates under current rules; re-execution after Failed starts new interpretations instead of resuming."
+    )]
     Submit {
         /// Operation ID
         operation_id: String,
@@ -210,6 +223,9 @@ pub enum ReplayCommands {
     },
 
     /// Full lifecycle: plan + preview + approve + execute (convenience)
+    #[command(
+        after_help = "Replay is non-idempotent: every run mints new event IDs and new ts_coided values for the same occurrence coordinates under current rules; re-execution after Failed starts new interpretations instead of resuming."
+    )]
     Run {
         /// Source ID to replay events for
         #[arg(long)]
@@ -827,7 +843,11 @@ fn replay_list_envelope(
 }
 
 fn replay_preview_caveats(payload: &serde_json::Value, operation_id: &str) -> Vec<CaveatView> {
-    let mut caveats = Vec::new();
+    let mut caveats = vec![replay_non_idempotency_caveat(
+        operation_id,
+        "sinexctl ops replay preview",
+        "replay.preview_operation",
+    )];
     let preview = payload.get("preview").unwrap_or(&serde_json::Value::Null);
     if preview
         .get("total_events")
@@ -881,11 +901,15 @@ fn replay_preview_caveats(payload: &serde_json::Value, operation_id: &str) -> Ve
 }
 
 fn replay_operation_caveats(operation: &ReplayOperation) -> Vec<CaveatView> {
-    let mut caveats = Vec::new();
+    let mut caveats = vec![replay_non_idempotency_caveat(
+        &operation.operation_id,
+        "sinexctl ops replay status",
+        "replay.operation_status",
+    )];
     match operation.state {
         ReplayState::Failed => caveats.push(replay_caveat_for_operation(
             ReadinessCaveatId::WindowPartial,
-            "replay operation failed; source interpretations may remain stale or partially repaired until the failure is resolved",
+            "replay operation failed; source interpretations may remain stale or partially repaired until the failure is resolved; re-execution creates new interpretations under current rules and does not resume this execution",
             &operation.operation_id,
             "sinexctl ops replay status",
             "replay.operation_status",
@@ -909,6 +933,25 @@ fn replay_operation_caveats(operation: &ReplayOperation) -> Vec<CaveatView> {
         ));
     }
     caveats
+}
+
+const REPLAY_NON_IDEMPOTENCY_CAVEAT_ID: &str = "replay.non_idempotent";
+
+fn replay_non_idempotency_caveat(
+    operation_id: &str,
+    command_hint: &str,
+    rpc_method: &str,
+) -> CaveatView {
+    CaveatView {
+        id: REPLAY_NON_IDEMPOTENCY_CAVEAT_ID.to_string(),
+        message: "replay is non-idempotent: each execution re-derives events under current rules and mints new event IDs and new `ts_coided` values for the same occurrence coordinates; re-execution after failure starts new interpretations rather than resuming".to_string(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::ReplayRun, operation_id)
+                .with_label(operation_id)
+                .with_command_hint(format!("{command_hint} {operation_id}"))
+                .with_rpc_method(rpc_method),
+        ),
+    }
 }
 
 fn replay_caveat_for_operation(
@@ -995,6 +1038,7 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
     {
         output.push_str(&format!("  Direct Events: {total}\n"));
     }
+    output.push_str("  Replay Semantics: non-idempotent; every execution mints new event IDs and `ts_coided` values for the same occurrence coordinates under current rules\n");
     if let Some(window) = preview.get("time_window")
         && let (Some(start), Some(end)) = (
             window.get("start").and_then(|v| v.as_str()),
@@ -1148,6 +1192,7 @@ fn format_replay_execute_table(operation: &ReplayOperation) -> String {
         "  Total Events: {}\n",
         operation.checkpoint.total_events
     ));
+    output.push_str("  Replay Semantics: non-idempotent; every execution mints new event IDs and `ts_coided` values for the same occurrence coordinates under current rules\n");
     output.push_str(&format!(
         "\nWatch: sinexctl ops replay watch {}\n",
         operation.operation_id
@@ -1164,6 +1209,7 @@ fn format_replay_submit_table(operation: &ReplayOperation) -> String {
         "  Total Events: {}\n",
         operation.checkpoint.total_events
     ));
+    output.push_str("  Replay Semantics: non-idempotent; every execution mints new event IDs and `ts_coided` values for the same occurrence coordinates under current rules\n");
     output.push_str(&format!(
         "\nWatch: sinexctl ops replay watch {}\n",
         operation.operation_id
