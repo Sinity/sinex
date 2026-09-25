@@ -277,10 +277,9 @@ async fn test_append_only_empty_file_yields_no_records() -> xtask::sandbox::Test
 /// On CRLF-terminated files this under-counts the true on-disk offset by 1
 /// per line, so `MaterialAnchor::Line{byte_start}` -- part of the
 /// occurrence-identity tuple -- no longer matches the file's real byte
-/// position past the first line. Fails until byte_offset accounts for the
-/// actual terminator width (1 for LF, 2 for CRLF).
+/// position past the first line unless offsets account for each line's actual
+/// terminator width (1 for LF, 2 for CRLF).
 #[sinex_test]
-#[ignore = "sinex-9h8q open: CRLF byte-offset undercounting -- fails until fixed"]
 async fn test_append_only_crlf_byte_offset_matches_real_file_position()
 -> xtask::sandbox::TestResult<()> {
     let mut f = NamedTempFile::new().unwrap();
