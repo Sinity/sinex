@@ -2,9 +2,14 @@ use sinex_db::{DbPoolExt, SourceMaterialRecord};
 use sinex_primitives::Id;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{ActuationStatus, HyprlandWorkspaceSwitchedPayload};
+use sinex_primitives::nats::{JetStreamEventLane, JetStreamTopology};
 use sinex_primitives::rpc::instructions::HyprlandWorkspaceSwitchRequest;
+use sinexd::api::config::GatewayConfig;
 use sinexd::api::handlers::handle_hyprland_workspace_switch;
 use sinexd::api::rpc_server::RpcAuthContext;
+use sinexd::api::service_container::ServiceContainer;
+use sinexd::event_engine::{IngestEventValidator, JetStreamConsumer};
+use std::sync::Arc;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixListener,
@@ -13,16 +18,87 @@ use xtask::sandbox::prelude::*;
 
 #[path = "common/mod.rs"]
 mod common;
+#[path = "../event_engine/support.rs"]
+mod event_engine_support;
+
+struct ConfirmedConsumerGuard(tokio::task::JoinHandle<sinexd::event_engine::EventEngineResult<()>>);
+
+impl Drop for ConfirmedConsumerGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn services_for_test(
+    ctx: TestContext,
+) -> TestResult<(
+    TestContext,
+    ServiceContainer,
+    EnvGuard,
+    ConfirmedConsumerGuard,
+)> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    services_for_nats_test_context(ctx).await
+}
+
+async fn services_for_nats_test_context(
+    ctx: TestContext,
+) -> TestResult<(
+    TestContext,
+    ServiceContainer,
+    EnvGuard,
+    ConfirmedConsumerGuard,
+)> {
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
+
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let mut config = GatewayConfig::load()?;
+    config.database_url = ctx.database_url().to_string();
+    config.nats.url = ctx.nats_handle()?.client_url().to_string();
+    config.namespace = Some(namespace.clone());
+    let services = ServiceContainer::new(&config).await?;
+
+    // Seed a registered material before the consumer starts. Individual tests
+    // may register additional observation materials before invoking the handler.
+    ctx.create_source_material(Some("hyprland-instruction-consumer-seed"))
+        .await?;
+
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
+    let env = ctx.env().clone();
+    let base_stream = env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS");
+    let topology = JetStreamTopology::for_lane(
+        &env,
+        base_stream,
+        ctx.pipeline_namespace()
+            .consumer_name("hyprland-instructions"),
+        Some(&namespace),
+        JetStreamEventLane::Activity,
+    );
+    let js = nats.jetstream_with_client(nats_client.clone());
+    let consumer = JetStreamConsumer::new(
+        nats_client,
+        ctx.pool().clone(),
+        Arc::new(tokio::sync::RwLock::new(IngestEventValidator::new(false))),
+        topology.clone(),
+    );
+    let handle =
+        event_engine_support::spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
+
+    Ok((ctx, services, env_guard, ConfirmedConsumerGuard(handle)))
+}
 
 #[sinex_test]
 async fn hyprland_workspace_switch_records_unavailable_without_observation(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let (ctx, services, _env, _consumer) = services_for_test(ctx).await?;
     common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let auth = RpcAuthContext::system();
 
     let response = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
             instruction_id: None,
             desired_workspace_id: 4,
@@ -73,6 +149,7 @@ async fn hyprland_workspace_switch_records_unavailable_without_observation(
 async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_ready(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
     common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
@@ -87,6 +164,7 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
     .from_material(material_id)
     .build()?;
     ctx.pool().events().insert(observed).await?;
+    let (_ctx, services, _env, _consumer) = services_for_nats_test_context(ctx).await?;
 
     let temp = tempfile::Builder::new()
         .prefix("sinex-hypr-")
@@ -94,7 +172,6 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
     let socket_path = temp.path().join("hyprland-command.sock");
     let listener = UnixListener::bind(&socket_path)?;
     let server = tokio::spawn(async move {
-        let (_probe_stream, _) = listener.accept().await?;
         let (mut stream, _) = listener.accept().await?;
         let mut request = String::new();
         stream.read_to_string(&mut request).await?;
@@ -103,7 +180,7 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
     });
 
     let response = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
             instruction_id: None,
             desired_workspace_id: 4,
@@ -119,7 +196,7 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
     assert_eq!(request, "dispatch workspace 4");
     assert!(response.observation_ready);
     assert_eq!(response.current_workspace_id, Some(2));
-    assert_eq!(response.attempt.status, ActuationStatus::Attempted);
+    assert_eq!(response.attempt.status, ActuationStatus::Accepted);
     assert_eq!(response.command_socket_response.as_deref(), Some("ok"));
     assert_eq!(
         response
@@ -133,18 +210,11 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
     Ok(())
 }
 
-/// sinex-audit-hyprland-retry-idempotency-gap: the active-instruction guard
-/// explicitly excludes rows whose `instruction_id` matches the current
-/// request (`AND i.payload->>'instruction_id' <> $2`). A client retry using
-/// the SAME instruction_id after an already-attempted dispatch -- the
-/// natural way to retry idempotently, since instruction_id is
-/// client-suppliable -- is invisible to its own already-pending guard and
-/// re-dispatches a second time instead of being recognized as a retry.
 #[sinex_test]
-#[ignore = "sinex-audit-hyprland-retry-idempotency-gap open: a client retry with the same instruction_id re-dispatches instead of being recognized as a duplicate"]
-async fn hyprland_workspace_switch_same_instruction_id_retry_redispatches(
+async fn hyprland_workspace_switch_fresh_instruction_id_retry_does_not_redispatch(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let (ctx, services, _env, _consumer) = services_for_test(ctx).await?;
     common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation-retry"))
@@ -160,15 +230,12 @@ async fn hyprland_workspace_switch_same_instruction_id_retry_redispatches(
     .build()?;
     ctx.pool().events().insert(observed).await?;
 
-    let retry_instruction_id = sinex_primitives::Uuid::now_v7();
-
     let temp = tempfile::Builder::new()
         .prefix("sinex-hypr-retry-")
         .tempdir_in("/tmp")?;
     let socket_path = temp.path().join("hyprland-command.sock");
     let listener = UnixListener::bind(&socket_path)?;
     let server = tokio::spawn(async move {
-        let (_probe_stream, _) = listener.accept().await?;
         let (mut stream, _) = listener.accept().await?;
         let mut request = String::new();
         stream.read_to_string(&mut request).await?;
@@ -177,9 +244,9 @@ async fn hyprland_workspace_switch_same_instruction_id_retry_redispatches(
     });
 
     let first = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
-            instruction_id: Some(retry_instruction_id),
+            instruction_id: None,
             desired_workspace_id: 4,
             deadline: None,
             dry_run: false,
@@ -189,29 +256,19 @@ async fn hyprland_workspace_switch_same_instruction_id_retry_redispatches(
     )
     .await?;
     server.await??;
-    assert_eq!(first.attempt.status, ActuationStatus::Attempted);
+    assert_eq!(first.attempt.status, ActuationStatus::Accepted);
 
-    // A second call reusing the SAME instruction_id (a client retry, e.g.
-    // after an RPC timeout) should be recognized as a duplicate of the
-    // already-attempted first call and rejected without dispatching again.
+    // The gateway retry path creates a fresh instruction ID. The source to
+    // target transition key still identifies the same side effect.
     let retry_temp = tempfile::Builder::new()
         .prefix("sinex-hypr-retry2-")
         .tempdir_in("/tmp")?;
     let retry_socket_path = retry_temp.path().join("hyprland-command.sock");
     let retry_listener = UnixListener::bind(&retry_socket_path)?;
-    let retry_server = tokio::spawn(async move {
-        let (_probe_stream, _) = retry_listener.accept().await?;
-        let (mut stream, _) = retry_listener.accept().await?;
-        let mut request = String::new();
-        stream.read_to_string(&mut request).await?;
-        stream.write_all(b"ok").await?;
-        Ok::<_, std::io::Error>(request)
-    });
-
     let second = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
-            instruction_id: Some(retry_instruction_id),
+            instruction_id: None,
             desired_workspace_id: 4,
             deadline: None,
             dry_run: false,
@@ -224,9 +281,22 @@ async fn hyprland_workspace_switch_same_instruction_id_retry_redispatches(
     assert_eq!(
         second.attempt.status,
         ActuationStatus::Rejected,
-        "retrying with the same instruction_id must not re-dispatch"
+        "retrying with a fresh instruction_id must not re-dispatch"
     );
-    drop(retry_server);
+    assert_ne!(
+        first.instruction.instruction_id,
+        second.instruction.instruction_id
+    );
+    assert_eq!(second.command_socket_response, None);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            retry_listener.accept()
+        )
+        .await
+        .is_err(),
+        "same-ID retry must not connect to the second actuator socket"
+    );
 
     Ok(())
 }
@@ -235,6 +305,7 @@ async fn hyprland_workspace_switch_same_instruction_id_retry_redispatches(
 async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let (ctx, services, _env, _consumer) = services_for_test(ctx).await?;
     common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
@@ -256,7 +327,6 @@ async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
     let socket_path = temp.path().join("hyprland-command.sock");
     let listener = UnixListener::bind(&socket_path)?;
     let server = tokio::spawn(async move {
-        let (_probe_stream, _) = listener.accept().await?;
         let (mut stream, _) = listener.accept().await?;
         let mut request = String::new();
         stream.read_to_string(&mut request).await?;
@@ -265,7 +335,7 @@ async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
     });
 
     let first = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
             instruction_id: None,
             desired_workspace_id: 4,
@@ -279,10 +349,10 @@ async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
     let request = server.await??;
 
     assert_eq!(request, "dispatch workspace 4");
-    assert_eq!(first.attempt.status, ActuationStatus::Attempted);
+    assert_eq!(first.attempt.status, ActuationStatus::Accepted);
 
     let second = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
             instruction_id: None,
             desired_workspace_id: 4,
@@ -329,6 +399,7 @@ async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
 async fn hyprland_workspace_switch_noops_when_already_satisfied(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let (ctx, services, _env, _consumer) = services_for_test(ctx).await?;
     common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
@@ -345,7 +416,7 @@ async fn hyprland_workspace_switch_noops_when_already_satisfied(
     ctx.pool().events().insert(observed).await?;
 
     let response = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
             instruction_id: None,
             desired_workspace_id: 4,
@@ -389,6 +460,7 @@ async fn hyprland_workspace_switch_noops_when_already_satisfied(
 async fn hyprland_workspace_switch_dry_run_records_plan_without_dispatch(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let (ctx, services, _env, _consumer) = services_for_test(ctx).await?;
     common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
@@ -405,7 +477,7 @@ async fn hyprland_workspace_switch_dry_run_records_plan_without_dispatch(
     ctx.pool().events().insert(observed).await?;
 
     let response = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
             instruction_id: None,
             desired_workspace_id: 4,
@@ -458,6 +530,7 @@ async fn hyprland_workspace_switch_dry_run_records_plan_without_dispatch(
 async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let (ctx, services, _env, _consumer) = services_for_test(ctx).await?;
     common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
@@ -479,7 +552,6 @@ async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
     let socket_path = temp.path().join("hyprland-command.sock");
     let listener = UnixListener::bind(&socket_path)?;
     let server = tokio::spawn(async move {
-        let (_probe_stream, _) = listener.accept().await?;
         let (mut stream, _) = listener.accept().await?;
         let mut request = String::new();
         stream.read_to_string(&mut request).await?;
@@ -488,7 +560,7 @@ async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
     });
 
     let response = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
             instruction_id: None,
             desired_workspace_id: 4,
@@ -502,7 +574,7 @@ async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
     let request = server.await??;
 
     assert_eq!(request, "dispatch workspace 4");
-    assert_eq!(response.attempt.status, ActuationStatus::Failed);
+    assert_eq!(response.attempt.status, ActuationStatus::Attempted);
     assert_eq!(
         response.command_socket_response.as_deref(),
         Some("unknown dispatcher")
@@ -542,6 +614,7 @@ async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
 async fn hyprland_workspace_switch_resolves_default_socket_from_runtime_env(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let (ctx, services, _env, _consumer) = services_for_test(ctx).await?;
     common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
@@ -565,7 +638,6 @@ async fn hyprland_workspace_switch_resolves_default_socket_from_runtime_env(
     let socket_path = instance_dir.join(".socket.sock");
     let listener = UnixListener::bind(&socket_path)?;
     let server = tokio::spawn(async move {
-        let (_probe_stream, _) = listener.accept().await?;
         let (mut stream, _) = listener.accept().await?;
         let mut request = String::new();
         stream.read_to_string(&mut request).await?;
@@ -578,7 +650,7 @@ async fn hyprland_workspace_switch_resolves_default_socket_from_runtime_env(
     env.set("HYPRLAND_INSTANCE_SIGNATURE", "instance-1");
 
     let response = handle_hyprland_workspace_switch(
-        ctx.pool(),
+        &services,
         HyprlandWorkspaceSwitchRequest {
             instruction_id: None,
             desired_workspace_id: 4,
@@ -592,7 +664,7 @@ async fn hyprland_workspace_switch_resolves_default_socket_from_runtime_env(
     let request = server.await??;
 
     assert_eq!(request, "dispatch workspace 4");
-    assert_eq!(response.attempt.status, ActuationStatus::Attempted);
+    assert_eq!(response.attempt.status, ActuationStatus::Accepted);
     assert_eq!(response.command_socket_response.as_deref(), Some("ok"));
     Ok(())
 }

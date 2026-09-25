@@ -682,6 +682,13 @@
     },
     {
       "source": "runtime.instruction",
+      "event_type": "actuation.dispatch_started",
+      "version": "1.0.0",
+      "path": "runtime.instruction/actuation.dispatch_started.json",
+      "content_hash": "3d061ce6abce40d91cc76dad9acae049649ef22b1ab766a9b4a36b899e955c3b"
+    },
+    {
+      "source": "runtime.instruction",
       "event_type": "desktop.workspace.switch_requested",
       "version": "1.0.0",
       "path": "runtime.instruction/desktop.workspace.switch_requested.json",

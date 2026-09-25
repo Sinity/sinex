@@ -1,0 +1,109 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "HyprlandActuatorCapability": {
+      "description": "Declared local actuator capability.",
+      "enum": [
+        "workspace_switch"
+      ],
+      "type": "string"
+    },
+    "HyprlandCommandSummary": {
+      "description": "Sanitized command summary safe to persist in an actuation-attempt event.",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/HyprlandActuatorCapability"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HyprlandWorkspaceCommand"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current_workspace_id": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "observation_ready": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "capability",
+        "observation_ready"
+      ],
+      "type": "object"
+    },
+    "HyprlandDispatch": {
+      "description": "Hyprland command-socket dispatch kind.",
+      "enum": [
+        "workspace"
+      ],
+      "type": "string"
+    },
+    "HyprlandWorkspaceCommand": {
+      "description": "Typed Hyprland command-socket message for switching workspaces.",
+      "properties": {
+        "dispatch": {
+          "$ref": "#/$defs/HyprlandDispatch"
+        },
+        "workspace_id": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch",
+        "workspace_id"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Durable idempotency receipt written after connecting to the actuator and\nimmediately before sending a command that may change desktop state.",
+  "properties": {
+    "actuator_id": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "string"
+    },
+    "command_summary": {
+      "$ref": "#/$defs/HyprlandCommandSummary"
+    },
+    "dispatch_started_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "instruction_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "instruction_id",
+    "idempotency_key",
+    "actuator_id",
+    "capability",
+    "command_summary",
+    "dispatch_started_at"
+  ],
+  "title": "ActuationDispatchReceiptPayload",
+  "type": "object",
+  "x-sinex-event-type": "actuation.dispatch_started",
+  "x-sinex-source": "runtime.instruction",
+  "x-sinex-version": "1.0.0"
+}
