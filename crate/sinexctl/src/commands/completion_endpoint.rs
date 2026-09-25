@@ -52,7 +52,8 @@ impl CompletionEndpointCommand {
     }
 
     async fn complete(&self, client: Option<&GatewayClient>) -> CompletionResponseView {
-        let active_token = active_token(&self.line, self.cursor).to_string();
+        let cursor = normalize_cursor(&self.line, self.cursor);
+        let active_token = active_token(&self.line, cursor).to_string();
         let mut vocabulary = CompletionVocabulary::from_payload_inventory();
         if let Some(client) = client
             && let Ok(runtime) = RuntimeCompletionVocabulary::load(client).await
@@ -60,8 +61,8 @@ impl CompletionEndpointCommand {
             vocabulary.merge_runtime(runtime);
         }
 
-        let candidates = build_candidates(&self.line, self.cursor, &active_token, &vocabulary);
-        CompletionResponseView::new(self.line.clone(), self.cursor, active_token, candidates)
+        let candidates = build_candidates(&self.line, cursor, &active_token, &vocabulary);
+        CompletionResponseView::new(self.line.clone(), cursor, active_token, candidates)
     }
 }
 
@@ -155,8 +156,16 @@ impl RuntimeCompletionVocabulary {
     }
 }
 
+fn normalize_cursor(line: &str, cursor: usize) -> usize {
+    let mut cursor = cursor.min(line.len());
+    while !line.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    cursor
+}
+
 fn active_token(line: &str, cursor: usize) -> &str {
-    let cursor = cursor.min(line.len());
+    let cursor = normalize_cursor(line, cursor);
     let prefix = &line[..cursor];
     prefix
         .rsplit_once(char::is_whitespace)
@@ -164,7 +173,7 @@ fn active_token(line: &str, cursor: usize) -> &str {
 }
 
 fn active_token_start(line: &str, cursor: usize, active: &str) -> usize {
-    let cursor = cursor.min(line.len());
+    let cursor = normalize_cursor(line, cursor);
     cursor.saturating_sub(active.len())
 }
 
@@ -175,7 +184,8 @@ fn build_candidates(
     vocabulary: &CompletionVocabulary,
 ) -> Vec<CompletionCandidateView> {
     let replace_start = active_token_start(line, cursor, active);
-    let replace_end = cursor.min(line.len());
+    let cursor = normalize_cursor(line, cursor);
+    let replace_end = cursor;
 
     let mut candidates = if command_context(line, cursor).as_deref() == Some("ops dlq") {
         ops_dlq_candidates(line, cursor, active, replace_start, replace_end)
@@ -343,7 +353,7 @@ fn query_unit_candidates(
     replace_end: usize,
     vocabulary: &CompletionVocabulary,
 ) -> Vec<CompletionCandidateView> {
-    let cursor = cursor.min(line.len());
+    let cursor = normalize_cursor(line, cursor);
     let expression = line[..cursor]
         .strip_prefix("sinexctl query")
         .unwrap_or(&line[..cursor])
@@ -632,7 +642,7 @@ fn ops_dlq_candidates(
 }
 
 fn ops_dlq_subcommand(line: &str, cursor: usize) -> Option<String> {
-    let cursor = cursor.min(line.len());
+    let cursor = normalize_cursor(line, cursor);
     let mut tokens = line[..cursor]
         .split_whitespace()
         .map(|token| token.to_string())
@@ -752,7 +762,7 @@ fn ops_dlq_option_candidates(
 }
 
 fn command_context(line: &str, cursor: usize) -> Option<String> {
-    let cursor = cursor.min(line.len());
+    let cursor = normalize_cursor(line, cursor);
     let mut tokens = line[..cursor]
         .split_whitespace()
         .map(|token| token.to_string())
