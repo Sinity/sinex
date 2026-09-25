@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A provider-usage record observed in a verified revision.",
+  "properties": {
+    "line_index": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "manifest_digest": {
+      "type": "string"
+    },
+    "material_id": {
+      "type": "string"
+    },
+    "native_id": {
+      "type": "string"
+    },
+    "origin": {
+      "type": "string"
+    },
+    "protocol_version": {
+      "type": "string"
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "record_kind": {
+      "type": "string"
+    },
+    "record_sha256": {
+      "type": "string"
+    },
+    "revision_id": {
+      "type": "string"
+    },
+    "segment_index": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "semantics_version": {
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "seq": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "session_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol_version",
+    "semantics_version",
+    "manifest_digest",
+    "revision_id",
+    "session_id",
+    "origin",
+    "native_id",
+    "record_id",
+    "record_kind",
+    "material_id",
+    "segment_index",
+    "line_index",
+    "seq",
+    "record_sha256"
+  ],
+  "title": "PolylogueUsageObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "integration.polylogue.usage.observed",
+  "x-sinex-source": "integration.polylogue",
+  "x-sinex-version": "1.0.0"
+}

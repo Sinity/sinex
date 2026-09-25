@@ -447,7 +447,11 @@ async fn document_parser_terminal_outputs_stamp_equivalence_key_and_semantics_ve
         .equivalence_key
         .as_deref()
         .expect("document.parsed equivalence_key must be set");
-    let document_id = parsed.payload.get("document_id").and_then(|value| value.as_str()).expect("document_id");
+    let document_id = parsed
+        .payload
+        .get("document_id")
+        .and_then(|value| value.as_str())
+        .expect("document_id");
     assert_eq!(
         parsed_key,
         sinex_primitives::derivation::derived_equivalence_key(

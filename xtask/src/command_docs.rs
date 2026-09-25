@@ -200,8 +200,13 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "history context",
                 fallback_summary: "Surface unresolved verification failures",
                 when: "a fresh agent session needs the latest failed test/check nodes and postmortem pointers",
-                examples: &["xtask history context", "xtask history context --limit 20 --format json"],
-                notes: &["A later green test/check run clears the corresponding unresolved failures."],
+                examples: &[
+                    "xtask history context",
+                    "xtask history context --limit 20 --format json",
+                ],
+                notes: &[
+                    "A later green test/check run clears the corresponding unresolved failures.",
+                ],
             },
             GuideEntry {
                 path: "history diagnostics",
