@@ -1325,7 +1325,7 @@ fn apply_scoped_engine_to_json(value: JsonValue, scope: &ScopedEngine) -> JsonVa
                 // (`messages`, `material_exports`, ...). A field rule written
                 // for one email event, such as `/subject`, must protect every
                 // matching array element rather than silently selecting none.
-                apply_field_path_to_array_elements(&mut value, &pointer, &scope.engine);
+                apply_field_path_to_nested_values(&mut value, &pointer, &scope.engine);
             }
         }
     }
@@ -1333,22 +1333,26 @@ fn apply_scoped_engine_to_json(value: JsonValue, scope: &ScopedEngine) -> JsonVa
     value
 }
 
-fn apply_field_path_to_array_elements(
+fn apply_field_path_to_nested_values(
     value: &mut JsonValue,
     pointer: &str,
     engine: &PrivacyEngine,
 ) -> bool {
+    // Resolve the complete event-shaped path against each nested value before
+    // descending further. Export manifests can nest event fields inside an
+    // object on each array item (for example `messages[*].provider_material`),
+    // not only directly on the array item's root.
+    if let Some(field_value) = value.pointer_mut(pointer) {
+        let original = std::mem::replace(field_value, JsonValue::Null);
+        *field_value = engine.process_json(&original, ProcessingContext::Document);
+        return true;
+    }
+
     match value {
         JsonValue::Array(items) => {
             let mut changed = false;
             for item in items {
-                if let Some(field_value) = item.pointer_mut(pointer) {
-                    let original = std::mem::replace(field_value, JsonValue::Null);
-                    *field_value = engine.process_json(&original, ProcessingContext::Document);
-                    changed = true;
-                } else {
-                    changed |= apply_field_path_to_array_elements(item, pointer, engine);
-                }
+                changed |= apply_field_path_to_nested_values(item, pointer, engine);
             }
             changed
         }
@@ -1358,7 +1362,7 @@ fn apply_field_path_to_array_elements(
                 .values_mut()
                 .filter(|child| child.is_array() || child.is_object())
             {
-                changed |= apply_field_path_to_array_elements(child, pointer, engine);
+                changed |= apply_field_path_to_nested_values(child, pointer, engine);
             }
             changed
         }
