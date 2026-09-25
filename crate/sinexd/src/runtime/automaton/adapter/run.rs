@@ -3,7 +3,9 @@
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 
-use super::{AutomatonRuntime, historical_resume_position, recv_invalidation};
+use super::{
+    AutomatonRuntime, checkpoint_resume_event_id, historical_resume_position, recv_invalidation,
+};
 
 use crate::runtime::automaton::context::AutomatonContext;
 use crate::runtime::automaton::traits::Automaton;
@@ -18,8 +20,11 @@ use sinex_primitives::settlement::{
     DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase, Settlement,
 };
 
+use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::OperationMarker;
+use sinex_primitives::query::{Cursor, CursorAnchor};
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::{Id, JsonValue};
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -295,6 +300,7 @@ where
     ) -> RuntimeResult<ScanReport> {
         use sinex_db::repositories::DbPoolExt;
         use sinex_primitives::prelude::*;
+        use sinex_primitives::query::EventOrdering;
 
         let start = Instant::now();
         let pool = {
@@ -316,7 +322,8 @@ where
             "Starting automaton historical replay"
         );
 
-        let (time_range, mut cursor) = historical_resume_position(&from, end_time)?;
+        let time_range = historical_resume_position(&from, end_time)?;
+        let mut cursor = historical_resume_cursor(&pool, &from).await?;
 
         let mut events_processed = 0u64;
         let mut events_emitted = 0u64;
@@ -334,6 +341,7 @@ where
                 cursor: cursor.clone(),
                 limit: batch_size,
                 direction: SortDirection::Asc,
+                order: EventOrdering::TsOrig,
                 ..EventQuery::default()
             };
 
@@ -373,14 +381,12 @@ where
                 let ctx = AutomatonContext::historical(&query_event.event, operation_id)?;
                 let trigger_event_id = ctx.trigger_event_id;
                 let state_before = self.snapshot_state()?;
+                let mut candidate_state = self.state_from_snapshot(&state_before)?;
+                let mut checkpoint_after_settlement = false;
 
                 match self
                     .automaton
-                    .process_derived(
-                        &mut self.persisted_state.state,
-                        query_event.event.clone(),
-                        &ctx,
-                    )
+                    .process_derived(&mut candidate_state, query_event.event.clone(), &ctx)
                     .await
                 {
                     Ok(outputs) => {
@@ -407,13 +413,13 @@ where
                             // input's state mutation may advance the replay
                             // frontier without waiting on an emitter.
                         } else {
-                            let emitter = self.event_emitter.as_ref().ok_or_else(|| {
-                                SinexError::lifecycle(
+                            let Some(emitter) = self.event_emitter.as_ref() else {
+                                return Err(SinexError::lifecycle(
                                     "automaton replay output channel is not initialized",
                                 )
                                 .with_context("automaton", self.automaton.name())
-                                .with_context("trigger_event_id", trigger_event_id.to_string())
-                            })?;
+                                .with_context("trigger_event_id", trigger_event_id.to_string()));
+                            };
                             let registry = self
                                 .runtime
                                 .as_ref()
@@ -461,7 +467,22 @@ where
                         let settlement = DefaultFailurePolicy.settle(&sinex_error, &failure_ctx);
                         match settlement {
                             Settlement::Commit => {
-                                warn!(automaton = %self.automaton.name(), error = %e, "Committing (settled as benign) during historical replay");
+                                self.send_to_processing_failure_queue_or_fail(
+                                    &query_event.event,
+                                    &e,
+                                )
+                                .await?;
+                                if !self.processing_failure_routing_is_durable() {
+                                    return Err(SinexError::processing(
+                                        "historical replay benign failure was not durably evidenced",
+                                    )
+                                    .with_context("automaton", self.automaton.name())
+                                    .with_context(
+                                        "trigger_event_id",
+                                        trigger_event_id.to_string(),
+                                    ));
+                                }
+                                checkpoint_after_settlement = true;
                             }
                             Settlement::SendToProcessingFailure
                             | Settlement::Park { .. }
@@ -484,24 +505,11 @@ where
                                         trigger_event_id.to_string(),
                                     ));
                                 }
-                                if let Err(cp_err) = self
-                                    .save_state_with_file_fallback(
-                                        "historical replay processing-failure checkpoint",
-                                    )
-                                    .await
-                                {
-                                    error!(
-                                        target: "sinex_metrics",
-                                        metric = "derive.checkpoint_failures_total",
-                                        automaton = %self.automaton.name(),
-                                        error = %cp_err,
-                                        "Failed to save checkpoint after replay processing-failure routing error"
-                                    );
-                                }
                                 if let Err(error) = failure_err {
                                     self.restore_state(&state_before)?;
                                     return Err(error);
                                 }
+                                checkpoint_after_settlement = true;
                             }
                             Settlement::Retry { .. } => {
                                 self.restore_state(&state_before)?;
@@ -597,8 +605,24 @@ where
                     }
                 }
                 events_processed += 1;
+                self.persisted_state.state = candidate_state;
                 self.record_processed_input(trigger_event_id, query_event.event.ts_orig);
                 self.observe_runtime_snapshot().await;
+                if checkpoint_after_settlement
+                    && let Err(cp_err) = self
+                        .save_state_with_file_fallback(
+                            "historical replay processing-failure checkpoint",
+                        )
+                        .await
+                {
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "derive.checkpoint_failures_total",
+                        automaton = %self.automaton.name(),
+                        error = %cp_err,
+                        "Failed to save checkpoint after replay processing-failure settlement"
+                    );
+                }
             }
 
             if self.should_checkpoint() {
@@ -674,4 +698,37 @@ where
             "Automaton historical replay requires the 'db' feature",
         ))
     }
+}
+
+#[cfg(feature = "db")]
+pub(super) async fn historical_resume_cursor(
+    pool: &sinex_db::DbPool,
+    checkpoint: &Checkpoint,
+) -> RuntimeResult<Option<Cursor>> {
+    use sinex_db::repositories::DbPoolExt;
+
+    let Some(event_uuid) = checkpoint_resume_event_id(checkpoint) else {
+        return Ok(None);
+    };
+    let event_id = Id::<Event<JsonValue>>::from_uuid(event_uuid);
+    let event = pool.events().get_by_id(event_id).await.map_err(|error| {
+        SinexError::database(format!(
+            "Failed to resolve historical replay checkpoint event: {error}"
+        ))
+        .with_context("event_id", event_uuid.to_string())
+    })?;
+    let event = event.ok_or_else(|| {
+        SinexError::invalid_state("Historical replay checkpoint event is missing")
+            .with_context("event_id", event_uuid.to_string())
+    })?;
+    let ts_orig = event.ts_orig.ok_or_else(|| {
+        SinexError::invalid_state(
+            "Historical replay checkpoint event has no ts_orig for occurrence-ordered resume",
+        )
+        .with_context("event_id", event_uuid.to_string())
+    })?;
+
+    Ok(Some(Cursor::after_anchor(
+        CursorAnchor::from_id(event_id).with_ts_orig(Some(ts_orig)),
+    )))
 }

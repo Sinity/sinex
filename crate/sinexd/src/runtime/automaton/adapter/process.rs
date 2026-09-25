@@ -50,9 +50,8 @@ struct PreparedInput {
 /// What still needs to happen (if anything) before a [`PreparedInput`] may
 /// be marked processed.
 enum PreparedSettlement {
-    /// The automaton produced no output (`Ok(vec![])`), or the failure
-    /// policy settled the automaton's error as a benign commit — nothing to
-    /// durably confirm; safe to mark processed immediately.
+    /// The automaton produced no output (`Ok(vec![])`), so there is no
+    /// emission to settle before marking the input processed.
     NoOutput,
     /// Non-empty output events exist and must be durably emitted (and
     /// settle to a progress-unlocking [`crate::runtime::durable_emission::EmissionReceiptState`])
@@ -231,26 +230,15 @@ where
         event: Event<JsonValue>,
     ) -> RuntimeResult<Vec<Event<JsonValue>>> {
         let state_before = self.snapshot_state()?;
-        let mut prepared = match self.prepare_one(event).await {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.restore_state(&state_before)?;
-                return Err(error);
-            }
-        };
+        let mut candidate_state = self.state_from_snapshot(&state_before)?;
+        let mut prepared = self.prepare_one(event, &mut candidate_state).await?;
         let outputs = match &prepared.settlement {
             PreparedSettlement::PendingEmission(outputs) => outputs.clone(),
             PreparedSettlement::NoOutput
             | PreparedSettlement::DurableFailureRouted
             | PreparedSettlement::UnprovenFailureRouted => Vec::new(),
         };
-        prepared.state_after = match self.snapshot_state() {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                self.restore_state(&state_before)?;
-                return Err(error);
-            }
-        };
+        prepared.state_after = self.snapshot_candidate_state(&candidate_state)?;
 
         // Keep the historical helper's return contract (it returns the
         // constructed outputs to its caller), while making its progress side
@@ -266,8 +254,20 @@ where
     }
 
     pub(super) fn snapshot_state(&self) -> RuntimeResult<JsonValue> {
-        serde_json::to_value(&self.persisted_state.state).map_err(|error| {
+        self.snapshot_candidate_state(&self.persisted_state.state)
+    }
+
+    fn snapshot_candidate_state(&self, state: &N::State) -> RuntimeResult<JsonValue> {
+        serde_json::to_value(state).map_err(|error| {
             SinexError::serialization("failed to snapshot automaton state before durable commit")
+                .with_context("automaton", self.automaton.name())
+                .with_source(error)
+        })
+    }
+
+    pub(super) fn state_from_snapshot(&self, snapshot: &JsonValue) -> RuntimeResult<N::State> {
+        serde_json::from_value(snapshot.clone()).map_err(|error| {
+            SinexError::serialization("failed to clone automaton state before durable commit")
                 .with_context("automaton", self.automaton.name())
                 .with_source(error)
         })
@@ -288,7 +288,11 @@ where
     /// durable when they happen (processing-failure routing) still execute
     /// here; only `record_processed_input`/checkpoint advancement is
     /// deferred to the caller's commit phase.
-    async fn prepare_one(&mut self, event: Event<JsonValue>) -> RuntimeResult<PreparedInput> {
+    async fn prepare_one(
+        &mut self,
+        event: Event<JsonValue>,
+        candidate_state: &mut N::State,
+    ) -> RuntimeResult<PreparedInput> {
         let context = AutomatonContext::live(&event)?;
         let source_event_id = context.trigger_event_id;
         let input_ts_orig = event.ts_orig;
@@ -302,7 +306,7 @@ where
 
         let result = self
             .automaton
-            .process_derived(&mut self.persisted_state.state, event.clone(), &context)
+            .process_derived(candidate_state, event.clone(), &context)
             .await;
 
         let runtime_ms = process_started_at.elapsed().as_secs_f64() * 1000.0;
@@ -379,11 +383,18 @@ where
 
                 match settlement {
                     Settlement::Commit => {
-                        warn!(automaton = %self.automaton.name(), error = %e, "Committing (settled as benign)");
+                        self.send_to_processing_failure_queue_or_fail(&event, &e)
+                            .await?;
+                        let settlement = if self.processing_failure_routing_is_durable() {
+                            PreparedSettlement::DurableFailureRouted
+                        } else {
+                            PreparedSettlement::UnprovenFailureRouted
+                        };
+                        warn!(automaton = %self.automaton.name(), error = %e, "Benign failure routed for durable settlement");
                         Ok(PreparedInput {
                             source_event_id,
                             input_ts_orig,
-                            settlement: PreparedSettlement::NoOutput,
+                            settlement,
                             state_after: JsonValue::Null,
                         })
                     }
@@ -497,55 +508,45 @@ where
                     .with_context("automaton", self.automaton.name())
                     .with_source(error)
             })?;
-        let automaton_name = self.automaton.name();
-        let restore_state = |state: &mut N::State| -> RuntimeResult<()> {
-            *state = serde_json::from_value(state_snapshot.clone()).map_err(|error| {
-                SinexError::serialization("failed to restore window state after timer flush")
-                    .with_context("automaton", automaton_name)
+        // Work on an isolated state value. A cancelled future does not run its
+        // ordinary error path, so mutating the live state here could lose a
+        // window before its durable-emission receipt arrives.
+        let mut flushed_state: N::State =
+            serde_json::from_value(state_snapshot.clone()).map_err(|error| {
+                SinexError::serialization("failed to clone window state before timer flush")
+                    .with_context("automaton", self.automaton.name())
                     .with_source(error)
             })?;
-            Ok(())
-        };
 
         let outputs = match self
             .automaton
-            .timer_flush_derived(&mut self.persisted_state.state, watermark, &context)
+            .timer_flush_derived(&mut flushed_state, watermark, &context)
             .await
         {
             Ok(outputs) => outputs,
             Err(error) => {
-                restore_state(&mut self.persisted_state.state)?;
                 return Err(SinexError::processing("windowed timer flush failed")
-                    .with_context("automaton", automaton_name)
+                    .with_context("automaton", self.automaton.name())
                     .with_source(error));
             }
         };
 
         if outputs.is_empty() {
+            self.persisted_state.state = flushed_state;
             return Ok(0);
         }
 
-        if let Err(error) = self.validate_output_batch(&outputs, "timer flush") {
-            restore_state(&mut self.persisted_state.state)?;
-            return Err(error);
-        }
+        self.validate_output_batch(&outputs, "timer flush")?;
         self.observe_output_batch(&outputs, "timer_flush").await;
-        let output_events = match self.build_output_events(outputs, None, &context) {
-            Ok(events) => events,
-            Err(error) => {
-                restore_state(&mut self.persisted_state.state)?;
-                return Err(error);
-            }
-        };
+        let output_events = self.build_output_events(outputs, None, &context)?;
         let count = output_events.len() as u64;
 
         if count > 0 {
             let Some(emitter) = self.event_emitter.as_ref() else {
-                restore_state(&mut self.persisted_state.state)?;
                 return Err(SinexError::lifecycle(
                     "automaton output channel is not initialized for timer flush",
                 )
-                .with_context("automaton", automaton_name));
+                .with_context("automaton", self.automaton.name()));
             };
             let registry = self
                 .runtime
@@ -566,14 +567,17 @@ where
                 emit_batch_durable(&registry, emitter, request, self.durable_emission_timeout)
                     .await;
             if !receipt.unlocks_progress() {
-                restore_state(&mut self.persisted_state.state)?;
                 return Err(SinexError::processing(
                     "timer-flush output was emitted but did not reach a durable settlement",
                 )
-                .with_context("automaton", automaton_name)
+                .with_context("automaton", self.automaton.name())
                 .with_context("flush_id", context.trigger_event_id.to_string()));
             }
 
+            // Commit the state only after durable settlement. If this future
+            // is cancelled while awaiting the receipt, the live state remains
+            // the pre-flush window and shutdown can safely checkpoint it.
+            self.persisted_state.state = flushed_state;
             // A timer flush has no input cursor whose commit implicitly dirties
             // checkpoint state. Persist the post-flush state only after the
             // output receipt has unlocked progress; otherwise a shutdown or
@@ -583,9 +587,20 @@ where
                 .save_state_with_file_fallback("durable timer flush checkpoint")
                 .await
             {
-                restore_state(&mut self.persisted_state.state)?;
+                self.persisted_state.state =
+                    serde_json::from_value(state_snapshot).map_err(|restore_error| {
+                        SinexError::serialization(
+                            "failed to restore window state after timer flush",
+                        )
+                        .with_context("automaton", self.automaton.name())
+                        .with_source(restore_error)
+                    })?;
                 return Err(error);
             }
+        } else {
+            // The automaton produced no publishable event after building its
+            // outputs, so there is no receipt barrier to wait for.
+            self.persisted_state.state = flushed_state;
         }
 
         Ok(count)
@@ -725,8 +740,10 @@ where
         let mut committed_outputs = Vec::new();
         for entry in plan.into_iter().take(committed_prefix) {
             self.record_processed_input(entry.source_event_id, entry.input_ts_orig);
-            self.observe_runtime_snapshot().await;
             committed_outputs.extend(entry.outputs);
+        }
+        if committed_prefix > 0 {
+            self.observe_runtime_snapshot().await;
         }
 
         Ok(committed_outputs)
@@ -741,24 +758,22 @@ where
         events: Vec<Event<JsonValue>>,
     ) -> RuntimeResult<Vec<Event<JsonValue>>> {
         let state_before = self.snapshot_state()?;
+        let mut candidate_state = self.state_from_snapshot(&state_before)?;
         let mut prepared_inputs = Vec::with_capacity(events.len());
         let mut retry_error: Option<SinexError> = None;
 
         for event in events {
-            let state_before_event = self.snapshot_state()?;
-            match self.prepare_one(event).await {
+            match self.prepare_one(event, &mut candidate_state).await {
                 Ok(mut prepared) => {
-                    prepared.state_after = match self.snapshot_state() {
+                    prepared.state_after = match self.snapshot_candidate_state(&candidate_state) {
                         Ok(snapshot) => snapshot,
                         Err(error) => {
-                            self.restore_state(&state_before_event)?;
                             return Err(error);
                         }
                     };
                     prepared_inputs.push(prepared);
                 }
                 Err(e) => {
-                    self.restore_state(&state_before_event)?;
                     error!(
                         target: "sinex_metrics",
                         metric = "derive.batch_retry_halts_total",

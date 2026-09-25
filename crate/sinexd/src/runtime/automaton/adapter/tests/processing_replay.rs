@@ -941,6 +941,123 @@ async fn global_state_invalidation_does_not_clobber_unrelated_state(
 }
 
 #[cfg(feature = "db")]
+struct HistoricalReplayMutationFailure;
+
+#[cfg(feature = "db")]
+impl Transducer for HistoricalReplayMutationFailure {
+    type State = TestDerivedState;
+    type Input = JsonValue;
+    type Output = JsonValue;
+
+    fn name(&self) -> &'static str {
+        "historical-replay-mutation-failure"
+    }
+
+    fn input_event_type(&self) -> &'static str {
+        "test.input"
+    }
+
+    fn output_event_type(&self) -> &'static str {
+        "test.output"
+    }
+
+    async fn process(
+        &mut self,
+        state: &mut Self::State,
+        _input: Self::Input,
+        _context: &AutomatonContext,
+    ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
+        state.processed += 1;
+        Err(AutomatonLogicError::InputParsing(
+            "settle mutated state".to_string(),
+        ))
+    }
+}
+
+#[cfg(feature = "db")]
+#[sinex_test]
+async fn historical_replay_checkpoints_durable_failure_after_frontier(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sinex_db::DbPoolExt;
+
+    let ctx = ctx.with_nats().dedicated().await?;
+    // This test exercises the NATS-backed durable failure route.  Dedicated
+    // NATS setup intentionally creates no streams, so provision the canonical
+    // activity processing-failure stream here.  The adjacent failure-path test
+    // deliberately leaves it absent to verify routing failure behavior.
+    let topology = sinex_primitives::nats::JetStreamTopology::new(
+        ctx.env(),
+        ctx.env()
+            .nats_stream_name_with_namespace(None, "SINEX_RAW_EVENTS"),
+        "historical-replay-mutation-failure".to_string(),
+        None,
+    );
+    async_nats::jetstream::new(ctx.nats_client())
+        .get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: topology.processing_failures_stream.to_string(),
+            subjects: vec![topology.processing_failures_subject.to_string()],
+            ..Default::default()
+        })
+        .await?;
+    let inserted = ctx
+        .pool()
+        .events()
+        .insert_batch(vec![
+            make_db_input_event(&ctx, "durable-failure", "durable-failure").await?,
+        ])
+        .await?;
+    let input_id = inserted[0].id.expect("inserted event should have an id");
+    let (runtime, _event_receiver) =
+        make_runtime_state_with_db(&ctx, "historical-replay-mutation-failure", None).await?;
+    let checkpoint_manager = runtime.checkpoint_manager();
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(HistoricalReplayMutationFailure));
+    adapter.checkpoint_manager = Some(Arc::clone(&checkpoint_manager));
+    adapter.event_emitter = Some(runtime.event_emitter().clone());
+    adapter.host = runtime.service_info().host().to_string();
+    adapter.runtime = Some(runtime);
+
+    adapter
+        .run_historical(Checkpoint::None, Timestamp::now(), ScanArgs::default())
+        .await?;
+
+    assert_eq!(
+        adapter.state().processed,
+        1,
+        "failure settlement retains its state mutation"
+    );
+    assert_eq!(
+        adapter.events_processed(),
+        1,
+        "failure settlement advances replay progress"
+    );
+    assert_eq!(
+        adapter.current_checkpoint_internal(),
+        Checkpoint::internal(*input_id.as_uuid(), 1),
+        "checkpoint must include the settled input frontier"
+    );
+
+    let mut restored = AutomatonRuntime::new(TransducerWrapper(HistoricalReplayMutationFailure));
+    restored.checkpoint_manager = Some(checkpoint_manager);
+    restored.load_state().await?;
+    assert_eq!(
+        restored.state().processed,
+        1,
+        "durable checkpoint retains mutated state"
+    );
+    assert_eq!(
+        restored.events_processed(),
+        1,
+        "durable checkpoint retains replay progress"
+    );
+    assert_eq!(
+        restored.current_checkpoint_internal(),
+        Checkpoint::internal(*input_id.as_uuid(), 1)
+    );
+    Ok(())
+}
+
+#[cfg(feature = "db")]
 #[sinex_test]
 async fn historical_replay_fails_when_dlq_routing_fails(ctx: TestContext) -> TestResult<()> {
     use sinex_db::DbPoolExt;
@@ -956,8 +1073,8 @@ async fn historical_replay_fails_when_dlq_routing_fails(ctx: TestContext) -> Tes
     let input_id = inserted[0].id.expect("inserted event should have an id");
 
     let (runtime, _event_receiver) =
-        make_runtime_state_with_db(&ctx, "derived-adapter-dlq-retry-test", None).await?;
-    let mut adapter = AutomatonRuntime::new(TransducerWrapper(DlqRetryAutomaton));
+        make_runtime_state_with_db(&ctx, "historical-replay-mutation-failure", None).await?;
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(HistoricalReplayMutationFailure));
     adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
     adapter.event_emitter = Some(runtime.event_emitter().clone());
     adapter.host = runtime.service_info().host().to_string();
@@ -970,13 +1087,64 @@ async fn historical_replay_fails_when_dlq_routing_fails(ctx: TestContext) -> Tes
 
     let rendered = format!("{error:#}");
     assert!(rendered.contains("failed to send automaton event to processing-failure stream"));
-    assert!(rendered.contains("route me to dlq"));
-    assert!(rendered.contains("derived-adapter-dlq-retry-test"));
+    assert!(rendered.contains("settle mutated state"));
+    assert!(rendered.contains("historical-replay-mutation-failure"));
     assert!(
         adapter.events_processed() == 0,
         "failing DLQ routing must not advance replay progress past the bad event"
     );
+    assert_eq!(
+        adapter.state().processed,
+        0,
+        "failed routing must roll back the state mutation"
+    );
     assert_eq!(adapter.current_checkpoint_internal(), Checkpoint::None);
     assert_eq!(input_id, inserted[0].id.expect("id should stay available"));
+    Ok(())
+}
+
+#[cfg(feature = "db")]
+#[sinex_test]
+async fn historical_replay_keeps_state_and_frontier_before_output_settlement(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sinex_db::DbPoolExt;
+
+    let ctx = ctx.with_nats().dedicated().await?;
+    ctx.pool()
+        .events()
+        .insert_batch(vec![
+            make_db_input_event(&ctx, "unsettled-replay", "unsettled-replay").await?,
+        ])
+        .await?;
+    let (runtime, _internal_receiver) =
+        make_runtime_state_with_db(&ctx, "derived-history-unsettled-test", None).await?;
+    let checkpoint_manager = runtime.checkpoint_manager();
+    let (output_tx, mut output_rx) = mpsc::channel::<Event<JsonValue>>(1);
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingAutomaton))
+        .with_durable_emission_timeout(Duration::from_millis(100));
+    adapter.checkpoint_manager = Some(Arc::clone(&checkpoint_manager));
+    adapter.event_emitter = Some(EventEmitter::new(output_tx, false));
+    adapter.host = runtime.service_info().host().to_string();
+    adapter.runtime = Some(runtime);
+
+    let error = adapter
+        .run_historical(Checkpoint::None, Timestamp::now(), ScanArgs::default())
+        .await
+        .expect_err("replay must wait for its durable output receipt");
+    assert!(error.to_string().contains("durable settlement"));
+    assert!(
+        output_rx.try_recv().is_ok(),
+        "replay should prepare an output"
+    );
+    assert_eq!(adapter.state().processed, 0);
+    assert_eq!(adapter.events_processed(), 0);
+    assert_eq!(adapter.current_checkpoint_internal(), Checkpoint::None);
+
+    let mut restored = AutomatonRuntime::new(TransducerWrapper(EmittingAutomaton));
+    restored.checkpoint_manager = Some(checkpoint_manager);
+    restored.load_state().await?;
+    assert_eq!(restored.state().processed, 0);
+    assert_eq!(restored.events_processed(), 0);
     Ok(())
 }

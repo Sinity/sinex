@@ -522,6 +522,47 @@ async fn make_runtime_state(
     ))
 }
 
+async fn make_runtime_state_with_direct_transport(
+    ctx: &TestContext,
+    module_name: &str,
+) -> TestResult<RuntimeContext> {
+    let kv = ctx.checkpoint_kv().await?;
+    let checkpoint_manager = Arc::new(CheckpointManager::new(
+        kv,
+        module_name.to_string(),
+        "test-group".to_string(),
+        format!("test-consumer-{}", Uuid::now_v7().simple()),
+    ));
+    let (event_sender, _event_receiver) = mpsc::channel::<Event<JsonValue>>(32);
+    let emitter = EventEmitter::new(event_sender, false);
+    let handles = RuntimeHandles::new_edge(
+        checkpoint_manager,
+        emitter,
+        EventTransport::new_noop_direct(),
+        None,
+    );
+    let work_dir = tempdir()?;
+    let work_dir_path = work_dir.keep();
+    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+        color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+    })?;
+    Ok(RuntimeContext::new(
+        ServiceInfo::new(
+            module_name.to_string(),
+            module_name.to_string(),
+            HostName::from_static("test-host"),
+            work_dir_path,
+            false,
+            format!("instance-{}", Uuid::now_v7().simple()),
+            env!("CARGO_PKG_VERSION").to_string(),
+            None,
+        ),
+        handles,
+        HashMap::new(),
+        work_dir_utf8,
+    ))
+}
+
 /// Like `make_runtime_state`, but wires an explicit `SettlementRegistry`
 /// into the returned `RuntimeContext` (sinex-vxu) instead of the default
 /// disconnected one, so a caller-side `emit_batch_durable` can actually
@@ -1097,10 +1138,6 @@ async fn process_batch_halts_on_retry_error() -> TestResult<()> {
 }
 
 /// Env var carrying the parent's ephemeral NATS connection URL to the child.
-/// Its presence ALSO switches this same test function into its child role
-/// (the outer/parent role never sets it on itself, only on the spawned
-/// child) — one test function serves both roles, so the child gets a real
-/// `TestContext`/binary re-invocation for free, no separate harness binary.
 /// `.shared()`/`.dedicated()` NATS provisioning
 /// (`xtask::sandbox::nats::ephemeral`) is scoped by an in-process registry —
 /// it reuses one server across tests WITHIN a process, but the child here is
@@ -1112,14 +1149,23 @@ const R6D9_NATS_URL_ENV: &str = "SINEX_R6D9_NATS_URL";
 
 /// Fixed (not per-test-random) checkpoint identity shared by both the outer
 /// harness and inner scenario roles of
-/// `r6d9_checkpoint_before_output_fail_point_fires` — the usual
+/// `r6d9_checkpoint_before_output_fail_point_child` — the usual
 /// `ctx.checkpoint_kv()` per-test-random namespace would prevent the parent
 /// from ever finding the bucket the child wrote to, even connected to the
 /// same server.
 const R6D9_CHECKPOINT_BUCKET: &str = "sinex_r6d9_crash_window_test_checkpoints";
 const R6D9_MODULE_NAME: &str = "derived-adapter-r6d9-crash-window-test";
+const R6D9_ACCEPTED_MODULE_NAME: &str = "derived-adapter-r6d9-accepted-crash-test";
 const R6D9_CONSUMER_GROUP: &str = "r6d9-test-group";
 const R6D9_CONSUMER_NAME: &str = "r6d9-test-consumer";
+const R6D9_RAW_ACCEPTED_NATS_URL_ENV: &str = "SINEX_R6D9_RAW_ACCEPTED_NATS_URL";
+const R6D9_RAW_ACCEPTED_BUCKET_ENV: &str = "SINEX_R6D9_RAW_ACCEPTED_BUCKET";
+const R6D9_RAW_ACCEPTED_MODULE_ENV: &str = "SINEX_R6D9_RAW_ACCEPTED_MODULE";
+const R6D9_RAW_ACCEPTED_STREAM_ENV: &str = "SINEX_R6D9_RAW_ACCEPTED_STREAM";
+const R6D9_RAW_ACCEPTED_SUBJECT_ENV: &str = "SINEX_R6D9_RAW_ACCEPTED_SUBJECT";
+const R6D9_RAW_ACCEPTED_EXIT_CODE: i32 = 97;
+
+const R6D9_ACCEPTED_MARKER_ENV: &str = "SINEX_R6D9_ACCEPTED_MARKER";
 
 async fn r6d9_fixed_checkpoint_manager(
     js: &async_nats::jetstream::Context,
@@ -1138,6 +1184,48 @@ async fn r6d9_fixed_checkpoint_manager(
         R6D9_MODULE_NAME.to_string(),
         R6D9_CONSUMER_GROUP.to_string(),
         R6D9_CONSUMER_NAME.to_string(),
+    ))
+}
+
+async fn r6d9_accepted_checkpoint_manager(
+    js: &async_nats::jetstream::Context,
+) -> TestResult<CheckpointManager> {
+    let kv = sinex_primitives::nats::create_or_open_kv_store(
+        js,
+        async_nats::jetstream::kv::Config {
+            bucket: R6D9_CHECKPOINT_BUCKET.to_string(),
+            history: 8,
+            ..Default::default()
+        },
+    )
+    .await?;
+    Ok(CheckpointManager::new(
+        kv,
+        R6D9_ACCEPTED_MODULE_NAME.to_string(),
+        "r6d9-accepted-test-group".to_string(),
+        "r6d9-accepted-test-consumer".to_string(),
+    ))
+}
+
+async fn r6d9_raw_accepted_checkpoint_manager(
+    js: &async_nats::jetstream::Context,
+    bucket: &str,
+    module_name: &str,
+) -> TestResult<CheckpointManager> {
+    let kv = sinex_primitives::nats::create_or_open_kv_store(
+        js,
+        async_nats::jetstream::kv::Config {
+            bucket: bucket.to_string(),
+            history: 8,
+            ..Default::default()
+        },
+    )
+    .await?;
+    Ok(CheckpointManager::new(
+        kv,
+        module_name.to_string(),
+        "r6d9-raw-accepted-group".to_string(),
+        "r6d9-raw-accepted-consumer".to_string(),
     ))
 }
 
@@ -1176,50 +1264,6 @@ async fn r6d9_fixed_checkpoint_manager(
 /// in-process, without needing a second child-process scenario here.
 #[sinex_test]
 async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> TestResult<()> {
-    if let Ok(nats_url) = std::env::var(R6D9_NATS_URL_ENV) {
-        // Child role: connect directly to the PARENT's already-running
-        // ephemeral NATS server (see R6D9_NATS_URL_ENV doc) rather than
-        // provisioning our own via ctx.with_nats() — this is what makes the
-        // checkpoint write below visible to the parent after this process
-        // exits.
-        let client = async_nats::connect(&nats_url)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("child failed to connect to parent NATS: {e}"))?;
-        let js = async_nats::jetstream::new(client);
-        let checkpoint_manager = Arc::new(r6d9_fixed_checkpoint_manager(&js).await?);
-        let mut adapter = AutomatonRuntime::with_config(
-            TransducerWrapper(EmittingAutomaton),
-            AutomatonAdapterConfig {
-                checkpoint_interval: 1,
-                ..AutomatonAdapterConfig::default()
-            },
-        )
-        .with_fail_point_after_checkpoint(Arc::new(std::sync::atomic::AtomicBool::new(true)));
-        adapter.checkpoint_manager = Some(checkpoint_manager);
-
-        // sinex-vxu fix: no event_emitter/settlement registry is wired here
-        // — deliberately reproducing the OLD test's exact setup. Under the
-        // FIXED code, `process_batch` has no way to durably confirm
-        // `EmittingAutomaton`'s output at all, so it must never mark the
-        // input processed either — the checkpoint-before-output window the
-        // fail point targets must be structurally unreachable, not merely
-        // empirically avoided. A clean, non-crashing return (with nothing
-        // committed) is therefore the CORRECT outcome now.
-        let committed = adapter
-            .process_batch(vec![make_input_event("r6d9")?])
-            .await
-            .expect(
-                "process_batch must not error merely because durable emission cannot be \
-                 attempted (no event emitter wired) — it should simply commit nothing",
-            );
-        assert!(
-            committed.is_empty(),
-            "sinex-vxu fix: with no event emitter wired, nothing can be durably confirmed, so \
-             no input may be marked processed — got {committed:?}"
-        );
-        return Ok(());
-    }
-
     let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
     let nats_url = ctx.nats_handle()?.client_url().to_string();
@@ -1242,7 +1286,7 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
         .split_once("::")
         .map_or(module_path!(), |(_, rest)| rest);
     let qualified_name =
-        format!("{module_path_without_crate}::r6d9_checkpoint_before_output_fail_point_fires");
+        format!("{module_path_without_crate}::r6d9_checkpoint_before_output_fail_point_child");
     let output = tokio::process::Command::new(exe)
         .arg(&qualified_name)
         .arg("--exact")
@@ -1274,6 +1318,212 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
         restored.processed_count, 0,
         "sinex-vxu fix: the checkpoint must NOT have advanced — no input's output was ever \
          durably confirmed, so none should be marked processed. Got: {restored:?}"
+    );
+
+    Ok(())
+}
+
+/// DB-free child scenario for the parent crash-window harness above. A plain
+/// Tokio test avoids re-entering `sinex_test(TestContext)` and contending for
+/// another sandbox database slot. It connects to the parent's NATS server so
+/// its checkpoint write is visible to the parent process.
+#[tokio::test]
+async fn r6d9_checkpoint_before_output_fail_point_child() -> TestResult<()> {
+    let nats_url = std::env::var(R6D9_NATS_URL_ENV)
+        .expect("parent must provide the shared NATS URL to the child scenario");
+    let client = async_nats::connect(&nats_url)
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("child failed to connect to parent NATS: {e}"))?;
+    let js = async_nats::jetstream::new(client);
+    let checkpoint_manager = Arc::new(r6d9_fixed_checkpoint_manager(&js).await?);
+    let mut adapter = AutomatonRuntime::with_config(
+        TransducerWrapper(EmittingAutomaton),
+        AutomatonAdapterConfig {
+            checkpoint_interval: 1,
+            ..AutomatonAdapterConfig::default()
+        },
+    )
+    .with_fail_point_after_checkpoint(Arc::new(std::sync::atomic::AtomicBool::new(true)));
+    adapter.checkpoint_manager = Some(checkpoint_manager);
+
+    // With no emitter, no output receipt can settle and the input cannot be
+    // marked processed. The fail point must therefore remain unreachable.
+    let committed = adapter
+        .process_batch(vec![make_input_event("r6d9")?])
+        .await
+        .expect(
+            "process_batch must not error merely because durable emission cannot be \
+             attempted (no event emitter wired) — it should simply commit nothing",
+        );
+    assert!(
+        committed.is_empty(),
+        "sinex-vxu fix: with no event emitter wired, nothing can be durably confirmed, so \
+         no input may be marked processed — got {committed:?}"
+    );
+    Ok(())
+}
+
+/// The second sinex-r6d.9/sinex-vxu crash window: JetStream has accepted an
+/// automaton output, but the event-engine has not yet produced the durable
+/// settlement receipt. A child runs the real adapter path, publishes its
+/// emitted output to JetStream, and exits before resolving the receipt. The
+/// parent verifies that the accepted raw output exists while the durable
+/// adapter checkpoint still has not advanced.
+#[sinex_test(timeout = 90)]
+async fn r6d9_raw_accepted_before_db_settlement_does_not_advance_checkpoint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    if let Ok(nats_url) = std::env::var(R6D9_RAW_ACCEPTED_NATS_URL_ENV) {
+        let bucket = std::env::var(R6D9_RAW_ACCEPTED_BUCKET_ENV)?;
+        let module_name = std::env::var(R6D9_RAW_ACCEPTED_MODULE_ENV)?;
+        let stream_name = std::env::var(R6D9_RAW_ACCEPTED_STREAM_ENV)?;
+        let subject = std::env::var(R6D9_RAW_ACCEPTED_SUBJECT_ENV)?;
+        let client = async_nats::connect(&nats_url).await?;
+        let js = async_nats::jetstream::new(client.clone());
+        let _stream = js.get_stream(&stream_name).await?;
+        let checkpoint_manager =
+            Arc::new(r6d9_raw_accepted_checkpoint_manager(&js, &bucket, &module_name).await?);
+        let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+
+        let (output_tx, mut output_rx) = mpsc::channel::<Event<JsonValue>>(8);
+        let event_emitter = EventEmitter::new(output_tx, false);
+        let (runtime_tx, runtime_rx) = mpsc::channel::<Event<JsonValue>>(1);
+        drop(runtime_rx);
+        let runtime_emitter = EventEmitter::new(runtime_tx, false);
+        let handles = RuntimeHandles::new_edge(
+            checkpoint_manager.clone(),
+            runtime_emitter,
+            EventTransport::Nats(Arc::new(NatsPublisher::new(client.clone()))),
+            None,
+        )
+        .with_settlement_registry(registry);
+        let work_dir = tempdir()?;
+        let work_dir_path = work_dir.keep();
+        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+            color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+        })?;
+        let runtime = RuntimeContext::new(
+            ServiceInfo::new(
+                module_name.clone(),
+                module_name.clone(),
+                HostName::from_static("test-host"),
+                work_dir_path,
+                false,
+                format!("instance-{}", Uuid::now_v7().simple()),
+                env!("CARGO_PKG_VERSION").to_string(),
+                None,
+            ),
+            handles,
+            HashMap::new(),
+            work_dir_utf8,
+        );
+
+        let publisher_js = js.clone();
+        tokio::spawn(async move {
+            let Some(event) = output_rx.recv().await else {
+                std::process::exit(R6D9_RAW_ACCEPTED_EXIT_CODE + 1);
+            };
+            let Ok(payload) = serde_json::to_vec(&event) else {
+                std::process::exit(R6D9_RAW_ACCEPTED_EXIT_CODE + 2);
+            };
+            let accepted = match publisher_js.publish(subject, payload.into()).await {
+                Ok(ack) => ack.await.is_ok(),
+                Err(_) => false,
+            };
+            if !accepted {
+                std::process::exit(R6D9_RAW_ACCEPTED_EXIT_CODE + 3);
+            }
+            // NATS has returned its JetStream publish ACK, but this harness
+            // intentionally never resolves the adapter's settlement registry.
+            std::process::exit(R6D9_RAW_ACCEPTED_EXIT_CODE);
+        });
+
+        let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingAutomaton))
+            .with_durable_emission_timeout(Duration::from_secs(30));
+        adapter.checkpoint_manager = Some(checkpoint_manager);
+        adapter.event_emitter = Some(event_emitter);
+        adapter.runtime = Some(runtime);
+        let _ = adapter
+            .process_batch(vec![make_input_event("raw-accepted-unsettled")?])
+            .await;
+        return Err(color_eyre::eyre::eyre!(
+            "raw-accepted crash fail point did not terminate the child"
+        ));
+    }
+
+    let ctx = ctx.with_nats().shared().await?;
+    let js = ctx.jetstream().await?;
+    let nats_url = ctx.nats_handle()?.client_url().to_string();
+    let suffix = Uuid::now_v7().simple().to_string().to_lowercase();
+    let bucket = format!("sinex_r6d9_raw_accepted_{suffix}");
+    let module_name = format!("derived-adapter-r6d9-raw-accepted-{suffix}");
+    let stream_name = format!("SINEX_R6D9_RAW_ACCEPTED_{}", suffix.to_uppercase());
+    let subject = format!("test.r6d9.raw_accepted.{suffix}");
+    let stream = js
+        .get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: stream_name.clone(),
+            subjects: vec![subject.clone()],
+            ..Default::default()
+        })
+        .await?;
+
+    let checkpoint_manager =
+        r6d9_raw_accepted_checkpoint_manager(&js, &bucket, &module_name).await?;
+    checkpoint_manager.reset_checkpoint().await?;
+
+    let exe = std::env::current_exe().map_err(|error| {
+        color_eyre::eyre::eyre!("current_exe unavailable for raw-accepted crash harness: {error}")
+    })?;
+    let module_path_without_crate = module_path!()
+        .split_once("::")
+        .map_or(module_path!(), |(_, rest)| rest);
+    let qualified_name = format!(
+        "{module_path_without_crate}::r6d9_raw_accepted_before_db_settlement_does_not_advance_checkpoint"
+    );
+    let child = tokio::process::Command::new(exe)
+        .arg(&qualified_name)
+        .arg("--exact")
+        .arg("--nocapture")
+        .env(R6D9_RAW_ACCEPTED_NATS_URL_ENV, &nats_url)
+        .env(R6D9_RAW_ACCEPTED_BUCKET_ENV, &bucket)
+        .env(R6D9_RAW_ACCEPTED_MODULE_ENV, &module_name)
+        .env(R6D9_RAW_ACCEPTED_STREAM_ENV, &stream_name)
+        .env(R6D9_RAW_ACCEPTED_SUBJECT_ENV, &subject)
+        .output();
+    let output = tokio::time::timeout(Duration::from_secs(30), child)
+        .await
+        .map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "child did not reach raw JetStream acceptance before the crash deadline"
+            )
+        })?
+        .map_err(|error| {
+            color_eyre::eyre::eyre!("failed to spawn raw-accepted crash child: {error}")
+        })?;
+    assert_eq!(
+        output.status.code(),
+        Some(R6D9_RAW_ACCEPTED_EXIT_CODE),
+        "child must exit after JetStream acceptance but before DB settlement; got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let accepted = stream.get_last_raw_message_by_subject(&subject).await?;
+    let accepted_event: Event<JsonValue> = serde_json::from_slice(&accepted.payload)?;
+    assert_eq!(
+        accepted_event.event_type.as_str(),
+        "test.output",
+        "JetStream must retain the output accepted before the child died"
+    );
+
+    let restored = r6d9_raw_accepted_checkpoint_manager(&js, &bucket, &module_name)
+        .await?
+        .load_checkpoint()
+        .await?;
+    assert_eq!(
+        restored.processed_count, 0,
+        "RawAccepted without DB settlement must not advance the durable adapter checkpoint"
     );
 
     Ok(())
@@ -1361,21 +1611,79 @@ async fn process_batch_advances_checkpoint_only_after_durable_emission_settles(
     Ok(())
 }
 
+#[sinex_test]
+async fn direct_warning_only_failure_route_does_not_advance_checkpoint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let runtime =
+        make_runtime_state_with_direct_transport(&ctx, "direct-failure-route-test").await?;
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(DlqRetryAutomaton));
+    adapter.runtime = Some(runtime);
+
+    let committed = adapter
+        .process_batch(vec![make_input_event("warning-only-failure")?])
+        .await?;
+
+    assert!(
+        committed.is_empty(),
+        "warning-only Direct routing is not a durable settlement"
+    );
+    assert_eq!(adapter.persisted_state.events_processed, 0);
+    assert_eq!(adapter.current_checkpoint_internal(), Checkpoint::None);
+    Ok(())
+}
+
+#[sinex_test]
+async fn cancelled_live_batch_keeps_state_at_settled_frontier() -> TestResult<()> {
+    let (output_tx, mut output_rx) = mpsc::channel::<Event<JsonValue>>(1);
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingAutomaton))
+        .with_durable_emission_timeout(Duration::from_secs(30));
+    adapter.event_emitter = Some(EventEmitter::new(output_tx, false));
+
+    let mut processing = Box::pin(adapter.process_batch(vec![make_input_event("cancelled")?]));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            result = &mut processing => panic!("batch completed before its receipt: {result:?}"),
+            output = output_rx.recv() => assert!(output.is_some(), "emitter closed before output"),
+        }
+    })
+    .await?;
+    drop(processing);
+
+    assert_eq!(adapter.persisted_state.state.processed, 0);
+    assert_eq!(adapter.persisted_state.events_processed, 0);
+    assert_eq!(adapter.current_checkpoint_internal(), Checkpoint::None);
+    Ok(())
+}
+
+#[sinex_test]
+async fn unsettled_live_output_cannot_report_ack_safe_bridge_success() -> TestResult<()> {
+    let (output_tx, _output_rx) = mpsc::channel::<Event<JsonValue>>(1);
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingAutomaton))
+        .with_durable_emission_timeout(Duration::from_millis(100));
+    adapter.event_emitter = Some(EventEmitter::new(output_tx, false));
+
+    let error = RuntimeModule::process_event_batch(
+        &mut adapter,
+        vec![make_input_event("unsettled-confirmed-delivery")?],
+    )
+    .await
+    .expect_err("an unsettled receipt must make the confirmed delivery retry");
+    assert!(error.to_string().contains("without durable settlement"));
+    assert_eq!(adapter.persisted_state.events_processed, 0);
+    assert_eq!(adapter.persisted_state.state.processed, 0);
+    Ok(())
+}
+
 // -------------------------------------------------------------------------
-// sinex-vxu remaining scope: timer_flush has no state-commit barrier
+// sinex-vxu remaining scope: timer_flush must survive future cancellation
 // -------------------------------------------------------------------------
 //
-// process_batch_advances_checkpoint_only_after_durable_emission_settles
-// (above) proves the live-bridge path IS gated on durable-emission
-// settlement. `AutomatonRuntime::timer_flush` (process.rs) is a completely
-// separate code path used by every Windowed automaton's trailing-bucket
-// flush -- it calls `emit_output_events` directly and returns the emitted
-// count with NO settlement check at all, unlike `commit_prepared_inputs`'s
-// per-input gating. If a shutdown/checkpoint-save happens right after
-// `timer_flush` mutates `persisted_state.state` (e.g. resetting a window
-// accumulator) but before the emitted event durably lands, that window's
-// data is gone with nothing to replay it from -- CLAUDE.md's own note on
-// this bead: "historical replay/timer_flush/shutdown still open".
+// timer_flush already waits for durable-emission settlement and restores
+// state on an ordinary error. Its remaining gap was cancellation: dropping
+// the future while that wait was pending skipped the restore path, allowing
+// shutdown to checkpoint the cleared window before any receipt unlocked it.
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct FlushBarrierState {
@@ -1467,13 +1775,8 @@ impl Windowed for EmittingWindowedAutomaton {
     }
 }
 
-/// sinex-vxu open (remaining scope): `timer_flush` must not clear
-/// `persisted_state.state` past an emitted output whose durable-emission
-/// receipt never settles -- the same barrier `process_batch` already has
-/// via `commit_prepared_inputs`. Currently it has none: this proves
-/// `has_pending_window` is cleared even though the registry below never
-/// resolves the emitted event, so a shutdown/checkpoint-save landing here
-/// would durably lose the window with no receipt ever having unlocked it.
+/// An unresolved receipt must not allow either an ordinary failed flush or a
+/// later shutdown checkpoint to clear the pending window.
 #[sinex_test]
 async fn timer_flush_does_not_clear_window_state_before_emission_settles(
     ctx: TestContext,
@@ -1594,6 +1897,68 @@ async fn shutdown_saves_pre_flush_state_after_unsettled_timer_output(
     Ok(())
 }
 
+#[sinex_test]
+async fn cancelled_timer_flush_preserves_window_for_shutdown_checkpoint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (event_sender, mut event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+    let emitter = EventEmitter::new(event_sender, false);
+    let runtime =
+        make_runtime_state_with_registry(&ctx, "derived-windowed-flush-cancel-test", registry)
+            .await?;
+    let checkpoint_dir = tempdir()?;
+    let checkpoint_path = checkpoint_dir
+        .path()
+        .join("cancelled-flush.checkpoint.json");
+    let mut adapter = AutomatonRuntime::with_shutdown_config(
+        WindowedWrapper(EmittingWindowedAutomaton),
+        ShutdownConfig {
+            checkpoint_path: Some(checkpoint_path.clone()),
+            ..ShutdownConfig::default()
+        },
+    );
+    adapter.event_emitter = Some(emitter);
+    adapter.runtime = Some(runtime);
+    adapter.persisted_state.state.has_pending_window = true;
+
+    // Receiving the event proves timer_flush entered durable emission. The
+    // registry is deliberately left unresolved, so dropping the pinned future
+    // at this point cancels its settlement wait.
+    {
+        let flush = adapter.timer_flush(Timestamp::now());
+        tokio::pin!(flush);
+        tokio::select! {
+            result = &mut flush => panic!("flush unexpectedly completed before cancellation: {result:?}"),
+            event = event_receiver.recv() => {
+                event.expect("timer flush must put its output into the emitter channel");
+            }
+        }
+    }
+
+    assert!(
+        adapter.persisted_state.state.has_pending_window,
+        "cancelling while durable settlement is pending must preserve the live window"
+    );
+    RuntimeModule::shutdown(&mut adapter).await?;
+
+    let checkpoint = CheckpointState::load_from_file(&checkpoint_path)
+        .await?
+        .expect("shutdown must leave a checkpoint file");
+    assert_eq!(
+        checkpoint
+            .data
+            .as_ref()
+            .and_then(|data| data.get("state"))
+            .and_then(|state| state.get("has_pending_window"))
+            .and_then(JsonValue::as_bool),
+        Some(true),
+        "shutdown must not checkpoint a window whose timer output was cancelled before settlement"
+    );
+    Ok(())
+}
+
 /// Drain `raw`, resolving every emitted event's id as `PersistedConfirmed`
 /// in `registry` before forwarding it — a minimal stand-in for the real
 /// event-engine's settlement call sites (`jetstream_consumer/persist.rs`),
@@ -1619,6 +1984,158 @@ fn auto_settle_events(
             }
         }
     })
+}
+
+/// Cross-process crash proof for the raw accepted / unresolved durable
+/// emission boundary. The child sink receives the event and records a marker,
+/// but deliberately never resolves its receipt. The parent kills the child
+/// while `process_batch` is still waiting, then checks the shared checkpoint
+/// remains at zero. This covers acceptance by the mpsc emitter only; it makes
+/// no claim about NATS or database persistence.
+#[sinex_test]
+async fn r6d9_accepted_output_unresolved_receipt_does_not_advance_checkpoint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    if let Ok(nats_url) = std::env::var(R6D9_NATS_URL_ENV) {
+        let marker = std::env::var(R6D9_ACCEPTED_MARKER_ENV)
+            .map_err(|e| color_eyre::eyre::eyre!("missing child marker path: {e}"))?;
+        let client = async_nats::connect(&nats_url).await?;
+        let js = async_nats::jetstream::new(client.clone());
+        let checkpoint_manager = Arc::new(r6d9_accepted_checkpoint_manager(&js).await?);
+        let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+        let (event_sender, mut event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+        let emitter = EventEmitter::new(event_sender, false);
+        let handles = RuntimeHandles::new_edge(
+            checkpoint_manager,
+            emitter.clone(),
+            EventTransport::Nats(Arc::new(NatsPublisher::new(client))),
+            None,
+        )
+        .with_settlement_registry(registry);
+        let work_dir = tempdir()?;
+        let work_dir_path = work_dir.keep();
+        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+            color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+        })?;
+        let runtime = RuntimeContext::new(
+            ServiceInfo::new(
+                R6D9_ACCEPTED_MODULE_NAME.to_string(),
+                R6D9_ACCEPTED_MODULE_NAME.to_string(),
+                HostName::from_static("test-host"),
+                work_dir_path,
+                false,
+                format!("instance-{}", Uuid::now_v7().simple()),
+                env!("CARGO_PKG_VERSION").to_string(),
+                None,
+            ),
+            handles,
+            HashMap::new(),
+            work_dir_utf8,
+        );
+
+        // Receiving and publishing this marker establishes that the event
+        // crossed the emitter channel. Parking without resolving its id keeps
+        // the receipt pending until the parent terminates this process.
+        let _sink = tokio::spawn(async move {
+            let event = event_receiver
+                .recv()
+                .await
+                .expect("emitter must deliver the automaton output");
+            assert!(event.id.is_some(), "emitted event must have an id");
+            tokio::fs::write(marker, b"accepted")
+                .await
+                .expect("parent-visible acceptance marker must be written");
+            std::future::pending::<()>().await;
+        });
+
+        let mut adapter = AutomatonRuntime::with_config(
+            TransducerWrapper(EmittingAutomaton),
+            AutomatonAdapterConfig {
+                checkpoint_interval: 1,
+                ..AutomatonAdapterConfig::default()
+            },
+        )
+        .with_durable_emission_timeout(Duration::from_secs(300));
+        adapter.event_emitter = Some(emitter);
+        adapter.runtime = Some(runtime);
+        let _ = adapter
+            .process_batch(vec![make_input_event("accepted-unsettled")?])
+            .await?;
+        panic!("process_batch unexpectedly completed without receipt settlement");
+    }
+
+    let ctx = ctx.with_nats().shared().await?;
+    let js = ctx.jetstream().await?;
+    let nats_url = ctx.nats_handle()?.client_url().to_string();
+    let manager = Arc::new(r6d9_accepted_checkpoint_manager(&js).await?);
+    manager.reset_checkpoint().await?;
+
+    let marker_dir = tempdir()?;
+    let marker = marker_dir.path().join("accepted");
+    let exe = std::env::current_exe().map_err(|e| {
+        color_eyre::eyre::eyre!("current_exe unavailable for accepted-output harness: {e}")
+    })?;
+    let module_path_without_crate = module_path!()
+        .split_once("::")
+        .map_or(module_path!(), |(_, rest)| rest);
+    let qualified_name = format!(
+        "{module_path_without_crate}::r6d9_accepted_output_unresolved_receipt_does_not_advance_checkpoint"
+    );
+    let mut child = tokio::process::Command::new(exe)
+        .arg(&qualified_name)
+        .arg("--exact")
+        .arg("--nocapture")
+        .env(R6D9_NATS_URL_ENV, &nats_url)
+        .env(R6D9_ACCEPTED_MARKER_ENV, &marker)
+        .spawn()
+        .map_err(|e| color_eyre::eyre::eyre!("failed to spawn accepted-output child: {e}"))?;
+
+    let marker_wait = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if tokio::fs::try_exists(&marker).await? {
+                return Ok::<(), std::io::Error>(());
+            }
+            if let Some(status) = child.try_wait()? {
+                return Err(std::io::Error::other(format!(
+                    "child exited before accepting output: {status}"
+                )));
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    match marker_wait {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            return Err(color_eyre::eyre::eyre!(
+                "child exited before accepting output: {error}"
+            ));
+        }
+        Err(error) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(color_eyre::eyre::eyre!(
+                "child did not reach the accepted/unresolved boundary before timeout: {error}"
+            ));
+        }
+    }
+
+    child.kill().await?;
+    let status = child.wait().await?;
+    assert!(
+        !status.success(),
+        "parent must kill child while receipt is pending"
+    );
+
+    let restored = r6d9_accepted_checkpoint_manager(&js)
+        .await?
+        .load_checkpoint()
+        .await?;
+    assert_eq!(
+        restored.processed_count, 0,
+        "accepted output with an unresolved receipt must not advance the durable checkpoint"
+    );
+    Ok(())
 }
 
 // -------------------------------------------------------------------------
@@ -1933,5 +2450,119 @@ async fn durable_invalidation_consumer_redelivers_unacked_message(
     redelivered.ack().await.map_err(|error| {
         color_eyre::eyre::eyre!("failed to ack redelivered invalidation: {error}")
     })?;
+    Ok(())
+}
+
+#[sinex_test]
+async fn historical_resume_cursor_preserves_occurrence_order(ctx: TestContext) -> TestResult<()> {
+    use sinex_db::DbPoolExt;
+    use sinex_primitives::query::{EventOrdering, EventQuery, EventQueryResult, SortDirection};
+
+    let ctx = ctx.with_nats().shared().await?;
+    let suffix = Uuid::now_v7().simple().to_string();
+    let source = format!("test.catchup-resume-{suffix}");
+    let event_type = format!("test.catchup_resume.{suffix}");
+    let material_id = ctx.create_source_material(Some(&source)).await?;
+    let end_time = Timestamp::now();
+    let time_range = super::historical_resume_position(&Checkpoint::None, end_time)?;
+
+    // The UUID order is deliberately the reverse of ts_orig order. A resume
+    // from the second occurrence-ordered event therefore exposes whether the
+    // cursor uses the key the bounded query orders by.
+    let mut ids = (0..4).map(|_| Uuid::now_v7()).collect::<Vec<_>>();
+    ids.sort_unstable();
+    let mut events = Vec::with_capacity(ids.len());
+    for (index, id) in ids.iter().rev().enumerate() {
+        let ts_orig = Timestamp::from_unix_timestamp(1_700_000_000 + index as i64)
+            .expect("fixture timestamp is valid");
+        let mut event = DynamicPayload::new(
+            source.clone(),
+            event_type.clone(),
+            json!({"occurrence": index}),
+        )
+        .from_material_at(material_id, index as i64)
+        .at_time(ts_orig)
+        .build()?;
+        event.id = Some(Id::from_uuid(*id));
+        events.push(event);
+    }
+    let inserted = ctx.pool().events().insert_batch(events).await?;
+    assert_eq!(inserted.len(), 4);
+
+    let query = |cursor, limit| EventQuery {
+        sources: vec![EventSource::new(source.clone()).expect("valid source")],
+        event_types: vec![EventType::new(event_type.clone()).expect("valid event type")],
+        time_range: Some(time_range),
+        cursor,
+        limit,
+        direction: SortDirection::Asc,
+        order: EventOrdering::TsOrig,
+        ..EventQuery::default()
+    };
+
+    let EventQueryResult::Events {
+        events: first_page, ..
+    } = ctx.pool().events().query(query(None, 2)).await?
+    else {
+        panic!("expected occurrence-ordered event page");
+    };
+    assert_eq!(first_page.len(), 2);
+    let checkpoint_event_id = first_page[1]
+        .event
+        .id
+        .expect("queried events have ids")
+        .to_uuid();
+    let checkpoint_ts_orig = first_page[1]
+        .event
+        .ts_orig
+        .expect("historical events have ts_orig");
+    let mut seen = first_page
+        .into_iter()
+        .map(|item| item.event.id.expect("queried events have ids").to_uuid())
+        .collect::<Vec<_>>();
+
+    let checkpoint = Checkpoint::internal(checkpoint_event_id, 2);
+    let mut cursor = super::run::historical_resume_cursor(ctx.pool(), &checkpoint)
+        .await?
+        .expect("internal checkpoint should produce an occurrence cursor");
+    let anchor = cursor
+        .after
+        .as_ref()
+        .expect("resume cursor is after an anchor");
+    assert_eq!(anchor.id.to_uuid(), checkpoint_event_id);
+    assert_eq!(anchor.ts_orig, Some(checkpoint_ts_orig));
+    loop {
+        let EventQueryResult::Events {
+            events: page,
+            next_cursor,
+            ..
+        } = ctx
+            .pool()
+            .events()
+            .query(query(Some(cursor.clone()), 1))
+            .await?
+        else {
+            panic!("expected occurrence-ordered resumed page");
+        };
+        if page.is_empty() {
+            break;
+        }
+        seen.extend(
+            page.into_iter()
+                .map(|item| item.event.id.expect("queried events have ids").to_uuid()),
+        );
+        let Some(next_cursor) = next_cursor else {
+            break;
+        };
+        cursor = next_cursor;
+    }
+
+    let mut expected = ids;
+    expected.sort_unstable();
+    seen.sort_unstable();
+    assert_eq!(
+        seen, expected,
+        "resume must deliver every event exactly once"
+    );
     Ok(())
 }
