@@ -20,7 +20,7 @@ publish = "pr"
 [operations.dev_services]
 description = "Run Sinex development Postgres and NATS in the foreground"
 exec = ["nix", "run", ".#xtask", "--", "infra", "lease-services"]
-pool = "normal"
+pool = "service"
 result = "exit"
 cache = "tree+environment"
 timeout_seconds = 28800
