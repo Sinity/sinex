@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "due_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "horizon": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prediction_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "predictor": {
+      "type": "string"
+    },
+    "probability": {
+      "format": "double",
+      "type": "number"
+    },
+    "resolution_criteria": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "prediction_id",
+    "statement",
+    "probability",
+    "resolution_criteria",
+    "due_at",
+    "predictor"
+  ],
+  "title": "PredictionRegisteredPayload",
+  "type": "object",
+  "x-sinex-event-type": "prediction.registered",
+  "x-sinex-source": "prediction",
+  "x-sinex-version": "1.0.0"
+}

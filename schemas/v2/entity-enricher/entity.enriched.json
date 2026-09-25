@@ -41,7 +41,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Enriched entity with temporal statistics and category refinement.\n\nThe entity enricher (Stage 4) consumes `entity.resolved` events and emits\nperiodically enriched snapshots that include first/last seen timestamps,\noccurrence frequency, an active-hours histogram, and a refined category.",
+  "description": "Enriched entity with temporal statistics and category refinement.\n\nThe entity enricher (Stage 4) consumes `entity.resolved` events and emits\nperiodically enriched snapshots that include first/last seen timestamps,\noccurrence frequency, an operator-local civil-hour histogram, the timezone\nused to interpret it, and a refined category.",
   "properties": {
     "active_hours": {
       "additionalProperties": false,
@@ -85,6 +85,10 @@
     "refined_category": {
       "$ref": "#/$defs/EntityCategory",
       "description": "Refined category assigned by the enricher."
+    },
+    "tz_id": {
+      "description": "IANA timezone used to interpret `active_hours` (operator-local civil time).",
+      "type": "string"
     }
   },
   "required": [
@@ -95,11 +99,12 @@
     "first_seen",
     "last_seen",
     "occurrence_count",
-    "active_hours"
+    "active_hours",
+    "tz_id"
   ],
   "title": "EntityEnrichedPayload",
   "type": "object",
   "x-sinex-event-type": "entity.enriched",
   "x-sinex-source": "entity-enricher",
-  "x-sinex-version": "1.0.0"
+  "x-sinex-version": "2.0.0"
 }

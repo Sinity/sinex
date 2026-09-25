@@ -9,6 +9,13 @@
       "content_hash": "84492d6367d8023940381b46a02febe956e56cd7c50653793788ccf7c4108858"
     },
     {
+      "source": "entity-enricher",
+      "event_type": "entity.enriched",
+      "version": "2.0.0",
+      "path": "entity-enricher/entity.enriched.json",
+      "content_hash": "0ec034c0501924b0440dc4b0637dbd2d228d7c650276608ec8a395975bbc6187"
+    },
+    {
       "source": "sinexd.event_engine",
       "event_type": "batch.stats",
       "version": "2.2.0",
