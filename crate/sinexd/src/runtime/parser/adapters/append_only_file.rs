@@ -132,19 +132,28 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
             line_num += 1;
             let line_bytes = line.as_bytes().to_vec();
             let line_len = line_bytes.len() as u64;
+            let line_end = byte_offset as usize + line_bytes.len();
+            let terminator_len = if content.as_bytes()[line_end..].starts_with(b"\r\n") {
+                2
+            } else if content.as_bytes()[line_end..].starts_with(b"\n") {
+                1
+            } else {
+                0
+            };
+            let line_advance = line_len + terminator_len;
 
             if line_num < start_line {
-                byte_offset += line_len + 1; // +1 for newline
+                byte_offset += line_advance;
                 continue;
             }
 
             if byte_offset < start_offset {
-                byte_offset += line_len + 1;
+                byte_offset += line_advance;
                 continue;
             }
 
             if skip_empty && line.is_empty() {
-                byte_offset += line_len + 1;
+                byte_offset += line_advance;
                 continue;
             }
 
@@ -166,7 +175,7 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
                 metadata,
             });
 
-            byte_offset += line_len + 1;
+            byte_offset += line_advance;
         }
 
         Ok(stream::iter(records.into_iter().map(Ok)).boxed())
