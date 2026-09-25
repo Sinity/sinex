@@ -1688,6 +1688,22 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         "/source_file",
     )
     .await?;
+    add_email_export_disclosure_rule(
+        &ctx,
+        "email-export-material-preview",
+        r"raw_body_secret_[A-Za-z0-9_]+",
+        "<EMAIL_RAW_BODY>",
+        "/raw_message_preview",
+    )
+    .await?;
+    add_email_export_disclosure_rule(
+        &ctx,
+        "email-export-material-uri",
+        r"material_uri_secret_[A-Za-z0-9_.-]+",
+        "<EMAIL_MATERIAL_URI>",
+        "/source_uri",
+    )
+    .await?;
 
     seed_email_projection_message(
         &ctx,
@@ -1697,7 +1713,12 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
             "folder": "INBOX",
             "source_file": "source_file_secret_maildir.eml",
             "raw_material_id": "raw_email_secret_material_001",
-            "mailbox_format": "rfc822",
+            "mailbox_format": "imap-provider",
+            "provider_material": {
+                "source": "imap_provider_material",
+                "source_uri": "material_uri_secret_message_001",
+                "raw_message_preview": "raw_body_secret_message_001"
+            },
             "subject": "EMAIL_SUBJECT_SECRET_board_packet",
             "from": ["sender@example.test"],
             "to": ["recipient_secret_private@example.test"],
@@ -1731,7 +1752,12 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
                 "folder": "INBOX",
                 "source_file": source_file,
                 "raw_material_id": material,
-                "mailbox_format": "rfc822",
+                "mailbox_format": "imap-provider",
+                "provider_material": {
+                    "source": "imap_provider_material",
+                    "source_uri": format!("material_uri_secret_message_{:03}", index + 2),
+                    "raw_message_preview": format!("raw_body_secret_message_{:03}", index + 2)
+                },
                 "subject": subject,
                 "from": ["sender@example.test"],
                 "to": [recipient],
@@ -1753,6 +1779,7 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
                 "scope": {
                     "source_id": "email.mailbox",
                     "mode_id": "source:email.mailbox",
+                    "include_material": true,
                     "output_path": output_path.to_string_lossy()
                 },
             }),
@@ -1780,6 +1807,12 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         "recipient_secret_private_003@example.test",
         "raw_email_secret_material_003",
         "source_file_secret_maildir_003.eml",
+        "raw_body_secret_message_001",
+        "raw_body_secret_message_002",
+        "raw_body_secret_message_003",
+        "material_uri_secret_message_001",
+        "material_uri_secret_message_002",
+        "material_uri_secret_message_003",
     ] {
         assert!(
             !scope_json.contains(token),
@@ -1801,11 +1834,22 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         assert!(message_json.contains("<EMAIL_MATERIAL>"));
         assert!(message_json.contains("<EMAIL_SOURCE_FILE>"));
     }
+    let material_exports = exported["material_exports"]
+        .as_array()
+        .expect("mailbox export material_exports array");
+    assert_eq!(material_exports.len(), 3);
+    for material in material_exports {
+        let material_json = serde_json::to_string(material)?;
+        assert!(material_json.contains("<EMAIL_RAW_BODY>"));
+        assert!(material_json.contains("<EMAIL_MATERIAL_URI>"));
+    }
     for replacement in [
         "<EMAIL_SUBJECT>",
         "<EMAIL_RECIPIENT>",
         "<EMAIL_MATERIAL>",
         "<EMAIL_SOURCE_FILE>",
+        "<EMAIL_RAW_BODY>",
+        "<EMAIL_MATERIAL_URI>",
     ] {
         assert!(
             exported_json.contains(replacement),
@@ -1813,11 +1857,17 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         );
     }
     assert_eq!(
-        exported["disclosure_policy"]["posture"], "metadata_only",
-        "export should remain a metadata-only artifact after disclosure"
+        exported["disclosure_policy"]["posture"], "metadata_with_material_evidence",
+        "export should report its material evidence posture"
     );
-    assert_eq!(exported["disclosure_policy"]["body"], "omitted");
-    assert_eq!(exported["disclosure_policy"]["attachment_bytes"], "omitted");
+    assert_eq!(
+        exported["disclosure_policy"]["body"],
+        "raw_message_preview_disclosed"
+    );
+    assert_eq!(
+        exported["disclosure_policy"]["attachment_bytes"],
+        "materialized_attachment_events_disclosed"
+    );
     assert_eq!(exported["messages"][0]["body_bytes"], 4096);
     assert_eq!(scope["export_disclosure"]["redacted"], true);
     assert!(
@@ -1834,6 +1884,8 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         "db.email-export-recipient",
         "db.email-export-material",
         "db.email-export-source-file",
+        "db.email-export-material-preview",
+        "db.email-export-material-uri",
     ] {
         assert!(
             scope["export_disclosure"]["caveats"]
