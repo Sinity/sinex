@@ -41,6 +41,74 @@ async fn hyprland_command_socket_dispatches_typed_workspace_command() -> TestRes
 }
 
 #[sinex_test]
+async fn hyprland_command_socket_rejects_oversized_response() -> TestResult<()> {
+    let temp = tempfile::Builder::new()
+        .prefix("sinex-hypr-large-")
+        .tempdir_in("/tmp")?;
+    let socket_path = temp.path().join("hyprland-command.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = String::new();
+        stream.read_to_string(&mut request).await?;
+        stream.write_all(&vec![b'x'; 4097]).await?;
+        Ok::<_, std::io::Error>(request)
+    });
+    let command = HyprlandWorkspaceCommand {
+        dispatch: HyprlandDispatch::Workspace,
+        workspace_id: 4,
+    };
+
+    let result = dispatch_hyprland_workspace_command(&socket_path, &command).await;
+    let request = server.await??;
+    assert_eq!(request, "dispatch workspace 4");
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[sinex_test]
+async fn hyprland_command_socket_times_out_while_waiting_for_response() -> TestResult<()> {
+    let temp = tempfile::Builder::new()
+        .prefix("sinex-hypr-hang-")
+        .tempdir_in("/tmp")?;
+    let socket_path = temp.path().join("hyprland-command.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = String::new();
+        stream.read_to_string(&mut request).await?;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        Ok::<_, std::io::Error>(request)
+    });
+    let command = HyprlandWorkspaceCommand {
+        dispatch: HyprlandDispatch::Workspace,
+        workspace_id: 4,
+    };
+
+    let result = dispatch_hyprland_workspace_command(&socket_path, &command).await;
+    assert!(result.is_err());
+    server.abort();
+    Ok(())
+}
+
+#[sinex_test]
+async fn hyprland_command_socket_rejects_invalid_path_before_connect() -> TestResult<()> {
+    let socket_path = PathBuf::from("/tmp/sinex\0hyprland.sock");
+    let command = HyprlandWorkspaceCommand {
+        dispatch: HyprlandDispatch::Workspace,
+        workspace_id: 4,
+    };
+
+    assert!(
+        dispatch_hyprland_workspace_command(&socket_path, &command)
+            .await
+            .is_err()
+    );
+    assert!(!probe_hyprland_command_socket(&socket_path).await.available);
+    Ok(())
+}
+
+#[sinex_test]
 async fn hyprland_command_socket_probe_reports_connectable_socket() -> TestResult<()> {
     let temp = tempfile::Builder::new()
         .prefix("sinex-hypr-")

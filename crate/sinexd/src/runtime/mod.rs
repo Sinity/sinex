@@ -117,7 +117,8 @@ pub use file_tailer::{
 pub use health_reporter::{EmitTracker, HealthMetrics, HealthReporter, HealthThresholds};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 pub use hyprland::{
-    HyprlandCommandSocketProbe, HyprlandCommandSocketResponse, dispatch_hyprland_workspace_command,
+    HyprlandCommandSocketConnection, HyprlandCommandSocketProbe, HyprlandCommandSocketResponse,
+    connect_hyprland_command_socket, dispatch_hyprland_workspace_command,
     probe_hyprland_command_socket, resolve_hyprland_command_socket_path,
 };
 pub use input_shapes::{

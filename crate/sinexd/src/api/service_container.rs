@@ -7,11 +7,16 @@ use crate::api::replay_control::{
     ReplayControlClient, ReplayControlError, spawn_replay_control_with_material_authority,
 };
 use crate::event_engine::policy::PolicyEngine;
+use crate::runtime::NatsPublisher;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
+use futures::StreamExt;
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_db::validation::{EventValidator, SchemaCompilationFailure};
 use sinex_db::{DbPoolExt, create_pool_with_config};
+use sinex_primitives::events::{Event, admission::EventIntent};
+use sinex_primitives::nats::JetStreamEventLane;
+use sinex_primitives::{JsonValue, transport};
 use sinex_primitives::{
     Result as SinexResult, RuntimeLivenessAggregate, RuntimeLivenessPolicy, Timestamp,
     coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
@@ -130,6 +135,147 @@ async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> SinexRe
 }
 
 impl ServiceContainer {
+    /// Publish one event through normal admission and wait until this exact
+    /// event is visible on the confirmed activity stream. The observer is
+    /// armed before publication, so a fast event-engine confirmation cannot
+    /// race past the caller.
+    pub async fn publish_and_confirm_activity_event(
+        &self,
+        event: Event<JsonValue>,
+        source_id: &str,
+    ) -> SinexResult<Event<JsonValue>> {
+        const CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(15);
+
+        let event_id = event.id.ok_or_else(|| {
+            SinexError::invalid_state("confirmed handoff requires a preassigned event id")
+        })?;
+        let client = self.nats_client.as_ref().ok_or_else(|| {
+            SinexError::service("NATS is required to publish an instruction event")
+        })?;
+        let namespace = self.config.namespace.as_deref();
+        let env = &self.env;
+        let base_stream = env.nats_stream_name_with_namespace(namespace, "SINEX_RAW_EVENTS");
+        let topology = sinex_primitives::nats::JetStreamTopology::for_lane(
+            env,
+            base_stream,
+            "rpc-confirmed-handoff".to_string(),
+            namespace,
+            JetStreamEventLane::Activity,
+        );
+        let provenance = if event.is_synthesized_event() {
+            "synthesized"
+        } else {
+            "material"
+        };
+        let subject = format!(
+            "{}{}.{}.{}",
+            topology.confirmed_events_prefix,
+            provenance,
+            sinex_primitives::environment::SinexEnvironment::nats_subject_token(
+                event.source.as_str()
+            ),
+            sinex_primitives::environment::SinexEnvironment::nats_subject_token(
+                event.event_type.as_str()
+            ),
+        );
+        let js = async_nats::jetstream::new(client.clone());
+        let stream = js
+            .get_stream(topology.confirmed_events_stream.as_str())
+            .await
+            .map_err(|error| {
+                SinexError::network("confirmed activity stream is unavailable")
+                    .with_std_error(&error)
+            })?;
+        // Ephemeral consumer with DeliverPolicy::New is the registration
+        // barrier: messages published before it exists cannot satisfy the
+        // handoff, and this exact subject narrows delivery to the event's lane,
+        // provenance, source, and event type.
+        let mut consumer = stream
+            .create_consumer(async_nats::jetstream::consumer::pull::Config {
+                deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
+                ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
+                filter_subject: subject,
+                inactive_threshold: Duration::from_secs(30),
+                ..Default::default()
+            })
+            .await
+            .map_err(|error| {
+                SinexError::network("failed to arm confirmed-event observer").with_std_error(&error)
+            })?;
+        let consumer_name = consumer
+            .info()
+            .await
+            .map_err(|error| {
+                SinexError::network("failed to identify confirmed-event observer")
+                    .with_source(error.to_string())
+            })?
+            .name
+            .clone();
+        let publisher =
+            NatsPublisher::with_namespace(client.clone(), self.config.namespace.clone());
+        let intent = EventIntent::new(
+            source_id,
+            "instructions-rpc",
+            "1.0.0",
+            vec![event],
+            sinex_primitives::events::builder::get_hostname(),
+        );
+        let publish_result = publisher
+            .publish_intent(&intent, transport::Class::Critical)
+            .await;
+        if let Err(error) = publish_result {
+            let _ = stream.delete_consumer(&consumer_name).await;
+            return Err(error);
+        }
+
+        let deadline = tokio::time::Instant::now() + CONFIRMATION_TIMEOUT;
+        let result = async {
+            let mut messages = consumer.messages().await.map_err(|error| {
+                SinexError::network("failed to read confirmed-event observer")
+                    .with_std_error(&error)
+            })?;
+            loop {
+                let next = tokio::time::timeout_at(deadline, messages.next())
+                    .await
+                    .map_err(|_| {
+                        SinexError::network("timed out waiting for exact confirmed instruction")
+                            .with_context("event_id", event_id.to_string())
+                    })?;
+                let Some(message) = next else {
+                    return Err(SinexError::network(
+                        "confirmed-event observer ended before instruction confirmation",
+                    ));
+                };
+                let message = message.map_err(|error| {
+                    SinexError::network("confirmed-event delivery failed").with_std_error(&error)
+                })?;
+                let confirmed: Event<JsonValue> = serde_json::from_slice(&message.payload)
+                    .map_err(|error| {
+                        SinexError::serialization("confirmed-event payload is invalid")
+                            .with_std_error(&error)
+                    })?;
+                let matches = confirmed.id == Some(event_id);
+                message.ack().await.map_err(|error| {
+                    SinexError::network("failed to acknowledge confirmed event")
+                        .with_source(error.to_string())
+                })?;
+                if matches {
+                    return Ok(confirmed);
+                }
+            }
+        }
+        .await;
+        let delete_result = stream.delete_consumer(&consumer_name).await;
+        match (result, delete_result) {
+            (Ok(confirmed), Ok(_)) => Ok(confirmed),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(SinexError::network(
+                "failed to retire confirmed-event observer after receipt",
+            )
+            .with_source(error.to_string())),
+        }
+    }
+
     /// Create a service container from a database URL (test convenience).
     ///
     /// Loads the normal environment-backed gateway configuration, then forces the

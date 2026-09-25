@@ -171,6 +171,23 @@ pub struct ActuationAttemptPayload {
     pub attempted_at: Timestamp,
 }
 
+/// Durable idempotency receipt written after connecting to the actuator and
+/// immediately before sending a command that may change desktop state.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "runtime.instruction",
+    event_type = "actuation.dispatch_started",
+    version = "1.0.0"
+)]
+pub struct ActuationDispatchReceiptPayload {
+    pub instruction_id: Uuid,
+    pub idempotency_key: String,
+    pub actuator_id: String,
+    pub capability: String,
+    pub command_summary: HyprlandCommandSummary,
+    pub dispatch_started_at: Timestamp,
+}
+
 /// Reconciler output that ties desired state to ordinary observation events.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(
