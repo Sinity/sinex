@@ -36,6 +36,19 @@ fn to_zoned(ts: Timestamp) -> Option<Zoned> {
         .ok()
 }
 
+/// Return the wall-clock hour for `ts` in an explicit IANA timezone.
+///
+/// This is useful for deterministic timezone coverage while production callers
+/// continue to use [`operator_tz`] as their single configured authority.
+#[must_use]
+pub fn civil_hour_of_day(ts: Timestamp, tz_id: &str) -> Option<u8> {
+    JiffTimestamp::from_nanosecond(ts.inner().unix_timestamp_nanos())
+        .ok()?
+        .in_tz(tz_id)
+        .ok()
+        .map(|zoned| zoned.hour() as u8)
+}
+
 fn from_zoned(zoned: &Zoned, fallback: Timestamp) -> Timestamp {
     OffsetDateTime::from_unix_timestamp_nanos(zoned.timestamp().as_nanosecond())
         .map(Timestamp::from)

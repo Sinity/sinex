@@ -72,7 +72,7 @@ an interpretation`. Time-joins run on overlapping/adjacent `ts_orig` intervals
 | `interruption.event` | notification ⊕ focus-change within Δt | cheap, demoable; both inputs live |
 | `screen.grounding` | screen-OCR text ⊕ active-window interval | aligns "what was on screen" to attention; media lane exists |
 | `machine.context` overlay | state intervals ⊕ anything | "that build was slow because swap storm" |
-| `routine.baseline` / `anomaly.event` | per-hour-of-week aggregates over attention.stream → deviation events | typed data products, **not behavioral narratives** (system computes, operator interprets) |
+| `routine.baseline` / `anomaly.event` | per-hour-of-week aggregates over attention.stream, with `entity-enricher` active-hour histograms as entity-level input → deviation events | typed data products, **not behavioral claims**; entity enrichment supplies local-hour statistics, while the system computes and the operator interprets |
 | `plan.vs.actual` | calendar intervals ⊕ attention.stream; predictions ⋈ resolutions; instructions ⋈ expectations | the intentional loop closed with evidence |
 | `change.episode` | agent session ⊕ xtask history ⊕ git ⊕ CI | "this change: intent, toil, verification, outcome" — the self-hosting derivation |
 | `consumption.episode` | visit+dwell ⊕ (crawled content ⋈ topic) ⊕ raindrop save ⊕ later reference | "read → saved → used" chains; needs browser content |

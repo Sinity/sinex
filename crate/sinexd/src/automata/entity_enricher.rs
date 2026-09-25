@@ -108,7 +108,7 @@ pub const ENTITY_ENRICHER_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
         projection_kind: None,
         artifact_kind: None,
         proposal_kind: None,
-        semantics_version: "1.0.0",
+        semantics_version: "2.0.0",
         input_eligibility: InputEligibility::ExplicitOnly,
         default_support: ClaimSupportTemplate::new(
             SupportLevel::Heuristic,
@@ -167,7 +167,7 @@ impl ScopeReconciler for EntityEnricher {
         let entity_key = scope_key.to_string();
 
         // ── Update per-entity statistics ─────────────────────────────────
-        let hour = hour_of_day(now);
+        let hour = operator_local_hour(now);
 
         // sinex-audit-entity-unbounded-maps: bound the map before inserting
         // a genuinely new entity at capacity. See `MAX_TRACKED_ENTITIES` doc.
@@ -265,6 +265,7 @@ impl ScopeReconciler for EntityEnricher {
                 last_seen: stats.last_seen,
                 occurrence_count: stats.occurrence_count,
                 active_hours: stats.active_hours.clone(),
+                tz_id: crate::automata::civil::operator_tz().to_string(),
             };
 
             let declaration = &ENTITY_ENRICHER_OUTPUT_DECLARATIONS[0];
@@ -272,7 +273,7 @@ impl ScopeReconciler for EntityEnricher {
             let output =
                 DerivedOutput::reconciled(payload, now, source_event_ids, entity_key.clone())
                     .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
-                    .with_semantics_version("1.0.0")
+                    .with_semantics_version("2.0.0")
                     .with_derived_equivalence_key(declaration, format!("{entity_id}:{now}"))
                     .with_declaration_id(declaration.declaration_id)
                     .with_product_class(declaration.product_class)
@@ -295,12 +296,17 @@ pub type EntityEnricherRuntime = ScopeReconcilerAdapter<EntityEnricher>;
 
 // ── Helper functions ────────────────────────────────────────────────────────
 
-/// Extract the hour-of-day (0-23) from a timestamp.
-fn hour_of_day(ts: Timestamp) -> u8 {
-    // Use the raw seconds-since-epoch to compute the hour.
-    let total_seconds = ts.unix_timestamp();
-    let hours = (total_seconds / 3600) % 24;
-    hours as u8
+/// Extract the operator-local civil hour (0-23) from a timestamp.
+fn operator_local_hour(ts: Timestamp) -> u8 {
+    // Keep the canonical civil conversion/fallback behavior, and read the
+    // local calendar hour directly so the second occurrence of a fall-back
+    // hour remains in the same 0-23 bucket.
+    crate::automata::civil::civil_hour_of_day(ts, crate::automata::civil::operator_tz())
+        .unwrap_or_else(|| {
+            let hour_start = crate::automata::civil::floor_to_civil_hour(ts);
+            let day_start = crate::automata::civil::floor_to_civil_day(ts);
+            ((hour_start.unix_timestamp() - day_start.unix_timestamp()) / 3600) as u8
+        })
 }
 
 /// Map `entity_type` to a coarse `EntityCategory`.
