@@ -98,6 +98,8 @@ pub(crate) struct TlsCheck {
     pub ca_exists: bool,
     pub server_cert_exists: bool,
     pub client_cert_exists: bool,
+    #[serde(skip)]
+    mtls_required: bool,
     /// Days until server cert expires (None if cert missing or unreadable)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_expires_days: Option<i64>,
@@ -229,9 +231,37 @@ const RA_ACTION_CLASSIFY_UNCATEGORIZED_STDERR: &str =
 impl TlsCheck {
     fn is_healthy(&self) -> bool {
         self.error.is_none()
-            && !self.server_expired.unwrap_or(false)
-            && self.key_matches.unwrap_or(true)
+            && self.server_cert_exists
+            && self.server_expired == Some(false)
+            && self.key_matches == Some(true)
+            && (!self.mtls_required || self.ca_exists)
     }
+}
+
+fn tls_requires_mtls(listen_address: &str, require_client_tls: bool) -> Result<bool> {
+    let host = if let Ok(address) = listen_address.parse::<std::net::SocketAddr>() {
+        address.ip().to_string()
+    } else if let Some((host, port)) = listen_address.rsplit_once(':') {
+        port.parse::<u16>().wrap_err_with(|| {
+            format!("invalid TCP port in SINEX_API_TCP_LISTEN={listen_address:?}")
+        })?;
+        let host = host.trim_matches(['[', ']']).to_string();
+        if host.is_empty() {
+            return Err(eyre!(
+                "empty host in SINEX_API_TCP_LISTEN={listen_address:?}"
+            ));
+        }
+        host
+    } else {
+        return Err(eyre!(
+            "invalid SINEX_API_TCP_LISTEN={listen_address:?}; expected host:port"
+        ));
+    };
+    let is_loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback());
+    Ok(require_client_tls || !is_loopback)
 }
 
 fn resolve_tls_artifact(dir: &Path, candidates: &[&str]) -> Option<PathBuf> {
@@ -258,12 +288,56 @@ fn detect_tls_check() -> Option<TlsCheck> {
         None
     }?;
 
+    let listen_address =
+        std::env::var("SINEX_API_TCP_LISTEN").unwrap_or_else(|_| "127.0.0.1:9999".to_string());
+    let (require_client_tls, require_client_tls_error) =
+        match std::env::var("SINEX_API_REQUIRE_CLIENT_TLS")
+            .ok()
+            .as_deref()
+        {
+            None | Some("0") | Some("false") | Some("FALSE") => (false, None),
+            Some("1") | Some("true") | Some("TRUE") => (true, None),
+            Some(value) => (
+                false,
+                Some(format!(
+                    "invalid SINEX_API_REQUIRE_CLIENT_TLS={value:?}; expected 0/1 or false/true"
+                )),
+            ),
+        };
+    let client_ca_path = std::env::var("SINEX_API_TLS_CLIENT_CA")
+        .ok()
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+
+    Some(detect_tls_check_in(
+        active_dir,
+        &listen_address,
+        require_client_tls,
+        require_client_tls_error,
+        client_ca_path.as_deref(),
+    ))
+}
+
+fn detect_tls_check_in(
+    active_dir: &Path,
+    listen_address: &str,
+    require_client_tls: bool,
+    require_client_tls_error: Option<String>,
+    client_ca_path: Option<&Path>,
+) -> TlsCheck {
     let server_cert_path = resolve_tls_artifact(active_dir, &["server.pem"]);
     let server_key_path = resolve_tls_artifact(active_dir, &["server-key.pem"]);
     let client_cert_exists = resolve_tls_artifact(active_dir, &["client.pem"]).is_some();
-    let ca_exists = resolve_tls_artifact(active_dir, &["ca.pem"]).is_some();
+    let tls_mode = tls_requires_mtls(listen_address, require_client_tls);
+    let mtls_required = tls_mode.as_ref().copied().unwrap_or(false);
+    let tls_mode_error =
+        require_client_tls_error.or_else(|| tls_mode.err().map(|error| error.to_string()));
+    let ca_path = if mtls_required { client_ca_path } else { None };
+    let ca_exists = ca_path.as_deref().map(Path::exists).unwrap_or_else(|| {
+        !mtls_required && resolve_tls_artifact(active_dir, &["ca.pem"]).is_some()
+    });
 
-    let (server_expires_days, server_expired, key_matches, error) =
+    let (server_expires_days, server_expired, key_matches, validation_error) =
         if let Some(cert_path) = server_cert_path.as_ref() {
             let opts = crate::tls::TlsCheckOptions {
                 cert_path: Some(cert_path.clone()),
@@ -284,15 +358,22 @@ fn detect_tls_check() -> Option<TlsCheck> {
             (None, None, None, None)
         };
 
-    Some(TlsCheck {
+    TlsCheck {
         ca_exists,
         server_cert_exists: server_cert_path.is_some(),
         client_cert_exists,
+        mtls_required,
         server_expires_days,
         server_expired,
         key_matches,
-        error,
-    })
+        error: tls_mode_error.or(validation_error),
+    }
+}
+
+fn apply_tls_check_to_overall(all_ok: &mut bool, tls_check: Option<&TlsCheck>) {
+    if tls_check.is_some_and(|check| !check.is_healthy()) {
+        *all_ok = false;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -433,16 +514,27 @@ where
         };
     }
 
-    let extensions = String::from_utf8_lossy(&output.stdout)
+    let extensions: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(ToString::to_string)
         .collect();
 
+    let missing = ["vector", "timescaledb"]
+        .into_iter()
+        .filter(|required| !extensions.iter().any(|extension| extension == required))
+        .collect::<Vec<_>>();
+    let error = (!missing.is_empty()).then(|| {
+        format!(
+            "Postgres is reachable, but required extensions are not installed: {}",
+            missing.join(", ")
+        )
+    });
+
     PostgresExtensionsProbe {
         extensions: Some(extensions),
-        error: None,
+        error,
     }
 }
 
@@ -1426,9 +1518,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
 
     // Check TLS certificates from env vars or .sinex/tls/
     let tls_check = detect_tls_check();
-    if tls_check.as_ref().is_some_and(|check| !check.is_healthy()) {
-        all_ok = false;
-    }
+    apply_tls_check_to_overall(&mut all_ok, tls_check.as_ref());
 
     let pipeline_smoke = pipeline_smoke_check(pipelines, &mut all_ok);
 
