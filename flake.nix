@@ -1476,6 +1476,7 @@
                 fenixPkgs.rust-src
 
                 # Cargo development tools
+                ast-grep
                 cargo-nextest
                 cargo-insta
                 cargo-llvm-cov

@@ -34,8 +34,8 @@ cache = "tree+environment"
 timeout_seconds = 7200
 
 [operations.verify_quick]
-description = "Check the Nix flake format without starting development services"
-exec = ["nix", "fmt", "--", "--check", "flake.nix"]
+description = "Check changed Rust formatting, blocking ast-grep rules, and Git diff whitespace without compiling"
+exec = ["bash", "xtask/scripts/verify-quick.sh"]
 pool = "normal"
 result = "exit"
 cache = "tree+environment"
