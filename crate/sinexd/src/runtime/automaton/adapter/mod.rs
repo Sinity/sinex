@@ -27,7 +27,7 @@ use sinex_primitives::env as shared_env;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::TimeRange;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{Id, JsonValue, Pagination, Uuid};
+use sinex_primitives::{JsonValue, Pagination, Uuid};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -421,33 +421,19 @@ fn restore_resume_position<S>(persisted: &mut PersistedState<S>, checkpoint: &Ch
     }
 }
 
-fn historical_resume_position(
-    from: &Checkpoint,
-    end_time: Timestamp,
-) -> RuntimeResult<(TimeRange, Option<sinex_primitives::Cursor>)> {
+fn historical_resume_position(from: &Checkpoint, end_time: Timestamp) -> RuntimeResult<TimeRange> {
     let full_range = || {
         TimeRange::new(None, Some(end_time))
             .map_err(|e| SinexError::validation(format!("Invalid time range: {e}")))
     };
 
     match from {
-        Checkpoint::None => Ok((full_range()?, None)),
-        Checkpoint::Internal { event_id, .. } => Ok((
-            full_range()?,
-            Some(sinex_primitives::Cursor::after_id(Id::from_uuid(*event_id))),
-        )),
+        Checkpoint::None | Checkpoint::Internal { .. } => full_range(),
         Checkpoint::Stream {
-            event_id: Some(event_id),
-            ..
-        } => Ok((
-            full_range()?,
-            Some(sinex_primitives::Cursor::after_id(Id::from_uuid(*event_id))),
-        )),
-        Checkpoint::Timestamp { timestamp, .. } => Ok((
-            TimeRange::new(Some(*timestamp), Some(end_time))
-                .map_err(|e| SinexError::validation(format!("Invalid time range: {e}")))?,
-            None,
-        )),
+            event_id: Some(_), ..
+        } => full_range(),
+        Checkpoint::Timestamp { timestamp, .. } => TimeRange::new(Some(*timestamp), Some(end_time))
+            .map_err(|e| SinexError::validation(format!("Invalid time range: {e}"))),
         Checkpoint::Stream {
             message_id,
             event_id: None,
@@ -650,6 +636,20 @@ where
             .await;
         let output_count = outputs.len();
         let processed = (self.persisted_state.events_processed - events_processed_before) as usize;
+
+        // The confirmed consumer treats an Ok result as safe to ACK. A
+        // pending or failed output receipt leaves an uncommitted input in the
+        // bridge batch, so report an error and make the delivery retryable.
+        // Lifecycle class prevents the runner's per-event DLQ fallback from
+        // turning a temporary durability gap into a terminal settlement.
+        if processed != batch_size {
+            return Err(SinexError::lifecycle(
+                "automaton bridge batch has inputs without durable settlement",
+            )
+            .with_context("automaton", self.automaton.name())
+            .with_context("committed_inputs", processed.to_string())
+            .with_context("batch_size", batch_size.to_string()));
+        }
 
         debug!(
             automaton = %self.automaton.name(),
