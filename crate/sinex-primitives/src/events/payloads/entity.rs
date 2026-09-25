@@ -127,12 +127,13 @@ pub enum EntityCategory {
 ///
 /// The entity enricher (Stage 4) consumes `entity.resolved` events and emits
 /// periodically enriched snapshots that include first/last seen timestamps,
-/// occurrence frequency, an active-hours histogram, and a refined category.
+/// occurrence frequency, an operator-local civil-hour histogram, the timezone
+/// used to interpret it, and a refined category.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(
     source = "entity-enricher",
     event_type = "entity.enriched",
-    version = "1.0.0"
+    version = "2.0.0"
 )]
 pub struct EntityEnrichedPayload {
     /// The resolved entity identity this enrichment snapshot describes.
@@ -151,6 +152,8 @@ pub struct EntityEnrichedPayload {
     pub occurrence_count: u64,
     /// Active-hours histogram: maps hour-of-day (0-23) to occurrence count.
     pub active_hours: BTreeMap<u8, u64>,
+    /// IANA timezone used to interpret `active_hours` (operator-local civil time).
+    pub tz_id: String,
 }
 
 // ============================================================================
@@ -208,6 +211,7 @@ impl EntityEnrichedPayload {
             last_seen: crate::temporal::now(),
             occurrence_count: 1,
             active_hours: BTreeMap::new(),
+            tz_id: "UTC".into(),
         }
     }
 }

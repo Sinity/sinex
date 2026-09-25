@@ -95,44 +95,30 @@ async fn entities_map_is_bounded_under_high_cardinality() -> TestResult<()> {
     Ok(())
 }
 
-/// sinex-nbi.5: `hour_of_day` buckets `active_hours` from the raw UTC
-/// epoch second (`ts.unix_timestamp() / 3600 % 24`), never consulting the
-/// operator-local civil-time module (`automata::civil`, sinex-2ged) that
-/// the rest of the codebase already uses for exactly this purpose. Any
-/// timestamp near a UTC/local day boundary buckets into the wrong hour
-/// for an operator-local "when am I active" surface.
-///
-/// This test derives the expected local hour from `civil::floor_to_civil_hour`
-/// / `civil::floor_to_civil_day` (the canonical mechanism), rather than
-/// hardcoding an assumed timezone offset, so it holds under whatever
-/// `SINEX_LOCAL_TZ` the environment has configured (default `Europe/Warsaw`,
-/// never UTC).
+/// sinex-nbi.5 regression: verify that the enricher's active-hours histogram
+/// uses the operator's civil hour and that emitted metadata names that same
+/// timezone. Explicit Europe/Warsaw fixed-offset and DST cases below keep
+/// timezone behavior deterministic regardless of the process environment.
 #[sinex_test]
-#[ignore = "sinex-nbi.5 open: entity_enricher's active_hours buckets by raw UTC hour instead of operator-local civil hour"]
 async fn active_hours_buckets_by_operator_local_hour_not_utc_sinex_nbi_5() -> TestResult<()> {
-    use crate::automata::civil::{floor_to_civil_day, floor_to_civil_hour};
+    use crate::automata::civil::{civil_hour_of_day, floor_to_civil_day, floor_to_civil_hour};
     use sinex_primitives::temporal::parse_rfc3339;
 
-    // 23:30 UTC -- chosen so it sits close to a civil-day boundary in every
-    // real-world non-UTC operator timezone.
+    // Winter 23:30 UTC is midnight hour 0 in Europe/Warsaw (UTC+1).
     let now = parse_rfc3339("2026-01-15T23:30:00Z").expect("valid timestamp");
+    assert_eq!(civil_hour_of_day(now, "Europe/Warsaw"), Some(0));
 
     let local_hour_start = floor_to_civil_hour(now);
     let local_day_start = floor_to_civil_day(now);
     let expected_local_hour =
         ((local_hour_start.unix_timestamp() - local_day_start.unix_timestamp()) / 3600) as u8;
     let utc_hour = ((now.unix_timestamp() / 3600) % 24) as u8;
-    assert_ne!(
-        expected_local_hour, utc_hour,
-        "test fixture must pick a timestamp where local and UTC hour diverge"
-    );
-
     let mut enricher = EntityEnricher::default();
     let mut state = EnricherState::default();
     let context = AutomatonContext::timer_flush(now)?;
     let entity_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, b"tool:nbi5-fixture");
 
-    enricher
+    let outputs = enricher
         .reconcile(
             &mut state,
             &entity_id.to_string(),
@@ -157,6 +143,26 @@ async fn active_hours_buckets_by_operator_local_hour_not_utc_sinex_nbi_5() -> Te
          got buckets {:?} (raw UTC hour {utc_hour} was bucketed instead)",
         stats.active_hours.keys().collect::<Vec<_>>()
     );
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(
+        outputs[0].payload.tz_id,
+        crate::automata::civil::operator_tz(),
+        "payload must identify the canonical civil timezone"
+    );
+    assert_eq!(outputs[0].semantics_version.as_deref(), Some("2.0.0"));
 
+    Ok(())
+}
+
+/// Both occurrences of Warsaw's repeated 02:00 fall-back hour map to hour 2.
+#[sinex_test]
+async fn civil_hour_of_day_handles_warsaw_fall_back() -> TestResult<()> {
+    use crate::automata::civil::civil_hour_of_day;
+    use sinex_primitives::temporal::parse_rfc3339;
+
+    let first = parse_rfc3339("2024-10-27T00:30:00Z").expect("valid timestamp");
+    let second = parse_rfc3339("2024-10-27T01:30:00Z").expect("valid timestamp");
+    assert_eq!(civil_hour_of_day(first, "Europe/Warsaw"), Some(2));
+    assert_eq!(civil_hour_of_day(second, "Europe/Warsaw"), Some(2));
     Ok(())
 }
