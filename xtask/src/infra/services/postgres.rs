@@ -128,6 +128,73 @@ fn utf8_path<'a>(path: &'a Path, label: &str) -> Result<&'a str> {
         .ok_or_else(|| color_eyre::eyre::eyre!("{label} must be valid UTF-8: {}", path.display()))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostmasterPidFileState {
+    Missing,
+    Stale { pid: u32 },
+    Running { pid: u32 },
+}
+
+/// Classify a postmaster.pid without signaling the recorded PID or modifying
+/// the cluster. On Linux, a live PostgreSQL executable means we must leave the
+/// cluster alone; a missing process or a reused PID belonging to another
+/// executable is stale metadata for PostgreSQL to validate during startup.
+fn classify_postmaster_pid_file(
+    contents: &str,
+    process_executable: Option<&Path>,
+) -> Result<PostmasterPidFileState> {
+    let pid = parse_postmaster_pid(contents)?;
+
+    let is_postgres = process_executable
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name == "postgres" || name == "postmaster" || name.starts_with("postgres (deleted)")
+        });
+
+    Ok(if is_postgres {
+        PostmasterPidFileState::Running { pid }
+    } else {
+        PostmasterPidFileState::Stale { pid }
+    })
+}
+
+fn parse_postmaster_pid(contents: &str) -> Result<u32> {
+    contents
+        .lines()
+        .next()
+        .and_then(|line| line.trim().parse::<u32>().ok())
+        .filter(|pid| *pid > 0)
+        .ok_or_else(|| color_eyre::eyre::eyre!("postmaster.pid does not contain a valid PID"))
+}
+
+fn inspect_postmaster_pid_file(data_dir: &Path) -> Result<PostmasterPidFileState> {
+    let pid_file = data_dir.join("postmaster.pid");
+    let contents = match fs::read_to_string(&pid_file) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PostmasterPidFileState::Missing);
+        }
+        Err(error) => {
+            return Err(error).wrap_err_with(|| format!("failed to read {}", pid_file.display()));
+        }
+    };
+    let pid = parse_postmaster_pid(&contents)
+        .wrap_err_with(|| format!("invalid {}", pid_file.display()))?;
+
+    // Reading /proc/<pid>/exe is observational: it does not send a signal to
+    // the PID. Fail closed on errors other than process disappearance so an
+    // unreadable live process is never mistaken for stale metadata.
+    let process_executable = match fs::read_link(format!("/proc/{pid}/exe")) {
+        Ok(executable) => Some(executable),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error).wrap_err_with(|| format!("failed to inspect PostgreSQL PID {pid}"));
+        }
+    };
+    classify_postmaster_pid_file(&contents, process_executable.as_deref())
+}
+
 impl PostgresManager {
     #[must_use]
     pub fn new(config: PostgresConfig) -> Self {
@@ -206,12 +273,22 @@ impl PostgresManager {
                 self.config.port
             );
         }
-        if self.config.data_dir.join("postmaster.pid").exists() {
-            bail!(
-                "PostgreSQL state {} has a postmaster.pid but lease port {} is not ready; AgentCTL owns cancellation and cleanup, so xtask will not signal or remove it",
+        match inspect_postmaster_pid_file(&self.config.data_dir)? {
+            PostmasterPidFileState::Running { pid } => bail!(
+                "PostgreSQL state {} has a live postmaster.pid for PID {pid}, but lease port {} is not ready; AgentCTL owns cancellation and cleanup, so xtask will not signal or remove it",
                 self.config.data_dir.display(),
                 self.config.port
-            );
+            ),
+            PostmasterPidFileState::Missing => {}
+            PostmasterPidFileState::Stale { pid } => {
+                // Do not remove the file: PostgreSQL performs its own stale
+                // lock-file validation as part of pg_ctl start.
+                if verbose {
+                    println!(
+                        "Found stale PostgreSQL PID metadata for PID {pid}; asking PostgreSQL to validate it during startup"
+                    );
+                }
+            }
         }
 
         if verbose {

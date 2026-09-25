@@ -20,6 +20,61 @@ fn test_manager(root: &tempfile::TempDir) -> PostgresManager {
 }
 
 #[sinex_test]
+async fn stale_postmaster_pid_file_allows_postgres_startup_validation() -> TestResult<()> {
+    assert_eq!(
+        classify_postmaster_pid_file("2127774\n/data/pg\n", None)?,
+        PostmasterPidFileState::Stale { pid: 2127774 }
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn live_postgres_executable_blocks_startup_without_signaling_it() -> TestResult<()> {
+    assert_eq!(
+        classify_postmaster_pid_file(
+            "1234\n/data/pg\n",
+            Some(Path::new("/nix/store/pg/bin/postgres"))
+        )?,
+        PostmasterPidFileState::Running { pid: 1234 }
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn reused_pid_for_another_executable_is_stale() -> TestResult<()> {
+    assert_eq!(
+        classify_postmaster_pid_file("1234\n/data/pg\n", Some(Path::new("/usr/bin/python3")))?,
+        PostmasterPidFileState::Stale { pid: 1234 }
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn malformed_postmaster_pid_file_fails_closed() -> TestResult<()> {
+    let error = classify_postmaster_pid_file("not-a-pid\n/data/pg\n", None).unwrap_err();
+    assert!(format!("{error:#}").contains("valid PID"));
+
+    let error = classify_postmaster_pid_file("-1\n/data/pg\n", None).unwrap_err();
+    assert!(format!("{error:#}").contains("valid PID"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn pid_file_inspection_leaves_missing_process_for_postgres_validation() -> TestResult<()> {
+    let root = tempfile::tempdir()?;
+    let data_dir = root.path().join("data");
+    std::fs::create_dir_all(&data_dir)?;
+    std::fs::write(data_dir.join("postmaster.pid"), "4294967295\n/data/pg\n")?;
+
+    assert_eq!(
+        inspect_postmaster_pid_file(&data_dir)?,
+        PostmasterPidFileState::Stale { pid: u32::MAX }
+    );
+    assert!(data_dir.join("postmaster.pid").exists());
+    Ok(())
+}
+
+#[sinex_test]
 async fn postgres_identifier_rendering_rejects_sql_fragments() -> TestResult<()> {
     assert_eq!(
         pg_identifier("sinex_test_db", "database")?,
