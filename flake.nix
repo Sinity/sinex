@@ -477,7 +477,9 @@
 
                 real_cargo="${fenixPkgs.toolchain}/bin/cargo"
                 pgrun="$SINEX_DEV_STATE_DIR/run"
-                pgport="''${PGPORT:-5432}"
+                # The AgentCTL lease is authoritative; PGPORT can be stale in
+                # an inherited shell when the lease chooses a different port.
+                pgport="''${SINEX_DEV_POSTGRES_PORT:-''${PGPORT:-5432}}"
 
                 _sinex_cargo_command_name() {
                   while [ "$#" -gt 0 ]; do
