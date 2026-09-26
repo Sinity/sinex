@@ -333,6 +333,12 @@ async fn looks_like_runnable_command_filters_prose_and_bare_commands()
         ),
         Some("agentctl job start sinex verify_closure --wait -- sinex-e7e9 --dry-run".to_string())
     );
+    assert_eq!(
+        extract_inline_backtick_command(
+            "Example: `agentctl job start ... --wait -- ... --dry-run`."
+        ),
+        None
+    );
     assert!(looks_like_runnable_command(
         "SINEX_FOO=bar xtask test -p xtask"
     ));
