@@ -93,6 +93,89 @@ async fn admit_payload_schema_test_event(
     }
 }
 
+/// sinex-tpv9: every admission rejection after an event ID is available must
+/// retain that exact candidate ID for settlement and checkpoint handling.
+#[sinex_test]
+async fn known_candidate_id_is_preserved_by_all_admission_rejection_branches(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let validator = Arc::new(RwLock::new(IngestEventValidator::new_strict(true)));
+    let service = AdmissionService::new(ctx.pool.clone(), Arc::clone(&validator));
+
+    let mut missing_timestamp = candidate(serde_json::json!({ "value": "missing timestamp" }));
+    let missing_timestamp_id = Uuid::now_v7();
+    missing_timestamp.id = Some(Id::from_uuid(missing_timestamp_id));
+    missing_timestamp.provenance = Provenance::from_derived([Id::from_uuid(Uuid::now_v7())])
+        .expect("one parent produces derived provenance");
+    missing_timestamp.ts_orig = None;
+    assert_rejection_event_id(
+        service.admit_event(missing_timestamp).await?,
+        AdmissionRejectionKind::MissingTimestamp,
+        missing_timestamp_id,
+    );
+
+    let past_id = Uuid::now_v7();
+    let mut past = candidate(serde_json::json!({ "value": "past timestamp" }));
+    past.id = Some(Id::from_uuid(past_id));
+    past.ts_orig = Some(Timestamp::now());
+    let past_service = AdmissionService::new(ctx.pool.clone(), Arc::clone(&validator))
+        .with_ts_orig_lower_bound(Some(Timestamp::now() + time::Duration::days(1)));
+    assert_rejection_event_id(
+        past_service.admit_event(past).await?,
+        AdmissionRejectionKind::PastTimestamp,
+        past_id,
+    );
+
+    let future_id = Uuid::now_v7();
+    let mut future = candidate(serde_json::json!({ "value": "future timestamp" }));
+    future.id = Some(Id::from_uuid(future_id));
+    future.ts_orig = Some(Timestamp::now() + time::Duration::days(1));
+    assert_rejection_event_id(
+        service.admit_event(future).await?,
+        AdmissionRejectionKind::FutureTimestamp,
+        future_id,
+    );
+
+    let negative_anchor_id = Uuid::now_v7();
+    let mut negative_anchor = candidate(serde_json::json!({ "value": "negative anchor" }));
+    negative_anchor.id = Some(Id::from_uuid(negative_anchor_id));
+    negative_anchor.ts_orig = Some(Timestamp::now());
+    negative_anchor.provenance = Provenance::from_material(Id::new(), -1, None, None);
+    assert_rejection_event_id(
+        service.admit_event(negative_anchor).await?,
+        AdmissionRejectionKind::NegativeAnchor,
+        negative_anchor_id,
+    );
+
+    let schema_id = Uuid::now_v7();
+    let mut schema_invalid = candidate(serde_json::json!({ "unexpected": "field" }));
+    schema_invalid.id = Some(Id::from_uuid(schema_id));
+    schema_invalid.ts_orig = Some(Timestamp::now());
+    assert_rejection_event_id(
+        service.admit_event(schema_invalid).await?,
+        AdmissionRejectionKind::SchemaValidation,
+        schema_id,
+    );
+
+    Ok(())
+}
+
+fn assert_rejection_event_id(
+    decision: AdmissionDecision,
+    expected_kind: AdmissionRejectionKind,
+    expected_event_id: Uuid,
+) {
+    let AdmissionDecision::Rejected(rejection) = decision else {
+        panic!("expected {expected_kind:?} rejection, received {decision:?}");
+    };
+    assert_eq!(rejection.kind, expected_kind);
+    assert_eq!(
+        rejection.event_id,
+        Some(expected_event_id),
+        "rejection must retain the known candidate event ID"
+    );
+}
+
 /// sinex-4pm: a schema ID can be valid in the admission validator and absent
 /// from the database by persistence time. This must produce an explicit,
 /// evidence-bearing schema-management failure, never a committed NULL ID.
