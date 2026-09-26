@@ -5,7 +5,7 @@ use sinex_primitives::temporal::{Duration, Timestamp};
 use sinexctl::client::{ClientConfig, GatewayClient, RetryConfig};
 use sinexctl::mcp::{
     MCP_PROTOCOL_VERSION, MCP_SUPPORTED_PROTOCOL_VERSIONS, McpOutputContract, McpSurfaceKind,
-    assert_read_only_tool_names, call_tool, tool_catalog, tools,
+    assert_read_only_tool_catalog, call_tool, tool_catalog, tools,
 };
 use sinexctl::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
 use std::collections::BTreeSet;
@@ -79,7 +79,7 @@ async fn mcp_tool_order_matches_catalog_order() -> TestResult<()> {
             tool.name
         );
     }
-    assert_read_only_tool_names()?;
+    assert_read_only_tool_catalog()?;
     Ok(())
 }
 
@@ -252,8 +252,16 @@ async fn mcp_catalog_backing_methods_are_typed_read_only_rpc() -> TestResult<()>
 fn mcp_wire_tools_declare_read_only_annotations() -> TestResult<()> {
     for tool in tools() {
         let encoded = serde_json::to_value(&tool)?;
-        assert_eq!(encoded["annotations"]["readOnlyHint"], true, "{}", tool.name);
-        assert_eq!(encoded["annotations"]["destructiveHint"], false, "{}", tool.name);
+        assert_eq!(
+            encoded["annotations"]["readOnlyHint"], true,
+            "{}",
+            tool.name
+        );
+        assert_eq!(
+            encoded["annotations"]["destructiveHint"], false,
+            "{}",
+            tool.name
+        );
     }
     Ok(())
 }
