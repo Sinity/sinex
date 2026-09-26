@@ -325,6 +325,15 @@ async fn looks_like_runnable_command_filters_prose_and_bare_commands()
     assert!(looks_like_runnable_command("gh pr view 1234"));
     assert!(looks_like_runnable_command("bd show sinex-e7e9 --json"));
     assert!(looks_like_runnable_command(
+        "agentctl job start sinex verify_closure --wait -- sinex-e7e9 --dry-run"
+    ));
+    assert_eq!(
+        extract_inline_backtick_command(
+            "Run `agentctl job start sinex verify_closure --wait -- sinex-e7e9 --dry-run`."
+        ),
+        Some("agentctl job start sinex verify_closure --wait -- sinex-e7e9 --dry-run".to_string())
+    );
+    assert!(looks_like_runnable_command(
         "SINEX_FOO=bar xtask test -p xtask"
     ));
     Ok(())
@@ -748,7 +757,7 @@ async fn closure_manifest_status_does_not_accept_substring_false_positives()
 }
 
 #[sinex_test]
-async fn collect_closure_evidence_includes_manifest_items() -> ::xtask::sandbox::TestResult<()> {
+async fn closure_manifest_accepts_agentctl_operation_command() -> ::xtask::sandbox::TestResult<()> {
     let payload = BeadClosurePayload {
         id: "sinex-e7e9".to_string(),
         status: "closed".to_string(),
@@ -759,16 +768,23 @@ async fn collect_closure_evidence_includes_manifest_items() -> ::xtask::sandbox:
 
 | AC | Evidence kind | Surface | Evidence | Command | Status |
 | --- | --- | --- | --- | --- | --- |
-| AC-1 | schema | strict-diff report | inline check drift is rejected by strict-diff output | xtask test -p sinex-schema -E 'test(strict_diff)' | Satisfied |
+| AC-1 | runtime | AgentCTL verify_closure | a closed Bead can be checked without running its evidence commands | agentctl job start sinex verify_closure --wait -- sinex-e7e9 --dry-run | Satisfied |
 "
         .to_string(),
     };
     let evidence = collect_closure_evidence(&payload);
     assert_eq!(evidence.commands.len(), 1);
+    assert_eq!(
+        evidence.commands[0].command,
+        "agentctl job start sinex verify_closure --wait -- sinex-e7e9 --dry-run"
+    );
     assert_eq!(evidence.commands[0].source, "close_reason:manifest:AC-1");
     assert_eq!(evidence.manifest_items.len(), 1);
     assert_eq!(evidence.manifest_items[0].source, "close_reason");
     assert!(validate_closure_evidence_manifest(&evidence.manifest_items).is_empty());
+    assert!(validate_closure_evidence_readiness(&evidence).is_empty());
+    let criteria = extract_bead_acceptance_criteria(&payload.acceptance_criteria);
+    assert!(validate_bead_closure_contract(&payload, &criteria, &evidence).is_empty());
     Ok(())
 }
 
