@@ -2189,6 +2189,7 @@ fn looks_like_shell_command(candidate: &str) -> bool {
         || candidate.starts_with("git ")
         || candidate.starts_with("gh ")
         || candidate.starts_with("bd ")
+        || candidate.starts_with("agentctl ")
         || candidate.starts_with("rg ")
         || candidate.starts_with("nix ")
         || candidate.starts_with("SINEX_")
@@ -2223,7 +2224,7 @@ fn looks_like_runnable_command(candidate: &str) -> bool {
     }
     match cmd {
         // Project tools rarely start prose; any argument form is a real command.
-        "xtask" | "sinexctl" | "bd" | "nix" | "psql" | "nats" => true,
+        "xtask" | "sinexctl" | "bd" | "agentctl" | "nix" | "psql" | "nats" => true,
         // General tools also open narrative sentences ("git push pre-push drift
         // guard passes"). Require at least one command-shaped argument token to
         // distinguish a real invocation from prose.
