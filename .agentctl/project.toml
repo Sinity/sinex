@@ -114,3 +114,4 @@ pool = "normal"
 result = "exit"
 cache = "none"
 timeout_seconds = 1800
+arguments = "required"

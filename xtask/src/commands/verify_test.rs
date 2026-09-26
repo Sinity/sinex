@@ -374,6 +374,7 @@ async fn collect_closure_evidence_reads_bead_close_reason() -> ::xtask::sandbox:
         id: "sinex-e7e9".to_string(),
         status: "closed".to_string(),
         acceptance_criteria: "- command is runnable".to_string(),
+        metadata: serde_json::Value::Null,
         close_reason: "## Verification\n\n```bash\nxtask check -p xtask\n```".to_string(),
     };
     let evidence = collect_closure_evidence(&payload);
@@ -390,6 +391,7 @@ async fn collect_closure_evidence_is_empty_without_commands_or_matrix()
         id: "sinex-e7e9".to_string(),
         status: "closed".to_string(),
         acceptance_criteria: "- behavior is proven".to_string(),
+        metadata: serde_json::Value::Null,
         close_reason: "Text-only landing claim.".to_string(),
     };
     let evidence = collect_closure_evidence(&payload);
@@ -424,12 +426,44 @@ async fn bead_payload_parser_requires_one_matching_top_level_record()
 }
 
 #[sinex_test]
+async fn closure_verifier_reads_versioned_acceptance_criteria() -> ::xtask::sandbox::TestResult<()>
+{
+    let payload = parse_bead_closure_payload(
+        br###"[{"id":"sinex-vmhg","status":"closed","acceptance_criteria":"","metadata":{"acceptance_criteria":[{"id":"AC-1","text":"the versioned acceptance criterion"}]},"close_reason":"## Closure Evidence Manifest\n\n| AC | Evidence kind | Surface | Evidence | Command | Status |\n| --- | --- | --- | --- | --- | --- |\n| AC-1 | runtime | closure verification | versioned criterion is covered | xtask test -p xtask -E 'test(closure_verifier_reads_versioned_acceptance_criteria)' | Satisfied |"}]"###,
+        "sinex-vmhg",
+    )?;
+
+    let (criteria, errors) = bead_acceptance_criteria(&payload);
+    assert_eq!(criteria, ["the versioned acceptance criterion"]);
+    assert!(errors.is_empty());
+    let evidence = collect_closure_evidence(&payload);
+    assert!(validate_bead_closure_contract(&payload, &criteria, &evidence).is_empty());
+
+    let legacy = parse_bead_closure_payload(
+        br#"[{"id":"sinex-vmhg","status":"closed","acceptance_criteria":"- legacy criterion"}]"#,
+        "sinex-vmhg",
+    )?;
+    let (criteria, errors) = bead_acceptance_criteria(&legacy);
+    assert_eq!(criteria, ["legacy criterion"]);
+    assert!(errors.is_empty());
+
+    let malformed = parse_bead_closure_payload(
+        br#"[{"id":"sinex-vmhg","status":"closed","metadata":{"acceptance_criteria":[{"id":"AC-1","text":"first"},{"id":"AC-1","text":"duplicate"}]}}]"#,
+        "sinex-vmhg",
+    )?;
+    let (_, errors) = bead_acceptance_criteria(&malformed);
+    assert!(errors.iter().any(|error| error.reason.contains("unique")));
+    Ok(())
+}
+
+#[sinex_test]
 async fn bead_closure_contract_requires_closed_status_and_every_ac_disposition()
 -> ::xtask::sandbox::TestResult<()> {
     let payload = BeadClosurePayload {
         id: "sinex-e7e9".to_string(),
         status: "open".to_string(),
         acceptance_criteria: "- first behavior\n- second behavior".to_string(),
+        metadata: serde_json::Value::Null,
         close_reason: "\
 ## Closure Evidence Manifest
 
@@ -458,6 +492,7 @@ async fn bead_closure_contract_rejects_unowned_deferral_and_prose_only_satisfact
         id: "sinex-e7e9".to_string(),
         status: "closed".to_string(),
         acceptance_criteria: "- first behavior\n- second behavior".to_string(),
+        metadata: serde_json::Value::Null,
         close_reason: "\
 ## Closure Evidence Manifest
 
@@ -494,6 +529,7 @@ async fn bead_closure_contract_accepts_complete_manifest() -> ::xtask::sandbox::
         id: "sinex-e7e9".to_string(),
         status: "closed".to_string(),
         acceptance_criteria: "- first behavior\n- second behavior".to_string(),
+        metadata: serde_json::Value::Null,
         close_reason: "\
 ## Closure Evidence Manifest
 
@@ -517,6 +553,7 @@ async fn bead_closure_contract_rejects_docs_claim_without_artifact_or_command()
         id: "sinex-e7e9".to_string(),
         status: "closed".to_string(),
         acceptance_criteria: "- contributor guidance is current".to_string(),
+        metadata: serde_json::Value::Null,
         close_reason: "\
 ## Closure Evidence Manifest
 
@@ -716,6 +753,7 @@ async fn collect_closure_evidence_includes_manifest_items() -> ::xtask::sandbox:
         id: "sinex-e7e9".to_string(),
         status: "closed".to_string(),
         acceptance_criteria: "- strict-diff behavior is proven".to_string(),
+        metadata: serde_json::Value::Null,
         close_reason: "\
 ## Closure Evidence Manifest
 
