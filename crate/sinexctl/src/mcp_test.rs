@@ -24,16 +24,16 @@ async fn mcp_catalog_and_tool_list_names_stay_in_sync() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn mcp_catalog_declares_view_envelope_contract_for_read_tools() -> TestResult<()> {
+async fn mcp_catalog_read_only_claims_match_typed_rpc_authority() -> TestResult<()> {
     let catalog = tool_catalog();
     assert!(
         !catalog.is_empty(),
         "MCP catalog must not be empty; the envelope contract would be unenforced"
     );
+    validate_read_only_catalog(&catalog)?;
 
     for entry in catalog {
         assert_eq!(entry.kind, McpSurfaceKind::Tool);
-        assert!(entry.read_only, "{} must remain read-only", entry.name);
         assert_eq!(
             entry.output_contract,
             McpOutputContract::ViewEnvelope,
@@ -41,6 +41,30 @@ async fn mcp_catalog_declares_view_envelope_contract_for_read_tools() -> TestRes
             entry.name
         );
     }
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_read_only_catalog_rejects_write_and_admin_mutations() -> TestResult<()> {
+    let write_mutation = McpCatalogEntry {
+        name: "sinex_test_write_mutation",
+        kind: McpSurfaceKind::Tool,
+        description: "test fixture",
+        backing_rpc_methods: &[methods::BROWSER_CAPTURE_BATCH],
+        read_only: true,
+        output_contract: McpOutputContract::ViewEnvelope,
+    };
+    let admin_mutation = McpCatalogEntry {
+        name: "sinex_test_admin_mutation",
+        kind: McpSurfaceKind::Tool,
+        description: "test fixture",
+        backing_rpc_methods: &[methods::SOURCES_ARCHIVE],
+        read_only: true,
+        output_contract: McpOutputContract::ViewEnvelope,
+    };
+
+    assert!(validate_read_only_catalog(&[write_mutation]).is_err());
+    assert!(validate_read_only_catalog(&[admin_mutation]).is_err());
     Ok(())
 }
 

@@ -35,7 +35,6 @@ use sinex_primitives::rpc::events::EventsRelationEvidenceRequest;
 use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
-use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::predictions::{PredictionReportRequest, PredictionReportResponse};
 use sinex_primitives::rpc::privacy::{PrivacyShadowAuditRequest, PrivateModeStateResponse};
 use sinex_primitives::rpc::replay::ReplayState;
@@ -57,6 +56,7 @@ use sinex_primitives::rpc::tasks::{
     TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
 };
 use sinex_primitives::rpc::telemetry::EventEngineValidationSnapshot;
+use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog, methods};
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
     SourcesContinuityGetRequest, SourcesContinuityListRequest, SourcesExplainGapRequest,
@@ -77,15 +77,9 @@ pub const MCP_IMPLEMENTATION: &str = "sinex-mcp-server";
 pub const MCP_IMPLEMENTATION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const AGENT_ORIENTATION: &str = include_str!("../docs/agent_orientation.md");
 
-const FORBIDDEN_TOOL_TERMS: &[&str] = &[
-    "stage",
-    "publish",
-    "delete",
-    "archive",
-    "tombstone",
-    "finalize",
-    "actuate",
-];
+// This tool returns static orientation content without calling the gateway.
+// Any other MCP entry without typed RPC backing needs an explicit exception here.
+const TRANSPORT_ONLY_READ_ONLY_TOOLS: &[&str] = &["sinex_orient"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpTool {
@@ -1859,19 +1853,64 @@ fn status_window_schema() -> Value {
     })
 }
 
-pub fn assert_read_only_tool_names() -> Result<()> {
-    for tool in tools() {
-        for term in FORBIDDEN_TOOL_TERMS {
-            if tool.name.contains(term) {
-                return Err(eyre!("MCP v1 tool name is not read-only: {}", tool.name));
+fn validate_read_only_catalog(catalog: &[McpCatalogEntry]) -> Result<()> {
+    let rpc_catalog = method_catalog();
+
+    for entry in catalog {
+        if !entry.read_only {
+            return Err(eyre!(
+                "MCP catalog entry is not declared read-only: {}",
+                entry.name
+            ));
+        }
+
+        if entry.backing_rpc_methods.is_empty() {
+            if !TRANSPORT_ONLY_READ_ONLY_TOOLS.contains(&entry.name) {
+                return Err(eyre!(
+                    "MCP entry has no typed RPC backing or transport-only rule: {}",
+                    entry.name
+                ));
+            }
+            continue;
+        }
+
+        if TRANSPORT_ONLY_READ_ONLY_TOOLS.contains(&entry.name) {
+            return Err(eyre!(
+                "transport-only MCP entry unexpectedly declares RPC backing: {}",
+                entry.name
+            ));
+        }
+
+        for method_name in entry.backing_rpc_methods {
+            let method = rpc_catalog
+                .iter()
+                .find(|method| method.name == *method_name)
+                .ok_or_else(|| {
+                    eyre!(
+                        "MCP entry `{}` references unknown RPC method `{method_name}`",
+                        entry.name
+                    )
+                })?;
+            if method.mutability != RpcMutability::ReadOnly || method.role != RpcRole::ReadOnly {
+                return Err(eyre!(
+                    "MCP entry `{}` references non-read-only RPC method `{method_name}` (role: {:?}, mutability: {:?})",
+                    entry.name,
+                    method.role,
+                    method.mutability
+                ));
             }
         }
     }
+
     Ok(())
 }
 
+pub fn assert_read_only_tool_catalog() -> Result<()> {
+    validate_read_only_catalog(&tool_catalog())
+}
+
 pub async fn run_stdio(client: GatewayClient) -> Result<()> {
-    assert_read_only_tool_names()?;
+    assert_read_only_tool_catalog()?;
     trace_mcp_event("server_start");
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
