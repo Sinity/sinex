@@ -2,7 +2,8 @@
 //!
 //! Replaces the `match source_name` arm in `main.rs` with a compile-time
 //! registry. Each source contributes a [`SourceFactoryEntry`] via
-//! [`register_source!`] at link time — no match arms.
+//! [`register_source!`] at link time. Sources with multiple runtimes select
+//! their factory by runtime-binding subject.
 //!
 //! # How to add a new source
 //!
@@ -29,39 +30,95 @@ pub type SourceFactoryFn =
 /// A single entry in the compile-time source factory inventory.
 pub struct SourceFactoryEntry {
     pub source_id: &'static str,
+    pub mode_subjects: &'static [&'static str],
+    pub default: bool,
     pub factory_fn: SourceFactoryFn,
 }
 
 inventory::collect!(SourceFactoryEntry);
 
-/// Global registry of source factories keyed by source id.
-///
-/// Populated at startup from the `inventory`-collected [`SourceFactoryEntry`]
-/// items. First registration wins (consistent with link order).
-static SOURCE_FACTORY_REGISTRY: LazyLock<HashMap<&'static str, SourceFactoryFn>> =
-    LazyLock::new(|| {
-        let mut map: HashMap<&'static str, SourceFactoryFn> = HashMap::new();
-        for entry in inventory::iter::<SourceFactoryEntry>() {
-            map.entry(entry.source_id).or_insert(entry.factory_fn);
+struct SourceFactoryRegistry {
+    defaults: HashMap<&'static str, SourceFactoryFn>,
+    modes: HashMap<&'static str, HashMap<&'static str, SourceFactoryFn>>,
+}
+
+impl SourceFactoryRegistry {
+    fn from_entries<'a>(entries: impl IntoIterator<Item = &'a SourceFactoryEntry>) -> Self {
+        let mut registry = Self {
+            defaults: HashMap::new(),
+            modes: HashMap::new(),
+        };
+        for entry in entries {
+            if entry.default {
+                assert!(
+                    registry
+                        .defaults
+                        .insert(entry.source_id, entry.factory_fn)
+                        .is_none(),
+                    "duplicate default source factory for {}",
+                    entry.source_id
+                );
+            }
+            for &mode in entry.mode_subjects {
+                assert!(
+                    registry
+                        .modes
+                        .entry(entry.source_id)
+                        .or_default()
+                        .insert(mode, entry.factory_fn)
+                        .is_none(),
+                    "duplicate source factory for {} mode {}",
+                    entry.source_id,
+                    mode
+                );
+            }
         }
-        map
-    });
+        registry
+    }
+
+    fn find(&self, source_id: &str, mode: Option<&str>) -> Option<SourceFactoryFn> {
+        match mode {
+            Some(mode) => self.modes.get(source_id).map_or_else(
+                || self.defaults.get(source_id).copied(),
+                |modes| modes.get(mode).copied(),
+            ),
+            None => self.defaults.get(source_id).copied(),
+        }
+    }
+}
+
+static SOURCE_FACTORY_REGISTRY: LazyLock<SourceFactoryRegistry> =
+    LazyLock::new(|| SourceFactoryRegistry::from_entries(inventory::iter::<SourceFactoryEntry>()));
 
 /// Look up a source factory function by source id.
 #[must_use]
 pub fn find_source_factory(source_id: &SourceId) -> Option<SourceFactoryFn> {
-    SOURCE_FACTORY_REGISTRY.get(source_id.as_str()).copied()
+    find_source_factory_for_mode(source_id, None)
+}
+
+/// Select the runtime for a source and optional runtime-binding subject.
+/// A source with explicit mode registrations never falls back to its default
+/// for an unregistered mode.
+#[must_use]
+pub fn find_source_factory_for_mode(
+    source_id: &SourceId,
+    mode_subject: Option<&str>,
+) -> Option<SourceFactoryFn> {
+    SOURCE_FACTORY_REGISTRY.find(source_id.as_str(), mode_subject)
 }
 
 /// List all registered source ids that have source factories.
 #[must_use]
 pub fn registered_source_factory_ids() -> Vec<SourceId> {
     let mut ids: Vec<SourceId> = SOURCE_FACTORY_REGISTRY
+        .defaults
         .keys()
+        .chain(SOURCE_FACTORY_REGISTRY.modes.keys())
         .copied()
         .map(SourceId::from_static)
         .collect();
     ids.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+    ids.dedup();
     ids
 }
 
@@ -85,10 +142,26 @@ pub fn registered_source_factory_ids() -> Vec<SourceId> {
 /// ```
 #[macro_export]
 macro_rules! register_source {
+    (source_id: $id:expr, modes: [$($mode:expr),+ $(,)?], default: $default:expr, driver: $driver:ty $(,)?) => {
+        $crate::__submit_mode_source_factory!(
+            $id, &[$($mode),+], $default,
+            |args| Box::pin($crate::sources::source_factory::run_source_driver::<$driver>(args)),
+        );
+    };
+
+    (source_id: $id:expr, modes: [$($mode:expr),+ $(,)?], default: $default:expr, adapter: $adapter:ty, parser: $parser:ty $(,)?) => {
+        $crate::register_source!(source_id: $id, parser: $parser);
+        $crate::__submit_mode_source_factory!(
+            $id, &[$($mode),+], $default,
+            |args| Box::pin($crate::sources::source_factory::run_adapter_source::<$adapter, $parser>($id, args)),
+        );
+    };
+
     (source_id: $id:expr, driver: $driver:ty $(,)?) => {
-        $crate::__submit_registry_entry!(
-            $crate::sources::source_factory::SourceFactoryEntry,
+        $crate::__submit_mode_source_factory!(
             $id,
+            &[],
+            true,
             |args| {
                 Box::pin($crate::sources::source_factory::run_source_driver::<$driver>(args))
             },
@@ -109,9 +182,10 @@ macro_rules! register_source {
         parser: $parser:ty $(,)?
     ) => {
         $crate::register_source!(source_id: $id, parser: $parser);
-        $crate::__submit_registry_entry!(
-            $crate::sources::source_factory::SourceFactoryEntry,
+        $crate::__submit_mode_source_factory!(
             $id,
+            &[],
+            true,
             |args| {
                 Box::pin($crate::sources::source_factory::run_adapter_source::<
                     $adapter,
@@ -126,9 +200,10 @@ macro_rules! register_source {
         emit_at: $phase:expr,
         emit: $emit_fn:expr $(,)?
     ) => {
-        $crate::__submit_registry_entry!(
-            $crate::sources::source_factory::SourceFactoryEntry,
+        $crate::__submit_mode_source_factory!(
             $id,
+            &[],
+            true,
             |args| {
                 Box::pin($crate::sources::monitor_driver::run_monitor_unit_delegated(
                     $id, $phase, $emit_fn, args,
@@ -147,6 +222,21 @@ macro_rules! __submit_registry_entry {
         ::inventory::submit! {
             $entry_path {
                 source_id: $id,
+                factory_fn: $factory_fn,
+            }
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __submit_mode_source_factory {
+    ($id:expr, $modes:expr, $default:expr, $factory_fn:expr $(,)?) => {
+        ::inventory::submit! {
+            $crate::sources::source_factory::SourceFactoryEntry {
+                source_id: $id,
+                mode_subjects: $modes,
+                default: $default,
                 factory_fn: $factory_fn,
             }
         }
@@ -246,28 +336,97 @@ mod tests {
         Ok(())
     }
 
-    /// sinex-2fkc: SOURCE_FACTORY_REGISTRY is a first-registration-wins HashMap with no
-    /// collision detection. media.audio-transcript and media.screen-ocr each have TWO
-    /// SourceFactoryEntry registrations (the auto-registered staged FileContentDropAdapter
-    /// parser via #[derive(SourceMeta)], and the explicit register_source! for the live
-    /// driver) -- dispatch silently resolves to whichever links first. This must fail until
-    /// the collision is either eliminated (drop the redundant auto-registration) or rejected
-    /// at startup (panic/hard-error on duplicate source_id in SOURCE_FACTORY_REGISTRY's
-    /// construction, replacing the current `.or_insert`).
     #[test]
-    #[ignore = "sinex-2fkc open: media.audio-transcript and media.screen-ocr each have 2 \
-                colliding SourceFactoryEntry registrations, silently resolved by link order"]
-    fn media_capture_source_ids_do_not_silently_collide_in_factory_registry() {
-        for source_id in ["media.audio-transcript", "media.screen-ocr"] {
-            let count = inventory::iter::<SourceFactoryEntry>()
-                .filter(|e| e.source_id == source_id)
-                .count();
+    fn media_factories_follow_mode_subject_independent_of_link_order() {
+        let entries: Vec<_> = inventory::iter::<SourceFactoryEntry>()
+            .filter(|entry| {
+                entry.source_id == "media.audio-transcript" || entry.source_id == "media.screen-ocr"
+            })
+            .collect();
+        let forward = SourceFactoryRegistry::from_entries(entries.iter().copied());
+        let reverse = SourceFactoryRegistry::from_entries(entries.iter().rev().copied());
+
+        for (source_id, staged_modes, live_modes) in [
+            (
+                "media.audio-transcript",
+                &[
+                    "source:media.audio-transcript",
+                    "source:media.audio-transcript.audio-bundle-staged",
+                ][..],
+                &[
+                    "source:media.audio-transcript.on-demand-session",
+                    "source:media.audio-transcript.live-session",
+                ][..],
+            ),
+            (
+                "media.screen-ocr",
+                &[
+                    "source:media.screen-ocr",
+                    "source:media.screen-ocr.screenshot-ocr-staged",
+                    "source:media.screen-ocr.video-staged",
+                ][..],
+                &[
+                    "source:media.screen-ocr.on-demand-region",
+                    "source:media.screen-ocr.live-session",
+                ][..],
+            ),
+        ] {
+            let registrations: Vec<_> = entries
+                .iter()
+                .filter(|entry| entry.source_id == source_id)
+                .collect();
             assert_eq!(
-                count, 1,
-                "{source_id} has {count} SourceFactoryEntry registrations colliding on the \
-                 same source_id -- first-registration-wins makes dispatch link-order-dependent \
-                 (sinex-2fkc)"
+                registrations.len(),
+                2,
+                "{source_id} needs staged and live factories"
             );
+            let staged = registrations
+                .iter()
+                .find(|entry| entry.default)
+                .expect("staged default factory");
+            let live = registrations
+                .iter()
+                .find(|entry| !entry.default)
+                .expect("live factory");
+            assert_eq!(staged.mode_subjects, staged_modes);
+            assert_eq!(live.mode_subjects, live_modes);
+            assert!(!std::ptr::fn_addr_eq(staged.factory_fn, live.factory_fn));
+
+            for registry in [&forward, &reverse] {
+                assert!(std::ptr::fn_addr_eq(
+                    registry.find(source_id, None).expect("staged default"),
+                    staged.factory_fn
+                ));
+                for &mode in staged_modes {
+                    assert!(std::ptr::fn_addr_eq(
+                        registry.find(source_id, Some(mode)).expect("staged mode"),
+                        staged.factory_fn
+                    ));
+                }
+                for &mode in live_modes {
+                    assert!(std::ptr::fn_addr_eq(
+                        registry.find(source_id, Some(mode)).expect("live mode"),
+                        live.factory_fn
+                    ));
+                }
+                assert!(registry.find(source_id, Some("source:unknown")).is_none());
+            }
+            let id = SourceId::from_static(source_id);
+            for &mode in live_modes {
+                assert!(std::ptr::fn_addr_eq(
+                    find_source_factory_for_mode(&id, Some(mode)).expect("linked live mode"),
+                    live.factory_fn
+                ));
+            }
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate default source factory")]
+    fn duplicate_default_factory_is_rejected() {
+        let entry = inventory::iter::<SourceFactoryEntry>()
+            .find(|entry| entry.source_id == "noop")
+            .expect("noop factory registered");
+        SourceFactoryRegistry::from_entries([entry, entry]);
     }
 }

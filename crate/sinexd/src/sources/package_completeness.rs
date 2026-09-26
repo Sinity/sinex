@@ -21,7 +21,7 @@ use sinex_primitives::{AdmissionPolicy, EventContract, admission_policies, event
 use crate::sources::catalog_export::render_catalog;
 use crate::sources::dispatch::parser_inventory_records;
 use crate::sources::privacy_coverage::render_privacy_coverage_matrix;
-use crate::sources::source_factory::registered_source_factory_ids;
+use crate::sources::source_factory::{find_source_factory_for_mode, registered_source_factory_ids};
 
 /// Bumped when the report JSON shape changes.
 pub const PACKAGE_COMPLETENESS_SCHEMA_VERSION: u32 = 2;
@@ -470,7 +470,7 @@ fn build_bound_mode(
     catalog_projection: &Value,
     privacy_entries: &BTreeSet<String>,
 ) -> PackageCompletenessMode {
-    let manual_reason = manual_reason(binding, parser_records, source_factory_ids);
+    let manual_reason = manual_reason(binding, parser_records);
     let mut mode_state = if binding.proposed {
         PackageModeState::Proposed
     } else if manual_reason.is_some() {
@@ -521,7 +521,15 @@ fn finalize_mode(
     privacy_entries: &BTreeSet<String>,
     mut diagnostics: BaseDiagnostics,
 ) -> PackageCompletenessMode {
-    let source_factory_registered = source_factory_ids.contains(contract.id);
+    let source_factory_registered = if let Some(binding) = binding {
+        find_source_factory_for_mode(
+            &sinex_primitives::parser::SourceId::from_static(contract.id),
+            Some(binding.subject.as_str()),
+        )
+        .is_some()
+    } else {
+        source_factory_ids.contains(contract.id)
+    };
     let parser_record = parser_records.get(contract.id);
     let parser_factory_registered = parser_record.is_some();
     let privacy_coverage_registered = privacy_entries.contains(contract.id);
@@ -1130,7 +1138,6 @@ fn catalog_entry_has_subject(entry: &Value, subject: &str) -> bool {
 fn manual_reason(
     binding: &SourceRuntimeBinding,
     parser_records: &BTreeMap<String, crate::sources::dispatch::ParserInventoryRecord>,
-    source_factory_ids: &BTreeSet<String>,
 ) -> Option<&'static str> {
     if binding.proposed {
         return None;
@@ -1140,8 +1147,14 @@ fn manual_reason(
         RunnerPack::InProcess => Some("in_process_emitter_or_projection"),
         RunnerPack::SinexdSource | RunnerPack::Live | RunnerPack::Staged => {
             let has_parser = parser_records.contains_key(binding.source_id);
-            let has_source_factory = source_factory_ids.contains(binding.source_id);
-            if has_parser && !has_source_factory {
+            let has_source_factory = find_source_factory_for_mode(
+                &sinex_primitives::parser::SourceId::from_static(binding.source_id),
+                Some(binding.subject.as_str()),
+            )
+            .is_some();
+            if !has_source_factory && binding.adapter == "MediaWorkerCommandExecutor" {
+                Some("rpc_driven_executor_no_source_factory")
+            } else if has_parser && !has_source_factory {
                 Some("parser_only_dispatch_no_source_factory")
             } else {
                 None

@@ -566,6 +566,11 @@ fn snapshot_report(events: u64, duration: Duration) -> ScanReport {
 
 crate::register_source!(
     source_id: "media.audio-transcript",
+    modes: [
+        "source:media.audio-transcript.on-demand-session",
+        "source:media.audio-transcript.live-session",
+    ],
+    default: false,
     driver: MediaAudioCaptureDriver<CommandAudioCaptureBackend>,
 );
 

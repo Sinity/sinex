@@ -56,3 +56,32 @@ async fn source_skeleton_accepts_package_and_mode_aliases() -> xtask::sandbox::T
     assert_eq!(mode_id, "terminal.atuin-history");
     Ok(())
 }
+
+#[sinex_test]
+async fn scan_source_driver_accepts_mode_subject() -> xtask::sandbox::TestResult<()> {
+    let cli = Cli::try_parse_from([
+        "sinexd",
+        "scan-source-driver",
+        "--source",
+        "media.screen-ocr",
+        "--mode-subject",
+        "source:media.screen-ocr.live-session",
+    ])
+    .expect("mode-aware source run should parse");
+
+    let Some(Command::ScanSourceDriver {
+        source,
+        mode_subject,
+        ..
+    }) = cli.command
+    else {
+        panic!("expected scan-source-driver command");
+    };
+
+    assert_eq!(source, "media.screen-ocr");
+    assert_eq!(
+        mode_subject.as_deref(),
+        Some("source:media.screen-ocr.live-session")
+    );
+    Ok(())
+}

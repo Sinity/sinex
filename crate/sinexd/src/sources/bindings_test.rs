@@ -104,6 +104,7 @@ sinex_primitives::register_source_runtime_binding! {
 async fn enabling_binding_without_criticality_fails_loudly() -> xtask::sandbox::TestResult<()> {
     let manifest_binding = SourceBinding {
         source_id: CRITICALITY_FIXTURE_SOURCE_ID.to_string(),
+        mode_subject: None,
         instance_idx: 1,
         service_name: None,
         runtime_config: None,
@@ -134,6 +135,7 @@ async fn enabling_binding_with_invalid_recovery_policy_fails_loudly()
 -> xtask::sandbox::TestResult<()> {
     let manifest_binding = SourceBinding {
         source_id: INVALID_RECOVERY_FIXTURE_SOURCE_ID.to_string(),
+        mode_subject: None,
         instance_idx: 1,
         service_name: None,
         runtime_config: None,

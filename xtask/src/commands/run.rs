@@ -57,6 +57,8 @@ struct DevSourceBindingsManifest {
 #[derive(Debug, Clone, Deserialize)]
 struct DevSourceBinding {
     source_id: String,
+    #[serde(default)]
+    mode_subject: Option<String>,
     #[serde(default = "default_source_binding_instance_idx")]
     instance_idx: u32,
     #[serde(default)]
@@ -191,6 +193,10 @@ fn live_source_binding_services() -> Result<HashSet<String>> {
 }
 
 fn append_source_binding_args(args: &mut Vec<String>, binding: DevSourceBinding) {
+    if let Some(mode) = binding.mode_subject {
+        args.push("--mode-subject".to_string());
+        args.push(mode);
+    }
     if let Some(config) = binding.runtime_config
         && !config.is_null()
     {

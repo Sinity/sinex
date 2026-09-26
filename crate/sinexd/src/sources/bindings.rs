@@ -68,6 +68,11 @@ pub struct SourceBinding {
     /// in the source contract registry via `register_source_contract!`.
     pub source_id: String,
 
+    /// Runtime-binding subject selecting a source mode. Omitted for legacy
+    /// single-factory bindings and the staged default of a multi-mode source.
+    #[serde(default)]
+    pub mode_subject: Option<String>,
+
     /// 1-based instance index used to derive a stable per-binding service
     /// label.
     #[serde(default = "default_instance_idx")]
@@ -147,18 +152,8 @@ impl SourceBindingsManifest {
 /// added without declaring criticality" scenario this exists to catch, so
 /// an empty match set is itself a hard error rather than a silent pass.
 ///
-/// Known limitation: matching is by `source_id`, which is coarser than the
-/// specific runtime-binding subject the manifest entry deploys. A
-/// multi-mode source contract with several non-proposed
-/// `SourceRuntimeBinding`s sharing one `source_id` requires *every* such
-/// binding to declare criticality before *any* of its modes can be enabled.
-/// The media audio-transcript and screen-ocr contracts are examples of this
-/// shape: each combines staged, worker, and live-capture modes under one
-/// source id. Missing declarations on a sibling mode can therefore over-block
-/// a fully-declared mode. `SourceBinding` doesn't currently carry which
-/// runtime binding/subject it deploys, so per-mode scoping isn't expressible
-/// yet; tightening this to per-mode matching once the manifest schema can name
-/// a binding is left for a follow-up.
+/// A binding with `mode_subject` validates the matching runtime descriptor;
+/// older manifests without one retain the source-wide criticality check.
 pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
     let registry = SourceContractRegistry::from_inventory();
     let mut errors = Vec::new();
@@ -173,22 +168,30 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
             errors.push(format!("{}: {error}", binding.source_id));
             continue;
         }
-        if source_factory::find_source_factory(&unit_id).is_none() {
+        if source_factory::find_source_factory_for_mode(&unit_id, binding.mode_subject.as_deref())
+            .is_none()
+        {
             errors.push(format!(
-                "{}: source contract registered but no source factory \
-                 (missing register_source! factory call)",
-                binding.source_id
+                "{}: no source factory for mode {:?}",
+                binding.source_id, binding.mode_subject
             ));
         }
         let deployed_runtime_bindings: Vec<_> = source_runtime_bindings()
-            .filter(|rb| rb.source_id == binding.source_id && !rb.proposed)
+            .filter(|rb| {
+                rb.source_id == binding.source_id
+                    && !rb.proposed
+                    && binding
+                        .mode_subject
+                        .as_deref()
+                        .is_none_or(|mode| rb.subject.as_str() == mode)
+            })
             .collect();
         if deployed_runtime_bindings.is_empty() {
             errors.push(format!(
-                "{}: enabled source has no non-proposed SourceRuntimeBinding registered \
+                "{}: enabled mode {:?} has no non-proposed SourceRuntimeBinding registered \
                  (a source with no deployable runtime descriptor cannot declare \
                  SourceCriticality and must not be enabled); see sinex-sn6s",
-                binding.source_id
+                binding.source_id, binding.mode_subject
             ));
         }
         for runtime_binding in deployed_runtime_bindings {
@@ -224,18 +227,23 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
 /// Look up the source factory for the source id, then call it with a
 /// synthesized argv equivalent to the old per-source `ExecStart`.
 pub async fn run_binding(binding: SourceBinding) -> Result<()> {
+    if binding.mode_subject.is_some() {
+        validate_bindings(std::slice::from_ref(&binding))?;
+    }
     let unit_id = SourceId::new(&binding.source_id).map_err(|error| {
         SinexError::configuration(format!(
             "invalid source_id '{}': {error}",
             binding.source_id
         ))
     })?;
-    let factory = source_factory::find_source_factory(&unit_id).ok_or_else(|| {
-        SinexError::configuration(format!(
-            "no source factory registered for source '{}'",
-            binding.source_id
-        ))
-    })?;
+    let factory =
+        source_factory::find_source_factory_for_mode(&unit_id, binding.mode_subject.as_deref())
+            .ok_or_else(|| {
+                SinexError::configuration(format!(
+                    "no source factory registered for source '{}' mode {:?}",
+                    binding.source_id, binding.mode_subject
+                ))
+            })?;
 
     let service_name = binding.service_name.clone().unwrap_or_else(|| {
         format!(

@@ -12,7 +12,10 @@
 use sinex_primitives::parser::SourceId;
 use sinexd::sources::{
     dispatch::{default_parser_dispatch, find_parser_factory},
-    source_factory::{find_source_factory, registered_source_factory_ids},
+    source_factory::{
+        SourceFactoryEntry, find_source_factory, find_source_factory_for_mode,
+        registered_source_factory_ids,
+    },
 };
 use xtask::sandbox::prelude::*;
 
@@ -144,6 +147,85 @@ async fn fs_adapter_factory_and_parser_bridge_registered() -> TestResult<()> {
         find_parser_factory(&sui("fs")).is_some(),
         "parser factory for 'fs' must be registered for replay dispatch"
     );
+    Ok(())
+}
+
+/// The linked production inventory must send staged imports and live capture
+/// to different factories even if the linker changes registration order.
+#[sinex_test]
+async fn linked_media_factories_dispatch_by_mode_subject() -> TestResult<()> {
+    for (source_id, staged_modes, live_modes) in [
+        (
+            "media.audio-transcript",
+            &[
+                "source:media.audio-transcript",
+                "source:media.audio-transcript.audio-bundle-staged",
+            ][..],
+            &[
+                "source:media.audio-transcript.on-demand-session",
+                "source:media.audio-transcript.live-session",
+            ][..],
+        ),
+        (
+            "media.screen-ocr",
+            &[
+                "source:media.screen-ocr",
+                "source:media.screen-ocr.screenshot-ocr-staged",
+                "source:media.screen-ocr.video-staged",
+            ][..],
+            &[
+                "source:media.screen-ocr.on-demand-region",
+                "source:media.screen-ocr.live-session",
+            ][..],
+        ),
+    ] {
+        let entries: Vec<_> = inventory::iter::<SourceFactoryEntry>()
+            .filter(|entry| entry.source_id == source_id)
+            .collect();
+        assert_eq!(
+            entries.len(),
+            2,
+            "{source_id} needs staged and live factories"
+        );
+        let staged = entries
+            .iter()
+            .find(|entry| entry.default)
+            .expect("staged default factory");
+        let live = entries
+            .iter()
+            .find(|entry| !entry.default)
+            .expect("live factory");
+        assert_eq!(staged.mode_subjects, staged_modes);
+        assert_eq!(live.mode_subjects, live_modes);
+        assert!(
+            !std::ptr::fn_addr_eq(staged.factory_fn, live.factory_fn),
+            "{source_id} staged and live factories must differ"
+        );
+
+        let id = sui(source_id);
+        assert!(std::ptr::fn_addr_eq(
+            find_source_factory(&id).expect("linked staged default"),
+            staged.factory_fn
+        ));
+        for &mode in staged_modes {
+            assert!(
+                std::ptr::fn_addr_eq(
+                    find_source_factory_for_mode(&id, Some(mode)).expect("linked staged mode"),
+                    staged.factory_fn
+                ),
+                "{source_id} staged mode {mode} dispatched to another factory"
+            );
+        }
+        for &mode in live_modes {
+            assert!(
+                std::ptr::fn_addr_eq(
+                    find_source_factory_for_mode(&id, Some(mode)).expect("linked live mode"),
+                    live.factory_fn
+                ),
+                "{source_id} live mode {mode} dispatched to another factory"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -1221,14 +1303,9 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
             "media.audio-transcript",
             "media.audio-transcript.audio-bundle-staged",
         ),
-        (
-            "media.audio-transcript",
-            "media.audio-transcript.local-model-batch",
-        ),
         ("media.screen-ocr", "media.screen-ocr"),
         ("media.screen-ocr", "media.screen-ocr.screenshot-ocr-staged"),
         ("media.screen-ocr", "media.screen-ocr.video-staged"),
-        ("media.screen-ocr", "media.screen-ocr.local-model-batch"),
         ("media.screen-ocr", "media.screen-ocr.on-demand-region"),
         ("media.screen-ocr", "media.screen-ocr.on-demand-video"),
     ] {
@@ -1242,6 +1319,22 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
             mode.missing.is_empty(),
             "accepted media package mode should satisfy the package gate"
         );
+    }
+
+    for (package_id, mode_id) in [
+        (
+            "media.audio-transcript",
+            "media.audio-transcript.local-model-batch",
+        ),
+        ("media.screen-ocr", "media.screen-ocr.local-model-batch"),
+    ] {
+        let mode = &report.packages[package_id].modes[mode_id];
+        assert_eq!(mode.mode_state, PackageModeState::Manual);
+        assert_eq!(
+            mode.manual_reason,
+            Some("rpc_driven_executor_no_source_factory")
+        );
+        assert!(!mode.sources.source_factory_registered);
     }
 
     let external = report
