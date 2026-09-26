@@ -93,6 +93,11 @@ enum Command {
         #[arg(long)]
         source: String,
 
+        /// Runtime-binding subject selecting the source mode. Media sources
+        /// default to their staged import mode when omitted.
+        #[arg(long)]
+        mode_subject: Option<String>,
+
         /// Runtime label reported by heartbeats. Defaults to the source id
         /// when absent.
         #[arg(long)]
@@ -245,6 +250,7 @@ async fn main() -> color_eyre::Result<()> {
         } => rpc_server_serve(&cli, tcp_listen, cors_origins).await,
         Command::ScanSourceDriver {
             source,
+            mode_subject,
             service_name,
             instance_idx,
             runtime_config,
@@ -253,6 +259,7 @@ async fn main() -> color_eyre::Result<()> {
         } => {
             scan_source(
                 source,
+                mode_subject,
                 service_name,
                 instance_idx,
                 runtime_config,
@@ -496,6 +503,7 @@ async fn rpc_server_serve(
 
 async fn scan_source(
     source: String,
+    mode_subject: Option<String>,
     service_name: Option<String>,
     instance_idx: u32,
     runtime_config: Option<String>,
@@ -511,6 +519,7 @@ async fn scan_source(
 
     let binding = SourceBinding {
         source_id: source,
+        mode_subject,
         instance_idx,
         service_name,
         runtime_config: runtime_config_value,

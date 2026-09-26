@@ -291,6 +291,7 @@ async fn test_append_source_binding_args_for_scan_source_driver() -> ::xtask::sa
         &mut args,
         DevSourceBinding {
             source_id: "terminal.zsh-history".to_string(),
+            mode_subject: None,
             instance_idx: 1,
             service_name: None,
             runtime_config: Some(serde_json::json!({
@@ -333,6 +334,7 @@ async fn test_default_all_source_bindings_excludes_journald() -> ::xtask::sandbo
         bindings: vec![
             DevSourceBinding {
                 source_id: "terminal.atuin-history".to_string(),
+                mode_subject: None,
                 instance_idx: 1,
                 service_name: None,
                 runtime_config: None,
@@ -341,6 +343,7 @@ async fn test_default_all_source_bindings_excludes_journald() -> ::xtask::sandbo
             },
             DevSourceBinding {
                 source_id: "system.journald".to_string(),
+                mode_subject: None,
                 instance_idx: 1,
                 service_name: None,
                 runtime_config: None,
@@ -364,6 +367,7 @@ async fn test_all_source_bindings_can_include_default_excluded_sources()
         bindings: vec![
             DevSourceBinding {
                 source_id: "terminal.atuin-history".to_string(),
+                mode_subject: None,
                 instance_idx: 1,
                 service_name: None,
                 runtime_config: None,
@@ -372,6 +376,7 @@ async fn test_all_source_bindings_can_include_default_excluded_sources()
             },
             DevSourceBinding {
                 source_id: "system.journald".to_string(),
+                mode_subject: None,
                 instance_idx: 1,
                 service_name: None,
                 runtime_config: None,
@@ -394,6 +399,7 @@ async fn test_source_binding_runtime_args_uses_manifest_identity()
 -> ::xtask::sandbox::TestResult<()> {
     let binding = DevSourceBinding {
         source_id: "git-commit-history".to_string(),
+        mode_subject: Some("source:git-commit-history".to_string()),
         instance_idx: 3,
         service_name: None,
         runtime_config: Some(serde_json::json!({"repo": "/realm/project/sinex"})),
@@ -413,6 +419,8 @@ async fn test_source_binding_runtime_args_uses_manifest_identity()
             "source-driver-git-commit-history-3".to_string(),
             "--instance-idx".to_string(),
             "3".to_string(),
+            "--mode-subject".to_string(),
+            "source:git-commit-history".to_string(),
             "--runtime-config".to_string(),
             r#"{"repo":"/realm/project/sinex"}"#.to_string(),
         ]
@@ -426,6 +434,7 @@ async fn test_runtime_module_resolution_distinguishes_binding_and_binary_names()
     let manifest = DevSourceBindingsManifest {
         bindings: vec![DevSourceBinding {
             source_id: "desktop.activitywatch".to_string(),
+            mode_subject: None,
             instance_idx: 1,
             service_name: None,
             runtime_config: None,

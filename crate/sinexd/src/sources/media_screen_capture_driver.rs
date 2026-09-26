@@ -514,6 +514,11 @@ fn snapshot_report(events: u64, duration: Duration) -> ScanReport {
 
 crate::register_source!(
     source_id: "media.screen-ocr",
+    modes: [
+        "source:media.screen-ocr.on-demand-region",
+        "source:media.screen-ocr.live-session",
+    ],
+    default: false,
     driver: MediaScreenCaptureDriver<CommandScreenCaptureBackend>,
 );
 

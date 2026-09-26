@@ -39,6 +39,7 @@ use sinex_primitives::source_contracts::{
     event_types = "media.audio.recording_observed, media.audio.capture_session_started, media.audio.capture_session_ended, media.audio.transcription_run_observed",
     event_source = "media.audio",
     adapter = "FileContentDropAdapter",
+    factory = "none",
     implementation = "staged-parser",
     privacy_tier = PrivacyTier::Sensitive,
     horizons(Horizon::Historical),
@@ -125,6 +126,7 @@ pub struct MediaAudioTranscriptParser;
     event_types = "media.screen.screenshot_observed, media.screen.capture_session_started, media.screen.capture_session_ended, media.screen.video_segment_observed, media.screen.ocr_run_observed",
     event_source = "media.screen",
     adapter = "FileContentDropAdapter",
+    factory = "none",
     implementation = "staged-parser",
     privacy_tier = PrivacyTier::Sensitive,
     horizons(Horizon::Historical),
@@ -233,6 +235,29 @@ pub struct MediaAudioTranscriptParser;
     )
 )]
 pub struct MediaScreenOcrParser;
+
+crate::register_source!(
+    source_id: "media.audio-transcript",
+    modes: [
+        "source:media.audio-transcript",
+        "source:media.audio-transcript.audio-bundle-staged",
+    ],
+    default: true,
+    adapter: crate::runtime::parser::FileContentDropAdapter,
+    parser: MediaAudioTranscriptParser,
+);
+
+crate::register_source!(
+    source_id: "media.screen-ocr",
+    modes: [
+        "source:media.screen-ocr",
+        "source:media.screen-ocr.screenshot-ocr-staged",
+        "source:media.screen-ocr.video-staged",
+    ],
+    default: true,
+    adapter: crate::runtime::parser::FileContentDropAdapter,
+    parser: MediaScreenOcrParser,
+);
 
 #[derive(Debug, Clone)]
 struct TranscriptSegment {

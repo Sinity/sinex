@@ -1868,6 +1868,7 @@ let
       screenBinding = optionalAttrs sat.screen.enable {
         "media.screen-ocr" = {
           enable = true;
+          modeSubject = "source:media.screen-ocr.live-session";
           adapterConfig =
             {
               capture_command = sat.screen.captureCommand;
@@ -1882,6 +1883,7 @@ let
       audioBinding = optionalAttrs sat.audio.enable {
         "media.audio-transcript" = {
           enable = true;
+          modeSubject = "source:media.audio-transcript.live-session";
           adapterConfig =
             {
               capture_command = sat.audio.captureCommand;
@@ -2037,6 +2039,7 @@ let
             map
               (idx: {
                 source_id = sourceId;
+                mode_subject = binding.modeSubject or null;
                 instance_idx = idx;
                 service_name = "source-driver-${id}-${toString idx}";
                 runtime_config = runtimeConfig;

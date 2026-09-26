@@ -1221,14 +1221,9 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
             "media.audio-transcript",
             "media.audio-transcript.audio-bundle-staged",
         ),
-        (
-            "media.audio-transcript",
-            "media.audio-transcript.local-model-batch",
-        ),
         ("media.screen-ocr", "media.screen-ocr"),
         ("media.screen-ocr", "media.screen-ocr.screenshot-ocr-staged"),
         ("media.screen-ocr", "media.screen-ocr.video-staged"),
-        ("media.screen-ocr", "media.screen-ocr.local-model-batch"),
         ("media.screen-ocr", "media.screen-ocr.on-demand-region"),
         ("media.screen-ocr", "media.screen-ocr.on-demand-video"),
     ] {
@@ -1242,6 +1237,22 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
             mode.missing.is_empty(),
             "accepted media package mode should satisfy the package gate"
         );
+    }
+
+    for (package_id, mode_id) in [
+        (
+            "media.audio-transcript",
+            "media.audio-transcript.local-model-batch",
+        ),
+        ("media.screen-ocr", "media.screen-ocr.local-model-batch"),
+    ] {
+        let mode = &report.packages[package_id].modes[mode_id];
+        assert_eq!(mode.mode_state, PackageModeState::Manual);
+        assert_eq!(
+            mode.manual_reason,
+            Some("rpc_driven_executor_no_source_factory")
+        );
+        assert!(!mode.sources.source_factory_registered);
     }
 
     let external = report

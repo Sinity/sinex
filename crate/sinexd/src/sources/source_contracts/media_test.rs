@@ -199,9 +199,10 @@ async fn enabled_media_sources_pass_real_startup_binding_validation() -> TestRes
         "every deployable media runtime binding must declare criticality"
     );
 
-    let manifest = [
+    let mut manifest = [
         SourceBinding {
             source_id: "media.audio-transcript".to_string(),
+            mode_subject: None,
             instance_idx: 1,
             service_name: None,
             runtime_config: None,
@@ -210,6 +211,7 @@ async fn enabled_media_sources_pass_real_startup_binding_validation() -> TestRes
         },
         SourceBinding {
             source_id: "media.screen-ocr".to_string(),
+            mode_subject: None,
             instance_idx: 1,
             service_name: None,
             runtime_config: None,
@@ -218,6 +220,15 @@ async fn enabled_media_sources_pass_real_startup_binding_validation() -> TestRes
         },
     ];
     validate_bindings(&manifest)?;
+    manifest[0].mode_subject = Some("source:media.audio-transcript.live-session".to_string());
+    manifest[1].mode_subject = Some("source:media.screen-ocr.live-session".to_string());
+    validate_bindings(&manifest)?;
+
+    manifest[0].mode_subject = Some("source:media.audio-transcript.local-model-batch".to_string());
+    assert!(
+        validate_bindings(&manifest).is_err(),
+        "RPC-driven media worker mode must not dispatch through a source factory"
+    );
     Ok(())
 }
 
