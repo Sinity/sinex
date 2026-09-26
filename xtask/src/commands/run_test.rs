@@ -1070,7 +1070,7 @@ fn test_live_agentctl_coalesces_matching_workspace_jobs() {
 }
 
 #[sinex_test]
-async fn test_agentctl_verification_operations_bind_only_typed_inputs()
+async fn test_agentctl_verification_operations_require_caller_arguments()
 -> ::xtask::sandbox::TestResult<()> {
     let descriptor: toml::Value = toml::from_str(include_str!("../../../.agentctl/project.toml"))?;
     let operations = descriptor["operations"]
@@ -1137,45 +1137,17 @@ async fn test_agentctl_verification_operations_bind_only_typed_inputs()
         Some(1_800)
     );
 
-    let parameters = verify_closure["parameters"]
-        .as_table()
-        .ok_or_else(|| color_eyre::eyre::eyre!("verify_closure parameters must be a table"))?;
     assert_eq!(
-        parameters.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["bead_id", "dry_run", "json"],
-        "verify_closure exposes only its typed positional id and boolean flags"
+        verify_closure
+            .get("arguments")
+            .and_then(toml::Value::as_str),
+        Some("required"),
+        "closure verification needs a Bead selector and accepts CLI flags"
     );
-    let bead_id = &parameters["bead_id"];
-    assert_eq!(
-        bead_id.get("type").and_then(toml::Value::as_str),
-        Some("string")
+    assert!(
+        verify_closure.get("parameters").is_none(),
+        "AgentCTL does not support typed operation parameters"
     );
-    assert_eq!(
-        bead_id.get("position").and_then(toml::Value::as_integer),
-        Some(1)
-    );
-    assert_eq!(
-        bead_id.get("required").and_then(toml::Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        bead_id.get("max_length").and_then(toml::Value::as_integer),
-        Some(128)
-    );
-    assert_eq!(
-        bead_id.get("grammar").and_then(toml::Value::as_str),
-        Some("safe-token")
-    );
-    for (name, flag) in [("json", "--json"), ("dry_run", "--dry-run")] {
-        assert_eq!(
-            parameters[name].get("type").and_then(toml::Value::as_str),
-            Some("bool")
-        );
-        assert_eq!(
-            parameters[name].get("flag").and_then(toml::Value::as_str),
-            Some(flag)
-        );
-    }
 
     Ok(())
 }

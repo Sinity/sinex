@@ -1177,7 +1177,7 @@ fn execute_closure(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let payload = fetch_bead_closure_payload(bead_id)?;
-    let acceptance_criteria = extract_bead_acceptance_criteria(&payload.acceptance_criteria);
+    let (acceptance_criteria, acceptance_criteria_errors) = bead_acceptance_criteria(&payload);
     let evidence = collect_closure_evidence(&payload);
     let commands = &evidence.commands;
     let evidence_sources = evidence
@@ -1195,6 +1195,7 @@ fn execute_closure(
 
     let matrix_errors = validate_closure_matrix_items(&evidence.matrix_items);
     let mut manifest_errors = validate_closure_evidence_readiness(&evidence);
+    manifest_errors.extend(acceptance_criteria_errors);
     manifest_errors.extend(validate_bead_closure_contract(
         &payload,
         &acceptance_criteria,
@@ -1397,7 +1398,86 @@ struct BeadClosurePayload {
     #[serde(default)]
     acceptance_criteria: String,
     #[serde(default)]
+    metadata: serde_json::Value,
+    #[serde(default)]
     close_reason: String,
+}
+
+// Structured Bead criteria are canonical; retain the legacy text field for older records.
+fn bead_acceptance_criteria(
+    payload: &BeadClosurePayload,
+) -> (Vec<String>, Vec<ClosureEvidenceManifestError>) {
+    let Some(versioned) = payload.metadata.get("acceptance_criteria") else {
+        return (
+            extract_bead_acceptance_criteria(&payload.acceptance_criteria),
+            Vec::new(),
+        );
+    };
+
+    let Some(rows) = versioned.as_array() else {
+        return (
+            Vec::new(),
+            vec![ClosureEvidenceManifestError {
+                source: "bd.metadata.acceptance_criteria".to_string(),
+                ac_id: None,
+                reason: "versioned acceptance criteria must be an array of authored id/text rows"
+                    .to_string(),
+            }],
+        );
+    };
+
+    let mut criteria = Vec::with_capacity(rows.len());
+    let mut errors = Vec::new();
+    let mut seen_ids = BTreeSet::new();
+    for (index, row) in rows.iter().enumerate() {
+        let id = row
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty());
+        let text = row
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty());
+
+        let Some(id) = id else {
+            errors.push(ClosureEvidenceManifestError {
+                source: "bd.metadata.acceptance_criteria".to_string(),
+                ac_id: Some(format!("AC-{}", index + 1)),
+                reason: "versioned acceptance criterion requires a non-empty authored id"
+                    .to_string(),
+            });
+            continue;
+        };
+        if !seen_ids.insert(id.to_string()) {
+            errors.push(ClosureEvidenceManifestError {
+                source: "bd.metadata.acceptance_criteria".to_string(),
+                ac_id: Some(id.to_string()),
+                reason: "versioned acceptance criterion ids must be unique".to_string(),
+            });
+            continue;
+        }
+        let Some(text) = text else {
+            errors.push(ClosureEvidenceManifestError {
+                source: "bd.metadata.acceptance_criteria".to_string(),
+                ac_id: Some(id.to_string()),
+                reason: "versioned acceptance criterion requires non-empty text".to_string(),
+            });
+            continue;
+        };
+        criteria.push(text.to_string());
+    }
+
+    if rows.is_empty() {
+        errors.push(ClosureEvidenceManifestError {
+            source: "bd.metadata.acceptance_criteria".to_string(),
+            ac_id: None,
+            reason: "versioned acceptance criteria must not be empty".to_string(),
+        });
+    }
+
+    (criteria, errors)
 }
 
 fn collect_closure_evidence(payload: &BeadClosurePayload) -> ClosureEvidence {
