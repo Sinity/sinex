@@ -38,7 +38,7 @@ async fn timestamp_does_not_fabricate_a_wall_clock_for_a_v4_uuid() -> TestResult
     // honest outcomes are "no timestamp" (e.g. an Option) or a hard error --
     // silently returning `Timestamp::now()` invents provenance that never
     // existed, which is exactly the class of bug this repo's clock doctrine
-    // exists to forbid (see CLAUDE.md: "NEVER falsify provenance clocks").
+    // exists to forbid (see AGENTS.md: "NEVER falsify provenance clocks").
     //
     let v4_id: Id<Marker> = Id::from_uuid(::uuid::Uuid::new_v4());
     assert_eq!(v4_id.timestamp(), None);

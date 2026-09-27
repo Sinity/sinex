@@ -1117,7 +1117,7 @@ in
 ## Support & Documentation
 
 - **Architecture**: See `README.md#architecture`
-- **Development**: See `CLAUDE.md` for developer reference
+- **Development**: See `AGENTS.md` for developer reference
 - **CLI**: See `crate/sinexctl/README.md` for sinexctl usage
 - **Issues**: Report to project repository
 - **TimescaleDB**: [Official docs](https://docs.timescale.com/)

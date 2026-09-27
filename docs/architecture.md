@@ -1,6 +1,6 @@
 # Sinex Architecture Deep-Dive
 
-> Reference companion to the always-loaded `CLAUDE.md` (= `AGENTS.md`). This file
+> Reference companion to the always-loaded `AGENTS.md`. This file
 > holds the long-form architecture material: the provenance model, the full event
 > lifecycle with failure/threshold tables, the type-enforcement hierarchy, system
 > topology, the database schema map, and the privacy/redaction plane.

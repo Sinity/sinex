@@ -304,9 +304,9 @@ Two antipatterns to avoid:
 
 ## Agent Docs
 
-`CLAUDE.md` is a single self-contained file (no transclusion) and `AGENTS.md`
-is a committed symlink to it — every agent framework reads the same bytes with
-no render step. Edit `CLAUDE.md` directly; keep it dense and move long-form
+`AGENTS.md` is a single self-contained file (no transclusion) that every agent
+reads directly, with no render step and no separate `CLAUDE.md`. Edit it
+directly; keep it dense and move long-form
 material to `docs/architecture.md`, `docs/glossary.md`, or the owning
 `crate/**/docs/` file.
 

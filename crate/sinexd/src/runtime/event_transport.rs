@@ -388,7 +388,7 @@ impl EventBatcher {
     /// rename into place was never followed by a parent-dir fsync, so the
     /// rename itself could be lost on crash even though the data was synced).
     /// Opening a directory read-only and calling `sync_all` is the portable
-    /// Unix idiom; sinex targets Linux only (see repo CLAUDE.md), so this is
+    /// Unix idiom; sinex targets Linux only (see repo AGENTS.md), so this is
     /// not expected to fail in practice, but a failure here is logged rather
     /// than propagated — directory durability is a hardening improvement over
     /// the previous complete absence of it, not a new hard dependency.

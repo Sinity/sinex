@@ -5545,7 +5545,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "U4: Include CLAUDE.md and docs/ + .agent/ (project memory) in the snapshot",
+              "help": "U4: Include AGENTS.md and docs/ + .agent/ (project memory) in the snapshot",
               "long": "project-memory",
               "name": "project_memory",
               "possible_values": [

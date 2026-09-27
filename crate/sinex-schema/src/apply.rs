@@ -1288,7 +1288,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     // above, so a fresh database never creates semantic.* at all; this DROP
     // converges any existing database that still has it (fresh-rebuild
     // campaign, no external backwards-compatibility obligation — see
-    // CLAUDE.md). CASCADE removes the schema's tables/indexes/constraints in
+    // AGENTS.md). CASCADE removes the schema's tables/indexes/constraints in
     // one statement; there is no data worth preserving here (candidate lane
     // output is evidence, not canonical state, by design).
     execute_sql(pool, "DROP SCHEMA IF EXISTS semantic CASCADE").await?;
