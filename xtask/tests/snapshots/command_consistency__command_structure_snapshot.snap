@@ -1317,234 +1317,9 @@ expression: json
       "name": "infra",
       "subcommands": [
         {
-          "about": "Start the infrastructure",
-          "args": [
-            {
-              "global": false,
-              "help": "Start all processes",
-              "long": "all",
-              "name": "all",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Specific processes to start",
-              "long": null,
-              "name": "processes",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "start",
-          "subcommands": []
-        },
-        {
-          "about": "Stop the infrastructure",
-          "args": [
-            {
-              "global": false,
-              "help": "Stop/clean every checkout-local dev-state root under /var/cache/sinex/$USER",
-              "long": "all-checkouts",
-              "name": "all_checkouts",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Only remove stale/malformed lock and PID files; do not stop live processes",
-              "long": "stale-only",
-              "name": "stale_only",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Only stop instances whose owning checkout no longer exists on disk (sinex-grlv). Unconditionally safe: a deleted checkout can never be legitimately in use, so this needs no idle window and never touches a live checkout elsewhere",
-              "long": "orphaned-only",
-              "name": "orphaned_only",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Print planned actions without stopping processes or removing files",
-              "long": "dry-run",
-              "name": "dry_run",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Specific processes to stop",
-              "long": null,
-              "name": "processes",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "stop",
-          "subcommands": []
-        },
-        {
-          "about": "Run the explicit local devshell/runtime lifecycle smoke",
-          "args": [
-            {
-              "global": false,
-              "help": "Print the smoke plan and current coordinates without starting or stopping services",
-              "long": "dry-run",
-              "name": "dry_run",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Stop current-checkout infra before the smoke if it is already running",
-              "long": "reset-first",
-              "name": "reset_first",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Preserve already-running current-checkout infra while running smoke probes",
-              "long": "allow-running",
-              "name": "allow_running",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Skip the explicit infra start/stop phase and only verify read-only probes",
-              "long": "skip-start",
-              "name": "skip_start",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "smoke",
-          "subcommands": []
-        },
-        {
-          "about": "Show infrastructure status",
-          "args": [
-            {
-              "global": false,
-              "help": "Watch mode",
-              "long": "watch",
-              "name": "watch",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": "w",
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Show every checkout-local dev-state root under /var/cache/sinex/$USER",
-              "long": "all-checkouts",
-              "name": "all_checkouts",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "status",
-          "subcommands": []
-        },
-        {
-          "about": "View logs",
-          "args": [
-            {
-              "global": false,
-              "help": "Process name",
-              "long": null,
-              "name": "process",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Lines to show",
-              "long": "lines",
-              "name": "lines",
-              "possible_values": [],
-              "required": false,
-              "short": "l",
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Follow output",
-              "long": "follow",
-              "name": "follow",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": "f",
-              "takes_value": false
-            }
-          ],
-          "name": "logs",
+          "about": "Run the checkout's development Postgres and NATS in the foreground",
+          "args": [],
+          "name": "lease-services",
           "subcommands": []
         },
         {
@@ -2282,6 +2057,23 @@ expression: json
       "args": [],
       "name": "history",
       "subcommands": [
+        {
+          "about": "Emit unresolved verification failures for session-start context",
+          "args": [
+            {
+              "global": false,
+              "help": "Maximum number of failure nodes to emit",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "context",
+          "subcommands": []
+        },
         {
           "about": "List recent invocations",
           "args": [
@@ -5545,7 +5337,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "U4: Include CLAUDE.md and docs/ + .agent/ (project memory) in the snapshot",
+              "help": "U4: Include AGENTS.md and docs/ + .agent/ (project memory) in the snapshot",
               "long": "project-memory",
               "name": "project_memory",
               "possible_values": [

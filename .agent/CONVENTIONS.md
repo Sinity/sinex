@@ -1,7 +1,7 @@
 # Sinex Agent Conventions
 
 Repo-local conventions for agents working in this checkout. Always-loaded
-operating rules live in `CLAUDE.md` (= `AGENTS.md`); this file holds the
+operating rules live in `AGENTS.md`; this file holds the
 repo-agent conventions that do not need to be in every context window.
 
 **The devloop substrate is Beads.** The former bespoke conductor packet
@@ -92,7 +92,7 @@ Conventions for bead content:
 - Priorities: 0 = operator directive/campaign or in-flight recovery,
   1 = data-loss correctness and the current consumption unlock, 2 = normal,
   3 = design/meta/legibility, 4 = far-backlog design notes.
-- `bd dolt push` follows the same policy as `git push` (see repo CLAUDE.md).
+- `bd dolt push` follows the same policy as `git push` (see repo AGENTS.md).
   NB: no Dolt remote is configured — `.beads/issues.jsonl` in git IS the sync
   surface; ship bead-state deltas in PRs (`chore(beads):`).
 - `bd preflight`/`bd doctor` are upstream-tool checklists that do not know
@@ -135,7 +135,7 @@ should outlive the turn; local plans are execution checklists only.
 - **Proof ladder.** Prove the changed surface with the narrowest command that
   exercises it while iterating; run the broad gate (`xtask check --full`,
   `xtask test --impact-mode=off --all`) once per publishable phase — see the
-  verification cadence in CLAUDE.md.
+  verification cadence in AGENTS.md.
 
 ## Greedy Batch / PR Cadence
 

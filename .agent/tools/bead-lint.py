@@ -172,7 +172,7 @@ def main() -> int:
                 continue
             if token in KNOWN_NON_BEAD_TOKENS:
                 continue
-            # worktree dirname convention: sinex-pr<N>-fix (see CLAUDE.md worktree
+            # worktree dirname convention: sinex-pr<N>-fix (see AGENTS.md worktree
             # placement policy) — a PR number, not a bead id
             if re.fullmatch(r"pr\d+", token):
                 continue

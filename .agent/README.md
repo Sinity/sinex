@@ -1,6 +1,6 @@
 # .agent — Sinex Repo Agent Surface
 
-Orientation for agents. Always-loaded rules live in `CLAUDE.md` (= `AGENTS.md`);
+Orientation for agents. Always-loaded rules live in `AGENTS.md`;
 repo conventions in [`CONVENTIONS.md`](CONVENTIONS.md).
 
 - **Task substrate**: Beads. `bd prime` → `bd ready` → claim → work → PR →

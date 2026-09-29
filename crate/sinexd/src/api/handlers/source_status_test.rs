@@ -506,7 +506,7 @@ async fn live_status_has_no_recency_bound_after_single_emit() -> xtask::sandbox:
     // bead says "a run that emitted exactly once and then died reads
     // live=true forever" -- likely in this file's runtime_observations
     // handling, or list_live_runtime_presence in sinex-db's state.rs per
-    // CLAUDE.md's summary of that file).
+    // AGENTS.md's summary of that file).
     // Setup needed: a SourceStatus/runtime observation row with exactly one
     // historical emit and no subsequent heartbeat, evaluated against a "now"
     // far past any reasonable liveness window.

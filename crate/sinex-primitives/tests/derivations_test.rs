@@ -33,7 +33,7 @@ async fn derivation_registry_invariants_hold_across_all_specs() -> TestResult<()
 
     // Every registered derivation must be able to say what happens to it on
     // replay and on redaction — these are the two invalidation triggers the
-    // architecture treats as universal (CLAUDE.md: "Replay is not
+    // architecture treats as universal (AGENTS.md: "Replay is not
     // idempotent by design"; "Privacy/redaction is a presentation feature"
     // still requires every derived output to know it must be rebuilt). A
     // spec missing either is a silent invalidation-planning gap.

@@ -2,7 +2,7 @@
 
 GitHub Issues were retired as Sinex's task substrate on 2026-07-10. Beads
 (`bd`) is the sole work-tracking and closure authority; current conventions
-live in `CLAUDE.md`, `.agent/CONVENTIONS.md`, and `CONTRIBUTING.md`.
+live in `AGENTS.md`, `.agent/CONVENTIONS.md`, and `CONTRIBUTING.md`.
 
 Before claiming a Bead is honestly closed, record a `Closure Evidence
 Manifest` in its `close_reason` and run:

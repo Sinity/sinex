@@ -1,7 +1,7 @@
 # Scratch
 
 Gitignored thinking space. Not shared task truth (that is Beads — `bd prime`)
-and not durable docs (CLAUDE.md / docs/ / crate docs).
+and not durable docs (AGENTS.md / docs/ / crate docs).
 
 Layout:
 
@@ -13,6 +13,6 @@ Layout:
   Information, not authority: verify file:line claims against master before
   acting; record verdicts in beads.
 
-Promote durable insight out of scratch: rules → CLAUDE.md/CONVENTIONS.md,
+Promote durable insight out of scratch: rules → AGENTS.md/CONVENTIONS.md,
 work items → beads, gotchas → `bd remember`. The retired conductor packet
 lives at `.agent/archive/devloop-2026-07/`.
