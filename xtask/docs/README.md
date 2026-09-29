@@ -59,8 +59,9 @@ xtask docs check
 ```
 
 `AGENTS.md` is not a generated surface: it is a single self-contained file;
-edit it directly, no regeneration step. Use `xtask docs ast-grep-catalog` when you only changed `.config/ast-grep/rules/`
-and want the rendered rule catalog refreshed. Use
+edit it directly, no regeneration step. Use `xtask docs ast-grep-catalog` when
+you only changed `.config/ast-grep/rules/` and want the rendered rule catalog
+refreshed. Use
 `xtask docs schema-bundle` when you only need to refresh the tracked JSON schema
 contract bundle.
 

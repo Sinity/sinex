@@ -306,9 +306,8 @@ Two antipatterns to avoid:
 
 `AGENTS.md` is a single self-contained file (no transclusion) that every agent
 reads directly, with no render step and no separate `CLAUDE.md`. Edit it
-directly; keep it dense and move long-form
-material to `docs/architecture.md`, `docs/glossary.md`, or the owning
-`crate/**/docs/` file.
+directly; keep it dense and move long-form material to `docs/architecture.md`,
+`docs/glossary.md`, or the owning `crate/**/docs/` file.
 
 The generated xtask docs surfaces can be refreshed and verified with:
 
