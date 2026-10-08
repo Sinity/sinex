@@ -224,7 +224,7 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
 
 ## Runtime and worktree traps
 
-- Compile-heavy worktrees live under `/realm/worktrees/`. Start `dev_services`
+- Compile-heavy worktrees live under `/realm/worktree/`. Start `dev_services`
   for that workspace before any database-backed check; the devshell derives one
   PostgreSQL and NATS port pair per checkout, so worktrees never contend.
 - Start runtime operations through AgentCTL and use the returned job ID for
