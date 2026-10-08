@@ -58,8 +58,8 @@ workspace passes are phase-boundary checks, not a tax on every small PR.
 2. PR template filled out: Summary, Problem, Solution, Verification.
 3. Acceptance Criteria Drift section completed (mark each AC as satisfied,
    deferred, or misframed).
-4. At least one human review approved (for solo development: self-review
-   with a 24-hour cooling-off period before merge).
+4. The author reviews the complete change against its acceptance criteria.
+   Human approval and a cooling-off period are not required.
 5. No unresolved automated review findings (CodeRabbit, Copilot, proof packs).
    False positives must be explicitly noted in a PR comment.
 6. Branch is up to date with `master` (rebased, not merged).
