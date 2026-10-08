@@ -1929,7 +1929,7 @@ in
               continuousPollIntervalSec = 30;
             };
             raindrop-bookmarks = {
-              path = "/realm/accounts/raindrop/processed/bookmarks.csv";
+              path = "/realm/account/raindrop/processed/bookmarks.csv";
               sourceIdentifier = "raindrop-bookmarks";
             };
           }
@@ -3215,7 +3215,7 @@ in
             };
           };
           raindrop-bookmarks = {
-            path = "/realm/accounts/raindrop/processed/bookmarks.csv";
+            path = "/realm/account/raindrop/processed/bookmarks.csv";
             sourceIdentifier = "raindrop-bookmarks";
           };
         };

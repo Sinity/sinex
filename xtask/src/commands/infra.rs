@@ -502,7 +502,7 @@ fn default_browser_history_dump_path() -> Option<PathBuf> {
 }
 
 fn default_raindrop_bookmarks_export_path() -> Option<PathBuf> {
-    let path = PathBuf::from("/realm/accounts/raindrop/processed/bookmarks.csv");
+    let path = PathBuf::from("/realm/account/raindrop/processed/bookmarks.csv");
     path.exists().then_some(path)
 }
 
