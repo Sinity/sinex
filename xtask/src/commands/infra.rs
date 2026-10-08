@@ -497,7 +497,7 @@ fn generate_dev_source_bindings_manifest_for_home(
 }
 
 fn default_browser_history_dump_path() -> Option<PathBuf> {
-    let path = PathBuf::from("/realm/activity/webhistory/gestalt/derived/full_history.ndjson");
+    let path = PathBuf::from("/realm/activity/browser/history/gestalt/derived/full_history.ndjson");
     path.exists().then_some(path)
 }
 
