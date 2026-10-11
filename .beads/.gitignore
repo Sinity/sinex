@@ -69,3 +69,7 @@ bd.db
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default
 # since no pattern above ignores them.
+
+# Task exports: the task database is external (/realm/state/tasks) and
+# this repository is public. Never track Beads exports here.
+*.jsonl
