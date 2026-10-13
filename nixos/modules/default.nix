@@ -2591,7 +2591,7 @@ in
       apiTlsCertFile = cfg.core.api.tlsCertFile;
       apiTlsKeyFile = cfg.core.api.tlsKeyFile;
       apiTlsTrustAnchorFile =
-        if cfg.core.api.autoGenerateTls then runtimeDir + "/api-ca.pem" else null;
+        if cfg.core.api.autoGenerateTls then stateRoot + "/api-ca.pem" else null;
       apiTlsClientCAFile = cfg.core.api.tlsClientCAFile;
       apiProbeListenAddress =
         if hasPrefix "0.0.0.0:" cfg.core.api.listenAddress then

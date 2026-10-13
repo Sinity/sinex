@@ -510,7 +510,9 @@ let
       apiTlsCertRuntimeFile = "${runtimeDir}/api-server.pem";
       apiTlsKeyRuntimeFile = "${runtimeDir}/api-server-key.pem";
       apiTlsClientCaRuntimeFile = "${runtimeDir}/api-client-ca.pem";
-      apiTlsTrustAnchorRuntimeFile = "${runtimeDir}/api-ca.pem";
+      # The CA is public client input; runtimeDir contains private credentials
+      # and is deliberately not traversable by ordinary runtime clients.
+      apiTlsTrustAnchorRuntimeFile = "${cfg.stateRoot}/api-ca.pem";
       apiTlsTrustAnchorSourceFile =
         if cfg.core.api.autoGenerateTls then
           "${tlsDir}/ca.pem"
