@@ -86,7 +86,7 @@ let
     set -euo pipefail
     export SINEX_CONTENT_STORE_PATH=${escapeShellArg repoPath}
     export DATABASE_URL=${escapeShellArg casDatabaseUrl}
-    ${cfg.cliPackage}/bin/sinexctl blob sweep-orphans \
+    ${cfg.cliPackage}/bin/sinexctl ops blob sweep-orphans \
       --content-store-path ${escapeShellArg repoPath} \
       ${optionalString casSweep.apply "--apply"}
   '';
@@ -95,7 +95,7 @@ let
     set -euo pipefail
     export SINEX_CONTENT_STORE_PATH=${escapeShellArg repoPath}
     export DATABASE_URL=${escapeShellArg casDatabaseUrl}
-    ${cfg.cliPackage}/bin/sinexctl blob fsck \
+    ${cfg.cliPackage}/bin/sinexctl ops blob fsck \
       --content-store-path ${escapeShellArg repoPath} \
       ${optionalString casFsckCfg.apply "--apply"}
   '';
