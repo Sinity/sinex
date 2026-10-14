@@ -5,6 +5,7 @@
 //! ACK/NAK/DLQ and confirmation publishing, while finite staged parsers can call
 //! this service directly before they have a transport shape of their own.
 
+use crate::event_engine::polylogue_ingress::{PolylogueProofFailure, validate_polylogue_intent};
 use crate::event_engine::validator::{IngestEventValidator, ValidationResult};
 use crate::event_engine::{EventEngineResult, SinexError};
 use sinex_db::DbPool;
@@ -535,6 +536,7 @@ impl RecentIdCache {
 /// `EventRepository::insert_stream_batch`.
 pub struct AdmissionService {
     pool: DbPool,
+    content_store: Option<Arc<crate::runtime::content_store::ContentStoreManager>>,
     validator: Arc<RwLock<IngestEventValidator>>,
     recent_id_cache: Mutex<RecentIdCache>,
     fail_once: Option<Arc<AtomicBool>>,
@@ -607,6 +609,7 @@ impl AdmissionService {
     pub fn new(pool: DbPool, validator: Arc<RwLock<IngestEventValidator>>) -> Self {
         Self {
             pool,
+            content_store: None,
             validator,
             recent_id_cache: Mutex::new(RecentIdCache::new(RECENT_ID_CACHE_SIZE)),
             fail_once: None,
@@ -617,6 +620,16 @@ impl AdmissionService {
             #[cfg(test)]
             payload_schema_fk_retry_barrier: None,
         }
+    }
+
+    /// Supply the native CAS authority for registered material bytes.
+    #[must_use]
+    pub fn with_content_store(
+        mut self,
+        store: Arc<crate::runtime::content_store::ContentStoreManager>,
+    ) -> Self {
+        self.content_store = Some(store);
+        self
     }
 
     #[must_use]
@@ -711,7 +724,8 @@ impl AdmissionService {
         &self,
         event: Event<JsonValue>,
     ) -> EventEngineResult<AdmissionDecision> {
-        self.admit_event_with_metadata(event, None, None).await
+        self.admit_event_with_metadata(event, None, None, false)
+            .await
     }
 
     /// Admit a staged-parser candidate with parser/source metadata.
@@ -775,7 +789,7 @@ impl AdmissionService {
             }
         }
 
-        self.admit_event_with_metadata(event, Some(metadata), None)
+        self.admit_event_with_metadata(event, Some(metadata), None, false)
             .await
     }
 
@@ -818,7 +832,17 @@ impl AdmissionService {
         mut event: Event<JsonValue>,
         metadata: Option<CandidateEventMetadata>,
         precomputed_equivalence: Option<EquivalenceOutcome>,
+        verified_polylogue: bool,
     ) -> EventEngineResult<AdmissionDecision> {
+        if event.source.to_string() == "integration.polylogue" && !verified_polylogue {
+            return Ok(AdmissionDecision::Rejected(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::EnvelopeValidation,
+                    "Polylogue observation requires verified revision material at intent ingress",
+                )
+                .with_candidate(&event),
+            ));
+        }
         // Occurrence reconciliation (#1637 + sinex-n9a). A live row sharing the
         // event's equivalence_key either suppresses this interpretation, or —
         // for SupersedeOnChange event types whose content actually changed —
@@ -1087,12 +1111,40 @@ impl AdmissionService {
         for (message_index, payload) in payloads.iter().enumerate() {
             match parse_intent_bytes(payload) {
                 Ok(intent) => {
+                    match validate_polylogue_intent(
+                        &self.pool,
+                        self.content_store.as_deref(),
+                        &intent,
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(PolylogueProofFailure::Retry(error)) => return Err(error),
+                        Err(PolylogueProofFailure::Reject(reason)) => {
+                            decisions_by_message.push(
+                                intent
+                                    .events
+                                    .iter()
+                                    .map(|event| {
+                                        AdmissionDecision::Rejected(
+                                            AdmissionRejection::new(
+                                                AdmissionRejectionKind::EnvelopeValidation,
+                                                format!("Polylogue material proof: {reason}"),
+                                            )
+                                            .with_candidate(event),
+                                        )
+                                    })
+                                    .collect(),
+                            );
+                            continue;
+                        }
+                    }
                     decisions_by_message.push(Vec::new());
                     events.extend(
                         intent
                             .events
                             .into_iter()
-                            .map(|event| (message_index, event)),
+                            .map(|event| (message_index, event, true)),
                     );
                 }
                 Err(decision) => decisions_by_message.push(vec![decision]),
@@ -1108,7 +1160,7 @@ impl AdmissionService {
 
     async fn admit_events_batch(
         &self,
-        events: Vec<(usize, Event<JsonValue>)>,
+        events: Vec<(usize, Event<JsonValue>, bool)>,
     ) -> EventEngineResult<Vec<(usize, AdmissionDecision)>> {
         let mut decisions = Vec::with_capacity(events.len());
 
@@ -1119,7 +1171,7 @@ impl AdmissionService {
         let mut seen_equiv_keys = HashSet::new();
         let equiv_keys: Vec<String> = events
             .iter()
-            .filter_map(|(_, e)| e.equivalence_key.as_ref().map(|k| k.as_str().to_owned()))
+            .filter_map(|(_, e, _)| e.equivalence_key.as_ref().map(|k| k.as_str().to_owned()))
             .filter(|key| seen_equiv_keys.insert(key.clone()))
             .collect();
         let mut live_by_key: HashMap<String, LiveEquivalenceRow> = if equiv_keys.is_empty() {
@@ -1152,7 +1204,7 @@ impl AdmissionService {
         let mut key_last_index: HashMap<String, usize> = HashMap::new();
         let mut key_archive_target: HashMap<String, Option<Uuid>> = HashMap::new();
 
-        for (message_index, event) in events {
+        for (message_index, event, verified_polylogue) in events {
             let equiv_key = event.equivalence_key.clone();
             let outcome = equiv_key
                 .as_deref()
@@ -1161,7 +1213,7 @@ impl AdmissionService {
                     classify_live_match(&event, live)
                 });
             let decision = self
-                .admit_event_with_metadata(event, None, Some(outcome))
+                .admit_event_with_metadata(event, None, Some(outcome), verified_polylogue)
                 .await?;
 
             let Some(key) = equiv_key else {
@@ -1396,7 +1448,7 @@ impl AdmissionService {
                     classify_live_match(&event, live)
                 });
             let decision = self
-                .admit_event_with_metadata(event, None, Some(outcome))
+                .admit_event_with_metadata(event, None, Some(outcome), false)
                 .await?;
 
             let Some(key) = equiv_key else {

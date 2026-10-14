@@ -110,6 +110,8 @@ pub struct JetStreamConsumer {
     #[cfg(any(test, feature = "testing"))]
     delivery_observer: Option<Arc<AtomicU64>>,
     #[cfg(any(test, feature = "testing"))]
+    raw_ack_drop_once: Option<Arc<AtomicBool>>,
+    #[cfg(any(test, feature = "testing"))]
     source_material_ready_dlq_threshold: Option<i64>,
     #[cfg(any(test, feature = "testing"))]
     source_material_ready_retry_delay: Option<Duration>,

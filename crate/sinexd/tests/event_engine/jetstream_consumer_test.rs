@@ -4,12 +4,16 @@
 mod support;
 
 use async_nats::jetstream;
+use color_eyre::eyre::WrapErr;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::source_materials::SourceMaterial;
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::events::payloads::{
     ActivityDailySummaryPayload, ActivityWatchWindowActivePayload, StateIntervalPayload,
 };
+use sinex_primitives::polylogue_protocol::PolylogueRevisionManifest;
 use sinex_primitives::{Timestamp, Uuid, error::SinexError, temporal};
 use sinexd::event_engine::material_ready_set::MaterialReadySet;
 use sinexd::event_engine::validator::IngestEventValidator;
@@ -18,6 +22,7 @@ use sinexd::runtime::durable_emission::{EmissionReceiptState, SuppressionReason}
 use sqlx::Row;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use support::{
     FIXTURE_SOURCE_MATERIAL_ID, admission_envelope, admission_envelope_multi,
@@ -3374,5 +3379,414 @@ async fn equivalence_key_collision_within_one_fetch_batch_must_not_duplicate(
 
     consumer_handle.abort();
     let _ = consumer_handle.await;
+    Ok(())
+}
+
+#[sinex_test(timeout = 120)]
+async fn polylogue_fixture_material_and_mixed_envelope_survive_restart(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/polylogue/v1/small-session");
+    let manifest_bytes = std::fs::read(fixture.join("manifest.json"))?;
+    let manifest = PolylogueRevisionManifest::from_json(&manifest_bytes)?;
+    let mut segments = BTreeMap::new();
+    let mut material_paths = BTreeMap::new();
+    for descriptor in std::iter::once(&manifest.head_segment).chain(&manifest.segments) {
+        let path = fixture.join("segments").join(&descriptor.filename);
+        segments.insert(descriptor.index, std::fs::read(&path)?);
+        material_paths.insert(descriptor.index, path);
+    }
+    manifest.verify(&segments)?;
+    let custody = tempfile::TempDir::new()?;
+    let content_store = Arc::new(sinexd::runtime::content_store::ContentStoreManager::new(
+        sinexd::runtime::content_store::ContentStoreConfig {
+            root_path: camino::Utf8PathBuf::from_path_buf(custody.path().join("cas"))
+                .map_err(|_| eyre!("fixture path must be UTF-8"))?,
+            ..Default::default()
+        },
+        ctx.pool.clone(),
+        None,
+    )?);
+    let mut blob_ids = BTreeMap::new();
+    for (&index, path) in &mut material_paths {
+        let locator = custody.path().join(path.file_name().unwrap());
+        std::fs::write(&locator, &segments[&index])?;
+        let blob = content_store
+            .ingest_from_bytes(
+                &segments[&index],
+                path.file_name().unwrap().to_str().unwrap(),
+                "application/x-ndjson",
+            )
+            .await?;
+        blob_ids.insert(index, blob.id);
+        if index % 2 == 0 {
+            std::fs::remove_file(&locator)?;
+        } else {
+            std::fs::write(&locator, b"mutated staging locator\n")?;
+        }
+        *path = locator;
+    }
+
+    let withheld_index = 2;
+    let mut material_ids = BTreeMap::new();
+    for (&index, path) in &material_paths {
+        if index == withheld_index {
+            continue;
+        }
+        let record = ctx
+            .pool
+            .source_materials()
+            .register_material_with_total_bytes(
+                SourceMaterial::file(path.to_string_lossy().into_owned())
+                    .with_optional_blob_id(Some(blob_ids[&index])),
+                i64::try_from(segments[&index].len())?,
+            )
+            .await?;
+        material_ids.insert(index, record.id);
+    }
+    let withheld_id = Uuid::now_v7();
+    material_ids.insert(withheld_index, withheld_id);
+
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        ctx.env(),
+        ctx.pipeline_namespace()
+            .stream("SINEX_RAW_EVENTS_POLYLOGUE_BRIDGE"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-polylogue-bridge"),
+        Some(&namespace),
+    );
+    let js = ctx.jetstream().await?;
+    let raw_deliveries = Arc::new(AtomicU64::new(0));
+    let consumer = JetStreamConsumer::with_test_hooks(
+        nats_client.clone(),
+        ctx.pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(false))),
+        topology.clone(),
+        Duration::from_secs(30),
+        None,
+        None,
+        None,
+        Some(Arc::clone(&raw_deliveries)),
+        false,
+        None,
+        None,
+        Some(Duration::from_millis(300)),
+    )
+    .with_content_store(Arc::clone(&content_store));
+    let registry = consumer.settlement_registry();
+    let handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
+
+    let manifest_digest = format!("{:x}", Sha256::digest(&manifest_bytes));
+    let mut events = Vec::new();
+    let mut ids = Vec::new();
+    let mut withheld_event_id = None;
+    for (record_id, anchor) in &manifest.anchors {
+        let material_id = material_ids[&anchor.segment_index];
+        let event_id = Uuid::now_v7();
+        if anchor.segment_index == withheld_index && withheld_event_id.is_none() {
+            withheld_event_id = Some(event_id);
+        }
+        ids.push((
+            event_id,
+            material_id,
+            manifest.anchor_byte(&segments, record_id)?,
+            record_id.clone(),
+        ));
+        events.push(json!({
+            "id": event_id.to_string(),
+            "source": "integration.polylogue",
+            "event_type": format!("integration.polylogue.{}.observed", anchor.kind),
+            "payload": {
+                "protocol_version": manifest.protocol_version,
+                "semantics_version": manifest.semantics_version,
+                "manifest_digest": manifest_digest,
+                "revision_id": manifest.revision_id,
+                "session_id": manifest.session_id,
+                "origin": manifest.origin,
+                "native_id": manifest.native_id,
+                "record_id": record_id,
+                "record_kind": anchor.kind,
+                "material_id": material_id.to_string(),
+                "segment_index": anchor.segment_index,
+                "line_index": anchor.line_index,
+                "seq": anchor.seq,
+                "record_sha256": anchor.sha256,
+            },
+            "ts_orig": temporal::now().format_rfc3339(),
+            "host": "test-host",
+            "source_material_id": material_id.to_string(),
+            "anchor_byte": manifest.anchor_byte(&segments, record_id)?,
+        }));
+    }
+    let bad_id = Uuid::now_v7();
+    let mut bad = events[2].clone();
+    assert_ne!(bad["event_type"], events[0]["event_type"]);
+    let bad_event_type = bad["event_type"].as_str().unwrap().to_owned();
+    bad["id"] = json!(bad_id.to_string());
+    bad["ts_orig"] = json!((temporal::now() + temporal::Duration::days(3650)).format_rfc3339());
+    events.push(bad);
+    let mut withheld_rx = registry.register(withheld_event_id.unwrap().into());
+    let mut bad_rx = registry.register(bad_id.into());
+    let mut intent = admission_envelope_multi("integration.polylogue", events);
+    intent["polylogue_revision"] = json!({
+        "manifest_json": String::from_utf8(manifest_bytes.clone())?,
+        "segment_material_ids": material_ids
+            .iter()
+            .map(|(index, material_id)| (index.to_string(), material_id.to_string()))
+            .collect::<BTreeMap<_, _>>(),
+    });
+    let envelope = serde_json::to_vec(&intent)?;
+    let subject = ctx
+        .env()
+        .nats_subject_with_namespace(Some(&namespace), "events.raw.integration_polylogue.batch");
+    nats_client
+        .publish(subject.clone(), envelope.clone().into())
+        .await?;
+    nats_client.flush().await?;
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(600), &mut bad_rx)
+            .await
+            .is_err()
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(600), &mut withheld_rx)
+            .await
+            .is_err()
+    );
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(withheld_event_id.unwrap().into())
+            .await?
+            .is_none()
+    );
+    let mut raw_stream = js.get_stream(&topology.events_stream).await?;
+    let mut raw_consumer = raw_stream
+        .get_consumer::<jetstream::consumer::pull::Config>(&topology.consumer_durable)
+        .await
+        .map_err(|error| SinexError::network(error.to_string()))?;
+    assert_eq!(raw_consumer.info().await?.ack_floor.stream_sequence, 0);
+
+    // Restart while the only physical raw message is still unsettled. The
+    // missing registered segment must not turn into a durable child outcome.
+    handle.abort();
+    let _ = handle.await;
+    let drop_raw_ack_once = Arc::new(AtomicBool::new(true));
+    let restarted = JetStreamConsumer::with_test_hooks(
+        nats_client.clone(),
+        ctx.pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(false))),
+        topology.clone(),
+        Duration::from_secs(30),
+        None,
+        None,
+        None,
+        Some(Arc::clone(&raw_deliveries)),
+        false,
+        None,
+        None,
+        Some(Duration::from_millis(300)),
+    )
+    .with_content_store(Arc::clone(&content_store))
+    .with_raw_ack_drop_once(Arc::clone(&drop_raw_ack_once));
+    let restarted_registry = restarted.settlement_registry();
+    let mut other_receipts = ids
+        .iter()
+        .filter(|(event_id, _, _, _)| Some(*event_id) != withheld_event_id)
+        .map(|(event_id, _, _, record_id)| {
+            (
+                record_id.clone(),
+                restarted_registry.register((*event_id).into()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let withheld_rx = restarted_registry.register(withheld_event_id.unwrap().into());
+    let bad_rx = restarted_registry.register(bad_id.into());
+
+    ctx.pool
+        .source_materials()
+        .register_external_material(
+            withheld_id,
+            SourceMaterial::file(
+                material_paths[&withheld_index]
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+            .with_optional_blob_id(Some(blob_ids[&withheld_index])),
+        )
+        .await?;
+    let restarted_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, restarted).await?;
+    // The settlement owner has reached its final safe outcome, but the test
+    // hook simulates a lost ACK response for this same physical envelope.
+    WaitHelpers::wait_for_condition(
+        || {
+            let drop_once = Arc::clone(&drop_raw_ack_once);
+            async move { Ok::<bool, SinexError>(!drop_once.load(Ordering::SeqCst)) }
+        },
+        Timeouts::STANDARD,
+    )
+    .await
+    .wrap_err("aggregate settlement never reached the simulated lost ACK")?;
+    restarted_handle.abort();
+    let _ = restarted_handle.await;
+    assert_eq!(raw_stream.info().await?.state.messages, 1);
+    assert_eq!(raw_consumer.info().await?.ack_floor.stream_sequence, 0);
+
+    // Restart again. JetStream must redeliver the original stream sequence;
+    // no second publish is permitted in this recovery proof.
+    let final_consumer = JetStreamConsumer::with_test_hooks(
+        nats_client.clone(),
+        ctx.pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(false))),
+        topology.clone(),
+        Duration::from_secs(30),
+        None,
+        None,
+        None,
+        Some(Arc::clone(&raw_deliveries)),
+        false,
+        None,
+        None,
+        Some(Duration::from_millis(300)),
+    )
+    .with_content_store(Arc::clone(&content_store));
+    let final_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, final_consumer).await?;
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = js.clone();
+            let stream_name = topology.events_stream.clone();
+            let durable = topology.consumer_durable.clone();
+            async move {
+                let stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let mut consumer = stream
+                    .get_consumer::<jetstream::consumer::pull::Config>(&durable)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                Ok::<bool, SinexError>(
+                    consumer
+                        .info()
+                        .await
+                        .map_err(|error| SinexError::network(error.to_string()))?
+                        .ack_floor
+                        .stream_sequence
+                        == 1,
+                )
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await
+    .wrap_err("original raw envelope was not ACKed after lost-response redelivery")?;
+    assert!(raw_deliveries.load(Ordering::SeqCst) >= 3);
+    // The current raw stream is a WorkQueue: successful aggregate ACK removes
+    // its delivery copy. Its last sequence still proves no second publish.
+    let raw_info = raw_stream.info().await?;
+    assert_eq!(
+        raw_info.config.retention,
+        jetstream::stream::RetentionPolicy::WorkQueue
+    );
+    assert_eq!(raw_info.state.messages, 0);
+    assert_eq!(raw_info.state.last_sequence, 1);
+    let bad_state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), bad_rx).await??;
+    let EmissionReceiptState::DurableDebt { debt_id, .. } = bad_state else {
+        panic!("future-timestamp child must settle as durable debt: {bad_state:?}");
+    };
+    let failed_row = sqlx::query(
+        "SELECT failed_event_id, event_type FROM sinex_schemas.dlq_events WHERE dlq_id = $1::uuid",
+    )
+    .bind(debt_id)
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(failed_row.try_get::<Uuid, _>("failed_event_id")?, bad_id);
+    assert_eq!(
+        failed_row.try_get::<String, _>("event_type")?,
+        bad_event_type
+    );
+    let mut dlq_stream = js.get_stream(&topology.dlq_stream).await?;
+    let dlq_state = dlq_stream.info().await?.state.clone();
+    assert_eq!(dlq_state.messages, 1);
+    let dlq_entry = dlq_stream.direct_get(dlq_state.first_sequence).await?;
+    let bad_id_string = bad_id.to_string();
+    assert_eq!(
+        dlq_entry
+            .headers
+            .get("Event-Id")
+            .map(|value| value.as_str()),
+        Some(bad_id_string.as_str())
+    );
+    assert_eq!(
+        dlq_entry
+            .headers
+            .get("Dlq-Failure-Scope")
+            .map(|value| value.as_str()),
+        Some("child")
+    );
+    let withheld_state =
+        tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), withheld_rx).await??;
+    assert!(matches!(
+        withheld_state,
+        EmissionReceiptState::PersistedConfirmed { .. }
+    ));
+    for (event_id, material_id, anchor_byte, record_id) in &ids {
+        WaitHelpers::wait_for_event_id(&ctx.pool, (*event_id).into(), Timeouts::SHORT).await?;
+        let row = sqlx::query(
+            "SELECT source_material_id, anchor_byte, payload FROM core.events WHERE id = $1::uuid",
+        )
+        .bind(event_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(row.try_get::<Uuid, _>("source_material_id")?, *material_id);
+        assert_eq!(row.try_get::<i64, _>("anchor_byte")?, *anchor_byte);
+        assert_eq!(
+            row.try_get::<serde_json::Value, _>("payload")?["record_id"],
+            record_id.as_str()
+        );
+    }
+    assert!(ctx.pool.events().get_by_id(bad_id.into()).await?.is_none());
+    for (record_id, receipt) in other_receipts.drain(..) {
+        let state = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), receipt)
+            .await
+            .wrap_err_with(|| format!("missing receipt for Polylogue record {record_id}"))??;
+        assert!(
+            matches!(state, EmissionReceiptState::PersistedConfirmed { .. }),
+            "unexpected receipt for Polylogue record {record_id}: {state:?}"
+        );
+    }
+    assert_eq!(
+        dlq_stream.info().await?.state.messages,
+        1,
+        "redelivery must reconcile the existing rejected-child DLQ witness"
+    );
+    for (event_id, material_id, anchor_byte, _) in &ids {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+            .bind(event_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+        assert_eq!(
+            count, 1,
+            "lost-response replay must keep one row per minted event id"
+        );
+        let occurrence_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1::uuid AND anchor_byte = $2",
+        )
+        .bind(material_id)
+        .bind(anchor_byte)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(
+            occurrence_count, 1,
+            "lost-response replay must not duplicate the material occurrence"
+        );
+    }
+    final_handle.abort();
+    let _ = final_handle.await;
     Ok(())
 }

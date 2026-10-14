@@ -16,12 +16,23 @@ use crate::events::Event;
 use crate::primitives::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
+use uuid::Uuid;
 
 /// Current envelope version emitted by all producers.
 pub const CURRENT_ENVELOPE_VERSION: &str = "1";
 
 /// Envelope versions that event_engine will accept on receipt.
 pub const ACCEPTED_ENVELOPE_VERSIONS: &[&str] = &["1"];
+
+/// Exact registered segment coordinates and the manifest witness for one
+/// Polylogue revision. Transcript bytes remain in source materials, never in
+/// the raw event envelope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolylogueRevisionEvidence {
+    pub manifest_json: String,
+    pub segment_material_ids: BTreeMap<i32, Uuid>,
+}
 
 /// Default envelope version for backward-compatible deserialization.
 ///
@@ -145,6 +156,11 @@ pub struct EventIntent {
     /// Parser version (semver, e.g., "1.2.0").
     pub parser_version: String,
 
+    /// Required for Polylogue observations and rechecked by event-engine
+    /// admission against the registered segment materials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polylogue_revision: Option<PolylogueRevisionEvidence>,
+
     /// The events that passed producer-side admission checks.
     /// Must contain at least one event.
     pub events: Vec<Event<JsonValue>>,
@@ -170,6 +186,7 @@ impl EventIntent {
             source_id: source_id.into(),
             parser_id: parser_id.into(),
             parser_version: parser_version.into(),
+            polylogue_revision: None,
             events,
             admitted_at: Timestamp::now(),
             admitted_by,

@@ -9,7 +9,9 @@ use crate::event_engine::{
     validator::IngestEventValidator,
 };
 // External crates
-use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
+use crate::runtime::content_store::{
+    ContentStoreConfig, ContentStoreManager, MaterialContentStore,
+};
 use crate::runtime::heartbeat::HeartbeatEmitter;
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::systemd_notify;
@@ -1043,6 +1045,7 @@ impl IngestService {
         let future_ts_skew = time::Duration::seconds(self.config.ts_orig_future_skew_secs as i64);
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
         let settlement_registry = self.settlement_registry.clone();
+        let content_store_path = self.config.content_store_path.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let ts_orig_lower_bound = match self.config.ts_orig_lower_bound_unix {
             Some(unix_seconds) => match Timestamp::from_unix_timestamp(unix_seconds) {
@@ -1060,6 +1063,14 @@ impl IngestService {
             None => None,
         };
         let handle = tokio::spawn(async move {
+            let content_store = Arc::new(ContentStoreManager::new(
+                ContentStoreConfig {
+                    root_path: content_store_path,
+                    ..Default::default()
+                },
+                pool.clone(),
+                None,
+            )?);
             let mut consumer = crate::event_engine::JetStreamConsumer::new(
                 nats_client,
                 pool.clone(),
@@ -1074,7 +1085,8 @@ impl IngestService {
             .with_ts_orig_lower_bound(ts_orig_lower_bound)
             .with_reject_initial_replay(reject_initial_replay)
             .with_observer(observer)
-            .with_settlement_registry(settlement_registry);
+            .with_settlement_registry(settlement_registry)
+            .with_content_store(content_store);
 
             // Load DB-backed privacy policy (#1042). Admission must not run
             // with an implicit noop policy in production.
