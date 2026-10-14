@@ -347,7 +347,7 @@ impl JetStreamConsumer {
             .fetch_add(1, Ordering::Relaxed);
         let event_id = rejection.event_id;
         let reason = rejection.reason;
-        match self.route_to_dlq(msg, reason.clone()).await {
+        match self.route_to_dlq(msg, reason.clone(), event_id).await {
             Ok(durable_failure_id) => {
                 self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
                 if let Some(event_id) = event_id {

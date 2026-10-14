@@ -1838,6 +1838,218 @@ async fn multi_child_intent_settles_valid_and_rejected_siblings(
     Ok(())
 }
 
+// Large mixed envelopes must settle both initially and on raw redelivery.
+#[sinex_test]
+async fn multi_child_intent_settles_sixteen_mixed_siblings_before_restart(
+    ctx: TestContext,
+) -> TestResult<()> {
+    assert_sixteen_mixed_siblings_settle(ctx, false).await
+}
+
+#[sinex_test]
+async fn multi_child_intent_settles_sixteen_mixed_siblings_after_restart(
+    ctx: TestContext,
+) -> TestResult<()> {
+    assert_sixteen_mixed_siblings_settle(ctx, true).await
+}
+
+async fn assert_sixteen_mixed_siblings_settle(ctx: TestContext, restart: bool) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let ack_wait = if restart {
+        Duration::from_millis(300)
+    } else {
+        Duration::from_secs(30)
+    };
+    let nats_client = ctx.nats_client();
+    ensure_fixture_source_material(&ctx.pool).await?;
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        ctx.env(),
+        ctx.pipeline_namespace()
+            .stream("SINEX_RAW_EVENTS_R6D12_RESTART"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-r6d12-restart"),
+        Some(&namespace),
+    );
+    let js = ctx.jetstream().await?;
+    let consumer = JetStreamConsumer::with_ack_wait(
+        nats_client.clone(),
+        ctx.pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(false))),
+        topology.clone(),
+        ack_wait,
+    );
+    let handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
+    let setup = ConsumerSetup {
+        handle,
+        js,
+        topology,
+        namespace,
+    };
+    let env = ctx.env();
+
+    let dlq_stream = setup.topology.dlq_stream.clone();
+    let mut dlq_stream_handle = setup.js.get_stream(&dlq_stream).await?;
+    let initial_dlq_messages = dlq_stream_handle.info().await?.state.messages;
+
+    let missing_material_id = Uuid::now_v7();
+    let good_ids: Vec<_> = (0..15).map(|_| Uuid::now_v7()).collect();
+    let mut events: Vec<_> = good_ids
+        .iter()
+        .enumerate()
+        .map(|(index, good_id)| {
+            json!({
+                "id": good_id.to_string(),
+                "source": "r6d12mixed",
+                "event_type": "r6d12mixed.good",
+                "payload": {"ok": true},
+                "ts_orig": temporal::now().format_rfc3339(),
+                "host": "test-host",
+                "source_material_id": if restart && index == 0 { missing_material_id.to_string() } else { FIXTURE_SOURCE_MATERIAL_ID.to_owned() },
+                "anchor_byte": index,
+            })
+        })
+        .collect();
+    let bad_id = Uuid::now_v7();
+    let bad_event = json!({
+        "id": bad_id.to_string(),
+        "source": "r6d12mixed",
+        "event_type": "r6d12mixed.bad",
+        "payload": {"data": "bad"},
+        // A well-formed but implausibly-future RFC3339 timestamp: it must
+        // deserialize fine (unlike a malformed string, which would poison
+        // the WHOLE envelope's deserialization and reject the valid
+        // sibling too) yet still get rejected by the future-skew admission
+        // check. Legitimate pre-2000 timestamps are covered separately.
+        "ts_orig": (temporal::now() + temporal::Duration::days(3650)).format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 1,
+    });
+
+    events.push(bad_event);
+    let subject =
+        env.nats_subject_with_namespace(Some(&setup.namespace), "events.raw.r6d12mixed.batch");
+    nats_client
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope_multi("r6d12mixed", events))?.into(),
+        )
+        .await?;
+    nats_client.flush().await?;
+
+    // The rejected sibling must still reach the DLQ.
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let dlq_stream = dlq_stream.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&dlq_stream)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let state = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?
+                    .state
+                    .clone();
+                Ok::<bool, SinexError>(state.messages > initial_dlq_messages)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    let mut owner_handle = setup.handle;
+    if restart {
+        // End the first owner after the rejected child is durably routed, while
+        // the unregistered material still prevents its admitted siblings persisting.
+        owner_handle.abort();
+        let _ = owner_handle.await;
+        ctx.ensure_specific_material(missing_material_id, Some("r6d12-restart-material"))
+            .await?;
+        let restarted = JetStreamConsumer::with_ack_wait(
+            nats_client.clone(),
+            ctx.pool.clone(),
+            Arc::new(RwLock::new(IngestEventValidator::new(false))),
+            setup.topology.clone(),
+            ack_wait,
+        );
+        owner_handle =
+            spawn_consumer_and_wait_ready(&ctx, &setup.js, &setup.topology, restarted).await?;
+    }
+    for good_id in good_ids {
+        WaitHelpers::wait_for_event_id(&ctx.pool, good_id.into(), Timeouts::SHORT).await?;
+    }
+
+    // Persistence and DLQ receipts are not proof the physical envelope settled.
+    // Inspect the broker's actual ACK floor before ending its owner.
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.events_stream.clone();
+            let durable = setup.topology.consumer_durable.clone();
+            async move {
+                let stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let mut consumer = stream
+                    .get_consumer::<jetstream::consumer::pull::Config>(&durable)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let info = consumer
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                Ok::<bool, SinexError>(
+                    info.ack_floor.stream_sequence == 1 && info.num_ack_pending == 0,
+                )
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    owner_handle.abort();
+    let _ = owner_handle.await;
+    assert_eq!(
+        dlq_stream_handle.info().await?.state.messages,
+        initial_dlq_messages + 1,
+        "redelivery must reuse its retained rejected-child witness"
+    );
+    let dlq_state = dlq_stream_handle.info().await?.state.clone();
+    let retained = dlq_stream_handle
+        .direct_get(dlq_state.first_sequence)
+        .await?;
+    let bad_id_string = bad_id.to_string();
+    assert_eq!(
+        retained.headers.get("Event-Id").map(|value| value.as_str()),
+        Some(bad_id_string.as_str())
+    );
+    assert_eq!(
+        retained
+            .headers
+            .get("Dlq-Failure-Scope")
+            .map(|value| value.as_str()),
+        Some("child")
+    );
+    let failed_types: Vec<String> = sqlx::query_scalar(
+        "SELECT event_type FROM sinex_schemas.dlq_events WHERE failed_event_id = $1::uuid",
+    )
+    .bind(bad_id)
+    .fetch_all(&ctx.pool)
+    .await?;
+    assert!(!failed_types.is_empty());
+    assert!(
+        failed_types
+            .iter()
+            .all(|event_type| event_type == "r6d12mixed.bad")
+    );
+    Ok(())
+}
+
 /// sinex-r6d.12: a not-ready event (unregistered source material) and a
 /// ready event sharing ONE physical raw message. The shared-envelope
 /// settlement coordinator must NAK the whole message when the not-ready

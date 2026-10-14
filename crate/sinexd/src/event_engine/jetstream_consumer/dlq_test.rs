@@ -117,6 +117,7 @@ async fn dlq_route_keeps_multi_child_intents_with_same_leading_event_recoverable
             .route_to_dlq(
                 &message,
                 "adversarial multi-child admission failure".to_string(),
+                None,
             )
             .await?;
         durable_failure_ids.push(durable_failure_id);
@@ -133,6 +134,39 @@ async fn dlq_route_keeps_multi_child_intents_with_same_leading_event_recoverable
         assert_eq!(evidence.error_category, "permanent");
         message.ack().await.map_err(ack_error)?;
     }
+
+    // Reusing child ids with different raw bytes must not turn a duplicate
+    // publish ACK into evidence for this changed envelope.
+    let changed_intent = json!({
+        "events": [
+            {"id": "00000000-0000-7000-8000-000000000001"},
+            {"id": "00000000-0000-7000-8000-000000000002",
+             "payload": {"changed": true}},
+        ]
+    });
+    js.publish(
+        topology.events_subject.clone(),
+        serde_json::to_vec(&changed_intent)?.into(),
+    )
+    .await?
+    .await?;
+    let changed_message = tokio::time::timeout(Duration::from_secs(2), messages.next())
+        .await?
+        .expect("raw consumer must receive changed intent")?;
+    let mismatch = consumer
+        .route_to_dlq(
+            &changed_message,
+            "changed bytes under retained child ids".to_string(),
+            None,
+        )
+        .await
+        .expect_err("mismatched retained witness cannot settle new bytes");
+    assert!(
+        mismatch
+            .to_string()
+            .contains("DLQ duplicate does not match"),
+        "expected a witness mismatch, got {mismatch}"
+    );
 
     let dlq_state = js
         .get_stream(&topology.dlq_stream)
@@ -203,7 +237,7 @@ async fn dlq_requeue_then_refail_survives_the_dlq_dupe_window(ctx: TestContext) 
         .await?
         .expect("raw consumer must receive the original intent")?;
     consumer
-        .route_to_dlq(&first_raw, "initial admission failure".to_string())
+        .route_to_dlq(&first_raw, "initial admission failure".to_string(), None)
         .await?;
     first_raw.ack().await.map_err(ack_error)?;
 
@@ -234,6 +268,7 @@ async fn dlq_requeue_then_refail_survives_the_dlq_dupe_window(ctx: TestContext) 
         .route_to_dlq(
             &refailed_raw,
             "refailed admission within dupeWindow".to_string(),
+            None,
         )
         .await?;
     refailed_raw.ack().await.map_err(ack_error)?;
@@ -316,7 +351,7 @@ async fn dlq_route_marks_redacted_and_parse_failure_entries_non_requeueable(
         .await?
         .expect("raw consumer must receive the redacted payload")?;
     consumer
-        .route_to_dlq(&first_raw, "redacted admission failure".to_string())
+        .route_to_dlq(&first_raw, "redacted admission failure".to_string(), None)
         .await?;
     first_raw.ack().await.map_err(ack_error)?;
 
@@ -324,7 +359,7 @@ async fn dlq_route_marks_redacted_and_parse_failure_entries_non_requeueable(
         .await?
         .expect("raw consumer must receive the malformed payload")?;
     consumer
-        .route_to_dlq(&second_raw, "parse failure".to_string())
+        .route_to_dlq(&second_raw, "parse failure".to_string(), None)
         .await?;
     second_raw.ack().await.map_err(ack_error)?;
 
