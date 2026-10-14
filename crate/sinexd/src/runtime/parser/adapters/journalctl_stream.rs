@@ -131,9 +131,11 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
 
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
+        let resume_cursor = journal_resume_cursor(config, cursor.as_ref());
 
         let stream = async_stream::stream! {
             let mut frame_index: u64 = 0;
+            let mut pending_cursor = resume_cursor;
             // sinex-audit-anchor-byte-degenerate: track the cumulative byte
             // position of this journalctl subprocess's own line stream (the
             // unix_socket_stream.rs bytes_read pattern), rather than hardcoding
@@ -152,7 +154,13 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
                     }
                     Ok(None) => {
                         match child.wait().await {
-                            Ok(status) if status.success() => {}
+                            Ok(status) if status.success() => {
+                                if pending_cursor.is_some() {
+                                    yield Err(ParserError::Cursor(
+                                        "journal checkpoint unavailable: query ended before confirming it".into()
+                                    ));
+                                }
+                            }
                             Ok(status) => {
                                 yield Err(ParserError::Adapter(format!(
                                     "journalctl exited unsuccessfully: {status}"
@@ -167,6 +175,26 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
                         break;
                     }
                     Ok(Some(line)) => {
+                        if let Some(expected) = pending_cursor.as_ref() {
+                            if line.is_empty() {
+                                continue;
+                            }
+                            // Inclusive --cursor must return this exact opaque identity
+                            // first. Never order cursors or race a separate preflight.
+                            let actual = serde_json::from_str::<serde_json::Value>(&line)
+                                .ok().and_then(|value| value.get("__CURSOR")
+                                    .and_then(serde_json::Value::as_str).map(str::to_owned));
+                            if actual.as_deref() != Some(expected.as_str()) {
+                                yield Err(ParserError::Cursor(
+                                    "journal checkpoint unavailable: first filtered record does not match the requested cursor".into()
+                                ));
+                                break;
+                            }
+                            pending_cursor = None;
+                            // The committed checkpoint is confirmation evidence only;
+                            // newly captured material starts at the next record's byte zero.
+                            continue;
+                        }
                         // `lines()` has already consumed this line's trailing newline,
                         // whether or not the line produces a record. Keep the stream-byte
                         // cursor in lockstep before blank-line and size-cap handling so the
@@ -253,16 +281,23 @@ fn journalctl_args(
         args.push(format!("--priority={p}"));
     }
 
-    let resume_cursor = cursor
-        .map(|c| c.cursor.clone())
-        .or_else(|| config.from_cursor.clone());
+    let resume_cursor = journal_resume_cursor(config, cursor);
     if let Some(c) = resume_cursor {
-        args.push(format!("--after-cursor={c}"));
+        args.push(format!("--cursor={c}"));
     } else if config.start_at_now_without_cursor {
         args.push("--since=now".to_string());
     }
 
     args
+}
+
+pub(super) fn journal_resume_cursor(
+    config: &JournalctlStreamConfig,
+    cursor: Option<&JournalctlCursor>,
+) -> Option<String> {
+    cursor
+        .map(|c| c.cursor.clone())
+        .or_else(|| config.from_cursor.clone())
 }
 
 // =============================================================================

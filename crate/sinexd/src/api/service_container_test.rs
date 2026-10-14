@@ -16,6 +16,106 @@ use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
 
+#[sinex_serial_test]
+async fn registered_journal_binding_reports_unavailable_cursor_in_native_status(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use crate::runtime::parser::journalctl_test_fixture::{JournalFixture, UNAVAILABLE_CURSOR};
+    use crate::sources::bindings::{SourceBinding, run_binding};
+    use sinex_primitives::rpc::source_status::SourcesStatusViewRequest;
+    let ctx = ctx.with_nats().shared().await?;
+    let mut fixture = JournalFixture::new()?;
+    let state = tempfile::tempdir()?;
+    fixture
+        .env
+        .set("SINEX_STATE_DIR", state.path().display().to_string());
+    fixture.env.set(
+        "SINEX_CONTENT_STORE_PATH",
+        state.path().display().to_string(),
+    );
+    fixture
+        .env
+        .set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
+    crate::runtime::acquisition_opportunity::clear_test_observation("system.journald");
+    let binding = SourceBinding {
+        source_id: "system.journald".into(),
+        mode_subject: None,
+        instance_idx: 1,
+        service_name: Some(format!(
+            "synthetic-journal-status-{}",
+            uuid::Uuid::now_v7().simple()
+        )),
+        runtime_config: Some(json!({
+            "units": ["sinex-synthetic-fixture.service"], "from_cursor": UNAVAILABLE_CURSOR
+        })),
+        extra_args: vec![
+            "--database-url".into(),
+            ctx.database_url().into(),
+            "--url".into(),
+            ctx.nats_handle()?.client_url().to_string(),
+            "--namespace".into(),
+            format!("synthetic-journal-{}", uuid::Uuid::now_v7().simple()),
+            "--work-dir".into(),
+            state.path().display().to_string(),
+            "scan".into(),
+            "--from".into(),
+            "none".into(),
+            "--until".into(),
+            "snapshot".into(),
+        ],
+        extra_env: HashMap::new(),
+    };
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(30), run_binding(binding)).await?;
+    assert!(
+        result.is_err(),
+        "an unavailable journal checkpoint must fail the registered source run"
+    );
+    let container = super::ServiceContainer::from_database_url(ctx.database_url()).await?;
+    let response = crate::api::handlers::source_status::handle_sources_status_view(
+        &container,
+        SourcesStatusViewRequest {
+            source: Some("system.journald".into()),
+            exact_counts: false,
+            ..SourcesStatusViewRequest::default()
+        },
+    )
+    .await?;
+    let source = response
+        .payload
+        .sources
+        .iter()
+        .find(|source| source.source_id == "system.journald")
+        .ok_or_else(|| {
+            color_eyre::eyre::eyre!("native status omitted the registered journal source")
+        })?;
+    let reports: Vec<_> = source
+        .modes
+        .iter()
+        .filter_map(|mode| mode.acquisition_opportunity.as_ref())
+        .collect();
+    assert!(
+        !reports.is_empty(),
+        "binding failure must be visible through sources.status.view"
+    );
+    for report in reports {
+        assert_eq!(report.source_id, "system.journald");
+        assert_eq!(
+            report.completeness,
+            sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown
+        );
+        assert!(report.reason.contains("checkpoint unavailable"));
+        assert_eq!(
+            report.cursor_before.as_deref(),
+            Some(serde_json::to_string(&json!({"cursor": UNAVAILABLE_CURSOR}))?.as_str())
+        );
+        assert!(report.cursor_after.is_none());
+        assert!(serde_json::to_value(report)?.get("missing_count").is_none());
+    }
+    crate::runtime::acquisition_opportunity::clear_test_observation("system.journald");
+    Ok(())
+}
+
 #[sinex_test]
 async fn stale_replay_recovery_accepts_clean_state(ctx: TestContext) -> TestResult<()> {
     let replay = sinex_db::replay::state_machine::ReplayStateMachine::new(ctx.pool.clone());

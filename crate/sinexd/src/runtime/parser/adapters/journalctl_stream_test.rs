@@ -1,5 +1,111 @@
 use super::*;
+use xtask::sandbox::prelude::sinex_serial_test;
 use xtask::sandbox::prelude::sinex_test;
+
+#[sinex_serial_test]
+async fn journal_resume_requires_exact_retained_cursor_in_same_stream()
+-> xtask::sandbox::TestResult<()> {
+    use super::super::journalctl_test_fixture::{JournalFixture, UNAVAILABLE_CURSOR};
+    use futures::StreamExt;
+    let fixture = JournalFixture::new()?;
+    let config = JournalctlStreamConfig {
+        units: vec!["sinex-synthetic-fixture.service".into()],
+        priority: None,
+        from_cursor: None,
+        start_at_now_without_cursor: false,
+    };
+    let adapter = JournalctlStreamAdapter;
+    let mut available = adapter
+        .open(
+            dummy_material_id(),
+            &config,
+            Some(JournalctlCursor::new(&fixture.cursors[0])),
+        )
+        .await?;
+    let record = tokio::time::timeout(std::time::Duration::from_secs(6), available.next())
+        .await?
+        .ok_or_else(|| {
+            color_eyre::eyre::eyre!("available resume ended without its next record")
+        })??;
+    assert_eq!(adapter.cursor_after(&record)?.cursor, fixture.cursors[1]);
+    assert_eq!(
+        record.anchor,
+        MaterialAnchor::StreamFrame {
+            material_offset: 0,
+            frame_index: 0
+        }
+    );
+    drop(available);
+    let mut unavailable = adapter
+        .open(
+            dummy_material_id(),
+            &config,
+            Some(JournalctlCursor::new(UNAVAILABLE_CURSOR)),
+        )
+        .await?;
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(6), unavailable.next()).await?;
+    assert!(
+        matches!(result, Some(Err(ParserError::Cursor(ref reason))) if reason.contains("checkpoint unavailable")),
+        "a successful child must not admit records beyond an unverified checkpoint: {result:?}"
+    );
+    assert!(unavailable.next().await.is_none());
+    drop(unavailable);
+    // An empty live scope is pending evidence, not proof that retention lost data.
+    let empty_config = JournalctlStreamConfig {
+        units: vec!["synthetic-empty-journal-scope.service".into()],
+        ..config.clone()
+    };
+    let mut empty = adapter
+        .open(
+            dummy_material_id(),
+            &empty_config,
+            Some(JournalctlCursor::new(&fixture.cursors[0])),
+        )
+        .await?;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(200), empty.next())
+            .await
+            .is_err()
+    );
+    drop(empty); // Cancel this same reader, without admitting or advancing anything.
+    fixture.finite_query()?;
+    let mut finite_empty = adapter
+        .open(
+            dummy_material_id(),
+            &empty_config,
+            Some(JournalctlCursor::new(&fixture.cursors[0])),
+        )
+        .await?;
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(6), finite_empty.next()).await?;
+    assert!(
+        matches!(result, Some(Err(ParserError::Cursor(ref reason))) if reason.contains("query ended before confirming")),
+        "successful EOF without checkpoint evidence must not claim complete resume: {result:?}"
+    );
+    drop(finite_empty);
+    fixture.delay_start()?;
+    let mut delayed = adapter
+        .open(
+            dummy_material_id(),
+            &config,
+            Some(JournalctlCursor::new(&fixture.cursors[0])),
+        )
+        .await?;
+    // A valid child delayed beyond the former five-second deadline remains live.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(5200), delayed.next())
+            .await
+            .is_err()
+    );
+    let record = tokio::time::timeout(std::time::Duration::from_secs(10), delayed.next())
+        .await?
+        .ok_or_else(|| {
+            color_eyre::eyre::eyre!("delayed valid reader ended before its next record")
+        })??;
+    assert_eq!(adapter.cursor_after(&record)?.cursor, fixture.cursors[1]);
+    Ok(())
+}
 
 fn dummy_material_id() -> Id<SourceMaterial> {
     Id::from_uuid(uuid::Uuid::new_v4())
@@ -210,7 +316,7 @@ async fn journalctl_args_default_without_cursor_preserves_historical_import()
     );
 
     assert!(!args.contains(&"--since=now".to_string()));
-    assert!(!args.iter().any(|arg| arg.starts_with("--after-cursor=")));
+    assert!(!args.iter().any(|arg| arg.starts_with("--cursor=")));
     assert!(args.contains(&"--unit=sinexd.service".to_string()));
     assert!(args.contains(&"--priority=6".to_string()));
     Ok(())
@@ -229,7 +335,7 @@ async fn journalctl_args_start_at_now_when_requested() -> xtask::sandbox::TestRe
     );
 
     assert!(args.contains(&"--since=now".to_string()));
-    assert!(!args.iter().any(|arg| arg.starts_with("--after-cursor=")));
+    assert!(!args.iter().any(|arg| arg.starts_with("--cursor=")));
     Ok(())
 }
 
@@ -245,9 +351,9 @@ async fn journalctl_args_resume_after_runtime_cursor() -> xtask::sandbox::TestRe
         Some(&JournalctlCursor::new("runtime-cursor")),
     );
 
-    assert!(args.contains(&"--after-cursor=runtime-cursor".to_string()));
+    assert!(args.contains(&"--cursor=runtime-cursor".to_string()));
     assert!(!args.contains(&"--since=now".to_string()));
-    assert!(!args.contains(&"--after-cursor=config-cursor".to_string()));
+    assert!(!args.contains(&"--cursor=config-cursor".to_string()));
     Ok(())
 }
 
