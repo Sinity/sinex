@@ -536,6 +536,7 @@ impl RecentIdCache {
 /// `EventRepository::insert_stream_batch`.
 pub struct AdmissionService {
     pool: DbPool,
+    content_store: Option<Arc<crate::runtime::content_store::ContentStoreManager>>,
     validator: Arc<RwLock<IngestEventValidator>>,
     recent_id_cache: Mutex<RecentIdCache>,
     fail_once: Option<Arc<AtomicBool>>,
@@ -608,6 +609,7 @@ impl AdmissionService {
     pub fn new(pool: DbPool, validator: Arc<RwLock<IngestEventValidator>>) -> Self {
         Self {
             pool,
+            content_store: None,
             validator,
             recent_id_cache: Mutex::new(RecentIdCache::new(RECENT_ID_CACHE_SIZE)),
             fail_once: None,
@@ -618,6 +620,16 @@ impl AdmissionService {
             #[cfg(test)]
             payload_schema_fk_retry_barrier: None,
         }
+    }
+
+    /// Supply the native CAS authority for registered material bytes.
+    #[must_use]
+    pub fn with_content_store(
+        mut self,
+        store: Arc<crate::runtime::content_store::ContentStoreManager>,
+    ) -> Self {
+        self.content_store = Some(store);
+        self
     }
 
     #[must_use]
@@ -1099,7 +1111,13 @@ impl AdmissionService {
         for (message_index, payload) in payloads.iter().enumerate() {
             match parse_intent_bytes(payload) {
                 Ok(intent) => {
-                    match validate_polylogue_intent(&self.pool, &intent).await {
+                    match validate_polylogue_intent(
+                        &self.pool,
+                        self.content_store.as_deref(),
+                        &intent,
+                    )
+                    .await
+                    {
                         Ok(()) => {}
                         Err(PolylogueProofFailure::Retry(error)) => return Err(error),
                         Err(PolylogueProofFailure::Reject(reason)) => {

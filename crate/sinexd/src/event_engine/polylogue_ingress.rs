@@ -1,9 +1,11 @@
 //! Verify externally produced Polylogue observations against registered bytes
 //! before event-engine admission can treat their anchors as evidence.
 
+use crate::runtime::content_store::ContentStoreManager;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sinex_db::DbPool;
+use sinex_db::models::Blob;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::domain::MaterialStatus;
@@ -49,6 +51,7 @@ fn reject(reason: impl Into<String>) -> PolylogueProofFailure {
 /// is a terminal admission rejection routed through the existing DLQ owner.
 pub(super) async fn validate_polylogue_intent(
     pool: &DbPool,
+    content_store: Option<&ContentStoreManager>,
     intent: &EventIntent,
 ) -> Result<(), PolylogueProofFailure> {
     let has_polylogue = intent
@@ -120,18 +123,58 @@ pub(super) async fn validate_polylogue_intent(
                 "Polylogue segment must be a registered file material",
             ));
         }
-        let bytes = tokio::fs::read(source_uri).await.map_err(|error| {
-            PolylogueProofFailure::Retry(
-                SinexError::network("could not read registered Polylogue segment")
-                    .with_context("material_id", material_id.to_string())
-                    .with_source(error),
-            )
-        })?;
-        segments.insert(segment_index, bytes);
+        // Once blob custody exists, the staging locator is no longer an authority.
+        let path = if let Some(blob_id) = record.optional_blob_id {
+            let store = content_store.ok_or_else(|| {
+                PolylogueProofFailure::Retry(SinexError::network(
+                    "Polylogue CAS reader is unavailable",
+                ))
+            })?;
+            let blob = pool
+                .blobs()
+                .get_by_id(Id::<Blob>::from_uuid(blob_id))
+                .await
+                .map_err(|error| {
+                    PolylogueProofFailure::Retry(
+                        SinexError::database("could not inspect Polylogue blob").with_source(error),
+                    )
+                })?
+                .ok_or_else(|| {
+                    PolylogueProofFailure::Retry(SinexError::network(
+                        "registered Polylogue blob is unavailable",
+                    ))
+                })?;
+            store
+                .get_blob_path(&blob.content_key())
+                .await
+                .map_err(|error| {
+                    PolylogueProofFailure::Retry(
+                        SinexError::network("could not resolve Polylogue CAS bytes")
+                            .with_source(error),
+                    )
+                })?
+                .into_std_path_buf()
+        } else {
+            // File-only registration retains its explicitly declared file authority.
+            std::path::PathBuf::from(source_uri)
+        };
+        segments.insert(segment_index, path);
     }
-    manifest
-        .verify(&segments)
-        .map_err(|error| reject(format!("Polylogue revision verification failed: {error}")))?;
+    let verified_manifest = manifest.clone();
+    let offsets = tokio::task::spawn_blocking(move || verified_manifest.verify_files(&segments))
+        .await
+        .map_err(|error| {
+            PolylogueProofFailure::Retry(
+                SinexError::network("Polylogue verification worker unavailable").with_source(error),
+            )
+        })?
+        .map_err(|error| {
+            if error.is_retryable() {
+                PolylogueProofFailure::Retry(error)
+            } else {
+                reject(format!("Polylogue revision verification failed: {error}"))
+            }
+        })?;
 
     for event in &intent.events {
         let claim: AnchorClaim = serde_json::from_value(event.payload.clone())
@@ -168,9 +211,9 @@ pub(super) async fn validate_polylogue_intent(
         };
         if id.to_uuid() != claim.material_id
             || *anchor_byte
-                != manifest
-                    .anchor_byte(&segments, &claim.record_id)
-                    .map_err(|error| reject(format!("Polylogue anchor cannot resolve: {error}")))?
+                != *offsets
+                    .get(&claim.record_id)
+                    .ok_or_else(|| reject("Polylogue anchor cannot resolve"))?
         {
             return Err(reject(
                 "Polylogue event provenance contradicts verified anchor",

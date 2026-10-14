@@ -3399,6 +3399,35 @@ async fn polylogue_fixture_material_and_mixed_envelope_survive_restart(
         material_paths.insert(descriptor.index, path);
     }
     manifest.verify(&segments)?;
+    let custody = tempfile::TempDir::new()?;
+    let content_store = Arc::new(sinexd::runtime::content_store::ContentStoreManager::new(
+        sinexd::runtime::content_store::ContentStoreConfig {
+            root_path: camino::Utf8PathBuf::from_path_buf(custody.path().join("cas"))
+                .map_err(|_| eyre!("fixture path must be UTF-8"))?,
+            ..Default::default()
+        },
+        ctx.pool.clone(),
+        None,
+    )?);
+    let mut blob_ids = BTreeMap::new();
+    for (&index, path) in &mut material_paths {
+        let locator = custody.path().join(path.file_name().unwrap());
+        std::fs::write(&locator, &segments[&index])?;
+        let blob = content_store
+            .ingest_from_bytes(
+                &segments[&index],
+                path.file_name().unwrap().to_str().unwrap(),
+                "application/x-ndjson",
+            )
+            .await?;
+        blob_ids.insert(index, blob.id);
+        if index % 2 == 0 {
+            std::fs::remove_file(&locator)?;
+        } else {
+            std::fs::write(&locator, b"mutated staging locator\n")?;
+        }
+        *path = locator;
+    }
 
     let withheld_index = 2;
     let mut material_ids = BTreeMap::new();
@@ -3410,7 +3439,8 @@ async fn polylogue_fixture_material_and_mixed_envelope_survive_restart(
             .pool
             .source_materials()
             .register_material_with_total_bytes(
-                SourceMaterial::file(path.to_string_lossy().into_owned()),
+                SourceMaterial::file(path.to_string_lossy().into_owned())
+                    .with_optional_blob_id(Some(blob_ids[&index])),
                 i64::try_from(segments[&index].len())?,
             )
             .await?;
@@ -3445,7 +3475,8 @@ async fn polylogue_fixture_material_and_mixed_envelope_survive_restart(
         None,
         None,
         Some(Duration::from_millis(300)),
-    );
+    )
+    .with_content_store(Arc::clone(&content_store));
     let registry = consumer.settlement_registry();
     let handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
 
@@ -3561,6 +3592,7 @@ async fn polylogue_fixture_material_and_mixed_envelope_survive_restart(
         None,
         Some(Duration::from_millis(300)),
     )
+    .with_content_store(Arc::clone(&content_store))
     .with_raw_ack_drop_once(Arc::clone(&drop_raw_ack_once));
     let restarted_registry = restarted.settlement_registry();
     let mut other_receipts = ids
@@ -3584,7 +3616,8 @@ async fn polylogue_fixture_material_and_mixed_envelope_survive_restart(
                 material_paths[&withheld_index]
                     .to_string_lossy()
                     .into_owned(),
-            ),
+            )
+            .with_optional_blob_id(Some(blob_ids[&withheld_index])),
         )
         .await?;
     let restarted_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, restarted).await?;
@@ -3620,7 +3653,8 @@ async fn polylogue_fixture_material_and_mixed_envelope_survive_restart(
         None,
         None,
         Some(Duration::from_millis(300)),
-    );
+    )
+    .with_content_store(Arc::clone(&content_store));
     let final_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, final_consumer).await?;
     WaitHelpers::wait_for_condition(
         || {

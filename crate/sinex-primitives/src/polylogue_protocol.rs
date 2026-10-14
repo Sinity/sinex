@@ -5,6 +5,8 @@
 //! tool text.
 
 use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader, Cursor};
+use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
@@ -204,10 +206,15 @@ const fn entry(
 
 #[must_use]
 pub fn vocabulary_entry(kind: PolylogueRecordKind) -> &'static PolylogueVocabularyEntry {
-    POLYLOGUE_VOCABULARY
-        .iter()
-        .find(|entry| entry.kind == kind)
-        .expect("all Polylogue kinds are represented")
+    match kind {
+        PolylogueRecordKind::Session => &POLYLOGUE_VOCABULARY[0],
+        PolylogueRecordKind::Lineage => &POLYLOGUE_VOCABULARY[1],
+        PolylogueRecordKind::Usage => &POLYLOGUE_VOCABULARY[2],
+        PolylogueRecordKind::Message => &POLYLOGUE_VOCABULARY[3],
+        PolylogueRecordKind::Block => &POLYLOGUE_VOCABULARY[4],
+        PolylogueRecordKind::Attachment => &POLYLOGUE_VOCABULARY[5],
+        PolylogueRecordKind::SessionEvent => &POLYLOGUE_VOCABULARY[6],
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -320,6 +327,28 @@ impl PolylogueRevisionManifest {
     /// Verify segment bytes, sequence spaces, anchors, counts, and semantic
     /// closure before any record is admitted as evidence.
     pub fn verify(&self, segments: &BTreeMap<i32, Vec<u8>>) -> Result<()> {
+        self.verify_readers(segments, |bytes| Ok(Cursor::new(bytes.as_slice())))
+            .map(|_| ())
+    }
+
+    /// Verify immutable segment files once and return offsets relative to each
+    /// registered segment. Memory holds record metadata and the largest record,
+    /// rather than all segment bytes or transcript records.
+    pub fn verify_files(&self, paths: &BTreeMap<i32, PathBuf>) -> Result<BTreeMap<String, i64>> {
+        self.verify_readers(paths, |path| {
+            std::fs::File::open(path)
+                .map(BufReader::new)
+                .map_err(|error| {
+                    SinexError::io(format!("cannot open segment {}: {error}", path.display()))
+                })
+        })
+    }
+
+    fn verify_readers<'a, T: 'a, R: BufRead>(
+        &self,
+        segments: &'a BTreeMap<i32, T>,
+        mut open: impl FnMut(&'a T) -> Result<R>,
+    ) -> Result<BTreeMap<String, i64>> {
         self.validate_compatibility()?;
         if self.session_id.trim().is_empty()
             || self.origin.trim().is_empty()
@@ -348,210 +377,194 @@ impl PolylogueRevisionManifest {
                 "transcript segments are not uniquely ordered",
             ));
         }
-        let declared_indexes = self
-            .segments
-            .iter()
-            .map(|segment| segment.index)
-            .collect::<std::collections::BTreeSet<_>>();
         if segments.len() != self.segments.len() + 1
-            || segments
-                .keys()
-                .any(|index| *index != HEAD_SEGMENT_INDEX && !declared_indexes.contains(index))
+            || !segments.contains_key(&HEAD_SEGMENT_INDEX)
+            || self
+                .segments
+                .iter()
+                .any(|descriptor| !segments.contains_key(&descriptor.index))
         {
-            return Err(protocol_error("material contains undeclared segments"));
+            return Err(protocol_error(
+                "material contains undeclared or missing segments",
+            ));
         }
-
-        let mut counts = BTreeMap::new();
-        let mut anchors = BTreeMap::new();
         if self.head_segment.first_seq != 0 {
             return Err(protocol_error("head sequence must start at zero"));
         }
-        let head = self.verify_segment(
-            &self.head_segment,
-            segments,
-            true,
-            &mut counts,
-            &mut anchors,
-        )?;
-        let mut transcript = Vec::new();
+        let mut counts = BTreeMap::new();
+        let mut anchors = BTreeMap::new();
+        let mut offsets = BTreeMap::new();
+        let mut message_blocks = BTreeMap::new();
+        let mut message_coordinates = std::collections::BTreeSet::new();
+        let mut block_counts = BTreeMap::<String, u64>::new();
+        let mut session_count = 0;
+        let mut session_messages = None;
+        let mut joined = Sha256::new();
+        let mut joined_size = 0_usize;
         let mut expected_transcript_seq = 0;
-        for descriptor in &self.segments {
-            if descriptor.first_seq != expected_transcript_seq {
+        for descriptor in std::iter::once(&self.head_segment).chain(&self.segments) {
+            let head = descriptor.index == HEAD_SEGMENT_INDEX;
+            if !head && descriptor.first_seq != expected_transcript_seq {
                 return Err(protocol_error(
                     "transcript sequence spaces are not contiguous",
                 ));
             }
-            transcript.extend(self.verify_segment(
+            let source = segments
+                .get(&descriptor.index)
+                .ok_or_else(|| protocol_error(format!("missing segment {}", descriptor.index)))?;
+            let size = stream_segment(
                 descriptor,
-                segments,
-                false,
-                &mut counts,
-                &mut anchors,
-            )?);
-            expected_transcript_seq = if descriptor.record_count == 0 {
-                descriptor.first_seq
-            } else {
-                descriptor
-                    .last_seq
-                    .checked_add(1)
-                    .ok_or_else(|| protocol_error("transcript sequence overflows u64"))?
-            };
+                open(source)?,
+                head,
+                &mut joined,
+                |record, line_index, offset| {
+                    if anchors.contains_key(&record.record_id) {
+                        return Err(protocol_error(format!(
+                            "duplicate record_id {}",
+                            record.record_id
+                        )));
+                    }
+                    anchors.insert(
+                        record.record_id.clone(),
+                        PolylogueAnchor {
+                            segment_index: descriptor.index,
+                            line_index,
+                            seq: record.seq,
+                            kind: record.kind.as_str().to_owned(),
+                            sha256: sha256_hex(&record.canonical_bytes),
+                        },
+                    );
+                    offsets.insert(record.record_id.clone(), offset);
+                    *counts.entry(record.kind.as_str().to_owned()).or_default() += 1;
+                    let session_field = if record.kind == PolylogueRecordKind::Lineage {
+                        "src_session_id"
+                    } else {
+                        "session_id"
+                    };
+                    if record.value.get(session_field).and_then(Value::as_str)
+                        != Some(self.session_id.as_str())
+                    {
+                        return Err(protocol_error(
+                            "material record belongs to a different session",
+                        ));
+                    }
+                    let owner = match record.kind {
+                        PolylogueRecordKind::Block | PolylogueRecordKind::Attachment => {
+                            record.value.get("message_id").and_then(Value::as_str)
+                        }
+                        PolylogueRecordKind::SessionEvent => record
+                            .value
+                            .get("source_message_id")
+                            .and_then(Value::as_str),
+                        _ => None,
+                    };
+                    // Transcript seq is strictly increasing across segments. A
+                    // known message here therefore exists and precedes its child.
+                    if let Some(owner) = owner {
+                        if !message_blocks.contains_key(owner) {
+                            return Err(protocol_error(format!(
+                                "{} names an absent or later message owner",
+                                record.kind.as_str()
+                            )));
+                        }
+                    }
+                    match record.kind {
+                        PolylogueRecordKind::Session => {
+                            session_count += 1;
+                            if record.record_id != self.session_id
+                                || record.value.get("session_id").and_then(Value::as_str)
+                                    != Some(self.session_id.as_str())
+                                || record.value.get("origin").and_then(Value::as_str)
+                                    != Some(self.origin.as_str())
+                                || record.value.get("native_id").and_then(Value::as_str)
+                                    != Some(self.native_id.as_str())
+                            {
+                                return Err(protocol_error(
+                                    "session identity does not match manifest",
+                                ));
+                            }
+                            session_messages =
+                                record.value.get("message_count").and_then(Value::as_u64);
+                        }
+                        PolylogueRecordKind::Message => {
+                            if record.value.get("message_id").and_then(Value::as_str)
+                                != Some(record.record_id.as_str())
+                            {
+                                return Err(protocol_error("message identity is inconsistent"));
+                            }
+                            let position = record
+                                .value
+                                .get("position")
+                                .and_then(Value::as_u64)
+                                .ok_or_else(|| protocol_error("invalid message position"))?;
+                            let variant = record
+                                .value
+                                .get("variant_index")
+                                .and_then(Value::as_u64)
+                                .ok_or_else(|| protocol_error("invalid message variant_index"))?;
+                            if !message_coordinates.insert((position, variant)) {
+                                return Err(protocol_error("duplicate message ordinal"));
+                            }
+                            message_blocks.insert(
+                                record.record_id,
+                                record.value.get("block_count").and_then(Value::as_u64),
+                            );
+                        }
+                        PolylogueRecordKind::Block => {
+                            if record.value.get("block_id").and_then(Value::as_str)
+                                != Some(record.record_id.as_str())
+                            {
+                                return Err(protocol_error("block identity is inconsistent"));
+                            }
+                            if let Some(message_id) =
+                                record.value.get("message_id").and_then(Value::as_str)
+                            {
+                                *block_counts.entry(message_id.to_owned()).or_default() += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    Ok(())
+                },
+            )?;
+            joined_size = joined_size
+                .checked_add(size)
+                .ok_or_else(|| protocol_error("revision size overflows usize"))?;
+            if !head {
+                expected_transcript_seq = if descriptor.record_count == 0 {
+                    descriptor.first_seq
+                } else {
+                    descriptor
+                        .last_seq
+                        .checked_add(1)
+                        .ok_or_else(|| protocol_error("transcript sequence overflows u64"))?
+                };
+            }
         }
-        let mut joined = segments
-            .get(&HEAD_SEGMENT_INDEX)
-            .ok_or_else(|| protocol_error("missing head segment"))?
-            .clone();
-        for descriptor in &self.segments {
-            joined.extend_from_slice(
-                segments
-                    .get(&descriptor.index)
-                    .ok_or_else(|| protocol_error("missing transcript segment"))?,
-            );
-        }
-        if sha256_hex(&joined) != self.content_digest.polylogue_sha256
-            || joined.len() != self.content_digest.size_bytes
+        if format!("{:x}", joined.finalize()) != self.content_digest.polylogue_sha256
+            || joined_size != self.content_digest.size_bytes
         {
             return Err(protocol_error("revision content digest or size mismatch"));
         }
         if counts != self.expected_record_counts || anchors != self.anchors {
             return Err(protocol_error("manifest counts or anchors mismatch"));
         }
-
-        let sessions = head
-            .iter()
-            .filter(|record| record.kind == PolylogueRecordKind::Session)
-            .collect::<Vec<_>>();
-        if sessions.len() != 1 || sessions[0].record_id != self.session_id {
+        if session_count != 1 {
             return Err(protocol_error(
                 "head must contain one session matching session_id",
             ));
         }
-        if sessions[0]
-            .value
-            .get("message_count")
-            .and_then(Value::as_u64)
-            != Some(*counts.get("message").unwrap_or(&0) as u64)
-        {
+        if session_messages != Some(*counts.get("message").unwrap_or(&0) as u64) {
             return Err(protocol_error("session message_count mismatch"));
         }
-        let mut block_counts = BTreeMap::<String, usize>::new();
-        for record in &transcript {
-            if record.kind == PolylogueRecordKind::Block {
-                if let Some(message_id) = record.value.get("message_id").and_then(Value::as_str) {
-                    *block_counts.entry(message_id.to_owned()).or_default() += 1;
-                }
-            }
-        }
-        for record in transcript
-            .iter()
-            .filter(|record| record.kind == PolylogueRecordKind::Message)
-        {
-            let declared = record.value.get("block_count").and_then(Value::as_u64);
-            let actual = block_counts.get(&record.record_id).copied().unwrap_or(0) as u64;
-            if declared != Some(actual) {
+        for (message_id, declared) in message_blocks {
+            if declared != Some(block_counts.get(&message_id).copied().unwrap_or(0)) {
                 return Err(protocol_error(format!(
-                    "message {} block_count mismatch",
-                    record.record_id
+                    "message {message_id} block_count mismatch"
                 )));
             }
         }
-        Ok(())
-    }
-
-    fn verify_segment(
-        &self,
-        descriptor: &PolylogueSegmentDescriptor,
-        segments: &BTreeMap<i32, Vec<u8>>,
-        head: bool,
-        counts: &mut BTreeMap<String, usize>,
-        anchors: &mut BTreeMap<String, PolylogueAnchor>,
-    ) -> Result<Vec<PolylogueResolvedRecord>> {
-        let raw = segments
-            .get(&descriptor.index)
-            .ok_or_else(|| protocol_error(format!("missing segment {}", descriptor.index)))?;
-        if sha256_hex(raw) != descriptor.sha256 || raw.len() != descriptor.size_bytes {
-            return Err(protocol_error(format!(
-                "segment {} digest or size mismatch",
-                descriptor.index
-            )));
-        }
-        let lines = split_ndjson(raw)?;
-        if lines.len() != descriptor.record_count {
-            return Err(protocol_error(format!(
-                "segment {} record count mismatch",
-                descriptor.index
-            )));
-        }
-        let allowed = if head {
-            &PolylogueRecordKind::HEAD[..]
-        } else {
-            &PolylogueRecordKind::TRANSCRIPT[..]
-        };
-        let mut expected_seq = descriptor.first_seq;
-        let mut records = Vec::with_capacity(lines.len());
-        for (line_index, line) in lines.into_iter().enumerate() {
-            let value = parse_strict_json(line)?;
-            let object = value
-                .as_object()
-                .ok_or_else(|| protocol_error("record is not a JSON object"))?;
-            let kind = PolylogueRecordKind::parse(
-                object.get("kind").and_then(Value::as_str).unwrap_or(""),
-            )?;
-            if !allowed.contains(&kind) {
-                return Err(protocol_error(format!(
-                    "{} is in the wrong segment",
-                    kind.as_str()
-                )));
-            }
-            let seq = object
-                .get("seq")
-                .and_then(Value::as_u64)
-                .ok_or_else(|| protocol_error("record has no integer seq"))?;
-            if seq != expected_seq {
-                return Err(protocol_error(format!(
-                    "sequence gap: expected {expected_seq}, got {seq}"
-                )));
-            }
-            expected_seq = expected_seq
-                .checked_add(1)
-                .ok_or_else(|| protocol_error("record sequence overflows u64"))?;
-            let record_id = object
-                .get("record_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| protocol_error("record has no record_id"))?
-                .to_owned();
-            if anchors.contains_key(&record_id) {
-                return Err(protocol_error(format!("duplicate record_id {record_id}")));
-            }
-            let canonical_bytes = canonical_json_bytes(&value)?;
-            anchors.insert(
-                record_id.clone(),
-                PolylogueAnchor {
-                    segment_index: descriptor.index,
-                    line_index,
-                    seq,
-                    kind: kind.as_str().to_owned(),
-                    sha256: sha256_hex(&canonical_bytes),
-                },
-            );
-            *counts.entry(kind.as_str().to_owned()).or_default() += 1;
-            records.push(PolylogueResolvedRecord {
-                kind,
-                record_id,
-                seq,
-                canonical_bytes,
-                original_bytes: line.to_vec(),
-                original_sha256: sha256_hex(line),
-                value,
-            });
-        }
-        if descriptor.record_count > 0 && descriptor.last_seq.checked_add(1) != Some(expected_seq) {
-            return Err(protocol_error(format!(
-                "segment {} sequence bounds mismatch",
-                descriptor.index
-            )));
-        }
-        Ok(records)
+        Ok(offsets)
     }
 
     /// Resolve one anchored record while rechecking its segment integrity.
@@ -573,17 +586,30 @@ impl PolylogueRevisionManifest {
                 .find(|segment| segment.index == anchor.segment_index)
                 .ok_or_else(|| protocol_error("anchor names unknown segment"))?
         };
-        let records = self.verify_segment(
+        let raw = segments
+            .get(&descriptor.index)
+            .ok_or_else(|| protocol_error(format!("missing segment {}", descriptor.index)))?;
+        let mut selected = None;
+        let mut ids = std::collections::BTreeSet::new();
+        stream_segment(
             descriptor,
-            segments,
+            Cursor::new(raw.as_slice()),
             anchor.segment_index == HEAD_SEGMENT_INDEX,
-            &mut BTreeMap::new(),
-            &mut BTreeMap::new(),
+            &mut Sha256::new(),
+            |record, line_index, _| {
+                if !ids.insert(record.record_id.clone()) {
+                    return Err(protocol_error(format!(
+                        "duplicate record_id {}",
+                        record.record_id
+                    )));
+                }
+                if line_index == anchor.line_index {
+                    selected = Some(record);
+                }
+                Ok(())
+            },
         )?;
-        let record = records
-            .into_iter()
-            .nth(anchor.line_index)
-            .ok_or_else(|| protocol_error("anchor line out of bounds"))?;
+        let record = selected.ok_or_else(|| protocol_error("anchor line out of bounds"))?;
         if record.record_id != record_id
             || record.seq != anchor.seq
             || record.kind.as_str() != anchor.kind
@@ -605,13 +631,313 @@ impl PolylogueRevisionManifest {
         let raw = segments
             .get(&anchor.segment_index)
             .ok_or_else(|| protocol_error("anchor names missing segment"))?;
-        let lines = split_ndjson(raw)?;
-        let offset = lines[..anchor.line_index]
-            .iter()
+        let offset = raw
+            .split(|byte| *byte == b'\n')
+            .take(anchor.line_index)
             .try_fold(0_usize, |offset, line| offset.checked_add(line.len() + 1))
             .ok_or_else(|| protocol_error("anchor byte offset overflows usize"))?;
         i64::try_from(offset).map_err(|_| protocol_error("anchor byte offset overflows i64"))
     }
+}
+
+/// Shared framing, integrity and per-record validation for memory and file
+/// adapters. The visitor retains only metadata (or one selected record).
+fn stream_segment(
+    descriptor: &PolylogueSegmentDescriptor,
+    mut reader: impl BufRead,
+    head: bool,
+    joined: &mut Sha256,
+    mut visit: impl FnMut(PolylogueResolvedRecord, usize, i64) -> Result<()>,
+) -> Result<usize> {
+    let allowed = if head {
+        &PolylogueRecordKind::HEAD[..]
+    } else {
+        &PolylogueRecordKind::TRANSCRIPT[..]
+    };
+    let mut digest = Sha256::new();
+    let mut size = 0_usize;
+    let mut record_count = 0_usize;
+    let mut expected_seq = descriptor.first_seq;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = reader.read_until(b'\n', &mut line).map_err(|error| {
+            SinexError::io(format!("cannot read segment {}: {error}", descriptor.index))
+        })?;
+        if read == 0 {
+            break;
+        }
+        let offset =
+            i64::try_from(size).map_err(|_| protocol_error("anchor byte offset overflows i64"))?;
+        size = size
+            .checked_add(read)
+            .ok_or_else(|| protocol_error("segment size overflows usize"))?;
+        digest.update(&line);
+        joined.update(&line);
+        if line.last() != Some(&b'\n') {
+            return Err(protocol_error("segment must end with LF"));
+        }
+        line.pop();
+        if line.is_empty() {
+            // Preserve the original empty-segment representation: exactly LF.
+            if size == 1
+                && reader
+                    .fill_buf()
+                    .map_err(|error| {
+                        SinexError::io(format!("cannot read segment {}: {error}", descriptor.index))
+                    })?
+                    .is_empty()
+            {
+                break;
+            }
+            return Err(protocol_error("segment contains an empty line"));
+        }
+        let value = parse_strict_json(&line)?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| protocol_error("record is not a JSON object"))?;
+        let kind =
+            PolylogueRecordKind::parse(object.get("kind").and_then(Value::as_str).unwrap_or(""))?;
+        if !allowed.contains(&kind) {
+            return Err(protocol_error(format!(
+                "{} is in the wrong segment",
+                kind.as_str()
+            )));
+        }
+        validate_record_shape(kind, object)?;
+        let seq = object
+            .get("seq")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| protocol_error("record has no integer seq"))?;
+        if seq != expected_seq {
+            return Err(protocol_error(format!(
+                "sequence gap: expected {expected_seq}, got {seq}"
+            )));
+        }
+        expected_seq = expected_seq
+            .checked_add(1)
+            .ok_or_else(|| protocol_error("record sequence overflows u64"))?;
+        let record_id = object
+            .get("record_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| protocol_error("record has no record_id"))?
+            .to_owned();
+        if record_id.is_empty() {
+            return Err(protocol_error("record_id must be nonempty text"));
+        }
+        let canonical_bytes = canonical_json_bytes(&value)?;
+        let original_sha256 = sha256_hex(&line);
+        visit(
+            PolylogueResolvedRecord {
+                kind,
+                record_id,
+                seq,
+                canonical_bytes,
+                original_bytes: line.clone(),
+                original_sha256,
+                value,
+            },
+            record_count,
+            offset,
+        )?;
+        record_count = record_count
+            .checked_add(1)
+            .ok_or_else(|| protocol_error("record count overflows usize"))?;
+    }
+    if size == 0 {
+        return Err(protocol_error("segment must end with LF"));
+    }
+    if format!("{:x}", digest.finalize()) != descriptor.sha256 || size != descriptor.size_bytes {
+        return Err(protocol_error(format!(
+            "segment {} digest or size mismatch",
+            descriptor.index
+        )));
+    }
+    if record_count != descriptor.record_count {
+        return Err(protocol_error(format!(
+            "segment {} record count mismatch",
+            descriptor.index
+        )));
+    }
+    if record_count > 0 && descriptor.last_seq.checked_add(1) != Some(expected_seq) {
+        return Err(protocol_error(format!(
+            "segment {} sequence bounds mismatch",
+            descriptor.index
+        )));
+    }
+    Ok(size)
+}
+
+/// Shapes of declared material fields. Opaque objects keep their own JSON
+/// contents; only the message usage object has a fixed nested field vocabulary.
+#[derive(Clone, Copy)]
+enum RecordFieldShape {
+    Text,
+    NullableText,
+    Unsigned,
+    NullableInteger,
+    Number,
+    NullableNumber,
+    Object,
+    NullableObject,
+    NullableBoolean,
+    TextArray,
+    MessageUsage,
+}
+
+impl RecordFieldShape {
+    fn accepts(self, value: &Value) -> bool {
+        match self {
+            Self::Text => value.is_string(),
+            Self::NullableText => value.is_null() || value.is_string(),
+            Self::Unsigned => value.as_u64().is_some(),
+            Self::NullableInteger => {
+                value.is_null() || value.as_i64().is_some() || value.as_u64().is_some()
+            }
+            Self::Number => value.is_number(),
+            Self::NullableNumber => value.is_null() || value.is_number(),
+            Self::Object => value.is_object(),
+            Self::NullableObject => value.is_null() || value.is_object(),
+            Self::NullableBoolean => value.is_null() || value.is_boolean(),
+            Self::TextArray => value
+                .as_array()
+                .is_some_and(|values| values.iter().all(Value::is_string)),
+            Self::MessageUsage => value.as_object().is_some_and(|object| {
+                object.iter().all(|(field, value)| {
+                    matches!(
+                        field.as_str(),
+                        "input_tokens"
+                            | "output_tokens"
+                            | "cache_read_tokens"
+                            | "cache_write_tokens"
+                            | "duration_ms"
+                    ) && (value.is_null() || value.as_u64().is_some())
+                })
+            }),
+        }
+    }
+}
+
+/// Current semantics-8 builder keys and types. Absent optional fields remain
+/// allowed; a present field must have its declared type, including nullability.
+fn validate_record_shape(kind: PolylogueRecordKind, object: &Map<String, Value>) -> Result<()> {
+    use PolylogueRecordKind as Kind;
+    use RecordFieldShape as Shape;
+    let required: &[&str] = match kind {
+        Kind::Session => &["session_id", "origin", "native_id", "message_count"],
+        Kind::Lineage => &["src_session_id"],
+        Kind::Usage | Kind::SessionEvent => &["session_id"],
+        Kind::Message => &[
+            "session_id",
+            "message_id",
+            "position",
+            "variant_index",
+            "block_count",
+        ],
+        Kind::Block => &["session_id", "message_id", "block_id"],
+        Kind::Attachment => &["session_id", "message_id"],
+    };
+    for field in ["kind", "record_id", "seq"].iter().chain(required) {
+        if !object.contains_key(*field) {
+            return Err(protocol_error(format!(
+                "{} record has no {field}",
+                kind.as_str()
+            )));
+        }
+    }
+    for (field, value) in object {
+        let shape = match (kind, field.as_str()) {
+            (_, "kind" | "record_id") => Shape::Text,
+            (_, "seq") => Shape::Unsigned,
+            (Kind::Session, "session_id" | "origin" | "native_id" | "session_kind") => Shape::Text,
+            (Kind::Session, "message_count") => Shape::Unsigned,
+            (
+                Kind::Session,
+                "title" | "git_branch" | "git_repository_url" | "provider_project_ref",
+            ) => Shape::NullableText,
+            (Kind::Session, "created_at_ms" | "updated_at_ms") => Shape::NullableInteger,
+            (Kind::Session, "working_directories" | "tags") => Shape::TextArray,
+            (Kind::Session, "metadata") => Shape::Object,
+            (Kind::Lineage, "src_session_id" | "dst_origin" | "dst_native_id" | "link_type") => {
+                Shape::Text
+            }
+            (
+                Kind::Lineage,
+                "branch_point_message_native_id"
+                | "branch_point_source_native_id_json"
+                | "inheritance"
+                | "status",
+            ) => Shape::NullableText,
+            (Kind::Lineage, "confidence") => Shape::Number,
+            (Kind::Lineage, "observed_at_ms") => Shape::NullableInteger,
+            (Kind::Usage, "session_id" | "model_name") => Shape::Text,
+            (
+                Kind::Usage,
+                "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens",
+            ) => Shape::Unsigned,
+            (Kind::Usage, "cost_usd" | "cost_credits") => Shape::NullableNumber,
+            (Kind::Usage, "cost_provenance") => Shape::NullableText,
+            (
+                Kind::Message,
+                "session_id" | "message_id" | "role" | "message_type" | "material_origin",
+            ) => Shape::Text,
+            (
+                Kind::Message,
+                "native_id" | "source_native_id_json" | "text" | "model_name" | "parent_message_id",
+            ) => Shape::NullableText,
+            (Kind::Message, "position" | "variant_index" | "block_count") => Shape::Unsigned,
+            (Kind::Message, "occurred_at_ms") => Shape::NullableInteger,
+            (Kind::Message, "usage") => Shape::MessageUsage,
+            (
+                Kind::Block,
+                "session_id" | "message_id" | "block_id" | "content_identity" | "block_type",
+            ) => Shape::Text,
+            (Kind::Block, "position" | "content_occurrence") => Shape::Unsigned,
+            (
+                Kind::Block,
+                "text"
+                | "tool_name"
+                | "tool_id"
+                | "tool_outcome"
+                | "tool_result_outcome_unknown_reason"
+                | "semantic_type"
+                | "media_type"
+                | "language",
+            ) => Shape::NullableText,
+            (Kind::Block, "tool_input") => Shape::NullableObject,
+            (Kind::Block, "tool_result_is_error") => Shape::NullableBoolean,
+            (Kind::Block, "tool_result_exit_code") => Shape::NullableInteger,
+            (
+                Kind::Attachment,
+                "session_id" | "message_id" | "attachment_id" | "native_identity"
+                | "acquisition_status",
+            ) => Shape::Text,
+            (Kind::Attachment, "position" | "byte_count") => Shape::Unsigned,
+            (
+                Kind::Attachment,
+                "display_name" | "media_type" | "blob_sha256" | "upload_origin" | "direction"
+                | "producer_ref" | "source_url" | "caption",
+            ) => Shape::NullableText,
+            (Kind::SessionEvent, "session_id" | "event_type" | "summary") => Shape::Text,
+            (Kind::SessionEvent, "position") => Shape::Unsigned,
+            (Kind::SessionEvent, "payload") => Shape::Object,
+            (Kind::SessionEvent, "source_message_id") => Shape::NullableText,
+            (Kind::SessionEvent, "occurred_at_ms") => Shape::NullableInteger,
+            _ => {
+                return Err(protocol_error(format!(
+                    "unknown {} record field {field:?}",
+                    kind.as_str()
+                )));
+            }
+        };
+        if !shape.accepts(value) {
+            return Err(protocol_error(format!(
+                "invalid {} record field {field:?}",
+                kind.as_str()
+            )));
+        }
+    }
+    Ok(())
 }
 
 struct StrictValue(Value);
@@ -757,21 +1083,6 @@ fn validate_number_tokens(bytes: &[u8]) -> Result<()> {
         index += 1;
     }
     Ok(())
-}
-
-fn split_ndjson(raw: &[u8]) -> Result<Vec<&[u8]>> {
-    if !raw.ends_with(b"\n") {
-        return Err(protocol_error("segment must end with LF"));
-    }
-    let body = &raw[..raw.len() - 1];
-    if body.is_empty() {
-        return Ok(Vec::new());
-    }
-    let lines = body.split(|byte| *byte == b'\n').collect::<Vec<_>>();
-    if lines.iter().any(|line| line.is_empty()) {
-        return Err(protocol_error("segment contains an empty line"));
-    }
-    Ok(lines)
 }
 
 fn canonical_json(value: &Value) -> Result<Value> {

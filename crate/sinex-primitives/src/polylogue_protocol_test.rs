@@ -18,6 +18,8 @@ fn synthetic_revision() -> (PolylogueRevisionManifest, BTreeMap<i32, Vec<u8>>) {
         "block_count": 1,
         "kind": "message",
         "message_id": "claude-code-session:demo:n:msg-1",
+        "position": 0,
+        "variant_index": 0,
         "record_id": "claude-code-session:demo:n:msg-1",
         "seq": 0,
         "session_id": "claude-code-session:demo"
@@ -203,6 +205,21 @@ fn checked_in_polylogue_producer_fixture_matches_every_anchor() {
     manifest
         .verify(&segments)
         .expect("Rust consumer verifies Python producer bytes");
+    let fixture_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/polylogue/v1/small-session/segments");
+    let paths = std::iter::once(&manifest.head_segment)
+        .chain(&manifest.segments)
+        .map(|descriptor| (descriptor.index, fixture_root.join(&descriptor.filename)))
+        .collect();
+    let offsets = manifest
+        .verify_files(&paths)
+        .expect("producer files stream verify");
+    for record_id in manifest.anchors.keys() {
+        assert_eq!(
+            offsets[record_id],
+            manifest.anchor_byte(&segments, record_id).unwrap()
+        );
+    }
     assert_eq!(manifest.semantics_version, SEMANTICS_VERSION);
     assert_eq!(
         manifest.expected_record_counts.len(),
@@ -388,4 +405,487 @@ fn opaque_unicode_keys_and_values_remain_distinct() {
     assert_ne!(value["é"], value["e\u{301}"]);
     let canonical = canonical_json_bytes(&value).unwrap();
     assert_eq!(parse_strict_json(&canonical).unwrap(), value);
+}
+
+// Update only byte commitments: canonical anchors remain independent witnesses.
+fn recommit_bytes(manifest: &mut PolylogueRevisionManifest, segments: &BTreeMap<i32, Vec<u8>>) {
+    let mut joined = Sha256::new();
+    let mut size = 0;
+    for descriptor in std::iter::once(&mut manifest.head_segment).chain(&mut manifest.segments) {
+        let raw = &segments[&descriptor.index];
+        descriptor.sha256 = sha256_hex(raw);
+        descriptor.size_bytes = raw.len();
+        joined.update(raw);
+        size += raw.len();
+    }
+    manifest.revision_id = format!("{:x}", joined.finalize());
+    manifest.content_digest.polylogue_sha256 = manifest.revision_id.clone();
+    manifest.content_digest.size_bytes = size;
+}
+
+fn stream_with_tiny_buffers(
+    manifest: &PolylogueRevisionManifest,
+    segments: &BTreeMap<i32, Vec<u8>>,
+) -> Result<BTreeMap<String, i64>> {
+    manifest.verify_readers(segments, |raw| {
+        Ok(BufReader::with_capacity(1, Cursor::new(raw)))
+    })
+}
+
+#[test]
+fn streamed_offsets_match_resolved_original_bytes_across_small_read_buffers() {
+    let (mut manifest, mut segments) = synthetic_revision();
+    segments.get_mut(&0).unwrap().insert(1, b' ');
+    recommit_bytes(&mut manifest, &segments);
+    let offsets = stream_with_tiny_buffers(&manifest, &segments).unwrap();
+    for (record_id, anchor) in &manifest.anchors {
+        assert_eq!(
+            offsets[record_id],
+            manifest.anchor_byte(&segments, record_id).unwrap()
+        );
+        let raw = &segments[&anchor.segment_index];
+        let resolved = manifest.resolve_anchor(&segments, record_id).unwrap();
+        assert_eq!(
+            raw[offsets[record_id] as usize..]
+                .split(|byte| *byte == b'\n')
+                .next()
+                .unwrap(),
+            resolved.original_bytes
+        );
+    }
+}
+
+#[test]
+fn streaming_rejects_framing_duplicate_keys_ids_and_unsupported_sequences() {
+    let invalid_segments = [
+        // Missing final LF, interior empty line, and an actually empty segment.
+        b"{}".to_vec(),
+        b"\n{}\n".to_vec(),
+        Vec::new(),
+        br#"{"kind":"message","seq":0,"record_id":"x","nested":{"a":1,"a":2}}
+"#
+        .to_vec(),
+        br#"{"kind":"message","seq":18446744073709551616,"record_id":"x"}
+"#
+        .to_vec(),
+        br#"{"kind":"message","seq":0.0,"record_id":"x"}
+"#
+        .to_vec(),
+        br#"{"kind":"message","seq":0,"record_id":"same"}
+{"kind":"block","seq":1,"record_id":"same"}
+"#
+        .to_vec(),
+    ];
+    for raw in invalid_segments {
+        let (mut manifest, mut segments) = synthetic_revision();
+        segments.insert(0, raw);
+        recommit_bytes(&mut manifest, &segments);
+        assert!(stream_with_tiny_buffers(&manifest, &segments).is_err());
+    }
+    let (manifest, mut segments) = synthetic_revision();
+    segments.get_mut(&0).unwrap()[0] ^= 1;
+    assert!(stream_with_tiny_buffers(&manifest, &segments).is_err());
+}
+
+#[test]
+fn streaming_checks_session_identity_and_semantic_counts_after_recommitment() {
+    for field in ["session_id", "origin", "native_id", "message_count"] {
+        let (mut manifest, mut segments) = synthetic_revision();
+        let raw = &segments[&HEAD_SEGMENT_INDEX];
+        let mut session = parse_strict_json(&raw[..raw.len() - 1]).unwrap();
+        session[field] = if field == "message_count" {
+            json!(2)
+        } else {
+            json!("other")
+        };
+        let mut replacement = canonical_json_bytes(&session).unwrap();
+        manifest
+            .anchors
+            .get_mut(&manifest.session_id)
+            .unwrap()
+            .sha256 = sha256_hex(&replacement);
+        replacement.push(b'\n');
+        segments.insert(HEAD_SEGMENT_INDEX, replacement);
+        recommit_bytes(&mut manifest, &segments);
+        assert!(
+            stream_with_tiny_buffers(&manifest, &segments).is_err(),
+            "changed {field}"
+        );
+    }
+    let (mut manifest, mut segments) = synthetic_revision();
+    let raw = &segments[&0];
+    let lines = raw.split(|byte| *byte == b'\n').collect::<Vec<_>>();
+    let mut message = parse_strict_json(lines[0]).unwrap();
+    message["block_count"] = json!(2);
+    let mut replacement = canonical_json_bytes(&message).unwrap();
+    manifest
+        .anchors
+        .get_mut("claude-code-session:demo:n:msg-1")
+        .unwrap()
+        .sha256 = sha256_hex(&replacement);
+    replacement.push(b'\n');
+    replacement.extend_from_slice(lines[1]);
+    replacement.push(b'\n');
+    segments.insert(0, replacement);
+    recommit_bytes(&mut manifest, &segments);
+    assert!(stream_with_tiny_buffers(&manifest, &segments).is_err());
+}
+
+#[test]
+fn file_verification_reports_missing_and_mutated_segment_files() {
+    let (manifest, segments) = synthetic_revision();
+    let directory = tempfile::tempdir().unwrap();
+    let paths = segments
+        .iter()
+        .map(|(index, raw)| {
+            let path = directory.path().join(format!("segment-{index}.ndjson"));
+            std::fs::write(&path, raw).unwrap();
+            (*index, path)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let offsets = manifest.verify_files(&paths).unwrap();
+    assert_eq!(
+        offsets,
+        stream_with_tiny_buffers(&manifest, &segments).unwrap()
+    );
+    std::fs::write(&paths[&0], b"{}\n").unwrap();
+    let error = manifest.verify_files(&paths).unwrap_err();
+    assert_eq!(error.kind(), crate::error::SinexErrorKind::Validation);
+    assert!(!error.is_retryable());
+    std::fs::remove_file(&paths[&0]).unwrap();
+    let error = manifest.verify_files(&paths).unwrap_err();
+    assert_eq!(error.kind(), crate::error::SinexErrorKind::Io);
+    assert!(error.is_retryable());
+    assert!(error.to_string().contains("cannot open segment"), "{error}");
+}
+
+#[test]
+fn streamed_read_failure_is_retryable_unavailability() {
+    struct UnavailableReader;
+    impl std::io::Read for UnavailableReader {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("synthetic read failure"))
+        }
+    }
+    impl BufRead for UnavailableReader {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            Err(std::io::Error::other("synthetic read failure"))
+        }
+        fn consume(&mut self, _: usize) {}
+    }
+    let (manifest, segments) = synthetic_revision();
+    let error = manifest
+        .verify_readers(&segments, |_| Ok(UnavailableReader))
+        .unwrap_err();
+    assert_eq!(error.kind(), crate::error::SinexErrorKind::Io);
+    assert!(error.is_retryable());
+    assert!(
+        error.to_string().contains("cannot read segment -1"),
+        "{error}"
+    );
+}
+
+fn checked_producer_revision() -> (PolylogueRevisionManifest, BTreeMap<i32, Vec<u8>>) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/polylogue/v1/small-session");
+    let manifest =
+        PolylogueRevisionManifest::from_json(&std::fs::read(root.join("manifest.json")).unwrap())
+            .unwrap();
+    let segments = std::iter::once(&manifest.head_segment)
+        .chain(&manifest.segments)
+        .map(|descriptor| {
+            (
+                descriptor.index,
+                std::fs::read(root.join("segments").join(&descriptor.filename)).unwrap(),
+            )
+        })
+        .collect();
+    (manifest, segments)
+}
+
+// Rebuild all byte and canonical commitments so semantic tests cannot pass by
+// merely detecting stale digests or anchors.
+fn recommit_records(manifest: &mut PolylogueRevisionManifest, segments: &BTreeMap<i32, Vec<u8>>) {
+    manifest.anchors.clear();
+    manifest.expected_record_counts.clear();
+    for descriptor in std::iter::once(&mut manifest.head_segment).chain(&mut manifest.segments) {
+        let raw = &segments[&descriptor.index];
+        let lines = raw[..raw.len() - 1]
+            .split(|byte| *byte == b'\n')
+            .collect::<Vec<_>>();
+        descriptor.record_count = lines.len();
+        for (line_index, line) in lines.into_iter().enumerate() {
+            let value = parse_strict_json(line).unwrap();
+            let record_id = value["record_id"].as_str().unwrap().to_owned();
+            let kind = value["kind"].as_str().unwrap().to_owned();
+            let seq = value["seq"].as_u64().unwrap();
+            if line_index == 0 {
+                descriptor.first_seq = seq;
+            }
+            descriptor.last_seq = seq;
+            *manifest
+                .expected_record_counts
+                .entry(kind.clone())
+                .or_default() += 1;
+            manifest.anchors.insert(
+                record_id,
+                PolylogueAnchor {
+                    segment_index: descriptor.index,
+                    line_index,
+                    seq,
+                    kind,
+                    sha256: sha256_hex(&canonical_json_bytes(&value).unwrap()),
+                },
+            );
+        }
+    }
+    recommit_bytes(manifest, segments);
+}
+
+fn mutate_record(
+    segments: &mut BTreeMap<i32, Vec<u8>>,
+    record_id: &str,
+    mut mutate: impl FnMut(&mut Value),
+) {
+    let mut found = false;
+    for raw in segments.values_mut() {
+        let mut replacement = Vec::new();
+        for line in raw[..raw.len() - 1].split(|byte| *byte == b'\n') {
+            let mut record = parse_strict_json(line).unwrap();
+            if record["record_id"].as_str() == Some(record_id) {
+                mutate(&mut record);
+                found = true;
+            }
+            replacement.extend_from_slice(&canonical_json_bytes(&record).unwrap());
+            replacement.push(b'\n');
+        }
+        *raw = replacement;
+    }
+    assert!(found, "synthetic record {record_id} exists");
+}
+
+#[test]
+fn recomputed_orphan_block_cannot_disappear_from_message_count_closure() {
+    let (mut manifest, mut segments) = synthetic_revision();
+    mutate_record(
+        &mut segments,
+        "claude-code-session:demo:n:msg-1:0",
+        |record| {
+            record["message_id"] = json!("claude-code-session:demo:n:absent");
+        },
+    );
+    mutate_record(
+        &mut segments,
+        "claude-code-session:demo:n:msg-1",
+        |record| {
+            record["block_count"] = json!(0);
+        },
+    );
+    recommit_records(&mut manifest, &segments);
+    let error = stream_with_tiny_buffers(&manifest, &segments).unwrap_err();
+    assert!(
+        error.to_string().contains("absent or later message owner"),
+        "{error}"
+    );
+    assert!(!error.is_retryable());
+}
+
+#[test]
+fn each_owned_kind_rejects_recomputed_absent_or_later_message_owners() {
+    for kind in ["block", "attachment", "session_event"] {
+        let (original, original_segments) = checked_producer_revision();
+        let (record_id, anchor) = original
+            .anchors
+            .iter()
+            .find(|(_, anchor)| anchor.kind == kind)
+            .unwrap();
+        for owner in [
+            "claude-code-session:demo-session-1:n:absent",
+            "claude-code-session:demo-session-1:n:msg-6",
+        ] {
+            let mut manifest = original.clone();
+            let mut segments = original_segments.clone();
+            mutate_record(&mut segments, record_id, |record| {
+                record[if kind == "session_event" {
+                    "source_message_id"
+                } else {
+                    "message_id"
+                }] = json!(owner);
+            });
+            // The session event already follows msg-6. Move it before its owner
+            // with fresh sequences when testing the later-owner case.
+            if kind == "session_event" && owner.ends_with("msg-6") {
+                let raw = segments.get_mut(&anchor.segment_index).unwrap();
+                let mut records = raw[..raw.len() - 1]
+                    .split(|byte| *byte == b'\n')
+                    .map(|line| parse_strict_json(line).unwrap())
+                    .collect::<Vec<_>>();
+                records.swap(2, 3);
+                *raw = records
+                    .into_iter()
+                    .enumerate()
+                    .flat_map(|(index, mut record)| {
+                        record["seq"] = json!(8 + index);
+                        canonical_json_bytes(&record)
+                            .unwrap()
+                            .into_iter()
+                            .chain([b'\n'])
+                    })
+                    .collect();
+            }
+            recommit_records(&mut manifest, &segments);
+            let error = manifest.verify(&segments).unwrap_err();
+            assert!(
+                error.to_string().contains("absent or later message owner"),
+                "{kind}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn all_seven_kinds_reject_recomputed_wrong_session_identity() {
+    for kind in POLYLOGUE_VOCABULARY.map(|entry| entry.kind.as_str()) {
+        let (mut manifest, mut segments) = checked_producer_revision();
+        let record_id = manifest
+            .anchors
+            .iter()
+            .find(|(_, anchor)| anchor.kind == kind)
+            .unwrap()
+            .0
+            .clone();
+        mutate_record(&mut segments, &record_id, |record| {
+            record[if kind == "lineage" {
+                "src_session_id"
+            } else {
+                "session_id"
+            }] = json!("different-session");
+        });
+        recommit_records(&mut manifest, &segments);
+        let error = manifest.verify(&segments).unwrap_err();
+        assert!(
+            error.to_string().contains("different session"),
+            "{kind}: {error}"
+        );
+    }
+}
+
+#[test]
+fn all_seven_kind_shapes_reject_recomputed_unknown_missing_and_mistyped_fields() {
+    let fields = [
+        ("session", "message_count", json!("one"), "native_id"),
+        ("lineage", "confidence", json!(true), "src_session_id"),
+        ("usage", "input_tokens", json!(false), "session_id"),
+        (
+            "message",
+            "usage",
+            json!({"input_tokens": true}),
+            "position",
+        ),
+        ("block", "tool_result_is_error", json!(1), "block_id"),
+        ("attachment", "byte_count", json!("zero"), "message_id"),
+        ("session_event", "payload", json!([]), "session_id"),
+    ];
+    for (kind, field, wrong_value, required) in fields {
+        for mutation in 0..3 {
+            let (mut manifest, mut segments) = checked_producer_revision();
+            let record_id = manifest
+                .anchors
+                .iter()
+                .find(|(_, anchor)| anchor.kind == kind)
+                .unwrap()
+                .0
+                .clone();
+            mutate_record(&mut segments, &record_id, |record| match mutation {
+                0 => {
+                    record["undeclared_field"] = json!(null);
+                }
+                1 => {
+                    record[field] = wrong_value.clone();
+                }
+                _ => {
+                    record.as_object_mut().unwrap().remove(required);
+                }
+            });
+            recommit_records(&mut manifest, &segments);
+            let error = manifest.verify(&segments).unwrap_err();
+            assert_eq!(
+                error.kind(),
+                crate::error::SinexErrorKind::Validation,
+                "{kind}: {error}"
+            );
+            assert!(
+                error.to_string().contains("record field")
+                    || error.to_string().contains("record has no"),
+                "{kind}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn optional_fields_and_opaque_objects_keep_their_declared_contracts() {
+    let (mut manifest, mut segments) = checked_producer_revision();
+    let session_id = manifest.session_id.clone();
+    mutate_record(&mut segments, &session_id, |record| {
+        record.as_object_mut().unwrap().remove("title");
+        record["metadata"] = json!({"e\u{301}": {"opaque": true}, "é": [null, 1, "exact"]});
+    });
+    let message_id = manifest
+        .anchors
+        .iter()
+        .find(|(_, anchor)| anchor.kind == "message")
+        .unwrap()
+        .0
+        .clone();
+    mutate_record(&mut segments, &message_id, |record| {
+        record["text"] = Value::Null;
+        record["usage"] = json!({"input_tokens": null, "output_tokens": 0});
+    });
+    let event_id = manifest
+        .anchors
+        .iter()
+        .find(|(_, anchor)| anchor.kind == "session_event")
+        .unwrap()
+        .0
+        .clone();
+    mutate_record(&mut segments, &event_id, |record| {
+        record["source_message_id"] = Value::Null;
+        record["payload"] = json!({"opaque": {"undeclared_field": [false]}});
+    });
+    recommit_records(&mut manifest, &segments);
+    manifest.verify(&segments).unwrap();
+}
+
+#[test]
+fn recomputed_message_identity_ordinals_and_block_identity_must_agree() {
+    for field in ["message_id", "position", "block_id"] {
+        let (mut manifest, mut segments) = checked_producer_revision();
+        let kind = if field == "block_id" {
+            "block"
+        } else {
+            "message"
+        };
+        let record_id = manifest
+            .anchors
+            .iter()
+            .find(|(_, anchor)| anchor.kind == kind)
+            .unwrap()
+            .0
+            .clone();
+        mutate_record(&mut segments, &record_id, |record| {
+            record[field] = if field == "position" {
+                json!(1)
+            } else {
+                json!("inconsistent")
+            };
+        });
+        recommit_records(&mut manifest, &segments);
+        let error = manifest.verify(&segments).unwrap_err();
+        assert!(
+            error.to_string().contains("identity is inconsistent")
+                || error.to_string().contains("duplicate message ordinal"),
+            "{field}: {error}"
+        );
+    }
 }

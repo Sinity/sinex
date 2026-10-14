@@ -407,7 +407,17 @@ async fn polylogue_external_producer_observation_without_revision_proof_rejects(
 async fn polylogue_admission_checks_registered_revision_before_accepting_anchor(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let service = admission_service(&ctx);
+    let custody = tempfile::TempDir::new()?;
+    let content_store = Arc::new(sinexd::runtime::content_store::ContentStoreManager::new(
+        sinexd::runtime::content_store::ContentStoreConfig {
+            root_path: camino::Utf8PathBuf::from_path_buf(custody.path().join("cas"))
+                .map_err(|_| color_eyre::eyre::eyre!("fixture path must be UTF-8"))?,
+            ..Default::default()
+        },
+        ctx.pool.clone(),
+        None,
+    )?);
+    let service = admission_service(&ctx).with_content_store(Arc::clone(&content_store));
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/polylogue/v1/small-session");
     let manifest_bytes = std::fs::read(fixture.join("manifest.json"))?;
@@ -417,14 +427,26 @@ async fn polylogue_admission_checks_registered_revision_before_accepting_anchor(
     for segment in std::iter::once(&manifest.head_segment).chain(&manifest.segments) {
         let path = fixture.join("segments").join(&segment.filename);
         let bytes = std::fs::read(&path)?;
+        let locator = custody.path().join(&segment.filename);
+        std::fs::write(&locator, &bytes)?;
+        let blob = content_store
+            .ingest_from_bytes(&bytes, &segment.filename, "application/x-ndjson")
+            .await?;
         let registered = ctx
             .pool
             .source_materials()
             .register_material_with_total_bytes(
-                SourceMaterial::file(path.to_string_lossy().into_owned()),
+                SourceMaterial::file(locator.to_string_lossy().into_owned())
+                    .with_optional_blob_id(Some(blob.id)),
                 i64::try_from(bytes.len())?,
             )
             .await?;
+        // Both absent and changed locators must leave registered CAS authority intact.
+        if segment.index % 2 == 0 {
+            std::fs::remove_file(&locator)?;
+        } else {
+            std::fs::write(&locator, b"mutated staging locator\n")?;
+        }
         segment_material_ids.insert(segment.index, registered.id);
         segments.insert(segment.index, bytes);
     }
@@ -470,6 +492,13 @@ async fn polylogue_admission_checks_registered_revision_before_accepting_anchor(
         segment_material_ids,
     });
 
+    // CAS custody cannot silently fall back to a file when the native reader is absent.
+    assert!(
+        admission_service(&ctx)
+            .admit_intent_bytes(&serde_json::to_vec(&intent)?)
+            .await
+            .is_err()
+    );
     let accepted = service
         .admit_intent_bytes(&serde_json::to_vec(&intent)?)
         .await?;

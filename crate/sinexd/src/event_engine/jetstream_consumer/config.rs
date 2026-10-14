@@ -4,6 +4,15 @@ use super::confirmation::CONFIRM_PUBLISH_CONCURRENCY;
 use super::*;
 
 impl JetStreamConsumer {
+    #[must_use]
+    pub fn with_content_store(
+        mut self,
+        store: Arc<crate::runtime::content_store::ContentStoreManager>,
+    ) -> Self {
+        self.admission = self.admission.with_content_store(store);
+        self
+    }
+
     pub fn new(
         nats_client: NatsClient,
         pool: DbPool,
