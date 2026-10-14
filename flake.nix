@@ -620,7 +620,12 @@
                   export SINEX_DEV_POSTGRES_PORT="''${SINEX_DEV_POSTGRES_PORT:-$((${toString pgPortBase} + (checkout_first_byte % ${toString pgPortSpan})))}"
                   export PGPORT="$SINEX_DEV_POSTGRES_PORT"
                   export DATABASE_URL="postgresql:///sinex_dev?host=$checkout_pg_run_dir&port=$SINEX_DEV_POSTGRES_PORT"
-                  export SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-$checkout_nats_port}"
+                  if [ -n "''${XDG_RUNTIME_DIR:-}" ]; then
+                    checkout_nats_port="$(flock --shared "$XDG_RUNTIME_DIR/sinex-dev-nats-start.lock" sh -c 'if [ -r "$1" ]; then cat "$1"; else printf "%s\n" "$2"; fi' sh "$checkout_dev_state_dir/nats.port" "''${SINEX_DEV_NATS_PORT:-$checkout_nats_port}")"
+                  else
+                    checkout_nats_port="''${SINEX_DEV_NATS_PORT:-$checkout_nats_port}"
+                  fi
+                  export SINEX_DEV_NATS_PORT="$checkout_nats_port"
                   export SINEX_DEV_GATEWAY_PORT="$checkout_gateway_port"
                   export SINEX_NATS_DIR="$checkout_dev_state_dir/nats"
                   export SINEX_NATS_URL="nats://127.0.0.1:$SINEX_DEV_NATS_PORT"
@@ -1478,6 +1483,7 @@
                 fenixPkgs.rust-src
 
                 # Cargo development tools
+                util-linux
                 ast-grep
                 cargo-nextest
                 cargo-insta
@@ -1588,7 +1594,12 @@
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
                 export PGPORT="$SINEX_DEV_POSTGRES_PORT"
                 export SINEX_DEV_GATEWAY_PORT="$((19000 + _sinex_checkout_hash_byte))"
-                export SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-$((4222 + (_sinex_checkout_hash_byte % 100)))}"
+                _sinex_nats_fallback="''${SINEX_DEV_NATS_PORT:-$((4222 + (_sinex_checkout_hash_byte % 100)))}"
+                if [ -n "''${XDG_RUNTIME_DIR:-}" ]; then
+                  export SINEX_DEV_NATS_PORT="$(flock --shared "$XDG_RUNTIME_DIR/sinex-dev-nats-start.lock" sh -c 'if [ -r "$1" ]; then cat "$1"; else printf "%s\n" "$2"; fi' sh "$SINEX_DEV_STATE_DIR/nats.port" "$_sinex_nats_fallback")"
+                else
+                  export SINEX_DEV_NATS_PORT="$_sinex_nats_fallback"
+                fi
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
                 export SINEX_API_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_API_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
