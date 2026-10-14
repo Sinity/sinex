@@ -134,6 +134,8 @@ pub use sqlite_snapshot::{
 pub use static_file::{StaticFileAdapter, StaticFileConfig, StaticFileCursor};
 
 // New adapters.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) mod journalctl_test_fixture;
 pub use clipboard_polling::{
     ArboardBackend, ClipboardBackend, ClipboardPollingAdapter, ClipboardPollingConfig,
     ClipboardPollingCursor, MockClipboardBackend,
@@ -269,6 +271,15 @@ impl InputShapeAdapterExt for file_drop::FileDropAdapter {
 }
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for journalctl_stream::JournalctlStreamAdapter {
+    fn acquisition_resume_cursor(
+        &self,
+        config: &Self::Config,
+        cursor: Option<&Self::Cursor>,
+    ) -> Option<Self::Cursor> {
+        journalctl_stream::journal_resume_cursor(config, cursor)
+            .map(journalctl_stream::JournalctlCursor::new)
+    }
+
     fn configure_initial_stream_position(
         &self,
         config: &Self::Config,

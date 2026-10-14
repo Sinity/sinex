@@ -1593,6 +1593,10 @@ where
         // arrive. The placeholder is never used in production events — each
         // record's real anchor is returned by append_with_anchor() below.
         let placeholder_material_id = Id::<SourceMaterial>::from_uuid(Uuid::nil());
+        let acquisition_cursor_before = self
+            .adapter
+            .acquisition_resume_cursor(config, cursor.as_ref())
+            .and_then(|cursor| serde_json::to_string(&cursor).ok());
 
         // Open the adapter stream. Runtime acquisition is offered so
         // content-bearing adapters can stage their own material and return
@@ -1619,7 +1623,8 @@ where
                         state
                             .cursor
                             .as_ref()
-                            .and_then(|cursor| serde_json::to_string(cursor).ok()),
+                            .and_then(|cursor| serde_json::to_string(cursor).ok())
+                            .or_else(|| acquisition_cursor_before.clone()),
                     );
                 }
                 return Err(
@@ -1703,7 +1708,8 @@ where
                                 state
                                     .cursor
                                     .as_ref()
-                                    .and_then(|cursor| serde_json::to_string(cursor).ok()),
+                                    .and_then(|cursor| serde_json::to_string(cursor).ok())
+                                    .or_else(|| acquisition_cursor_before.clone()),
                             );
                         }
                         return Err(crate::runtime::SinexError::processing(

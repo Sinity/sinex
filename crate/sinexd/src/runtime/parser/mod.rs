@@ -20,6 +20,8 @@
 #[cfg(feature = "messaging")]
 mod adapter_source;
 mod adapters;
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) use adapters::journalctl_test_fixture;
 mod declarative;
 pub mod dedup;
 mod fingerprint;
@@ -194,6 +196,16 @@ pub enum InitialStreamPosition {
 #[cfg(feature = "messaging")]
 #[async_trait]
 pub trait InputShapeAdapterExt: InputShapeAdapter {
+    /// Known opaque resume position used when reporting acquisition uncertainty.
+    /// Adapters with a configured fallback override this to retain that bound.
+    fn acquisition_resume_cursor(
+        &self,
+        _config: &Self::Config,
+        cursor: Option<&Self::Cursor>,
+    ) -> Option<Self::Cursor> {
+        cursor.cloned()
+    }
+
     /// Open this adapter for a registered logical source.
     ///
     /// Adapters with acquisition-specific reporting may use `source_id` to

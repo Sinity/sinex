@@ -643,6 +643,61 @@ async fn subprocess_adapter_open_failure_preserves_the_cursor_and_source_id(
     Ok(())
 }
 
+#[sinex_serial_test]
+async fn unavailable_journal_cursor_preserves_durable_frontier(ctx: TestContext) -> TestResult<()> {
+    use crate::runtime::parser::adapters::journalctl_test_fixture::{
+        JournalFixture, UNAVAILABLE_CURSOR,
+    };
+    use crate::runtime::parser::adapters::{JournalctlCursor, JournalctlStreamAdapter};
+    use crate::sources::source_contracts::system::journald::JournaldParser;
+    let fixture = JournalFixture::new()?;
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source =
+        AdapterBackedSource::<JournalctlStreamAdapter, JournaldParser>::new("system.journald");
+    let mut state = AdapterModuleState::default();
+    source
+        .initialize(
+            serde_json::from_value(serde_json::json!({
+                "units": ["sinex-synthetic-fixture.service"],
+                "from_cursor": fixture.cursors[0]
+            }))?,
+            &runtime,
+            &mut state,
+        )
+        .await?;
+    // Persisted identity takes precedence over the available configured fallback.
+    let cursor = JournalctlCursor::new(UNAVAILABLE_CURSOR);
+    state.cursor = Some(cursor.clone());
+    source.persist_stream_checkpoint_if_due(&state, true).await;
+    let manager = runtime.checkpoint_manager();
+    let before = manager.load_checkpoint().await?;
+    assert!(
+        source
+            .scan_snapshot(&mut state, ScanArgs::default())
+            .await
+            .is_err()
+    );
+    assert_eq!(state.cursor, Some(cursor));
+    let after = manager.load_checkpoint().await?;
+    assert_eq!(
+        serde_json::to_value(&before)?,
+        serde_json::to_value(&after)?,
+        "unverified resume must not advance or rewrite the durable checkpoint"
+    );
+    let report = crate::runtime::acquisition_opportunity::latest("system.journald")
+        .ok_or_else(|| eyre!("journal uncertainty was not reported"))?;
+    assert_eq!(
+        report.cursor_before,
+        Some(serde_json::to_string(&JournalctlCursor::new(
+            UNAVAILABLE_CURSOR
+        ))?)
+    );
+    assert!(report.reason.contains("checkpoint unavailable"));
+    crate::runtime::acquisition_opportunity::clear_test_observation("system.journald");
+    Ok(())
+}
+
 #[sinex_test]
 async fn successful_finite_drain_preserves_unreconciled_acquisition_uncertainty(
     ctx: TestContext,
