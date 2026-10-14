@@ -3,6 +3,7 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::JsonValue;
+use sinex_primitives::environment::SinexEnvironment;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::EventId;
 use sinex_primitives::{error::SinexError, temporal};
@@ -10,6 +11,7 @@ use sinexd::runtime::{
     ConfirmedEventCompletion, ConfirmedEventHandler, JetStreamEventConsumer,
     JetStreamEventConsumerConfig, RuntimeResult, prelude::async_trait,
 };
+use std::os::unix::process::ExitStatusExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc, oneshot};
@@ -67,6 +69,223 @@ impl ConfirmedEventHandler for DeferredCompletionHandler {
             .await
             .map_err(|_| SinexError::lifecycle("ACK-barrier test receiver dropped"))
     }
+}
+
+const PIPELINE_CRASH_NATS: &str = "SINEX_PIPELINE_CRASH_NATS";
+const PIPELINE_CRASH_NAMESPACE: &str = "SINEX_PIPELINE_CRASH_NAMESPACE";
+const PIPELINE_CRASH_CONSUMER: &str = "SINEX_PIPELINE_CRASH_CONSUMER";
+const PIPELINE_CRASH_EVENT: &str = "SINEX_PIPELINE_CRASH_EVENT";
+const PIPELINE_CRASH_MARKER: &str = "SINEX_PIPELINE_CRASH_MARKER";
+
+/// Admission and database persistence precede the real consumer-process kill.
+/// Unlike the direct confirmed-stream control, this uses the normal raw pipeline.
+#[sinex_test(timeout = 90)]
+async fn confirmed_event_redelivers_after_consumer_process_death() -> Result<()> {
+    if let Ok(nats_url) = std::env::var(PIPELINE_CRASH_NATS) {
+        let namespace = std::env::var(PIPELINE_CRASH_NAMESPACE)?;
+        let consumer_name = std::env::var(PIPELINE_CRASH_CONSUMER)?;
+        let expected = std::env::var(PIPELINE_CRASH_EVENT)?;
+        let marker = std::env::var(PIPELINE_CRASH_MARKER)?;
+        let client = async_nats::connect(&nats_url).await?;
+        let env = SinexEnvironment::new("dev")?;
+        let stream_name = format!(
+            "{}_CONFIRMED",
+            env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS")
+        );
+        let js = async_nats::jetstream::new(client.clone());
+        let (delivery_tx, mut delivery_rx) = mpsc::channel(1);
+        let consumer = Arc::new(JetStreamEventConsumer::new_with_namespace(
+            client,
+            env,
+            JetStreamEventConsumerConfig {
+                consumer_name: consumer_name.clone(),
+                batch_size: 1,
+                deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
+                liveness_check_interval: Duration::from_secs(60),
+                ..Default::default()
+            },
+            Arc::new(DeferredCompletionHandler {
+                deliveries: delivery_tx,
+            }),
+            Some(namespace),
+        ));
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let runner = consumer.clone();
+        let _runner =
+            tokio::spawn(async move { runner.run_with_ready_signal(Some(ready_tx)).await });
+        timeout(Duration::from_secs(10), ready_rx).await??;
+        let (_event_id, _unsettled_receipt) = timeout(Duration::from_secs(10), async {
+            loop {
+                let (id, receipt) = delivery_rx
+                    .recv()
+                    .await
+                    .ok_or_else(|| eyre!("child delivery channel closed"))?;
+                if id.to_string() == expected {
+                    return Ok::<_, color_eyre::eyre::Report>((id, receipt));
+                }
+                receipt
+                    .send(ConfirmedEventCompletion::Safe)
+                    .map_err(|_| eyre!("child consumer dropped unrelated completion"))?;
+            }
+        })
+        .await??;
+        let stream = js.get_stream(&stream_name).await?;
+        let mut durable = stream
+            .get_consumer::<async_nats::jetstream::consumer::pull::Config>(&consumer_name)
+            .await
+            .map_err(|error| eyre!("child durable lookup failed: {error}"))?;
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if durable.info().await?.num_ack_pending == 1 {
+                    return Ok::<_, color_eyre::eyre::Report>(());
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await??;
+        tokio::fs::write(marker, expected.as_bytes()).await?;
+        // Keep the exact delivery and completion receipt alive until the parent
+        // kills this process. The child does not construct a database sandbox.
+        std::future::pending::<()>().await;
+        return Ok(());
+    }
+
+    let ctx = TestContext::with_name("confirmed_event_redelivers_after_consumer_process_death")
+        .await?
+        .with_nats()
+        .shared()
+        .await?;
+    let scope = ctx.pipeline().await?;
+    let sandbox = scope.ctx();
+    let env = sandbox.env().clone();
+    let namespace = scope.namespace().prefix().to_string();
+    let consumer_name = format!("pipeline-process-death-{namespace}");
+    let event_id = scope
+        .publish(DynamicPayload::new(
+            "pipeline-process-death-source",
+            "pipeline.process_death",
+            json!({"test": "persisted-unsettled-delivery"}),
+        ))
+        .await?;
+    let persisted = sandbox
+        .pool()
+        .events()
+        .get_by_id(event_id)
+        .await?
+        .ok_or_else(|| eyre!("admitted event was not persisted before consumer death"))?;
+    assert_eq!(persisted.id, Some(event_id));
+    assert!(persisted.provenance.source_material_id().is_some());
+
+    let marker_dir = tempfile::tempdir()?;
+    let marker = marker_dir.path().join("unsettled-delivery");
+    let module = module_path!()
+        .split_once("::")
+        .map_or(module_path!(), |(_, rest)| rest);
+    let test_name = format!("{module}::confirmed_event_redelivers_after_consumer_process_death");
+    let mut child = tokio::process::Command::new(std::env::current_exe()?)
+        .arg(test_name)
+        .arg("--exact")
+        .arg("--nocapture")
+        .env(PIPELINE_CRASH_NATS, sandbox.nats_handle()?.client_url())
+        .env(PIPELINE_CRASH_NAMESPACE, &namespace)
+        .env(PIPELINE_CRASH_CONSUMER, &consumer_name)
+        .env(PIPELINE_CRASH_EVENT, event_id.to_string())
+        .env(PIPELINE_CRASH_MARKER, &marker)
+        .kill_on_drop(true)
+        .spawn()?;
+    let held = timeout(Duration::from_secs(25), async {
+        loop {
+            if tokio::fs::try_exists(&marker).await? {
+                return Ok::<_, std::io::Error>(());
+            }
+            if let Some(status) = child.try_wait()? {
+                return Err(std::io::Error::other(format!(
+                    "child exited before holding delivery: {status}"
+                )));
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    if !matches!(held, Ok(Ok(()))) {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return Err(eyre!("child did not reach unsettled delivery: {held:?}"));
+    }
+    assert_eq!(
+        tokio::fs::read_to_string(&marker).await?,
+        event_id.to_string()
+    );
+    child.kill().await?;
+    assert_eq!(
+        child.wait().await?.signal(),
+        Some(9),
+        "consumer must die from the parent's SIGKILL"
+    );
+
+    let client = sandbox.nats_client();
+    let stream_name = format!(
+        "{}_CONFIRMED",
+        env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS")
+    );
+    let (delivery_tx, mut delivery_rx) = mpsc::channel(1);
+    let restarted = Arc::new(JetStreamEventConsumer::new_with_namespace(
+        client.clone(),
+        env,
+        JetStreamEventConsumerConfig {
+            consumer_name: consumer_name.clone(),
+            batch_size: 1,
+            deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
+            liveness_check_interval: Duration::from_secs(60),
+            ..Default::default()
+        },
+        Arc::new(DeferredCompletionHandler {
+            deliveries: delivery_tx,
+        }),
+        Some(namespace),
+    ));
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let runner = restarted.clone();
+    let runner_task =
+        tokio::spawn(async move { runner.run_with_ready_signal(Some(ready_tx)).await });
+    timeout(Duration::from_secs(10), ready_rx).await??;
+    // The production consumer uses its unchanged 30-second ACK deadline.
+    let (redelivered, receipt) = timeout(Duration::from_secs(40), delivery_rx.recv())
+        .await?
+        .ok_or_else(|| eyre!("restarted consumer stopped before redelivery"))?;
+    assert_eq!(redelivered, event_id);
+    let js = async_nats::jetstream::new(client);
+    let stream = js.get_stream(&stream_name).await?;
+    let mut durable = stream
+        .get_consumer::<async_nats::jetstream::consumer::pull::Config>(&consumer_name)
+        .await
+        .map_err(|error| eyre!("restarted durable lookup failed: {error}"))?;
+    assert!(durable.info().await?.num_redelivered >= 1);
+    receipt
+        .send(ConfirmedEventCompletion::Safe)
+        .map_err(|_| eyre!("restarted consumer dropped completion receipt"))?;
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if durable.info().await?.num_ack_pending == 0 {
+                return Ok::<_, color_eyre::eyre::Report>(());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    let after = sandbox
+        .pool()
+        .events()
+        .get_by_id(event_id)
+        .await?
+        .ok_or_else(|| eyre!("persisted interpretation vanished after consumer recovery"))?;
+    assert_eq!(after.id, persisted.id);
+    assert_eq!(after.provenance, persisted.provenance);
+    assert_eq!(after.payload, persisted.payload);
+    restarted.stop().await;
+    runner_task.await??;
+    scope.shutdown().await?;
+    Ok(())
 }
 
 #[sinex_test(timeout = 60)]
