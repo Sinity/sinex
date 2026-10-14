@@ -257,6 +257,50 @@ fn notify_socket_path(prefix: &str) -> Result<PathBuf> {
     )))
 }
 
+/// Owns an sd_notify socket path for the full lifetime of a launch attempt.
+/// Drop removes the filesystem entry on success, timeout, and spawn failure.
+struct NotifySocketGuard(PathBuf);
+
+impl NotifySocketGuard {
+    fn bind(prefix: &str) -> Result<(Self, UnixDatagram)> {
+        let guard = Self(notify_socket_path(prefix)?);
+        let _ = std::fs::remove_file(&guard.0);
+        let listener = UnixDatagram::bind(&guard.0)
+            .wrap_err_with(|| format!("failed to bind {}", guard.0.display()))?;
+        Ok((guard, listener))
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for NotifySocketGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn event_engine_command(
+    binary_path: &std::path::Path,
+    pool_size: u32,
+    debug_log: &std::path::Path,
+) -> Result<Command> {
+    let log_file = std::fs::File::create(debug_log)
+        .wrap_err_with(|| format!("failed to create {}", debug_log.display()))?;
+    let stderr_file = log_file
+        .try_clone()
+        .wrap_err_with(|| format!("failed to clone {}", debug_log.display()))?;
+    let mut cmd = Command::new(binary_path);
+    crate::process::configure_managed_child_tokio(&mut cmd);
+    cmd.arg("--pool-size")
+        .arg(pool_size.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(stderr_file));
+    Ok(cmd)
+}
+
 /// Drain a (typically already-exited) child's piped stdout/stderr into a
 /// human-readable suffix for error messages. Best-effort: returns an empty
 /// string if the handles were not piped or reading fails.
@@ -479,10 +523,7 @@ async fn start_test_gateway_inner(
     };
 
     let listen_str = actual_addr.to_string();
-    let notify_socket_path = notify_socket_path("gw")?;
-    let _ = std::fs::remove_file(&notify_socket_path);
-    let notify_listener = UnixDatagram::bind(&notify_socket_path)
-        .wrap_err_with(|| format!("failed to bind {}", notify_socket_path.display()))?;
+    let (notify_socket, notify_listener) = NotifySocketGuard::bind("gw")?;
 
     let mut cmd = tokio::process::Command::new(&binary_path);
     crate::process::configure_managed_child_tokio(&mut cmd);
@@ -501,7 +542,7 @@ async fn start_test_gateway_inner(
         // parent environment (NixOS, other tests) and unexpectedly require
         // client certificates.
         .env_remove("SINEX_API_TLS_CLIENT_CA")
-        .env("NOTIFY_SOCKET", &notify_socket_path);
+        .env("NOTIFY_SOCKET", notify_socket.path());
     if config.rpc_rate_limit_disabled {
         cmd.env("SINEX_API_RATE_LIMIT_ENABLED", "false");
     }
@@ -532,7 +573,6 @@ async fn start_test_gateway_inner(
         )
         .await
     {
-        let _ = std::fs::remove_file(&notify_socket_path);
         // Surface the child's captured stdout/stderr — otherwise a startup
         // panic or config error in the gateway subprocess is invisible and the
         // failure reads only as "exited before READY=1".
@@ -544,8 +584,6 @@ async fn start_test_gateway_inner(
         }
         return Err(e).wrap_err(format!("Gateway failed to become ready{captured}"));
     }
-    let _ = std::fs::remove_file(&notify_socket_path);
-
     Ok(handle)
 }
 
@@ -912,10 +950,7 @@ pub async fn start_test_source(
     let binary_path = freshness.binary_path.clone();
 
     let debug_log = source_driver_debug_log_path_for_test_process(&config.source_id);
-    let notify_socket_path = notify_socket_path("sw")?;
-    let _ = std::fs::remove_file(&notify_socket_path);
-    let notify_listener = UnixDatagram::bind(&notify_socket_path)
-        .wrap_err_with(|| format!("failed to bind {}", notify_socket_path.display()))?;
+    let (notify_socket, notify_listener) = NotifySocketGuard::bind("sw")?;
 
     let log_file = std::fs::File::create(&debug_log)
         .wrap_err_with(|| format!("failed to create {}", debug_log.display()))?;
@@ -955,7 +990,7 @@ pub async fn start_test_source(
     if let Some(runtime_config) = &config.runtime_config {
         cmd.arg("--runtime-config").arg(runtime_config);
     }
-    cmd.env("NOTIFY_SOCKET", &notify_socket_path);
+    cmd.env("NOTIFY_SOCKET", notify_socket.path());
     cmd.arg("--extra-arg").arg("service");
     cmd.stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
@@ -975,7 +1010,6 @@ pub async fn start_test_source(
         )
         .await
     {
-        let _ = std::fs::remove_file(&notify_socket_path);
         let mut handle = TestSourceDriverHandle {
             child,
             source_id: config.source_id,
@@ -987,8 +1021,6 @@ pub async fn start_test_source(
         }
         return Err(error).wrap_err("source host failed to become ready");
     }
-    let _ = std::fs::remove_file(&notify_socket_path);
-
     Ok(TestSourceDriverHandle {
         child,
         source_id: config.source_id,
@@ -1111,21 +1143,10 @@ pub async fn start_test_event_engine_with_config(
     freshness.ensure_fresh()?;
     let binary_path = freshness.binary_path.clone();
 
-    // Capture both stdout and stderr to a debug log file.
-    // tracing_subscriber::fmt() defaults to stdout in 0.3.x, so we need >{file} 2>&1.
+    // Capture both streams in the debug log without routing paths through a shell.
     let debug_log = event_engine_debug_log_path_for_test_process();
-    let notify_socket_path = notify_socket_path("in")?;
-    let _ = std::fs::remove_file(&notify_socket_path);
-    let notify_listener = UnixDatagram::bind(&notify_socket_path)
-        .wrap_err_with(|| format!("failed to bind {}", notify_socket_path.display()))?;
-    let mut cmd = Command::new("bash");
-    crate::process::configure_managed_child_tokio(&mut cmd);
-    cmd.arg("-c").arg(format!(
-        "exec {} --pool-size {} >{} 2>&1",
-        binary_path.display(),
-        config.database_pool_size,
-        debug_log.display(),
-    ));
+    let (notify_socket, notify_listener) = NotifySocketGuard::bind("in")?;
+    let mut cmd = event_engine_command(&binary_path, config.database_pool_size, &debug_log)?;
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
     // Engine-only fixture: the gateway runs as a separate TLS subprocess (see
@@ -1183,8 +1204,8 @@ pub async fn start_test_event_engine_with_config(
     // routed to the DLQ instead of being persisted.
     cmd.env("SINEX_VALIDATE_SCHEMAS", "false");
     cmd.env("SINEX_SKIP_SCHEMA_SYNC", "true");
-    cmd.env("NOTIFY_SOCKET", &notify_socket_path);
-    cmd.stdin(Stdio::null()).kill_on_drop(true);
+    cmd.env("NOTIFY_SOCKET", notify_socket.path())
+        .kill_on_drop(true);
 
     let mut child = cmd.spawn()?;
     crate::process::register_tokio_child_process_group(&child, "sandbox event_engine");
@@ -1213,7 +1234,6 @@ pub async fn start_test_event_engine_with_config(
             )
             .await
             {
-                let _ = std::fs::remove_file(&notify_socket_path);
                 let _ = child.start_kill();
                 return Err(error)
                     .wrap_err(format_event_engine_debug_context(&debug_log))
@@ -1224,7 +1244,6 @@ pub async fn start_test_event_engine_with_config(
                 .wait_for_stream(&js, &stream_name, Duration::from_secs(Timeouts::STANDARD))
                 .await
             {
-                let _ = std::fs::remove_file(&notify_socket_path);
                 let _ = child.start_kill();
                 return Err(error)
                     .wrap_err(format_event_engine_debug_context(&debug_log))
@@ -1232,8 +1251,6 @@ pub async fn start_test_event_engine_with_config(
             }
         }
     }
-    let _ = std::fs::remove_file(&notify_socket_path);
-
     Ok(TestEventEngineHandle { child, stream_name })
 }
 

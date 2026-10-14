@@ -74,6 +74,7 @@ struct ReleaseCheck {
     id: &'static str,
     family: &'static str,
     command: String,
+    args: Vec<String>,
     proves: &'static str,
 }
 
@@ -213,30 +214,47 @@ fn release_checks(base_ref: &str) -> Vec<ReleaseCheck> {
             id: "nix-eval",
             family: "format-lint-static",
             command: "xtask check --nix".to_string(),
+            args: vec!["check".to_string(), "--nix".to_string()],
             proves: "flake outputs and generated devshell wiring evaluate through the repo-native check gate",
         },
         ReleaseCheck {
             id: "changed-strict",
             family: "focused-rust",
             command: format!("xtask check --changed-strict {base_ref}"),
+            args: vec![
+                "check".to_string(),
+                "--changed-strict".to_string(),
+                base_ref.to_string(),
+            ],
             proves: "changed Rust/API surfaces compile through the affected-package gate",
         },
         ReleaseCheck {
             id: "schema-strict-diff",
             family: "schema",
             command: "xtask schema strict-diff".to_string(),
+            args: vec!["schema".to_string(), "strict-diff".to_string()],
             proves: "declared schema and inspected database have no strict drift",
         },
         ReleaseCheck {
             id: "command-reference",
             family: "operator-surfaces",
             command: "xtask docs command-reference --check".to_string(),
+            args: vec![
+                "docs".to_string(),
+                "command-reference".to_string(),
+                "--check".to_string(),
+            ],
             proves: "checked-in xtask command reference matches the live clap tree",
         },
         ReleaseCheck {
             id: "schema-bundle",
             family: "generated-artifacts",
             command: "xtask docs schema-bundle --check".to_string(),
+            args: vec![
+                "docs".to_string(),
+                "schema-bundle".to_string(),
+                "--check".to_string(),
+            ],
             proves: "checked-in payload schema bundle matches the Rust registry",
         },
         ReleaseCheck {
@@ -244,12 +262,25 @@ fn release_checks(base_ref: &str) -> Vec<ReleaseCheck> {
             family: "generated-artifacts",
             command: "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)'"
                 .to_string(),
+            args: vec![
+                "test".to_string(),
+                "-p".to_string(),
+                "sinexd".to_string(),
+                "-E".to_string(),
+                "test(source_catalog_artifact_matches_inventory)".to_string(),
+            ],
             proves: "checked-in NixOS source catalog artifact matches the linked Rust source inventory",
         },
         ReleaseCheck {
             id: "privacy-catalog",
             family: "privacy",
             command: "xtask privacy catalog --format json".to_string(),
+            args: vec![
+                "privacy".to_string(),
+                "catalog".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+            ],
             proves: "privacy catalog can be loaded by the repo-native privacy engine",
         },
     ]
@@ -369,8 +400,12 @@ fn summarize_results(results: &[ReleaseCheckResult]) -> ReleaseReadinessSummary 
 }
 
 fn run_release_check(check: &ReleaseCheck) -> ReleaseCheckResult {
-    match ProcessBuilder::new("sh")
-        .args(["-lc", check.command.as_str()])
+    run_release_check_with_program(check, "xtask")
+}
+
+fn run_release_check_with_program(check: &ReleaseCheck, program: &str) -> ReleaseCheckResult {
+    match ProcessBuilder::new(program)
+        .args(&check.args)
         .with_description(format!("release-readiness check {}", check.id))
         .run()
     {
