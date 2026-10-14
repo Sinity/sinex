@@ -223,6 +223,13 @@ fn execute_lease_services(ctx: &CommandContext) -> Result<CommandResult> {
     let nats_port = config.nats.port;
     drop(_nats_startup_lock);
 
+    // The verifier supplies a fresh path inside its private startup directory.
+    // Publish readiness only after this process started and checked both services;
+    // probing a shared port alone could acknowledge another checkout's service.
+    if let Some(path) = std::env::var_os("AGENTCTL_SERVICE_READY") {
+        std::fs::write(path, b"ready\n").wrap_err("publish development-service readiness")?;
+    }
+
     println!(
         "{}",
         json!({
