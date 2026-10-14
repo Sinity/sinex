@@ -820,6 +820,7 @@ impl RecordFieldShape {
 
 /// Current semantics-8 builder keys and types. Absent optional fields remain
 /// allowed; a present field must have its declared type, including nullability.
+/// Source identity coordinates are required even when optional value fields are absent.
 fn validate_record_shape(kind: PolylogueRecordKind, object: &Map<String, Value>) -> Result<()> {
     use PolylogueRecordKind as Kind;
     use RecordFieldShape as Shape;
@@ -834,8 +835,14 @@ fn validate_record_shape(kind: PolylogueRecordKind, object: &Map<String, Value>)
             "variant_index",
             "block_count",
         ],
-        Kind::Block => &["session_id", "message_id", "block_id"],
-        Kind::Attachment => &["session_id", "message_id"],
+        Kind::Block => &[
+            "session_id",
+            "message_id",
+            "block_id",
+            "content_identity",
+            "content_occurrence",
+        ],
+        Kind::Attachment => &["session_id", "message_id", "native_identity"],
     };
     for field in ["kind", "record_id", "seq"].iter().chain(required) {
         if !object.contains_key(*field) {

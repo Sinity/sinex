@@ -27,6 +27,8 @@ fn synthetic_revision() -> (PolylogueRevisionManifest, BTreeMap<i32, Vec<u8>>) {
     let block_value = json!({
         "block_id": "claude-code-session:demo:n:msg-1:0",
         "block_type": "tool_result",
+        "content_identity": "synthetic-tool-result",
+        "content_occurrence": 0,
         "kind": "block",
         "message_id": "claude-code-session:demo:n:msg-1",
         "record_id": "claude-code-session:demo:n:msg-1:0",
@@ -887,5 +889,35 @@ fn recomputed_message_identity_ordinals_and_block_identity_must_agree() {
                 || error.to_string().contains("duplicate message ordinal"),
             "{field}: {error}"
         );
+    }
+}
+
+#[test]
+fn recomputed_records_require_declared_content_and_native_identity_coordinates() {
+    for (kind, field) in [
+        ("block", "content_identity"),
+        ("block", "content_occurrence"),
+        ("attachment", "native_identity"),
+    ] {
+        let (mut manifest, mut segments) = checked_producer_revision();
+        let record_id = manifest
+            .anchors
+            .iter()
+            .find(|(_, anchor)| anchor.kind == kind)
+            .unwrap()
+            .0
+            .clone();
+        mutate_record(&mut segments, &record_id, |record| {
+            record.as_object_mut().unwrap().remove(field);
+        });
+        recommit_records(&mut manifest, &segments);
+        let error = stream_with_tiny_buffers(&manifest, &segments).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("record has no {field}")),
+            "{error}"
+        );
+        assert!(!error.is_retryable());
     }
 }
