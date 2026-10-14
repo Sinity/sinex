@@ -837,15 +837,24 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
         let mut passthrough_attrs = Vec::new();
         for attr in &attrs {
             if attr.path().is_ident("cases") {
-                let lit: TS = attr.parse_args().unwrap();
+                let lit = match parse_proptest_attr_args(attr) {
+                    Ok(lit) => lit,
+                    Err(error) => return error.to_compile_error().into(),
+                };
                 meta_entries.push(quote!(cases = #lit));
             } else if attr.path().is_ident("timeout") {
-                let lit: TS = attr.parse_args().unwrap();
+                let lit = match parse_proptest_attr_args(attr) {
+                    Ok(lit) => lit,
+                    Err(error) => return error.to_compile_error().into(),
+                };
                 meta_entries.push(quote!(timeout = #lit));
             } else if attr.path().is_ident("trace") {
                 meta_entries.push(quote!(trace));
             } else if attr.path().is_ident("seed") {
-                let lit: TS = attr.parse_args().unwrap();
+                let lit = match parse_proptest_attr_args(attr) {
+                    Ok(lit) => lit,
+                    Err(error) => return error.to_compile_error().into(),
+                };
                 meta_entries.push(quote!(seed = #lit));
             } else {
                 passthrough_attrs.push(attr.clone());
@@ -883,6 +892,10 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
     }
 
     quote!( #( #out )* ).into()
+}
+
+fn parse_proptest_attr_args(attr: &syn::Attribute) -> syn::Result<proc_macro2::TokenStream> {
+    attr.parse_args()
 }
 
 #[proc_macro_attribute]
@@ -1013,26 +1026,34 @@ fn expand_rstest_variant(
     timeout_secs: u64,
     serial_scope: SerialScope,
     enable_tracing: bool,
-) -> TokenStream {
+) -> proc_macro2::TokenStream {
     let fn_name = &input.sig.ident;
     let fn_vis = &input.vis;
     let fn_body = &input.block;
 
-    // Build the function signature without Sandbox (if present)
+    // Build the function signature without a context parameter (if present).
+    // Bind the generated context under the parameter's original name so the
+    // test body continues to refer to the same identifier.
     let mut filtered_inputs = Vec::new();
     let mut has_ctx_param = false;
+    let mut ctx_ident = None;
 
     for arg in &input.sig.inputs {
-        if let syn::FnArg::Typed(pat_type) = arg
-            && let syn::Type::Path(type_path) = pat_type.ty.as_ref()
-            && type_path
-                .path
-                .segments
-                .last()
-                .is_some_and(|seg| seg.ident == "Sandbox")
-        {
-            has_ctx_param = true;
-            continue;
+        if let syn::FnArg::Typed(pat_type) = arg {
+            if is_context_type(pat_type.ty.as_ref()) {
+                if has_ctx_param {
+                    return syn::Error::new_spanned(
+                        &pat_type.ty,
+                        "rstest supports only one context parameter",
+                    )
+                    .to_compile_error();
+                }
+                has_ctx_param = true;
+                if let syn::Pat::Ident(pat_ident) = pat_type.pat.as_ref() {
+                    ctx_ident = Some(pat_ident.ident.clone());
+                }
+                continue;
+            }
         }
         filtered_inputs.push(arg.clone());
     }
@@ -1048,11 +1069,50 @@ fn expand_rstest_variant(
     };
 
     let future_body = if has_ctx_param {
+        let Some(ctx_ident) = ctx_ident else {
+            return syn::Error::new_spanned(
+                &input.sig.inputs,
+                "rstest context parameter must use an identifier pattern",
+            )
+            .to_compile_error();
+        };
+        let ctx_binding = input.sig.inputs.iter().find_map(|arg| {
+            let syn::FnArg::Typed(pat_type) = arg else {
+                return None;
+            };
+            if !is_context_type(pat_type.ty.as_ref()) {
+                return None;
+            }
+            if let syn::Type::Reference(reference) = pat_type.ty.as_ref() {
+                let backing_ident = syn::Ident::new("__sinex_test_context", ctx_ident.span());
+                let borrow = if reference.mutability.is_some() {
+                    quote!(&mut #backing_ident)
+                } else {
+                    quote!(&#backing_ident)
+                };
+                let mutability = reference.mutability.map(|_| quote!(mut));
+                Some(quote! {
+                    let #mutability #backing_ident = ::xtask::Sandbox::with_name(test_name).await?;
+                    let #ctx_ident = #borrow;
+                })
+            } else {
+                Some(quote! {
+                    let #ctx_ident = ::xtask::Sandbox::with_name(test_name).await?;
+                })
+            }
+        });
+        let Some(ctx_binding) = ctx_binding else {
+            return syn::Error::new_spanned(
+                &input.sig.inputs,
+                "failed to generate rstest context binding",
+            )
+            .to_compile_error();
+        };
         quote! {
             #serial_guard
             #tracing_block
             let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
-            let ctx = ::xtask::Sandbox::with_name(test_name).await?;
+            #ctx_binding
             async { #fn_body }.await
         }
     } else {
@@ -1106,7 +1166,7 @@ fn expand_rstest_variant(
             }
             result
         }
-    }.into()
+    }
 }
 
 /// Generate async test with Sandbox context.
@@ -1284,7 +1344,8 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
             timeout_secs,
             config.serial_scope,
             config.trace,
-        );
+        )
+        .into();
     }
 
     let fn_body = *input.block.clone();

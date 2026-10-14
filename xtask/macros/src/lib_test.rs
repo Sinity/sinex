@@ -1,6 +1,7 @@
 use super::{
-    SerialScope, expand_async_context_test, expand_simple_async_test,
-    parse_sinex_test_attrs_tokens, serial_guard_tokens,
+    SerialScope, classify_attrs, expand_async_context_test, expand_rstest_variant,
+    expand_simple_async_test, parse_proptest_attr_args, parse_sinex_test_attrs_tokens,
+    serial_guard_tokens,
 };
 use quote::quote;
 use syn::parse::Parser as _;
@@ -131,43 +132,77 @@ fn simple_async_expansion_keeps_single_serial_guard_inside_timed_future() {
     assert!(rendered.contains("timeout"), "rendered tokens: {rendered}");
 }
 
-// sinex-mqe3: `sinex_proptest!`'s per-attribute loop (lib.rs ~836-850) calls
-// `attr.parse_args::<TS>().unwrap()` for `#[cases(..)]`/`#[timeout(..)]`/
-// `#[seed(..)]` attributes instead of propagating a `syn::Error` into a
-// `compile_error!` like the rest of this crate's parsing does. This proves
-// the exact panicking API call pattern at that call site with realistic
-// malformed attribute syntax, without invoking the outer `proc_macro`
-// entry point directly (constructing `proc_macro::TokenStream` outside of
-// an active macro expansion is not supported by this crate's toolchain, so
-// no existing test in this file does that either -- see the other tests
-// here, which all exercise `proc_macro2`-based internals instead).
 #[test]
-#[ignore = "sinex-mqe3 open: attr.parse_args().unwrap() panics instead of compile-erroring on malformed #[cases(..)] input"]
-fn cases_attr_with_malformed_args_panics_instead_of_compile_erroring() {
-    // `#[cases]` with no parenthesized args at all -- the exact typo
-    // `sinex_proptest!`'s loop can receive from a test author forgetting
-    // the value (`#[cases]` instead of `#[cases(45)]`). The outer
-    // attribute syntax is perfectly well-formed (a bare `Meta::Path`), but
-    // `parse_args()` requires the `Meta::List` (parenthesized) form and
-    // returns `Err` for a bare path -- there is no token stream to
-    // extract at all, unlike a merely-unusual-but-still-tokenizable body,
-    // which `parse_args::<TokenStream>()` would happily accept.
-    let attrs = syn::Attribute::parse_outer
-        .parse_str("#[cases]")
-        .expect("a bare attribute path is well-formed syntax");
-    let attr = attrs
-        .into_iter()
-        .next()
-        .expect("parsed exactly one attribute");
-    let result = std::panic::catch_unwind(|| {
-        let _: proc_macro2::TokenStream = attr.parse_args().unwrap();
+fn malformed_proptest_attribute_arguments_return_compile_error_tokens() {
+    for source in ["#[cases]", "#[timeout]", "#[seed]"] {
+        let attr = syn::Attribute::parse_outer
+            .parse_str(source)
+            .expect("attribute itself is valid syntax")
+            .into_iter()
+            .next()
+            .expect("one attribute");
+        let error =
+            parse_proptest_attr_args(&attr).expect_err("missing argument list must be diagnosed");
+        assert!(
+            error
+                .to_compile_error()
+                .to_string()
+                .contains("compile_error"),
+            "malformed {source} should produce compile_error tokens"
+        );
+    }
+}
+
+#[test]
+fn rstest_context_uses_original_parameter_identifier() {
+    let input = parse_item_fn(quote! {
+        #[case(1)]
+        async fn rstest_context(actual_ctx: ::xtask::sandbox::Sandbox, value: u8) -> ::anyhow::Result<()> {
+            let _ = actual_ctx;
+            let _ = value;
+            Ok(())
+        }
     });
+    let attrs = classify_attrs(&input);
+    let rendered = expand_rstest_variant(&input, &attrs, 30, SerialScope::None, false).to_string();
+
     assert!(
-        result.is_err(),
-        "expected attr.parse_args().unwrap() to panic on malformed args, matching the real bug \
-         at xtask/macros/src/lib.rs:840 -- if this now passes, the panic has already been fixed \
-         (e.g. by switching to `?` and a compile_error!) and this test should be un-ignored and \
-         rewritten to assert the graceful-error behavior instead"
+        rendered.contains("let actual_ctx = :: xtask :: Sandbox :: with_name"),
+        "{rendered}"
     );
-    let _ = attr;
+    assert!(!rendered.contains("let ctx ="), "{rendered}");
+    assert!(
+        !rendered.contains("actual_ctx : : xtask"),
+        "context parameter should be injected: {rendered}"
+    );
+    assert!(
+        rendered.contains("value : u8"),
+        "non-context arguments must be preserved: {rendered}"
+    );
+}
+
+#[test]
+fn rstest_accepts_test_context_reference_and_uses_its_identifier() {
+    let input = parse_item_fn(quote! {
+        #[case(1)]
+        async fn rstest_context(context: &::xtask::sandbox::TestContext) -> ::anyhow::Result<()> {
+            let _ = context;
+            Ok(())
+        }
+    });
+    let attrs = classify_attrs(&input);
+    let rendered = expand_rstest_variant(&input, &attrs, 30, SerialScope::None, false).to_string();
+
+    assert!(
+        rendered.contains("let __sinex_test_context = :: xtask :: Sandbox :: with_name"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("let context = & __sinex_test_context"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("context : & :: xtask"),
+        "context parameter should be injected: {rendered}"
+    );
 }

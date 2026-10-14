@@ -1,5 +1,7 @@
 use super::*;
 use crate::sandbox::sinex_test;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[sinex_test]
 async fn contract_only_report_separates_claims_non_claims_and_checks()
@@ -47,6 +49,45 @@ async fn generated_source_catalog_artifact_points_at_behavior_owner_test()
         "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)'"
     );
     Ok(())
+}
+
+#[cfg(unix)]
+#[sinex_test]
+async fn changed_strict_base_ref_metacharacters_are_passed_as_data()
+-> ::xtask::sandbox::TestResult<()> {
+    let temp = tempfile::tempdir()?;
+    let marker = temp.path().join("executed");
+    let received = temp.path().join("received-args");
+    let program = temp.path().join("fake-xtask");
+    let payload = format!("origin/master; touch {}", marker.display());
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > {}\n",
+        shell_quote(received.to_str().expect("UTF-8 temp path"))
+    );
+    std::fs::write(&program, script)?;
+    let mut permissions = std::fs::metadata(&program)?.permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&program, permissions)?;
+
+    let check = release_checks(&payload)
+        .into_iter()
+        .find(|check| check.id == "changed-strict")
+        .expect("changed-strict check is present");
+    let result = run_release_check_with_program(&check, program.to_str().expect("UTF-8 temp path"));
+
+    assert_eq!(result.status, CheckStatus::Passed, "{}", result.detail);
+    assert!(!marker.exists(), "base ref was executed by a shell");
+    let args = std::fs::read_to_string(received)?;
+    assert_eq!(
+        args.lines().collect::<Vec<_>>(),
+        ["check", "--changed-strict", payload.as_str()]
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 #[sinex_test]

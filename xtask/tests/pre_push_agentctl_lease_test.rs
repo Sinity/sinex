@@ -841,7 +841,10 @@ fn dev_services_cache_identity_excludes_allocated_ports() {
     assert_eq!(dev_services["cache"].as_str(), Some("tree+environment"));
     let verify_quick = &descriptor["operations"]["verify_quick"];
     assert_eq!(
-        verify_quick["exec"].as_array().expect("quick exec").iter()
+        verify_quick["exec"]
+            .as_array()
+            .expect("quick exec")
+            .iter()
             .map(|value| value.as_str().expect("quick exec argument"))
             .collect::<Vec<_>>(),
         vec!["nix", "fmt", "--", "--check", "flake.nix"]

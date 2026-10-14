@@ -294,3 +294,47 @@ async fn terminate_test_child_kills_running_process() -> TestResult<()> {
     terminate_test_child(&mut child, "unit-test child").await?;
     Ok(())
 }
+
+#[sinex_test]
+async fn event_engine_command_keeps_paths_as_direct_argv() -> TestResult<()> {
+    let tempdir = tempfile::tempdir()?;
+    let binary = tempdir.path().join("bin with ; shell chars/sinexd");
+    let log = tempdir.path().join("log with $() chars and spaces.log");
+    let command = event_engine_command(&binary, 17, &log)?;
+
+    assert_eq!(command.as_std().get_program(), binary.as_os_str());
+    assert_eq!(
+        command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        ["--pool-size", "17"]
+    );
+    assert!(
+        log.exists(),
+        "stdout/stderr redirection opens the requested log path"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn notify_socket_guard_cleans_up_after_spawn_failure() -> TestResult<()> {
+    let (guard, listener) = NotifySocketGuard::bind("test-spawn-failure")?;
+    let socket_path = guard.path().to_path_buf();
+    assert!(socket_path.exists());
+
+    let spawn = Command::new(socket_path.parent().unwrap().join("missing executable")).spawn();
+    assert!(
+        spawn.is_err(),
+        "the deliberately missing program must fail to spawn"
+    );
+
+    drop(listener);
+    drop(guard);
+    assert!(
+        !socket_path.exists(),
+        "guard removes socket after early return path"
+    );
+    Ok(())
+}
