@@ -61,7 +61,21 @@ _sinex_pre_push_postgres_port() {
 }
 
 _sinex_pre_push_nats_port() {
-  local checkout_hash first_byte
+  local checkout_hash first_byte port_file selected
+  port_file="$(_sinex_pre_push_cache_root)/dev-state/nats.port"
+  if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    selected="$(flock --shared "$XDG_RUNTIME_DIR/sinex-dev-nats-start.lock" sh -c 'if [ -r "$1" ]; then cat "$1"; fi' sh "$port_file")"
+  elif [[ -r "$port_file" ]]; then
+    selected="$(cat "$port_file")"
+  else
+    selected=""
+  fi
+  if [[ -n "$selected" ]]; then
+    if [[ "$selected" =~ ^[0-9]{1,5}$ ]] && (( 10#$selected > 0 && 10#$selected <= 65535 )); then
+      printf '%s' "$selected"
+      return 0
+    fi
+  fi
   checkout_hash="$(_sinex_pre_push_checkout_hash)"
   first_byte="$((16#${checkout_hash:0:2}))"
   printf '%s' "$((4222 + (first_byte % 100)))"

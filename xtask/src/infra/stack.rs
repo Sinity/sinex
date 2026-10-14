@@ -11,6 +11,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use crate::infra::nats_port::{self, NatsStartupLock};
 use crate::infra::services::nats::{NatsConfig as SharedNatsConfig, NatsManager};
 use crate::infra::services::postgres::{
     PostgresConfig as SharedPgConfig, PostgresDurabilityMode, PostgresManager,
@@ -60,6 +61,13 @@ impl StackConfig {
     }
 
     fn from_state_dir(state_dir: PathBuf) -> Self {
+        let nats_port = nats_port::persisted_port(&state_dir)
+            .or_else(|| {
+                std::env::var("SINEX_DEV_NATS_PORT")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+            })
+            .unwrap_or(4222);
         Self {
             state_dir,
             postgres: PostgresConfig {
@@ -77,10 +85,7 @@ impl StackConfig {
                 superuser: "postgres".to_string(),
             },
             nats: NatsConfig {
-                port: std::env::var("SINEX_DEV_NATS_PORT")
-                    .ok()
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or(4222),
+                port: nats_port,
                 jetstream: true,
             },
             annex: AnnexConfig {
@@ -154,7 +159,7 @@ impl StackConfig {
             database: self.postgres.database.clone(),
             superuser: self.postgres.superuser.clone(),
             app_user: self.postgres.user.clone(),
-            // AgentCTL assigns a private loopback lease for this foreground job.
+            // AgentCTL supervises this checkout's foreground service job.
             listen_addresses: "127.0.0.1".to_string(),
             durability: PostgresDurabilityMode::Durable,
         }
@@ -497,7 +502,51 @@ pub fn nats_generate_config(config: &StackConfig, _verbose: bool) -> Result<()> 
     mgr.generate_config()
 }
 
+/// Serialize NATS port selection across checkouts and keep the selected value
+/// stable in this checkout's declared development state directory.
+pub fn lease_nats_startup(config: &mut StackConfig) -> Result<NatsStartupLock> {
+    let lock = NatsStartupLock::acquire()?;
+    config.nats.port = nats_port::choose_and_persist(
+        &lock,
+        &config.state_dir,
+        config.nats.port,
+        nats_port::port_is_available,
+    )?;
+    Ok(lock)
+}
+
+/// Move to the next available port after the selected candidate loses a bind
+/// race with a process that does not participate in the Sinex startup lock.
+pub fn advance_nats_port(
+    lock: &NatsStartupLock,
+    config: &mut StackConfig,
+    attempted: u16,
+) -> Result<()> {
+    const FIRST: u16 = 4_222;
+    const LAST: u16 = 5_221;
+    let next = if (FIRST..=LAST).contains(&attempted) && attempted < LAST {
+        attempted + 1
+    } else {
+        FIRST
+    };
+    config.nats.port =
+        nats_port::choose_and_persist(lock, &config.state_dir, next, nats_port::port_is_available)?;
+    Ok(())
+}
+
+pub fn nats_start_conflicted(config: &StackConfig, error: &color_eyre::eyre::Report) -> bool {
+    if error.to_string().contains("already accepting connections") {
+        return true;
+    }
+    fs::read_to_string(config.logs_dir().join("nats.log"))
+        .is_ok_and(|log| log.to_ascii_lowercase().contains("address already in use"))
+}
+
 pub fn nats_start(config: &StackConfig, verbose: bool) -> Result<()> {
     let mgr = NatsManager::new(config.to_shared_nats());
     mgr.start(verbose)
 }
+
+#[cfg(test)]
+#[path = "stack_test.rs"]
+mod tests;

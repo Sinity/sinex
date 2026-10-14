@@ -185,23 +185,43 @@ fn require_free_loopback_port(name: &str, port: u16) -> Result<()> {
 
 fn execute_lease_services(ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("infra lease-services");
-    // The devshell derives SINEX_DEV_POSTGRES_PORT and SINEX_DEV_NATS_PORT per
-    // checkout, and every consumer of this stack reads the same pair from the
-    // environment. Choosing different ports here would strand them.
-    let config = StackConfig::for_current_checkout()?;
+    // PostgreSQL keeps its checkout-derived port. NATS can move to a persisted
+    // fallback while holding the cross-checkout startup lock; later devshells
+    // read that assignment before exporting its URL.
+    let mut config = StackConfig::for_current_checkout()?;
     let postgres_port = config.postgres.port;
-    let nats_port = config.nats.port;
     require_free_loopback_port("SINEX_DEV_POSTGRES_PORT", postgres_port)?;
-    require_free_loopback_port("SINEX_DEV_NATS_PORT", nats_port)?;
 
     stack::ensure_directories(&config)?;
     stack::annex_init(&config, ctx.is_human())?;
-    stack::nats_generate_config(&config, ctx.is_human())?;
     stack::pg_init(&config, ctx.is_human())?;
     stack::pg_start(&config, ctx.is_human())?;
     stack::pg_setup_database(&config, ctx.is_human())?;
     stack::pg_apply_schema(&config, ctx.is_human())?;
-    stack::nats_start(&config, ctx.is_human())?;
+
+    let _nats_startup_lock = stack::lease_nats_startup(&mut config)?;
+    let mut remaining_attempts = crate::infra::nats_port::NATS_PORT_COUNT;
+    loop {
+        remaining_attempts -= 1;
+        stack::nats_generate_config(&config, ctx.is_human())?;
+        match stack::nats_start(&config, ctx.is_human()) {
+            Ok(()) => break,
+            Err(error) if stack::nats_start_conflicted(&config, &error) => {
+                if remaining_attempts == 0 {
+                    return Err(error).wrap_err("NATS fallback exhausted its startup retry budget");
+                }
+                let attempted = config.nats.port;
+                stack::advance_nats_port(&_nats_startup_lock, &mut config, attempted)?;
+                eprintln!(
+                    "NATS port {attempted} was claimed during startup; retrying on {}",
+                    config.nats.port
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let nats_port = config.nats.port;
+    drop(_nats_startup_lock);
 
     // The verifier supplies a fresh path inside its private startup directory.
     // Publish readiness only after this process started and checked both services;
