@@ -18,6 +18,9 @@ pub(super) struct DlqEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) requeue_blocked_reason: Option<String>,
     pub(super) error: String,
+    /// The rejected child when this raw envelope contains several events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) failed_child_id: Option<Uuid>,
     /// Disclosure-filtered payload for operator inspection. Never retry input.
     pub(super) original_payload: JsonValue,
     /// Exact ingress bytes, kept separate from the operator-facing payload.
@@ -32,6 +35,8 @@ pub(super) const DLQ_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
 pub(super) const DLQ_DUPLICATE_WINDOW: Duration = Duration::from_hours(1);
 pub(super) const DLQ_RETRY_DELAY: Duration = Duration::from_secs(1);
 pub(super) const DLQ_REQUEUE_GENERATION_HEADER: &str = "Dlq-Requeue-Generation";
+const DLQ_FAILURE_SCOPE_HEADER: &str = "Dlq-Failure-Scope";
+const ORIGINAL_RAW_BLAKE3_HEADER: &str = "Original-Raw-Blake3";
 
 /// Extract the failed event's id from a raw-ingress payload.
 ///
@@ -99,8 +104,9 @@ pub(super) fn dlq_publish_msg_id(
     msg: &jetstream::Message,
     original_nats_msg_id: Option<&str>,
     original_payload: &JsonValue,
+    failed_child_id: Option<Uuid>,
 ) -> EventEngineResult<String> {
-    let base = dlq_intent_identity(original_payload)
+    let mut base = dlq_intent_identity(original_payload)
         .or_else(|| dlq_event_id(original_payload).map(|event_id| format!("dlq.{event_id}")))
         .or_else(|| original_nats_msg_id.map(|original_id| format!("dlq.msg.{original_id}")))
         .unwrap_or_else(|| {
@@ -109,6 +115,14 @@ pub(super) fn dlq_publish_msg_id(
             hasher.update(&msg.payload);
             format!("dlq.hash.{}", hasher.finalize().to_hex())
         });
+    if original_payload
+        .get("events")
+        .and_then(JsonValue::as_array)
+        .is_some_and(|events| events.len() > 1)
+        && let Some(child_id) = failed_child_id
+    {
+        base.push_str(&format!(".child.{child_id}"));
+    }
     let generation = dlq_requeue_generation(msg.headers.as_ref())?;
 
     if generation == 0 {
@@ -128,6 +142,7 @@ impl JetStreamConsumer {
         &self,
         msg: &jetstream::Message,
         error: String,
+        failed_child_id: Option<Uuid>,
     ) -> EventEngineResult<Uuid> {
         let original_nats_msg_id = msg
             .headers
@@ -181,18 +196,30 @@ impl JetStreamConsumer {
                 }
             };
 
-        let dlq_publish_msg_id =
-            dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload)?;
+        let dlq_publish_msg_id = dlq_publish_msg_id(
+            msg,
+            original_nats_msg_id.as_deref(),
+            &original_payload,
+            failed_child_id,
+        )?;
         let requeue_generation = dlq_requeue_generation(msg.headers.as_ref())?;
-        let original_event_id = dlq_event_id(&original_payload);
+        let original_event_id = failed_child_id
+            .map(|id| id.to_string())
+            .or_else(|| dlq_event_id(&original_payload));
+        let failure_scope = if failed_child_id.is_some() {
+            "child"
+        } else {
+            "whole_envelope"
+        };
+        let original_raw_blake3 = blake3::hash(&msg.payload).to_hex().to_string();
 
         let failed_event_id = original_event_id
             .as_deref()
             .and_then(|value| value.parse::<Uuid>().ok())
             .unwrap_or_else(Uuid::now_v7);
-        let event_type = dlq_payload_field(&original_payload, "event_type")
+        let event_type = dlq_payload_field(&original_payload, "event_type", failed_child_id)
             .unwrap_or_else(|| "raw_ingest".to_string());
-        let source = dlq_payload_field(&original_payload, "source")
+        let source = dlq_payload_field(&original_payload, "source", failed_child_id)
             .unwrap_or_else(|| msg.subject.to_string());
         let retry_count = msg
             .info()
@@ -210,6 +237,7 @@ impl JetStreamConsumer {
             raw_bytes_base64,
             requeue_blocked_reason,
             error,
+            failed_child_id,
             original_payload,
             failed_at: Timestamp::now(),
         };
@@ -222,6 +250,8 @@ impl JetStreamConsumer {
         let requeue_generation = requeue_generation.to_string();
         headers.insert(DLQ_REQUEUE_GENERATION_HEADER, requeue_generation.as_str());
         headers.insert("Original-Subject", msg.subject.as_str());
+        headers.insert(DLQ_FAILURE_SCOPE_HEADER, failure_scope);
+        headers.insert(ORIGINAL_RAW_BLAKE3_HEADER, original_raw_blake3.as_str());
         headers.insert("Retry-Count", "0");
         insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
         transport::insert_semantic_transport_class_header(&mut headers, transport::Class::Critical);
@@ -304,14 +334,33 @@ impl JetStreamConsumer {
             {
                 Ok(ack) => match ack.await {
                     Ok(ack) if ack.duplicate => {
-                        warn!(
-                            nats_msg_id = ?dlq_entry.nats_msg_id,
-                            attempt,
-                            "DLQ publish was acknowledged as a JetStream duplicate; refusing to settle the raw message"
-                        );
-                        last_error = Some(SinexError::network(
-                            "DLQ publish was deduplicated and is not fresh durable evidence",
-                        ));
+                        match self
+                            .duplicate_dlq_witness_matches(
+                                ack.sequence,
+                                &ack.stream,
+                                &dlq_publish_msg_id,
+                                msg.subject.as_str(),
+                                &original_raw_blake3,
+                                failure_scope,
+                                original_event_id.as_deref(),
+                                &requeue_generation,
+                            )
+                            .await
+                        {
+                            Ok(true) => {
+                                debug!(
+                                    sequence = ack.sequence,
+                                    "Reconciled redelivered failure with its retained DLQ witness"
+                                );
+                                return Ok(durable_failure_id);
+                            }
+                            Ok(false) => {
+                                last_error = Some(SinexError::network(
+                                    "DLQ duplicate does not match the failed child and raw envelope",
+                                ));
+                            }
+                            Err(err) => last_error = Some(err),
+                        }
                     }
                     Ok(_) => {
                         debug!(nats_msg_id = ?dlq_entry.nats_msg_id, "Routed to DLQ");
@@ -351,6 +400,47 @@ impl JetStreamConsumer {
             .unwrap_or_else(|| SinexError::network("Failed to route to DLQ after retries")))
     }
 
+    /// A duplicate publish ACK only proves that some earlier message used the
+    /// same NATS Msg-Id. Reconcile it with the retained stream message before
+    /// allowing a redelivered child to settle the shared raw envelope.
+    async fn duplicate_dlq_witness_matches(
+        &self,
+        sequence: u64,
+        acknowledged_stream: &str,
+        expected_msg_id: &str,
+        original_subject: &str,
+        original_raw_blake3: &str,
+        failure_scope: &str,
+        event_id: Option<&str>,
+        requeue_generation: &str,
+    ) -> EventEngineResult<bool> {
+        if acknowledged_stream != self.topology.dlq_stream.to_string() {
+            return Ok(false);
+        }
+        let stream = self
+            .js
+            .get_stream(&self.topology.dlq_stream)
+            .await
+            .map_err(|error| {
+                SinexError::network("Failed to inspect duplicate DLQ stream").with_source(error)
+            })?;
+        let retained = stream.direct_get(sequence).await.map_err(|error| {
+            SinexError::network("Failed to inspect duplicate DLQ witness").with_source(error)
+        })?;
+        let header_matches = |name: &str, expected: &str| {
+            retained.headers.get(name).map(|value| value.as_str()) == Some(expected)
+        };
+        Ok(
+            retained.subject.as_str() == self.topology.dlq_publish_subject.as_str()
+                && header_matches("Nats-Msg-Id", expected_msg_id)
+                && header_matches("Original-Subject", original_subject)
+                && header_matches(ORIGINAL_RAW_BLAKE3_HEADER, original_raw_blake3)
+                && header_matches(DLQ_FAILURE_SCOPE_HEADER, failure_scope)
+                && header_matches(DLQ_REQUEUE_GENERATION_HEADER, requeue_generation)
+                && event_id.is_none_or(|id| header_matches("Event-Id", id)),
+        )
+    }
+
     // route_to_dlq_and_ack was removed (sinex-r6d.12): it acked the raw
     // message directly, which is exactly the unilateral per-child settlement
     // this bead eliminated. Every caller now calls route_to_dlq above and reports
@@ -358,7 +448,12 @@ impl JetStreamConsumer {
     // RawEnvelopeSettlement via settle_child instead.
 }
 
-fn dlq_payload_field(payload: &JsonValue, key: &str) -> Option<String> {
+fn dlq_payload_field(
+    payload: &JsonValue,
+    key: &str,
+    failed_child_id: Option<Uuid>,
+) -> Option<String> {
+    let failed_child_id = failed_child_id.map(|id| id.to_string());
     payload
         .get(key)
         .and_then(JsonValue::as_str)
@@ -366,7 +461,15 @@ fn dlq_payload_field(payload: &JsonValue, key: &str) -> Option<String> {
             payload
                 .get("events")
                 .and_then(JsonValue::as_array)
-                .and_then(|events| events.first())
+                .and_then(|events| {
+                    if let Some(id) = &failed_child_id {
+                        events.iter().find(|event| {
+                            event.get("id").and_then(JsonValue::as_str) == Some(id.as_str())
+                        })
+                    } else {
+                        events.first()
+                    }
+                })
                 .and_then(|event| event.get(key))
                 .and_then(JsonValue::as_str)
         })

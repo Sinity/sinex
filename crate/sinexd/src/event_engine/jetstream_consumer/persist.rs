@@ -393,7 +393,11 @@ impl JetStreamConsumer {
                         // through the shared coordinator, never ack the
                         // message directly.
                         match self
-                            .route_to_dlq(&prepared.message, format!("Persistence error: {e}"))
+                            .route_to_dlq(
+                                &prepared.message,
+                                format!("Persistence error: {e}"),
+                                Some(prepared.parsed_id),
+                            )
                             .await
                         {
                             Ok(durable_failure_id) => {
@@ -465,6 +469,7 @@ impl JetStreamConsumer {
                                     .route_to_dlq(
                                         &prepared.message,
                                         format!("Persistence error: {e}"),
+                                        Some(prepared.parsed_id),
                                     )
                                     .await
                                 {
@@ -843,7 +848,11 @@ impl JetStreamConsumer {
                 retry_threshold,
             );
             match self
-                .route_to_dlq(&prepared.message, dlq_reason.clone())
+                .route_to_dlq(
+                    &prepared.message,
+                    dlq_reason.clone(),
+                    Some(prepared.parsed_id),
+                )
                 .await
             {
                 Ok(durable_failure_id) => {
