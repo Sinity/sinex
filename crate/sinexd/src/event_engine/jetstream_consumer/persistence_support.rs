@@ -190,6 +190,8 @@ pub(super) struct RawEnvelopeSettlement {
     remaining: AtomicUsize,
     needs_redelivery: AtomicBool,
     redelivery_delay: std::sync::Mutex<Option<Duration>>,
+    #[cfg(any(test, feature = "testing"))]
+    raw_ack_drop_once: Option<Arc<AtomicBool>>,
 }
 
 impl RawEnvelopeSettlement {
@@ -208,6 +210,24 @@ impl RawEnvelopeSettlement {
             remaining: AtomicUsize::new(child_count),
             needs_redelivery: AtomicBool::new(false),
             redelivery_delay: std::sync::Mutex::new(None),
+            #[cfg(any(test, feature = "testing"))]
+            raw_ack_drop_once: None,
+        })
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(super) fn new_with_ack_drop(
+        message: jetstream::Message,
+        child_count: usize,
+        raw_ack_drop_once: Option<Arc<AtomicBool>>,
+    ) -> Arc<Self> {
+        debug_assert!(child_count > 0);
+        Arc::new(Self {
+            message,
+            remaining: AtomicUsize::new(child_count),
+            needs_redelivery: AtomicBool::new(false),
+            redelivery_delay: std::sync::Mutex::new(None),
+            raw_ack_drop_once,
         })
     }
 
@@ -247,6 +267,14 @@ impl RawEnvelopeSettlement {
                         .with_source(e)
                 })
         } else {
+            #[cfg(any(test, feature = "testing"))]
+            if self
+                .raw_ack_drop_once
+                .as_ref()
+                .is_some_and(|drop_once| drop_once.swap(false, Ordering::SeqCst))
+            {
+                return Ok(());
+            }
             self.message.ack().await.map_err(|e| {
                 SinexError::network("Failed to ACK raw envelope after child settlement")
                     .with_source(e)

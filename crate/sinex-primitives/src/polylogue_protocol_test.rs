@@ -141,6 +141,154 @@ fn verifies_and_resolves_anchored_revision() {
         .expect("block anchor resolves");
     assert_eq!(resolved.kind, PolylogueRecordKind::Block);
     assert_eq!(resolved.value["block_type"], "tool_result");
+    assert_eq!(resolved.original_bytes, resolved.canonical_bytes);
+    assert_eq!(
+        resolved.original_sha256,
+        sha256_hex(&resolved.original_bytes)
+    );
+    assert_eq!(
+        manifest
+            .anchor_byte(&segments, "claude-code-session:demo:n:msg-1:0")
+            .unwrap(),
+        (segments[&0]
+            .split(|byte| *byte == b'\n')
+            .next()
+            .unwrap()
+            .len()
+            + 1) as i64
+    );
+}
+
+#[test]
+fn checked_in_polylogue_producer_fixture_matches_every_anchor() {
+    let manifest = PolylogueRevisionManifest::from_json(include_bytes!(
+        "../../../tests/fixtures/polylogue/v1/small-session/manifest.json"
+    ))
+    .expect("real Polylogue producer manifest");
+    assert_eq!(
+        manifest.origin_vocabulary_version,
+        ORIGIN_VOCABULARY_VERSION
+    );
+    assert_eq!(manifest.origin_vocabulary_digest, ORIGIN_VOCABULARY_DIGEST);
+    let segments = BTreeMap::from([
+        (
+            -1,
+            include_bytes!(
+                "../../../tests/fixtures/polylogue/v1/small-session/segments/head.ndjson"
+            )
+            .to_vec(),
+        ),
+        (
+            0,
+            include_bytes!(
+                "../../../tests/fixtures/polylogue/v1/small-session/segments/seg-00000.ndjson"
+            )
+            .to_vec(),
+        ),
+        (
+            1,
+            include_bytes!(
+                "../../../tests/fixtures/polylogue/v1/small-session/segments/seg-00001.ndjson"
+            )
+            .to_vec(),
+        ),
+        (
+            2,
+            include_bytes!(
+                "../../../tests/fixtures/polylogue/v1/small-session/segments/seg-00002.ndjson"
+            )
+            .to_vec(),
+        ),
+    ]);
+    manifest
+        .verify(&segments)
+        .expect("Rust consumer verifies Python producer bytes");
+    assert_eq!(manifest.semantics_version, SEMANTICS_VERSION);
+    assert_eq!(
+        manifest.expected_record_counts.len(),
+        POLYLOGUE_VOCABULARY.len()
+    );
+    for (record_id, anchor) in &manifest.anchors {
+        let resolved = manifest
+            .resolve_anchor(&segments, record_id)
+            .expect("anchor resolves");
+        assert_eq!(resolved.kind.as_str(), anchor.kind);
+        assert_eq!(sha256_hex(&resolved.canonical_bytes), anchor.sha256);
+        assert_eq!(
+            sha256_hex(&resolved.original_bytes),
+            resolved.original_sha256
+        );
+        assert_eq!(
+            &segments[&anchor.segment_index]
+                [manifest.anchor_byte(&segments, record_id).unwrap() as usize..]
+                .split(|byte| *byte == b'\n')
+                .next()
+                .unwrap()[..],
+            &resolved.original_bytes
+        );
+    }
+}
+
+#[test]
+fn rejects_duplicate_keys_and_unsupported_values_before_value_loss() {
+    for raw in [
+        br#"{"outer":{"key":1,"key":2}}"#.as_slice(),
+        br#"{"seq":18446744073709551616}"#.as_slice(),
+        br#"{"seq":-9223372036854775809}"#.as_slice(),
+        br#"{"bad":"\ud800"}"#.as_slice(),
+    ] {
+        assert!(parse_strict_json(raw).is_err(), "must reject {raw:?}");
+    }
+    assert!(PolylogueRevisionManifest::from_json(br#"{"anchors":{},"anchors":{}}"#).is_err());
+    assert!(parse_strict_json(br#"{"seq":18446744073709551615}"#).is_ok());
+}
+
+#[test]
+fn python_canonical_helper_matches_rust_at_numeric_and_unicode_boundaries() {
+    let produced = include_bytes!("../../../tests/fixtures/polylogue/v1/canonical_boundaries.json");
+    let parsed = parse_strict_json(produced).expect("Python canonical boundary vector parses");
+    assert_eq!(
+        parsed["large_integer"].as_u64(),
+        Some(9_007_199_254_740_993)
+    );
+    assert_eq!(parsed["u64_max"].as_u64(), Some(u64::MAX));
+    assert_eq!(
+        canonical_json_bytes(&parsed).unwrap(),
+        produced[..produced.len() - 1]
+    );
+}
+
+#[test]
+fn raw_original_can_differ_from_canonical_record_without_changing_anchor_identity() {
+    let composed = br#"{"text":"caf\u00e9"}"#;
+    let decomposed = br#"{"text":"cafe\u0301"}"#;
+    assert_ne!(sha256_hex(composed), sha256_hex(decomposed));
+    assert_ne!(
+        canonical_json_bytes(&parse_strict_json(composed).unwrap()).unwrap(),
+        canonical_json_bytes(&parse_strict_json(decomposed).unwrap()).unwrap()
+    );
+
+    let (mut manifest, mut segments) = synthetic_revision();
+    let head = segments.get_mut(&HEAD_SEGMENT_INDEX).unwrap();
+    head.insert(1, b' ');
+    manifest.head_segment.sha256 = sha256_hex(head);
+    manifest.head_segment.size_bytes = head.len();
+    let mut joined = head.clone();
+    joined.extend_from_slice(&segments[&0]);
+    manifest.revision_id = sha256_hex(&joined);
+    manifest.content_digest.polylogue_sha256 = manifest.revision_id.clone();
+    manifest.content_digest.size_bytes = joined.len();
+    manifest
+        .verify(&segments)
+        .expect("raw whitespace does not change canonical anchor");
+    let resolved = manifest
+        .resolve_anchor(&segments, &manifest.session_id)
+        .unwrap();
+    assert_ne!(resolved.original_bytes, resolved.canonical_bytes);
+    assert_ne!(
+        resolved.original_sha256,
+        manifest.anchors[&manifest.session_id].sha256
+    );
 }
 
 #[test]
@@ -164,13 +312,80 @@ fn mutations_fail_closed() {
     let (mut manifest, segments) = synthetic_revision();
     manifest.segments[0].first_seq = 4;
     assert!(manifest.verify(&segments).is_err());
+
+    let (manifest, mut segments) = synthetic_revision();
+    segments.insert(1, b"{}\n".to_vec());
+    assert!(manifest.verify(&segments).is_err());
+
+    let (manifest, mut segments) = synthetic_revision();
+    segments.remove(&0);
+    assert!(manifest.verify(&segments).is_err());
+
+    let (mut manifest, segments) = synthetic_revision();
+    manifest.anchors.remove("claude-code-session:demo:n:msg-1");
+    assert!(manifest.verify(&segments).is_err());
+
+    let (mut manifest, segments) = synthetic_revision();
+    manifest.content_digest.canonicalizer_version += 1;
+    assert!(manifest.verify(&segments).is_err());
+
+    let (mut manifest, segments) = synthetic_revision();
+    manifest.semantics_version -= 1;
+    assert!(manifest.verify(&segments).is_err());
+
+    let (mut manifest, segments) = synthetic_revision();
+    manifest.head_segment.first_seq = u64::MAX;
+    assert!(manifest.verify(&segments).is_err());
+}
+
+#[test]
+fn anchor_resolution_rejects_incompatible_manifest_versions() {
+    let record_id = "claude-code-session:demo:n:msg-1";
+    let mut mutations: Vec<Box<dyn Fn(&mut PolylogueRevisionManifest)>> = vec![
+        Box::new(|manifest| manifest.protocol_version.push_str("-unknown")),
+        Box::new(|manifest| manifest.semantics_version += 1),
+        Box::new(|manifest| manifest.origin_vocabulary_version += 1),
+        Box::new(|manifest| manifest.origin_vocabulary_digest = "stale".into()),
+        Box::new(|manifest| manifest.content_digest.canonicalizer_version += 1),
+    ];
+    for mutate in mutations.drain(..) {
+        let (mut manifest, segments) = synthetic_revision();
+        mutate(&mut manifest);
+        assert!(manifest.verify(&segments).is_err());
+        assert!(manifest.resolve_anchor(&segments, record_id).is_err());
+        assert!(manifest.anchor_byte(&segments, record_id).is_err());
+    }
 }
 
 #[test]
 fn vocabulary_maps_every_protocol_kind_to_a_non_legacy_event() {
     assert_eq!(POLYLOGUE_VOCABULARY.len(), 7);
+    let registry: Value = serde_json::from_str(include_str!("../../../schemas/v1/registry.json"))
+        .expect("schema registry");
+    let registered = registry["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["source"] == "integration.polylogue")
+        .collect::<Vec<_>>();
+    assert_eq!(registered.len(), POLYLOGUE_VOCABULARY.len());
     for entry in POLYLOGUE_VOCABULARY {
         assert_eq!(entry.event_type, entry.kind.event_type());
         assert!(!entry.consumer.is_empty());
+        assert!(
+            registered
+                .iter()
+                .any(|schema| schema["event_type"] == entry.event_type)
+        );
     }
+}
+
+#[test]
+fn opaque_unicode_keys_and_values_remain_distinct() {
+    let raw = "{\"é\":\"é\",\"e\u{301}\":\"e\u{301}\"}";
+    let value = parse_strict_json(raw.as_bytes()).unwrap();
+    assert_eq!(value.as_object().unwrap().len(), 2);
+    assert_ne!(value["é"], value["e\u{301}"]);
+    let canonical = canonical_json_bytes(&value).unwrap();
+    assert_eq!(parse_strict_json(&canonical).unwrap(), value);
 }

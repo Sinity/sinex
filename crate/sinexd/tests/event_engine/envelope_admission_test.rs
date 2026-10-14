@@ -5,15 +5,21 @@
 //! 2. Rejection paths: invalid envelope version, missing fields, empty events
 //! 3. The low-level escape hatch (`publish_raw_event_batch`) is grep-detectable
 
+use sha2::{Digest, Sha256};
+use sinex_db::DbPoolExt;
+use sinex_db::repositories::source_materials::SourceMaterial;
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::Event;
+use sinex_primitives::events::admission::PolylogueRevisionEvidence;
 use sinex_primitives::events::admission::{CURRENT_ENVELOPE_VERSION, EventIntent};
 use sinex_primitives::events::payloads::PolylogueSessionObservedPayload;
+use sinex_primitives::polylogue_protocol::PolylogueRevisionManifest;
 use sinex_primitives::{DynamicPayload, Id, JsonValue, Uuid};
 use sinexd::event_engine::IngestEventValidator;
 use sinexd::event_engine::admission::{
     AdmissionDecision, AdmissionRejectionKind, AdmissionService,
 };
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use xtask::sandbox::prelude::*;
@@ -211,6 +217,7 @@ async fn envelope_rejects_missing_source_id(ctx: TestContext) -> TestResult<()> 
         source_id: String::new(),
         parser_id: "test-parser".into(),
         parser_version: "1.0.0".into(),
+        polylogue_revision: None,
         events: vec![make_event(
             "test.source",
             "test.type",
@@ -245,6 +252,7 @@ async fn envelope_rejects_missing_parser_version(ctx: TestContext) -> TestResult
         source_id: "test-unit".into(),
         parser_id: "test-parser".into(),
         parser_version: String::new(),
+        polylogue_revision: None,
         events: vec![make_event(
             "test.source",
             "test.type",
@@ -332,14 +340,14 @@ async fn external_producer_json_fixture_parses(ctx: TestContext) -> TestResult<(
 }
 
 #[sinex_test]
-async fn polylogue_external_producer_observation_fixture_admits(
+async fn polylogue_external_producer_observation_without_revision_proof_rejects(
     ctx: TestContext,
 ) -> TestResult<()> {
     let service = admission_service(&ctx);
     let material_id = Id::<sinex_primitives::events::SourceMaterial>::from_uuid(Uuid::now_v7());
     let payload = PolylogueSessionObservedPayload {
         protocol_version: "polylogue.material-protocol/v1".into(),
-        semantics_version: 2,
+        semantics_version: sinex_primitives::polylogue_protocol::SEMANTICS_VERSION,
         manifest_digest: "a".repeat(64),
         revision_id: "b".repeat(64),
         session_id: "claude-code-session:session-018f".into(),
@@ -387,21 +395,153 @@ async fn polylogue_external_producer_observation_fixture_admits(
     let decisions = service.admit_intent_bytes(&payload).await?;
 
     assert_eq!(decisions.len(), 1);
-    match &decisions[0] {
-        AdmissionDecision::Admitted(admitted) => {
-            assert_eq!(admitted.event.source.as_str(), "integration.polylogue");
-            assert_eq!(
-                admitted.event.event_type.as_str(),
-                "integration.polylogue.session.observed"
-            );
-            assert_eq!(admitted.event.payload["record_kind"], "session");
-            assert_eq!(admitted.event.payload["origin"], "claude-code-session");
-            assert_eq!(
-                admitted.event.payload["session_id"],
-                "claude-code:session-018f"
-            );
-        }
-        other => panic!("expected Polylogue fixture admission, got {other:?}"),
+    assert!(matches!(
+        &decisions[0],
+        AdmissionDecision::Rejected(rejection)
+            if rejection.kind == AdmissionRejectionKind::EnvelopeValidation
+    ));
+    Ok(())
+}
+
+#[sinex_test]
+async fn polylogue_admission_checks_registered_revision_before_accepting_anchor(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let service = admission_service(&ctx);
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/polylogue/v1/small-session");
+    let manifest_bytes = std::fs::read(fixture.join("manifest.json"))?;
+    let manifest = PolylogueRevisionManifest::from_json(&manifest_bytes)?;
+    let mut segment_material_ids = BTreeMap::new();
+    let mut segments = BTreeMap::new();
+    for segment in std::iter::once(&manifest.head_segment).chain(&manifest.segments) {
+        let path = fixture.join("segments").join(&segment.filename);
+        let bytes = std::fs::read(&path)?;
+        let registered = ctx
+            .pool
+            .source_materials()
+            .register_material_with_total_bytes(
+                SourceMaterial::file(path.to_string_lossy().into_owned()),
+                i64::try_from(bytes.len())?,
+            )
+            .await?;
+        segment_material_ids.insert(segment.index, registered.id);
+        segments.insert(segment.index, bytes);
     }
+    let anchor = &manifest.anchors[&manifest.session_id];
+    let material_id = Id::<sinex_primitives::events::SourceMaterial>::from_uuid(
+        segment_material_ids[&anchor.segment_index],
+    );
+    let claim = PolylogueSessionObservedPayload {
+        protocol_version: manifest.protocol_version.clone(),
+        semantics_version: manifest.semantics_version,
+        manifest_digest: format!("{:x}", Sha256::digest(&manifest_bytes)),
+        revision_id: manifest.revision_id.clone(),
+        session_id: manifest.session_id.clone(),
+        origin: manifest.origin.clone(),
+        native_id: manifest.native_id.clone(),
+        record_id: manifest.session_id.clone(),
+        record_kind: anchor.kind.clone(),
+        material_id: material_id.to_string(),
+        segment_index: anchor.segment_index,
+        line_index: u64::try_from(anchor.line_index)?,
+        seq: anchor.seq,
+        record_sha256: anchor.sha256.clone(),
+    };
+    let mut event = DynamicPayload::new(
+        "integration.polylogue",
+        "integration.polylogue.session.observed",
+        serde_json::to_value(claim)?,
+    )
+    .from_material(material_id)
+    .build()?
+    .to_json_event()?;
+    event.id = Some(Id::from_uuid(Uuid::now_v7()));
+    assert_eq!(manifest.anchor_byte(&segments, &manifest.session_id)?, 0);
+    let mut intent = EventIntent::new(
+        "integration.polylogue",
+        "polylogue-bridge",
+        "0.1.0",
+        vec![event],
+        HostName::from_static("polylogue-host"),
+    );
+    intent.polylogue_revision = Some(PolylogueRevisionEvidence {
+        manifest_json: String::from_utf8(manifest_bytes.clone())?,
+        segment_material_ids,
+    });
+
+    let accepted = service
+        .admit_intent_bytes(&serde_json::to_vec(&intent)?)
+        .await?;
+    assert!(matches!(&accepted[0], AdmissionDecision::Admitted(_)));
+
+    let mut unsupported = intent.clone();
+    let mut manifest_value: JsonValue = serde_json::from_slice(&manifest_bytes)?;
+    manifest_value["semantics_version"] = serde_json::json!(999);
+    unsupported
+        .polylogue_revision
+        .as_mut()
+        .unwrap()
+        .manifest_json = serde_json::to_string(&manifest_value)?;
+    let decisions = service
+        .admit_intent_bytes(&serde_json::to_vec(&unsupported)?)
+        .await?;
+    assert!(
+        matches!(&decisions[0], AdmissionDecision::Rejected(rejection)
+        if rejection.kind == AdmissionRejectionKind::EnvelopeValidation)
+    );
+
+    for ambiguous_manifest in [
+        "{\"anchors\":{},\"anchors\":{}}",
+        "{\"é\":1,\"e\u{301}\":2}",
+    ] {
+        let mut collision = intent.clone();
+        collision.polylogue_revision.as_mut().unwrap().manifest_json = ambiguous_manifest.into();
+        let decisions = service
+            .admit_intent_bytes(&serde_json::to_vec(&collision)?)
+            .await?;
+        assert!(
+            matches!(&decisions[0], AdmissionDecision::Rejected(rejection)
+            if rejection.kind == AdmissionRejectionKind::EnvelopeValidation)
+        );
+    }
+
+    let mut missing_anchor = intent.clone();
+    missing_anchor.events[0].payload["record_id"] = serde_json::json!("absent-anchor");
+    let decisions = service
+        .admit_intent_bytes(&serde_json::to_vec(&missing_anchor)?)
+        .await?;
+    assert!(
+        matches!(&decisions[0], AdmissionDecision::Rejected(rejection)
+        if rejection.kind == AdmissionRejectionKind::EnvelopeValidation)
+    );
+
+    let mut extra_claim = intent.clone();
+    extra_claim.events[0].payload["unchecked_fact"] = serde_json::json!(true);
+    let decisions = service
+        .admit_intent_bytes(&serde_json::to_vec(&extra_claim)?)
+        .await?;
+    assert!(
+        matches!(&decisions[0], AdmissionDecision::Rejected(rejection)
+        if rejection.kind == AdmissionRejectionKind::EnvelopeValidation)
+    );
+
+    let direct = service.admit_event(intent.events[0].clone()).await?;
+    assert!(matches!(direct, AdmissionDecision::Rejected(rejection)
+        if rejection.kind == AdmissionRejectionKind::EnvelopeValidation));
+
+    let mut missing_material = intent;
+    missing_material
+        .polylogue_revision
+        .as_mut()
+        .unwrap()
+        .segment_material_ids
+        .insert(anchor.segment_index, Uuid::now_v7());
+    assert!(
+        service
+            .admit_intent_bytes(&serde_json::to_vec(&missing_material)?)
+            .await
+            .is_err()
+    );
     Ok(())
 }

@@ -7,20 +7,28 @@
 use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use unicode_normalization::UnicodeNormalization;
 
 use crate::error::{Result, SinexError};
 
 pub const PROTOCOL_VERSION: &str = "polylogue.material-protocol/v1";
-pub const SEMANTICS_VERSION: u16 = 2;
-pub const CANONICALIZER_VERSION: u16 = 1;
+pub const SEMANTICS_VERSION: u16 = 8;
+pub const CANONICALIZER_VERSION: u16 = 2;
 pub const HEAD_SEGMENT_INDEX: i32 = -1;
-pub const ORIGIN_VOCABULARY_VERSION: u16 = 3;
+pub const ORIGIN_VOCABULARY_VERSION: u16 = 4;
 pub const ORIGIN_VOCABULARY_DIGEST: &str =
-    "f05126b022becf8fcebe9622919465b5e1f86163c25ecdda9d7e1259caba3512";
+    "f2413435b8a49c0bd5425dd04616d3ced4f2e44419b66858b1de04ed281a6036";
+
+const KNOWN_ORIGIN_VOCABULARIES: &[(u16, &str)] = &[
+    (
+        3,
+        "f05126b022becf8fcebe9622919465b5e1f86163c25ecdda9d7e1259caba3512",
+    ),
+    (ORIGIN_VOCABULARY_VERSION, ORIGIN_VOCABULARY_DIGEST),
+];
 
 /// Complete normalized record vocabulary emitted by protocol v1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -275,29 +283,50 @@ pub struct PolylogueResolvedRecord {
     pub record_id: String,
     pub seq: u64,
     pub canonical_bytes: Vec<u8>,
+    pub original_bytes: Vec<u8>,
+    pub original_sha256: String,
     pub value: Value,
 }
 
 impl PolylogueRevisionManifest {
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
-        serde_json::from_slice(bytes)
+        let value = parse_strict_json(bytes)?;
+        serde_json::from_value(value)
             .map_err(|error| protocol_error(format!("invalid manifest: {error}")))
+    }
+
+    /// Refuse protocol, semantic, Origin, or canonicalizer variants that this
+    /// reader cannot interpret before inspecting any registered material.
+    pub fn validate_compatibility(&self) -> Result<()> {
+        if self.protocol_version != PROTOCOL_VERSION || self.semantics_version != SEMANTICS_VERSION
+        {
+            return Err(protocol_error("unsupported protocol or semantics version"));
+        }
+        if !KNOWN_ORIGIN_VOCABULARIES.contains(&(
+            self.origin_vocabulary_version,
+            self.origin_vocabulary_digest.as_str(),
+        )) {
+            return Err(protocol_error("unknown or stale Origin vocabulary"));
+        }
+        if self.content_digest.media_type != "application/x-ndjson; charset=utf-8" {
+            return Err(protocol_error("unsupported segment media type"));
+        }
+        if self.content_digest.canonicalizer_version != CANONICALIZER_VERSION {
+            return Err(protocol_error("unsupported canonicalizer version"));
+        }
+        Ok(())
     }
 
     /// Verify segment bytes, sequence spaces, anchors, counts, and semantic
     /// closure before any record is admitted as evidence.
     pub fn verify(&self, segments: &BTreeMap<i32, Vec<u8>>) -> Result<()> {
-        if self.protocol_version != PROTOCOL_VERSION || self.semantics_version != SEMANTICS_VERSION
+        self.validate_compatibility()?;
+        if self.session_id.trim().is_empty()
+            || self.origin.trim().is_empty()
+            || self.native_id.trim().is_empty()
+            || self.revision_id.trim().is_empty()
         {
-            return Err(protocol_error("unsupported protocol or semantics version"));
-        }
-        if self.origin_vocabulary_version != ORIGIN_VOCABULARY_VERSION
-            || self.origin_vocabulary_digest != ORIGIN_VOCABULARY_DIGEST
-        {
-            return Err(protocol_error("unknown or stale Origin vocabulary"));
-        }
-        if self.content_digest.canonicalizer_version != CANONICALIZER_VERSION {
-            return Err(protocol_error("unsupported canonicalizer version"));
+            return Err(protocol_error("manifest identity fields must be non-empty"));
         }
         if self.head_segment.index != HEAD_SEGMENT_INDEX
             || self
@@ -318,6 +347,18 @@ impl PolylogueRevisionManifest {
             return Err(protocol_error(
                 "transcript segments are not uniquely ordered",
             ));
+        }
+        let declared_indexes = self
+            .segments
+            .iter()
+            .map(|segment| segment.index)
+            .collect::<std::collections::BTreeSet<_>>();
+        if segments.len() != self.segments.len() + 1
+            || segments
+                .keys()
+                .any(|index| *index != HEAD_SEGMENT_INDEX && !declared_indexes.contains(index))
+        {
+            return Err(protocol_error("material contains undeclared segments"));
         }
 
         let mut counts = BTreeMap::new();
@@ -350,7 +391,10 @@ impl PolylogueRevisionManifest {
             expected_transcript_seq = if descriptor.record_count == 0 {
                 descriptor.first_seq
             } else {
-                descriptor.last_seq + 1
+                descriptor
+                    .last_seq
+                    .checked_add(1)
+                    .ok_or_else(|| protocol_error("transcript sequence overflows u64"))?
             };
         }
         let mut joined = segments
@@ -446,8 +490,7 @@ impl PolylogueRevisionManifest {
         let mut expected_seq = descriptor.first_seq;
         let mut records = Vec::with_capacity(lines.len());
         for (line_index, line) in lines.into_iter().enumerate() {
-            let value: Value = serde_json::from_slice(line)
-                .map_err(|error| protocol_error(format!("invalid NDJSON record: {error}")))?;
+            let value = parse_strict_json(line)?;
             let object = value
                 .as_object()
                 .ok_or_else(|| protocol_error("record is not a JSON object"))?;
@@ -469,7 +512,9 @@ impl PolylogueRevisionManifest {
                     "sequence gap: expected {expected_seq}, got {seq}"
                 )));
             }
-            expected_seq += 1;
+            expected_seq = expected_seq
+                .checked_add(1)
+                .ok_or_else(|| protocol_error("record sequence overflows u64"))?;
             let record_id = object
                 .get("record_id")
                 .and_then(Value::as_str)
@@ -495,10 +540,12 @@ impl PolylogueRevisionManifest {
                 record_id,
                 seq,
                 canonical_bytes,
+                original_bytes: line.to_vec(),
+                original_sha256: sha256_hex(line),
                 value,
             });
         }
-        if descriptor.record_count > 0 && descriptor.last_seq + 1 != expected_seq {
+        if descriptor.record_count > 0 && descriptor.last_seq.checked_add(1) != Some(expected_seq) {
             return Err(protocol_error(format!(
                 "segment {} sequence bounds mismatch",
                 descriptor.index
@@ -513,6 +560,7 @@ impl PolylogueRevisionManifest {
         segments: &BTreeMap<i32, Vec<u8>>,
         record_id: &str,
     ) -> Result<PolylogueResolvedRecord> {
+        self.validate_compatibility()?;
         let anchor = self
             .anchors
             .get(record_id)
@@ -545,6 +593,170 @@ impl PolylogueRevisionManifest {
         }
         Ok(record)
     }
+
+    /// Resolve the byte offset within the registered segment after validating
+    /// the anchor and the complete segment digest.
+    pub fn anchor_byte(&self, segments: &BTreeMap<i32, Vec<u8>>, record_id: &str) -> Result<i64> {
+        self.resolve_anchor(segments, record_id)?;
+        let anchor = self
+            .anchors
+            .get(record_id)
+            .ok_or_else(|| protocol_error("anchor not found"))?;
+        let raw = segments
+            .get(&anchor.segment_index)
+            .ok_or_else(|| protocol_error("anchor names missing segment"))?;
+        let lines = split_ndjson(raw)?;
+        let offset = lines[..anchor.line_index]
+            .iter()
+            .try_fold(0_usize, |offset, line| offset.checked_add(line.len() + 1))
+            .ok_or_else(|| protocol_error("anchor byte offset overflows usize"))?;
+        i64::try_from(offset).map_err(|_| protocol_error("anchor byte offset overflows i64"))
+    }
+}
+
+struct StrictValue(Value);
+
+impl<'de> Deserialize<'de> for StrictValue {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct StrictVisitor;
+        impl<'de> Visitor<'de> for StrictVisitor {
+            type Value = StrictValue;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an unambiguous JSON value")
+            }
+
+            fn visit_bool<E: de::Error>(self, value: bool) -> std::result::Result<Self::Value, E> {
+                Ok(StrictValue(Value::Bool(value)))
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> std::result::Result<Self::Value, E> {
+                Ok(StrictValue(Value::Number(value.into())))
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> std::result::Result<Self::Value, E> {
+                Ok(StrictValue(Value::Number(value.into())))
+            }
+
+            fn visit_f64<E: de::Error>(self, value: f64) -> std::result::Result<Self::Value, E> {
+                if !value.is_finite() {
+                    return Err(E::custom("nonfinite JSON number"));
+                }
+                serde_json::Number::from_f64(value)
+                    .map(Value::Number)
+                    .map(StrictValue)
+                    .ok_or_else(|| E::custom("unsupported JSON number"))
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> std::result::Result<Self::Value, E> {
+                Ok(StrictValue(Value::String(value.to_owned())))
+            }
+
+            fn visit_string<E: de::Error>(
+                self,
+                value: String,
+            ) -> std::result::Result<Self::Value, E> {
+                Ok(StrictValue(Value::String(value)))
+            }
+
+            fn visit_none<E: de::Error>(self) -> std::result::Result<Self::Value, E> {
+                Ok(StrictValue(Value::Null))
+            }
+
+            fn visit_unit<E: de::Error>(self) -> std::result::Result<Self::Value, E> {
+                Ok(StrictValue(Value::Null))
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<Self::Value, A::Error> {
+                let mut values = Vec::new();
+                while let Some(StrictValue(value)) = seq.next_element()? {
+                    values.push(value);
+                }
+                Ok(StrictValue(Value::Array(values)))
+            }
+
+            fn visit_map<A: MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<Self::Value, A::Error> {
+                let mut values = Map::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if values.contains_key(&key) {
+                        return Err(de::Error::custom(format!("duplicate JSON key {key:?}")));
+                    }
+                    let StrictValue(value) = map.next_value()?;
+                    values.insert(key, value);
+                }
+                Ok(StrictValue(Value::Object(values)))
+            }
+        }
+        deserializer.deserialize_any(StrictVisitor)
+    }
+}
+
+fn parse_strict_json(bytes: &[u8]) -> Result<Value> {
+    validate_number_tokens(bytes)?;
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let StrictValue(value) = StrictValue::deserialize(&mut deserializer)
+        .map_err(|error| protocol_error(format!("invalid or ambiguous JSON: {error}")))?;
+    deserializer
+        .end()
+        .map_err(|error| protocol_error(format!("invalid JSON trailer: {error}")))?;
+    Ok(value)
+}
+
+fn validate_number_tokens(bytes: &[u8]) -> Result<()> {
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            index += 1;
+            continue;
+        }
+        if byte == b'-' || byte.is_ascii_digit() {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && matches!(bytes[index], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
+            {
+                index += 1;
+            }
+            let token = std::str::from_utf8(&bytes[start..index])
+                .map_err(|_| protocol_error("invalid number encoding"))?;
+            if !token.bytes().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
+                let supported = if token.starts_with('-') {
+                    token.parse::<i64>().is_ok()
+                } else {
+                    token.parse::<u64>().is_ok()
+                };
+                if !supported {
+                    return Err(protocol_error(
+                        "integer is outside protocol v1's i64/u64 range",
+                    ));
+                }
+            }
+            continue;
+        }
+        index += 1;
+    }
+    Ok(())
 }
 
 fn split_ndjson(raw: &[u8]) -> Result<Vec<&[u8]>> {
@@ -562,26 +774,67 @@ fn split_ndjson(raw: &[u8]) -> Result<Vec<&[u8]>> {
     Ok(lines)
 }
 
-fn canonical_json(value: &Value) -> Value {
+fn canonical_json(value: &Value) -> Result<Value> {
     match value {
         Value::Object(object) => {
             let mut keys = object.keys().collect::<Vec<_>>();
             keys.sort();
             let mut sorted = Map::with_capacity(object.len());
             for key in keys {
-                sorted.insert(key.nfc().collect(), canonical_json(&object[key]));
+                sorted.insert(key.clone(), canonical_json(&object[key])?);
             }
-            Value::Object(sorted)
+            Ok(Value::Object(sorted))
         }
-        Value::Array(values) => Value::Array(values.iter().map(canonical_json).collect()),
-        Value::String(value) => Value::String(value.nfc().collect()),
-        other => other.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(canonical_json)
+            .collect::<Result<Vec<_>>>()
+            .map(Value::Array),
+        Value::String(value) => Ok(Value::String(value.clone())),
+        other => Ok(other.clone()),
+    }
+}
+
+/// Match the producer's core-JSON float spelling, including positive exponent
+/// signs and fixed notation through 1e-5. This is canonicalizer version 2;
+/// opaque strings and keys are never normalized by this framing layer.
+struct MaterialJsonFormatter;
+
+impl serde_json::ser::Formatter for MaterialJsonFormatter {
+    fn write_f64<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        value: f64,
+    ) -> std::io::Result<()> {
+        let mut text = serde_json::to_string(&value).map_err(std::io::Error::other)?;
+        if let Some((mantissa, exponent)) = text.split_once('e') {
+            let exponent: i32 = exponent.parse().map_err(std::io::Error::other)?;
+            if (-5..0).contains(&exponent) {
+                let negative = mantissa.starts_with('-');
+                let digits = mantissa.trim_start_matches('-').replace('.', "");
+                text = format!(
+                    "{}0.{}{}",
+                    if negative { "-" } else { "" },
+                    "0".repeat((-exponent - 1) as usize),
+                    digits
+                );
+            } else {
+                text = format!("{mantissa}e{exponent:+}");
+            }
+        }
+        writer.write_all(text.as_bytes())
     }
 }
 
 fn canonical_json_bytes(value: &Value) -> Result<Vec<u8>> {
-    serde_json::to_vec(&canonical_json(value))
-        .map_err(|error| protocol_error(format!("cannot canonicalize JSON: {error}")))
+    let mut bytes = Vec::new();
+    canonical_json(value)?
+        .serialize(&mut serde_json::Serializer::with_formatter(
+            &mut bytes,
+            MaterialJsonFormatter,
+        ))
+        .map_err(|error| protocol_error(format!("cannot canonicalize JSON: {error}")))?;
+    Ok(bytes)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

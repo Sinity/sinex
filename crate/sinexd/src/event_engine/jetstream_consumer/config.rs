@@ -36,6 +36,8 @@ impl JetStreamConsumer {
             #[cfg(any(test, feature = "testing"))]
             delivery_observer: None,
             #[cfg(any(test, feature = "testing"))]
+            raw_ack_drop_once: None,
+            #[cfg(any(test, feature = "testing"))]
             source_material_ready_dlq_threshold: None,
             #[cfg(any(test, feature = "testing"))]
             source_material_ready_retry_delay: None,
@@ -218,6 +220,15 @@ impl JetStreamConsumer {
     #[must_use]
     pub fn settlement_registry(&self) -> SettlementRegistry {
         self.settlement_registry.clone()
+    }
+
+    /// Simulate loss of the final raw ACK at the existing aggregate-settlement
+    /// boundary after all child outcomes are durable.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn with_raw_ack_drop_once(mut self, drop_once: Arc<AtomicBool>) -> Self {
+        self.raw_ack_drop_once = Some(drop_once);
+        self
     }
 
     /// Build a consumer with optional test-only hooks.

@@ -58,6 +58,13 @@ impl JetStreamConsumer {
             return Ok(Vec::new());
         }
 
+        #[cfg(any(test, feature = "testing"))]
+        let settlement = RawEnvelopeSettlement::new_with_ack_drop(
+            msg.clone(),
+            decisions.len(),
+            self.raw_ack_drop_once.clone(),
+        );
+        #[cfg(not(any(test, feature = "testing")))]
         let settlement = RawEnvelopeSettlement::new(msg.clone(), decisions.len());
         let mut prepared = Vec::with_capacity(decisions.len());
 
