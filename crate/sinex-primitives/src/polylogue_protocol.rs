@@ -14,6 +14,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+use crate::Uuid;
 use crate::error::{Result, SinexError};
 
 pub const PROTOCOL_VERSION: &str = "polylogue.material-protocol/v1";
@@ -23,6 +24,144 @@ pub const HEAD_SEGMENT_INDEX: i32 = -1;
 pub const ORIGIN_VOCABULARY_VERSION: u16 = 4;
 pub const ORIGIN_VOCABULARY_DIGEST: &str =
     "f2413435b8a49c0bd5425dd04616d3ced4f2e44419b66858b1de04ed281a6036";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PolylogueOriginalRole {
+    ProviderNative,
+    Attachment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PolylogueAcquisitionKind {
+    FullSnapshot,
+    ByteWindow,
+    LogicalSnapshot,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PolylogueByteWindow {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Coordinates describe the exact selected acquisition. A full snapshot is
+/// not a claim that these bytes represent an entire physical provider file.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PolylogueAcquisition {
+    pub kind: PolylogueAcquisitionKind,
+    #[serde(deserialize_with = "required_optional")]
+    pub byte_window: Option<PolylogueByteWindow>,
+    #[serde(deserialize_with = "required_optional")]
+    pub addressing_mode: Option<String>,
+    #[serde(deserialize_with = "required_optional")]
+    pub tables: Option<Vec<String>>,
+}
+
+fn required_optional<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+impl PolylogueAcquisition {
+    pub fn validate(&self, size_bytes: u64) -> Result<()> {
+        if self.kind != PolylogueAcquisitionKind::ByteWindow && self.byte_window.is_some() {
+            return Err(protocol_error(
+                "byte coordinates require byte-window acquisition",
+            ));
+        }
+        if self.kind != PolylogueAcquisitionKind::LogicalSnapshot && self.tables.is_some() {
+            return Err(protocol_error(
+                "table scope requires logical-snapshot acquisition",
+            ));
+        }
+        if self.kind == PolylogueAcquisitionKind::ByteWindow && self.byte_window.is_none() {
+            return Err(protocol_error(
+                "byte-window acquisition has no byte coordinates",
+            ));
+        }
+        if let Some(window) = &self.byte_window
+            && window.end.checked_sub(window.start) != Some(size_bytes)
+        {
+            return Err(protocol_error(
+                "acquisition window does not match retained byte size",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Retained original input, independently registered from normalized segments.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolylogueOriginalWitness {
+    pub role: PolylogueOriginalRole,
+    pub source_ref: String,
+    pub material_id: Uuid,
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub media_type: String,
+    pub acquisition: PolylogueAcquisition,
+}
+
+/// Bind exact Source input witnesses without changing normalized record IDs
+/// or segment bytes. Material UUIDs and transport locators are coordinates,
+/// not part of this versioned source-witness identity.
+pub fn original_material_commitment(
+    normalizer_version: &str,
+    originals: &[PolylogueOriginalWitness],
+) -> Result<String> {
+    if normalizer_version.trim().is_empty() {
+        return Err(protocol_error(
+            "original witnesses have no normalizer version",
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for original in originals {
+        original.acquisition.validate(original.size_bytes)?;
+        if original.source_ref.trim().is_empty()
+            || original.media_type.trim().is_empty()
+            || original.sha256.len() != 64
+            || !original
+                .sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || !seen.insert((original.role, original.source_ref.as_str()))
+        {
+            return Err(protocol_error(
+                "invalid or duplicate original witness descriptor",
+            ));
+        }
+    }
+    let values = originals
+        .iter()
+        .map(|original| {
+            serde_json::json!({
+                "role": original.role,
+                "source_ref": original.source_ref,
+                "sha256": original.sha256,
+                "size_bytes": original.size_bytes,
+                "media_type": original.media_type,
+                "acquisition": original.acquisition,
+            })
+        })
+        .collect::<Vec<_>>();
+    let bytes = canonical_json_bytes(&serde_json::json!({
+        "normalizer_version": normalizer_version,
+        "originals": values,
+    }))?;
+    Ok(format!(
+        "polylogue.original-materials/v1:sha256:{}",
+        sha256_hex(&bytes)
+    ))
+}
 
 const KNOWN_ORIGIN_VOCABULARIES: &[(u16, &str)] = &[
     (
@@ -1144,7 +1283,7 @@ impl serde_json::ser::Formatter for MaterialJsonFormatter {
     }
 }
 
-fn canonical_json_bytes(value: &Value) -> Result<Vec<u8>> {
+pub fn canonical_json_bytes(value: &Value) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     canonical_json(value)?
         .serialize(&mut serde_json::Serializer::with_formatter(

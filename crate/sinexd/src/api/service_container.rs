@@ -30,6 +30,7 @@ use tracing::{info, warn};
 pub struct ServiceContainer {
     config: Arc<GatewayConfig>,
     pool_max_connections: usize,
+    publication_coordination_pool: sqlx::PgPool,
     pub content: Arc<ContentService>,
     pub pkm: Arc<PkmService>,
     pub replay_control: Option<ReplayControlClient>,
@@ -38,6 +39,7 @@ pub struct ServiceContainer {
     nats_client: Option<async_nats::Client>,
     env: sinex_primitives::environment::SinexEnvironment,
     sse_bus: Arc<OnceLock<Arc<crate::api::sse_bus::SubscriptionBus>>>,
+    raw_activity_topology: Option<sinex_primitives::nats::JetStreamTopology>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -297,7 +299,12 @@ impl ServiceContainer {
         };
 
         let base_config = config.pool_config();
-        let service_config = per_service_pool_config(&base_config, 2);
+        if base_config.max_connections < 3 {
+            return Err(SinexError::configuration(
+                "gateway connection budget must cover content, PKM and publication coordination pools (minimum 3)",
+            ));
+        }
+        let service_config = per_service_pool_config(&base_config, 3);
 
         let content_pool = create_pool_with_config(&db_url, &service_config)
             .await
@@ -311,6 +318,16 @@ impl ServiceContainer {
             .map_err(|e| {
                 SinexError::service("Failed to create database pool")
                     .with_operation("gateway.create_pool.pkm")
+                    .with_source(e.to_string())
+            })?;
+
+        // Advisory-lock waiters must not consume connections needed by CAS staging.
+        // This bounded pool is included in the gateway connection allocation.
+        let publication_coordination_pool = create_pool_with_config(&db_url, &service_config)
+            .await
+            .map_err(|e| {
+                SinexError::service("Failed to create publication coordination pool")
+                    .with_operation("gateway.create_pool.publication_coordination")
                     .with_source(e.to_string())
             })?;
 
@@ -387,10 +404,14 @@ impl ServiceContainer {
             pool_max_connections: [
                 content_pool.options().get_max_connections(),
                 pkm_pool.options().get_max_connections(),
+                publication_coordination_pool
+                    .options()
+                    .get_max_connections(),
             ]
             .iter()
             .map(|value| *value as usize)
             .sum(),
+            publication_coordination_pool,
             content: Arc::new(ContentService::new(content_pool, content_store)),
             pkm: Arc::new(PkmService::new(pkm_pool)),
             replay_control: control_client,
@@ -399,10 +420,27 @@ impl ServiceContainer {
             nats_client,
             env,
             sse_bus: Arc::new(OnceLock::new()),
+            raw_activity_topology: None,
         };
 
         recover_stale_dlq_requeue_operations(&services).await?;
         Ok(services)
+    }
+
+    /// Inject the actual raw owner configuration; an API-only process cannot
+    /// infer consumer settlement from a guessed durable name.
+    #[must_use]
+    pub fn with_raw_activity_topology(
+        mut self,
+        topology: sinex_primitives::nats::JetStreamTopology,
+    ) -> Self {
+        self.raw_activity_topology = Some(topology);
+        self
+    }
+
+    #[must_use]
+    pub fn raw_activity_topology(&self) -> Option<&sinex_primitives::nats::JetStreamTopology> {
+        self.raw_activity_topology.as_ref()
     }
 
     /// Get NATS client if available
@@ -469,6 +507,12 @@ impl ServiceContainer {
     #[must_use]
     pub fn pool(&self) -> &sqlx::PgPool {
         self.content.pool()
+    }
+
+    /// Request locks use a separate bounded pool so waiters cannot starve CAS work.
+    #[must_use]
+    pub fn publication_coordination_pool(&self) -> &sqlx::PgPool {
+        &self.publication_coordination_pool
     }
 
     #[must_use]

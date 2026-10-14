@@ -1897,7 +1897,7 @@ impl MaterialContentStore {
             .await
             .map_err(SinexError::io)?;
         let mut content = Vec::new();
-        let mut chunk = [0_u8; 64 * 1024];
+        let mut chunk = vec![0_u8; 64 * 1024];
         loop {
             let bytes_read = file.read(&mut chunk).await.map_err(SinexError::io)?;
             if bytes_read == 0 {

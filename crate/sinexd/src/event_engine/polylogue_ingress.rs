@@ -45,6 +45,252 @@ fn reject(reason: impl Into<String>) -> PolylogueProofFailure {
     PolylogueProofFailure::Reject(reason.into())
 }
 
+async fn registered_file(
+    pool: &DbPool,
+    material_id: Uuid,
+    require_cas: bool,
+) -> Result<SourceMaterialRecord, PolylogueProofFailure> {
+    let record = pool
+        .source_materials()
+        .get_by_id(Id::<SourceMaterialRecord>::from_uuid(material_id))
+        .await
+        .map_err(|error| {
+            PolylogueProofFailure::Retry(
+                SinexError::database("could not inspect Polylogue material registration")
+                    .with_source(error),
+            )
+        })?
+        .ok_or_else(|| {
+            PolylogueProofFailure::Retry(SinexError::network(
+                "Polylogue material is not registered",
+            ))
+        })?;
+    if record.status != MaterialStatus::Completed {
+        return Err(PolylogueProofFailure::Retry(SinexError::network(
+            "Polylogue material is not complete",
+        )));
+    }
+    if record
+        .metadata
+        .get("material_type")
+        .and_then(JsonValue::as_str)
+        != Some("file")
+        || record
+            .metadata
+            .get("source_uri")
+            .and_then(JsonValue::as_str)
+            .is_none()
+    {
+        return Err(reject(
+            "Polylogue evidence must be registered file material",
+        ));
+    }
+    if require_cas && record.optional_blob_id.is_none() {
+        return Err(reject(
+            "Polylogue original-backed publication requires retained CAS material",
+        ));
+    }
+    Ok(record)
+}
+
+async fn registered_path(
+    pool: &DbPool,
+    content_store: Option<&ContentStoreManager>,
+    record: &SourceMaterialRecord,
+) -> Result<std::path::PathBuf, PolylogueProofFailure> {
+    if let Some(blob_id) = record.optional_blob_id {
+        let store = content_store.ok_or_else(|| {
+            PolylogueProofFailure::Retry(SinexError::network("Polylogue CAS reader is unavailable"))
+        })?;
+        let blob = pool
+            .blobs()
+            .get_by_id(Id::<Blob>::from_uuid(blob_id))
+            .await
+            .map_err(|error| {
+                PolylogueProofFailure::Retry(
+                    SinexError::database("could not inspect Polylogue blob").with_source(error),
+                )
+            })?
+            .ok_or_else(|| {
+                PolylogueProofFailure::Retry(SinexError::network(
+                    "registered Polylogue blob is unavailable",
+                ))
+            })?;
+        return store
+            .get_blob_path(&blob.content_key())
+            .await
+            .map(|path| path.into_std_path_buf())
+            .map_err(|error| {
+                PolylogueProofFailure::Retry(
+                    SinexError::network("could not resolve Polylogue CAS bytes").with_source(error),
+                )
+            });
+    }
+    record
+        .metadata
+        .get("source_uri")
+        .and_then(JsonValue::as_str)
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| reject("file material has no declared file authority"))
+}
+
+async fn read_registered_manifest(
+    pool: &DbPool,
+    content_store: Option<&ContentStoreManager>,
+    record: &SourceMaterialRecord,
+) -> Result<Vec<u8>, PolylogueProofFailure> {
+    let path = registered_path(pool, content_store, record).await?;
+    let bytes = tokio::fs::read(path).await.map_err(|error| {
+        PolylogueProofFailure::Retry(
+            SinexError::network("registered manifest bytes are unavailable").with_source(error),
+        )
+    })?;
+    if let Some(expected) = record
+        .metadata
+        .get("polylogue_sha256")
+        .and_then(JsonValue::as_str)
+        && format!("{:x}", Sha256::digest(&bytes)) != expected
+    {
+        return Err(PolylogueProofFailure::Retry(SinexError::network(
+            "retained manifest failed byte integrity",
+        )));
+    }
+    Ok(bytes)
+}
+
+async fn verify_original_materials(
+    pool: &DbPool,
+    content_store: Option<&ContentStoreManager>,
+    evidence: &sinex_primitives::events::admission::PolylogueRevisionEvidence,
+    manifest: &PolylogueRevisionManifest,
+) -> Result<(), PolylogueProofFailure> {
+    use sinex_primitives::polylogue_protocol::{
+        PolylogueOriginalRole, original_material_commitment,
+    };
+    use tokio::io::AsyncReadExt;
+
+    if evidence.originals.is_empty() {
+        if evidence.normalizer_version.is_some()
+            || manifest.content_digest.provider_digest.is_some()
+        {
+            return Err(reject(
+                "Polylogue source commitment has no original witnesses",
+            ));
+        }
+        return Ok(());
+    }
+    let normalizer = evidence
+        .normalizer_version
+        .as_deref()
+        .filter(|version| !version.trim().is_empty())
+        .ok_or_else(|| reject("Polylogue original witnesses have no normalizer version"))?;
+    let commitment = original_material_commitment(normalizer, &evidence.originals)
+        .map_err(|error| reject(format!("invalid original witness commitment: {error}")))?;
+    if manifest.content_digest.provider_digest.as_deref() != Some(commitment.as_str()) {
+        return Err(reject(
+            "Polylogue original witness commitment contradicts manifest",
+        ));
+    }
+    if !evidence
+        .originals
+        .iter()
+        .any(|original| original.role == PolylogueOriginalRole::ProviderNative)
+    {
+        return Err(reject(
+            "Polylogue publication has no acquired provider witness",
+        ));
+    }
+    let links = pool
+        .source_materials()
+        .links_from(evidence.manifest_material_id)
+        .await
+        .map_err(|error| {
+            PolylogueProofFailure::Retry(
+                SinexError::database("could not inspect original material backing links")
+                    .with_source(error),
+            )
+        })?;
+    let mut names = std::collections::HashSet::new();
+    for original in &evidence.originals {
+        let role = serde_json::to_value(original.role)
+            .map_err(|error| reject(format!("invalid original witness role: {error}")))?;
+        if original.source_ref.trim().is_empty()
+            || !names.insert((role.to_string(), original.source_ref.clone()))
+        {
+            return Err(reject(
+                "Polylogue original witness names are empty or duplicate",
+            ));
+        }
+        if !links.iter().any(|link| {
+            link.to_material_id == original.material_id
+                && link.relation_type == "backed_by"
+                && link
+                    .metadata
+                    .get("normalizer_version")
+                    .and_then(JsonValue::as_str)
+                    == Some(normalizer)
+                && link.metadata.get("source_ref").and_then(JsonValue::as_str)
+                    == Some(original.source_ref.as_str())
+        }) {
+            return Err(PolylogueProofFailure::Retry(SinexError::network(
+                "Polylogue original witness backing link is unavailable",
+            )));
+        }
+        let record = registered_file(pool, original.material_id, true).await?;
+        if record
+            .metadata
+            .get("polylogue_sha256")
+            .and_then(JsonValue::as_str)
+            != Some(original.sha256.as_str())
+            || record
+                .metadata
+                .get("source_ref")
+                .and_then(JsonValue::as_str)
+                != Some(original.source_ref.as_str())
+            || record.metadata.get("polylogue_original_role") != Some(&role)
+            || record.metadata.get("acquisition")
+                != Some(
+                    &serde_json::to_value(&original.acquisition)
+                        .map_err(|error| reject(format!("invalid acquisition witness: {error}")))?,
+                )
+        {
+            return Err(reject(
+                "registered original material contradicts its witness",
+            ));
+        }
+        let path = registered_path(pool, content_store, &record).await?;
+        let mut file = tokio::fs::File::open(path).await.map_err(|error| {
+            PolylogueProofFailure::Retry(
+                SinexError::network("original material bytes are unavailable").with_source(error),
+            )
+        })?;
+        let mut hash = Sha256::new();
+        let mut size = 0_u64;
+        let mut buffer = vec![0_u8; 64 * 1024];
+        loop {
+            let count = file.read(&mut buffer).await.map_err(|error| {
+                PolylogueProofFailure::Retry(
+                    SinexError::network("could not verify original material bytes")
+                        .with_source(error),
+                )
+            })?;
+            if count == 0 {
+                break;
+            }
+            size = size
+                .checked_add(count as u64)
+                .ok_or_else(|| reject("original size overflows u64"))?;
+            hash.update(&buffer[..count]);
+        }
+        if size != original.size_bytes || format!("{:x}", hash.finalize()) != original.sha256 {
+            return Err(PolylogueProofFailure::Retry(SinexError::network(
+                "retained original material failed byte integrity",
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// The manifest is metadata on the raw intent; segment bytes are read only
 /// from already registered source materials. Any missing material leaves the
 /// physical raw message unsettled for redelivery, while a contradictory proof
@@ -78,86 +324,26 @@ pub(super) async fn validate_polylogue_intent(
         .polylogue_revision
         .as_ref()
         .ok_or_else(|| reject("Polylogue intent has no material revision evidence"))?;
-    let manifest_bytes = evidence.manifest_json.as_bytes();
-    let manifest = PolylogueRevisionManifest::from_json(manifest_bytes)
+    let manifest_record = registered_file(
+        pool,
+        evidence.manifest_material_id,
+        !evidence.originals.is_empty(),
+    )
+    .await?;
+    let manifest_bytes = read_registered_manifest(pool, content_store, &manifest_record).await?;
+    let manifest = PolylogueRevisionManifest::from_json(&manifest_bytes)
         .map_err(|error| reject(format!("invalid Polylogue manifest: {error}")))?;
     manifest
         .validate_compatibility()
         .map_err(|error| reject(format!("unsupported Polylogue manifest: {error}")))?;
-    let manifest_digest = format!("{:x}", Sha256::digest(manifest_bytes));
+    let manifest_digest = format!("{:x}", Sha256::digest(&manifest_bytes));
+
+    verify_original_materials(pool, content_store, evidence, &manifest).await?;
 
     let mut segments = BTreeMap::new();
     for (&segment_index, &material_id) in &evidence.segment_material_ids {
-        let record = pool
-            .source_materials()
-            .get_by_id(Id::<SourceMaterialRecord>::from_uuid(material_id))
-            .await
-            .map_err(|error| {
-                PolylogueProofFailure::Retry(
-                    SinexError::database("could not inspect Polylogue segment registration")
-                        .with_source(error),
-                )
-            })?
-            .ok_or_else(|| {
-                PolylogueProofFailure::Retry(SinexError::network(format!(
-                    "Polylogue segment material {material_id} is not registered"
-                )))
-            })?;
-        if record.status != MaterialStatus::Completed {
-            return Err(PolylogueProofFailure::Retry(SinexError::network(format!(
-                "Polylogue segment material {material_id} is not complete"
-            ))));
-        }
-        let source_uri = record
-            .metadata
-            .get("source_uri")
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| reject("Polylogue segment must be a registered file material"))?;
-        if record
-            .metadata
-            .get("material_type")
-            .and_then(JsonValue::as_str)
-            != Some("file")
-        {
-            return Err(reject(
-                "Polylogue segment must be a registered file material",
-            ));
-        }
-        // Once blob custody exists, the staging locator is no longer an authority.
-        let path = if let Some(blob_id) = record.optional_blob_id {
-            let store = content_store.ok_or_else(|| {
-                PolylogueProofFailure::Retry(SinexError::network(
-                    "Polylogue CAS reader is unavailable",
-                ))
-            })?;
-            let blob = pool
-                .blobs()
-                .get_by_id(Id::<Blob>::from_uuid(blob_id))
-                .await
-                .map_err(|error| {
-                    PolylogueProofFailure::Retry(
-                        SinexError::database("could not inspect Polylogue blob").with_source(error),
-                    )
-                })?
-                .ok_or_else(|| {
-                    PolylogueProofFailure::Retry(SinexError::network(
-                        "registered Polylogue blob is unavailable",
-                    ))
-                })?;
-            store
-                .get_blob_path(&blob.content_key())
-                .await
-                .map_err(|error| {
-                    PolylogueProofFailure::Retry(
-                        SinexError::network("could not resolve Polylogue CAS bytes")
-                            .with_source(error),
-                    )
-                })?
-                .into_std_path_buf()
-        } else {
-            // File-only registration retains its explicitly declared file authority.
-            std::path::PathBuf::from(source_uri)
-        };
+        let record = registered_file(pool, material_id, !evidence.originals.is_empty()).await?;
+        let path = registered_path(pool, content_store, &record).await?;
         segments.insert(segment_index, path);
     }
     let verified_manifest = manifest.clone();

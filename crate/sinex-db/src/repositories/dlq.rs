@@ -21,6 +21,35 @@ impl<'a> Repository<'a> for DlqEventRepository<'a> {
 }
 
 impl DlqEventRepository<'_> {
+    /// Return event IDs with unresolved durable DLQ evidence for the
+    /// Polylogue raw-ingest automaton.
+    ///
+    /// Callers should pass bounded slices (at most 1,000 IDs) so the UUID
+    /// array bind stays within the repository's normal query-size limits.
+    pub async fn unresolved_polylogue_raw_ingest_event_ids(
+        &self,
+        event_ids: &[Uuid],
+    ) -> DbResult<Vec<Uuid>> {
+        if event_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        sqlx::query_scalar!(
+            r#"
+            SELECT DISTINCT failed_event_id AS "failed_event_id!: Uuid"
+            FROM sinex_schemas.dlq_events
+            WHERE failed_event_id = ANY($1::uuid[])
+              AND automaton_name = 'event-engine.raw-ingest'
+              AND source = 'integration.polylogue'
+              AND resolved_at IS NULL
+            "#,
+            event_ids
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "find unresolved Polylogue raw-ingest DLQ event IDs"))
+    }
+
     /// Count unresolved durable DLQ evidence for operator health surfaces.
     pub async fn pending_count(&self) -> DbResult<u64> {
         let row = sqlx::query!(

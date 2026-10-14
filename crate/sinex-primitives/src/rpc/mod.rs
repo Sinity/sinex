@@ -164,6 +164,7 @@ pub mod llm;
 pub mod methods;
 pub mod ops;
 pub mod pkm;
+pub mod polylogue;
 pub mod predictions;
 pub mod privacy;
 pub mod replay;
@@ -183,6 +184,8 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         audit::AUDIT_GET_METHOD.info(),
         automata::AUTOMATA_STATUS_METHOD.info(),
         browser::BROWSER_CAPTURE_BATCH_METHOD.info(),
+        polylogue::POLYLOGUE_REVISION_PUBLISH_METHOD.info(),
+        polylogue::POLYLOGUE_REVISION_STATUS_METHOD.info(),
         content::CONTENT_RETRIEVE_BLOB_METHOD.info(),
         content::CONTENT_STORE_BLOB_METHOD.info(),
         coordination::COORDINATION_GET_LEADER_METHOD.info(),

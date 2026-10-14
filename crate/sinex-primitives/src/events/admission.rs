@@ -30,8 +30,12 @@ pub const ACCEPTED_ENVELOPE_VERSIONS: &[&str] = &["1"];
 /// the raw event envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolylogueRevisionEvidence {
-    pub manifest_json: String,
+    pub manifest_material_id: Uuid,
     pub segment_material_ids: BTreeMap<i32, Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalizer_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub originals: Vec<crate::polylogue_protocol::PolylogueOriginalWitness>,
 }
 
 /// Default envelope version for backward-compatible deserialization.

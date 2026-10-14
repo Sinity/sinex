@@ -225,7 +225,7 @@ async fn test_service_container_arc_references(ctx: TestContext) -> TestResult<(
 /// connections for an unrelated service.
 ///
 /// This test verifies isolation by checking that the total max-connection count
-/// sums correctly: two separate pools of N must sum to 2×N, whereas a single
+/// sums correctly across content, PKM and publication coordination, whereas a single
 /// shared pool of N would report exactly N.
 #[sinex_test]
 async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> {
@@ -236,19 +236,18 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
     let temp_dir = TempDir::new()?;
     configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
     // Set a known pool size so assertions are deterministic regardless of defaults.
-    // `per_service_pool_config` divides by 2, so effective per-service max = 40/2 = 20.
-    env.set("SINEX_API_POOL_MAX_CONNECTIONS", "40");
+    // Three bounded service pools split the configured connection budget.
+    env.set("SINEX_API_POOL_MAX_CONNECTIONS", "42");
 
     let config =
         GatewayConfig::load()?.with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
     let container = ServiceContainer::new(&config).await?;
 
-    // pool_max_connections sums the max connections across all two pools.
-    // If they share a single pool this would equal 40 rather than 2 × (40/2).
+    // Each independent pool receives 14 connections; all three count toward RPC limits.
     let total = container.pool_max_connections();
     assert_eq!(
-        total, 40,
-        "Two pools each with max 20 connections should sum to 40 total (got {total}); \
+        total, 42,
+        "Three pools each with max 14 connections should sum to 42 total (got {total}); \
          a shared-pool implementation would report a smaller number"
     );
 

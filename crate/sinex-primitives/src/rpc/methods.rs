@@ -166,6 +166,8 @@ pub const EVENTS_ANNOTATE: &str = "events.annotate";
 // Sources
 pub const BROWSER_CAPTURE_BATCH: &str = "browser.capture_batch";
 pub const SOURCES_STAGE: &str = "sources.stage";
+pub const POLYLOGUE_REVISION_PUBLISH: &str = "polylogue.revision.publish";
+pub const POLYLOGUE_REVISION_STATUS: &str = "polylogue.revision.status";
 pub const SOURCES_LIST: &str = "sources.list";
 pub const SOURCES_SHOW: &str = "sources.show";
 pub const SOURCES_COVERAGE: &str = "sources.coverage";
