@@ -113,7 +113,7 @@ timeout_seconds = 1800
 [operations.verify_closure]
 description = "Verify one closed Sinex Bead's acceptance criteria and evidence"
 exec = ["xtask", "verify", "closure"]
-pool = "normal"
+pool = "bulk"
 result = "exit"
 cache = "none"
 timeout_seconds = 1800
