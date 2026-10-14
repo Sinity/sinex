@@ -2,7 +2,7 @@
 
 use crate::runtime::{
     RuntimeResult,
-    nats_payload::{NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES, ensure_nats_payload_fits},
+    intent_partitions::{intent_partition, partition_event_intent},
     nats_publisher::NatsPublisher,
 };
 use futures::future::BoxFuture;
@@ -220,7 +220,6 @@ struct BatchPublishResult {
     failed: usize,
 }
 
-const NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES: usize = NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
 const RECOVERY_SPOOL_REPLAY_AFTER_SUCCESS_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Event batcher that handles batching and sending
@@ -900,90 +899,44 @@ impl EventBatcher {
         } else {
             source_id
         };
-        let pending = std::mem::take(events);
-        let mut pending_iter = pending.into_iter();
-        let mut published = 0usize;
-        let mut chunk = Vec::new();
-        let mut estimated_chunk_payload_bytes =
-            Self::intent_payload_base_estimate(source_id, parser_id, parser_version);
-
-        while let Some(event) = pending_iter.next() {
-            let event_payload_estimate = Self::event_payload_estimate(&event);
-            chunk.push(event);
-            estimated_chunk_payload_bytes =
-                estimated_chunk_payload_bytes.saturating_add(event_payload_estimate);
-
-            if estimated_chunk_payload_bytes <= NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES {
-                continue;
+        let intent = EventIntent::new(
+            source_id,
+            parser_id,
+            parser_version,
+            std::mem::take(events),
+            HostName::from_static("sinex-batcher"),
+        );
+        let partitions = match partition_event_intent(&intent) {
+            Ok(partitions) => partitions,
+            Err(error) => {
+                *events = intent.events;
+                Self::log_nats_publish_failure(event_count, events.len(), &error);
+                return BatchPublishResult {
+                    published: 0,
+                    failed: events.len(),
+                };
             }
-
-            match Self::intent_payload_len(source_id, parser_id, parser_version, &chunk) {
-                Ok(payload_len)
-                    if payload_len > NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES && chunk.len() > 1 =>
-                {
-                    let overflow = chunk
-                        .pop()
-                        .expect("chunk len checked above; overflow event must exist");
-                    estimated_chunk_payload_bytes =
-                        Self::intent_payload_base_estimate(source_id, parser_id, parser_version)
-                            .saturating_add(Self::event_payload_estimate(&overflow));
-                    match Self::publish_intent_chunk(
-                        publisher,
-                        source_id,
-                        parser_id,
-                        parser_version,
-                        chunk,
-                    )
-                    .await
-                    {
-                        Ok(count) => {
-                            published += count;
-                            chunk = vec![overflow];
-                        }
-                        Err((failed_chunk, error)) => {
-                            *events = failed_chunk
-                                .into_iter()
-                                .chain(std::iter::once(overflow))
-                                .chain(pending_iter)
-                                .collect();
-                            Self::log_nats_publish_failure(event_count, events.len(), &error);
-                            return BatchPublishResult {
-                                published,
-                                failed: events.len(),
-                            };
-                        }
-                    }
-                }
-                Ok(payload_len) => {
-                    estimated_chunk_payload_bytes = payload_len;
-                    if payload_len > NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES {
-                        warn!(
-                            payload_len,
-                            soft_limit = NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES,
-                            "Single event intent envelope exceeds soft NATS payload split limit; publishing alone"
-                        );
-                    }
-                }
+        };
+        let mut published = 0;
+        for partition in partitions {
+            let chunk = match intent_partition(&intent, partition) {
+                Ok(chunk) => chunk,
                 Err(error) => {
-                    *events = chunk.into_iter().chain(pending_iter).collect();
+                    *events = intent.events.into_iter().skip(partition.start).collect();
                     Self::log_nats_publish_failure(event_count, events.len(), &error);
                     return BatchPublishResult {
                         published,
                         failed: events.len(),
                     };
                 }
-            }
-        }
-
-        if !chunk.is_empty() {
-            match Self::publish_intent_chunk(publisher, source_id, parser_id, parser_version, chunk)
+            };
+            match publisher
+                .publish_intent(&chunk, sinex_primitives::transport::Class::Critical)
                 .await
             {
-                Ok(count) => {
-                    published += count;
-                }
-                Err((failed_chunk, error)) => {
-                    *events = failed_chunk;
+                Ok(()) => published += chunk.events.len(),
+                Err(error) => {
+                    *events = intent.events.into_iter().skip(partition.start).collect();
                     Self::log_nats_publish_failure(event_count, events.len(), &error);
                     return BatchPublishResult {
                         published,
@@ -992,7 +945,6 @@ impl EventBatcher {
                 }
             }
         }
-
         debug!(
             published,
             original_batch_size = event_count,
@@ -1001,77 +953,6 @@ impl EventBatcher {
         BatchPublishResult {
             published,
             failed: 0,
-        }
-    }
-
-    fn intent_payload_len(
-        source_id: &str,
-        parser_id: &str,
-        parser_version: &str,
-        events: &[Event<JsonValue>],
-    ) -> RuntimeResult<usize> {
-        let intent = EventIntent::new(
-            source_id,
-            parser_id,
-            parser_version,
-            events.to_vec(),
-            HostName::from_static("sinex-batcher"),
-        );
-        serde_json::to_vec(&intent)
-            .map(|payload| payload.len())
-            .map_err(SinexError::from)
-    }
-
-    fn intent_payload_base_estimate(
-        source_id: &str,
-        parser_id: &str,
-        parser_version: &str,
-    ) -> usize {
-        1024usize
-            .saturating_add(source_id.len())
-            .saturating_add(parser_id.len())
-            .saturating_add(parser_version.len())
-    }
-
-    fn event_payload_estimate(event: &Event<JsonValue>) -> usize {
-        serde_json::to_vec(event)
-            .map(|payload| payload.len().saturating_add(64))
-            .unwrap_or(NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES)
-    }
-
-    async fn publish_intent_chunk(
-        publisher: &NatsPublisher,
-        source_id: &str,
-        parser_id: &str,
-        parser_version: &str,
-        events: Vec<Event<JsonValue>>,
-    ) -> Result<usize, (Vec<Event<JsonValue>>, SinexError)> {
-        let event_count = events.len();
-        let payload_len =
-            match Self::intent_payload_len(source_id, parser_id, parser_version, &events) {
-                Ok(payload_len) => payload_len,
-                Err(error) => return Err((events, error)),
-            };
-        if let Err(error) =
-            ensure_nats_payload_fits("event intent envelope", source_id, payload_len)
-        {
-            return Err((events, error));
-        }
-
-        let intent = EventIntent::new(
-            source_id,
-            parser_id,
-            parser_version,
-            events,
-            HostName::from_static("sinex-batcher"),
-        );
-
-        match publisher
-            .publish_intent(&intent, sinex_primitives::transport::Class::Critical)
-            .await
-        {
-            Ok(()) => Ok(event_count),
-            Err(error) => Err((intent.events, error)),
         }
     }
 

@@ -39,6 +39,10 @@ async fn publish_with_headers_rejects_oversized_payload_before_nats(
         .await
         .expect_err("oversized payload should fail before NATS publish");
 
+    assert_eq!(
+        error.kind(),
+        sinex_primitives::error::SinexErrorKind::ResourceExhausted
+    );
     let error_text = error.to_string();
     assert!(error_text.contains("NATS payload exceeds configured hard limit"));
     assert!(error_text.contains("oversized test publish"));

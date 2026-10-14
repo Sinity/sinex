@@ -27,7 +27,7 @@ pub(crate) fn ensure_nats_payload_fits(
         "Refusing oversized NATS publish before server disconnect"
     );
     Err(
-        SinexError::validation("NATS payload exceeds configured hard limit")
+        SinexError::resource_exhausted("NATS payload exceeds configured hard limit")
             .with_context("subject", subject.to_string())
             .with_context("payload_bytes", payload_bytes.to_string())
             .with_context(

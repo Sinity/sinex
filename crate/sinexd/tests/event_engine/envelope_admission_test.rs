@@ -487,9 +487,14 @@ async fn polylogue_admission_checks_registered_revision_before_accepting_anchor(
         vec![event],
         HostName::from_static("polylogue-host"),
     );
+    let manifest_id =
+        register_polylogue_fixture_manifest(&ctx, &content_store, custody.path(), &manifest_bytes)
+            .await?;
     intent.polylogue_revision = Some(PolylogueRevisionEvidence {
-        manifest_json: String::from_utf8(manifest_bytes.clone())?,
+        manifest_material_id: manifest_id,
         segment_material_ids,
+        normalizer_version: None,
+        originals: Vec::new(),
     });
 
     // CAS custody cannot silently fall back to a file when the native reader is absent.
@@ -511,7 +516,13 @@ async fn polylogue_admission_checks_registered_revision_before_accepting_anchor(
         .polylogue_revision
         .as_mut()
         .unwrap()
-        .manifest_json = serde_json::to_string(&manifest_value)?;
+        .manifest_material_id = register_polylogue_fixture_manifest(
+        &ctx,
+        &content_store,
+        custody.path(),
+        &serde_json::to_vec(&manifest_value)?,
+    )
+    .await?;
     let decisions = service
         .admit_intent_bytes(&serde_json::to_vec(&unsupported)?)
         .await?;
@@ -525,7 +536,17 @@ async fn polylogue_admission_checks_registered_revision_before_accepting_anchor(
         "{\"é\":1,\"e\u{301}\":2}",
     ] {
         let mut collision = intent.clone();
-        collision.polylogue_revision.as_mut().unwrap().manifest_json = ambiguous_manifest.into();
+        collision
+            .polylogue_revision
+            .as_mut()
+            .unwrap()
+            .manifest_material_id = register_polylogue_fixture_manifest(
+            &ctx,
+            &content_store,
+            custody.path(),
+            ambiguous_manifest.as_bytes(),
+        )
+        .await?;
         let decisions = service
             .admit_intent_bytes(&serde_json::to_vec(&collision)?)
             .await?;
@@ -573,4 +594,28 @@ async fn polylogue_admission_checks_registered_revision_before_accepting_anchor(
             .is_err()
     );
     Ok(())
+}
+
+async fn register_polylogue_fixture_manifest(
+    ctx: &TestContext,
+    store: &sinexd::runtime::content_store::ContentStoreManager,
+    directory: &std::path::Path,
+    bytes: &[u8],
+) -> TestResult<Uuid> {
+    let locator = directory.join(format!("manifest-input-{}.json", Uuid::now_v7()));
+    tokio::fs::write(&locator, bytes).await?;
+    let blob = store
+        .ingest_from_bytes(bytes, "manifest.json", "application/json")
+        .await?;
+    let material = ctx
+        .pool
+        .source_materials()
+        .register_material_with_total_bytes(
+            SourceMaterial::file(locator.to_string_lossy().into_owned())
+                .with_optional_blob_id(Some(blob.id)),
+            i64::try_from(bytes.len())?,
+        )
+        .await?;
+    tokio::fs::remove_file(locator).await?;
+    Ok(material.id)
 }

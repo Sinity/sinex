@@ -24,6 +24,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 mod helpers;
+mod polylogue_publication;
 mod tombstone;
 mod types;
 
@@ -32,6 +33,7 @@ use helpers::{
     probe_health, probe_health_bool,
 };
 pub use helpers::{PROJECTION_REBUILD_OPERATION_TYPE, REPLAY_ARCHIVE_RECOVERY_OPERATION_TYPE};
+pub use polylogue_publication::POLYLOGUE_PUBLICATION_OPERATION;
 pub use types::{
     AutomataStatusRow, LiveModulePresence, ManifestRow, ModuleHealthSummary, ModuleManifest,
     ModuleRun, Operation, OperationRecord, OperationStatistics, RuntimeLivenessEvidenceRow,
@@ -327,6 +329,13 @@ impl StateRepository<'_> {
     }
 
     fn validate_log_operation(operation: &Operation) -> DbResult<()> {
+        // Publication preparation owns this scoped request identity and lock.
+        // The generic audit writer must not allocate a competing request row.
+        if operation.operation_type == POLYLOGUE_PUBLICATION_OPERATION {
+            return Err(SinexError::validation(
+                "use scoped Polylogue publication preparation",
+            ));
+        }
         Self::validate_audit_operation_type(&operation.operation_type)?;
         if operation.operation_type == "replay"
             && let Some(ref scope) = operation.scope

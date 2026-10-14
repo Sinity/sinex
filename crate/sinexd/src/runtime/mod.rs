@@ -50,6 +50,7 @@ pub mod heartbeat;
 pub mod hyprland;
 pub mod ingestion_helpers;
 pub mod input_shapes;
+pub(crate) mod intent_partitions;
 pub mod jetstream_consumer;
 pub mod jetstream_streams;
 pub mod material;

@@ -47,6 +47,7 @@ use sinex_primitives::rpc::{
     },
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
+    polylogue::{POLYLOGUE_REVISION_PUBLISH_METHOD, POLYLOGUE_REVISION_STATUS_METHOD},
     predictions::{
         PREDICTIONS_REGISTER_METHOD, PREDICTIONS_REPORT_METHOD, PREDICTIONS_RESOLVE_METHOD,
     },
@@ -898,6 +899,20 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Source material staging (Write — registers new materials, uses services)
         .service_auth_typed_rpc(SOURCES_STAGE_METHOD, boxed!(handle_sources_stage, 3))
+        .service_auth_typed_rpc(
+            POLYLOGUE_REVISION_PUBLISH_METHOD,
+            boxed!(
+                crate::api::handlers::polylogue_revision::handle_polylogue_revision_publish,
+                3
+            ),
+        )
+        .service_auth_typed_rpc(
+            POLYLOGUE_REVISION_STATUS_METHOD,
+            boxed!(
+                crate::api::handlers::polylogue_revision::handle_polylogue_revision_status,
+                3
+            ),
+        )
         // Source binding management (Write)
         .pool_typed_rpc(
             SOURCES_BINDINGS_CREATE_METHOD,

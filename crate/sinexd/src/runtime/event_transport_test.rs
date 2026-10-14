@@ -1,6 +1,5 @@
-use super::{
-    EventBatcher, EventBatcherConfig, EventTransport, NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES,
-};
+use super::{EventBatcher, EventBatcherConfig, EventTransport};
+use crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
 use crate::runtime::{jetstream_streams, nats_publisher::NatsPublisher};
 use futures::StreamExt;
 use sinex_primitives::{
@@ -14,6 +13,15 @@ use std::time::Duration;
 use tempfile::tempdir;
 use tokio::sync::{mpsc, oneshot};
 use xtask::sandbox::{TestResult, sinex_test};
+
+fn synthetic_batcher_config() -> EventBatcherConfig {
+    EventBatcherConfig {
+        source_id: "synthetic-batcher-source".into(),
+        parser_id: "synthetic-batcher-parser".into(),
+        parser_version: "1.0.0".into(),
+        ..EventBatcherConfig::default()
+    }
+}
 
 async fn remove_if_exists(path: &Path) -> TestResult<()> {
     match tokio::fs::remove_file(path).await {
@@ -120,7 +128,7 @@ async fn nats_transport_splits_oversized_intent_envelopes(
     let (_shutdown_tx, shutdown_rx) = oneshot::channel();
     let mut batcher = EventBatcher::new(
         EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
-        EventBatcherConfig::default(),
+        synthetic_batcher_config(),
         receiver,
         shutdown_rx,
         work_dir.path().to_path_buf(),
@@ -146,6 +154,9 @@ async fn nats_transport_splits_oversized_intent_envelopes(
 
     for message in [first, second] {
         let payload: JsonValue = serde_json::from_slice(&message.payload)?;
+        assert_eq!(payload["source_id"], "synthetic-batcher-source");
+        assert_eq!(payload["parser_id"], "synthetic-batcher-parser");
+        assert_eq!(payload["parser_version"], "1.0.0");
         assert_eq!(payload["events"].as_array().map(Vec::len), Some(1));
         assert_eq!(payload["events"][0]["event_type"], event_name);
     }
@@ -170,7 +181,7 @@ async fn nats_transport_spools_single_event_intent_over_hard_limit(
     let (_shutdown_tx, shutdown_rx) = oneshot::channel();
     let mut batcher = EventBatcher::new(
         EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
-        EventBatcherConfig::default(),
+        synthetic_batcher_config(),
         receiver,
         shutdown_rx,
         work_dir.path().to_path_buf(),
@@ -225,7 +236,7 @@ async fn leftover_recovery_spool_events_are_republished_on_startup(
     let (_shutdown_tx, shutdown_rx) = oneshot::channel();
     let batcher = EventBatcher::new(
         EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
-        EventBatcherConfig::default(),
+        synthetic_batcher_config(),
         receiver,
         shutdown_rx,
         work_dir.path().to_path_buf(),
@@ -273,7 +284,7 @@ async fn malformed_recovery_spool_entries_are_preserved_during_replay(
     let (_shutdown_tx, shutdown_rx) = oneshot::channel();
     let batcher = EventBatcher::new(
         EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
-        EventBatcherConfig::default(),
+        synthetic_batcher_config(),
         receiver,
         shutdown_rx,
         work_dir.path().to_path_buf(),
@@ -325,7 +336,7 @@ async fn recovery_spool_replay_never_discards_past_a_line_count(
     let (_shutdown_tx, shutdown_rx) = oneshot::channel();
     let batcher = EventBatcher::new(
         EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
-        EventBatcherConfig::default(),
+        synthetic_batcher_config(),
         receiver,
         shutdown_rx,
         work_dir.path().to_path_buf(),
@@ -375,7 +386,7 @@ async fn direct_transport_send_batch_delivers_to_closure() -> TestResult<()> {
     let (_shutdown_tx, shutdown_rx) = oneshot::channel();
     let mut batcher = EventBatcher::new(
         transport,
-        EventBatcherConfig::default(),
+        synthetic_batcher_config(),
         receiver,
         shutdown_rx,
         work_dir.path().to_path_buf(),
@@ -427,7 +438,7 @@ async fn direct_transport_failure_routes_to_recovery_spool() -> TestResult<()> {
     let (_shutdown_tx, shutdown_rx) = oneshot::channel();
     let mut batcher = EventBatcher::new(
         transport,
-        EventBatcherConfig::default(),
+        synthetic_batcher_config(),
         receiver,
         shutdown_rx,
         work_dir.path().to_path_buf(),

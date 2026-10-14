@@ -31,7 +31,7 @@ use super::{
     path_validator::{VerifiedPath, create_secure_temp_path, validate_path_exists},
     run_command_async,
 };
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as AsyncCommand;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
@@ -96,6 +96,24 @@ impl TemporaryBlobPath {
 
     fn as_path(&self) -> &Utf8Path {
         &self.0
+    }
+
+    async fn create() -> RuntimeResult<(Self, tokio::fs::File)> {
+        let path = create_secure_temp_path("sinex_blob", "tmp")
+            .map_err(|error| SinexError::io(std::io::Error::other(error)))?;
+        let mut options = tokio::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(super::CONTENT_STORE_FILE_MODE);
+        let file = options.open(&path).await.map_err(SinexError::io)?;
+        // Only construct the cleanup guard after exclusive creation succeeds;
+        // a path collision must never delete somebody else's file.
+        let guard = Self::new(path);
+        super::restrict_permissions(
+            guard.as_path().as_std_path(),
+            super::CONTENT_STORE_FILE_MODE,
+        );
+        Ok((guard, file))
     }
 }
 
@@ -392,6 +410,11 @@ impl ContentStoreManager {
     }
 
     /// Ingest a file into the content store
+    /// Apply the existing artifact size limit before a bounded metadata read.
+    pub(crate) fn ensure_ingest_size_allowed(&self, size: u64) -> RuntimeResult<()> {
+        self.content_store.ensure_file_size_allowed(size)
+    }
+
     pub async fn ingest_file(
         &self,
         file_path: &VerifiedPath,
@@ -460,6 +483,73 @@ impl ContentStoreManager {
         Ok(blob_metadata)
     }
 
+    /// Copy an authenticated external locator into process-owned temporary
+    /// custody before using the owned-upload CAS boundary. Ordinary ingest_file
+    /// keeps its existing configured-root containment rule.
+    pub(crate) async fn ingest_external_file(
+        &self,
+        file_path: &VerifiedPath,
+        original_filename: Option<&str>,
+    ) -> RuntimeResult<BlobMetadata> {
+        let validated_path = file_path.as_path();
+        let metadata = tokio::fs::metadata(validated_path)
+            .await
+            .map_err(SinexError::io)?;
+        if !metadata.is_file() {
+            return Err(SinexError::validation(
+                "External blob input is not a regular file",
+            ));
+        }
+        self.content_store
+            .ensure_file_size_allowed(metadata.len())?;
+        let mut source = tokio::fs::File::open(validated_path)
+            .await
+            .map_err(SinexError::io)?;
+        let metadata = source.metadata().await.map_err(SinexError::io)?;
+        if !metadata.is_file() {
+            return Err(SinexError::validation(
+                "External blob input is not a regular file",
+            ));
+        }
+        self.content_store
+            .ensure_file_size_allowed(metadata.len())?;
+        let filename = require_ingest_filename(validated_path, original_filename)?;
+        let content_type = Self::detect_mime_type(validated_path)?;
+        let (temporary, mut destination) = TemporaryBlobPath::create().await?;
+        let mut buffer = vec![0_u8; 64 * 1024];
+        let mut copied = 0_u64;
+        loop {
+            let read = source.read(&mut buffer).await.map_err(SinexError::io)?;
+            if read == 0 {
+                break;
+            }
+            copied = copied
+                .checked_add(read as u64)
+                .ok_or_else(|| SinexError::blob_storage("External blob byte size overflows u64"))?;
+            self.content_store.ensure_file_size_allowed(copied)?;
+            destination
+                .write_all(&buffer[..read])
+                .await
+                .map_err(SinexError::io)?;
+        }
+        destination.sync_all().await.map_err(SinexError::io)?;
+        drop(destination);
+        let size_bytes = i64::try_from(copied).map_err(|error| {
+            SinexError::blob_storage("blob size does not fit database metadata").with_source(error)
+        })?;
+        // This native helper still reads the bounded file into RAM for BLAKE3.
+        let blake3_hash = MaterialContentStore::compute_blake3_hash_with_limit(
+            temporary.as_path(),
+            self.content_store.config.max_blob_size,
+        )
+        .await?;
+        if let Some(existing) = self.check_dedup(&blake3_hash, filename).await? {
+            return Ok(existing);
+        }
+        self.ingest_owned_temp_file(&temporary, filename, size_bytes, &content_type, blake3_hash)
+            .await
+    }
+
     /// Ingest content from bytes (for in-memory content like clipboard)
     pub async fn ingest_from_bytes(
         &self,
@@ -484,30 +574,29 @@ impl ContentStoreManager {
             return Ok(existing);
         }
 
-        // Write to secure temp file for content-store ingestion
-        let temp_file_path = TemporaryBlobPath::new(
-            create_secure_temp_path("sinex_blob", "tmp")
-                .map_err(|e| SinexError::io(std::io::Error::other(e)))?,
-        );
-
-        let mut temp_file = tokio::fs::File::create(temp_file_path.as_path())
-            .await
-            .map_err(SinexError::io)?;
-        // sinex-vyi3: this transient file (holding the full content bytes
-        // about to be staged into CAS) lives in the SYSTEM temp directory,
-        // not under any of the ingest-spool paths the NixOS directoryRules
-        // fix tightens -- restrict it explicitly.
-        super::restrict_permissions(
-            temp_file_path.as_path().as_std_path(),
-            super::CONTENT_STORE_FILE_MODE,
-        );
+        let (temporary, mut temp_file) = TemporaryBlobPath::create().await?;
         temp_file.write_all(content).await.map_err(SinexError::io)?;
         temp_file.sync_all().await.map_err(SinexError::io)?;
         drop(temp_file);
+        let size_bytes = i64::try_from(content.len()).map_err(|error| {
+            SinexError::blob_storage("blob size does not fit database metadata").with_source(error)
+        })?;
+        self.ingest_owned_temp_file(&temporary, filename, size_bytes, content_type, blake3_hash)
+            .await
+    }
 
+    /// Only a process-owned upload guard can enter the external-root CAS path.
+    async fn ingest_owned_temp_file(
+        &self,
+        temporary: &TemporaryBlobPath,
+        filename: &str,
+        size_bytes: i64,
+        content_type: &str,
+        blake3_hash: String,
+    ) -> RuntimeResult<BlobMetadata> {
         let (content_key, write_lease) = self
             .content_store
-            .store_owned_temp_file_with_lease(temp_file_path.as_path())
+            .store_owned_temp_file_with_lease(temporary.as_path())
             .await
             .map_err(|e| {
                 SinexError::processing("Failed to add buffered upload to content store")
@@ -522,10 +611,7 @@ impl ContentStoreManager {
             .register_new_blob(
                 &content_key,
                 filename,
-                i64::try_from(content.len()).map_err(|error| {
-                    SinexError::blob_storage("blob size does not fit database metadata")
-                        .with_source(error)
-                })?,
+                size_bytes,
                 content_type.to_string(),
                 blake3_hash,
             )
@@ -1136,3 +1222,72 @@ impl ContentStoreManager {
 #[cfg(test)]
 #[path = "manager_test.rs"]
 mod tests;
+
+#[cfg(test)]
+mod external_upload_tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn external_file_is_copied_into_native_custody_without_root_policy_relaxation(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let directory = tempfile::tempdir()?;
+        let root = Utf8PathBuf::from_path_buf(directory.path().join("content-store"))
+            .map_err(|_| color_eyre::eyre::eyre!("synthetic root must be UTF-8"))?;
+        let source_path = Utf8PathBuf::from_path_buf(directory.path().join("transport.txt"))
+            .map_err(|_| color_eyre::eyre::eyre!("synthetic transport path must be UTF-8"))?;
+        let payload = b"synthetic external transport custody\n";
+        tokio::fs::write(&source_path, payload).await?;
+        let verified = VerifiedPath::from_utf8_path(&source_path)?;
+        let manager = ContentStoreManager::new(
+            ContentStoreConfig {
+                root_path: root,
+                ..Default::default()
+            },
+            ctx.pool().clone(),
+            None,
+        )?;
+        let refusal = manager.ingest_file(&verified, None).await.unwrap_err();
+        assert!(
+            refusal
+                .sources()
+                .iter()
+                .any(|source| source.contains("escapes configured root")),
+            "{refusal:?}"
+        );
+        let blob = manager.ingest_external_file(&verified, None).await?;
+        tokio::fs::remove_file(&source_path).await?;
+        assert_eq!(blob.size_bytes, payload.len() as i64);
+        let stored = manager.get_blob_path(&blob.content_key()).await?;
+        assert_eq!(tokio::fs::read(&stored).await?, payload);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn external_file_adapter_preserves_configured_blob_size_guard(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let directory = tempfile::tempdir()?;
+        let root = Utf8PathBuf::from_path_buf(directory.path().join("content-store"))
+            .map_err(|_| color_eyre::eyre::eyre!("synthetic root must be UTF-8"))?;
+        let source_path = Utf8PathBuf::from_path_buf(directory.path().join("transport.txt"))
+            .map_err(|_| color_eyre::eyre::eyre!("synthetic transport path must be UTF-8"))?;
+        tokio::fs::write(&source_path, b"synthetic bytes exceeding four").await?;
+        let manager = ContentStoreManager::new(
+            ContentStoreConfig {
+                root_path: root,
+                max_blob_size: 4,
+                ..Default::default()
+            },
+            ctx.pool().clone(),
+            None,
+        )?;
+        let error = manager
+            .ingest_external_file(&VerifiedPath::from_utf8_path(&source_path)?, None)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("exceeds limit"), "{error}");
+        Ok(())
+    }
+}

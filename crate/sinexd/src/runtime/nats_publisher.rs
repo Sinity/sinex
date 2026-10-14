@@ -21,6 +21,15 @@ use std::{
 use tokio::sync::{Mutex, Semaphore};
 
 const DEFAULT_PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Transport evidence for reconciling a prepared request after a missing
+/// reply. Publication acceptance is distinct from event-engine settlement.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RawIntentPublishAck {
+    pub stream: String,
+    pub sequence: u64,
+    pub duplicate: bool,
+}
 const DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY: usize = 100;
 const DEFAULT_TELEMETRY_PUBLISH_CONCURRENCY: usize = 16;
 const DEFAULT_RAW_INGEST_DLQ_PUBLISH_CONCURRENCY: usize = 16;
@@ -330,6 +339,18 @@ impl NatsPublisher {
         intent: &EventIntent,
         class: transport::Class,
     ) -> RuntimeResult<()> {
+        self.publish_intent_with_ack(intent, class)
+            .await
+            .map(|_| ())
+    }
+
+    /// Publish through the same native boundary while retaining its exact
+    /// stream/sequence receipt for request recovery. This is not confirmation.
+    pub async fn publish_intent_with_ack(
+        &self,
+        intent: &EventIntent,
+        class: transport::Class,
+    ) -> RuntimeResult<RawIntentPublishAck> {
         debug_assert!(
             matches!(
                 class,
@@ -395,7 +416,11 @@ impl NatsPublisher {
             "Event intent envelope published to JetStream"
         );
 
-        Ok(())
+        Ok(RawIntentPublishAck {
+            stream: ack.stream,
+            sequence: ack.sequence,
+            duplicate: ack.duplicate,
+        })
     }
 
     /// LOW-LEVEL ESCAPE HATCH: publish raw events without an admission envelope.

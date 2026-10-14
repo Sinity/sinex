@@ -3532,8 +3532,23 @@ async fn polylogue_fixture_material_and_mixed_envelope_survive_restart(
     let mut withheld_rx = registry.register(withheld_event_id.unwrap().into());
     let mut bad_rx = registry.register(bad_id.into());
     let mut intent = admission_envelope_multi("integration.polylogue", events);
+    let manifest_locator = custody.path().join("manifest-input.json");
+    std::fs::write(&manifest_locator, &manifest_bytes)?;
+    let manifest_blob = content_store
+        .ingest_from_bytes(&manifest_bytes, "manifest.json", "application/json")
+        .await?;
+    let manifest_record = ctx
+        .pool
+        .source_materials()
+        .register_material_with_total_bytes(
+            SourceMaterial::file(manifest_locator.to_string_lossy().into_owned())
+                .with_optional_blob_id(Some(manifest_blob.id)),
+            i64::try_from(manifest_bytes.len())?,
+        )
+        .await?;
+    std::fs::remove_file(&manifest_locator)?;
     intent["polylogue_revision"] = json!({
-        "manifest_json": String::from_utf8(manifest_bytes.clone())?,
+        "manifest_material_id": manifest_record.id,
         "segment_material_ids": material_ids
             .iter()
             .map(|(index, material_id)| (index.to_string(), material_id.to_string()))
@@ -3790,3 +3805,6 @@ async fn polylogue_fixture_material_and_mixed_envelope_survive_restart(
     let _ = final_handle.await;
     Ok(())
 }
+
+#[path = "external_rpc_native.rs"]
+mod external_rpc_native;

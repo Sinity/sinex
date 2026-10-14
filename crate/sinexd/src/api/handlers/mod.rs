@@ -18,6 +18,7 @@ pub mod lifecycle;
 pub mod llm;
 pub mod ops;
 pub mod pkm;
+pub mod polylogue_revision;
 pub mod predictions;
 pub mod privacy;
 pub mod projection;

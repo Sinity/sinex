@@ -169,7 +169,14 @@ impl Supervisor {
             let Some(api_config) = api_config else {
                 return Err(SinexError::configuration("API enabled without API config"));
             };
-            match start_api(api_config, shutdown_rx.clone(), escalate_tx.clone()).await {
+            match start_api(
+                api_config,
+                reconcile_config.as_ref(),
+                shutdown_rx.clone(),
+                escalate_tx.clone(),
+            )
+            .await
+            {
                 Ok(handle) => Some(handle),
                 Err(error) => {
                     error!(
@@ -459,12 +466,23 @@ async fn join_event_engine_after_startup_failure(handle: tokio::task::JoinHandle
 
 async fn start_api(
     config: GatewayConfig,
+    event_engine_config: Option<&EventEngineConfig>,
     shutdown_rx: watch::Receiver<bool>,
     escalate_tx: watch::Sender<bool>,
 ) -> Result<tokio::task::JoinHandle<()>> {
     let services = ServiceContainer::new(&config).await.map_err(|error| {
         SinexError::service("failed to construct ServiceContainer").with_std_error(&error)
     })?;
+    let services = if let Some(engine) = event_engine_config {
+        services.with_raw_activity_topology(sinex_primitives::nats::JetStreamTopology::new(
+            &sinex_primitives::environment::environment(),
+            engine.nats_stream_name.clone(),
+            engine.nats_consumer_name.clone(),
+            engine.nats_namespace.as_deref(),
+        ))
+    } else {
+        services
+    };
     Ok(tokio::spawn(async move {
         // For rpc_server we have to hand the receiver in (it observes
         // shutdown internally), so clone for the post-exit check.
