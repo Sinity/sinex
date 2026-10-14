@@ -76,6 +76,7 @@ fn fixture_mode() -> SourceModeStatusView {
         criticality: None,
         runtime_observed: None,
         runtime_live: None,
+        acquisition_opportunity: None,
         last_heartbeat_at: None,
         last_output_at: None,
         recent_output_count: None,

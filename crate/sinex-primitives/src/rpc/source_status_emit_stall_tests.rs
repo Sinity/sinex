@@ -20,6 +20,7 @@ fn base(now: Timestamp) -> SourceStatus {
         current_health: None,
         health_changed_at: None,
         health_reason: None,
+        acquisition_opportunity: None,
         recent_output_count: 0,
         last_output_at: None,
     }

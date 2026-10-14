@@ -46,7 +46,7 @@ cache = "tree+environment"
 [operations.build_default]
 description = "Build Sinex packages through the foreground semantic build route"
 exec = ["xtask", "build"]
-pool = "normal"
+pool = "bulk"
 result = "exit"
 cache = "tree+environment"
 
@@ -98,7 +98,7 @@ cache = "tree+environment"
 [operations.test_default]
 description = "Run Sinex's foreground nextest workflow through its semantic test planner"
 exec = ["xtask", "test"]
-pool = "normal"
+pool = "bulk"
 result = "exit"
 cache = "tree+environment"
 

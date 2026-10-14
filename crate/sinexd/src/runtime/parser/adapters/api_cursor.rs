@@ -40,6 +40,7 @@ use serde_json::{Map, Value as JsonValue};
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
+use sinex_primitives::sources::opportunity::{AcquisitionOpportunity, OpportunityCompleteness};
 
 use crate::runtime::parser::{InputShapeAdapter, ParserError, ParserResult};
 
@@ -335,6 +336,20 @@ fn build_record_metadata(
 pub struct ApiCursorAdapter<C: ApiClient> {
     client: Arc<C>,
     retry: RetryPolicy,
+    coverage_reporter: Option<(
+        String,
+        Arc<dyn Fn(AcquisitionOpportunity) + Send + Sync + 'static>,
+    )>,
+}
+
+impl<C: ApiClient> Clone for ApiCursorAdapter<C> {
+    fn clone(&self) -> Self {
+        Self {
+            client: Arc::clone(&self.client),
+            retry: self.retry,
+            coverage_reporter: self.coverage_reporter.clone(),
+        }
+    }
 }
 
 /// Fetch one page from `client` with exponential-backoff retry.
@@ -389,6 +404,7 @@ impl<C: ApiClient + 'static> ApiCursorAdapter<C> {
         Self {
             client: Arc::new(client),
             retry: RetryPolicy::default(),
+            coverage_reporter: None,
         }
     }
 
@@ -396,6 +412,21 @@ impl<C: ApiClient + 'static> ApiCursorAdapter<C> {
     #[must_use]
     pub fn with_retry(mut self, retry: RetryPolicy) -> Self {
         self.retry = retry;
+        self
+    }
+
+    /// Register an opt-in source-scoped report for exhausted page fetches.
+    ///
+    /// The report describes an incomplete acquisition scope and includes the
+    /// cursor at which the failed page began. The normal parser error remains
+    /// in the stream, so callers can record the opportunity without changing
+    /// the adapter's default error behavior.
+    #[must_use]
+    pub fn with_coverage<F>(mut self, source_id: impl Into<String>, report: F) -> Self
+    where
+        F: Fn(AcquisitionOpportunity) + Send + Sync + 'static,
+    {
+        self.coverage_reporter = Some((source_id.into(), Arc::new(report)));
         self
     }
 }
@@ -448,6 +479,7 @@ where
 
         let client = Arc::clone(&self.client);
         let retry = self.retry;
+        let coverage_reporter = self.coverage_reporter.clone();
 
         // State: None = exhausted, Some((cursor, page_index)) = next page to fetch.
         //
@@ -458,6 +490,7 @@ where
             Some((start_cursor, start_page_index)),
             move |state: Option<(Option<String>, u64)>| {
                 let client = Arc::clone(&client);
+                let coverage_reporter = coverage_reporter.clone();
                 async move {
                     let (current_cursor, page_index) = state?;
 
@@ -465,6 +498,19 @@ where
                         match fetch_page(client.as_ref(), retry, current_cursor.as_deref()).await {
                             Ok(p) => p,
                             Err(e) => {
+                                if let Some((source_id, report)) = &coverage_reporter {
+                                    report(AcquisitionOpportunity {
+                                        source_id: source_id.clone(),
+                                        completeness: OpportunityCompleteness::Incomplete,
+                                        reason: format!(
+                                            "api page acquisition failed after retries at page {page_index}: {e}"
+                                        ),
+                                        affected_paths: Vec::new(),
+                                        observed_at_unix_nanos: None,
+                                        cursor_before: current_cursor.clone(),
+                                        cursor_after: None,
+                                    });
+                                }
                                 // Surface the fetch error as a single Err item, then
                                 // terminate the stream (next_state = None).
                                 let err = Err(ParserError::Adapter(e.to_string()));

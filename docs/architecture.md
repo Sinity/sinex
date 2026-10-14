@@ -569,3 +569,22 @@ source events — there is no per-source "leak that persists into derived events
 class once a rule is configured.
 
 ---
+
+## Acquisition observations
+
+The default supervisor and API share a process-local latest observation per logical
+source. `sources.status` and each mode in `sources.status.view` expose typed
+acquisition uncertainty separately from persistence, liveness, and parser health.
+Absent observations do not establish completeness; a restart or API-only process
+does not inherit another process's reports. A successful drain carries no
+scope-aware reconciliation witness, so it does not erase prior uncertainty.
+FileDrop is a positive-only watcher with no finite scan: callback overflow
+retains affected paths and observation time when known and dispatches no hidden
+reconciliation. Failed provider pages remain incomplete and preserve the resume
+cursor for the failed page.
+
+Production journald bindings retain independent readers and opaque per-binding
+cursors. Child failures report unknown acquisition scope without advancing that
+cursor. A failed query alone does not prove retention loss. The optional shared
+broadcast adapter reports source-scoped uncertainty on lag; its channel backlog
+is not a count of missing source records and it is not production capture evidence.

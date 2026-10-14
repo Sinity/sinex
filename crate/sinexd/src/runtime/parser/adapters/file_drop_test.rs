@@ -6,12 +6,153 @@ use std::sync::{
     Arc as StdArc,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::{Duration as StdDuration, UNIX_EPOCH};
 use tempfile::TempDir;
 use tokio::time::{Duration, sleep};
 use xtask::sandbox::prelude::sinex_test;
 
 fn dummy_material_id() -> Id<SourceMaterial> {
     Id::from_uuid(uuid::Uuid::new_v4())
+}
+
+#[test]
+fn bounded_notify_queue_overflow_reports_unknown_path_and_time_scope() {
+    use std::sync::Mutex;
+
+    let (tx, mut rx) = mpsc::channel(1);
+    let queued = Event::new(EventKind::Any).add_path(PathBuf::from("/watched/already-queued"));
+    tx.try_send(Ok(queued)).expect("seed bounded queue");
+
+    let reports = StdArc::new(Mutex::new(Vec::new()));
+    let report_sink = StdArc::clone(&reports);
+    let coverage_sink: FileDropCoverageSink = (
+        "source.files.example".into(),
+        vec!["/watched".into()],
+        Arc::new(move |report| report_sink.lock().unwrap().push(report)),
+    );
+    let affected_path = PathBuf::from("/watched/overflowed.txt");
+    let dropped =
+        Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(affected_path);
+    let observed_at = UNIX_EPOCH + StdDuration::from_secs(123);
+
+    try_send_notify_result(&tx, Ok(dropped), Some(&coverage_sink), observed_at);
+
+    let reports = reports.lock().unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].source_id, "source.files.example");
+    assert_eq!(
+        reports[0].completeness,
+        sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown
+    );
+    assert!(reports[0].reason.contains("/watched/overflowed.txt"));
+    assert_eq!(
+        reports[0].affected_paths,
+        vec!["/watched/overflowed.txt".to_string()]
+    );
+    assert!(
+        reports[0]
+            .reason
+            .contains("observed_at_unix_nanos=Some(123000000000)")
+    );
+    assert_eq!(reports[0].observed_at_unix_nanos, Some(123_000_000_000));
+    assert!(!reports[0].reason.contains("missing_count"));
+    assert!(reports[0].reason.contains("no scan was dispatched"));
+    assert!(reports[0].reason.contains("no finite reconciliation scan"));
+    drop(reports);
+
+    // The overflow only reports uncertainty. It neither admits a record for
+    // the dropped event nor schedules a reconciliation scan.
+    let received = rx.try_recv().expect("pre-existing queued event retained");
+    assert_eq!(
+        received.unwrap().paths[0],
+        PathBuf::from("/watched/already-queued")
+    );
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn full_notify_error_queue_reports_unknown_configured_watch_scope() {
+    use std::sync::Mutex;
+
+    let (tx, _rx) = mpsc::channel(1);
+    tx.try_send(Ok(Event::new(EventKind::Any)))
+        .expect("seed bounded queue");
+
+    let reports = StdArc::new(Mutex::new(Vec::new()));
+    let report_sink = StdArc::clone(&reports);
+    let coverage_sink: FileDropCoverageSink = (
+        "source.files.example".into(),
+        vec!["/watched/root".into()],
+        Arc::new(move |report| report_sink.lock().unwrap().push(report)),
+    );
+    let error = notify::Error::generic("native watcher overflow");
+
+    try_send_notify_result(
+        &tx,
+        Err(error),
+        Some(&coverage_sink),
+        UNIX_EPOCH + StdDuration::from_secs(456),
+    );
+
+    let reports = reports.lock().unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].source_id, "source.files.example");
+    assert_eq!(
+        reports[0].completeness,
+        sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown
+    );
+    assert!(reports[0].reason.contains("native watcher overflow"));
+    assert!(reports[0].reason.contains("/watched/root"));
+    assert_eq!(reports[0].affected_paths, vec!["/watched/root".to_string()]);
+    assert!(
+        reports[0]
+            .reason
+            .contains("observed_at_unix_nanos=Some(456000000000)")
+    );
+    assert_eq!(reports[0].observed_at_unix_nanos, Some(456_000_000_000));
+    assert!(!reports[0].reason.contains("missing_count"));
+}
+
+#[test]
+fn notify_overflow_unrepresentable_observation_time_remains_unknown() {
+    use std::sync::Mutex;
+
+    for observed_at in [
+        UNIX_EPOCH - StdDuration::from_secs(1),
+        UNIX_EPOCH + StdDuration::from_secs(u64::MAX / 1_000_000_000 + 1),
+    ] {
+        let (tx, _rx) = mpsc::channel(1);
+        tx.try_send(Ok(Event::new(EventKind::Any))).unwrap();
+        let reports = StdArc::new(Mutex::new(Vec::new()));
+        let report_sink = StdArc::clone(&reports);
+        let coverage_sink: FileDropCoverageSink = (
+            "source.files.synthetic-clock".into(),
+            vec!["/watched".into()],
+            Arc::new(move |report| report_sink.lock().unwrap().push(report)),
+        );
+        try_send_notify_result(
+            &tx,
+            Ok(Event::new(EventKind::Any)),
+            Some(&coverage_sink),
+            observed_at,
+        );
+        let reports = reports.lock().unwrap();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].observed_at_unix_nanos, None);
+    }
+}
+
+#[test]
+fn default_notify_queue_delivery_remains_unchanged() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let event = Event::new(EventKind::Any).add_path(PathBuf::from("/watched/default.txt"));
+
+    try_send_notify_result(&tx, Ok(event), None, UNIX_EPOCH);
+
+    assert_eq!(
+        rx.try_recv().unwrap().unwrap().paths[0],
+        PathBuf::from("/watched/default.txt")
+    );
 }
 
 #[cfg(feature = "messaging")]

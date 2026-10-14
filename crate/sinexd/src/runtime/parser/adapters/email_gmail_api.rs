@@ -538,6 +538,19 @@ fn gmail_history_record(
 /// Scheduled Gmail API adapter.
 pub struct GmailApiCursorAdapter<C: GmailApiClient> {
     client: Arc<C>,
+    coverage_reporter: Option<(
+        String,
+        Arc<dyn Fn(sinex_primitives::sources::opportunity::AcquisitionOpportunity) + Send + Sync>,
+    )>,
+}
+
+impl<C: GmailApiClient> Clone for GmailApiCursorAdapter<C> {
+    fn clone(&self) -> Self {
+        Self {
+            client: Arc::clone(&self.client),
+            coverage_reporter: self.coverage_reporter.clone(),
+        }
+    }
 }
 
 impl<C: GmailApiClient> GmailApiCursorAdapter<C> {
@@ -545,7 +558,21 @@ impl<C: GmailApiClient> GmailApiCursorAdapter<C> {
     pub fn new(client: C) -> Self {
         Self {
             client: Arc::new(client),
+            coverage_reporter: None,
         }
+    }
+
+    /// Register an opt-in source-scoped report for exhausted provider pages.
+    #[must_use]
+    pub fn with_coverage<F>(mut self, source_id: impl Into<String>, report: F) -> Self
+    where
+        F: Fn(sinex_primitives::sources::opportunity::AcquisitionOpportunity)
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.coverage_reporter = Some((source_id.into(), Arc::new(report)));
+        self
     }
 }
 
@@ -575,18 +602,33 @@ where
         let start_page_index = cursor.as_ref().map_or(0, |cursor| cursor.page_index);
         let request_seed = GmailRequestSeed::from_config(config);
         let client = Arc::clone(&self.client);
+        let coverage_reporter = self.coverage_reporter.clone();
 
         let pages = stream::unfold(
             Some((start_page_token, start_history_id, start_page_index)),
             move |state| {
                 let client = Arc::clone(&client);
                 let request_seed = request_seed.clone();
+                let coverage_reporter = coverage_reporter.clone();
                 async move {
                     let (page_token, history_id, page_index) = state?;
                     let request = request_seed.to_request(page_token.clone(), history_id.clone());
                     let page = match client.fetch_page(request).await {
                         Ok(page) => page,
                         Err(error) => {
+                            if let Some((source_id, report)) = &coverage_reporter {
+                                report(sinex_primitives::sources::opportunity::AcquisitionOpportunity {
+                                    source_id: source_id.clone(),
+                                    completeness: sinex_primitives::sources::opportunity::OpportunityCompleteness::Incomplete,
+                                    reason: format!(
+                                        "Gmail API page acquisition failed at page {page_index}; explicit source scan can resume this provider scope: {error}"
+                                    ),
+                                    affected_paths: Vec::new(),
+                                    observed_at_unix_nanos: None,
+                                    cursor_before: page_token.clone().or(history_id.clone()),
+                                    cursor_after: None,
+                                });
+                            }
                             return Some((
                                 vec![Err(ParserError::Adapter(format!(
                                     "Gmail API fetch failed: {error}"
@@ -777,4 +819,80 @@ fn build_gmail_record(
         source_ts_hint: None,
         metadata: JsonValue::Object(metadata),
     })
+}
+
+#[cfg(all(test, feature = "messaging"))]
+mod tests {
+    use std::{error::Error, fmt};
+
+    use crate::runtime::parser::InputShapeAdapterExt;
+    use futures::StreamExt;
+    use xtask::sandbox::prelude::sinex_test;
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct ProviderUnavailable;
+
+    impl fmt::Display for ProviderUnavailable {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("synthetic Gmail page network failure")
+        }
+    }
+
+    impl Error for ProviderUnavailable {}
+
+    struct FailedGmailClient;
+
+    impl GmailApiClient for FailedGmailClient {
+        type Error = ProviderUnavailable;
+
+        async fn fetch_page(
+            &self,
+            _request: GmailApiPageRequest,
+        ) -> Result<GmailApiPage, Self::Error> {
+            Err(ProviderUnavailable)
+        }
+    }
+
+    #[sinex_test]
+    async fn failed_provider_page_is_incomplete_and_visible_by_source()
+    -> xtask::sandbox::TestResult<()> {
+        let source_id = format!("email.test.{}", uuid::Uuid::now_v7());
+        let adapter = GmailApiCursorAdapter::new(FailedGmailClient);
+        let stream = adapter
+            .open_with_source_id(
+                &source_id,
+                Id::<sinex_primitives::events::SourceMaterial>::from_uuid(uuid::Uuid::now_v7()),
+                &GmailApiCursorConfig {
+                    account_binding_ref: "synthetic-test-account".to_string(),
+                    mailbox_scope: Some("fixture-folder".to_string()),
+                    initial_page_token: None,
+                    initial_history_id: None,
+                    page_size: 10,
+                    label_ids: Vec::new(),
+                    include_spam_trash: false,
+                },
+                None,
+                None,
+            )
+            .await
+            .expect("adapter opens a stream before fetching the page");
+        let items: Vec<_> = stream.collect().await;
+        assert_eq!(items.len(), 1, "network failure remains a stream error");
+        assert!(
+            matches!(&items[0], Err(ParserError::Adapter(message)) if message.contains("synthetic Gmail page network failure"))
+        );
+
+        let opportunity = crate::runtime::acquisition_opportunity::latest(&source_id)
+            .expect("source-scoped opportunity is retained");
+        assert_eq!(
+            opportunity.completeness,
+            sinex_primitives::sources::opportunity::OpportunityCompleteness::Incomplete
+        );
+        assert!(opportunity.reason.contains("page 0"));
+        assert!(opportunity.cursor_before.is_none());
+        crate::runtime::acquisition_opportunity::clear_test_observation(&source_id);
+        Ok(())
+    }
 }

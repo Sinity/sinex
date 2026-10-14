@@ -12,6 +12,7 @@ use sinex_primitives::source_contracts::{
     RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceRecoveryPolicy, SubjectRef,
     all_source_contracts, source_runtime_bindings,
 };
+use sinex_primitives::sources::opportunity::{AcquisitionOpportunity, OpportunityCompleteness};
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, SourceCoverageListView,
 };
@@ -41,6 +42,104 @@ fn session_record(
         observed_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     }
+}
+
+#[test]
+fn source_status_includes_latest_acquisition_opportunity() {
+    let source_id = format!("status-test-{}", uuid::Uuid::now_v7());
+    crate::runtime::acquisition_opportunity::report(AcquisitionOpportunity {
+        source_id: source_id.clone(),
+        completeness: OpportunityCompleteness::Unknown,
+        reason: "bounded watcher queue overflow; explicit source scan may reconcile".to_string(),
+        affected_paths: vec!["/fixture/watch-root/item.txt".to_string()],
+        observed_at_unix_nanos: Some(123_000_000_000),
+        cursor_before: None,
+        cursor_after: None,
+    });
+
+    let status = source_runtime_observations(
+        vec![sinex_db::repositories::state::SourcesStatusRow {
+            module_name: ModuleName::new(&source_id),
+            version: "1.0.0".to_string(),
+            description: None,
+            manifest_status: Some("running".to_string()),
+            live: true,
+            service_name: None,
+            instance_id: None,
+            module_run_id: None,
+            host: None,
+            run_status: Some("running".to_string()),
+            started_at: None,
+            last_heartbeat_at: None,
+            current_health: None,
+            health_changed_at: None,
+            health_reason: None,
+            recent_output_count: 0,
+            last_output_at: None,
+        }],
+        30,
+        Timestamp::now(),
+    )
+    .remove(&source_id)
+    .expect("runtime source status");
+
+    let encoded = serde_json::to_value(status).expect("serialize source status");
+    assert_eq!(
+        encoded["acquisition_opportunity"]["completeness"],
+        "unknown"
+    );
+    assert_eq!(
+        encoded["acquisition_opportunity"]["reason"],
+        "bounded watcher queue overflow; explicit source scan may reconcile"
+    );
+    assert_eq!(
+        encoded["acquisition_opportunity"]["affected_paths"][0],
+        "/fixture/watch-root/item.txt"
+    );
+    assert_eq!(
+        encoded["acquisition_opportunity"]["observed_at_unix_nanos"],
+        123_000_000_000_u64
+    );
+}
+
+#[test]
+fn source_status_view_preserves_acquisition_scope_without_runtime_heartbeat() {
+    let source_id = format!("status-mode-synthetic-{}", uuid::Uuid::now_v7());
+    let opportunity = AcquisitionOpportunity {
+        source_id: source_id.clone(),
+        completeness: OpportunityCompleteness::Unknown,
+        reason: "direct journal reader query failed; coverage unknown".into(),
+        affected_paths: Vec::new(),
+        observed_at_unix_nanos: None,
+        cursor_before: Some("opaque-resume-cursor".into()),
+        cursor_after: None,
+    };
+    crate::runtime::acquisition_opportunity::report(opportunity.clone());
+    let mode = source_mode_status_view(
+        &source_id,
+        &BINDING,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+    assert_eq!(mode.acquisition_opportunity, Some(opportunity));
+    let encoded = serde_json::to_value(mode).unwrap();
+    assert_eq!(encoded["acquisition_opportunity"]["source_id"], source_id);
+    assert_eq!(
+        encoded["acquisition_opportunity"]["completeness"],
+        "unknown"
+    );
+    assert_eq!(
+        encoded["acquisition_opportunity"]["cursor_before"],
+        "opaque-resume-cursor"
+    );
+    assert!(
+        encoded["acquisition_opportunity"]
+            .get("missing_count")
+            .is_none()
+    );
+    assert_eq!(encoded.get("runtime_observed"), None);
+    crate::runtime::acquisition_opportunity::clear_test_observation(&source_id);
 }
 
 #[sinex_test]
@@ -2116,9 +2215,11 @@ async fn runtime_bridge_coverage_surfaces_stall_even_with_historical_output()
 
     assert_eq!(
         view.continuity,
-        SourceCoverageContinuity::Active,
-        "historical material/events should still make the source coverage active"
+        SourceCoverageContinuity::Stale,
+        "historical coverage remains present, but two-hour-old output is stale"
     );
+    assert_eq!(view.event_count, 42);
+    assert_eq!(view.material_count, 7);
     assert!(
         view.gaps
             .iter()
@@ -2242,6 +2343,7 @@ fn fs_runtime_status(now: Timestamp) -> SourceStatus {
         current_health: Some(HealthStatus::Healthy),
         health_changed_at: Some(now - time::Duration::seconds(900)),
         health_reason: Some("filesystem watcher active".to_string()),
+        acquisition_opportunity: None,
         recent_output_count: 0,
         last_output_at: None,
     }
@@ -2264,6 +2366,7 @@ fn terminal_bridge_status(now: Timestamp) -> SourceStatus {
         current_health: Some(HealthStatus::Healthy),
         health_changed_at: Some(now - time::Duration::seconds(5)),
         health_reason: Some("bridge connected".to_string()),
+        acquisition_opportunity: None,
         recent_output_count: 0,
         last_output_at: None,
     }

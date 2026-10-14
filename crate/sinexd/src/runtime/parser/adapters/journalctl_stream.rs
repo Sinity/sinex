@@ -10,10 +10,10 @@
 //!
 //! # Fan-out: [`SharedJournalctlStream`]
 //!
-//! When multiple source contracts share a single `journalctl` subprocess (e.g.
-//! `system.systemd` + `system.journald`), use [`SharedJournalctlStream`] to
-//! avoid spawning one subprocess per unit. One background task drives the
-//! subprocess and broadcasts each [`SourceRecord`] to all registered
+//! Production bindings keep independent readers, each resuming from its own
+//! opaque checkpoint. [`SharedJournalctlStream`] is an opt-in adapter contract,
+//! not the production reader: a shared startup/replay frontier is not defined.
+//! In this optional adapter, one background task drives the subprocess and broadcasts each [`SourceRecord`] to all registered
 //! [`JournalctlSubscriber`]s via a `tokio::sync::broadcast` channel.
 //!
 //! ## Broadcast lag policy
@@ -144,15 +144,28 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
             let mut bytes_read: u64 = 0;
 
             // Keep child alive until this async block is dropped.
-            let _child = child;
-
             loop {
                 match lines.next_line().await {
                     Err(e) => {
                         yield Err(ParserError::Io(e));
                         break;
                     }
-                    Ok(None) => break,
+                    Ok(None) => {
+                        match child.wait().await {
+                            Ok(status) if status.success() => {}
+                            Ok(status) => {
+                                yield Err(ParserError::Adapter(format!(
+                                    "journalctl exited unsuccessfully: {status}"
+                                )));
+                            }
+                            Err(error) => {
+                                yield Err(ParserError::Adapter(format!(
+                                    "failed to wait for journalctl: {error}"
+                                )));
+                            }
+                        }
+                        break;
+                    }
                     Ok(Some(line)) => {
                         // `lines()` has already consumed this line's trailing newline,
                         // whether or not the line produces a record. Keep the stream-byte
@@ -381,7 +394,49 @@ impl SharedJournalctlStream {
         JournalctlSubscriber {
             receiver: self.sender.subscribe(),
             filter: Box::new(filter),
+            coverage_reporter: None,
         }
+    }
+
+    /// Register a filtered subscriber that reports acquisition uncertainty
+    /// when the shared broadcast queue drops records before this consumer can
+    /// receive them. The Tokio lag count is deliberately not exposed as a
+    /// source missing-event count because the subscriber may filter records.
+    pub fn subscribe_with_coverage<F, R>(
+        &self,
+        source_id: impl Into<String>,
+        filter: F,
+        report: R,
+    ) -> JournalctlSubscriber
+    where
+        F: Fn(&SourceRecord) -> bool + Send + Sync + 'static,
+        R: Fn(sinex_primitives::sources::opportunity::AcquisitionOpportunity)
+            + Send
+            + Sync
+            + 'static,
+    {
+        JournalctlSubscriber {
+            receiver: self.sender.subscribe(),
+            filter: Box::new(filter),
+            coverage_reporter: Some((source_id.into(), Box::new(report))),
+        }
+    }
+
+    /// Construct a source-scoped subscriber whose acquisition reports appear
+    /// in the runtime's `sources.status` response.
+    pub fn subscribe_for_source<F>(
+        &self,
+        source_id: impl Into<String>,
+        filter: F,
+    ) -> JournalctlSubscriber
+    where
+        F: Fn(&SourceRecord) -> bool + Send + Sync + 'static,
+    {
+        self.subscribe_with_coverage(
+            source_id,
+            filter,
+            crate::runtime::acquisition_opportunity::report,
+        )
     }
 }
 
@@ -396,6 +451,15 @@ impl SharedJournalctlStream {
 pub struct JournalctlSubscriber {
     receiver: broadcast::Receiver<SourceRecord>,
     filter: Box<dyn Fn(&SourceRecord) -> bool + Send + Sync + 'static>,
+    coverage_reporter: Option<(
+        String,
+        Box<
+            dyn Fn(sinex_primitives::sources::opportunity::AcquisitionOpportunity)
+                + Send
+                + Sync
+                + 'static,
+        >,
+    )>,
 }
 
 #[async_trait]
@@ -447,10 +511,35 @@ impl JournalctlSubscriber {
     ) -> impl futures::Stream<Item = crate::runtime::parser::ParserResult<SourceRecord>> + Send + 'static
     {
         async_stream::stream! {
+            let mut last_cursor: Option<String> = None;
+            let mut gap_waiting_for_recovery: Option<(u64, Option<String>)> = None;
             loop {
                 match self.receiver.recv().await {
                     Ok(record) => {
                         if (self.filter)(&record) {
+                            let cursor = JournalctlStreamAdapter
+                                .cursor_after(&record)
+                                .ok()
+                                .map(|cursor| cursor.cursor);
+                            if let Some((skipped, cursor_before)) = gap_waiting_for_recovery.take()
+                                && let (Some((source_id, report)), Some(cursor_after)) =
+                                    (&self.coverage_reporter, cursor.clone())
+                            {
+                                report(
+                                    sinex_primitives::sources::opportunity::AcquisitionOpportunity {
+                                        source_id: source_id.clone(),
+                                        completeness: sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown,
+                                        reason: format!("subscriber resumed after shared fan-out lag ({skipped} queued records skipped; source loss count unknown)"),
+                                        affected_paths: Vec::new(),
+                                        observed_at_unix_nanos: None,
+                                        cursor_before,
+                                        cursor_after: Some(cursor_after),
+                                    },
+                                );
+                            }
+                            if cursor.is_some() {
+                                last_cursor = cursor;
+                            }
                             yield Ok(record);
                         }
                         // Non-matching records are silently skipped.
@@ -461,6 +550,21 @@ impl JournalctlSubscriber {
                             "JournalctlSubscriber: broadcast channel lagged — \
                              {n} records dropped; subscriber was too slow to consume"
                         );
+                        if let Some((source_id, report)) = &self.coverage_reporter {
+                            let cursor_before = last_cursor.clone();
+                            report(
+                                sinex_primitives::sources::opportunity::AcquisitionOpportunity {
+                                    source_id: source_id.clone(),
+                                    completeness: sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown,
+                                    reason: format!("subscriber lagged on shared fan-out ({n} queued records skipped; source loss count unknown)"),
+                                    affected_paths: Vec::new(),
+                                    observed_at_unix_nanos: None,
+                                    cursor_before: cursor_before.clone(),
+                                    cursor_after: None,
+                                },
+                            );
+                            gap_waiting_for_recovery = Some((n, cursor_before));
+                        }
                         // Continue — resume at the oldest available message.
                     }
                     Err(broadcast::error::RecvError::Closed) => {

@@ -145,6 +145,9 @@ pub struct SourceModeStatusView {
     pub runtime_observed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_live: Option<bool>,
+    /// Process-local acquisition uncertainty; absence does not prove completeness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquisition_opportunity: Option<crate::sources::opportunity::AcquisitionOpportunity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_heartbeat_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "messaging")]
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -221,6 +221,12 @@ impl FileDropRecordMetadata {
 /// Cursor is `()` — this is a live stream with no replay capability.
 #[derive(Debug, Clone, Default)]
 pub struct FileDropAdapter;
+
+type FileDropCoverageReporter = Arc<
+    dyn Fn(sinex_primitives::sources::opportunity::AcquisitionOpportunity) + Send + Sync + 'static,
+>;
+
+type FileDropCoverageSink = (String, Vec<String>, FileDropCoverageReporter);
 
 /// File-drop adapter variant that can stage regular file contents as source material.
 #[derive(Debug, Clone, Default)]
@@ -765,47 +771,137 @@ impl InputShapeAdapter for FileDropAdapter {
         config: &Self::Config,
         _cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        let (tx, rx) = mpsc::channel::<notify::Result<Event>>(256);
-        let event_filter = config.events.clone();
-        let path_filter = FileDropPathFilter::from_config(config);
-
-        // Build watcher on the current thread; it sends events to the channel.
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            // Ignore send errors — channel closed means the stream was dropped.
-            let _ = tx.blocking_send(res);
-        })
-        .map_err(|e| ParserError::Adapter(format!("failed to create file watcher: {e}")))?;
-
-        let watch_targets = planned_file_drop_watch_targets(config)?;
-        info!(
-            target_count = watch_targets.len(),
-            recursive = config.recursive,
-            max_depth = ?config.max_depth,
-            ignored_directory_count = config.ignored_directory_names.len(),
-            ignored_suffix_count = config.ignored_file_suffixes.len(),
-            event_filter_count = config.events.len(),
-            "file-drop adapter starting native watches"
-        );
-
-        for (path, mode) in watch_targets {
-            debug!(
-                path = %path.display(),
-                mode = ?mode,
-                "file-drop adapter watching path"
-            );
-            watcher.watch(&path, mode).map_err(|e| {
-                ParserError::Adapter(format!("failed to watch {}: {e}", path.display()))
-            })?;
-        }
-
-        let stream = build_file_drop_stream(material_id, rx, event_filter, path_filter, watcher);
-        Ok(stream)
+        open_file_drop_stream(material_id, config, None).await
     }
 
     fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
         // FileDrop is anchor-only; there is no cursor to advance.
         Ok(FileDropCursor)
     }
+}
+
+impl FileDropAdapter {
+    /// Open a file watcher that reports bounded callback-queue overflow as
+    /// source-scoped acquisition uncertainty. The report is diagnostic only:
+    /// callers remain responsible for any scan or reconciliation.
+    pub async fn open_with_coverage<F>(
+        &self,
+        material_id: Id<SourceMaterial>,
+        config: &FileDropConfig,
+        source_id: impl Into<String>,
+        report: F,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>>
+    where
+        F: Fn(sinex_primitives::sources::opportunity::AcquisitionOpportunity)
+            + Send
+            + Sync
+            + 'static,
+    {
+        open_file_drop_stream(
+            material_id,
+            config,
+            Some((
+                source_id.into(),
+                config
+                    .watch_paths
+                    .iter()
+                    .map(|path| path.as_str().to_owned())
+                    .collect(),
+                Arc::new(report),
+            )),
+        )
+        .await
+    }
+}
+
+async fn open_file_drop_stream(
+    material_id: Id<SourceMaterial>,
+    config: &FileDropConfig,
+    coverage_sink: Option<FileDropCoverageSink>,
+) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+    let (tx, rx) = mpsc::channel::<notify::Result<Event>>(256);
+    let event_filter = config.events.clone();
+    let path_filter = FileDropPathFilter::from_config(config);
+
+    // Build watcher on the current thread; it sends events to the channel.
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
+        try_send_notify_result(&tx, res, coverage_sink.as_ref(), SystemTime::now());
+    })
+    .map_err(|e| ParserError::Adapter(format!("failed to create file watcher: {e}")))?;
+
+    let watch_targets = planned_file_drop_watch_targets(config)?;
+    info!(
+        target_count = watch_targets.len(),
+        recursive = config.recursive,
+        max_depth = ?config.max_depth,
+        ignored_directory_count = config.ignored_directory_names.len(),
+        ignored_suffix_count = config.ignored_file_suffixes.len(),
+        event_filter_count = config.events.len(),
+        "file-drop adapter starting native watches"
+    );
+
+    for (path, mode) in watch_targets {
+        debug!(
+            path = %path.display(),
+            mode = ?mode,
+            "file-drop adapter watching path"
+        );
+        watcher.watch(&path, mode).map_err(|e| {
+            ParserError::Adapter(format!("failed to watch {}: {e}", path.display()))
+        })?;
+    }
+
+    let stream = build_file_drop_stream(material_id, rx, event_filter, path_filter, watcher);
+    Ok(stream)
+}
+
+fn try_send_notify_result(
+    tx: &mpsc::Sender<notify::Result<Event>>,
+    result: notify::Result<Event>,
+    coverage_sink: Option<&FileDropCoverageSink>,
+    observed_at: SystemTime,
+) {
+    let Some((source_id, watched_paths, report)) = coverage_sink else {
+        // Preserve the original callback behavior for default subscribers.
+        let _ = tx.blocking_send(result);
+        return;
+    };
+
+    let Err(mpsc::error::TrySendError::Full(dropped)) = tx.try_send(result) else {
+        return;
+    };
+    let (reason_detail, affected_scope) = match dropped {
+        Ok(event) => (
+            "native event discarded at bounded callback queue".to_string(),
+            event
+                .paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        ),
+        Err(error) => (
+            format!("notify error discarded at bounded callback queue: {error}"),
+            watched_paths.clone(),
+        ),
+    };
+    let observed_at_unix_nanos = observed_at
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_nanos()).ok());
+    let affected_paths = affected_scope;
+    report(
+        sinex_primitives::sources::opportunity::AcquisitionOpportunity {
+            source_id: source_id.clone(),
+            completeness: sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown,
+            reason: format!(
+                "bounded notify callback queue overflow; {reason_detail}; affected_paths={affected_paths:?}; observed_at_unix_nanos={observed_at_unix_nanos:?}; no scan was dispatched; FileDrop has no finite reconciliation scan because it is positive-only; queue depth is not a missing-event count"
+            ),
+            affected_paths,
+            observed_at_unix_nanos,
+            cursor_before: None,
+            cursor_after: None,
+        },
+    );
 }
 
 #[async_trait]
@@ -843,30 +939,62 @@ impl InputShapeAdapterExt for FileContentDropAdapter {
         let Some(acquisition) = acquisition else {
             return InputShapeAdapter::open(self, material_id, config, cursor).await;
         };
-        let mut stream = FileDropAdapter
+        let stream = FileDropAdapter
             .open(material_id, &config.file_drop, cursor)
             .await?;
-        let max_capture_bytes = config.max_capture_bytes;
-        let watch_paths = config.file_drop.watch_paths.clone();
-        let mut materialization_cache = FileContentMaterializationCache::default();
-        let stream = async_stream::stream! {
-            while let Some(record_result) = stream.next().await {
-                match record_result {
-                    Ok(record) => {
-                        yield materialize_file_content_record_with_cache(
-                            record,
-                            Arc::clone(&acquisition),
-                            max_capture_bytes,
-                            &mut materialization_cache,
-                            &watch_paths,
-                        ).await;
-                    }
-                    Err(error) => yield Err(error),
-                }
-            }
-        };
-        Ok(Box::pin(stream))
+        Ok(materialize_file_drop_stream(stream, config, acquisition))
     }
+
+    async fn open_with_source_id(
+        &self,
+        source_id: &str,
+        material_id: Id<SourceMaterial>,
+        config: &Self::Config,
+        cursor: Option<Self::Cursor>,
+        acquisition: Option<Arc<AcquisitionManager>>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        let stream = FileDropAdapter
+            .open_with_coverage(
+                material_id,
+                &config.file_drop,
+                source_id,
+                crate::runtime::acquisition_opportunity::report,
+            )
+            .await?;
+        let Some(acquisition) = acquisition else {
+            return Ok(stream);
+        };
+        let _ = cursor;
+        Ok(materialize_file_drop_stream(stream, config, acquisition))
+    }
+}
+
+#[cfg(feature = "messaging")]
+fn materialize_file_drop_stream(
+    mut stream: BoxStream<'static, ParserResult<SourceRecord>>,
+    config: &FileContentDropConfig,
+    acquisition: Arc<AcquisitionManager>,
+) -> BoxStream<'static, ParserResult<SourceRecord>> {
+    let max_capture_bytes = config.max_capture_bytes;
+    let watch_paths = config.file_drop.watch_paths.clone();
+    let mut materialization_cache = FileContentMaterializationCache::default();
+    let stream = async_stream::stream! {
+        while let Some(record_result) = stream.next().await {
+            match record_result {
+                Ok(record) => {
+                    yield materialize_file_content_record_with_cache(
+                        record,
+                        Arc::clone(&acquisition),
+                        max_capture_bytes,
+                        &mut materialization_cache,
+                        &watch_paths,
+                    ).await;
+                }
+                Err(error) => yield Err(error),
+            }
+        }
+    };
+    Box::pin(stream)
 }
 
 fn build_file_drop_stream(

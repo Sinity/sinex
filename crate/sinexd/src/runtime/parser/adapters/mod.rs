@@ -168,7 +168,30 @@ pub use adapter_schemas::{AdapterSchema, all_adapter_schemas};
 use crate::runtime::parser::InputShapeAdapterExt;
 
 #[cfg(feature = "messaging")]
-impl<C: api_cursor::ApiClient + 'static> InputShapeAdapterExt for api_cursor::ApiCursorAdapter<C> {}
+#[async_trait::async_trait]
+impl<C: api_cursor::ApiClient + 'static> InputShapeAdapterExt for api_cursor::ApiCursorAdapter<C> {
+    async fn open_with_source_id(
+        &self,
+        source_id: &str,
+        material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
+        config: &Self::Config,
+        cursor: Option<Self::Cursor>,
+        _acquisition: Option<
+            std::sync::Arc<crate::runtime::acquisition_manager::AcquisitionManager>,
+        >,
+    ) -> sinex_primitives::parser::ParserResult<
+        futures::stream::BoxStream<
+            'static,
+            sinex_primitives::parser::ParserResult<sinex_primitives::parser::SourceRecord>,
+        >,
+    > {
+        let adapter = self
+            .clone()
+            .with_coverage(source_id, crate::runtime::acquisition_opportunity::report);
+        sinex_primitives::parser::InputShapeAdapter::open(&adapter, material_id, config, cursor)
+            .await
+    }
+}
 #[cfg(feature = "messaging")]
 impl<L: incremental_dump::DumpLoader + 'static> InputShapeAdapterExt
     for incremental_dump::IncrementalDumpAdapter<L>
@@ -183,9 +206,31 @@ impl InputShapeAdapterExt for dbus_stream::DbusStreamAdapter {}
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for directory_walk::DirectoryWalkAdapter {}
 #[cfg(feature = "messaging")]
+#[async_trait::async_trait]
 impl<C: email_gmail_api::GmailApiClient + 'static> InputShapeAdapterExt
     for email_gmail_api::GmailApiCursorAdapter<C>
 {
+    async fn open_with_source_id(
+        &self,
+        source_id: &str,
+        material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
+        config: &Self::Config,
+        cursor: Option<Self::Cursor>,
+        _acquisition: Option<
+            std::sync::Arc<crate::runtime::acquisition_manager::AcquisitionManager>,
+        >,
+    ) -> sinex_primitives::parser::ParserResult<
+        futures::stream::BoxStream<
+            'static,
+            sinex_primitives::parser::ParserResult<sinex_primitives::parser::SourceRecord>,
+        >,
+    > {
+        let adapter = self
+            .clone()
+            .with_coverage(source_id, crate::runtime::acquisition_opportunity::report);
+        sinex_primitives::parser::InputShapeAdapter::open(&adapter, material_id, config, cursor)
+            .await
+    }
 }
 #[cfg(feature = "messaging")]
 impl<C: email_imap_sync::ImapSyncClient + 'static> InputShapeAdapterExt
@@ -195,7 +240,33 @@ impl<C: email_imap_sync::ImapSyncClient + 'static> InputShapeAdapterExt
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for email_mbox_file::EmailMboxFileAdapter {}
 #[cfg(feature = "messaging")]
-impl InputShapeAdapterExt for file_drop::FileDropAdapter {}
+#[async_trait::async_trait]
+impl InputShapeAdapterExt for file_drop::FileDropAdapter {
+    async fn open_with_source_id(
+        &self,
+        source_id: &str,
+        material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
+        config: &Self::Config,
+        cursor: Option<Self::Cursor>,
+        _acquisition: Option<
+            std::sync::Arc<crate::runtime::acquisition_manager::AcquisitionManager>,
+        >,
+    ) -> sinex_primitives::parser::ParserResult<
+        futures::stream::BoxStream<
+            'static,
+            sinex_primitives::parser::ParserResult<sinex_primitives::parser::SourceRecord>,
+        >,
+    > {
+        let _ = cursor;
+        self.open_with_coverage(
+            material_id,
+            config,
+            source_id,
+            crate::runtime::acquisition_opportunity::report,
+        )
+        .await
+    }
+}
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for journalctl_stream::JournalctlStreamAdapter {
     fn configure_initial_stream_position(
