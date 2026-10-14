@@ -149,6 +149,25 @@ const ADAPTER_MATERIAL_BATCH_MAX_RECORDS: usize = 1024;
 const ADAPTER_MATERIAL_BATCH_MAX_BYTES: usize = 256 * 1024;
 const ADAPTER_BATCH_DRAIN_WINDOW: Duration = Duration::from_millis(1);
 const STREAM_IDLE_FINALIZE_REASON: &str = "adapter-stream-idle";
+
+fn report_subprocess_acquisition_failure(
+    source_id: &str,
+    reason: String,
+    cursor_before: Option<String>,
+) {
+    crate::runtime::acquisition_opportunity::report(
+        sinex_primitives::sources::opportunity::AcquisitionOpportunity {
+            source_id: source_id.to_string(),
+            completeness: sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown,
+            reason,
+            affected_paths: Vec::new(),
+            observed_at_unix_nanos: None,
+            cursor_before,
+            cursor_after: None,
+        },
+    );
+}
+
 /// Per-event budget for a materialized batch's durable-emission receipt
 /// (sinex-r6d.11). A batch is bounded by `ADAPTER_MATERIAL_BATCH_MAX_RECORDS`
 /// records / `ADAPTER_MATERIAL_BATCH_MAX_BYTES` bytes, so this is a per-item
@@ -1582,7 +1601,8 @@ where
         // the append-stream materialization path.
         let mut stream = match self
             .adapter
-            .open_with_acquisition(
+            .open_with_source_id(
+                self.source_id,
                 placeholder_material_id,
                 config,
                 cursor,
@@ -1592,6 +1612,16 @@ where
         {
             Ok(s) => s,
             Err(e) => {
+                if A::KIND == InputShapeKind::Subprocess {
+                    report_subprocess_acquisition_failure(
+                        self.source_id,
+                        format!("adapter open failed: {e}"),
+                        state
+                            .cursor
+                            .as_ref()
+                            .and_then(|cursor| serde_json::to_string(cursor).ok()),
+                    );
+                }
                 return Err(
                     crate::runtime::SinexError::processing("adapter open failed")
                         .with_context("source_id", self.source_id)
@@ -1666,6 +1696,16 @@ where
                 let record = match record_result {
                     Ok(r) => r,
                     Err(e) => {
+                        if A::KIND == InputShapeKind::Subprocess {
+                            report_subprocess_acquisition_failure(
+                                self.source_id,
+                                format!("adapter stream failed: {e}"),
+                                state
+                                    .cursor
+                                    .as_ref()
+                                    .and_then(|cursor| serde_json::to_string(cursor).ok()),
+                            );
+                        }
                         return Err(crate::runtime::SinexError::processing(
                             "adapter stream yielded an error",
                         )
@@ -2275,7 +2315,11 @@ where
             // startup snapshot prevents the service route from ever reaching
             // its post-snapshot READY=1 notification.
             supports_snapshot: A::KIND != InputShapeKind::FileDrop,
-            supports_historical: true,
+            // FileDrop is a positive-only live watcher. It cannot enumerate a
+            // finite historical scope, so the explicit source-scan route must
+            // reject it instead of opening another watcher and implying that
+            // it reconciled an overflow.
+            supports_historical: A::KIND != InputShapeKind::FileDrop,
             // Continuous mode is poll-based for adapters that don't stream.
             supports_continuous: true,
             supports_interactive: false,

@@ -11,6 +11,7 @@
 //! issues can land independently without colliding.
 
 pub mod continuity;
+pub mod opportunity;
 
 use schemars::JsonSchema;
 use serde::Serialize;

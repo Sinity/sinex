@@ -194,6 +194,27 @@ pub enum InitialStreamPosition {
 #[cfg(feature = "messaging")]
 #[async_trait]
 pub trait InputShapeAdapterExt: InputShapeAdapter {
+    /// Open this adapter for a registered logical source.
+    ///
+    /// Adapters with acquisition-specific reporting may use `source_id` to
+    /// attach a scoped report. The default preserves existing adapter behavior.
+    async fn open_with_source_id(
+        &self,
+        source_id: &str,
+        material_id: Id<SourceMaterial>,
+        config: &Self::Config,
+        cursor: Option<Self::Cursor>,
+        acquisition: Option<
+            std::sync::Arc<crate::runtime::acquisition_manager::AcquisitionManager>,
+        >,
+    ) -> sinex_primitives::parser::ParserResult<
+        BoxStream<'static, sinex_primitives::parser::ParserResult<SourceRecord>>,
+    > {
+        let _ = source_id;
+        self.open_with_acquisition(material_id, config, cursor, acquisition)
+            .await
+    }
+
     /// Open the adapter with access to runtime material acquisition.
     async fn open_with_acquisition(
         &self,

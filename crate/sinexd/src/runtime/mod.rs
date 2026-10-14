@@ -21,6 +21,7 @@
 //! - For critical ordering, use database sequences instead of client-side `UUIDv7` IDs
 
 pub mod acquisition_manager;
+pub mod acquisition_opportunity;
 pub mod automaton_base;
 pub mod backlog;
 pub mod batch_importer;

@@ -5,6 +5,7 @@ use crate::runtime::checkpoint::CheckpointManager;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
 use crate::runtime::parser::adapters::{
     AppendOnlyCursor, ChainedCursor, DirectoryWalkAdapter, FileDropAdapter, SqliteRowCursor,
+    StaticFileAdapter,
 };
 use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
 use crate::runtime::stream::{
@@ -67,6 +68,34 @@ impl InputShapeAdapter for TestAdapter {
 }
 
 impl InputShapeAdapterExt for TestAdapter {}
+
+#[derive(Default)]
+struct FailingSubprocessAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for FailingSubprocessAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::Subprocess;
+
+    async fn open(
+        &self,
+        _material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        Err(ParserError::Adapter(
+            "synthetic subprocess open failure".to_string(),
+        ))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(0)
+    }
+}
+
+impl InputShapeAdapterExt for FailingSubprocessAdapter {}
 
 /// Probe adapter for the private-mode acquisition gate. Its stream contains a
 /// record that would create source material if `drain_adapter` reached the
@@ -538,9 +567,164 @@ fn file_drop_source_skips_finite_startup_snapshot() {
         !capabilities.supports_snapshot,
         "a native file watcher cannot complete the finite startup snapshot phase"
     );
-    assert!(capabilities.supports_historical);
+    assert!(!capabilities.supports_historical);
     assert!(capabilities.supports_continuous);
     assert!(source.defers_service_ready_until_continuous());
+}
+
+#[test]
+fn finite_snapshot_sources_are_distinguished_from_positive_only_watchers() {
+    let static_file = AdapterBackedSource::<StaticFileAdapter, TestParser>::new("static");
+    let directory_walk = AdapterBackedSource::<DirectoryWalkAdapter, TestParser>::new("walk");
+    let file_drop = AdapterBackedSource::<FileDropAdapter, TestParser>::new("watch");
+
+    assert!(static_file.capabilities().supports_snapshot);
+    assert!(directory_walk.capabilities().supports_snapshot);
+    assert!(
+        !file_drop.capabilities().supports_snapshot,
+        "a positive-only watcher cannot establish a complete finite snapshot"
+    );
+    assert!(
+        !file_drop.capabilities().supports_historical,
+        "the explicit source-scan route must reject unsupported watcher reconciliation"
+    );
+}
+
+#[test]
+fn subprocess_failure_reports_the_source_and_resume_cursor() {
+    let source_id = format!("journal-test-{}", uuid::Uuid::now_v7());
+    super::report_subprocess_acquisition_failure(
+        &source_id,
+        "adapter stream failed: journalctl exited unsuccessfully".to_string(),
+        Some("opaque-cursor".to_string()),
+    );
+
+    let report = crate::runtime::acquisition_opportunity::latest(&source_id)
+        .expect("subprocess failure recorded");
+    assert_eq!(report.source_id, source_id);
+    assert_eq!(
+        report.completeness,
+        sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown
+    );
+    assert_eq!(report.cursor_before.as_deref(), Some("opaque-cursor"));
+    assert!(report.reason.contains("journalctl exited unsuccessfully"));
+}
+
+#[sinex_test]
+async fn subprocess_adapter_open_failure_preserves_the_cursor_and_source_id(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let source_id = "journal.test.failure";
+    let mut source = AdapterBackedSource::<FailingSubprocessAdapter, TestParser>::new(source_id);
+    let mut state = AdapterModuleState::default();
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    state.cursor = Some(41);
+    assert!(
+        source
+            .scan_snapshot(&mut state, ScanArgs::default())
+            .await
+            .is_err()
+    );
+    let report = crate::runtime::acquisition_opportunity::latest(&source_id)
+        .expect("adapter lifecycle should report subprocess acquisition failure");
+    assert_eq!(report.source_id, source_id);
+    assert_eq!(
+        report.completeness,
+        sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown
+    );
+    assert!(report.reason.contains("synthetic subprocess open failure"));
+    assert_eq!(report.cursor_before.as_deref(), Some("41"));
+    assert_eq!(state.cursor, Some(41));
+    Ok(())
+}
+
+#[sinex_test]
+async fn successful_finite_drain_preserves_unreconciled_acquisition_uncertainty(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sinex_primitives::sources::opportunity::{AcquisitionOpportunity, OpportunityCompleteness};
+
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let source_id = "source.synthetic.multiple-scopes";
+    let opportunity = AcquisitionOpportunity {
+        source_id: source_id.into(),
+        completeness: OpportunityCompleteness::Incomplete,
+        reason: "a sibling provider query has an unreconciled page".into(),
+        affected_paths: Vec::new(),
+        observed_at_unix_nanos: None,
+        cursor_before: Some("sibling-query-cursor".into()),
+        cursor_after: None,
+    };
+    crate::runtime::acquisition_opportunity::report(opportunity.clone());
+    let mut source = AdapterBackedSource::<TestAdapter, TestParser>::new(source_id);
+    let mut state = AdapterModuleState::default();
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+    let scan = source
+        .scan_snapshot(&mut state, ScanArgs::default())
+        .await?;
+    assert_eq!(scan.events_processed, 0);
+    assert_eq!(
+        crate::runtime::acquisition_opportunity::latest(source_id),
+        Some(opportunity),
+        "a finite drain has no evidence that it reconciled another binding or query scope",
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[sinex_test]
+async fn direct_journal_reader_query_failure_reports_unknown_without_advancing_cursor(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use crate::runtime::parser::adapters::{JournalctlCursor, JournalctlStreamAdapter};
+
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let source_id = "journal.synthetic.invalid-query";
+    let mut source = AdapterBackedSource::<JournalctlStreamAdapter, TestParser>::new(source_id);
+    let mut state = AdapterModuleState::default();
+    source
+        .initialize(
+            AdapterSourceConfig {
+                adapter: serde_json::json!({"units": ["sinex-synthetic-nonexistent.service"]}),
+                ..Default::default()
+            },
+            &runtime,
+            &mut state,
+        )
+        .await?;
+    let cursor = JournalctlCursor::new("synthetic-invalid-cursor");
+    state.cursor = Some(cursor.clone());
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        source.scan_snapshot(&mut state, ScanArgs::default()),
+    )
+    .await?;
+    assert!(result.is_err());
+    assert_eq!(state.cursor, Some(cursor));
+    let report = crate::runtime::acquisition_opportunity::latest(source_id)
+        .expect("real direct reader failure reaches source lifecycle");
+    assert_eq!(report.source_id, source_id);
+    assert_eq!(
+        report.completeness,
+        sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown
+    );
+    assert!(report.reason.contains("journalctl exited unsuccessfully"));
+    assert_eq!(
+        report.cursor_before.as_deref(),
+        Some(r#"{"cursor":"synthetic-invalid-cursor"}"#)
+    );
+    assert_eq!(report.cursor_after, None);
+    // This is a malformed query, not evidence of an expired retained journal.
+    Ok(())
 }
 
 #[derive(Default)]
@@ -588,6 +772,36 @@ impl MaterialParser for EmittingParser {
                 .privacy_context(ProcessingContext::Metadata)
                 .build(),
         ])
+    }
+}
+
+#[derive(Default)]
+struct TimedReplayFixtureParser;
+
+#[async_trait]
+impl MaterialParser for TimedReplayFixtureParser {
+    type Config = ();
+
+    fn manifest(&self) -> ParserManifest {
+        EmittingParser.manifest()
+    }
+
+    async fn parse_record(
+        &mut self,
+        record: SourceRecord,
+        ctx: &ParserContext,
+    ) -> ParserResult<Vec<ParsedEventIntent>> {
+        let mut intents = EmittingParser.parse_record(record, ctx).await?;
+        for intent in &mut intents {
+            // This synthetic event is explicitly declared at fixture capture
+            // time; the plain CAS bytes do not pretend to encode a timestamp.
+            intent.ts_orig = ctx.acquisition_time;
+            intent.timing = sinex_primitives::parser::TimingEvidence::UserDeclared {
+                value: ctx.acquisition_time,
+                reason: "explicit synthetic CAS replay fixture time".into(),
+            };
+        }
+        Ok(intents)
     }
 }
 
@@ -3300,6 +3514,22 @@ async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_imp
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (runtime, mut event_receiver) = make_adapter_runtime_with_db(&ctx).await?;
+    let admission = Arc::new(AdmissionService::new(
+        ctx.pool().clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(false))),
+    ));
+    let registry = runtime.settlement_registry();
+    // Replay waits for the database witness, not the tee's synthetic receipt.
+    // Persist the emitted event through the actual admission owner before
+    // asserting that replay loaded the authoritative CAS bytes.
+    let persistence = tokio::spawn(async move {
+        let event = event_receiver
+            .recv()
+            .await
+            .ok_or_else(|| eyre!("expected replay event"))?;
+        settle_adapter_event_through_admission(&admission, &registry, event.clone()).await?;
+        Ok::<_, color_eyre::eyre::Error>(event)
+    });
 
     let _cas_dir = tempfile::tempdir()?;
     let cas_root = Utf8PathBuf::from_path_buf(_cas_dir.path().to_path_buf()).map_err(|path| {
@@ -3383,8 +3613,9 @@ async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_imp
     tokio::fs::write(&source_path, b"mutated path bytes that replay must ignore").await?;
     tokio::fs::remove_file(&source_path).await?;
 
-    let mut source =
-        AdapterBackedSource::<FileDropAdapter, EmittingParser>::new("file-drop-replay-test");
+    let mut source = AdapterBackedSource::<FileDropAdapter, TimedReplayFixtureParser>::new(
+        "file-drop-replay-test",
+    );
     let mut state = AdapterModuleState::default();
     source
         .initialize(
@@ -3431,11 +3662,9 @@ async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_imp
                 ..Default::default()
             },
         )
-        .await?;
-    let event = event_receiver
-        .recv()
-        .await
-        .ok_or_else(|| SinexError::processing("expected replayed file-drop event"))?;
+        .await;
+    let event = persistence.await??;
+    let report = report?;
     let authoritative_hash = blake3::hash(authoritative_bytes);
     let logical_path_hash = blake3::hash(logical_path.as_str().as_bytes());
 

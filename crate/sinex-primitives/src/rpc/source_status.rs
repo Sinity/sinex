@@ -8,6 +8,7 @@
 use crate::domain::{HealthStatus, ModuleName};
 use crate::env as shared_env;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+use crate::sources::opportunity::AcquisitionOpportunity;
 use crate::views::{SourceCoverageListView, ViewEnvelope};
 use crate::{
     DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Result, RuntimeLiveness, RuntimeLivenessPolicy,
@@ -138,6 +139,11 @@ pub struct SourceStatus {
     /// Reason text from the most recent health transition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_reason: Option<String>,
+    /// Latest acquisition observation in this process, when available.
+    /// Absence is not evidence of completeness; API-only and restarted
+    /// processes do not inherit another process's observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquisition_opportunity: Option<AcquisitionOpportunity>,
     /// Count of events emitted by this source inside the recent window.
     pub recent_output_count: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
+#[cfg(feature = "messaging")]
+use crate::runtime::parser::InputShapeAdapterExt;
 use futures::StreamExt;
 use xtask::sandbox::prelude::sinex_test;
 
@@ -278,6 +280,118 @@ async fn exhausted_retries_surface_typed_error() -> xtask::sandbox::TestResult<(
         Ok(_) => panic!("expected Err item in stream, got Ok"),
         Err(e) => panic!("expected Adapter error, got: {e}"),
     }
+    Ok(())
+}
+
+/// A provider that fails the first fetch of page 1, then makes that page
+/// available. This models a successful prefix followed by a transient page
+/// acquisition gap without conflating it with an empty export.
+struct FailOnceOnSecondPageClient {
+    page_one_attempts: AtomicU32,
+}
+
+impl ApiClient for FailOnceOnSecondPageClient {
+    type Record = serde_json::Value;
+    type Error = MockError;
+
+    async fn fetch(&self, cursor: Option<&str>) -> Result<ApiFetchPage<Self::Record>, Self::Error> {
+        match cursor {
+            None => Ok(ApiFetchPage {
+                records: vec![serde_json::json!({"page": 0})],
+                next_cursor: Some("page-1".to_owned()),
+                etag: Some("etag-0".to_owned()),
+            }),
+            Some("page-1") if self.page_one_attempts.fetch_add(1, Ordering::SeqCst) == 0 => {
+                Err(MockError("page 1 unavailable".to_owned()))
+            }
+            Some("page-1") => Ok(ApiFetchPage {
+                records: vec![serde_json::json!({"page": 1})],
+                next_cursor: None,
+                etag: Some("etag-1".to_owned()),
+            }),
+            Some(other) => Err(MockError(format!("unexpected cursor {other}"))),
+        }
+    }
+}
+
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn failed_later_page_preserves_prefix_and_resumes_from_failed_cursor()
+-> xtask::sandbox::TestResult<()> {
+    let adapter = ApiCursorAdapter::new(FailOnceOnSecondPageClient {
+        page_one_attempts: AtomicU32::new(0),
+    })
+    .with_retry(RetryPolicy::never());
+
+    let first_attempt = adapter
+        .open_with_source_id(
+            "provider.example",
+            dummy_material_id(),
+            &ApiCursorConfig::default(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let first_items: Vec<_> = first_attempt.collect().await;
+
+    assert_eq!(
+        first_items.len(),
+        2,
+        "one record then one page error expected"
+    );
+    let first_record = first_items[0]
+        .as_ref()
+        .expect("the successfully acquired first page must remain visible");
+    let checkpoint = adapter.cursor_after(first_record).unwrap();
+    assert_eq!(checkpoint.last_cursor.as_deref(), Some("page-1"));
+    assert!(!checkpoint.page_incomplete);
+    assert_eq!(checkpoint.page_index, 1);
+    match &first_items[1] {
+        Err(ParserError::Adapter(message)) => {
+            assert!(message.contains("page 1 unavailable"), "{message}");
+        }
+        other => panic!("expected a distinct failed-page parser error, got {other:?}"),
+    }
+    let opportunity = crate::runtime::acquisition_opportunity::latest("provider.example")
+        .expect("failed page should report an acquisition opportunity");
+    assert_eq!(opportunity.source_id, "provider.example");
+    assert_eq!(
+        opportunity.completeness,
+        sinex_primitives::sources::opportunity::OpportunityCompleteness::Incomplete
+    );
+    assert_eq!(opportunity.cursor_before.as_deref(), Some("page-1"));
+    assert_eq!(opportunity.cursor_after, None);
+    assert!(opportunity.reason.contains("page 1"));
+
+    // A later run resumes from the last successfully completed page boundary,
+    // so the failed page is retried instead of being treated as an empty or
+    // complete export.
+    let resumed = adapter
+        .open_with_source_id(
+            "provider.example",
+            dummy_material_id(),
+            &ApiCursorConfig::default(),
+            Some(checkpoint),
+            None,
+        )
+        .await
+        .unwrap();
+    let resumed_items: Vec<_> = resumed.collect().await;
+    assert_eq!(resumed_items.len(), 1);
+    let resumed_record = resumed_items[0]
+        .as_ref()
+        .expect("the previously failed page should be retried successfully");
+    let value: serde_json::Value = serde_json::from_slice(&resumed_record.bytes).unwrap();
+    assert_eq!(value["page"], 1);
+    assert!(matches!(
+        resumed_record.anchor,
+        MaterialAnchor::StreamFrame {
+            material_offset: 1,
+            frame_index: 0
+        }
+    ));
+    crate::runtime::acquisition_opportunity::clear_test_observation("provider.example");
     Ok(())
 }
 

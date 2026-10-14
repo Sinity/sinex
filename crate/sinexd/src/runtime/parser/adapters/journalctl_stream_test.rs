@@ -10,6 +10,31 @@ const JOURNAL_LINE_WITH_CURSOR: &str =
 const JOURNAL_LINE_NO_CURSOR: &str = r#"{"MESSAGE":"no cursor here","PRIORITY":"6"}"#;
 
 #[sinex_test]
+async fn journalctl_invalid_cursor_returns_an_error_without_records()
+-> xtask::sandbox::TestResult<()> {
+    use futures::StreamExt;
+
+    let adapter = JournalctlStreamAdapter;
+    let config = JournalctlStreamConfig {
+        units: vec!["synthetic-acquisition-fixture.service".into()],
+        priority: None,
+        from_cursor: None,
+        start_at_now_without_cursor: false,
+    };
+    let resume = JournalctlCursor::new("synthetic-invalid-cursor");
+    let mut stream = adapter
+        .open(dummy_material_id(), &config, Some(resume))
+        .await?;
+    let first = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next()).await?;
+    assert!(
+        matches!(first, Some(Err(ParserError::Adapter(ref reason))) if reason.contains("journalctl exited unsuccessfully")),
+        "a failed cursor query must not look like empty successful acquisition: {first:?}"
+    );
+    assert!(stream.next().await.is_none());
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_records_from_lines_happy_path() -> xtask::sandbox::TestResult<()> {
     let mid = dummy_material_id();
     let records = records_from_journal_lines(mid, &[JOURNAL_LINE_WITH_CURSOR]);
@@ -289,6 +314,20 @@ fn make_record_bytes(bytes: &[u8]) -> SourceRecord {
     }
 }
 
+fn make_cursor_record(cursor: &str) -> SourceRecord {
+    SourceRecord {
+        material_id: dummy_material_id(),
+        anchor: MaterialAnchor::StreamFrame {
+            material_offset: 0,
+            frame_index: 0,
+        },
+        bytes: format!(r#"{{"__CURSOR":"{cursor}"}}"#).into_bytes(),
+        logical_path: None,
+        source_ts_hint: None,
+        metadata: serde_json::Value::Null,
+    }
+}
+
 /// Drive records into a broadcast sender and collect what a subscriber
 /// with a given filter receives.
 async fn drive_and_collect(
@@ -325,6 +364,7 @@ async fn test_subscriber_filter_passes_matching_records() -> xtask::sandbox::Tes
     let subscriber = super::JournalctlSubscriber {
         receiver: rx_primary,
         filter: Box::new(|rec: &SourceRecord| rec.bytes.starts_with(b"MATCH")),
+        coverage_reporter: None,
     };
 
     let records = vec![
@@ -347,6 +387,92 @@ async fn test_subscriber_filter_passes_matching_records() -> xtask::sandbox::Tes
 }
 
 #[sinex_test]
+async fn test_lag_reports_unknown_source_coverage_not_missing_count()
+-> xtask::sandbox::TestResult<()> {
+    use futures::StreamExt;
+
+    let (tx, rx) = broadcast::channel::<SourceRecord>(1);
+    let (report_tx, report_rx) = std::sync::mpsc::channel();
+    let subscriber = super::JournalctlSubscriber {
+        receiver: rx,
+        filter: Box::new(|record: &SourceRecord| record.bytes.starts_with(b"MATCH")),
+        coverage_reporter: Some((
+            "system.journald.filtered".into(),
+            Box::new(move |report| report_tx.send(report).expect("report receiver")),
+        )),
+    };
+
+    // The fan-out queue drops a record that would not match this subscriber;
+    // that shared record must not become a source-event loss count.
+    tx.send(make_record_bytes(b"SKIP_1")).unwrap();
+    tx.send(make_record_bytes(b"MATCH_1")).unwrap();
+    drop(tx);
+
+    let mut stream = std::pin::pin!(subscriber.into_stream());
+    let received: Vec<_> = stream.collect().await;
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].as_ref().unwrap().bytes, b"MATCH_1");
+
+    let report = report_rx.recv().expect("lag coverage report");
+    assert_eq!(report.source_id, "system.journald.filtered");
+    assert_eq!(
+        report.completeness,
+        sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown
+    );
+    assert!(report.reason.contains("source loss count unknown"));
+    assert!(!report.reason.contains("missing events"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_lag_report_keeps_cursor_bounds_when_recovery_is_observed()
+-> xtask::sandbox::TestResult<()> {
+    use futures::StreamExt;
+
+    let (tx, rx) = broadcast::channel::<SourceRecord>(1);
+    let (report_tx, report_rx) = std::sync::mpsc::channel();
+    let subscriber = super::JournalctlSubscriber {
+        receiver: rx,
+        filter: Box::new(|_| true),
+        coverage_reporter: Some((
+            "system.journald.cursor-test".into(),
+            Box::new(move |report| report_tx.send(report).expect("report receiver")),
+        )),
+    };
+
+    let mut stream = std::pin::pin!(subscriber.into_stream());
+    tx.send(make_cursor_record("before-gap")).unwrap();
+    let before = stream.next().await.expect("cursor before gap").unwrap();
+    assert_eq!(
+        JournalctlStreamAdapter
+            .cursor_after(&before)
+            .unwrap()
+            .cursor,
+        "before-gap"
+    );
+
+    tx.send(make_cursor_record("filtered-or-lost")).unwrap();
+    tx.send(make_cursor_record("after-gap")).unwrap();
+    let after = stream.next().await.expect("recovered cursor").unwrap();
+    assert_eq!(
+        JournalctlStreamAdapter.cursor_after(&after).unwrap().cursor,
+        "after-gap"
+    );
+    drop(tx);
+    while stream.next().await.is_some() {}
+
+    let reports: Vec<_> = report_rx.try_iter().collect();
+    let recovered = reports.last().expect("recovery report");
+    assert_eq!(recovered.cursor_before.as_deref(), Some("before-gap"));
+    assert_eq!(recovered.cursor_after.as_deref(), Some("after-gap"));
+    assert_eq!(
+        recovered.completeness,
+        sinex_primitives::sources::opportunity::OpportunityCompleteness::Unknown
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_two_subscribers_receive_independently() -> xtask::sandbox::TestResult<()> {
     use futures::StreamExt;
 
@@ -356,11 +482,13 @@ async fn test_two_subscribers_receive_independently() -> xtask::sandbox::TestRes
     let sub_a = super::JournalctlSubscriber {
         receiver: tx.subscribe(),
         filter: Box::new(|r: &SourceRecord| r.bytes.starts_with(b"A")),
+        coverage_reporter: None,
     };
     // subscriber B: only "B" records
     let sub_b = super::JournalctlSubscriber {
         receiver: tx.subscribe(),
         filter: Box::new(|r: &SourceRecord| r.bytes.starts_with(b"B")),
+        coverage_reporter: None,
     };
 
     let records = vec![
@@ -425,6 +553,7 @@ async fn test_subscriber_cursor_after_extracts_journal_cursor() -> xtask::sandbo
     let subscriber = super::JournalctlSubscriber {
         receiver: rx,
         filter: Box::new(|_| true),
+        coverage_reporter: None,
     };
 
     let record = SourceRecord {
@@ -451,6 +580,7 @@ async fn test_subscriber_open_returns_error() -> xtask::sandbox::TestResult<()> 
     let subscriber = super::JournalctlSubscriber {
         receiver: rx,
         filter: Box::new(|_| true),
+        coverage_reporter: None,
     };
     let mid = dummy_material_id();
     let result = subscriber.open(mid, &(), None).await;

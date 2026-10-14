@@ -101,6 +101,7 @@ pub async fn handle_sources_status(
         .map_err(|e| SinexError::database("Failed to list sources status").with_std_error(&e))?
         .into_iter()
         .map(|row| {
+            let source_id = row.module_name.to_string();
             let mut status = SourceStatus {
                 module_name: row.module_name,
                 version: row.version,
@@ -117,6 +118,9 @@ pub async fn handle_sources_status(
                 current_health: row.current_health,
                 health_changed_at: row.health_changed_at,
                 health_reason: row.health_reason,
+                acquisition_opportunity: crate::runtime::acquisition_opportunity::latest(
+                    &source_id,
+                ),
                 recent_output_count: row.recent_output_count,
                 last_output_at: row.last_output_at,
             };
@@ -1161,6 +1165,7 @@ fn source_runtime_observations(
 ) -> HashMap<String, SourceStatus> {
     rows.into_iter()
         .filter_map(|row| {
+            let source_id = row.module_name.to_string();
             let mut status = SourceStatus {
                 module_name: row.module_name,
                 version: row.version,
@@ -1177,6 +1182,9 @@ fn source_runtime_observations(
                 current_health: row.current_health,
                 health_changed_at: row.health_changed_at,
                 health_reason: row.health_reason,
+                acquisition_opportunity: crate::runtime::acquisition_opportunity::latest(
+                    &source_id,
+                ),
                 recent_output_count: row.recent_output_count,
                 last_output_at: row.last_output_at,
             };
@@ -1193,6 +1201,7 @@ fn source_status_has_runtime_evidence(status: &SourceStatus) -> bool {
         || status.last_heartbeat_at.is_some()
         || status.last_output_at.is_some()
         || status.recent_output_count > 0
+        || status.acquisition_opportunity.is_some()
 }
 
 fn source_liveness_gap_kind(status: RuntimeLivenessStatus) -> &'static str {
@@ -1253,6 +1262,7 @@ fn source_mode_status_view(
             .map(str::to_string),
         runtime_observed: runtime_observation.map(|_| true),
         runtime_live: runtime_observation.map(|observation| observation.live),
+        acquisition_opportunity: crate::runtime::acquisition_opportunity::latest(source_id),
         last_heartbeat_at: runtime_observation
             .and_then(|observation| observation.last_heartbeat_at),
         last_output_at: runtime_observation.and_then(|observation| observation.last_output_at),
