@@ -20,6 +20,8 @@ publish = "pr"
 [operations.dev_services]
 description = "Run Sinex development Postgres and NATS in the foreground"
 exec = ["nix", "run", ".#xtask", "--", "infra", "lease-services"]
+ready_probe = ["bash", "-c", "test -f \"$AGENTCTL_SERVICE_READY\""]
+ready_timeout_seconds = 7200
 pool = "service"
 result = "exit"
 cache = "tree+environment"
@@ -28,6 +30,7 @@ timeout_seconds = 28800
 [operations.check_default]
 description = "Run Sinex's default foreground verification command"
 exec = ["xtask", "check"]
+requires = ["dev_services"]
 pool = "bulk"
 result = "exit"
 cache = "tree+environment"

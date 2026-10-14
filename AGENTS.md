@@ -224,9 +224,11 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
 
 ## Runtime and worktree traps
 
-- Compile-heavy worktrees live under `/realm/worktree/`. Start `dev_services`
-  for that workspace before any database-backed check; the devshell derives one
-  PostgreSQL and NATS port pair per checkout, so worktrees never contend.
+- Compile-heavy worktrees live under `/realm/worktree/`. The declared
+  `check_default` operation requires `dev_services` inside its own job unit;
+  start it through AgentCTL so startup and cancellation share that owner.
+  Standalone database-backed commands need an explicit `dev_services` job.
+  The devshell derives PostgreSQL and NATS coordinates from the checkout.
 - Start runtime operations through AgentCTL and use the returned job ID for
   logs, results, and cancellation. Do not infer ownership from process names.
 - Production `sinexd` is a system service. A Sinnix `switch` does not restart

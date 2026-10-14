@@ -203,6 +203,13 @@ fn execute_lease_services(ctx: &CommandContext) -> Result<CommandResult> {
     stack::pg_apply_schema(&config, ctx.is_human())?;
     stack::nats_start(&config, ctx.is_human())?;
 
+    // The verifier supplies a fresh path inside its private startup directory.
+    // Publish readiness only after this process started and checked both services;
+    // probing a shared port alone could acknowledge another checkout's service.
+    if let Some(path) = std::env::var_os("AGENTCTL_SERVICE_READY") {
+        std::fs::write(path, b"ready\n").wrap_err("publish development-service readiness")?;
+    }
+
     println!(
         "{}",
         json!({
