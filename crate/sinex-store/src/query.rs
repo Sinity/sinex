@@ -6,7 +6,7 @@ use sqlx::{Connection, Postgres, QueryBuilder, Row};
 use time::{Duration, OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
-const EVENT_VIEW: &str = "jsonb_build_object('id',e.id,'source',e.source,'host',e.host,'payload',e.payload,'parents',e.source_event_ids,'run',e.run_id,'operation',e.created_by_operation,'store','activity','time_suspect',e.time_suspect,'time_until',e.ts_orig_until,'written_by',e.written_by,'kind',e.event_type,'when',CASE WHEN e.ts_orig IS NULL THEN NULL ELSE to_char(e.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(e.ts_orig_tiebreak,0)::text,3,'0') || 'Z' END,'seen',to_char(e.ts_coided AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'written',to_char(e.ts_persisted AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'time_quality',e.ts_quality,'time_clock',e.ts_clock,'time_precision',e.ts_precision,'origin','material','material',e.source_material_id,'anchor',e.anchor_byte)";
+pub(crate) const EVENT_VIEW: &str = "jsonb_build_object('id',e.id,'source',e.source,'host',e.host,'payload',e.payload,'parents',e.source_event_ids,'run',e.run_id,'operation',e.created_by_operation,'store','activity','time_suspect',e.time_suspect,'time_until',e.ts_orig_until,'written_by',e.written_by,'kind',e.event_type,'when',CASE WHEN e.ts_orig IS NULL THEN NULL ELSE to_char(e.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(e.ts_orig_tiebreak,0)::text,3,'0') || 'Z' END,'seen',to_char(e.ts_coided AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'written',to_char(e.ts_persisted AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'time_quality',e.ts_quality,'time_clock',e.ts_clock,'time_precision',e.ts_precision,'origin',CASE WHEN e.source_material_id IS NULL THEN 'derived' ELSE 'material' END,'material',e.source_material_id,'anchor',e.anchor_byte)";
 
 #[derive(Debug, Clone)]
 pub struct QueryError(pub &'static str);
@@ -16,13 +16,16 @@ struct Filter {
     op: char,
     value: Value,
 }
+fn keyword<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    text.get(..word.len())
+        .filter(|head| head.eq_ignore_ascii_case(word))
+        .map(|_| &text[word.len()..])
+}
 fn parse(text: &str) -> std::result::Result<Vec<Filter>, QueryError> {
     if text.len() > 16_384 {
         return Err(QueryError("query exceeds 16 KiB"));
     }
-    let mut rest = text
-        .trim()
-        .strip_prefix("events")
+    let mut rest = keyword(text.trim(), "events")
         .ok_or(QueryError(
             "only the raw events unit is available; commands requires fusion",
         ))?
@@ -30,8 +33,7 @@ fn parse(text: &str) -> std::result::Result<Vec<Filter>, QueryError> {
     if rest.is_empty() {
         return Ok(vec![]);
     }
-    rest = rest
-        .strip_prefix("where ")
+    rest = keyword(rest, "where ")
         .ok_or(QueryError("expected events where FIELD OP VALUE"))?
         .trim();
     let mut filters = Vec::new();
@@ -107,8 +109,7 @@ fn parse(text: &str) -> std::result::Result<Vec<Filter>, QueryError> {
         if rest.is_empty() {
             break;
         }
-        rest = rest
-            .strip_prefix("and ")
+        rest = keyword(rest, "and ")
             .ok_or(QueryError(
                 "only conjunctions are available in the raw-event subset",
             ))?
@@ -230,7 +231,15 @@ impl Cursor {
 // recycle the connection. Close this exact transport instead. PostgreSQL's
 // transaction-local connection checks abort its query on observed socket loss.
 // No PID-targeted signal can accidentally reach a later, unrelated session.
-struct ReadLease(Option<sqlx::pool::PoolConnection<Postgres>>);
+pub(crate) struct ReadLease(pub(crate) Option<sqlx::pool::PoolConnection<Postgres>>);
+impl ReadLease {
+    pub(crate) fn connection(&mut self) -> &mut sqlx::PgConnection {
+        &mut *self.0.as_mut().expect("owned read connection")
+    }
+    pub(crate) fn finish(mut self) {
+        drop(self.0.take());
+    }
+}
 impl Drop for ReadLease {
     fn drop(&mut self) {
         if let Some(connection) = self.0.as_mut() {
@@ -239,6 +248,9 @@ impl Drop for ReadLease {
     }
 }
 impl ReadPool {
+    pub(crate) async fn read_lease(&self) -> Result<ReadLease> {
+        Ok(ReadLease(Some(self.0.acquire().await?)))
+    }
     pub async fn query(&self, text: &str, cursor: Option<&str>) -> Result<Value> {
         self.query_with_timeout(text, cursor, std::time::Duration::from_secs(10))
             .await
@@ -417,12 +429,40 @@ impl ReadPool {
     }
     pub async fn show(&self, id: &str) -> Result<Option<Value>> {
         let id = Uuid::parse_str(id).map_err(|_| Error::Invalid("invalid event ID"))?;
-        let row:Option<Value>=sqlx::query_scalar(&format!("SELECT {EVENT_VIEW} || jsonb_build_object('kind',e.event_type,'archive',(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id),'source_state',CASE WHEN e.record_state='removed' THEN 'removed at source' ELSE 'present' END) FROM core.events e WHERE e.id=$1")).bind(id).fetch_optional(&self.0).await?;
+        let mut lease = self.read_lease().await?;
+        let row:Option<Value>=sqlx::query_scalar(&format!("SELECT {EVENT_VIEW} || jsonb_build_object('kind',e.event_type,'archive',(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id),'source_state',CASE WHEN e.record_state='removed' THEN 'removed at source' ELSE 'present' END) FROM core.events e WHERE e.id=$1")).bind(id).fetch_optional(lease.connection()).await?;
+        lease.finish();
         Ok(row)
     }
     pub async fn trace(&self, id: &str, bytes_requested: bool) -> Result<Option<Value>> {
         let id = Uuid::parse_str(id).map_err(|_| Error::Invalid("invalid event ID"))?;
-        let row=sqlx::query("SELECT e.source_material_id,e.anchor_byte,e.offset_end,e.record_state,(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id) AS archive,m.status,m.durable_bytes,b.blake3,m.parser_provenance FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE e.id=$1").bind(id).fetch_optional(&self.0).await?;
+        let mut lease = self.read_lease().await?;
+        let parents: Option<Vec<Uuid>> =
+            sqlx::query_scalar("SELECT source_event_ids FROM core.events WHERE id=$1")
+                .bind(id)
+                .fetch_optional(lease.connection())
+                .await?
+                .flatten();
+        lease.finish();
+        if let Some(parents) = parents {
+            let mut evidence = Vec::new();
+            for parent in parents {
+                evidence.push(
+                    self.trace_material(parent, bytes_requested)
+                        .await?
+                        .ok_or(Error::Invalid("canonical parent evidence unavailable"))?,
+                );
+            }
+            return Ok(Some(
+                json!({"event":id,"representation":"canonical_shell_group","parents":evidence,"archive":self.show(&id.to_string()).await?.and_then(|e|e.get("archive").cloned())}),
+            ));
+        }
+        self.trace_material(id, bytes_requested).await
+    }
+    async fn trace_material(&self, id: Uuid, bytes_requested: bool) -> Result<Option<Value>> {
+        let mut lease = self.read_lease().await?;
+        let row=sqlx::query("SELECT e.source_material_id,e.anchor_byte,e.offset_end,e.record_state,(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id) AS archive,m.status,m.durable_bytes,b.blake3,m.parser_provenance FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE e.id=$1").bind(id).fetch_optional(lease.connection()).await?;
+        lease.finish();
         let Some(row) = row else { return Ok(None) };
         let material: Uuid = row.try_get("source_material_id")?;
         let anchor: i64 = row.try_get("anchor_byte")?;
@@ -463,7 +503,9 @@ impl ReadPool {
         end: Option<i64>,
         presentation: bool,
     ) -> Result<(Value, i64)> {
-        let row = sqlx::query("SELECT m.durable_bytes,b.blake3,m.parser_provenance FROM raw.source_material_registry m LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=$1").bind(material).fetch_one(&self.0).await?;
+        let mut lease = self.read_lease().await?;
+        let row = sqlx::query("SELECT m.durable_bytes,b.blake3,m.parser_provenance FROM raw.source_material_registry m LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=$1").bind(material).fetch_one(lease.connection()).await?;
+        lease.finish();
         let durable: i64 = row.try_get("durable_bytes")?;
         let expected_end = end;
         let end = end.unwrap_or_else(|| {

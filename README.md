@@ -1,6 +1,6 @@
 # Sinex foundation
 
-This is an isolated rewrite foundation, not a deployed release or completed M0. It provides canonical schema control, role-bound PostgreSQL ownership and an Atuin-only source path through retained row evidence, the single writer and normal daemon/CLI queries. The [retained Atuin replay subset](docs/rewrite/retained-replay.md) reparses one closed logical-row material with durable action recovery. MCP, other sources, automata and confirmed delivery remain unavailable. See the [implemented Atuin subset](docs/rewrite/atuin.md) for its limits.
+This is an isolated rewrite foundation, not a deployed release or completed M0. It provides canonical schema control, role-bound PostgreSQL ownership and an Atuin-only source path through retained row evidence, the single writer and normal daemon/CLI queries. The [retained Atuin replay subset](docs/rewrite/retained-replay.md) reparses one closed logical-row material with durable action recovery. The [indexed shell retrieval subset](docs/rewrite/indexed-retrieval.md) adds ranked search, project/time scope, real singleton canonical evidence and six read tools over `rmcp`. Other sources, multisource fusion, general automata and confirmed delivery remain unavailable. See the [implemented Atuin subset](docs/rewrite/atuin.md) for its limits.
 
 The [foundation contract](docs/rewrite/README.md) records source disposition and unimplemented criteria. The shared file layer comes from Polylogue’s [hashed-blobs-v0.1.0 release](https://github.com/Sinity/polylogue/tree/hashed-blobs-v0.1.0/crates/hashed-blobs). Cargo.lock pins the owner commit and the Nix build checks its source hash; no vendor fallback is present.
 
@@ -72,7 +72,7 @@ actual values; `result.json` marks dependent cases unrun on failure. State is
 removed only after successful evidence capture; failed owned state is retained
 with PostgreSQL stopped. The reporting controls qualify failed-run diagnostics. The connected boundary
 operation below qualifies observed retention/admission process kills. Physical
-SQLite snapshots, a general read model/index, formal M1 acceptance and task-routing
+SQLite snapshots, the full projection pruning/purge lifecycle, formal M1 acceptance and task-routing
 gates remain open.
 
 
@@ -132,3 +132,5 @@ for the concrete page fields, fixed 100-row size and source-coverage distinction
 `retained_replay_acceptance` qualifies the packaged retained-material replay subset, including a changed historical interpretation, restored omission, provider removal, bounded replacement kills, automatic owner continuation, current authorization, cancellation and refusal controls. The [owning replay contract](docs/rewrite/retained-replay.md) defines direct run, optional preview basis, request identity, progress/effect accounting and unsupported shapes.
 
 Registered readers enforce the fixed credential presentation floor independently of optional admission rules. [Credential output scope and refusal semantics](docs/credential-output.md) describe logical strings, opaque identities, row flags and qualification.
+
+`indexed_retrieval_package_acceptance` qualifies indexed shell retrieval through actual packaged daemon/API/CLI and rmcp stdio clients. The [owning indexed retrieval contract](docs/rewrite/indexed-retrieval.md) defines configuration, registered query shapes, ranking/snippets, canonical evidence, projection progress, interruption/reconstruction controls, and remaining full-product criteria. `indexed_retrieval_acceptance` is its focused development route. Existing raw-event, source, replay and output-floor evidence remains separate.

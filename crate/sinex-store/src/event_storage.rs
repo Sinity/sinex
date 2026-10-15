@@ -60,6 +60,17 @@ BEGIN
  RETURN NEW;
 END $$"#.into());
     statements.push("CREATE TRIGGER operation_guard BEFORE UPDATE ON core.operations_log FOR EACH ROW EXECUTE FUNCTION sinex_schemas.operation_guard()".into());
+    statements.push("CREATE INDEX search_text_command ON core.search_text USING gin(command_normalized gin_trgm_ops)".into());
+    statements.push(
+        "CREATE INDEX search_text_cwd ON core.search_text USING gin(cwd_normalized gin_trgm_ops)"
+            .into(),
+    );
+    statements.push("CREATE INDEX search_text_tsv ON core.search_text USING gin(tsv)".into());
+    statements.push(
+        "CREATE INDEX search_text_time ON core.search_text(generation,ts_orig,ts_orig_tiebreak,id)"
+            .into(),
+    );
+    statements.push("CREATE INDEX event_project_scope ON core.event_project(generation,project,ts_orig,event_id)".into());
     statements.push("CREATE VIEW core.live_events AS SELECT e.* FROM core.events e WHERE e.record_state='present' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.id=e.id)".into());
     statements
 }

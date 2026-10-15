@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 pub const WRITER_ROLE: &str = "sinex_writer";
 pub const READER_ROLE: &str = "sinex_reader";
+pub const READ_MODEL_ROLE: &str = "sinex_read_model";
 
 struct Column {
     name: &'static str,
@@ -136,6 +137,14 @@ const EVENT_CONSTRAINTS: &[(&str, &str)] = &[
         "FOREIGN KEY (source_material_id) REFERENCES raw.source_material_registry(id)",
     ),
     ("event_run", "FOREIGN KEY (run_id) REFERENCES core.runs(id)"),
+    (
+        "event_producer_version",
+        "FOREIGN KEY(producer_version_id) REFERENCES core.producer_versions(id)",
+    ),
+    (
+        "registered_shell_payload",
+        "CHECK (event_type<>'command.canonical' OR (payload_schema_id IS NOT DISTINCT FROM 3 AND source='fusion.shell-command' AND cardinality(source_event_ids)=1 AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'observed_by') IS NOT DISTINCT FROM 'array'))",
+    ),
 ];
 
 const TABLES: &[Definition] = &[
@@ -430,6 +439,24 @@ const TABLES: &[Definition] = &[
     },
     Definition {
         schema: "core",
+        name: "producer_versions",
+        columns: &[
+            col!("id", "uuid"),
+            col!("name", "text"),
+            col!("version", "text"),
+            col!("run_id", "uuid"),
+            col!("configuration", "jsonb"),
+        ],
+        constraints: &[
+            ("producer_versions_pkey", "PRIMARY KEY (id)"),
+            (
+                "producer_run",
+                "FOREIGN KEY (run_id) REFERENCES core.runs(id)",
+            ),
+        ],
+    },
+    Definition {
+        schema: "core",
         name: "events",
         columns: EVENT_COLUMNS,
         constraints: EVENT_CONSTRAINTS,
@@ -544,6 +571,59 @@ const TABLES: &[Definition] = &[
         ],
         constraints: &[("source_cursors_pkey", "PRIMARY KEY (binding, input)")],
     },
+    Definition {
+        schema: "derivation",
+        name: "shell_dirty",
+        columns: &[col!("parent_id", "uuid")],
+        constraints: &[("shell_dirty_pkey", "PRIMARY KEY (parent_id)")],
+    },
+    Definition {
+        schema: "derivation",
+        name: "read_model_position",
+        columns: &[
+            col!("name", "text"),
+            col!("generation", "uuid"),
+            col!("configuration", "text"),
+            col!("position", "bigint"),
+            col!("serving", "boolean"),
+            col!("failure", "text", null),
+        ],
+        constraints: &[
+            ("read_model_position_pkey", "PRIMARY KEY (name)"),
+            ("read_model_position_nonnegative", "CHECK (position>=0)"),
+        ],
+    },
+    Definition {
+        schema: "core",
+        name: "search_text",
+        columns: &[
+            col!("generation", "uuid"),
+            col!("id", "uuid"),
+            col!("ts_orig", "timestamp with time zone", null),
+            col!("ts_orig_tiebreak", "integer", null),
+            col!("source", "text"),
+            col!("event_type", "text"),
+            col!("tsv", "tsvector"),
+            col!("text", "text"),
+            col!("command", "text"),
+            col!("command_normalized", "text"),
+            col!("cwd_normalized", "text", null),
+            col!("cwd", "text", null),
+            col!("exit_code", "bigint", null),
+        ],
+        constraints: &[("search_text_pkey", "PRIMARY KEY (generation,id)")],
+    },
+    Definition {
+        schema: "core",
+        name: "event_project",
+        columns: &[
+            col!("generation", "uuid"),
+            col!("event_id", "uuid"),
+            col!("ts_orig", "timestamp with time zone", null),
+            col!("project", "text"),
+        ],
+        constraints: &[("event_project_pkey", "PRIMARY KEY (generation,event_id)")],
+    },
 ];
 
 fn enum_check(column: &str, labels: &[&str]) -> String {
@@ -657,7 +737,7 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         .execute(&mut *tx)
         .await?;
     let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM pg_namespace WHERE nspname IN ('core','raw','sinex_schemas','reflection','audit')",
+        "SELECT count(*) FROM pg_namespace WHERE nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation')",
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -669,6 +749,7 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         ]
         .concat();
         tx.execute(extension_sql.as_str()).await?;
+        tx.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm").await?;
         let installed: String =
             sqlx::query_scalar("SELECT extversion FROM pg_extension WHERE extname='timescaledb'")
                 .fetch_one(&mut *tx)
@@ -676,14 +757,15 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         if installed != TIMESCALEDB_VERSION {
             return Err(Error::Schema("TimescaleDB 2.27.2 is required".into()));
         }
-        sqlx::raw_sql("CREATE SCHEMA core; CREATE SCHEMA raw; CREATE SCHEMA sinex_schemas; CREATE SCHEMA reflection; CREATE SCHEMA audit; REVOKE ALL ON SCHEMA core, raw, sinex_schemas,reflection,audit FROM PUBLIC").execute(&mut *tx).await?;
+        sqlx::raw_sql("CREATE SCHEMA core; CREATE SCHEMA raw; CREATE SCHEMA sinex_schemas; CREATE SCHEMA reflection; CREATE SCHEMA audit; CREATE SCHEMA derivation; REVOKE ALL ON SCHEMA core, raw, sinex_schemas,reflection,audit,derivation FROM PUBLIC").execute(&mut *tx).await?;
         for ddl in declarations()? {
             tx.execute(ddl.as_str()).await?;
         }
         configure_events(&mut tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas (id,event_type,version,schema) VALUES (2,'command.executed','atuin-v1',$1)")
             .bind(crate::atuin::payload_schema()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed')")
+        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(3,'command.canonical','shell-command-v1-single-source',$1)").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed'),(3,'command.canonical')")
             .execute(&mut *tx)
             .await?;
         sqlx::query("INSERT INTO core.commit_counter (one,seq) VALUES (true,0)")
@@ -699,7 +781,8 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         .bind(catalog)
         .execute(&mut *tx)
         .await?;
-        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit TO sinex_writer,sinex_reader; GRANT INSERT ON core.operation_effects,core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON core.operations_log,raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
+        sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sinex_read_model') THEN CREATE ROLE sinex_read_model LOGIN; END IF; END $$; GRANT USAGE ON SCHEMA core,raw,audit,sinex_schemas,derivation,reflection TO sinex_read_model; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,audit,sinex_schemas,derivation,reflection TO sinex_read_model; GRANT INSERT,UPDATE,DELETE ON core.search_text,core.event_project,derivation.read_model_position TO sinex_read_model").execute(&mut *tx).await?;
+        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT INSERT ON core.producer_versions,derivation.shell_dirty,core.operation_effects,core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON core.operations_log,raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON derivation.shell_dirty,core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
     }
     let status = inspect(&mut tx).await?;
     tx.commit().await?;
@@ -738,12 +821,12 @@ struct Catalog {
 }
 
 async fn capture_catalog(conn: &mut PgConnection) -> Result<Catalog> {
-    let rows = sqlx::query("SELECT n.nspname || '.' || c.relname || '.' || con.conname AS key,pg_get_constraintdef(con.oid) AS definition FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit') AND con.contype <> 'n'").fetch_all(&mut *conn).await?;
+    let rows = sqlx::query("SELECT n.nspname || '.' || c.relname || '.' || con.conname AS key,pg_get_constraintdef(con.oid) AS definition FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation') AND con.contype <> 'n'").fetch_all(&mut *conn).await?;
     let mut constraints = BTreeMap::new();
     for r in rows {
         constraints.insert(r.try_get("key")?, r.try_get("definition")?);
     }
-    let rows = sqlx::query("SELECT n.nspname || '.' || c.relname || '.' || a.attname AS key,pg_get_expr(ad.adbin,ad.adrelid) AS expression FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef ad ON ad.adrelid=c.oid AND ad.adnum=a.attnum WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit') AND a.attnum>0 AND NOT a.attisdropped").fetch_all(&mut *conn).await?;
+    let rows = sqlx::query("SELECT n.nspname || '.' || c.relname || '.' || a.attname AS key,pg_get_expr(ad.adbin,ad.adrelid) AS expression FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef ad ON ad.adrelid=c.oid AND ad.adnum=a.attnum WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation') AND a.attnum>0 AND NOT a.attisdropped").fetch_all(&mut *conn).await?;
     let mut expressions = BTreeMap::new();
     for r in rows {
         expressions.insert(r.try_get("key")?, r.try_get("expression")?);
@@ -752,27 +835,27 @@ async fn capture_catalog(conn: &mut PgConnection) -> Result<Catalog> {
     for (kind, sql) in [
         (
             "collation",
-            "SELECT n.nspname || '.' || c.relname || '.' || a.attname AS key,jsonb_build_object('schema',cn.nspname,'name',co.collname) AS value FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_collation co ON co.oid=a.attcollation LEFT JOIN pg_namespace cn ON cn.oid=co.collnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit') AND c.relkind IN ('r','v') AND a.attnum>0 AND NOT a.attisdropped",
+            "SELECT n.nspname || '.' || c.relname || '.' || a.attname AS key,jsonb_build_object('schema',cn.nspname,'name',co.collname) AS value FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_collation co ON co.oid=a.attcollation LEFT JOIN pg_namespace cn ON cn.oid=co.collnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation') AND c.relkind IN ('r','v') AND a.attnum>0 AND NOT a.attisdropped",
         ),
         (
             "index",
-            "SELECT n.nspname || '.' || c.relname AS key,jsonb_build_object('definition',pg_get_indexdef(c.oid),'valid',i.indisvalid,'ready',i.indisready,'live',i.indislive,'options',c.reloptions,'tablespace',c.reltablespace) AS value FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit')",
+            "SELECT n.nspname || '.' || c.relname AS key,jsonb_build_object('definition',pg_get_indexdef(c.oid),'valid',i.indisvalid,'ready',i.indisready,'live',i.indislive,'options',c.reloptions,'tablespace',c.reltablespace) AS value FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation')",
         ),
         (
             "function",
-            "SELECT p.oid::regprocedure::text AS key,jsonb_build_object('definition',pg_get_functiondef(p.oid),'owner',pg_get_userbyid(p.proowner),'acl',p.proacl) AS value FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit')",
+            "SELECT p.oid::regprocedure::text AS key,jsonb_build_object('definition',pg_get_functiondef(p.oid),'owner',pg_get_userbyid(p.proowner),'acl',p.proacl) AS value FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation')",
         ),
         (
             "trigger",
-            "SELECT n.nspname || '.' || c.relname || '.' || t.tgname AS key,jsonb_build_object('definition',pg_get_triggerdef(t.oid),'enabled',t.tgenabled::text) AS value FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit') AND NOT t.tgisinternal",
+            "SELECT n.nspname || '.' || c.relname || '.' || t.tgname AS key,jsonb_build_object('definition',pg_get_triggerdef(t.oid),'enabled',t.tgenabled::text) AS value FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation') AND NOT t.tgisinternal",
         ),
         (
             "view",
-            "SELECT n.nspname || '.' || c.relname AS key,jsonb_build_object('definition',pg_get_viewdef(c.oid),'options',c.reloptions) AS value FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit') AND c.relkind='v'",
+            "SELECT n.nspname || '.' || c.relname AS key,jsonb_build_object('definition',pg_get_viewdef(c.oid),'options',c.reloptions) AS value FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation') AND c.relkind='v'",
         ),
         (
             "policy",
-            "SELECT n.nspname || '.' || c.relname || '.' || p.polname AS key,jsonb_build_object('roles',p.polroles,'command',p.polcmd::text,'permissive',p.polpermissive,'using',pg_get_expr(p.polqual,p.polrelid),'check',pg_get_expr(p.polwithcheck,p.polrelid)) AS value FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit')",
+            "SELECT n.nspname || '.' || c.relname || '.' || p.polname AS key,jsonb_build_object('roles',p.polroles,'command',p.polcmd::text,'permissive',p.polpermissive,'using',pg_get_expr(p.polqual,p.polrelid),'check',pg_get_expr(p.polwithcheck,p.polrelid)) AS value FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation')",
         ),
         (
             "timescale",
@@ -807,7 +890,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
     if extension.as_deref() != Some(TIMESCALEDB_VERSION) {
         return Err(Error::Schema("TimescaleDB 2.27.2 is required".into()));
     }
-    let tables: Vec<String> = sqlx::query_scalar("SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit') AND c.relkind IN ('r','p','v','m','f','S') ORDER BY 1").fetch_all(&mut *conn).await?;
+    let tables: Vec<String> = sqlx::query_scalar("SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation') AND c.relkind IN ('r','p','v','m','f','S') ORDER BY 1").fetch_all(&mut *conn).await?;
     let mut expected: Vec<String> = TABLES
         .iter()
         .map(|t| [t.schema, ".", t.name].concat())
@@ -894,7 +977,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 )));
             }
         }
-        let index_or_owner_drift: bool = sqlx::query_scalar("SELECT c.relrowsecurity OR c.relforcerowsecurity OR owner.rolname IN ('sinex_reader','sinex_writer') OR EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=c.oid AND (NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive)) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_roles owner ON owner.oid=c.relowner WHERE n.nspname=$1 AND c.relname=$2").bind(d.schema).bind(d.name).fetch_one(&mut *conn).await?;
+        let index_or_owner_drift: bool = sqlx::query_scalar("SELECT c.relrowsecurity OR c.relforcerowsecurity OR owner.rolname IN ('sinex_reader','sinex_writer','sinex_read_model') OR EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=c.oid AND (NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive)) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_roles owner ON owner.oid=c.relowner WHERE n.nspname=$1 AND c.relname=$2").bind(d.schema).bind(d.name).fetch_one(&mut *conn).await?;
         if index_or_owner_drift {
             return Err(Error::Schema(format!(
                 "{}.{} index, owner or row-security declaration differs",
@@ -914,19 +997,25 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             "registered Atuin payload schema differs".into(),
         ));
     }
+    let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=3 AND event_type='command.canonical' AND version='shell-command-v1-single-source'").fetch_optional(&mut *conn).await?;
+    if canonical.as_ref() != Some(&crate::shell::payload_schema()) {
+        return Err(Error::Schema(
+            "registered canonical payload schema differs".into(),
+        ));
+    }
     let counters: i64 = sqlx::query_scalar("SELECT count(*) FROM core.commit_counter WHERE one")
         .fetch_one(&mut *conn)
         .await?;
     if counters != 1 {
         return Err(Error::Schema("commit counter singleton is absent".into()));
     }
-    let dangerous: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname IN ('sinex_reader','sinex_writer') AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR oid=(SELECT datdba FROM pg_database WHERE datname=current_database()))) OR EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member WHERE r.rolname IN ('sinex_reader','sinex_writer')) OR NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sinex_reader') OR NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sinex_writer')").fetch_one(&mut *conn).await?;
+    let dangerous: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname IN ('sinex_reader','sinex_writer','sinex_read_model') AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR oid=(SELECT datdba FROM pg_database WHERE datname=current_database()))) OR EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member WHERE r.rolname IN ('sinex_reader','sinex_writer','sinex_read_model')) OR NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sinex_reader') OR NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sinex_writer')").fetch_one(&mut *conn).await?;
     if dangerous {
         return Err(Error::Schema(
             "dedicated unprivileged reader/writer roles required".into(),
         ));
     }
-    for table in expected {
+    for table in &expected {
         let bad: bool = sqlx::query_scalar("SELECT NOT has_table_privilege('sinex_reader',$1,'SELECT') OR has_table_privilege('sinex_reader',$1,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('sinex_reader',$1,'INSERT,UPDATE,REFERENCES')").bind(&table).fetch_one(&mut *conn).await?;
         if bad {
             return Err(Error::Schema(format!("reader grants unsafe for {table}")));
@@ -949,6 +1038,8 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 | "raw.inputs"
                 | "raw.observations"
                 | "raw.record_failures"
+                | "core.producer_versions"
+                | "derivation.shell_dirty"
         );
         let writer_update = matches!(
             table.as_str(),
@@ -961,7 +1052,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 | "core.live_equivalence"
                 | "core.live_coordinates"
         );
-        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1='core.live_coordinates') AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
+        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1 IN ('core.live_coordinates','derivation.shell_dirty')) AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
         if !good {
             return Err(Error::Schema(format!("writer grants differ for {table}")));
         }
@@ -972,11 +1063,23 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             "writer material UPDATE columns differ".into(),
         ));
     }
-    let schema_grants_bad: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit') AND (r.rolname IN ('sinex_reader','sinex_writer') OR has_schema_privilege('sinex_reader',n.oid,'CREATE') OR has_schema_privilege('sinex_writer',n.oid,'CREATE') OR NOT has_schema_privilege('sinex_reader',n.oid,'USAGE') OR NOT has_schema_privilege('sinex_writer',n.oid,'USAGE')))").fetch_one(&mut *conn).await?;
+    for table in &expected {
+        let mutable = matches!(
+            table.as_str(),
+            "core.search_text" | "core.event_project" | "derivation.read_model_position"
+        );
+        let good:bool=sqlx::query_scalar("SELECT has_table_privilege('sinex_read_model',$1,'SELECT') AND has_table_privilege('sinex_read_model',$1,'INSERT')=$2 AND has_table_privilege('sinex_read_model',$1,'UPDATE')=$2 AND has_table_privilege('sinex_read_model',$1,'DELETE')=$2 AND has_any_column_privilege('sinex_read_model',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_read_model',$1,'UPDATE')=$2 AND NOT has_any_column_privilege('sinex_read_model',$1,'REFERENCES') AND NOT has_table_privilege('sinex_read_model',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(table).bind(mutable).fetch_one(&mut *conn).await?;
+        if !good {
+            return Err(Error::Schema(format!(
+                "read-model grants differ for {table}"
+            )));
+        }
+    }
+    let schema_grants_bad: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation') AND (r.rolname IN ('sinex_reader','sinex_writer','sinex_read_model') OR has_schema_privilege('sinex_reader',n.oid,'CREATE') OR has_schema_privilege('sinex_writer',n.oid,'CREATE') OR has_schema_privilege('sinex_read_model',n.oid,'CREATE') OR NOT has_schema_privilege('sinex_reader',n.oid,'USAGE') OR NOT has_schema_privilege('sinex_writer',n.oid,'USAGE')))").fetch_one(&mut *conn).await?;
     if schema_grants_bad {
         return Err(Error::Schema("schema owner or grants differ".into()));
     }
-    let internal_trigger_disabled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit') AND t.tgisinternal AND t.tgenabled <> 'O')").fetch_one(&mut *conn).await?;
+    let internal_trigger_disabled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation') AND t.tgisinternal AND t.tgenabled <> 'O')").fetch_one(&mut *conn).await?;
     if internal_trigger_disabled {
         return Err(Error::Schema(
             "internal constraint trigger is disabled".into(),

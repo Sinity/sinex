@@ -12,6 +12,7 @@ pub mod rpc {
         "catalog",
         "sources.list",
         "query.run",
+        "search",
         "object.show",
         "object.trace",
         "replay.plan",
@@ -41,6 +42,8 @@ pub mod rpc {
         Sources,
         #[serde(rename = "query.run")]
         Query,
+        #[serde(rename = "search")]
+        Search,
         #[serde(rename = "object.show")]
         Show,
         #[serde(rename = "object.trace")]
@@ -59,6 +62,7 @@ pub mod rpc {
                 Self::Catalog => "catalog",
                 Self::Sources => "sources.list",
                 Self::Query => "query.run",
+                Self::Search => "search",
                 Self::Show => "object.show",
                 Self::Trace => "object.trace",
             }
@@ -75,6 +79,7 @@ pub mod rpc {
                 "catalog" => Some(Self::Catalog),
                 "sources.list" => Some(Self::Sources),
                 "query.run" => Some(Self::Query),
+                "search" => Some(Self::Search),
                 "object.show" => Some(Self::Show),
                 "object.trace" => Some(Self::Trace),
                 _ => None,
@@ -141,7 +146,7 @@ pub mod rpc {
                     }
                     return Ok(method);
                 }
-                Method::Query => {
+                Method::Query | Method::Search => {
                     let params = serde_json::from_value::<QueryParams>(self.params.clone())
                         .map_err(|_| {
                             RpcError::new(
@@ -194,6 +199,8 @@ pub mod rpc {
         pub query: String,
         #[serde(default)]
         pub cursor: Option<String>,
+        #[serde(default)]
+        pub page: Option<u32>,
         /// Whole-request read deadline; omitted API requests default to 10 seconds.
         #[serde(default)]
         pub timeout_ms: Option<u64>,
@@ -400,6 +407,8 @@ pub mod rpc {
         pub replays: Vec<sinex_model::replay::Outcome>,
         #[serde(default)]
         pub replay_authorized: bool,
+        #[serde(default)]
+        pub indexed_retrieval: Value,
     }
     #[derive(Clone, Debug, Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -437,8 +446,12 @@ pub mod rpc {
                 "Retained source observations, accounting and incomplete reads",
             ),
             (
+                Method::Search,
+                "Indexed shell words/phrases, ranked snippets and project/time scope",
+            ),
+            (
                 Method::Query,
-                "Raw events with explicit supported filters and snapshot pages",
+                "Shared bound query owner: raw event pages or registered indexed shell queries",
             ),
             (
                 Method::Show,

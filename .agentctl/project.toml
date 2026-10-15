@@ -154,3 +154,19 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.indexed_retrieval_acceptance]
+description = "Indexed shell retrieval through actual daemon CLI API and rmcp with interrupted projection and source changes"
+exec = ["python3", "tests/foundation.py", "--indexed"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
+
+[operations.indexed_retrieval_package_acceptance]
+description = "Packaged indexed shell retrieval with independent ranking Unicode scope lifecycle and actual MCP transport"
+exec = ["python3", "tests/foundation.py", "--indexed", "--packaged"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

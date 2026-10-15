@@ -17,6 +17,7 @@ struct App {
     config: Config,
     token: String,
     replay_token: Option<String>,
+    indexed: bool,
     reader: sinex_store::ReadPool,
     admission: sinex_store::Admission,
 }
@@ -96,7 +97,7 @@ pub async fn serve(
         config.store_dir.clone(),
         16,
         identity,
-        qualification,
+        qualification.clone(),
     )
     .await
     .map_err(|_| {
@@ -115,6 +116,25 @@ pub async fn serve(
         )
         .await
         .map_err(|_| "cannot configure replay authority".to_string())?;
+    let projection = if let Some(path) = &config.read_model_connection_file {
+        store
+            .admission
+            .enable_shell()
+            .await
+            .map_err(|_| "cannot enable canonical shell interpretation")?;
+        Some(
+            sinex_store::Projection::start(
+                &secret(path)?,
+                store.run_id(),
+                config.projects.iter().map(|p| p.model()).collect(),
+                qualification,
+            )
+            .await
+            .map_err(|_| "read-model role or projection unavailable")?,
+        )
+    } else {
+        None
+    };
     let (source_stop, source_shutdown) = tokio::sync::watch::channel(false);
     let (source_ended, mut source_ended_rx) = tokio::sync::watch::channel(false);
     let mut source = if let Some(atuin) = config.atuin.clone() {
@@ -142,6 +162,7 @@ pub async fn serve(
         None
     };
     let state = Arc::new(App {
+        indexed: config.read_model_connection_file.is_some(),
         config,
         token,
         replay_token,
@@ -163,6 +184,12 @@ pub async fn serve(
     } else {
         Ok(())
     };
+    if let Some(projection) = projection {
+        projection
+            .shutdown()
+            .await
+            .map_err(|_| "projection shutdown failed")?;
+    }
     let stopped = store.shutdown().await;
     source_result?;
     drop(lock);
@@ -258,6 +285,25 @@ async fn rpc(
 }
 
 async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcResponse {
+    if matches!(
+        method,
+        Method::Status | Method::Sources | Method::Show | Method::Trace
+    ) {
+        let id = request.id.clone();
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            execute_read(state, request, method),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(_) => RpcResponse::failure(Some(id), deadline_error(10000)),
+        }
+    } else {
+        execute_read(state, request, method).await
+    }
+}
+async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> RpcResponse {
     let result = match method {
         Method::Status => match (
             state.reader.schema_status().await,
@@ -280,6 +326,7 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
                 commit_seq: status.commit_seq,
                 replays,
                 replay_authorized: state.replay_token.is_some(),
+                indexed_retrieval: serde_json::Value::Null,
                 supported_sources: state.config.sources.clone(),
                 supported_methods: SUPPORTED_METHODS.iter().map(|s| s.to_string()).collect(),
             })
@@ -357,30 +404,66 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
         }),
         Method::Catalog => Ok(serde_json::json!(sinex_protocol::rpc::catalog())),
         Method::Sources => state.reader.sources().await.map_err(read_error),
-        Method::Query => {
+        Method::Query | Method::Search => {
             let params: sinex_protocol::QueryParams =
                 serde_json::from_value(request.params.clone()).expect("validated query params");
             let timeout_ms = params.timeout_ms.unwrap_or(10_000);
-            match sinex_store::validate_query(&params.query) {
-                Err(e) => Err(RpcError::new(
+            let indexed = method == Method::Search || sinex_store::is_indexed_query(&params.query);
+            if indexed {
+                if !state.indexed {
+                    Err(read_error(sinex_store::Error::ProjectionUnavailable(
+                        "indexed retrieval is not configured",
+                    )))
+                } else {
+                    state
+                        .reader
+                        .search_with_timeout(
+                            &params.query,
+                            params.cursor.as_deref(),
+                            params.page.unwrap_or(20),
+                            std::time::Duration::from_millis(timeout_ms),
+                        )
+                        .await
+                        .map_err(|e| {
+                            if matches!(e, sinex_store::Error::Deadline) {
+                                deadline_error(timeout_ms)
+                            } else {
+                                read_error(e)
+                            }
+                        })
+                }
+            } else if params.page.is_some() {
+                Err(RpcError::new(
                     ErrorKind::BadQuery,
-                    e.0,
+                    "raw events retain their fixed 100-row page",
                     serde_json::Value::Null,
-                )),
-                Ok(()) => state
-                    .reader
-                    .query_with_timeout(
-                        &params.query,
-                        params.cursor.as_deref(),
-                        std::time::Duration::from_millis(timeout_ms),
-                    )
-                    .await
-                    .map_err(|error| match error {
-                        sinex_store::Error::Deadline => deadline_error(timeout_ms),
-                        other => read_error(other),
-                    }),
+                ))
+            } else {
+                match sinex_store::validate_query(&params.query) {
+                    Err(e) => Err(RpcError::new(
+                        ErrorKind::BadQuery,
+                        e.0,
+                        serde_json::Value::Null,
+                    )),
+                    Ok(()) => state
+                        .reader
+                        .query_with_timeout(
+                            &params.query,
+                            params.cursor.as_deref(),
+                            std::time::Duration::from_millis(timeout_ms),
+                        )
+                        .await
+                        .map_err(|e| {
+                            if matches!(e, sinex_store::Error::Deadline) {
+                                deadline_error(timeout_ms)
+                            } else {
+                                read_error(e)
+                            }
+                        }),
+                }
             }
         }
+
         Method::Show | Method::Trace => {
             let params: sinex_protocol::ShowParams =
                 serde_json::from_value(request.params.clone()).expect("validated show params");
@@ -418,8 +501,24 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
             }
         }
     };
+    let result = if method == Method::Status {
+        match (result, state.reader.projection_status().await) {
+            (Ok(mut value), Ok(projection)) => {
+                value["indexed_retrieval"] = projection;
+                value["indexed_retrieval"]["configured"] = serde_json::json!(state.indexed);
+                Ok(value)
+            }
+            (Err(e), _) => Err(e),
+            (_, Err(e)) => Err(read_error(e)),
+        }
+    } else {
+        result
+    };
     let result = result.and_then(|mut value| {
-        if matches!(method, Method::Query | Method::Show | Method::Trace) {
+        if matches!(
+            method,
+            Method::Query | Method::Search | Method::Show | Method::Trace
+        ) {
             crate::output::validate_read(&value).map_err(|_| {
                 RpcError::new(
                     ErrorKind::Refused,
@@ -445,6 +544,7 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
                     serde_json::Value::Null,
                 ));
             }
+            crate::output::prepare_snippets(&original, &mut value);
             if let Some(notice) = value.get_mut("notice") {
                 *notice = serde_json::json!(sinex_protocol::DATA_NOTICE);
             }
@@ -476,13 +576,23 @@ fn deadline_error(timeout_ms: u64) -> RpcError {
             "reason": "execution_deadline",
             "timeout_ms": timeout_ms,
             "estimate": null,
-            "suggestion": "Narrow the supported source, kind, id or payload filters, or retry after contention ends.",
+            "suggestion": "Narrow the supported text, time, project, source or ID scope, or retry after contention ends.",
         }),
     )
 }
 
 fn read_error(error: sinex_store::Error) -> RpcError {
     match error {
+        sinex_store::Error::Database(sqlx::Error::Database(error))
+            if error.code().as_deref() == Some("57014") =>
+        {
+            deadline_error(10000)
+        }
+        sinex_store::Error::ProjectionUnavailable(reason) => RpcError::new(
+            ErrorKind::Partial,
+            reason,
+            serde_json::json!({"reason":"projection_unavailable","complete":false}),
+        ),
         sinex_store::Error::ReplayRefused(reason) => {
             RpcError::new(ErrorKind::Refused, reason, serde_json::Value::Null)
         }

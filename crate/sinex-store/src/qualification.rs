@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct QualificationBoundary {
     point: String,
     socket: PathBuf,
@@ -13,6 +14,8 @@ impl QualificationBoundary {
         let replay = point
             .strip_prefix("replay-staged-")
             .or_else(|| point.strip_prefix("replay-committed-"))
+            .or_else(|| point.strip_prefix("projection-staged-"))
+            .or_else(|| point.strip_prefix("projection-committed-"))
             .is_some_and(|step| step.parse::<usize>().is_ok_and(|n| n < 64));
         if (!replay
             && !matches!(
