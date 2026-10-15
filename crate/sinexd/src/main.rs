@@ -2,6 +2,8 @@
 mod atuin;
 mod config;
 #[cfg(feature = "runtime")]
+mod output;
+#[cfg(feature = "runtime")]
 mod server;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;

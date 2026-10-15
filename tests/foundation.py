@@ -23,12 +23,14 @@ parser.add_argument("--packaged", action="store_true", help="build and exercise 
 parser.add_argument("--read-lifecycle", action="store_true", help="qualify blocked reads and cancellation through actual packaged clients")
 parser.add_argument("--live-cursor", action="store_true", help="qualify current-state raw-event continuation through packaged clients")
 parser.add_argument("--startup-coverage", action="store_true", help="qualify configured initial source coverage before its first read")
+parser.add_argument("--credential-output", action="store_true", help="qualify fixed credential presentation with no optional rules")
 parser.add_argument("--atuin", action="store_true", help="qualify retained synthetic Atuin through real clients")
 parser.add_argument("--demo-spec", type=Path, help="read-only specification Git repository for the pinned Kestrel driver")
 parser.add_argument("--demo-boundaries", action="store_true", help="qualify observed writer boundary kills using the pinned fixture")
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.credential_output: OPTIONS.atuin = True
 if OPTIONS.retained_replay and (not OPTIONS.packaged or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.atuin or OPTIONS.demo_spec or OPTIONS.startup_coverage):
     parser.error("retained replay requires --packaged and its own scenario selector")
 if OPTIONS.read_lifecycle and (not OPTIONS.packaged or OPTIONS.live_cursor or OPTIONS.atuin or OPTIONS.demo_spec or OPTIONS.startup_coverage):
@@ -69,6 +71,8 @@ if OPTIONS.read_lifecycle:
     PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "disconnected actual client releases blocked snapshot", "API default deadline returns budget and releases snapshot", "CLI default deadline returns budget and releases snapshot", "CLI configured deadline returns budget and releases snapshot", "queued deadline and concurrent disconnect reclaim both reader slots"]
 if OPTIONS.retained_replay:
     PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "retained fixture and independent bad-interpretation contrast", "bounded replay removed-range progress and later precommit recovery", "postcommit kill and request recovery", "disconnected client leaves admitted replay running", "changed parser artifact refuses mixed-operation continuation", "retained evidence refusal and durable outcomes", "retained request and outcome authority refuse unavailable comparison", "explicit authority cancellation and request conflicts", "malformed retained material preserves prior answers"]
+if OPTIONS.credential_output:
+    PLANNED = PLANNED[:4] + ["Atuin retained source and real-client query"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)

@@ -1,6 +1,6 @@
 use crate::config::{Config, secret};
 use axum::{
-    Json, Router,
+    Router,
     body::{Body, Bytes},
     extract::{DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode},
@@ -192,7 +192,7 @@ async fn rpc(
     if !authenticated {
         return (
             StatusCode::UNAUTHORIZED,
-            Json(RpcResponse::failure(
+            present_response(RpcResponse::failure(
                 None,
                 RpcError::new(
                     ErrorKind::Refused,
@@ -208,17 +208,24 @@ async fn rpc(
         Err(_) => {
             return (
                 StatusCode::OK,
-                Json(RpcResponse::failure(None, RpcError::parse_error())),
+                present_response(RpcResponse::failure(None, RpcError::parse_error())),
             )
                 .into_response();
         }
     };
+    if !crate::output::request_safe(&request.id, &request.params) {
+        return (
+            StatusCode::OK,
+            present_response(crate::output::refusal(Some(request.id))),
+        )
+            .into_response();
+    }
     let method = match request.validate() {
         Ok(m) => m,
         Err(e) => {
             return (
                 StatusCode::OK,
-                Json(RpcResponse::failure(Some(request.id), e)),
+                present_response(RpcResponse::failure(Some(request.id), e)),
             )
                 .into_response();
         }
@@ -226,7 +233,7 @@ async fn rpc(
     if matches!(method, Method::ReplayStart | Method::ReplayCancel) && !operator {
         return (
             StatusCode::OK,
-            Json(RpcResponse::failure(
+            present_response(RpcResponse::failure(
                 Some(request.id),
                 RpcError::new(
                     ErrorKind::Refused,
@@ -241,9 +248,7 @@ async fn rpc(
     // disconnects, so it drops the in-flight read instead of detaching a handler.
     let body = Body::from_stream(futures_util::stream::once(async move {
         let response = execute(state, request, method).await;
-        Ok::<_, std::convert::Infallible>(Bytes::from(
-            serde_json::to_vec(&response).expect("RPC response serializes"),
-        ))
+        Ok::<_, std::convert::Infallible>(Bytes::from(crate::output::encode(response)))
     }));
     axum::response::Response::builder()
         .status(StatusCode::OK)
@@ -415,6 +420,14 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
     };
     let result = result.and_then(|mut value| {
         if matches!(method, Method::Query | Method::Show | Method::Trace) {
+            crate::output::validate_read(&value).map_err(|_| {
+                RpcError::new(
+                    ErrorKind::Refused,
+                    "credential presentation unavailable",
+                    serde_json::Value::Null,
+                )
+            })?;
+            let original = value.clone();
             sinex_store::present(
                 &mut value,
                 &state
@@ -425,6 +438,13 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
                     .collect::<Vec<_>>(),
             )
             .map_err(read_error)?;
+            if !crate::output::same_bindings(&original, &value) {
+                return Err(RpcError::new(
+                    ErrorKind::Refused,
+                    "presentation rule changes an opaque selector",
+                    serde_json::Value::Null,
+                ));
+            }
             if let Some(notice) = value.get_mut("notice") {
                 *notice = serde_json::json!(sinex_protocol::DATA_NOTICE);
             }
@@ -475,4 +495,11 @@ fn read_error(error: sinex_store::Error) -> RpcError {
             serde_json::Value::Null,
         ),
     }
+}
+
+fn present_response(response: RpcResponse) -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        crate::output::encode(response),
+    )
 }
