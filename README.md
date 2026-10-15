@@ -6,7 +6,7 @@ The [foundation contract](docs/rewrite/README.md) records source disposition and
 
 ## Build and inspect
 
-The Nix lock pins the compiler and package environment. The checked SQLx queries compile against an actual isolated PostgreSQL schema. Atuin admission and constructed queries execute against that same schema in acceptance. Build the query-free admin first:
+The Nix lock pins the compiler and package environment. A separate Rust input supplies the shared release’s tested Rust 1.98.1 minimum while preserving the existing PostgreSQL/Timescale package pin. The checked SQLx queries compile against an actual isolated PostgreSQL schema. Atuin admission and constructed queries execute against that same schema in acceptance. Build the query-free admin first:
 
 ```
 nix develop --command cargo build -p sinexd --no-default-features

@@ -1,15 +1,18 @@
 {
   description = "Sinex isolated executable foundation";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  outputs = { self, nixpkgs }:
+  inputs.rust-nixpkgs.url = "github:NixOS/nixpkgs/6510408d147d8c5e6d76043e899e9251756f6a75";
+  outputs = { self, nixpkgs, rust-nixpkgs }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
         config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "timescaledb" ];
       };
+      # Keep the qualified database packages while aligning the released crate’s compiler.
+      rustPkgs = import rust-nixpkgs { inherit system; };
       postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
-      package = pkgs.rustPlatform.buildRustPackage {
+      package = rustPkgs.rustPlatform.buildRustPackage {
         pname = "sinex-foundation";
         version = "0.1.0";
         src = ./.;
@@ -30,8 +33,8 @@
           createuser sinex_reader
           export DATABASE_URL="postgresql:///foundation?host=$PGHOST&port=$PGPORT"
           printf '%s' "$DATABASE_URL" > admin-connection
-          cargo build --offline --locked -p sinexd --no-default-features --target-dir target --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget}
-          target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinexd admin schema --connection-file "$PWD/admin-connection"
+          cargo build --offline --locked -p sinexd --no-default-features --target-dir target --target ${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}
+          target/${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinexd admin schema --connection-file "$PWD/admin-connection"
         '';
         cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "xtask" ];
         doCheck = true;
@@ -40,7 +43,7 @@
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ pkgs.cargo pkgs.rustc pkgs.rustfmt pkgs.clippy postgres pkgs.python3 pkgs.pkg-config ];
+        packages = [ rustPkgs.cargo rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.python3 pkgs.pkg-config ];
         shellHook = "export CARGO_TARGET_DIR=\"$PWD/target\"";
       };
     };
