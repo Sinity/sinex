@@ -116,14 +116,16 @@ fn walk(value: &mut Value, presentation: bool) -> Result<bool, ()> {
                 }
                 let display = display_field(key, presentation);
                 if !presentation && key == "rows" {
-                    if let Some(rows) = value.as_array_mut() {
-                        for row in rows {
-                            let detected = walk(row, false)?;
-                            row["secret"] = Value::Bool(detected);
-                            changed |= detected;
+                    let rows = value.as_array_mut().ok_or(())?;
+                    for row in rows {
+                        if !row.is_object() {
+                            return Err(());
                         }
-                        continue;
+                        let detected = walk(row, false)?;
+                        row["secret"] = Value::Bool(detected);
+                        changed |= detected;
                     }
+                    continue;
                 }
                 let detected = walk(value, display)?;
                 if !presentation && key == "row" && value.is_object() {
@@ -162,6 +164,51 @@ pub fn encode(response: RpcResponse) -> Vec<u8> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn malformed_request_rows_reach_protocol_validation_without_panicking() {
+        use sinex_protocol::rpc::{Method, RpcRequest};
+        for params in [
+            json!({"rows":[1]}),
+            json!({"rows":[[]]}),
+            json!({"rows":[null]}),
+            json!({"rows":[true]}),
+            json!({"rows":["plain"]}),
+            json!({"rows":1}),
+            json!({"rows":[]}),
+            json!([1]),
+            json!(null),
+        ] {
+            let original = params.clone();
+            assert!(request_safe(&RpcId::Number(7), &params));
+            assert_eq!(params, original);
+            let error = RpcRequest::new(RpcId::Number(7), Method::Status, params)
+                .validate()
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::BadQuery);
+        }
+    }
+    #[test]
+    fn malformed_response_rows_refuse_before_encoding_success() {
+        for rows in [
+            json!([1]),
+            json!([[]]),
+            json!([null]),
+            json!([true]),
+            json!(["plain"]),
+            json!(1),
+            json!(null),
+            json!({}),
+        ] {
+            let bytes = encode(RpcResponse::success(RpcId::Number(9), json!({"rows":rows})));
+            let wire: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(wire["id"], 9);
+            assert_eq!(wire["error"]["kind"], "refused");
+            assert!(wire.get("result").is_none());
+        }
+        let bytes = encode(RpcResponse::success(RpcId::Number(9), json!({"rows":[]})));
+        let wire: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(wire["result"]["rows"], json!([]));
+    }
     #[test]
     fn whole_document_refusal_discards_staged_text_and_ambiguous_keys() {
         let token = format!("ghp_{}", "A".repeat(36));
@@ -216,7 +263,19 @@ pub fn request_safe(id: &RpcId, params: &Value) -> bool {
         RpcId::Number(_) => true,
         RpcId::String(raw) => text(raw).is_ok_and(|masked| masked == *raw),
     };
-    id_safe && admit(&mut params.clone()).is_ok_and(|changed| !changed)
+    // Screening does not decorate or change request values. The protocol
+    // validator, called next, owns method-specific parameter shapes.
+    fn safe(value: &Value) -> bool {
+        match value {
+            Value::String(raw) => text(raw).is_ok_and(|masked| masked == *raw),
+            Value::Array(values) => values.iter().all(safe),
+            Value::Object(fields) => fields
+                .iter()
+                .all(|(key, value)| text(key).is_ok_and(|masked| masked == *key) && safe(value)),
+            _ => true,
+        }
+    }
+    id_safe && safe(params)
 }
 
 /// Validate raw identities/keys before optional presentation rules can alter them.

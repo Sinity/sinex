@@ -48,6 +48,15 @@ def exercise(h, base, cli, wait_cycle, config_text):
     config=work/'atuin.toml'
     port=tomllib.loads(config.read_text())['listen'].split(':')[-1]
     endpoint=f'http://127.0.0.1:{port}/rpc'
+    malformed = [{'rows':[1]}, {'rows':[[]]}, {'rows':[None]}, {'rows':[True]},
+                 {'rows':['plain']}, {'rows':1}, {'rows':[]}, [1], None]
+    for number,params in enumerate(malformed, 100):
+        request=urllib.request.Request(endpoint,data=json.dumps({'jsonrpc':'2.0','id':number,'method':'status','params':params}).encode(),headers={'Authorization':'Bearer synthetic-foundation-token','Content-Type':'application/json'})
+        with urllib.request.urlopen(request,timeout=5) as response: answer=json.load(response)
+        assert answer['id']==number and answer['error']['kind']=='bad_query' and 'result' not in answer
+        assert h['CHILDREN'][-1][0].poll() is None
+        assert 'result' in h['rpc'](endpoint,'synthetic-foundation-token')
+    (report/'malformed-request-controls.json').write_text(json.dumps({'cases':malformed,'typed_bad_query':True,'daemon_alive':True,'subsequent_normal_request':True},indent=2)+chr(10))
     for identity,params in [(token,{}),(17,{token:'synthetic'})]:
         request=urllib.request.Request(endpoint,data=json.dumps({'jsonrpc':'2.0','id':identity,'method':'status','params':params}).encode(),headers={'Authorization':'Bearer synthetic-foundation-token','Content-Type':'application/json'})
         with urllib.request.urlopen(request,timeout=5) as response: wire=response.read().decode()
