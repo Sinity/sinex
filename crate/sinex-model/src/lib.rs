@@ -635,3 +635,55 @@ pub mod batch {
     }
 }
 pub use events::{EventId, InputId, MaterialId, RunId};
+
+/// The implemented bounded retained-Atuin replay contract. Identity is supplied by the
+/// authenticated transport, never by these caller-controlled parameters.
+pub mod replay {
+    pub fn fresh_action_id() -> uuid::Uuid {
+        uuid::Uuid::now_v7()
+    }
+    use serde::{Deserialize, Serialize};
+    use uuid::Uuid;
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct Selection {
+        pub query: String,
+    }
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct Start {
+        pub query: String,
+        pub action_id: Uuid,
+        #[serde(default)]
+        pub expected_basis: Option<String>,
+    }
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct Operation {
+        pub operation_id: Uuid,
+    }
+    #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum State {
+        Recorded,
+        Running,
+        Completed,
+        Refused,
+        Cancelled,
+    }
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct Outcome {
+        pub operation_id: Uuid,
+        pub action_id: Uuid,
+        pub state: State,
+        pub complete: bool,
+        pub selected: usize,
+        pub processed: usize,
+        pub next_anchor: i64,
+        pub steps: usize,
+        pub archived: usize,
+        pub admitted: usize,
+        pub reason: Option<String>,
+    }
+}

@@ -90,8 +90,14 @@ pub fn mask(value: &mut Value, rules: &[PrivacyRule]) -> Result<()> {
 
 /// One bounded read from the source's consistent SQLite transaction. Fields name acquisition
 /// evidence, never synthetic event IDs. Admission derives the event type and equivalence key.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AtuinInterpretation {
+    Current,
+    HistoricalFixture,
+}
 #[derive(Clone)]
 pub struct AtuinStep {
+    pub interpretation: AtuinInterpretation,
     pub observation: Uuid,
     pub observed_at: String,
     pub locator: String,
@@ -115,15 +121,15 @@ struct AtuinRow {
     #[serde(default)]
     _end_not_recorded: bool,
 }
-struct Parsed {
-    payload: Value,
-    native_id: String,
-    time: String,
-    removed: bool,
-    nanos: i32,
-    time_evidence: sinex_model::events::TsOrig,
+pub(crate) struct Parsed {
+    pub(crate) payload: Value,
+    pub(crate) native_id: String,
+    pub(crate) time: String,
+    pub(crate) removed: bool,
+    pub(crate) nanos: i32,
+    pub(crate) time_evidence: sinex_model::events::TsOrig,
 }
-fn parse(row: &Value) -> std::result::Result<Parsed, &'static str> {
+pub(crate) fn parse(row: &Value) -> std::result::Result<Parsed, &'static str> {
     let r: AtuinRow = serde_json::from_value(row.clone())
         .map_err(|_| "invalid Atuin record field type or missing field")?;
     if r.id.is_empty() || r.id.len() > 512 || r.exit < -1 || r.duration < -1 {
@@ -380,6 +386,13 @@ impl WriterPool {
                     continue;
                 }
             };
+            if step.interpretation == AtuinInterpretation::HistoricalFixture
+                && parsed.native_id == "fixture-129"
+            {
+                sqlx::query("INSERT INTO raw.record_failures (observation_id,material_id,anchor_byte,reason) VALUES ($1,$2,$3,'controlled historical parser omission; current parser accepts this retained row')").bind(step.observation).bind(material).bind(anchor).execute(&mut *tx).await?;
+                failures += 1;
+                continue;
+            }
             let key = json!([input, parsed.native_id]).to_string();
             let key_hash =
                 blake3::hash(format!("{SOURCE}\x1fcommand.executed\x1f{key}").as_bytes())
@@ -415,9 +428,14 @@ impl WriterPool {
                 )
                 .map_err(|_| Error::Invalid("invalid projected source time"))?;
             let mut payload = parsed.payload;
+            let fixture = step.interpretation == AtuinInterpretation::HistoricalFixture
+                && parsed.native_id == "fixture-000";
+            if fixture {
+                payload["hostname"] = json!("controlled-historical-bad-interpretation");
+            }
             mask(&mut payload, &step.privacy_rules)?;
-            sqlx::query("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_orig_tiebreak,ts_quality,ts_clock,time_suspect,payload_schema_id,commit_seq,source_material_id,anchor_byte,offset_start,offset_end,offset_kind,ordinal,record_hash,record_state,run_id,equivalence_key) VALUES ($1,$2,'command.executed',$3,$4::text::timestamptz,$13,'intrinsic','producer',$14,2,$5,$6,$7,$7,$8,'bytes',0,$9,$10,$11,$12)")
-                .bind(id).bind(SOURCE).bind(payload).bind(parsed.time).bind(last_seq).bind(material).bind(anchor).bind(start+end).bind(&record_hash).bind(if parsed.removed {"removed"} else {"present"}).bind(self.run_id).bind(key).bind(parsed.nanos).bind(projected.suspect).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_orig_tiebreak,ts_quality,ts_clock,time_suspect,payload_schema_id,commit_seq,source_material_id,anchor_byte,offset_start,offset_end,offset_kind,ordinal,record_hash,record_state,run_id,equivalence_key,written_by) VALUES ($1,$2,'command.executed',$3,$4::text::timestamptz,$13,'intrinsic','producer',$14,2,$5,$6,$7,$7,$8,'bytes',0,$9,$10,$11,$12,$15)")
+                .bind(id).bind(SOURCE).bind(payload).bind(parsed.time).bind(last_seq).bind(material).bind(anchor).bind(start+end).bind(&record_hash).bind(if parsed.removed {"removed"} else {"present"}).bind(self.run_id).bind(key).bind(parsed.nanos).bind(projected.suspect).bind(if fixture {json!({"kind":"qualification_fixture","description":"controlled historical bad interpretation; not a predecessor binary"})}else{Value::Null}).execute(&mut *tx).await?;
             sqlx::query(
                 "INSERT INTO core.live_coordinates (store,occ_hash,event_id) VALUES (0,$1,$2)",
             )

@@ -14,11 +14,23 @@ pub mod rpc {
         "query.run",
         "object.show",
         "object.trace",
+        "replay.plan",
+        "replay.start",
+        "replay.status",
+        "replay.cancel",
     ];
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
     pub enum Method {
         #[serde(rename = "status")]
         Status,
+        #[serde(rename = "replay.plan")]
+        ReplayPlan,
+        #[serde(rename = "replay.start")]
+        ReplayStart,
+        #[serde(rename = "replay.status")]
+        ReplayStatus,
+        #[serde(rename = "replay.cancel")]
+        ReplayCancel,
         #[serde(rename = "version")]
         Version,
         #[serde(rename = "config.show")]
@@ -38,6 +50,10 @@ pub mod rpc {
         pub const fn as_str(self) -> &'static str {
             match self {
                 Self::Status => "status",
+                Self::ReplayPlan => "replay.plan",
+                Self::ReplayStart => "replay.start",
+                Self::ReplayStatus => "replay.status",
+                Self::ReplayCancel => "replay.cancel",
                 Self::Version => "version",
                 Self::ConfigShow => "config.show",
                 Self::Catalog => "catalog",
@@ -50,6 +66,10 @@ pub mod rpc {
         pub fn parse(value: &str) -> Option<Self> {
             match value {
                 "status" => Some(Self::Status),
+                "replay.plan" => Some(Self::ReplayPlan),
+                "replay.start" => Some(Self::ReplayStart),
+                "replay.status" => Some(Self::ReplayStatus),
+                "replay.cancel" => Some(Self::ReplayCancel),
                 "version" => Some(Self::Version),
                 "config.show" => Some(Self::ConfigShow),
                 "catalog" => Some(Self::Catalog),
@@ -92,6 +112,35 @@ pub mod rpc {
             let method = Method::parse(&self.method)
                 .ok_or_else(|| RpcError::method_not_found(&self.method))?;
             match method {
+                Method::ReplayPlan
+                | Method::ReplayStart
+                | Method::ReplayStatus
+                | Method::ReplayCancel => {
+                    let valid = match method {
+                        Method::ReplayPlan => serde_json::from_value::<
+                            sinex_model::replay::Selection,
+                        >(self.params.clone())
+                        .is_ok(),
+                        Method::ReplayStart => {
+                            serde_json::from_value::<sinex_model::replay::Start>(
+                                self.params.clone(),
+                            )
+                            .is_ok()
+                        }
+                        _ => serde_json::from_value::<sinex_model::replay::Operation>(
+                            self.params.clone(),
+                        )
+                        .is_ok(),
+                    };
+                    if !valid {
+                        return Err(RpcError::new(
+                            ErrorKind::BadQuery,
+                            "replay requires an explicit typed selection/action or operation identity",
+                            Value::Null,
+                        ));
+                    }
+                    return Ok(method);
+                }
                 Method::Query => {
                     let params = serde_json::from_value::<QueryParams>(self.params.clone())
                         .map_err(|_| {
@@ -347,6 +396,10 @@ pub mod rpc {
         /// Enabled implementations, not the broader design catalog. Empty does not certify source coverage.
         pub supported_sources: Vec<String>,
         pub supported_methods: Vec<String>,
+        #[serde(default)]
+        pub replays: Vec<sinex_model::replay::Outcome>,
+        #[serde(default)]
+        pub replay_authorized: bool,
     }
     #[derive(Clone, Debug, Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -356,6 +409,19 @@ pub mod rpc {
     }
     pub fn catalog() -> Vec<CatalogEntry> {
         [
+            (
+                Method::ReplayPlan,
+                "Plan bounded retained Atuin material replay",
+            ),
+            (
+                Method::ReplayStart,
+                "Admit retained replay; the owned writer completes bounded chunks",
+            ),
+            (Method::ReplayStatus, "Read durable replay progress"),
+            (
+                Method::ReplayCancel,
+                "Stop an existing replay between chunks",
+            ),
             (
                 Method::Status,
                 "Database schema, writer ownership and supported scope",
@@ -392,3 +458,5 @@ pub mod rpc {
     }
 }
 pub use rpc::*;
+
+pub use sinex_model::replay::{Operation as ReplayOperation, fresh_action_id};

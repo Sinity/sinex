@@ -16,12 +16,14 @@ use std::sync::Arc;
 struct App {
     config: Config,
     token: String,
+    replay_token: Option<String>,
     reader: sinex_store::ReadPool,
     admission: sinex_store::Admission,
 }
 pub async fn serve(
     config: Config,
     qualification: Option<sinex_store::QualificationBoundary>,
+    historical_fixture: bool,
 ) -> Result<(), String> {
     eprintln!(
         "{}",
@@ -36,6 +38,14 @@ pub async fn serve(
         serde_json::json!({"component":"sinexd","phase":"endpoint_reserved"})
     );
     let token = secret(&config.token_file)?;
+    let replay_token = config
+        .replay_token_file
+        .as_deref()
+        .map(secret)
+        .transpose()?;
+    if replay_token.as_ref() == Some(&token) {
+        return Err("replay operator credential must differ from the read-only credential".into());
+    }
     let writer = secret(&config.writer_connection_file)?;
     let reader = secret(&config.reader_connection_file)?;
     std::fs::create_dir_all(&config.state_dir)
@@ -96,12 +106,31 @@ pub async fn serve(
         "{}",
         serde_json::json!({"component":"sinexd","phase":"store_ready"})
     );
+    store
+        .admission
+        .set_replay_profile(
+            replay_token
+                .as_ref()
+                .map(|_| config.privacy_rules.iter().map(|r| r.rule()).collect()),
+        )
+        .await
+        .map_err(|_| "cannot configure replay authority".to_string())?;
     let (source_stop, source_shutdown) = tokio::sync::watch::channel(false);
     let (source_ended, mut source_ended_rx) = tokio::sync::watch::channel(false);
     let mut source = if let Some(atuin) = config.atuin.clone() {
         let rules: Vec<_> = config.privacy_rules.iter().map(|r| r.rule()).collect();
         let admission = store.admission.clone();
-        let observation = crate::atuin::begin_poll(&atuin.path, &rules, &admission).await?;
+        let observation = crate::atuin::begin_poll(
+            &atuin.path,
+            &rules,
+            &admission,
+            if historical_fixture {
+                sinex_store::AtuinInterpretation::HistoricalFixture
+            } else {
+                sinex_store::AtuinInterpretation::Current
+            },
+        )
+        .await?;
         let ended = source_ended.clone();
         Some(tokio::spawn(async move {
             let result =
@@ -115,6 +144,7 @@ pub async fn serve(
     let state = Arc::new(App {
         config,
         token,
+        replay_token,
         reader: store.reader.clone(),
         admission: store.admission.clone(),
     });
@@ -150,10 +180,15 @@ async fn rpc(
     headers: HeaderMap,
     body: Bytes,
 ) -> axum::response::Response {
-    let authenticated = headers
+    let supplied = headers
         .get("authorization")
         .and_then(|h| h.to_str().ok())
-        .is_some_and(|h| h.strip_prefix("Bearer ") == Some(state.token.as_str()));
+        .and_then(|h| h.strip_prefix("Bearer "));
+    let operator = state
+        .replay_token
+        .as_deref()
+        .is_some_and(|token| Some(token) == supplied);
+    let authenticated = operator || supplied == Some(state.token.as_str());
     if !authenticated {
         return (
             StatusCode::UNAUTHORIZED,
@@ -188,6 +223,20 @@ async fn rpc(
                 .into_response();
         }
     };
+    if matches!(method, Method::ReplayStart | Method::ReplayCancel) && !operator {
+        return (
+            StatusCode::OK,
+            Json(RpcResponse::failure(
+                Some(request.id),
+                RpcError::new(
+                    ErrorKind::Refused,
+                    "explicit replay operator profile required",
+                    serde_json::Value::Null,
+                ),
+            )),
+        )
+            .into_response();
+    }
     // The connection owns this body future. Hyper drops it when the receiver
     // disconnects, so it drops the in-flight read instead of detaching a handler.
     let body = Body::from_stream(futures_util::stream::once(async move {
@@ -208,8 +257,9 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
         Method::Status => match (
             state.reader.schema_status().await,
             state.reader.status().await,
+            state.reader.replay_operations().await,
         ) {
-            (Ok(schema), Ok(status)) => serde_json::to_value(Status {
+            (Ok(schema), Ok(status), Ok(replays)) => serde_json::to_value(Status {
                 schema: SchemaStatus {
                     version: i64::from(schema.version),
                     expected_version: 1,
@@ -223,6 +273,8 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
                     }
                 },
                 commit_seq: status.commit_seq,
+                replays,
+                replay_authorized: state.replay_token.is_some(),
                 supported_sources: state.config.sources.clone(),
                 supported_methods: SUPPORTED_METHODS.iter().map(|s| s.to_string()).collect(),
             })
@@ -239,6 +291,54 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
                 serde_json::Value::Null,
             )),
         },
+        Method::ReplayPlan | Method::ReplayStart | Method::ReplayCancel => {
+            let command = match method {
+                Method::ReplayPlan => sinex_store::ReplayCommand::Plan(
+                    serde_json::from_value(request.params.clone()).expect("validated plan"),
+                    state
+                        .config
+                        .privacy_rules
+                        .iter()
+                        .map(|r| r.rule())
+                        .collect(),
+                ),
+                Method::ReplayStart => sinex_store::ReplayCommand::Start(
+                    serde_json::from_value(request.params.clone()).expect("validated replay"),
+                ),
+                _ => sinex_store::ReplayCommand::Cancel(
+                    serde_json::from_value(request.params.clone()).expect("validated operation"),
+                ),
+            };
+            state
+                .admission
+                .replay(command)
+                .await
+                .map_err(|error| {
+                    if matches!(method,Method::ReplayStart|Method::ReplayCancel) && !matches!(error,sinex_store::Error::Invalid(_)|sinex_store::Error::ReplayRefused(_)) {
+                        RpcError::new(ErrorKind::Partial,"mutation outcome unavailable; recover the same action or inspect the existing operation",serde_json::json!({"outcome":"indeterminate","action_id":request.params.get("action_id"),"operation_id":request.params.get("operation_id")}))
+                    } else {read_error(error)}
+                })
+                .and_then(replay_outcome)
+        }
+        Method::ReplayStatus => {
+            let params: sinex_protocol::ReplayOperation =
+                serde_json::from_value(request.params.clone()).expect("validated operation");
+            state
+                .reader
+                .replay_status(params.operation_id)
+                .await
+                .map_err(read_error)
+                .and_then(|value| {
+                    value.ok_or_else(|| {
+                        RpcError::new(
+                            ErrorKind::NotFound,
+                            "replay operation not found",
+                            serde_json::Value::Null,
+                        )
+                    })
+                })
+                .and_then(replay_outcome)
+        }
         Method::Version => Ok(serde_json::json!(VersionInfo {
             version: env!("CARGO_PKG_VERSION").into(),
             protocol: "2.0".into()
@@ -337,6 +437,17 @@ async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcRes
     }
 }
 
+fn replay_outcome(value: serde_json::Value) -> Result<serde_json::Value, RpcError> {
+    if value["state"] == "refused" {
+        Err(RpcError::new(
+            ErrorKind::Refused,
+            "replay refused; prior committed chunks remain",
+            value,
+        ))
+    } else {
+        Ok(value)
+    }
+}
 fn deadline_error(timeout_ms: u64) -> RpcError {
     RpcError::new(
         ErrorKind::Budget,
@@ -352,6 +463,9 @@ fn deadline_error(timeout_ms: u64) -> RpcError {
 
 fn read_error(error: sinex_store::Error) -> RpcError {
     match error {
+        sinex_store::Error::ReplayRefused(reason) => {
+            RpcError::new(ErrorKind::Refused, reason, serde_json::Value::Null)
+        }
         sinex_store::Error::Invalid(reason) => {
             RpcError::new(ErrorKind::BadQuery, reason, serde_json::Value::Null)
         }

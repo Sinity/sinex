@@ -12,11 +12,13 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--retained-replay", action="store_true", help="qualify retained Atuin replay through actual packaged clients")
 parser.add_argument("--packaged", action="store_true", help="build and exercise the Nix package entrypoints")
 parser.add_argument("--read-lifecycle", action="store_true", help="qualify blocked reads and cancellation through actual packaged clients")
 parser.add_argument("--live-cursor", action="store_true", help="qualify current-state raw-event continuation through packaged clients")
@@ -27,6 +29,8 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.retained_replay and (not OPTIONS.packaged or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.atuin or OPTIONS.demo_spec or OPTIONS.startup_coverage):
+    parser.error("retained replay requires --packaged and its own scenario selector")
 if OPTIONS.read_lifecycle and (not OPTIONS.packaged or OPTIONS.live_cursor or OPTIONS.atuin or OPTIONS.demo_spec or OPTIONS.startup_coverage):
     parser.error("read lifecycle qualification requires --packaged and its own scenario selector")
 if OPTIONS.live_cursor and (not OPTIONS.packaged or OPTIONS.atuin or OPTIONS.demo_spec or OPTIONS.startup_coverage):
@@ -46,6 +50,7 @@ WORK = Path(tempfile.mkdtemp(prefix="sinex-foundation-", dir="/realm/tmp/work"))
 REPORT = Path(os.environ.get("SINEX_FOUNDATION_REPORT_DIR", str(WORK.parent / (WORK.name + "-result"))))
 REPORT.mkdir(parents=True, exist_ok=False)
 COMMANDS = []
+COMMAND_LOCK = threading.Lock()
 SCENARIOS = []
 PLANNED = ["cold query-free admin build", "canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "checked runtime build and pure contracts", "canonical hypertables, real role grants, writer admission and restart", "invalid and unsupported config fail before startup", "occupied endpoint leaves unowned resources untouched", "actual daemon CLI transport and truthful scope", "partial start cannot steal writer and clean shutdown releases ownership"]
 if OPTIONS.atuin:
@@ -62,6 +67,8 @@ if OPTIONS.live_cursor:
     PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "raw current-state continuation and change disclosure", "cursor refusal and compatible restart"]
 if OPTIONS.read_lifecycle:
     PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "disconnected actual client releases blocked snapshot", "API default deadline returns budget and releases snapshot", "CLI default deadline returns budget and releases snapshot", "CLI configured deadline returns budget and releases snapshot", "queued deadline and concurrent disconnect reclaim both reader slots"]
+if OPTIONS.retained_replay:
+    PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "retained fixture and independent bad-interpretation contrast", "bounded replay removed-range progress and later precommit recovery", "postcommit kill and request recovery", "disconnected client leaves admitted replay running", "changed parser artifact refuses mixed-operation continuation", "retained evidence refusal and durable outcomes", "retained request and outcome authority refuse unavailable comparison", "explicit authority cancellation and request conflicts", "malformed retained material preserves prior answers"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -74,18 +81,20 @@ PG_STARTED = False
 
 
 def run(args, *, expected=0, env=None, label=None):
-    index = len(COMMANDS)
+    with COMMAND_LOCK:
+        index = len(COMMANDS)
+        COMMANDS.append({"argv":[str(a) for a in args],"exit":None,"expected_exit":expected,"label":label})
     try:
         result = subprocess.run([str(a) for a in args], cwd=ROOT, env=env or ENV, capture_output=True, text=True, timeout=900)
     except subprocess.TimeoutExpired as error:
         def text(value): return value.decode(errors="replace") if isinstance(value, bytes) else (value or "")
         (REPORT / f"{index:03}.stdout").write_text(text(error.stdout))
         (REPORT / f"{index:03}.stderr").write_text(text(error.stderr))
-        COMMANDS.append({"argv":[str(a) for a in args],"exit":None,"expected_exit":expected,"label":label,"timed_out":True})
+        COMMANDS[index]["timed_out"] = True
         raise AssertionError(f"command {index} timed out; partial output retained") from error
     (REPORT / f"{index:03}.stdout").write_text(result.stdout)
     (REPORT / f"{index:03}.stderr").write_text(result.stderr)
-    COMMANDS.append({"argv": [str(a) for a in args], "exit": result.returncode, "expected_exit": expected, "label": label})
+    COMMANDS[index]["exit"] = result.returncode
     if result.returncode not in (expected if isinstance(expected, tuple) else (expected,)):
         raise AssertionError(f"command {index} ({label or args[0]}) exit {result.returncode}, expected {expected}; see retained output")
     return result
@@ -116,13 +125,13 @@ def rpc(endpoint, token, method="status"):
         return json.load(error)
 
 
-def start_daemon(config, name, *extra):
+def start_daemon(config, name, *extra, binary=None):
     stdout = (REPORT / (name+".stdout")).open("w")
     stderr = (REPORT / (name+".stderr")).open("w")
     (REPORT/(name+"-config.toml")).write_text(Path(config).read_text())
-    proc = subprocess.Popen([str(BIN_DIR/"sinexd"),"serve","--config",str(config), *map(str,extra)], env=ENV, stdout=stdout, stderr=stderr)
+    proc = subprocess.Popen([str(binary or BIN_DIR/"sinexd"),"serve","--config",str(config), *map(str,extra)], env=ENV, stdout=stdout, stderr=stderr)
     CHILDREN.append((proc,stdout,stderr))
-    PROCESSES.append({"pid":proc.pid,"argv":[str(BIN_DIR/"sinexd"),"serve","--config",str(config), *map(str,extra)],"stdout":name+".stdout","stderr":name+".stderr"})
+    PROCESSES.append({"pid":proc.pid,"argv":[str(binary or BIN_DIR/"sinexd"),"serve","--config",str(config), *map(str,extra)],"stdout":name+".stdout","stderr":name+".stderr"})
     return proc
 
 
@@ -149,7 +158,7 @@ try:
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
     (WORK/"pg").mkdir()
     (WORK/"socket").mkdir()
     ENV.update(PGDATA=str(WORK/"pg"), PGHOST=str(WORK/"socket"), PGPORT=str(free_port()))
@@ -165,7 +174,7 @@ try:
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=BIN_DIR/"sinexd" if OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle else ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
     scenario("canonical schema cold apply and idempotent check", lambda: (
         run([admin_binary,"admin","schema","--connection-file",WORK/"admin"]),
@@ -180,7 +189,7 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle): scenario("checked runtime build and pure contracts", lambda: (
+    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay): scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
     if not OPTIONS.packaged:
@@ -190,7 +199,10 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.read_lifecycle:
+    if OPTIONS.retained_replay:
+        import retained_replay_cases
+        retained_replay_cases.exercise(globals())
+    elif OPTIONS.read_lifecycle:
         import read_lifecycle_cases
         read_lifecycle_cases.exercise(globals())
     elif OPTIONS.live_cursor:

@@ -299,6 +299,79 @@ const TABLES: &[Definition] = &[
     },
     Definition {
         schema: "core",
+        name: "operations_log",
+        columns: &[
+            col!("id", "uuid"),
+            col!("operation_type", "text"),
+            col!("actor", "jsonb"),
+            col!("action_principal", "text"),
+            col!("action_id", "uuid"),
+            col!("request_format", "text"),
+            col!("request_ref", "uuid"),
+            col!("scope", "jsonb"),
+            col!("admission_state", "text"),
+            col!("outcome_format", "text", null),
+            col!("outcome_ref", "uuid", null),
+            col!("progress", "jsonb"),
+        ],
+        constraints: &[
+            ("operations_log_pkey", "PRIMARY KEY (id)"),
+            (
+                "operation_action_identity",
+                "UNIQUE (action_principal,action_id)",
+            ),
+            (
+                "operation_request_material",
+                "FOREIGN KEY (request_ref) REFERENCES raw.source_material_registry(id)",
+            ),
+            (
+                "operation_outcome_material",
+                "FOREIGN KEY (outcome_ref) REFERENCES raw.source_material_registry(id)",
+            ),
+            (
+                "operation_scope",
+                "CHECK (operation_type='replay' AND action_principal='foundation.operator' AND request_format='sinex.replay.request.v1')",
+            ),
+            (
+                "operation_state",
+                "CHECK (admission_state IN ('recorded','admitted','refused'))",
+            ),
+            (
+                "operation_outcome",
+                "CHECK ((outcome_format IS NULL)=(outcome_ref IS NULL) AND (admission_state='recorded' OR outcome_ref IS NOT NULL))",
+            ),
+        ],
+    },
+    Definition {
+        schema: "core",
+        name: "operation_effects",
+        columns: &[
+            col!("operation_id", "uuid"),
+            col!("step_no", "bigint"),
+            col!("effect_format", "text"),
+            col!("effects_ref", "uuid"),
+        ],
+        constraints: &[
+            (
+                "operation_effects_pkey",
+                "PRIMARY KEY (operation_id,step_no)",
+            ),
+            (
+                "effect_operation",
+                "FOREIGN KEY (operation_id) REFERENCES core.operations_log(id)",
+            ),
+            (
+                "effect_material",
+                "FOREIGN KEY (effects_ref) REFERENCES raw.source_material_registry(id)",
+            ),
+            (
+                "effect_step",
+                "CHECK (step_no>=0 AND effect_format='sinex.replay.effects.v1')",
+            ),
+        ],
+    },
+    Definition {
+        schema: "core",
         name: "manifests",
         columns: &[
             col!("id", "integer"),
@@ -626,7 +699,7 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         .bind(catalog)
         .execute(&mut *tx)
         .await?;
-        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit TO sinex_writer,sinex_reader; GRANT INSERT ON core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
+        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit TO sinex_writer,sinex_reader; GRANT INSERT ON core.operation_effects,core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON core.operations_log,raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
     }
     let status = inspect(&mut tx).await?;
     tx.commit().await?;
@@ -861,6 +934,8 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
         let writer_insert = matches!(
             table.as_str(),
             "core.events"
+                | "core.operations_log"
+                | "core.operation_effects"
                 | "core.commit_log"
                 | "raw.source_material_registry"
                 | "raw.source_cursors"
@@ -878,6 +953,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
         let writer_update = matches!(
             table.as_str(),
             "core.commit_counter"
+                | "core.operations_log"
                 | "raw.source_cursors"
                 | "core.blobs"
                 | "core.runs"

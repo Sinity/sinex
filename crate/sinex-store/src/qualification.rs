@@ -10,10 +10,16 @@ pub struct QualificationBoundary {
 }
 impl QualificationBoundary {
     pub fn new(point: String, socket: PathBuf) -> Result<Self> {
-        if !matches!(
-            point.as_str(),
-            "retained-fsynced" | "transaction-staged" | "transaction-committed"
-        ) || !socket.is_absolute()
+        let replay = point
+            .strip_prefix("replay-staged-")
+            .or_else(|| point.strip_prefix("replay-committed-"))
+            .is_some_and(|step| step.parse::<usize>().is_ok_and(|n| n < 64));
+        if (!replay
+            && !matches!(
+                point.as_str(),
+                "retained-fsynced" | "transaction-staged" | "transaction-committed"
+            ))
+            || !socket.is_absolute()
         {
             return Err(Error::Invalid(
                 "qualification requires a named writer boundary and absolute Unix socket",

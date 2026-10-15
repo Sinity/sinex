@@ -3,8 +3,12 @@ mod atuin;
 mod event_storage;
 mod qualification;
 mod query;
+mod replay;
 pub use atuin::mask as present;
-pub use atuin::{AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule, SOURCE as ATUIN_SOURCE};
+pub use atuin::{
+    AtuinInterpretation, AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule,
+    SOURCE as ATUIN_SOURCE,
+};
 pub use qualification::QualificationBoundary;
 pub use query::validate_query;
 mod schema;
@@ -46,6 +50,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("product queries are unavailable in the admin-only build")]
     ProductUnavailable,
+    #[error("replay refused: {0}")]
+    ReplayRefused(&'static str),
 }
 
 /// Actual identities supplied by the packaged caller, never invented by storage.
@@ -122,6 +128,32 @@ impl Admission {
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
     }
+    pub async fn replay(&self, command: ReplayCommand) -> Result<serde_json::Value> {
+        let cancelled = match &command {
+            ReplayCommand::Cancel(p) => Some(p.operation_id),
+            _ => None,
+        };
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .send(Command::Replay(command, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        if let Some(id) = cancelled {
+            eprintln!(
+                "{}",
+                serde_json::json!({"component":"sinex-store","phase":"replay_cancel_enqueued","operation_id":id})
+            );
+        }
+        rx.await.map_err(|_| Error::Stopped)?
+    }
+    pub async fn set_replay_profile(&self, rules: Option<Vec<PrivacyRule>>) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .send(Command::ReplayProfile(rules, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)
+    }
     pub fn is_available(&self) -> bool {
         !self.0.is_closed()
     }
@@ -135,7 +167,14 @@ impl Admission {
         rx.await.map_err(|_| Error::Stopped)?
     }
 }
+pub enum ReplayCommand {
+    Plan(sinex_model::replay::Selection, Vec<PrivacyRule>),
+    Start(sinex_model::replay::Start),
+    Cancel(sinex_model::replay::Operation),
+}
 enum Command {
+    ReplayProfile(Option<Vec<PrivacyRule>>, oneshot::Sender<()>),
+    Replay(ReplayCommand, oneshot::Sender<Result<serde_json::Value>>),
     Admit(MaterialEvent, oneshot::Sender<Result<Receipt>>),
     Atuin(AtuinStep, oneshot::Sender<Result<serde_json::Value>>),
     Shutdown(oneshot::Sender<()>),
@@ -149,6 +188,8 @@ struct WriterPool {
     _lock: std::fs::File,
     root: String,
     run_id: Uuid,
+    reader: ReadPool,
+    replay_rules: Option<Vec<PrivacyRule>>,
     qualification: Option<QualificationBoundary>,
 }
 
@@ -228,22 +269,24 @@ impl Store {
             ));
         }
         let run_id = start_run(&mut connection, identity).await?;
+        let reader = ReadPool(
+            reader_pool,
+            std::sync::Arc::new(hashed_blobs::Reader::new(root.clone(), vec![])),
+            root.clone(),
+        );
         let mut owner = WriterPool {
             connection,
             blobs: std::sync::Arc::new(blobs),
             _lock: lock,
             root,
             run_id,
+            reader: reader.clone(),
+            replay_rules: None,
             qualification,
         };
         owner.recover_blobs().await?;
         owner.recover_parts().await?;
         let (tx, rx) = mpsc::channel(capacity);
-        let reader = ReadPool(
-            reader_pool,
-            std::sync::Arc::new(hashed_blobs::Reader::new(owner.root.clone(), vec![])),
-            owner.root.clone(),
-        );
         let writer = tokio::spawn(owner.run(rx));
         Ok(Self {
             admission: Admission(tx),
@@ -367,8 +410,30 @@ pub async fn prepare_admission_statements(admin_url: &str) -> Result<()> {
 impl WriterPool {
     async fn run(mut self, mut rx: mpsc::Receiver<Command>) -> Result<()> {
         let mut shutdown = None;
-        while let Some(command) = rx.recv().await {
+        loop {
+            // A pending operation belongs to this writer, not to an HTTP waiter.
+            // Give queued control/live work the next turn between bounded chunks.
+            let command = if shutdown.is_none() && self.replay_rules.is_some() {
+                match rx.try_recv() {
+                    Ok(command) => Some(command),
+                    Err(mpsc::error::TryRecvError::Disconnected) => None,
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        if let Some(request) = self.next_replay().await? {
+                            self.replay(ReplayCommand::Start(request)).await?;
+                            continue;
+                        }
+                        rx.recv().await
+                    }
+                }
+            } else {
+                rx.recv().await
+            };
+            let Some(command) = command else { break };
             match command {
+                Command::ReplayProfile(rules, reply) => {
+                    self.replay_rules = rules;
+                    let _ = reply.send(());
+                }
                 Command::Admit(event, reply) => {
                     // A disconnected caller cannot cancel a queued transaction midway.
                     // Its receipt may be undeliverable, but the database result is durable.
@@ -377,6 +442,10 @@ impl WriterPool {
                 }
                 Command::Atuin(step, reply) => {
                     let result = self.admit_atuin(step).await;
+                    let _ = reply.send(result);
+                }
+                Command::Replay(command, reply) => {
+                    let result = self.replay(command).await;
                     let _ = reply.send(result);
                 }
                 Command::Shutdown(reply) => {

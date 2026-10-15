@@ -18,6 +18,7 @@ pub async fn run(
     mut stop: tokio::sync::watch::Receiver<bool>,
     mut observation: AtuinStep,
 ) -> Result<(), String> {
+    let interpretation = observation.interpretation;
     loop {
         if *stop.borrow() {
             return Ok(());
@@ -27,7 +28,7 @@ pub async fn run(
             changed = stop.changed() => { let _ = changed; return Ok(()); }
             _ = tokio::time::sleep(std::time::Duration::from_millis(config.poll_interval_ms)) => {}
         }
-        observation = begin_poll(&config.path, &rules, &admission).await?;
+        observation = begin_poll(&config.path, &rules, &admission, interpretation).await?;
     }
 }
 
@@ -37,6 +38,7 @@ pub async fn begin_poll(
     path: &Path,
     rules: &[PrivacyRule],
     admission: &Admission,
+    interpretation: sinex_store::AtuinInterpretation,
 ) -> Result<AtuinStep, String> {
     let observation = Uuid::now_v7();
     let observed_at = OffsetDateTime::now_utc()
@@ -50,6 +52,7 @@ pub async fn begin_poll(
         Err(_) => json!({"path":path,"stat":"unavailable"}),
     };
     let step = AtuinStep {
+        interpretation,
         observation,
         observed_at,
         locator,

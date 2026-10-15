@@ -22,6 +22,9 @@ enum Command {
         qualification_boundary: Option<String>,
         #[arg(long, requires = "qualification_boundary")]
         qualification_socket: Option<PathBuf>,
+        /// Controlled synthetic parser-error fixture, never enabled in ordinary acquisition.
+        #[arg(long)]
+        qualification_historical_atuin: bool,
     },
     Config {
         #[command(subcommand)]
@@ -111,6 +114,7 @@ async fn run(args: Args) -> Result<(), String> {
             config: path,
             qualification_boundary,
             qualification_socket,
+            qualification_historical_atuin,
         } => {
             let conf = config::Config::load(&path)?;
             let qualification = match (qualification_boundary, qualification_socket) {
@@ -125,7 +129,7 @@ async fn run(args: Args) -> Result<(), String> {
                     );
                 }
             };
-            server::serve(conf, qualification).await?;
+            server::serve(conf, qualification, qualification_historical_atuin).await?;
         }
     }
     Ok(())
