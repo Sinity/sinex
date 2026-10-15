@@ -13,7 +13,10 @@
         pname = "sinex-foundation";
         version = "0.1.0";
         src = ./.;
-        cargoLock.lockFile = ./Cargo.lock;
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+          outputHashes."hashed-blobs-0.1.0" = "sha256-pXXYpwvsA0xtEhHshHSgatLdf+bFnZmlkQcdpv6HlKw=";
+        };
         nativeBuildInputs = [ postgres ];
         preBuild = ''
           export PGDATA=$(mktemp -d)

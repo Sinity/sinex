@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["crate/sinex-model", "crate/sinex-protocol", "crate/sinex-store", "crate/sinexd", "crate/sinexctl", "xtask"]
-exclude = ["vendor/hashed-blobs"]
 
 [workspace.package]
 version = "0.1.0"

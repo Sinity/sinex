@@ -2,5 +2,5 @@
 set -euo pipefail
 # Publication is separate from preparation; use the declared candidate qualification.
 # This hook checks the tree's deterministic formatting and rejects whitespace damage.
-cargo fmt --package sinex-model --package sinex-protocol --package sinex-store --package sinexd --package sinexctl --package xtask -- --check
+nix develop --command cargo fmt --package sinex-model --package sinex-protocol --package sinex-store --package sinexd --package sinexctl --package xtask -- --check
 git diff --check

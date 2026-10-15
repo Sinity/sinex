@@ -39,8 +39,9 @@ timeout_seconds = 300
 cache = "none"
 
 [operations.foundation_lock]
-description = "Resolve the foundation dependency lock from the retained local crate index"
-exec = ["cargo", "generate-lockfile", "--offline"]
+description = "Update explicitly selected foundation dependency lock entries"
+exec = ["cargo", "update"]
+arguments = "required"
 pool = "normal"
 result = "exit"
 timeout_seconds = 300
@@ -127,4 +128,13 @@ exec = ["python3", "tests/foundation.py", "--packaged", "--read-lifecycle"]
 pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
+cache = "none"
+
+[operations.foundation_publish]
+description = "Push explicit reviewed foundation refs through normal hooks"
+exec = ["git", "push"]
+arguments = "required"
+pool = "normal"
+result = "exit"
+timeout_seconds = 1800
 cache = "none"

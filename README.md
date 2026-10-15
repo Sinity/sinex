@@ -2,7 +2,7 @@
 
 This is an isolated rewrite foundation, not a deployed release or completed M0. It provides canonical schema control, role-bound PostgreSQL ownership and an Atuin-only source path through retained row evidence, the single writer and normal daemon/CLI queries. MCP, other sources, automata, replay and confirmed delivery remain unavailable. See the [implemented Atuin subset](docs/rewrite/atuin.md) for its limits.
 
-The [foundation contract](docs/rewrite/README.md) records source disposition and unimplemented criteria. [Shared dependency provenance](vendor/hashed-blobs/UPSTREAM.json) identifies the provisional reviewed library snapshot and canonical adaptation; release pinning remains open.
+The [foundation contract](docs/rewrite/README.md) records source disposition and unimplemented criteria. The shared file layer comes from Polylogue’s [hashed-blobs-v0.1.0 release](https://github.com/Sinity/polylogue/tree/hashed-blobs-v0.1.0/crates/hashed-blobs). Cargo.lock pins the owner commit and the Nix build checks its source hash; no vendor fallback is present.
 
 ## Build and inspect
 
@@ -48,7 +48,7 @@ The client requires its explicit endpoint and has no installed-service fallback.
 
 ## Verification
 
-Use declared AgentCTL `foundation_build`, `foundation_acceptance`, `foundation_package`, and `foundation_package_acceptance` operations from this checkout. `foundation_format` formats owned workspace code before qualification. The acceptance runner owns a fresh PostgreSQL cluster and launches real built entrypoints; `foundation_package_acceptance` explicitly selects the Nix package binaries; it records command exits, raw output and scenario results in private scratch. Failures still emit `result.json` and return nonzero. It never targets production services.
+Use declared AgentCTL `foundation_build`, `foundation_acceptance`, `foundation_package`, and `foundation_package_acceptance` operations from this checkout. `foundation_format` formats owned workspace code before qualification. `foundation_lock` takes explicit Cargo update selectors (for example, `-- --workspace`) to preserve unrelated locked dependencies. `foundation_publish` takes explicit Git push arguments and runs the normal hooks; source publication and deployment remain separate decisions. The acceptance runner owns a fresh PostgreSQL cluster and launches real built entrypoints; `foundation_package_acceptance` explicitly selects the Nix package binaries; it records command exits, raw output and scenario results in private scratch. Failures still emit `result.json` and return nonzero. It never targets production services.
 
 `atuin_acceptance` and `atuin_package_acceptance` exercise retained synthetic Atuin through actual daemon and CLI processes. The original real-role integration test separately exercises event constraints, compression and definition-drift refusals; its synthetic proof API is not a source route. Exact package/build/client and operational criteria remain open until their reported checks actually pass. No source replacement PR, host activation, consumer update or external task migration is performed by these commands.
 
