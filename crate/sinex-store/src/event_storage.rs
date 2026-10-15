@@ -52,6 +52,14 @@ END $$"#.to_owned()];
             statements.push(template.replace("$TABLE", &table));
         }
     }
+    statements.push(r#"CREATE FUNCTION sinex_schemas.operation_guard() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog AS $$
+BEGIN
+ IF ROW(NEW.id,NEW.operation_type,NEW.actor,NEW.action_principal,NEW.action_id,NEW.request_format,NEW.request_ref,NEW.scope) IS DISTINCT FROM ROW(OLD.id,OLD.operation_type,OLD.actor,OLD.action_principal,OLD.action_id,OLD.request_format,OLD.request_ref,OLD.scope) THEN
+  RAISE EXCEPTION 'operation identity and admitted request are immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$"#.into());
+    statements.push("CREATE TRIGGER operation_guard BEFORE UPDATE ON core.operations_log FOR EACH ROW EXECUTE FUNCTION sinex_schemas.operation_guard()".into());
     statements.push("CREATE VIEW core.live_events AS SELECT e.* FROM core.events e WHERE e.record_state='present' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.id=e.id)".into());
     statements
 }

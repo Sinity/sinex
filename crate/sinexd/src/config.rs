@@ -38,6 +38,8 @@ pub struct Config {
     pub writer_connection_file: PathBuf,
     pub reader_connection_file: PathBuf,
     pub token_file: PathBuf,
+    /// Explicit fixed operator profile for replay; the ordinary token remains read-only.
+    pub replay_token_file: Option<PathBuf>,
     #[serde(default)]
     pub sources: Vec<String>,
     #[serde(default)]
@@ -93,6 +95,13 @@ impl Config {
         }
         for rule in &self.privacy_rules {
             rule.rule().validate()?;
+        }
+        if self
+            .replay_token_file
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
+        {
+            return Err("replay token path must be absolute".into());
         }
         for path in [
             &self.state_dir,

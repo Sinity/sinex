@@ -94,3 +94,36 @@ fn query_deadline_is_optional_bounded_and_does_not_change_its_question() {
         );
     }
 }
+
+#[test]
+fn replay_has_explicit_scope_action_and_no_caller_authorship() {
+    let start = json!({"query":"materials where id = 019a0000-0000-7000-8000-000000000001","action_id":"019a0000-0000-7000-8000-000000000002"});
+    assert_eq!(
+        RpcRequest::new(RpcId::Number(1), Method::ReplayStart, start.clone())
+            .validate()
+            .unwrap(),
+        Method::ReplayStart
+    );
+    for invalid in [
+        json!({}),
+        json!({"query":"materials"}),
+        json!({"action_id":"019a0000-0000-7000-8000-000000000002"}),
+    ] {
+        assert_eq!(
+            RpcRequest::new(RpcId::Number(1), Method::ReplayStart, invalid)
+                .validate()
+                .unwrap_err()
+                .kind,
+            ErrorKind::BadQuery
+        );
+    }
+    let mut forged = start;
+    forged["principal"] = json!("operator");
+    assert_eq!(
+        RpcRequest::new(RpcId::Number(1), Method::ReplayStart, forged)
+            .validate()
+            .unwrap_err()
+            .kind,
+        ErrorKind::BadQuery
+    );
+}

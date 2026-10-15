@@ -1,6 +1,6 @@
 # Sinex foundation
 
-This is an isolated rewrite foundation, not a deployed release or completed M0. It provides canonical schema control, role-bound PostgreSQL ownership and an Atuin-only source path through retained row evidence, the single writer and normal daemon/CLI queries. MCP, other sources, automata, replay and confirmed delivery remain unavailable. See the [implemented Atuin subset](docs/rewrite/atuin.md) for its limits.
+This is an isolated rewrite foundation, not a deployed release or completed M0. It provides canonical schema control, role-bound PostgreSQL ownership and an Atuin-only source path through retained row evidence, the single writer and normal daemon/CLI queries. The [retained Atuin replay subset](docs/rewrite/retained-replay.md) reparses one closed logical-row material with durable action recovery. MCP, other sources, automata and confirmed delivery remain unavailable. See the [implemented Atuin subset](docs/rewrite/atuin.md) for its limits.
 
 The [foundation contract](docs/rewrite/README.md) records source disposition and unimplemented criteria. The shared file layer comes from Polylogue’s [hashed-blobs-v0.1.0 release](https://github.com/Sinity/polylogue/tree/hashed-blobs-v0.1.0/crates/hashed-blobs). Cargo.lock pins the owner commit and the Nix build checks its source hash; no vendor fallback is present.
 
@@ -36,7 +36,7 @@ sources = []
 automata = []
 ```
 
-Connection files hold PostgreSQL URIs; the token file holds the bearer token. Diagnostics and public config never emit their contents. Configuration requires absolute paths and loopback binding, rejects unknown keys, and does not inherit connection overrides from environment variables. The token authorizes read RPC methods. Configured sources submit their acquired rows directly to the same private writer owner.
+Connection files hold PostgreSQL URIs; the token file holds the bearer token. Diagnostics and public config never emit their contents. Configuration requires absolute paths and loopback binding, rejects unknown keys, and does not inherit connection overrides from environment variables. The token authorizes read RPC methods; optional `replay_token_file` enables the separate fixed operator profile described in the replay contract. Configured sources submit their acquired rows directly to the same private writer owner.
 
 ```
 sinexd config check --config /absolute/path/config.toml
@@ -127,3 +127,6 @@ fixture. See the [owning continuation contract](docs/rewrite/atuin.md#raw-event-
 for the concrete page fields, fixed 100-row size and source-coverage distinction.
 
 `read_lifecycle_acceptance` observes packaged client disconnects and query deadlines under a real owned PostgreSQL lock. The [read lifecycle contract](docs/rewrite/atuin.md#raw-event-read-deadlines-and-cancellation) describes API/CLI defaults, configuration, typed errors and the currently qualified scope.
+
+
+`retained_replay_acceptance` qualifies the packaged retained-material replay subset, including a changed historical interpretation, restored omission, provider removal, bounded replacement kills, automatic owner continuation, current authorization, cancellation and refusal controls. The [owning replay contract](docs/rewrite/retained-replay.md) defines direct run, optional preview basis, request identity, progress/effect accounting and unsupported shapes.

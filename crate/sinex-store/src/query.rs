@@ -6,7 +6,7 @@ use sqlx::{Connection, Postgres, QueryBuilder, Row};
 use time::{Duration, OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
-const EVENT_VIEW: &str = "jsonb_build_object('id',e.id,'source',e.source,'host',e.host,'payload',e.payload,'parents',e.source_event_ids,'run',e.run_id,'store','activity','time_suspect',e.time_suspect,'time_until',e.ts_orig_until,'written_by',e.written_by,'kind',e.event_type,'when',CASE WHEN e.ts_orig IS NULL THEN NULL ELSE to_char(e.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(e.ts_orig_tiebreak,0)::text,3,'0') || 'Z' END,'seen',to_char(e.ts_coided AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'written',to_char(e.ts_persisted AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'time_quality',e.ts_quality,'time_clock',e.ts_clock,'time_precision',e.ts_precision,'origin','material','material',e.source_material_id,'anchor',e.anchor_byte)";
+const EVENT_VIEW: &str = "jsonb_build_object('id',e.id,'source',e.source,'host',e.host,'payload',e.payload,'parents',e.source_event_ids,'run',e.run_id,'operation',e.created_by_operation,'store','activity','time_suspect',e.time_suspect,'time_until',e.ts_orig_until,'written_by',e.written_by,'kind',e.event_type,'when',CASE WHEN e.ts_orig IS NULL THEN NULL ELSE to_char(e.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(e.ts_orig_tiebreak,0)::text,3,'0') || 'Z' END,'seen',to_char(e.ts_coided AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'written',to_char(e.ts_persisted AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'time_quality',e.ts_quality,'time_clock',e.ts_clock,'time_precision',e.ts_precision,'origin','material','material',e.source_material_id,'anchor',e.anchor_byte)";
 
 #[derive(Debug, Clone)]
 pub struct QueryError(pub &'static str);
@@ -454,6 +454,15 @@ impl ReadPool {
         anchor: i64,
         end: Option<i64>,
     ) -> Result<(Value, i64)> {
+        self.retained_record_raw(material, anchor, end, true).await
+    }
+    pub(crate) async fn retained_record_raw(
+        &self,
+        material: Uuid,
+        anchor: i64,
+        end: Option<i64>,
+        presentation: bool,
+    ) -> Result<(Value, i64)> {
         let row = sqlx::query("SELECT m.durable_bytes,b.blake3,m.parser_provenance FROM raw.source_material_registry m LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=$1").bind(material).fetch_one(&self.0).await?;
         let durable: i64 = row.try_get("durable_bytes")?;
         let expected_end = end;
@@ -507,7 +516,9 @@ impl ReadPool {
         let rules: Vec<crate::PrivacyRule> =
             serde_json::from_value(provenance["privacy_rules"].clone())
                 .map_err(|_| Error::Invalid("retained privacy provenance unavailable"))?;
-        crate::atuin::mask(&mut record, &rules)?;
+        if presentation {
+            crate::atuin::mask(&mut record, &rules)?;
+        }
         Ok((record, anchor + length as i64))
     }
 }

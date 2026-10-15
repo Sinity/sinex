@@ -119,8 +119,7 @@ truncates to zero and answers have zero retained events with explicit
 incompleteness. Reader-role custody audits inspect the original observation and
 recovered material in both cases. Source digests, held frames/PIDs, commands and
 relative artifacts remain in the existing portable report. This qualifies reads
-of retained logical rows after process death and provider disappearance. Parser
-replay, original SQLite byte reconstruction, power loss, general search/indexing
+of retained logical rows after process death and provider disappearance. The separate [retained replay qualification](retained-replay.md) covers parser replay. Original SQLite byte reconstruction, power loss, general search/indexing
 and formal M1 acceptance remain outside this test.
 
 ## Raw-event continuation

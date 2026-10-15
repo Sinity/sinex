@@ -138,3 +138,11 @@ pool = "normal"
 result = "exit"
 timeout_seconds = 1800
 cache = "none"
+
+[operations.retained_replay_acceptance]
+description = "Packaged retained Atuin replay with independent changed-interpretation facts, bounded replacement kills, durable action recovery and evidence refusals"
+exec = ["python3", "tests/foundation.py", "--packaged", "--retained-replay"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
