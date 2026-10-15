@@ -226,30 +226,15 @@ impl Cursor {
         Ok(c)
     }
 }
-// A cancelled SQLx fetch alone can leave its backend executing while the pool
-// waits to recycle it. Keep the checked-out connection until its own backend has
-// been stopped. The separate restricted-reader control pool cannot deadlock
-// behind exhausted read slots; holding this connection also prevents PID reuse.
-struct ReadLease {
-    connection: Option<sqlx::pool::PoolConnection<Postgres>>,
-    cancellation: sqlx::PgPool,
-    pid: i32,
-}
+// Dropping a fetch alone can leave PostgreSQL executing while SQLx waits to
+// recycle the connection. Close this exact transport instead. PostgreSQL's
+// transaction-local connection checks abort its query on observed socket loss.
+// No PID-targeted signal can accidentally reach a later, unrelated session.
+struct ReadLease(Option<sqlx::pool::PoolConnection<Postgres>>);
 impl Drop for ReadLease {
     fn drop(&mut self) {
-        if let Some(connection) = self.connection.take() {
-            let cancellation = self.cancellation.clone();
-            let pid = self.pid;
-            tokio::spawn(async move {
-                let result = sqlx::query_scalar::<_, bool>("SELECT pg_terminate_backend($1,1000)")
-                    .bind(pid)
-                    .fetch_one(&cancellation)
-                    .await;
-                if !matches!(result, Ok(true)) {
-                    eprintln!("read cancellation cleanup unavailable");
-                }
-                let _ = connection.close().await;
-            });
+        if let Some(connection) = self.0.as_mut() {
+            connection.close_on_drop();
         }
     }
 }
@@ -283,17 +268,9 @@ impl ReadPool {
         let filters = parse(text).map_err(|e| Error::Invalid(e.0))?;
         let digest = question(&filters)?;
         let clock = OffsetDateTime::now_utc();
-        let mut conn = self.0.acquire().await?;
-        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-            .fetch_one(&mut *conn)
-            .await?;
-        let mut lease = ReadLease {
-            connection: Some(conn),
-            cancellation: self.3.clone(),
-            pid,
-        };
+        let mut lease = ReadLease(Some(self.0.acquire().await?));
         let mut tx = lease
-            .connection
+            .0
             .as_mut()
             .expect("owned read connection")
             .begin()
@@ -301,7 +278,7 @@ impl ReadPool {
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .execute(&mut *tx)
             .await?;
-        sqlx::query("SELECT set_config('statement_timeout',$1,true)")
+        sqlx::query("SELECT set_config('statement_timeout',$1,true), set_config('client_connection_check_interval','100ms',true)")
             .bind(format!("{}ms", budget.as_millis().max(1)))
             .execute(&mut *tx)
             .await?;
@@ -433,7 +410,7 @@ impl ReadPool {
         let complete = source_status.iter().all(|s| s["status"] == "completed");
         tx.commit().await?;
         // Only a fully committed read may return its connection to the pool.
-        drop(lease.connection.take());
+        drop(lease.0.take());
         Ok(
             json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Raw live activity events matching {text}, ordered by original time then interpretation ID; shell fusion and coverage claims unavailable."),"excluded":{}}),
         )
