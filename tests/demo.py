@@ -14,8 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('spec_repository', type=Path, help='read-only Git repository containing the pinned independent oracle')
 parser.add_argument('--boundaries', action='store_true', help='also qualify observed writer-boundary SIGKILL and same-state recovery')
+parser.add_argument('--provider-loss', action='store_true', help='qualify retained reads after observed kill and original provider loss; reuse existing normal/control evidence')
 parser.add_argument('--controls', action='store_true', help='require launch and answer-corruption failures before the normal path')
 args = parser.parse_args()
+if args.provider_loss and (args.controls or args.boundaries):
+    parser.error('--provider-loss reuses previous normal/control evidence and cannot combine with --controls or --boundaries')
 args.spec_repository = args.spec_repository.resolve()
 report = Path(tempfile.mkdtemp(prefix='sinex-kestrel-result-', dir='/realm/tmp/work'))
 print(json.dumps({'driver_report': str(report/'result.json')}), flush=True)
@@ -64,10 +67,14 @@ runs = []
 expected_hash = None
 success = False
 try:
-    for control in ((['launch-failure', 'corrupt-answer', None] if args.controls else [None]) + (['boundaries'] if args.boundaries else [])):
+    selected = ['provider-loss'] if args.provider_loss else (
+        (['launch-failure', 'corrupt-answer', None] if args.controls else [None]) +
+        (['boundaries'] if args.boundaries else []))
+    for control in selected:
         name = control or 'normal'
         command = ['python3', str(ROOT/'tests/foundation.py'), '--packaged', '--demo-spec', str(args.spec_repository)]
-        if control == 'boundaries': command += ['--demo-boundaries']
+        if control == 'provider-loss': command += ['--demo-provider-loss']
+        elif control == 'boundaries': command += ['--demo-boundaries']
         elif control: command += ['--demo-control', control]
         env = os.environ.copy(); env['SINEX_FOUNDATION_REPORT_DIR'] = str(report/name)
         with (report/(name+'.stdout')).open('w') as out, (report/(name+'.stderr')).open('w') as err:
@@ -78,7 +85,7 @@ try:
         current_hash = hashlib.sha256((report/name/'prepared/expected.json').read_bytes()).hexdigest()
         if expected_hash is None: expected_hash = current_hash
         assert current_hash == expected_hash, 'independent expectations changed between controls and actual run'
-        if control and control != 'boundaries':
+        if control and control not in ('boundaries', 'provider-loss'):
             assert result.returncode != 0 and actual['success'] is False, f'{name}: driver falsely succeeded'
             assert any(s['outcome'] == 'unrun' for s in actual['scenarios']), f'{name}: dependent unrun cases absent'
             assert (report/name/'diagnostic.txt').is_file(), f'{name}: readable expected/actual diagnostic absent'
@@ -99,8 +106,8 @@ except Exception as error:
     failure = str(error)
 finally:
     summary = {'success': success, 'failure': None if success else failure, 'runs': runs,
-               'scope': 'actual packaged Kestrel raw-event paths and reporting controls'+(' plus observed retention/admission boundary recovery' if args.boundaries else '')+'; not formal M1 acceptance',
-               'open': ['read-model index kill boundary', 'general read model/index', 'physical SQLite snapshots (1c)', 'all other M1 and task-routing gates']}
+               'scope': ('actual packaged retained logical-row reads after observed kill and provider loss; precommit contrast; no parser replay, physical SQLite reconstruction or power-loss claim' if args.provider_loss else 'actual packaged Kestrel raw-event paths and reporting controls')+(' plus observed retention/admission boundary recovery' if args.boundaries else '')+'; not formal M1 acceptance',
+               'open': ['general read model/index and its future fault qualification', 'physical SQLite snapshots (1c)', 'all other M1 and task-routing gates']}
     (report/'result.json').write_text(json.dumps(summary, indent=2)+'\n')
     (report/'report.txt').write_text('\n'.join([summary['scope'], f'Success: {success}', f'Failure: {summary["failure"]}']+[f'{r["name"]}: exit {r["exit"]}; {r["report"]}' for r in runs])+ '\n')
     try:

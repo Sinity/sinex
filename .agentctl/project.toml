@@ -95,3 +95,12 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.kestrel_provider_loss_acceptance]
+description = "Packaged committed retained reads after observed writer kill and original provider loss, with precommit contrast"
+exec = ["python3", "tests/demo.py", "--provider-loss"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

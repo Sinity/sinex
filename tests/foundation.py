@@ -21,12 +21,15 @@ parser.add_argument("--packaged", action="store_true", help="build and exercise 
 parser.add_argument("--atuin", action="store_true", help="qualify retained synthetic Atuin through real clients")
 parser.add_argument("--demo-spec", type=Path, help="read-only specification Git repository for the pinned Kestrel driver")
 parser.add_argument("--demo-boundaries", action="store_true", help="qualify observed writer boundary kills using the pinned fixture")
+parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
 if OPTIONS.demo_spec and not OPTIONS.packaged:
     parser.error("the demonstration requires --packaged")
-if (OPTIONS.demo_control or OPTIONS.demo_boundaries) and not OPTIONS.demo_spec:
+if (OPTIONS.demo_control or OPTIONS.demo_boundaries or OPTIONS.demo_provider_loss) and not OPTIONS.demo_spec:
     parser.error("demonstration controls require --demo-spec")
+if OPTIONS.demo_provider_loss and (OPTIONS.demo_boundaries or OPTIONS.demo_control):
+    parser.error("provider-loss qualification cannot combine with other demonstration controls")
 BIN_DIR = Path(os.environ.get("SINEX_FOUNDATION_BIN_DIR", str(ROOT/"target/debug")))
 WORK = Path(tempfile.mkdtemp(prefix="sinex-foundation-", dir="/realm/tmp/work"))
 REPORT = Path(os.environ.get("SINEX_FOUNDATION_REPORT_DIR", str(WORK.parent / (WORK.name + "-result"))))
@@ -40,6 +43,8 @@ if OPTIONS.demo_spec:
     PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "pinned independent fixture preparation", "Kestrel base actual answers", "Kestrel repeated snapshot", "Kestrel append at the same source path", "Kestrel empty actual answers", "Kestrel malformed actual answers"]
 if OPTIONS.demo_boundaries:
     PLANNED = PLANNED[:2] + ["pinned independent fixture preparation", "uninterrupted boundary baseline", "observed retained-fsynced kill and restart", "observed transaction-staged kill and restart", "observed transaction-committed kill and restart"]
+if OPTIONS.demo_provider_loss:
+    PLANNED = PLANNED[:2] + ["pinned independent fixture preparation", "uninterrupted boundary baseline", "observed transaction-staged kill and provider loss", "observed transaction-committed kill and provider loss"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -167,9 +172,9 @@ try:
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
     if OPTIONS.demo_spec:
-        if OPTIONS.demo_boundaries:
+        if OPTIONS.demo_boundaries or OPTIONS.demo_provider_loss:
             import boundary_cases
-            boundary_cases.exercise(globals())
+            boundary_cases.exercise(globals(), provider_loss=OPTIONS.demo_provider_loss)
         else:
             import demo_cases
             demo_cases.exercise(globals())
@@ -283,9 +288,9 @@ finally:
         if name not in {s["name"] for s in SCENARIOS}:
             SCENARIOS.append({"name":name,"outcome":"unrun","reason":failure if not success else "not exercised"})
     for record,(proc,_,_) in zip(PROCESSES,CHILDREN): record["exit"]=proc.returncode
-    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else "development_build","binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"runtime_state":"owned disposable state removed after captured evidence" if success else str(WORK),"unimplemented":["formal M1 acceptance and read-model index fault boundary","MCP","confirmed delivery","full target schema and Timescale","sealed lifecycle","owner-tag shared dependency publication"]}
+    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else "development_build","binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"runtime_state":"owned disposable state removed after captured evidence" if success else str(WORK),"unimplemented":["formal M1 acceptance", "general read model/index and its future fault qualification","MCP","confirmed delivery","full target schema and Timescale","sealed lifecycle","owner-tag shared dependency publication"]}
     if OPTIONS.demo_spec:
-        report["demo"]={"oracle_revision":__import__("demo_cases").ORACLE_REVISION,"control":OPTIONS.demo_control,"scope":"packaged Atuin raw-event driver; canonical row material, no SQLite snapshot retention or read-model index"}
+        report["demo"]={"oracle_revision":__import__("demo_cases").ORACLE_REVISION,"control":OPTIONS.demo_control,"provider_loss":OPTIONS.demo_provider_loss,"scope":"packaged Atuin raw-event driver; canonical row material, no SQLite snapshot retention or read-model index"}
     (REPORT/"result.json").write_text(json.dumps(report,indent=2)+"\n")
     if success: shutil.rmtree(WORK)
     print(json.dumps({"success":success,"report":str(REPORT/"result.json"),"scenarios":len(SCENARIOS)}))

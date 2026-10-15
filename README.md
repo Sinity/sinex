@@ -104,3 +104,18 @@ a copied report tree and refuses a deliberately restored absolute scratch link
 before succeeding, so archival remains inspectable after
 scratch cleanup. Exact executed argv, configuration/source coordinates and raw
 stdout/stderr keep their original values as execution evidence.
+
+
+`kestrel_provider_loss_acceptance` takes the same required specification Git
+repository argument and qualifies retained logical-row reads after observed
+precommit/postcommit kills and provider disappearance. See the owning
+[Atuin provider-loss contract](docs/rewrite/atuin.md#retained-reads-without-the-provider)
+for the assertions and limits. Run it with:
+
+```sh
+agentctl job start /absolute/checkout kestrel_provider_loss_acceptance --workspace /absolute/checkout -- /absolute/spec-repository
+```
+
+The corresponding frontend is `xtask demo <workspace> <spec-repository>
+--provider-loss`. This mode reuses the separately recorded normal, three-boundary
+and reporting-control qualification; it cannot combine with the other demo modes.

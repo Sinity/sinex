@@ -89,3 +89,30 @@ exercises this failure while the actual writer is held, restoring its owned
 synthetic part before the kill/restart comparison. The canonical row's `_from`
 retains observation, history-table and rowid evidence; this is a logical row form,
 not a SQLite page snapshot.
+
+
+## Retained reads without the provider
+
+`kestrel_provider_loss_acceptance` takes the same required specification Git
+repository argument. It runs a fresh packaged candidate against synthetic state,
+reusing the separate normal-path, three-boundary and reporting-control
+qualification. The driver observes `transaction-committed`, kills the recorded
+held child before its source reply, then moves the owned SQLite provider away
+before restarting the same package with unchanged configuration and product
+state. Normal `query`, `show`, `trace --bytes` and `sources` establish that
+committed event identities, retained ranges and masked canonical row values
+survive. The independent pinned oracle checks all malformed-fixture query facts
+without changing its expectations. The query envelope remains incomplete with
+CLI exit 5 and an unavailable source reason. The latest source observation has
+read no rows; this does not erase earlier committed custody or claim a completed
+empty source. Repeated unavailable polls must not create a replacement database.
+
+A `transaction-staged` contrast moves the provider away after the observed
+pre-COMMIT kill. Its fsynced uncommitted tail has no promised custody: recovery
+truncates to zero and answers have zero retained events with explicit
+incompleteness. Reader-role custody audits inspect the original observation and
+recovered material in both cases. Source digests, held frames/PIDs, commands and
+relative artifacts remain in the existing portable report. This qualifies reads
+of retained logical rows after process death and provider disappearance. Parser
+replay, original SQLite byte reconstruction, power loss, general search/indexing
+and formal M1 acceptance remain outside this test.

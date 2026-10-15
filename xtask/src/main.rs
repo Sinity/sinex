@@ -5,7 +5,9 @@ fn main() -> ExitCode {
     let tail: Vec<_> = args.collect();
     if cmd == "demo" {
         if tail.len() < 2 {
-            eprintln!("xtask demo <workspace> <spec-repository> [--controls] [--boundaries]");
+            eprintln!(
+                "xtask demo <workspace> <spec-repository> [--controls] [--boundaries] [--provider-loss]"
+            );
             return ExitCode::from(2);
         }
         let script = std::path::Path::new(&tail[0]).join("tests/demo.py");
@@ -48,7 +50,7 @@ fn main() -> ExitCode {
         ],
         "help" => {
             println!(
-                "xtask build|test|check|fmt [cargo arguments]; xtask demo <workspace> <spec-repository> [--controls] [--boundaries]; runtime builds require an isolated development schema"
+                "xtask build|test|check|fmt [cargo arguments]; xtask demo <workspace> <spec-repository> [--controls] [--boundaries] [--provider-loss]; runtime builds require an isolated development schema"
             );
             return ExitCode::SUCCESS;
         }
