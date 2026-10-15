@@ -119,3 +119,9 @@ agentctl job start /absolute/checkout kestrel_provider_loss_acceptance --workspa
 The corresponding frontend is `xtask demo <workspace> <spec-repository>
 --provider-loss`. This mode reuses the separately recorded normal, three-boundary
 and reporting-control qualification; it cannot combine with the other demo modes.
+
+
+`live_cursor_acceptance` qualifies packaged raw-event current-state continuation,
+expiry/context refusals and compatible restart against an independent synthetic
+fixture. See the [owning continuation contract](docs/rewrite/atuin.md#raw-event-continuation)
+for the concrete page fields, fixed 100-row size and source-coverage distinction.

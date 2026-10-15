@@ -3,7 +3,7 @@ use crate::{Error, ReadPool, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{Connection, Postgres, QueryBuilder, Row};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use time::{Duration, OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 const EVENT_VIEW: &str = "jsonb_build_object('id',e.id,'source',e.source,'host',e.host,'payload',e.payload,'parents',e.source_event_ids,'run',e.run_id,'store','activity','time_suspect',e.time_suspect,'time_until',e.ts_orig_until,'written_by',e.written_by,'kind',e.event_type,'when',CASE WHEN e.ts_orig IS NULL THEN NULL ELSE to_char(e.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(e.ts_orig_tiebreak,0)::text,3,'0') || 'Z' END,'seen',to_char(e.ts_coided AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'written',to_char(e.ts_persisted AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'time_quality',e.ts_quality,'time_clock',e.ts_clock,'time_precision',e.ts_precision,'origin','material','material',e.source_material_id,'anchor',e.anchor_byte)";
@@ -119,17 +119,118 @@ fn parse(text: &str) -> std::result::Result<Vec<Filter>, QueryError> {
 pub fn validate_query(text: &str) -> std::result::Result<(), QueryError> {
     parse(text).map(|_| ())
 }
+// Bump this descriptor when query meaning, schema reads, defaults or key ordering change.
+const CURSOR_VERSION: u32 = 1;
+const CURSOR_ORDER: &str = "raw-present-activity-v1:when-ns-asc-null-last,id-asc";
+const CURSOR_LIFETIME: Duration = Duration::hours(24);
+const CHANGE_NOTICE: &str = "The commit position changed since the first page. Each page reads current state: removals apply; additions before the last key can be absent and additions after it can appear. A row whose ordering key moves can be absent or repeated. This traversal is not one fixed snapshot. A commit change does not establish that matching rows changed.";
+
+fn question(filters: &[Filter]) -> Result<String> {
+    let mut terms = Vec::new();
+    for f in filters {
+        let value = match f.field {
+            "when" => json!(
+                OffsetDateTime::parse(f.value.as_str().unwrap(), &Rfc3339)
+                    .map_err(|_| Error::Invalid("invalid original time"))?
+                    .to_offset(UtcOffset::UTC)
+                    .format(&Rfc3339)
+                    .map_err(|_| Error::Invalid("invalid original time"))?
+            ),
+            "id" => json!(
+                Uuid::parse_str(f.value.as_str().unwrap())
+                    .map_err(|_| Error::Invalid("invalid event ID"))?
+                    .to_string()
+            ),
+            _ => f.value.clone(),
+        };
+        terms.push(
+            serde_json::to_string(&(f.field, f.op, value))
+                .map_err(|_| Error::Invalid("query encoding failed"))?,
+        );
+    }
+    // Conjunction order, repeated terms, quoting and whitespace do not change the question.
+    terms.sort();
+    terms.dedup();
+    Ok(blake3::hash(
+        serde_json::to_string(&terms)
+            .map_err(|_| Error::Invalid("query encoding failed"))?
+            .as_bytes(),
+    )
+    .to_hex()
+    .to_string())
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Cursor {
+    version: u32,
+    order: String,
     query: String,
+    now: String,
+    zone: String,
+    logical_start: String,
+    first_commit_seq: i64,
+    expires_at: String,
+    #[serde(deserialize_with = "required_last_when")]
     last_when: Option<String>,
     last_id: String,
+}
+fn required_last_when<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(d)
+}
+impl Cursor {
+    fn decode(raw: &str, digest: &str, current: i64, clock: OffsetDateTime) -> Result<Self> {
+        if raw.len() > 4096 {
+            return Err(Error::Invalid("invalid page cursor"));
+        }
+        let c: Self = serde_json::from_str(raw)
+            .map_err(|_| Error::Invalid("invalid or incompatible page cursor"))?;
+        if c.version != CURSOR_VERSION || c.order != CURSOR_ORDER {
+            return Err(Error::Invalid("incompatible page cursor version/order"));
+        }
+        let now = OffsetDateTime::parse(&c.now, &Rfc3339)
+            .map_err(|_| Error::Invalid("invalid cursor resolved time"))?;
+        let expiry = OffsetDateTime::parse(&c.expires_at, &Rfc3339)
+            .map_err(|_| Error::Invalid("invalid cursor expiry"))?;
+        if expiry <= clock {
+            return Err(Error::Invalid(
+                "page cursor expired; issue a fresh query explicitly",
+            ));
+        }
+        if c.query != digest
+            || c.zone != "UTC"
+            || c.logical_start != "04:00"
+            || c.first_commit_seq < 0
+            || c.first_commit_seq > current
+            || now > clock
+            || now.checked_add(CURSOR_LIFETIME) != Some(expiry)
+            || Uuid::parse_str(&c.last_id)
+                .ok()
+                .map(|id| id.to_string())
+                .as_deref()
+                != Some(c.last_id.as_str())
+            || c.last_when.as_ref().is_some_and(|at| {
+                // SQL emits fixed-width UTC nanoseconds; a noncanonical key would sort differently.
+                at.len() != 30
+                    || !at.ends_with('Z')
+                    || at.as_bytes().get(19) != Some(&b'.')
+                    || OffsetDateTime::parse(at, &Rfc3339).is_err()
+            })
+        {
+            return Err(Error::Invalid(
+                "cursor does not match query/order/resolved context",
+            ));
+        }
+        Ok(c)
+    }
 }
 impl ReadPool {
     pub async fn query(&self, text: &str, cursor: Option<&str>) -> Result<Value> {
         let filters = parse(text).map_err(|e| Error::Invalid(e.0))?;
-        let digest = blake3::hash(text.as_bytes()).to_hex().to_string();
+        let digest = question(&filters)?;
+        let clock = OffsetDateTime::now_utc();
         let mut conn = self.0.acquire().await?;
         let mut tx = conn.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -138,24 +239,21 @@ impl ReadPool {
         let current: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
             .fetch_one(&mut *tx)
             .await?;
-        let page_after = match cursor {
-            None => None,
-            Some(raw) => {
-                if raw.len() > 1024 {
-                    return Err(Error::Invalid("invalid page cursor"));
-                }
-                let c: Cursor =
-                    serde_json::from_str(raw).map_err(|_| Error::Invalid("invalid page cursor"))?;
-                if c.query != digest
-                    || Uuid::parse_str(&c.last_id).is_err()
-                    || c.last_when
-                        .as_ref()
-                        .is_some_and(|at| OffsetDateTime::parse(at, &Rfc3339).is_err())
-                {
-                    return Err(Error::Invalid("cursor does not match query/order"));
-                }
-                Some(c)
-            }
+        let page_after = cursor
+            .map(|raw| Cursor::decode(raw, &digest, current, clock))
+            .transpose()?;
+        let first_commit_seq = page_after.as_ref().map_or(current, |c| c.first_commit_seq);
+        let now = match &page_after {
+            Some(c) => c.now.clone(),
+            None => clock
+                .format(&Rfc3339)
+                .map_err(|_| Error::Invalid("resolved clock encoding failed"))?,
+        };
+        let expires_at = match &page_after {
+            Some(c) => c.expires_at.clone(),
+            None => (clock + CURSOR_LIFETIME)
+                .format(&Rfc3339)
+                .map_err(|_| Error::Invalid("cursor expiry encoding failed"))?,
         };
         let seq = current;
         let mut q: QueryBuilder<Postgres> = QueryBuilder::new(format!(
@@ -228,7 +326,7 @@ impl ReadPool {
                 }
             }
         }
-        q.push(" ORDER BY event->>'when' NULLS LAST,event->>'id' LIMIT 101) SELECT (SELECT count(*) FROM matching) AS total,COALESCE((SELECT jsonb_agg(event) FROM page),'[]'::jsonb) AS rows");
+        q.push(" ORDER BY event->>'when' NULLS LAST,event->>'id' LIMIT 101) SELECT (SELECT count(*) FROM matching) AS total,COALESCE((SELECT jsonb_agg(event ORDER BY event->>'when' NULLS LAST,event->>'id') FROM page),'[]'::jsonb) AS rows");
         let row = q.build().fetch_one(&mut *tx).await?;
         let total: i64 = row.try_get("total")?;
         let mut rows: Value = row.try_get("rows")?;
@@ -243,7 +341,14 @@ impl ReadPool {
             let last = page.last().ok_or(Error::Invalid("invalid nonempty page"))?;
             Some(
                 serde_json::to_string(&Cursor {
+                    version: CURSOR_VERSION,
+                    order: CURSOR_ORDER.to_string(),
                     query: digest,
+                    now: now.clone(),
+                    zone: "UTC".to_string(),
+                    logical_start: "04:00".to_string(),
+                    first_commit_seq,
+                    expires_at: expires_at.clone(),
                     last_when: last["when"].as_str().map(str::to_string),
                     last_id: last["id"]
                         .as_str()
@@ -258,11 +363,8 @@ impl ReadPool {
         let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason FROM raw.observations WHERE input_id=i.id AND commit_seq<=$1 ORDER BY seq DESC LIMIT 1) o ON true").bind(seq).fetch_all(&mut *tx).await?;
         let complete = source_status.iter().all(|s| s["status"] == "completed");
         tx.commit().await?;
-        let now = OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .map_err(|_| Error::Invalid("resolved clock encoding failed"))?;
         Ok(
-            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor},"truncated":false,"complete":complete,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Raw live activity events matching {text}, ordered by original time then interpretation ID; shell fusion and coverage claims unavailable."),"excluded":{}}),
+            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Raw live activity events matching {text}, ordered by original time then interpretation ID; shell fusion and coverage claims unavailable."),"excluded":{}}),
         )
     }
     pub async fn show(&self, id: &str) -> Result<Option<Value>> {
@@ -380,5 +482,77 @@ mod tests {
         ] {
             assert!(parse(bad).is_err(), "{bad}");
         }
+    }
+    #[test]
+    fn question_is_structural_and_preserves_exact_values() {
+        let digest = |text| question(&parse(text).unwrap()).unwrap();
+        assert_eq!(
+            digest("events where source = x and kind = y"),
+            digest(" events where kind = \"y\" and source = \"x\" and source = x ")
+        );
+        assert_eq!(
+            digest("events where ts_orig = 2023-11-14T22:13:20.123456789Z"),
+            digest("events where when = 2023-11-14T23:13:20.123456789+01:00")
+        );
+        assert_ne!(
+            digest("events where when = 2023-11-14T22:13:20.123456789Z"),
+            digest("events where when = 2023-11-14T22:13:20.123456788Z")
+        );
+        assert_ne!(
+            digest("events where payload.command ~ x"),
+            digest("events where payload.command = x")
+        );
+        assert_ne!(
+            digest("events where source = x"),
+            digest("events where source = X")
+        );
+    }
+
+    #[test]
+    fn cursor_binds_context_and_accepts_unknown_time_without_an_old_codec() {
+        let clock = OffsetDateTime::parse("2026-10-15T12:00:00Z", &Rfc3339).unwrap();
+        let cursor = Cursor {
+            version: CURSOR_VERSION,
+            order: CURSOR_ORDER.into(),
+            query: "question".into(),
+            now: clock.format(&Rfc3339).unwrap(),
+            zone: "UTC".into(),
+            logical_start: "04:00".into(),
+            first_commit_seq: 5,
+            expires_at: (clock + CURSOR_LIFETIME).format(&Rfc3339).unwrap(),
+            last_when: None,
+            last_id: "019a54a0-0000-7000-8000-000000000001".into(),
+        };
+        let raw = serde_json::to_string(&cursor).unwrap();
+        assert!(Cursor::decode(&raw, "question", 6, clock).is_ok());
+        assert!(Cursor::decode(&raw, "different", 6, clock).is_err());
+        assert!(Cursor::decode(&raw, "question", 4, clock).is_err());
+        assert!(Cursor::decode(&raw, "question", 6, clock + CURSOR_LIFETIME).is_err());
+        assert!(Cursor::decode(&raw, "question", 6, clock - Duration::seconds(1)).is_err());
+        let valid = serde_json::to_value(&cursor).unwrap();
+        for (field, value) in [
+            ("version", json!(2)),
+            ("zone", json!("Europe/Warsaw")),
+            ("logical_start", json!("00:00")),
+            ("first_commit_seq", json!(-1)),
+            ("order", json!("other")),
+            ("last_id", json!("bad")),
+            ("last_when", json!("2023-11-14T22:13:20Z")),
+            ("expires_at", json!("2026-10-18T12:00:00Z")),
+        ] {
+            let mut changed = valid.clone();
+            changed[field] = value;
+            assert!(
+                Cursor::decode(&changed.to_string(), "question", 6, clock).is_err(),
+                "{field}"
+            );
+        }
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove("last_when");
+        assert!(Cursor::decode(&missing.to_string(), "question", 6, clock).is_err());
+        let mut known = valid.clone();
+        known["last_when"] = json!("2023-11-14T22:13:20.123456789Z");
+        assert!(Cursor::decode(&known.to_string(), "question", 6, clock).is_ok());
+        assert!(Cursor::decode(r#"{"query":"question","last_when":null,"last_id":"019a54a0-0000-7000-8000-000000000001"}"#, "question", 6, clock).is_err());
     }
 }

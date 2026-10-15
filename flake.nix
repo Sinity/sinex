@@ -32,7 +32,7 @@
         '';
         cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "xtask" ];
         doCheck = true;
-        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinexd" ];
+        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinexd" "-p" "sinex-store" ];
       };
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };

@@ -112,3 +112,11 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.live_cursor_acceptance]
+description = "Packaged raw-event current-state continuation, refusal and compatible restart"
+exec = ["python3", "tests/foundation.py", "--packaged", "--live-cursor"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
