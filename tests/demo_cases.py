@@ -126,6 +126,9 @@ created_by = "operator"
             if index == 0: all_answer = decoded
             compared = path
             if options.demo_control == 'corrupt-answer':
+                # Rejecting a damaged answer is meaningful only after this exact
+                # captured answer passes the same pinned oracle unchanged.
+                run(['python3', basis/DEMO/'check_answer.py', 'sinex', case, expected_path, path, '--query-index', str(index)], label=f'independent oracle baseline {case}/{index}')
                 compared = report/f'{case}-query-{index:02}-capture-{len(results):03}.corrupted.json'
                 decoded['total'] += 1
                 compared.write_text(json.dumps(decoded, indent=2)+'\n')
@@ -133,6 +136,8 @@ created_by = "operator"
             diagnostic = {'case': case, 'query_index': index, 'query': query['query'], 'expected': check,
                           'actual': path.name, 'compared': compared.name, 'control': options.demo_control,
                           'expected_sha256': expected_digest, 'comparison': 'pending'}
+            if options.demo_control == 'corrupt-answer':
+                diagnostic['baseline_valid'] = True
             results.append(diagnostic)
             (report/'comparisons.json').write_text(json.dumps(results, indent=2)+'\n')
             (report/'diagnostic.txt').write_text(f"Case: {case}, query {index}: {check['name']}\nQuery: {query['query']}\nExpected total: {check['total']}\nExpected rows: {json.dumps(check['expected_rows'], indent=2)}\nActual captured answer: {path.name}\nCompared answer: {compared.name}\nCaptured actual total: {json.loads(actual.stdout).get('total')}\nCompared total: {decoded.get('total')}\n")

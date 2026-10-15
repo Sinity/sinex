@@ -95,9 +95,11 @@ try:
             else:
                 comparisons = json.loads((report/name/'comparisons.json').read_text())
                 assert comparisons[0]['comparison'] == 'mismatch'
+                assert comparisons[0]['baseline_valid'] is True, 'unchanged captured answer was not qualified'
                 original = json.loads((report/name/comparisons[0]['actual']).read_text())
                 corrupted = json.loads((report/name/comparisons[0]['compared']).read_text())
                 assert corrupted['total'] == original['total']+1
+                assert any(c['exit'] == 0 and c['label'] == 'independent oracle baseline base/0' for c in actual['commands'])
                 assert any(c['exit'] == 1 and c['label'].startswith('independent oracle') for c in actual['commands'])
         else:
             assert result.returncode == 0 and actual['success'], actual.get('failure')
