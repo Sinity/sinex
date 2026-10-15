@@ -1,16 +1,21 @@
 //! Foundation storage authority. No connection or transaction escapes the writer owner.
 mod atuin;
 mod event_storage;
+mod projection;
 mod qualification;
 mod query;
 mod replay;
+mod search;
+mod shell;
 pub use atuin::mask as present;
 pub use atuin::{
     AtuinInterpretation, AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule,
     SOURCE as ATUIN_SOURCE,
 };
+pub use projection::Projection;
 pub use qualification::QualificationBoundary;
 pub use query::validate_query;
+pub use search::indexed as is_indexed_query;
 mod schema;
 pub use schema::{
     CAPTURED_FUTURE_SKEW_SECONDS, READER_ROLE, SchemaStatus, TIMESCALEDB_VERSION, WRITER_ROLE,
@@ -36,6 +41,8 @@ pub enum Error {
     Schema(String),
     #[error("invalid foundation admission: {0}")]
     Invalid(&'static str),
+    #[error("indexed projection unavailable: {0}")]
+    ProjectionUnavailable(&'static str),
     #[error("read execution deadline exceeded")]
     Deadline,
     #[error("writer already owned by another connection")]
@@ -95,12 +102,16 @@ pub struct StoreStatus {
 pub struct ReadPool(PgPool, std::sync::Arc<hashed_blobs::Reader>, String);
 impl ReadPool {
     pub async fn schema_status(&self) -> Result<SchemaStatus> {
-        let mut conn = self.0.acquire().await?;
-        schema::inspect(&mut conn).await
+        let mut lease = self.read_lease().await?;
+        let status = schema::inspect(lease.connection()).await?;
+        lease.finish();
+        Ok(status)
     }
     #[cfg(feature = "product")]
     pub async fn status(&self) -> Result<StoreStatus> {
-        let row = sqlx::query!("SELECT (SELECT count(*) FROM core.live_events) AS \"event_count!\", (SELECT count(*) FROM raw.source_material_registry) AS \"material_count!\", (SELECT seq FROM core.commit_counter WHERE one) AS \"commit_seq!\", (SELECT count(*) FROM raw.source_cursors) AS \"progress_count!\"").fetch_one(&self.0).await?;
+        let mut lease = self.read_lease().await?;
+        let row = sqlx::query!("SELECT (SELECT count(*) FROM core.live_events) AS \"event_count!\", (SELECT count(*) FROM raw.source_material_registry) AS \"material_count!\", (SELECT seq FROM core.commit_counter WHERE one) AS \"commit_seq!\", (SELECT count(*) FROM raw.source_cursors) AS \"progress_count!\"").fetch_one(lease.connection()).await?;
+        lease.finish();
         Ok(StoreStatus {
             event_count: row.event_count,
             material_count: row.material_count,
@@ -154,6 +165,14 @@ impl Admission {
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)
     }
+    pub async fn enable_shell(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .send(Command::ShellEnable(tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
     pub fn is_available(&self) -> bool {
         !self.0.is_closed()
     }
@@ -173,6 +192,7 @@ pub enum ReplayCommand {
     Cancel(sinex_model::replay::Operation),
 }
 enum Command {
+    ShellEnable(oneshot::Sender<Result<()>>),
     ReplayProfile(Option<Vec<PrivacyRule>>, oneshot::Sender<()>),
     Replay(ReplayCommand, oneshot::Sender<Result<serde_json::Value>>),
     Admit(MaterialEvent, oneshot::Sender<Result<Receipt>>),
@@ -190,10 +210,12 @@ struct WriterPool {
     run_id: Uuid,
     reader: ReadPool,
     replay_rules: Option<Vec<PrivacyRule>>,
+    shell_producer: Option<Uuid>,
     qualification: Option<QualificationBoundary>,
 }
 
 pub struct Store {
+    run_id: Uuid,
     pub admission: Admission,
     pub reader: ReadPool,
     writer: JoinHandle<Result<()>>,
@@ -258,6 +280,7 @@ impl Store {
         }
         let reader_pool = PgPoolOptions::new()
             .max_connections(2)
+            .after_connect(|connection,_|Box::pin(async move {sqlx::query("SELECT set_config('client_connection_check_interval','100ms',false),set_config('statement_timeout','10s',false)").execute(connection).await?;Ok(())}))
             .connect(reader_url)
             .await?;
         let role: String = sqlx::query_scalar("SELECT current_user::text")
@@ -269,6 +292,17 @@ impl Store {
             ));
         }
         let run_id = start_run(&mut connection, identity).await?;
+        let paired: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM core.runs WHERE id=$1 AND status='running')",
+        )
+        .bind(run_id)
+        .fetch_one(&reader_pool)
+        .await?;
+        if !paired {
+            return Err(Error::Invalid(
+                "reader connection belongs to a different store",
+            ));
+        }
         let reader = ReadPool(
             reader_pool,
             std::sync::Arc::new(hashed_blobs::Reader::new(root.clone(), vec![])),
@@ -282,6 +316,7 @@ impl Store {
             run_id,
             reader: reader.clone(),
             replay_rules: None,
+            shell_producer: None,
             qualification,
         };
         owner.recover_blobs().await?;
@@ -289,10 +324,15 @@ impl Store {
         let (tx, rx) = mpsc::channel(capacity);
         let writer = tokio::spawn(owner.run(rx));
         Ok(Self {
+            run_id,
             admission: Admission(tx),
             reader,
             writer,
         })
+    }
+
+    pub fn run_id(&self) -> Uuid {
+        self.run_id
     }
 
     /// A shutdown marker closes admission, drains all already accepted commands, then
@@ -334,7 +374,7 @@ const BLOB_PRESENT: &str = "UPDATE core.blobs SET status='present' WHERE id=$1";
 const WRITING_BLOBS: &str = "SELECT id,blake3 FROM core.blobs WHERE status='writing' AND root=$1";
 const RUN_INTERRUPT: &str =
     "UPDATE core.runs SET status='interrupted',ended_at=now() WHERE status='running'";
-const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed','command.executed']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
+const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed','command.executed','command.canonical']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
 const RUN_START: &str = "INSERT INTO core.runs (id,manifest_id,service_name,host,status,effective_config_hash) VALUES ($1,$2,$3,$4,'running',$5)";
 const RUN_END: &str = "UPDATE core.runs SET status='completed',ended_at=now() WHERE id=$1";
 
@@ -413,12 +453,19 @@ impl WriterPool {
         loop {
             // A pending operation belongs to this writer, not to an HTTP waiter.
             // Give queued control/live work the next turn between bounded chunks.
-            let command = if shutdown.is_none() && self.replay_rules.is_some() {
+            let command = if shutdown.is_none()
+                && (self.replay_rules.is_some() || self.shell_producer.is_some())
+            {
                 match rx.try_recv() {
                     Ok(command) => Some(command),
                     Err(mpsc::error::TryRecvError::Disconnected) => None,
                     Err(mpsc::error::TryRecvError::Empty) => {
-                        if let Some(request) = self.next_replay().await? {
+                        if self.shell_step().await? {
+                            continue;
+                        }
+                        if self.replay_rules.is_some()
+                            && let Some(request) = self.next_replay().await?
+                        {
                             self.replay(ReplayCommand::Start(request)).await?;
                             continue;
                         }
@@ -430,6 +477,10 @@ impl WriterPool {
             };
             let Some(command) = command else { break };
             match command {
+                Command::ShellEnable(reply) => {
+                    let result = self.shell_enable().await;
+                    let _ = reply.send(result);
+                }
                 Command::ReplayProfile(rules, reply) => {
                     self.replay_rules = rules;
                     let _ = reply.send(());

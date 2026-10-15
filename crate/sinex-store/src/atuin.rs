@@ -411,6 +411,7 @@ impl WriterPool {
             let id = Uuid::now_v7();
             if let Some(old) = old {
                 let old_id: Uuid = old.try_get("event_id")?;
+                crate::shell::dirty(&mut tx, old_id).await?;
                 sqlx::query("INSERT INTO audit.archived (id,archived_seq,reason,replaced_by) VALUES ($1,$2,'supersede',$3)").bind(old_id).bind(last_seq).bind(id).execute(&mut *tx).await?;
                 sqlx::query("INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id) VALUES ($1,$2,1,0,2)").bind(last_seq).bind(old_id).execute(&mut *tx).await?;
                 sqlx::query("DELETE FROM core.live_coordinates WHERE store=0 AND event_id=$1")
@@ -446,6 +447,7 @@ impl WriterPool {
             sqlx::query("INSERT INTO core.live_equivalence (store,key_hash,event_id,read_order,record_hash) VALUES (0,$1,$2,$3,$4) ON CONFLICT (store,key_hash) DO UPDATE SET event_id=EXCLUDED.event_id,read_order=EXCLUDED.read_order,record_hash=EXCLUDED.record_hash")
                 .bind(key_hash).bind(id).bind(read_order).bind(record_hash).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id) VALUES ($1,$2,0,0,2)").bind(last_seq).bind(id).execute(&mut *tx).await?;
+            crate::shell::dirty(&mut tx, id).await?;
             last_seq = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
             admitted += 1;
             removed += i64::from(parsed.removed);
@@ -493,7 +495,9 @@ impl WriterPool {
 
 impl ReadPool {
     pub async fn sources(&self) -> Result<Value> {
-        let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation','canonical_sqlite_rows','sqlite_snapshots','unavailable_until_1c','last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'first_record_error',(SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true ORDER BY i.binding,i.locator").fetch_all(&self.0).await?;
+        let mut lease = self.read_lease().await?;
+        let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation','canonical_sqlite_rows','sqlite_snapshots','unavailable_until_1c','last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'first_record_error',(SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true ORDER BY i.binding,i.locator").fetch_all(lease.connection()).await?;
+        lease.finish();
         for source in &mut rows {
             if !source["first_record_error"].is_null() {
                 let failure = &mut source["first_record_error"];

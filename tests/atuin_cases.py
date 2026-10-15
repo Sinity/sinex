@@ -73,7 +73,7 @@ created_by = "operator"
         raise AssertionError('source never reached requested committed observation; raw samples retained')
     def cli(command,*args,expected=0):
         answer=run([binaries/'sinexctl','--endpoint',endpoint,'--token-file',work/'token',command,*args,'--json'],expected=expected,label='Atuin CLI '+command)
-        return json.loads(answer.stdout) if expected in (0,5) else json.loads(answer.stderr)
+        return json.loads(answer.stdout or answer.stderr)
     query='events where source = terminal.atuin-history and kind = command.executed'
     first=None; baseline_ids=None
     def base():
@@ -104,8 +104,8 @@ created_by = "operator"
         trace=cli('trace',baseline_ids['synthetic-1'],'--bytes')['row']
         assert trace['record']['command']=='echo [withheld]' and trace['record']['_from']['table']=='history'
         assert trace['anchor']>=0 and trace['end']>trace['anchor']
-        assert cli('search','[withheld]')['total']==1
-        assert cli('query','commands',expected=2)['kind']=='bad_query'
+        assert cli('query','events where payload.command ~ "[withheld]"')['total']==1
+        assert cli('query','commands',expected=5)['kind']=='partial'
         assert cli('query','events where payload.exit_code = "bad"',expected=2)['kind']=='bad_query'
         (report/'independent-base-expectation.json').write_text(json.dumps({'total':2,'rows_read':4,'record_errors':1,'commands':['echo [withheld]','sleep synthetic']},indent=2)+'\n')
     scenario('Atuin retained source and real-client query',base)
@@ -137,7 +137,7 @@ created_by = "operator"
         with sqlite3.connect(db) as con: con.execute('UPDATE history SET deleted_at=? WHERE id="synthetic-1"',(epoch+1000,))
         preserve('soft-delete')
         wait_cycle(lambda x:x['status']=='completed' and x['removed']==1,after=before['id'])
-        assert cli('search','[withheld]')['total']==0
+        assert cli('query','events where payload.command ~ "[withheld]"')['total']==0
         assert cli('query',query)['total']==131
         old=cli('show',baseline_ids['synthetic-1']); assert old['resolved']=='archived'
         removed=cli('show',old['row']['archive']['replaced_by']); assert removed['resolved']=='removed at source'

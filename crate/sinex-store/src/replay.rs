@@ -339,7 +339,7 @@ impl WriterPool {
                     chunks += 1;
                 }
                 Ok(
-                    json!({"material_id":material,"basis":self.replay_basis(material,&ids,&rules).await?,"selected":ids.len(),"chunks":chunks.max(1),"chunk_max_records":CHUNK,"chunk_max_bytes":crate::MAX_STEP_BYTES,"representation":"canonical_sqlite_rows","dry_run":true,"search_projection":"unavailable"}),
+                    json!({"material_id":material,"basis":self.replay_basis(material,&ids,&rules).await?,"selected":ids.len(),"chunks":chunks.max(1),"chunk_max_records":CHUNK,"chunk_max_bytes":crate::MAX_STEP_BYTES,"representation":"canonical_sqlite_rows","dry_run":true,"search_projection":{"enabled":self.shell_producer.is_some(),"status":self.reader.projection_status().await?}}),
                 )
             }
             ReplayCommand::Start(p) => {
@@ -481,6 +481,7 @@ impl WriterPool {
                 let mut tx = self.connection.begin().await?;
                 for p in prepared {
                     if let Some(old) = p.old {
+                        crate::shell::dirty(&mut tx, old).await?;
                         let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
                         sqlx::query("INSERT INTO audit.archived (id,archived_seq,reason,replaced_by,operation_id) VALUES ($1,$2,'replay',$3,$4)").bind(old).bind(seq).bind(p.id).bind(id).execute(&mut *tx).await?;
                         sqlx::query("INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id) VALUES ($1,$2,1,0,2)").bind(seq).bind(old).execute(&mut *tx).await?;
@@ -510,6 +511,7 @@ impl WriterPool {
                         .bind(p.id).bind(crate::ATUIN_SOURCE).bind(p.parsed.payload).bind(p.parsed.time).bind(p.parsed.nanos).bind(projected.suspect).bind(seq).bind(material).bind(p.anchor).bind(p.end).bind(&p.record_hash).bind(if p.parsed.removed{"removed"}else{"present"}).bind(self.run_id).bind(&p.key).bind(id).bind(json!({"kind":"operator","principal":PRINCIPAL})).execute(&mut *tx).await?;
                     sqlx::query("INSERT INTO core.live_coordinates (store,occ_hash,event_id) VALUES (0,$1,$2)").bind(crate::coordinate_hash(material,p.anchor,"command.executed",0)).bind(p.id).execute(&mut *tx).await?;
                     sqlx::query("INSERT INTO core.live_equivalence (store,key_hash,event_id,read_order,record_hash) VALUES (0,$1,$2,$3,$4) ON CONFLICT (store,key_hash) DO UPDATE SET event_id=EXCLUDED.event_id,read_order=EXCLUDED.read_order,record_hash=EXCLUDED.record_hash").bind(p.key_hash).bind(p.id).bind(p.read_order).bind(p.record_hash).execute(&mut *tx).await?;
+                    crate::shell::dirty(&mut tx, p.id).await?;
                     sqlx::query("INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id) VALUES ($1,$2,0,0,2)").bind(seq).bind(p.id).execute(&mut *tx).await?;
                 }
                 sqlx::query("INSERT INTO core.operation_effects (operation_id,step_no,effect_format,effects_ref) VALUES ($1,$2,'sinex.replay.effects.v1',$3)").bind(id).bind(current.steps as i64).bind(effect_ref).execute(&mut *tx).await?;
@@ -604,7 +606,9 @@ impl WriterPool {
 }
 impl ReadPool {
     async fn action_record(&self, id: Uuid, format: &str) -> Result<Value> {
-        let row=sqlx::query("SELECT b.blake3,m.durable_bytes FROM raw.source_material_registry m JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=$1 AND m.material_kind='file' AND m.status='completed' AND m.source_identifier='sinex.replay.action' AND b.status='present'").bind(id).fetch_optional(&self.0).await?.ok_or(Error::ReplayRefused("retained action backing unavailable"))?;
+        let mut lease = self.read_lease().await?;
+        let row=sqlx::query("SELECT b.blake3,m.durable_bytes FROM raw.source_material_registry m JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=$1 AND m.material_kind='file' AND m.status='completed' AND m.source_identifier='sinex.replay.action' AND b.status='present'").bind(id).fetch_optional(lease.connection()).await?.ok_or(Error::ReplayRefused("retained action backing unavailable"))?;
+        lease.finish();
         let length: i64 = row.try_get("durable_bytes")?;
         if !(1..=crate::MAX_STEP_BYTES as i64).contains(&length) {
             return Err(Error::ReplayRefused(
@@ -629,7 +633,9 @@ impl ReadPool {
         Ok(value)
     }
     pub async fn replay_status(&self, id: Uuid) -> Result<Option<Value>> {
-        let row=sqlx::query("SELECT request_format,request_ref,outcome_format,outcome_ref,progress FROM core.operations_log WHERE id=$1 AND action_principal=$2").bind(id).bind(PRINCIPAL).fetch_optional(&self.0).await?;
+        let mut lease = self.read_lease().await?;
+        let row=sqlx::query("SELECT request_format,request_ref,outcome_format,outcome_ref,progress FROM core.operations_log WHERE id=$1 AND action_principal=$2").bind(id).bind(PRINCIPAL).fetch_optional(lease.connection()).await?;
+        lease.finish();
         let Some(row) = row else { return Ok(None) };
         if row.try_get::<String, _>("request_format")? != "sinex.replay.request.v1" {
             return Err(Error::ReplayRefused(
@@ -668,10 +674,12 @@ impl ReadPool {
         Ok(Some(progress))
     }
     pub async fn replay_operations(&self) -> Result<Vec<Outcome>> {
+        let mut lease = self.read_lease().await?;
         let ids: Vec<Uuid> =
             sqlx::query_scalar("SELECT id FROM core.operations_log ORDER BY id DESC LIMIT 32")
-                .fetch_all(&self.0)
+                .fetch_all(lease.connection())
                 .await?;
+        lease.finish();
         let mut outcomes = Vec::new();
         for id in ids {
             outcomes.push(

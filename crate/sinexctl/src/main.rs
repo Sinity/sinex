@@ -1,3 +1,4 @@
+mod mcp;
 use clap::{Parser, Subcommand};
 use sinex_protocol::rpc::{ErrorKind, Method, RpcId, RpcRequest, RpcResponse};
 use std::path::PathBuf;
@@ -21,6 +22,8 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Serve the implemented read tools over the official rmcp stdio transport.
+    Mcp,
     Status,
     Version,
     ConfigShow,
@@ -30,6 +33,8 @@ enum Command {
         query: String,
         #[arg(long)]
         cursor: Option<String>,
+        #[arg(long)]
+        page: Option<u32>,
     },
     /// Reparse one closed retained Atuin material. Repeat an explicit action to resume.
     Replay {
@@ -50,7 +55,14 @@ enum Command {
         operation_id: String,
     },
     Search {
-        text: String,
+        #[arg(required=true,num_args=1..)]
+        words: Vec<String>,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long, default_value = "20")]
+        page: u32,
+        #[arg(long)]
+        cursor: Option<String>,
     },
     Show {
         id: String,
@@ -63,8 +75,22 @@ enum Command {
 }
 fn main() -> std::process::ExitCode {
     let args = Args::parse();
+    if matches!(&args.command, Command::Mcp) {
+        if args.query_timeout_ms.is_some() {
+            fail("bad_query", "MCP tools accept their own bounded timeout_ms");
+            return std::process::ExitCode::from(2);
+        }
+        return match mcp::run(args.endpoint, args.token_file) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(_) => {
+                fail("internal", "MCP transport or configured daemon unavailable");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     let mut wait_replay = false;
     let (method, mut params) = match args.command {
+        Command::Mcp => unreachable!(),
         Command::Replay {
             query,
             dry_run,
@@ -107,14 +133,36 @@ fn main() -> std::process::ExitCode {
         Command::ConfigShow => (Method::ConfigShow, serde_json::json!({})),
         Command::Catalog => (Method::Catalog, serde_json::json!({})),
         Command::Sources => (Method::Sources, serde_json::json!({})),
-        Command::Query { query, cursor } => (
+        Command::Query {
+            query,
+            cursor,
+            page,
+        } => (
             Method::Query,
-            serde_json::json!({"query":query,"cursor":cursor}),
+            serde_json::json!({"query":query,"cursor":cursor,"page":page}),
         ),
-        Command::Search { text } => (
-            Method::Query,
-            serde_json::json!({"query":format!("events where payload.command ~ {}",serde_json::to_string(&text).expect("text encoding"))}),
-        ),
+        Command::Search {
+            words,
+            query,
+            page,
+            cursor,
+        } => {
+            let words = words
+                .iter()
+                .map(|w| {
+                    if w.chars().any(char::is_whitespace) {
+                        serde_json::to_string(w).unwrap()
+                    } else {
+                        w.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            (
+                Method::Search,
+                serde_json::json!({"query":format!("{words}{}",query.map_or(String::new(),|q|format!(" {q}"))),"page":page,"cursor":cursor}),
+            )
+        }
         Command::Show { id } => (
             Method::Show,
             serde_json::json!({"ref":if id.starts_with("sinex:") {id} else {format!("sinex:ev/{id}")}}),
@@ -124,12 +172,12 @@ fn main() -> std::process::ExitCode {
             serde_json::json!({"bytes":bytes,"ref":if id.starts_with("sinex:") {id} else {format!("sinex:ev/{id}")}}),
         ),
     };
-    if method != Method::Query && args.query_timeout_ms.is_some() {
+    if !matches!(method, Method::Query | Method::Search) && args.query_timeout_ms.is_some() {
         fail("bad_query", "--query-timeout-ms requires query or search");
         return std::process::ExitCode::from(ErrorKind::BadQuery.exit_code());
     }
     let query_timeout_ms = args.query_timeout_ms.unwrap_or(60_000);
-    if method == Method::Query {
+    if matches!(method, Method::Query | Method::Search) {
         params["timeout_ms"] = serde_json::json!(query_timeout_ms);
     }
     let token = match std::fs::read_to_string(&args.token_file) {
@@ -143,7 +191,7 @@ fn main() -> std::process::ExitCode {
     loop {
         let result = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_millis(
-                if method == Method::Query {
+                if matches!(method, Method::Query | Method::Search) {
                     query_timeout_ms + 5_000
                 } else {
                     10_000

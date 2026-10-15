@@ -65,6 +65,8 @@ fn display_field(key: &str, presentation: bool) -> bool {
                     | "reason"
                     | "description"
                     | "privacy"
+                    | "snippet"
+                    | "text"
             ))
 }
 /// Optional presentation rules must also preserve selectors and control metadata.
@@ -109,6 +111,8 @@ fn walk(value: &mut Value, presentation: bool) -> Result<bool, ()> {
             Ok(changed)
         }
         Value::Object(fields) => {
+            let snippet_text = fields.get("text").cloned();
+            let is_snippet = fields.contains_key("spans") && fields.contains_key("span_unit");
             let mut changed = false;
             for (key, value) in fields.iter_mut() {
                 if text(key)? != *key {
@@ -133,9 +137,76 @@ fn walk(value: &mut Value, presentation: bool) -> Result<bool, ()> {
                 }
                 changed |= detected;
             }
+            if is_snippet && snippet_text.as_ref() != fields.get("text") {
+                fields.insert("spans".into(), serde_json::json!([]));
+                fields.insert("highlights_unavailable".into(), serde_json::json!("masked"));
+            }
             Ok(changed)
         }
         _ => Ok(false),
+    }
+}
+/// Optional presentation can move offsets too. A changed logical string never
+/// keeps highlight ranges from its earlier representation.
+pub fn prepare_snippets(before: &Value, after: &mut Value) {
+    if let (Some(before), Some(after)) = (
+        before.get("rows").and_then(Value::as_array),
+        after.get_mut("rows").and_then(Value::as_array_mut),
+    ) {
+        for (a, b) in before.iter().zip(after) {
+            if a["snippet"]["text"] != b["snippet"]["text"] && b.get("snippet").is_some() {
+                b["snippet"]["spans"] = serde_json::json!([]);
+                b["snippet"]["highlights_unavailable"] = serde_json::json!("masked");
+            }
+        }
+    }
+}
+/// Cutting happens only after the complete logical string passed the fixed
+/// floor. Cutting raw text first could detach a password from its URL/header.
+fn finish_snippets(value: &mut Value) {
+    let Some(rows) = value
+        .get_mut("result")
+        .and_then(|v| v.get_mut("rows"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for row in rows {
+        let Some(snippet) = row.get_mut("snippet") else {
+            continue;
+        };
+        let Some(text) = snippet["text"].as_str() else {
+            continue;
+        };
+        let first = snippet["spans"]
+            .as_array()
+            .and_then(|s| s.first())
+            .and_then(|s| s[0].as_u64())
+            .unwrap_or(0) as usize;
+        let mut start = first.saturating_sub(80).min(text.len());
+        while !text.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut end = (start + 400).min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let truncated = text[start..end].to_string();
+        let cut_after = end < text.len();
+        let spans: Vec<Value> = snippet["spans"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                let a = s[0].as_u64()? as usize;
+                let b = s[1].as_u64()? as usize;
+                (a >= start && b <= end).then(|| serde_json::json!([a - start, b - start]))
+            })
+            .collect();
+        snippet["text"] = Value::String(truncated);
+        snippet["spans"] = Value::Array(spans);
+        snippet["cut_before"] = Value::Bool(start > 0);
+        snippet["cut_after"] = Value::Bool(cut_after);
     }
 }
 pub fn refusal(id: Option<RpcId>) -> RpcResponse {
@@ -155,7 +226,11 @@ pub fn encode(response: RpcResponse) -> Vec<u8> {
     });
     let mut value = serde_json::to_value(&response).expect("RPC response serializes");
     let mut output = Limited(Vec::new());
-    if admit(&mut value).is_err() || serde_json::to_writer(&mut output, &value).is_err() {
+    if admit(&mut value).is_err() {
+        return serde_json::to_vec(&refusal(id)).expect("static refusal serializes");
+    }
+    finish_snippets(&mut value);
+    if serde_json::to_writer(&mut output, &value).is_err() {
         return serde_json::to_vec(&refusal(id)).expect("static refusal serializes");
     }
     output.0

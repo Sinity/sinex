@@ -31,7 +31,24 @@ impl PrivacyConfig {
 }
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ProjectConfig {
+    pub name: String,
+    pub roots: Vec<String>,
+}
+impl ProjectConfig {
+    pub fn model(&self) -> sinex_model::retrieval::Project {
+        sinex_model::retrieval::Project {
+            name: self.name.clone(),
+            roots: self.roots.clone(),
+        }
+    }
+}
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
+    pub read_model_connection_file: Option<PathBuf>,
+    #[serde(default)]
+    pub projects: Vec<ProjectConfig>,
     pub listen: String,
     pub state_dir: PathBuf,
     pub store_dir: PathBuf,
@@ -62,6 +79,24 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&self) -> Result<(), String> {
+        if self
+            .read_model_connection_file
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
+        {
+            return Err("read model credential path must be absolute".into());
+        }
+        sinex_model::retrieval::Project::validate_all(
+            &self
+                .projects
+                .iter()
+                .map(ProjectConfig::model)
+                .collect::<Vec<_>>(),
+        )
+        .map_err(str::to_string)?;
+        if !self.projects.is_empty() && self.read_model_connection_file.is_none() {
+            return Err("projects require indexed retrieval configuration".into());
+        }
         let address: SocketAddr = self
             .listen
             .parse()
@@ -77,7 +112,7 @@ impl Config {
             || !self.automata.is_empty()
         {
             return Err(
-                "only the registered Atuin source is supported; automata are unavailable".into(),
+                "only Atuin and the indexed singleton shell interpretation are implemented; automata configuration is unavailable".into(),
             );
         }
         if self.sources.is_empty() != self.atuin.is_none() {

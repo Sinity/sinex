@@ -109,7 +109,7 @@ except Exception as error:
 finally:
     summary = {'success': success, 'failure': None if success else failure, 'runs': runs,
                'scope': ('actual packaged retained logical-row reads after observed kill and provider loss; precommit contrast; no parser replay, physical SQLite reconstruction or power-loss claim' if args.provider_loss else 'actual packaged Kestrel raw-event paths and reporting controls')+(' plus observed retention/admission boundary recovery' if args.boundaries else '')+'; not formal M1 acceptance',
-               'open': ['general read model/index and its future fault qualification', 'physical SQLite snapshots (1c)', 'all other M1 and task-routing gates']}
+               'open': ['full projection pruning/purge lifecycle and corpus-scale performance', 'physical SQLite snapshots (1c)', 'all other M1 and task-routing gates']}
     (report/'result.json').write_text(json.dumps(summary, indent=2)+'\n')
     (report/'report.txt').write_text('\n'.join([summary['scope'], f'Success: {success}', f'Failure: {summary["failure"]}']+[f'{r["name"]}: exit {r["exit"]}; {r["report"]}' for r in runs])+ '\n')
     try:
