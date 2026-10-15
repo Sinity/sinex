@@ -589,6 +589,30 @@ fn distance(a: &str, b: &str) -> usize {
     }
     previous[b.len()]
 }
+/// Explicit legacy raw selectors keep their own binder, including its refusals.
+/// Use the shared lexer so quoted words and filter values cannot choose a read path.
+pub fn explicit_raw_events(text: &str) -> bool {
+    if text.len() > 16_384 {
+        return false;
+    }
+    let Ok(tokens) = tokens(text) else {
+        return false;
+    };
+    if tokens.len() < 2
+        || tokens[0].quoted
+        || !tokens[0].value.eq_ignore_ascii_case("events")
+        || tokens[1].quoted
+        || !tokens[1].value.eq_ignore_ascii_case("where")
+    {
+        return false;
+    }
+    tokens[2..].windows(2).any(|pair| {
+        !pair[0].quoted
+            && (pair[0].value.starts_with("payload.") || pair[0].value == "ts_orig")
+            && ["=", "!=", "<", ">", "<=", ">=", "~", "^", ":", "exists"]
+                .contains(&pair[1].value.as_str())
+    })
+}
 pub fn bind(text: &str) -> Result<Bound, &'static str> {
     if text.len() > 16_384 {
         return Err("query exceeds 16 KiB");
@@ -808,6 +832,21 @@ mod tests {
         ] {
             assert!(bind(text).is_ok(), "{text}");
         }
+    }
+    #[test]
+    fn explicit_raw_selection_preserves_quoted_data() {
+        assert!(explicit_raw_events(
+            r#"events where payload.exit_code = "bad""#
+        ));
+        assert!(explicit_raw_events(
+            r#"events where source = terminal.atuin-history and payload.exit_code = "bad""#
+        ));
+        assert!(!explicit_raw_events(
+            r#"events where "payload.exit_code = bad""#
+        ));
+        assert!(!explicit_raw_events(
+            "events where command = payload.exit_code"
+        ));
     }
     #[test]
     fn unicode_and_phrase_contract() {

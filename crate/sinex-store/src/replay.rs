@@ -61,7 +61,10 @@ impl RequestRecord {
         if record.format != "sinex.replay.request.v1"
             || record.method != "replay.start"
             || record.interpretation_basis.format != "sinex.atuin.interpretation.v1"
-            || record.interpretation_basis.parser != "atuin-v1"
+            || !matches!(
+                record.interpretation_basis.parser.as_str(),
+                "atuin-v1" | crate::atuin::PARSER
+            )
         {
             return Err(Error::ReplayRefused(
                 "unsupported retained replay request contract",
@@ -111,7 +114,7 @@ fn outcome(id: Uuid, action: Uuid, selected: usize) -> Outcome {
 }
 impl WriterPool {
     async fn replay_scope(&mut self, material: Uuid) -> Result<Vec<Record>> {
-        let durable:Option<i64>=sqlx::query_scalar("SELECT durable_bytes FROM raw.source_material_registry WHERE id=$1 AND source_identifier=$2 AND material_kind='stream_chunk' AND status<>'capturing' AND parser_provenance->>'parser'='atuin-v1' AND parser_provenance->>'representation'='canonical_sqlite_rows'").bind(material).bind(crate::ATUIN_SOURCE).fetch_optional(&mut self.connection).await?;
+        let durable:Option<i64>=sqlx::query_scalar("SELECT durable_bytes FROM raw.source_material_registry WHERE id=$1 AND source_identifier=$2 AND material_kind='stream_chunk' AND status<>'capturing' AND parser_provenance->>'parser' IN ('atuin-v1','atuin-v2') AND parser_provenance->>'representation'='canonical_sqlite_rows'").bind(material).bind(crate::ATUIN_SOURCE).fetch_optional(&mut self.connection).await?;
         let durable = durable.ok_or(Error::ReplayRefused(
             "replay requires an existing closed retained Atuin logical-row material",
         ))?;
@@ -479,6 +482,9 @@ impl WriterPool {
                     .retain_record(&json!({"format":"sinex.replay.outcome.v1","outcome":done}))
                     .await?;
                 let mut tx = self.connection.begin().await?;
+                let producer =
+                    crate::atuin::parser_producer(&mut tx, self.run_id, crate::atuin::PARSER)
+                        .await?;
                 for p in prepared {
                     if let Some(old) = p.old {
                         crate::shell::dirty(&mut tx, old).await?;
@@ -507,8 +513,8 @@ impl WriterPool {
                             sinex_model::events::CaptureClock::Producer,
                         )
                         .map_err(|_| Error::Invalid("invalid replay time evidence"))?;
-                    sqlx::query("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_orig_tiebreak,ts_quality,ts_clock,time_suspect,payload_schema_id,commit_seq,source_material_id,anchor_byte,offset_start,offset_end,offset_kind,ordinal,record_hash,record_state,run_id,equivalence_key,created_by_operation,written_by) VALUES ($1,$2,'command.executed',$3,$4::text::timestamptz,$5,'intrinsic','producer',$6,2,$7,$8,$9,$9,$10,'bytes',0,$11,$12,$13,$14,$15,$16)")
-                        .bind(p.id).bind(crate::ATUIN_SOURCE).bind(p.parsed.payload).bind(p.parsed.time).bind(p.parsed.nanos).bind(projected.suspect).bind(seq).bind(material).bind(p.anchor).bind(p.end).bind(&p.record_hash).bind(if p.parsed.removed{"removed"}else{"present"}).bind(self.run_id).bind(&p.key).bind(id).bind(json!({"kind":"operator","principal":PRINCIPAL})).execute(&mut *tx).await?;
+                    sqlx::query("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_orig_tiebreak,ts_quality,ts_clock,time_suspect,payload_schema_id,commit_seq,source_material_id,anchor_byte,offset_start,offset_end,offset_kind,ordinal,record_hash,record_state,run_id,equivalence_key,created_by_operation,written_by,producer_version_id) VALUES ($1,$2,'command.executed',$3,$4::text::timestamptz,$5,'intrinsic','producer',$6,2,$7,$8,$9,$9,$10,'bytes',0,$11,$12,$13,$14,$15,$16,$17)")
+                        .bind(p.id).bind(crate::ATUIN_SOURCE).bind(p.parsed.payload).bind(p.parsed.time).bind(p.parsed.nanos).bind(projected.suspect).bind(seq).bind(material).bind(p.anchor).bind(p.end).bind(&p.record_hash).bind(if p.parsed.removed{"removed"}else{"present"}).bind(self.run_id).bind(&p.key).bind(id).bind(json!({"kind":"operator","principal":PRINCIPAL})).bind(producer).execute(&mut *tx).await?;
                     sqlx::query("INSERT INTO core.live_coordinates (store,occ_hash,event_id) VALUES (0,$1,$2)").bind(crate::coordinate_hash(material,p.anchor,"command.executed",0)).bind(p.id).execute(&mut *tx).await?;
                     sqlx::query("INSERT INTO core.live_equivalence (store,key_hash,event_id,read_order,record_hash) VALUES (0,$1,$2,$3,$4) ON CONFLICT (store,key_hash) DO UPDATE SET event_id=EXCLUDED.event_id,read_order=EXCLUDED.read_order,record_hash=EXCLUDED.record_hash").bind(p.key_hash).bind(p.id).bind(p.read_order).bind(p.record_hash).execute(&mut *tx).await?;
                     crate::shell::dirty(&mut tx, p.id).await?;
@@ -582,7 +588,7 @@ impl WriterPool {
             .map_err(|_| Error::Invalid("cannot encode current privacy rules"))?;
         Ok(InterpretationBasis {
             format: "sinex.atuin.interpretation.v1".into(),
-            parser: "atuin-v1".into(),
+            parser: crate::atuin::PARSER.into(),
             artifact,
             privacy_rules_hash: format!("blake3:{}", blake3::hash(&policy).to_hex()),
         })

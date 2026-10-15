@@ -11,6 +11,8 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 pub const SOURCE: &str = "terminal.atuin-history";
+pub(crate) const PARSER: &str = "atuin-v2";
+const PARSER_NAME: &str = "parser.terminal.atuin-history";
 pub const MAX_STEP_ROWS: usize = 64;
 pub const MAX_STEP_BYTES: usize = 1024 * 1024;
 const PART_BYTES: u64 = 100 * 1024 * 1024;
@@ -94,6 +96,8 @@ pub fn mask(value: &mut Value, rules: &[PrivacyRule]) -> Result<()> {
 pub enum AtuinInterpretation {
     Current,
     HistoricalFixture,
+    #[cfg(test)]
+    PriorCompletionFixture,
 }
 #[derive(Clone)]
 pub struct AtuinStep {
@@ -118,8 +122,6 @@ struct AtuinRow {
     session: String,
     hostname: String,
     deleted_at: Option<i64>,
-    #[serde(default)]
-    _end_not_recorded: bool,
 }
 pub(crate) struct Parsed {
     pub(crate) payload: Value,
@@ -144,13 +146,12 @@ pub(crate) fn parse(row: &Value) -> std::result::Result<Parsed, &'static str> {
         sinex_model::events::TimePrecision::Instant,
     )
     .map_err(|_| "invalid Atuin time evidence")?;
-    let ended = r.duration > 0 || r.exit >= 0;
+    let ended = r.duration >= 0 || r.exit >= 0;
     let state = if ended {
         "ended"
-    } else if r._end_not_recorded {
-        "end_not_recorded"
     } else {
-        "running"
+        // This reading has no end. It proves neither running nor immutable terminal state.
+        "end_not_recorded"
     };
     Ok(Parsed {
         payload: json!({"native_id":r.id,"command":r.command,"cwd":r.cwd,"session":r.session,
@@ -167,6 +168,30 @@ pub(crate) fn parse(row: &Value) -> std::result::Result<Parsed, &'static str> {
         nanos: (at.nanosecond() % 1000) as i32,
         time_evidence,
     })
+}
+
+pub(crate) async fn parser_producer(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    run: Uuid,
+    parser: &str,
+) -> Result<Uuid> {
+    if let Some(id) = sqlx::query_scalar(
+        "SELECT id FROM core.producer_versions WHERE name=$1 AND version=$2 AND run_id=$3 LIMIT 1",
+    )
+    .bind(PARSER_NAME)
+    .bind(parser)
+    .bind(run)
+    .fetch_optional(&mut **tx)
+    .await?
+    {
+        return Ok(id);
+    }
+    let id = Uuid::now_v7();
+    sqlx::query("INSERT INTO core.producer_versions(id,name,version,run_id,configuration) VALUES($1,$2,$3,$4,$5)")
+        .bind(id).bind(PARSER_NAME).bind(parser).bind(run)
+        .bind(json!({"representation":"canonical_sqlite_rows","parser":parser,"qualification_fixture":parser!=PARSER}))
+        .execute(&mut **tx).await?;
+    Ok(id)
 }
 
 impl WriterPool {
@@ -278,7 +303,14 @@ impl WriterPool {
                     .await?
             }
         };
-        let provenance = json!({"source":SOURCE,"event_type":"command.executed","equivalence":"registered_database + native_id","parser":"atuin-v1","representation":"canonical_sqlite_rows","privacy_class":"plain","privacy_rules":step.privacy_rules,"sqlite_snapshot":"unavailable_until_1c"});
+        let parser = PARSER;
+        #[cfg(test)]
+        let parser = if step.interpretation == AtuinInterpretation::PriorCompletionFixture {
+            "atuin-v1"
+        } else {
+            parser
+        };
+        let provenance = json!({"source":SOURCE,"event_type":"command.executed","equivalence":"registered_database + native_id","parser":parser,"representation":"canonical_sqlite_rows","privacy_class":"plain","privacy_rules":step.privacy_rules,"sqlite_snapshot":"unavailable_until_1c"});
         sqlx::query("INSERT INTO raw.observations (id,input_id,seq,observed_at,source_provenance,metadata,status) SELECT $1,$2,COALESCE(MAX(seq),0)+1,$3::text::timestamptz,$4,$5,'reading' FROM raw.observations WHERE input_id=$2 ON CONFLICT (id) DO NOTHING")
             .bind(step.observation).bind(input).bind(&step.observed_at).bind(&provenance).bind(&step.metadata).execute(&mut self.connection).await?;
         let mut bytes = Vec::new();
@@ -299,6 +331,17 @@ impl WriterPool {
             .as_bytes()[..16]
                 .to_vec();
             let result = parse(&Value::Object(original.clone()));
+            #[cfg(test)]
+            let result = if step.interpretation == AtuinInterpretation::PriorCompletionFixture {
+                result.map(|mut parsed| {
+                    // Controlled prior-recipe reading, not an actual predecessor binary.
+                    parsed.payload["completion"] = json!("running");
+                    parsed.payload["duration_ns"] = Value::Null;
+                    parsed
+                })
+            } else {
+                result
+            };
             original.insert(
                 "_from".into(),
                 json!({"observation":step.observation,"table":"history","rowid":rowid}),
@@ -371,6 +414,7 @@ impl WriterPool {
         }
         let mut tx = self.connection.begin().await?;
         let mut last_seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+        let producer = parser_producer(&mut tx, self.run_id, parser).await?;
         if let Some(id) = material {
             sqlx::query("UPDATE raw.source_material_registry SET total_bytes=$2,durable_bytes=$2 WHERE id=$1").bind(id).bind(start+bytes.len() as i64).execute(&mut *tx).await?;
         }
@@ -398,9 +442,10 @@ impl WriterPool {
                 blake3::hash(format!("{SOURCE}\x1fcommand.executed\x1f{key}").as_bytes())
                     .as_bytes()[..16]
                     .to_vec();
-            let old = sqlx::query("SELECT event_id,read_order,record_hash FROM core.live_equivalence WHERE store=0 AND key_hash=$1").bind(&key_hash).fetch_optional(&mut *tx).await?;
+            let old = sqlx::query("SELECT l.event_id,l.read_order,l.record_hash,p.version AS parser FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id LEFT JOIN core.producer_versions p ON p.id=e.producer_version_id AND p.name='parser.terminal.atuin-history' WHERE l.store=0 AND l.key_hash=$1").bind(&key_hash).fetch_optional(&mut *tx).await?;
             if let Some(ref old) = old {
-                if old.try_get::<Vec<u8>, _>("record_hash")? == record_hash
+                if (old.try_get::<Vec<u8>, _>("record_hash")? == record_hash
+                    && old.try_get::<Option<String>, _>("parser")?.as_deref() == Some(parser))
                     || old.try_get::<i64, _>("read_order")? >= read_order
                 {
                     sqlx::query("UPDATE core.live_equivalence SET read_order=GREATEST(read_order,$2) WHERE store=0 AND key_hash=$1").bind(&key_hash).bind(read_order).execute(&mut *tx).await?;
@@ -434,9 +479,13 @@ impl WriterPool {
             if fixture {
                 payload["hostname"] = json!("controlled-historical-bad-interpretation");
             }
+            let fixture_write = fixture;
+            #[cfg(test)]
+            let fixture_write =
+                fixture_write || step.interpretation == AtuinInterpretation::PriorCompletionFixture;
             mask(&mut payload, &step.privacy_rules)?;
-            sqlx::query("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_orig_tiebreak,ts_quality,ts_clock,time_suspect,payload_schema_id,commit_seq,source_material_id,anchor_byte,offset_start,offset_end,offset_kind,ordinal,record_hash,record_state,run_id,equivalence_key,written_by) VALUES ($1,$2,'command.executed',$3,$4::text::timestamptz,$13,'intrinsic','producer',$14,2,$5,$6,$7,$7,$8,'bytes',0,$9,$10,$11,$12,$15)")
-                .bind(id).bind(SOURCE).bind(payload).bind(parsed.time).bind(last_seq).bind(material).bind(anchor).bind(start+end).bind(&record_hash).bind(if parsed.removed {"removed"} else {"present"}).bind(self.run_id).bind(key).bind(parsed.nanos).bind(projected.suspect).bind(if fixture {json!({"kind":"qualification_fixture","description":"controlled historical bad interpretation; not a predecessor binary"})}else{Value::Null}).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_orig_tiebreak,ts_quality,ts_clock,time_suspect,payload_schema_id,commit_seq,source_material_id,anchor_byte,offset_start,offset_end,offset_kind,ordinal,record_hash,record_state,run_id,equivalence_key,written_by,producer_version_id) VALUES ($1,$2,'command.executed',$3,$4::text::timestamptz,$13,'intrinsic','producer',$14,2,$5,$6,$7,$7,$8,'bytes',0,$9,$10,$11,$12,$15,$16)")
+                .bind(id).bind(SOURCE).bind(payload).bind(parsed.time).bind(last_seq).bind(material).bind(anchor).bind(start+end).bind(&record_hash).bind(if parsed.removed {"removed"} else {"present"}).bind(self.run_id).bind(key).bind(parsed.nanos).bind(projected.suspect).bind(if fixture_write {json!({"kind":"qualification_fixture","description":"controlled historical bad interpretation; not a predecessor binary"})}else{Value::Null}).bind(producer).execute(&mut *tx).await?;
             sqlx::query(
                 "INSERT INTO core.live_coordinates (store,occ_hash,event_id) VALUES (0,$1,$2)",
             )
@@ -528,12 +577,163 @@ impl ReadPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "requires the harness-owned isolated PostgreSQL recipe database"]
+    async fn unchanged_source_new_recipe_readmits_and_preserves_old_evidence()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let admin = std::env::var("SINEX_TEST_ADMIN_URL")?;
+        let writer = std::env::var("SINEX_TEST_WRITER_URL")?;
+        let reader = std::env::var("SINEX_TEST_READER_URL")?;
+        let state = std::path::PathBuf::from(std::env::var("SINEX_TEST_STORE_DIR")?);
+        crate::bootstrap(&admin).await?;
+        let executable = std::fs::read(std::env::current_exe()?)?;
+        let store = crate::Store::connect(
+            &writer,
+            &reader,
+            state,
+            2,
+            crate::RuntimeIdentity {
+                service_name: "synthetic-atuin-recipe-proof".into(),
+                host: "synthetic-host".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+                executable_blake3: format!("blake3:{}", blake3::hash(&executable).to_hex()),
+                config_blake3: format!(
+                    "blake3:{}",
+                    blake3::hash(b"controlled prior recipe fixture").to_hex()
+                ),
+            },
+            None,
+        )
+        .await?;
+        store.admission.enable_shell().await?;
+        let source = json!({"_rowid":1,"id":"fixture-completion-v1","timestamp":1_700_000_000_000_000_000i64,"duration":0,"exit":-1,"command":"synthetic recipe proof","cwd":"/synthetic","session":"same","hostname":"host","deleted_at":null});
+        let clock = OffsetDateTime::now_utc();
+        let step = |interpretation, seconds| AtuinStep {
+            interpretation,
+            observation: Uuid::now_v7(),
+            observed_at: (clock + time::Duration::seconds(seconds))
+                .format(&Rfc3339)
+                .unwrap(),
+            locator: "synthetic-recipe-fixture".into(),
+            metadata: json!({"qualification_fixture":"controlled prior parser interpretation; not a predecessor binary"}),
+            rows: vec![source.clone()],
+            complete: true,
+            unavailable: None,
+            privacy_rules: vec![],
+        };
+        let first = store
+            .admission
+            .submit_atuin(step(AtuinInterpretation::PriorCompletionFixture, 0))
+            .await?;
+        assert_eq!(first["admitted"], 1);
+        let mut conn = sqlx::PgConnection::connect(&reader).await?;
+        let snapshot = "SELECT e.id,e.payload,e.record_hash,e.equivalence_key,p.version AS parser FROM core.live_events e JOIN core.producer_versions p ON p.id=e.producer_version_id WHERE e.event_type='command.executed'";
+        let old = sqlx::query(snapshot).fetch_one(&mut conn).await?;
+        let old_id: Uuid = old.try_get("id")?;
+        assert_eq!(old.try_get::<String, _>("parser")?, "atuin-v1");
+        assert_eq!(old.try_get::<Value, _>("payload")?["completion"], "running");
+        let before = store
+            .reader
+            .trace(&old_id.to_string(), true)
+            .await?
+            .unwrap();
+        async fn canonical(conn: &mut sqlx::PgConnection, parent: Uuid) -> Result<Uuid> {
+            for _ in 0..100 {
+                if let Some(id)=sqlx::query_scalar("SELECT id FROM core.live_events WHERE event_type='command.canonical' AND source_event_ids=ARRAY[$1]::uuid[]").bind(parent).fetch_optional(&mut *conn).await? {return Ok(id)}
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            Err(Error::Invalid("canonical fixture did not settle"))
+        }
+        let old_canonical = canonical(&mut conn, old_id).await?;
+        let corrected = store
+            .admission
+            .submit_atuin(step(AtuinInterpretation::Current, 1))
+            .await?;
+        assert_eq!(
+            corrected["admitted"], 1,
+            "equal source hash must not suppress a new parser recipe"
+        );
+        let new = sqlx::query(snapshot).fetch_one(&mut conn).await?;
+        let new_id: Uuid = new.try_get("id")?;
+        assert_ne!(new_id, old_id);
+        assert_eq!(
+            old.try_get::<Vec<u8>, _>("record_hash")?,
+            new.try_get::<Vec<u8>, _>("record_hash")?
+        );
+        assert_eq!(
+            old.try_get::<String, _>("equivalence_key")?,
+            new.try_get::<String, _>("equivalence_key")?
+        );
+        assert_eq!(new.try_get::<String, _>("parser")?, PARSER);
+        let payload: Value = new.try_get("payload")?;
+        assert_eq!(payload["completion"], "ended");
+        assert_eq!(payload["duration_ns"], 0);
+        assert_eq!(payload["exit_code"], Value::Null);
+        let new_canonical = canonical(&mut conn, new_id).await?;
+        assert_ne!(old_canonical, new_canonical);
+        let canonical_payload: Value =
+            sqlx::query_scalar("SELECT payload FROM core.live_events WHERE id=$1")
+                .bind(new_canonical)
+                .fetch_one(&mut conn)
+                .await?;
+        assert_eq!(canonical_payload["completion"], "ended");
+        let archive_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM audit.archived WHERE id=ANY($1)")
+                .bind(vec![old_id, old_canonical])
+                .fetch_one(&mut conn)
+                .await?;
+        assert_eq!(archive_count, 2);
+        let repeated = store
+            .admission
+            .submit_atuin(step(AtuinInterpretation::Current, 2))
+            .await?;
+        assert_eq!(repeated["admitted"], 0);
+        assert_eq!(repeated["repeated"], 1);
+        let stale = store
+            .admission
+            .submit_atuin(step(AtuinInterpretation::PriorCompletionFixture, -1))
+            .await?;
+        assert_eq!(
+            stale["admitted"], 0,
+            "an older reading cannot overwrite the current recipe's newer observation"
+        );
+        let after = store
+            .reader
+            .trace(&old_id.to_string(), true)
+            .await?
+            .unwrap();
+        for field in ["material", "anchor", "end", "record"] {
+            assert_eq!(before[field], after[field]);
+        }
+        println!(
+            "{}",
+            json!({"qualification":"controlled typed prior recipe, not a predecessor binary","old":old_id,"new":new_id,"source_record_hash":old.try_get::<Vec<u8>,_>("record_hash")?,"source_hash_equal":true,"equivalence_unchanged":true,"old_parser":"atuin-v1","new_parser":PARSER,"old_trace":before,"old_trace_after":after,"new_payload":payload,"canonical_old":old_canonical,"canonical_new":new_canonical,"current_repeat":repeated,"stale_reading":stale})
+        );
+        store.shutdown().await?;
+        Ok(())
+    }
+    #[test]
+    fn unfinished_is_no_recorded_end_not_proof_of_running() {
+        let row = json!({"id":"unfinished","timestamp":1_700_000_000_000_000_000i64,"duration":-1,"exit":-1,"command":"synthetic","cwd":"/synthetic","session":"same","hostname":"host","deleted_at":null});
+        assert_eq!(
+            parse(&row).unwrap().payload["completion"],
+            "end_not_recorded"
+        );
+    }
+    #[test]
+    fn zero_duration_records_an_end_with_unknown_exit() {
+        let row = json!({"id":"zero","timestamp":1_700_000_000_000_000_000i64,"duration":0,"exit":-1,"command":"synthetic","cwd":"/synthetic","session":"same","hostname":"host","deleted_at":null});
+        let parsed = parse(&row).unwrap();
+        assert_eq!(parsed.payload["completion"], "ended");
+        assert_eq!(parsed.payload["duration_ns"], 0);
+        assert_eq!(parsed.payload["exit_code"], Value::Null);
+    }
     #[test]
     fn unfinished_exit_is_unknown_and_malformed_time_is_a_record_failure() {
         let row = json!({"id":"synthetic-1","timestamp":1_700_000_000_123_456_789i64,"duration":-1,"exit":-1,"command":"example","cwd":"/synthetic","session":"s","hostname":"h:u","deleted_at":null});
         let parsed = parse(&row).unwrap();
         assert_eq!(parsed.payload["exit_code"], Value::Null);
-        assert_eq!(parsed.payload["completion"], "running");
+        assert_eq!(parsed.payload["completion"], "end_not_recorded");
         assert_eq!(parsed.time, "2023-11-14T22:13:20.123456Z");
         assert_eq!(parsed.nanos, 789);
         let mut bad = row.clone();

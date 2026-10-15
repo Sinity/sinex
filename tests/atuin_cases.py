@@ -98,7 +98,7 @@ created_by = "operator"
         assert actual['synthetic-1']['time_quality']=='intrinsic'
         assert actual['synthetic-2']['payload']['exit_code'] is None
         assert actual['synthetic-2']['payload']['duration_ns'] is None
-        assert actual['synthetic-2']['payload']['completion']=='running'
+        assert actual['synthetic-2']['payload']['completion']=='end_not_recorded'
         baseline_ids={k:r['id'] for k,r in actual.items()}
         assert cli('show',baseline_ids['synthetic-1'])['row']['payload']==actual['synthetic-1']['payload']
         trace=cli('trace',baseline_ids['synthetic-1'],'--bytes')['row']
@@ -106,7 +106,8 @@ created_by = "operator"
         assert trace['anchor']>=0 and trace['end']>trace['anchor']
         assert cli('query','events where payload.command ~ "[withheld]"')['total']==1
         assert cli('query','commands',expected=5)['kind']=='partial'
-        assert cli('query','events where payload.exit_code = "bad"',expected=2)['kind']=='bad_query'
+        invalid=cli('query','events where payload.exit_code = "bad"',expected=2)
+        assert invalid['kind']=='bad_query' and invalid['message']=='exit_code must be an integer'
         (report/'independent-base-expectation.json').write_text(json.dumps({'total':2,'rows_read':4,'record_errors':1,'commands':['echo [withheld]','sleep synthetic']},indent=2)+'\n')
     scenario('Atuin retained source and real-client query',base)
     if h['OPTIONS'].credential_output:
@@ -117,11 +118,19 @@ created_by = "operator"
         assert {r['payload']['native_id']:r['id'] for r in cli('query',query)['rows']}==baseline_ids
         # More later records than an entire writer step. The old open native key must
         # still update; rowid/order and a trailing window cannot stand in for identity.
+        before_later=wait_cycle()
         with sqlite3.connect(db) as con:
-            con.executemany(f'INSERT INTO history ({columns}) VALUES (?,?,?,?,?,?,?,?,?)',[row(f'append-{n}',n+10,'echo appended',session='other') for n in range(130)])
+            con.executemany(f'INSERT INTO history ({columns}) VALUES (?,?,?,?,?,?,?,?,?)',[row(f'append-{n}',n+10,'echo appended',session='open-session') for n in range(130)])
+        preserve('same-session-original-unfinished')
+        later_observation=wait_cycle(lambda x:x['status']=='completed' and x['rows_read']==134,after=before_later['id'])
+        unfinished=cli('query','events where payload.command = "sleep synthetic"')['rows'][0]
+        assert unfinished['payload']['completion']=='end_not_recorded'
+        assert unfinished['payload']['duration_ns'] is None and unfinished['payload']['exit_code'] is None
+        assert unfinished['id']==baseline_ids['synthetic-2'], 'later-row presence alone changed the interpretation'
+        with sqlite3.connect(db) as con:
             con.execute('UPDATE history SET exit=7,duration=9000000000 WHERE id="synthetic-2"')
         preserve('late-open-update')
-        wait_cycle(lambda x:x['status']=='completed' and x['rows_read']==134)
+        wait_cycle(lambda x:x['status']=='completed' and x['rows_read']==134 and x['admitted']==1,after=later_observation['id'])
         answer=cli('query',query); assert answer['total']==132
         assert answer['page']['cursor'] is not None
         wait_cycle(after=wait_cycle()['id'])
@@ -130,7 +139,7 @@ created_by = "operator"
         assert next_page['resolved']['commit_seq']>answer['resolved']['commit_seq']
         rows+=next_page['rows']; assert len({r['id'] for r in rows})==132
         updated=next(r for r in rows if r['payload']['native_id']=='synthetic-2')
-        assert updated['id']!=baseline_ids['synthetic-2'] and updated['payload']['exit_code']==7 and updated['payload']['duration_ns']==9000000000
+        assert updated['id']!=baseline_ids['synthetic-2'] and updated['payload']['exit_code']==7 and updated['payload']['duration_ns']==9000000000 and updated['payload']['completion']=='ended'
     scenario('Atuin repeat and late open-row update',repeat_update)
     def removal():
         before=wait_cycle()
@@ -182,6 +191,12 @@ created_by = "operator"
             if name=='empty':
                 assert result['status']=='completed' and result['rows_read']==0 and result['record_errors']==0
                 answer=cli('query',query); assert answer['total']==0 and answer['complete'] is True
+                invalid=cli('query','events where payload.exit_code = "bad"',expected=2)
+                assert invalid['kind']=='bad_query' and invalid['message']=='exit_code must be an integer'
+                assert cli('query','events where payload.command = "absent"')['total']==0
+                assert cli('query','commands where typo = x',expected=2)['kind']=='bad_query'
+                assert cli('query','commands',expected=5)['kind']=='partial'
+
             else:
                 assert result['status']=='unavailable' and result['reason'] and result['rows_read']==0
                 answer=cli('query',query,expected=5); assert answer['total']==0 and answer['complete'] is False

@@ -117,7 +117,7 @@ async fn read(
                 "Atuin poll interrupted by daemon shutdown; committed prefix retained".into(),
             );
         }
-        let row = sqlx::query("SELECT h.rowid AS _rowid,h.id,h.timestamp,h.duration,h.exit,h.command,h.cwd,h.session,h.hostname,h.deleted_at,CASE WHEN h.exit=-1 AND h.duration<=0 AND EXISTS (SELECT 1 FROM history later WHERE later.session=h.session AND later.timestamp>h.timestamp) THEN 1 ELSE 0 END AS _end_not_recorded FROM history h WHERE h.rowid>? ORDER BY h.rowid LIMIT 1")
+        let row = sqlx::query("SELECT h.rowid AS _rowid,h.id,h.timestamp,h.duration,h.exit,h.command,h.cwd,h.session,h.hostname,h.deleted_at FROM history h WHERE h.rowid>? ORDER BY h.rowid LIMIT 1")
             .bind(through).fetch_optional(&mut *tx).await.map_err(|_| "Atuin history schema/read unavailable")?;
         let Some(row) = row else {
             break;
@@ -137,7 +137,6 @@ async fn read(
             "session",
             "hostname",
             "deleted_at",
-            "_end_not_recorded",
         ] {
             let raw = row
                 .try_get_raw(name)
@@ -163,14 +162,7 @@ async fn read(
                     ),
                 }
             };
-            object.insert(
-                name.to_string(),
-                if name == "_end_not_recorded" {
-                    json!(value == 1)
-                } else {
-                    value
-                },
-            );
+            object.insert(name.to_string(), value);
         }
         let value = Value::Object(object);
         let size = serde_json::to_vec(&value)

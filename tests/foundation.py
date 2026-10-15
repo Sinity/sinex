@@ -59,7 +59,7 @@ COMMAND_LOCK = threading.Lock()
 SCENARIOS = []
 PLANNED = ["cold query-free admin build", "canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "checked runtime build and pure contracts", "canonical hypertables, real role grants, writer admission and restart", "invalid and unsupported config fail before startup", "occupied endpoint leaves unowned resources untouched", "actual daemon CLI transport and truthful scope", "partial start cannot steal writer and clean shutdown releases ownership"]
 if OPTIONS.atuin:
-    PLANNED = PLANNED[:4] + ["Atuin retained source and real-client query", "Atuin repeat and late open-row update", "Atuin soft delete and source evidence", "Atuin empty malformed and unavailable outcomes", "Atuin restart and bounded retained cursor"]
+    PLANNED = PLANNED[:4] + ["Atuin unchanged-source parser recipe readmission", "Atuin retained source and real-client query", "Atuin repeat and late open-row update", "Atuin soft delete and source evidence", "Atuin empty malformed and unavailable outcomes", "Atuin restart and bounded retained cursor"]
 if OPTIONS.startup_coverage:
     PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "unconfigured empty coverage", "configured blocked first read and recovery", "configured blocked empty read and restart", "missing source stays unavailable without creation"]
 if OPTIONS.demo_spec:
@@ -233,6 +233,13 @@ try:
             import demo_cases
             demo_cases.exercise(globals())
     elif OPTIONS.atuin:
+        if not OPTIONS.credential_output:
+            def atuin_recipe_contract():
+                run(["createdb","atuin_recipe"],label="isolated recipe discrimination database")
+                isolated=ENV.copy()
+                isolated.update(SINEX_TEST_ADMIN_URL=admin.replace('/foundation?','/atuin_recipe?'),SINEX_TEST_WRITER_URL=writer.replace('/foundation?','/atuin_recipe?'),SINEX_TEST_READER_URL=reader.replace('/foundation?','/atuin_recipe?'),SINEX_TEST_STORE_DIR=str(WORK/'recipe-proof-store'))
+                run(["cargo","test","--locked","-p","sinex-store","--features","product","--lib","atuin::tests::unchanged_source_new_recipe_readmits_and_preserves_old_evidence","--","--ignored","--nocapture"],env=isolated,label="typed prior recipe, identical source hash and retained history")
+            scenario("Atuin unchanged-source parser recipe readmission",atuin_recipe_contract)
         import atuin_cases
         atuin_cases.exercise(globals())
     else:

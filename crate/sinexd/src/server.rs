@@ -410,7 +410,13 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
             let timeout_ms = params.timeout_ms.unwrap_or(10_000);
             let indexed = method == Method::Search || sinex_store::is_indexed_query(&params.query);
             if indexed {
-                if !state.indexed {
+                if let Err(message) = sinex_model::retrieval::bind(&params.query) {
+                    Err(RpcError::new(
+                        ErrorKind::BadQuery,
+                        message,
+                        serde_json::Value::Null,
+                    ))
+                } else if !state.indexed {
                     Err(read_error(sinex_store::Error::ProjectionUnavailable(
                         "indexed retrieval is not configured",
                     )))

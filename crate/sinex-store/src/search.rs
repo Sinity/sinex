@@ -9,7 +9,8 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 pub fn indexed(text: &str) -> bool {
-    crate::query::validate_query(text).is_err()
+    !sinex_model::retrieval::explicit_raw_events(text)
+        && crate::query::validate_query(text).is_err()
 }
 fn expression(q: &mut QueryBuilder<'_, Postgres>, e: &Expr) {
     q.push("(");
