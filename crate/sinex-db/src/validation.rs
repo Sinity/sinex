@@ -759,6 +759,26 @@ mod tests {
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].schema_id, schema_id);
         assert_eq!(failures[0].name, "test.source.test.event");
+
+        // A registered but uncompiled schema must remain distinct from a type
+        // with no registered schema when using the production lookup API.
+        let validator = EventValidator {
+            schema_cache: SchemaCache::default(),
+            schema_lookup: SchemaLookup::default(),
+            schema_compilation_failures: Arc::new(RwLock::new(Vec::new())),
+            validation_enabled: true,
+            max_payload_bytes: DEFAULT_MAX_PAYLOAD_BYTES,
+        };
+        validator.schema_cache.bulk_update(cache);
+        validator.schema_lookup.bulk_update(lookup);
+        *validator.schema_compilation_failures.write() = failures;
+
+        assert!(matches!(
+            validator.validate_payload_for("test.source", "test.event", &serde_json::json!({})),
+            SchemaValidationOutcome::SchemaNotFound { schema_id: missing_id }
+                if missing_id == schema_id
+        ));
+        assert_eq!(validator.get_schema_compilation_failures().len(), 1);
     }
 }
 

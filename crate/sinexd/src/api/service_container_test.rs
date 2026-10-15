@@ -9,7 +9,7 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_db::validation::SchemaCompilationFailure;
 use sinex_primitives::domain::OperationStatus;
-use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::domain::{EventSource, EventType, ModuleKind, ModuleName, ModuleState};
 use sinex_primitives::events::{EventPayload, payloads::FileCreatedPayload};
 use sinex_primitives::rpc::system::SystemHealthRequest;
 use sqlx::postgres::PgPoolOptions;
@@ -247,6 +247,77 @@ async fn system_health_reports_schema_compilation_failure_from_active_db_row(
             .all(|reason| !reason.contains("schema compilation failure")),
         "successful schema reload must clear the schema failure signal: {:?}",
         recovered_response.degradation_reasons
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn system_health_reports_failed_runtime_run_from_active_db_row(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    let temp_dir = tempfile::TempDir::new()?;
+    env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
+    env.set(
+        "SINEX_CONTENT_STORE_PATH",
+        temp_dir.path().to_string_lossy().as_ref(),
+    );
+
+    let module_label = format!(
+        "synthetic-health-failed-runtime-{}",
+        sinex_primitives::Uuid::now_v7()
+    );
+    let module_name = ModuleName::new(&module_label);
+    let state = ctx.pool().state();
+    let manifest = state
+        .register_module(&module_name, ModuleKind::Source, "1.0.0", None)
+        .await?;
+    let run = state
+        .start_module_run(
+            manifest.id,
+            "synthetic-health-source",
+            "synthetic-health-failed-instance",
+            "synthetic-host",
+            None,
+            None,
+        )
+        .await?;
+    assert!(
+        state
+            .update_module_run_status(run.id, ModuleState::Failed)
+            .await?,
+        "the test runtime run should transition to failed"
+    );
+
+    let container = super::ServiceContainer::from_database_url(ctx.database_url()).await?;
+    let response =
+        super::super::handlers::handle_system_health(&container, SystemHealthRequest {}).await?;
+
+    assert!(
+        !response.healthy,
+        "failed runtime evidence must prevent all-clear"
+    );
+    assert!(response.components.runtime_liveness.unhealthy_count >= 1);
+    let runtime = response
+        .components
+        .runtime_liveness
+        .runtimes
+        .iter()
+        .find(|runtime| runtime.module_name == module_name);
+    assert_eq!(
+        runtime
+            .and_then(|runtime| runtime.liveness.as_ref())
+            .map(|liveness| &liveness.status),
+        Some(&sinex_primitives::RuntimeLivenessStatus::Unhealthy),
+        "the exact failed runtime should be assessed in system.health"
+    );
+    assert!(
+        response
+            .degradation_reasons
+            .iter()
+            .any(|reason| { reason.contains("runtime liveness") && reason.contains("unhealthy") })
     );
 
     Ok(())
