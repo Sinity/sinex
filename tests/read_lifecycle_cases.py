@@ -83,7 +83,8 @@ automata = []
         request=urllib.request.Request(endpoint,data=json.dumps({'jsonrpc':'2.0','id':7,'method':'query.run','params':params}).encode(),headers={'Authorization':'Bearer synthetic-foundation-token','Content-Type':'application/json'})
         with urllib.request.urlopen(request,timeout=15) as response:
             raw=response.read()
-            (report/'api-deadline.json').write_bytes(raw)
+            capture = 'api-default-deadline.json' if 'timeout_ms' not in params else f"api-timeout-{params['timeout_ms']}.json"
+            (report/capture).write_bytes(raw)
             return json.loads(raw)
     def budget(answer, timeout_ms):
         assert answer['kind']=='budget'
