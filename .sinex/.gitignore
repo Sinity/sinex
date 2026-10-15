@@ -1,3 +1,0 @@
-# Keep the state root tracked; ignore generated checkout-local contents.
-*
-!.gitignore
