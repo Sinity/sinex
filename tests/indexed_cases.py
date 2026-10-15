@@ -33,7 +33,7 @@ def exercise(h):
         con.execute('CREATE TABLE history(id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,duration INTEGER NOT NULL,exit INTEGER NOT NULL,command TEXT NOT NULL,cwd TEXT NOT NULL,session TEXT NOT NULL,hostname TEXT NOT NULL,deleted_at INTEGER)')
         con.executemany('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',fixture)
     (report/'independent-search-fixture.json').write_text(json.dumps(fixture,ensure_ascii=False,indent=2))
-    def configuration(source=True,nested='nested',poll=500):
+    def configuration(source=True,nested='nested',poll=500,roots=None):
         return f'''listen = "127.0.0.1:{port}"
 state_dir = "{work/'indexed-state'}"
 store_dir = "{work/'indexed-store'}"
@@ -46,7 +46,7 @@ sources = {json.dumps(['terminal.atuin-history'] if source else [])}
 automata = []
 [[projects]]
 name = "tide"
-roots = ["/synthetic/tide"]
+roots = {json.dumps(roots or ["/synthetic/tide"])}
 [[projects]]
 name = "{nested}"
 roots = ["/synthetic/tide/nested"]
@@ -145,7 +145,7 @@ poll_interval_ms = {poll}
         for row in rows:
             snippet=row['snippet'];raw=snippet['text'].encode()
             for a,b in snippet['spans']:assert raw[a:b].decode().casefold()=='needle'
-        for text in ['commands where typo = x','commands near (events) within 1m','recall now','commands where exit_code = bad','commands where source = terminal.*','commands where project = [tide,nested]','comands since 7d','RECALL now']:
+        for text in ['commands where typo = x','commands near (events) within 1m','recall now','commands where exit_code = bad','commands where source = terminal.*','commands where project = [tide,nested]','comands since 7d','RECALL now','commands where cwd "exists"','commands where command "=" "git status"']:
             response=api('query.run',{'query':text,'page':20});assert response['error']['kind']=='bad_query' and 'result' not in response,response
         baseline={r['payload']['native_id']:r for r in rows}
         (report/'independent-search-expectation.json').write_text(json.dumps({'needle_keys':expected,'top':'old-best','phrase':['phrase'],'words':['phrase','words','reverse'],'unicode':['unicode'],'exact':['singular'],'prefix':['singular','plural','prefix']},indent=2))
@@ -202,6 +202,30 @@ poll_interval_ms = {poll}
         assert tool('sinex_status',{})['indexed_retrieval']['configured']
         (report/'actual-mcp-transport.json').write_text(json.dumps(mcp_log,ensure_ascii=False,indent=2))
     scenario('actual MCP transport and cross-client identity',clients)
+
+    def project_boundaries():
+        nonlocal daemon
+        stop(daemon)
+        config.write_text(configuration(source=False,roots=['/synthetic/tide*','/synthetic/tide*']))
+        daemon=start(config,'project-wildcard-base');settled()
+        old='commands where command = "needle needle needle needle needle"'
+        assert query(old)['rows'][0]['project']=='tide'
+        assert query('commands where needle and project = nested')['rows'][0]['payload']['native_id']=='nested'
+        assert query('commands where command = "cargo test needle"')['rows'][0]['payload']['native_id']=='phrase'
+        assert query('commands where cwd = "exists"')['total']==0
+        stop(daemon)
+        config.write_text(config.read_text()+'\n[[projects]]\nname = "other"\nroots = ["/synthetic/t*"]\n')
+        daemon=start(config,'project-component-tie');settled()
+        assert query(old)['rows'][0]['project'] is None
+        assert query('commands where needle and project = nested')['rows'][0]['payload']['native_id']=='nested'
+        stop(daemon)
+        config.write_text(configuration(source=False,roots=['/synthetic/tide/*']).replace('roots = ["/synthetic/tide/nested"]','roots = ["/elsewhere"]'))
+        daemon=start(config,'project-wildcard-present-component');settled()
+        assert query(old)['rows'][0]['project'] is None
+        assert query('commands where command = "needle nested"')['rows'][0]['project']=='tide'
+        stop(daemon);config.write_text(configuration(source=False))
+        daemon=start(config,'project-boundaries-restored');settled()
+    scenario('project component-depth ambiguity and wildcard boundary',project_boundaries)
 
     def sql(text):
         result=run(['psql',h['admin'],'-XAtq','-v','ON_ERROR_STOP=1','-c',text],label='indexed qualification database observation')

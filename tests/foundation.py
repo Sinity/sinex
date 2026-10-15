@@ -77,7 +77,7 @@ if OPTIONS.retained_replay:
 if OPTIONS.credential_output:
     PLANNED = PLANNED[:4] + ["Atuin retained source and real-client query"]
 if OPTIONS.indexed:
-    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","bound SQL null semantics","restricted profile and store binding","indexed fixture, independent full-population ranking and semantic controls","actual MCP transport and cross-client identity","projection interruption and same-state reconstruction","source replacement removal replay and project rebuild","retained navigation without provider after restart","indexed deadlines cancellation and credential presentation"]
+    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","bound SQL null semantics","restricted profile and store binding","indexed fixture, independent full-population ranking and semantic controls","actual MCP transport and cross-client identity","project component-depth ambiguity and wildcard boundary","projection interruption and same-state reconstruction","source replacement removal replay and project rebuild","retained navigation without provider after restart","indexed deadlines cancellation and credential presentation"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)

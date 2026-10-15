@@ -15,7 +15,7 @@ pub fn normalization_basis() -> String {
 
 // Bump for changed token/text/project/filter/ranking/order meaning; this binds
 // reconstruction and cursor generation compatibility, independently of build time.
-pub const CONTRACT: &str = "sinex.shell-search.v1";
+pub const CONTRACT: &str = "sinex.shell-search.v2";
 pub fn normalize(text: &str) -> String {
     caseless::default_case_fold_str(text).nfc().collect()
 }
@@ -66,7 +66,7 @@ pub fn project(cwd: &str, projects: &[Project]) -> Option<String> {
                 cwd.starts_with('/')
             } else if let Some(prefix) = root.strip_suffix('*') {
                 cwd.starts_with(prefix)
-                    && !cwd[prefix.len()..]
+                    && !cwd[prefix.rfind('/').unwrap_or(0) + 1..]
                         .split('/')
                         .next()
                         .unwrap_or("")
@@ -75,7 +75,10 @@ pub fn project(cwd: &str, projects: &[Project]) -> Option<String> {
                 cwd == root || cwd.strip_prefix(root).is_some_and(|s| s.starts_with('/'))
             };
             if matched {
-                matches.push((root.len(), p.name.clone()));
+                matches.push((
+                    root.split('/').filter(|c| !c.is_empty()).count(),
+                    p.name.clone(),
+                ));
             }
         }
     }
@@ -414,7 +417,11 @@ impl Reader {
         }
         let t = self.value()?;
         if let Some(descriptor) = FIELDS.iter().find(|f| !t.quoted && f.name == t.value) {
-            let op = self.value()?.value.to_ascii_lowercase();
+            let operator = self.value()?;
+            if operator.quoted {
+                return Err("field operators must be unquoted");
+            }
+            let op = operator.value.to_ascii_lowercase();
             if !["=", "!=", "<", ">", "<=", ">=", "~", "^", ":", "exists"].contains(&op.as_str()) {
                 return Err("unsupported field operator");
             }
@@ -734,6 +741,73 @@ mod tests {
             }])
             .is_err()
         );
+    }
+    #[test]
+    fn project_depth_counts_components_and_ties_are_unknown() {
+        let mut projects = vec![
+            Project {
+                name: "short".into(),
+                roots: vec!["/src/t*".into()],
+            },
+            Project {
+                name: "long".into(),
+                roots: vec!["/src/tide*".into()],
+            },
+        ];
+        assert_eq!(project("/src/tidepool/tools", &projects), None);
+        projects.push(Project {
+            name: "nested".into(),
+            roots: vec!["/src/tidepool/tools".into()],
+        });
+        assert_eq!(
+            project("/src/tidepool/tools/bin", &projects).as_deref(),
+            Some("nested")
+        );
+        projects.truncate(1);
+        projects[0].roots.push("/src/tide*".into());
+        projects[0].roots.push("/src/t*".into());
+        assert_eq!(
+            project("/src/tidepool/tools", &projects).as_deref(),
+            Some("short")
+        );
+    }
+    #[test]
+    fn project_wildcard_accepts_empty_suffix_in_present_component() {
+        let projects = [Project {
+            name: "tide".into(),
+            roots: vec!["/src/tide*".into()],
+        }];
+        for path in [
+            "/src/tide",
+            "/src/tide/tools",
+            "/src/tidepool",
+            "/src/tidepool/tools",
+        ] {
+            assert_eq!(project(path, &projects).as_deref(), Some("tide"), "{path}");
+        }
+        let any = [Project {
+            name: "child".into(),
+            roots: vec!["/src/*".into()],
+        }];
+        assert_eq!(project("/src", &any), None);
+        assert_eq!(project("/src/", &any), None);
+        assert_eq!(project("/src/tide", &any).as_deref(), Some("child"));
+    }
+    #[test]
+    fn quoted_operator_tokens_are_data_not_field_syntax() {
+        for text in [
+            r#"commands where cwd "exists""#,
+            r#"commands where command "=" "git status""#,
+        ] {
+            assert!(bind(text).is_err(), "{text}");
+        }
+        for text in [
+            r#"commands where command = "git status""#,
+            r#"commands where cwd = "exists""#,
+            r#"commands where command ~ "=""#,
+        ] {
+            assert!(bind(text).is_ok(), "{text}");
+        }
     }
     #[test]
     fn unicode_and_phrase_contract() {
