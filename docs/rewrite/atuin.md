@@ -139,6 +139,8 @@ The declared `live_cursor_acceptance` operation exercises the Nix-packaged daemo
 
 ## Raw-event read deadlines and cancellation
 
+An explicit `--query-timeout-ms` on another command is refused before reading credentials or contacting the daemon; it is never silently ignored.
+
 `query.run` defaults to a 10,000 ms execution deadline. Its optional `timeout_ms` parameter accepts an integer from 1 to 3,600,000; other values fail as `bad_query` before SQL execution. `sinexctl query` and `search` send 60,000 ms by default, configurable with `--query-timeout-ms`. This is an execution budget and changes no filters, count, page, cursor or source-coverage meaning. The deadline covers reader-pool acquisition and the entire repeatable-read page, including its count and source observations. A transaction-local PostgreSQL `statement_timeout` additionally bounds each SQL statement. The client allows five further seconds to receive the complete deadline response; transport timeout also exits as `budget`, with a distinct message.
 
 An execution deadline returns JSON-RPC error kind `budget`, code -32006 and CLI exit 6. Its data names `execution_deadline` and `timeout_ms`, reports `estimate: null` because this subset has no cost estimator, and suggests narrowing supported filters or retrying after contention ends. It carries no rows, total, cursor or completeness claim. This does not implement the specification's cost estimates or general query planner.

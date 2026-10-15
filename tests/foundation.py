@@ -142,6 +142,8 @@ try:
             assert len(outputs) == 1, "package build did not return exactly one output"
             BIN_DIR = Path(outputs[0]) / "bin"
             assert all((BIN_DIR/name).is_file() for name in ["sinexd", "sinexctl"]), "package entrypoints absent"
+            refused = run([BIN_DIR/"sinexctl", "--endpoint", "http://127.0.0.1:1/rpc", "--token-file", WORK/"not-created", "--query-timeout-ms", "500", "status"], expected=2, label="query deadline refused on non-query command")
+            assert json.loads(refused.stderr)["kind"] == "bad_query"
             if OPTIONS.demo_spec:
                 run([BIN_DIR/"xtask", "demo", ROOT, "--help"], label="packaged xtask driver forwarding")
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")

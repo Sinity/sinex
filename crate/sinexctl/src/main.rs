@@ -14,8 +14,8 @@ struct Args {
     #[arg(long, global = true)]
     json: bool,
     /// Query execution deadline; includes PostgreSQL pool acquisition and all page statements.
-    #[arg(long, global = true, default_value_t = 60_000, value_parser = clap::value_parser!(u64).range(1..=3_600_000))]
-    query_timeout_ms: u64,
+    #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=3_600_000))]
+    query_timeout_ms: Option<u64>,
     #[command(subcommand)]
     command: Command,
 }
@@ -68,8 +68,13 @@ fn main() -> std::process::ExitCode {
             serde_json::json!({"bytes":bytes,"ref":if id.starts_with("sinex:") {id} else {format!("sinex:ev/{id}")}}),
         ),
     };
+    if method != Method::Query && args.query_timeout_ms.is_some() {
+        fail("bad_query", "--query-timeout-ms requires query or search");
+        return std::process::ExitCode::from(ErrorKind::BadQuery.exit_code());
+    }
+    let query_timeout_ms = args.query_timeout_ms.unwrap_or(60_000);
     if method == Method::Query {
-        params["timeout_ms"] = serde_json::json!(args.query_timeout_ms);
+        params["timeout_ms"] = serde_json::json!(query_timeout_ms);
     }
     let token = match std::fs::read_to_string(&args.token_file) {
         Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
@@ -82,7 +87,7 @@ fn main() -> std::process::ExitCode {
     let result = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_millis(
             if method == Method::Query {
-                args.query_timeout_ms + 5_000
+                query_timeout_ms + 5_000
             } else {
                 10_000
             },
