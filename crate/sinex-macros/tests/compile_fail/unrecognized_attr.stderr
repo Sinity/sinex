@@ -1,5 +1,0 @@
-error: unrecognized event_payload attribute
- --> tests/compile_fail/unrecognized_attr.rs:8:5
-  |
-8 |     unknown_key = "value"
-  |     ^^^^^^^^^^^

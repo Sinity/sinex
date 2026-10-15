@@ -2,155 +2,22 @@
 name = "sinexd"
 version.workspace = true
 edition.workspace = true
-authors.workspace = true
-repository.workspace = true
 license.workspace = true
 
-
-[[bin]]
-name = "sinexd"
-path = "src/main.rs"
-
-# sinex-r6d.9 VM crash-window harness: testing-feature only, never built for
-# production (see the module doc on the binary itself).
-[[bin]]
-name = "spool_rename_crash_harness"
-path = "src/bin/spool_rename_crash_harness.rs"
-required-features = ["testing"]
-
-[lib]
-name = "sinexd"
-path = "src/lib.rs"
-
-# DB-backed privacy policy tests (#1042 Slices 3+4).
 [features]
-default = ["db", "messaging", "preflight"]
-tokio-console = ["dep:console-subscriber"]
-testing = []
-test-support = []
-dev-errors = []
-messaging = []
-db = []
-preflight = []
+default = ["runtime"]
+runtime = ["sinex-store/product", "dep:axum"]
 
 [dependencies]
-# Sinex internals
-sinex-primitives = { path = "../sinex-primitives", features = ["sqlx", "nats", "rusqlite"] }
-sinex-db = { path = "../sinex-db" }
-
-# Async runtime + allocator
-tokio = { workspace = true, features = ["full"] }
-tokio-stream = { workspace = true, features = ["net"] }
-mimalloc = { workspace = true }
-futures = { workspace = true }
-parking_lot = { workspace = true }
-dashmap = { workspace = true }
-tempfile = { workspace = true }
-
-# Logging
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-console-subscriber = { workspace = true, optional = true }
-# color-eyre: in-crate test helpers use eyre::Result.
-color-eyre = { workspace = true }
-
-# Data
-serde = { workspace = true }
-serde_json = { workspace = true }
-uuid = { workspace = true }
-sqlx = { workspace = true }
-time = { workspace = true }
-jiff = "0.2"                    # operator-local civil-time bucketing (sinex-2ged)
-async-nats = { workspace = true }
-url = { workspace = true }
-blake3 = { workspace = true }
-crc32fast = { workspace = true }
-base64 = { workspace = true }
-
-# CLI + filesystem
-clap = { workspace = true, features = ["derive"] }
-camino = { workspace = true }
-dirs = { workspace = true }
-validator = { workspace = true }
-bon = { workspace = true }
-libc = { workspace = true }
-notify = { workspace = true }
-
-# HTTP / RPC / TLS (api module)
-axum = { workspace = true }
-tower = { version = "0.5", features = ["util", "timeout", "limit", "load-shed"] }
-tower-http = { version = "0.6", features = ["cors", "limit", "request-id", "trace"] }
-hyper-util = "0.1"
-tokio-rustls = "0.26"
-subtle = "2"
-governor = { workspace = true }
-petgraph = { workspace = true }
-reqwest = { workspace = true }
-serde_path_to_error = { workspace = true }
-bytes = { workspace = true }
-async-imap = { version = "0.11.2", default-features = false, features = ["runtime-tokio"] }
-async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
-
-
-# Source adapter substrate
-csv = { workspace = true }
-flate2 = { workspace = true }
-tar = { workspace = true }
-zip = { workspace = true }
-async-trait = { workspace = true }
-inventory = { workspace = true }
-regex = { workspace = true }
-serde_yml = { workspace = true }
-mime_guess = "2.0"
-mail-parser = { workspace = true }
-sinex-macros = { path = "../sinex-macros" }
-
-# runtime dependencies (formerly from sinexd crate)
-sd-notify = { workspace = true }
-sysinfo = { workspace = true }
-which = { workspace = true }
-urlencoding = "2.1"
-semver = { workspace = true }
-schemars = { workspace = true }
-jsonschema = { workspace = true }
-rusqlite = { workspace = true }
-ahash = { workspace = true }
-sha2 = { version = "0.10", default-features = false, features = ["std"] }
-nix = { workspace = true }
-globset = { workspace = true }
-zbus = { workspace = true }
-zvariant = { workspace = true }
-arboard = "3.4"
-async-stream = "0.3"
-gethostname = { workspace = true }
-
-[build-dependencies]
-time = { workspace = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }
-gethostname = { workspace = true }
-xtask = { path = "../../xtask" }
-xtask-macros = { path = "../../xtask/macros" }
-sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
-sinexd = { path = ".", features = ["testing", "test-support"] }
-# Re-wired tests/api/ integration tests (#1625): TLS-boundary tests mint certs
-# via rcgen.
-rcgen = { workspace = true }
-# SSE integration tests drive a real HTTPS gateway: `stream` for `bytes_stream`,
-# `query` for `.query(..)` URL params, `rustls` for the self-signed TLS client,
-# `json` for typed bodies. Test-only; the runtime dependency (above) stays minimal.
-reqwest = { workspace = true, features = ["stream", "query", "json", "rustls"] }
-syn = { workspace = true }
-# sinex-pdq5: property/simulation suite for the interval-lift invariant families.
-proptest = { workspace = true }
-
-[lints]
-workspace = true
-
-# sinex-v7od: tests/runtime/, tests/event_engine/, tests/sources/, and
-# tests/api/ are each aggregated into a single [[test]] binary (see
-# tests/runtime.rs, tests/event_engine.rs, tests/sources.rs, tests/api.rs)
-# instead of one [[test]] entry per file -- cargo-nextest isolates each test
-# function into its own process regardless of binary layout, so per-file
-# binaries bought no isolation, only N redundant relinks of the sinexd lib.
+sinex-model = { path = "../sinex-model" }
+sinex-protocol = { path = "../sinex-protocol" }
+sinex-store = { path = "../sinex-store", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+schemars = "0.8"
+fs2 = "0.4"
+axum = { version = "0.8", optional = true }
+blake3 = "1"

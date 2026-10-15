@@ -1,0 +1,489 @@
+//! Foundation storage authority. No connection or transaction escapes the writer owner.
+mod schema;
+pub use schema::{READER_ROLE, SchemaStatus, WRITER_ROLE, bootstrap, check_schema};
+
+use fs2::FileExt;
+use serde::Serialize;
+use sqlx::{Connection, Executor, PgConnection, PgPool, postgres::PgPoolOptions};
+use std::path::PathBuf;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
+use uuid::Uuid;
+
+pub type Result<T> = std::result::Result<T, Error>;
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("database operation failed: {0}")]
+    Database(#[from] sqlx::Error),
+    #[error("schema incompatible: {0}")]
+    Schema(String),
+    #[error("invalid foundation admission: {0}")]
+    Invalid(&'static str),
+    #[error("writer already owned by another connection")]
+    WriterOwned,
+    #[error("admission owner has stopped")]
+    Stopped,
+    #[error("blob operation failed: {0}")]
+    Blob(#[from] hashed_blobs::Error),
+    #[error("background task failed: {0}")]
+    Task(#[from] tokio::task::JoinError),
+    #[error("filesystem operation failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("product queries are unavailable in the admin-only build")]
+    ProductUnavailable,
+}
+
+/// Actual identities supplied by the packaged caller, never invented by storage.
+pub struct RuntimeIdentity {
+    pub service_name: String,
+    pub host: String,
+    pub version: String,
+    pub executable_blake3: String,
+    pub config_blake3: String,
+}
+
+/// A bounded synthetic proof case, not a registered source or public RPC capability.
+/// Original time is unknown by construction; no ingestion timestamp substitutes for it.
+pub struct MaterialEvent {
+    pub source: String,
+    pub event_type: String,
+    pub bytes: Vec<u8>,
+    pub anchor_byte: i64,
+    pub ordinal: i16,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Receipt {
+    pub event_id: Uuid,
+    pub material_id: Uuid,
+    pub commit_seq: i64,
+    pub blob_name: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StoreStatus {
+    pub event_count: i64,
+    pub material_count: i64,
+    pub commit_seq: i64,
+    pub progress_count: i64,
+}
+
+/// Actual restricted reader credential. The underlying pool is intentionally private.
+#[derive(Clone)]
+pub struct ReadPool(PgPool);
+impl ReadPool {
+    pub async fn schema_status(&self) -> Result<SchemaStatus> {
+        let mut conn = self.0.acquire().await?;
+        schema::inspect(&mut conn).await
+    }
+    #[cfg(feature = "product")]
+    pub async fn status(&self) -> Result<StoreStatus> {
+        let row = sqlx::query!("SELECT (SELECT count(*) FROM core.events) AS \"event_count!\", (SELECT count(*) FROM raw.source_material_registry) AS \"material_count!\", (SELECT seq FROM core.commit_counter WHERE one) AS \"commit_seq!\", (SELECT count(*) FROM raw.source_cursors) AS \"progress_count!\"").fetch_one(&self.0).await?;
+        Ok(StoreStatus {
+            event_count: row.event_count,
+            material_count: row.material_count,
+            commit_seq: row.commit_seq,
+            progress_count: row.progress_count,
+        })
+    }
+    #[cfg(not(feature = "product"))]
+    pub async fn status(&self) -> Result<StoreStatus> {
+        Err(Error::ProductUnavailable)
+    }
+    pub async fn close(&self) {
+        self.0.close().await;
+    }
+}
+
+#[derive(Clone)]
+pub struct Admission(mpsc::Sender<Command>);
+impl Admission {
+    pub fn is_available(&self) -> bool {
+        !self.0.is_closed()
+    }
+    /// Backpressure awaits bounded capacity; success means the transaction committed.
+    pub async fn submit_synthetic(&self, event: MaterialEvent) -> Result<Receipt> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .send(Command::Admit(event, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
+}
+enum Command {
+    Admit(MaterialEvent, oneshot::Sender<Result<Receipt>>),
+    Shutdown(oneshot::Sender<()>),
+}
+
+/// Kept private and moved exactly once into the writer task. It owns one real connection,
+/// including its session advisory lock, rather than lending a pool to API handlers.
+struct WriterPool {
+    connection: PgConnection,
+    blobs: std::sync::Arc<hashed_blobs::Store>,
+    _lock: std::fs::File,
+    root: String,
+    run_id: Uuid,
+}
+
+pub struct Store {
+    pub admission: Admission,
+    pub reader: ReadPool,
+    writer: JoinHandle<Result<()>>,
+}
+impl Store {
+    pub async fn connect(
+        writer_url: &str,
+        reader_url: &str,
+        state_dir: PathBuf,
+        capacity: usize,
+        identity: RuntimeIdentity,
+    ) -> Result<Self> {
+        if capacity == 0 || capacity > 1024 {
+            return Err(Error::Invalid("queue capacity must be 1..=1024"));
+        }
+        if parse_hash(&identity.executable_blake3).is_err()
+            || parse_hash(&identity.config_blake3).is_err()
+            || identity.service_name.is_empty()
+            || identity.host.is_empty()
+            || identity.version.is_empty()
+        {
+            return Err(Error::Invalid(
+                "actual executable/config hashes and runtime identity required",
+            ));
+        }
+        check_schema(writer_url).await?;
+        let (lock, root, blobs) = tokio::task::spawn_blocking(move || -> Result<_> {
+            std::fs::create_dir_all(&state_dir)?;
+            let root = std::fs::canonicalize(&state_dir)?;
+            let lock = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(root.join("writer.lock"))?;
+            match lock.try_lock_exclusive() {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    return Err(Error::WriterOwned);
+                }
+                Err(e) => return Err(e.into()),
+            }
+            let blobs = hashed_blobs::Store::open(&root, vec![], 0o600)?;
+            Ok((lock, root.to_string_lossy().into_owned(), blobs))
+        })
+        .await??;
+        let mut connection = PgConnection::connect(writer_url).await?;
+        require_role(&mut connection, WRITER_ROLE).await?;
+        let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(73018924012)")
+            .fetch_one(&mut connection)
+            .await?;
+        if !locked {
+            return Err(Error::WriterOwned);
+        }
+        let reader_pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(reader_url)
+            .await?;
+        let role: String = sqlx::query_scalar("SELECT current_user::text")
+            .fetch_one(&reader_pool)
+            .await?;
+        if role != READER_ROLE {
+            return Err(Error::Invalid(
+                "reader URL must authenticate as sinex_reader",
+            ));
+        }
+        let run_id = start_run(&mut connection, identity).await?;
+        let mut owner = WriterPool {
+            connection,
+            blobs: std::sync::Arc::new(blobs),
+            _lock: lock,
+            root,
+            run_id,
+        };
+        owner.recover_blobs().await?;
+        let (tx, rx) = mpsc::channel(capacity);
+        let writer = tokio::spawn(owner.run(rx));
+        Ok(Self {
+            admission: Admission(tx),
+            reader: ReadPool(reader_pool),
+            writer,
+        })
+    }
+
+    /// A shutdown marker closes admission, drains all already accepted commands, then
+    /// drops the owning connection and its advisory lock. Cloned handles then refuse.
+    pub async fn shutdown(self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.admission
+            .0
+            .send(Command::Shutdown(tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?;
+        self.writer.await??;
+        self.reader.close().await;
+        Ok(())
+    }
+}
+
+async fn require_role(connection: &mut PgConnection, role: &str) -> Result<()> {
+    let actual: String = sqlx::query_scalar("SELECT current_user::text")
+        .fetch_one(connection)
+        .await?;
+    if actual != role {
+        return Err(Error::Invalid(
+            "writer URL must authenticate as sinex_writer",
+        ));
+    }
+    Ok(())
+}
+
+const COUNTER: &str = "UPDATE core.commit_counter SET seq=seq+1 WHERE one RETURNING seq";
+const MATERIAL: &str = "INSERT INTO raw.source_material_registry (id,material_kind,source_identifier,status,ts_quality,blob_id,total_bytes,durable_bytes) VALUES ($1,'file',$2,'completed','unknown',$3,$4,$4)";
+const EVENT: &str = "INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_quality,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id) VALUES ($1,$2,$3,$4,NULL,'unknown',$5,$6,$7,$8,$9,$10)";
+const LOG: &str = "INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id) VALUES ($1,$2,0,0,1)";
+const PROGRESS: &str = "INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,'synthetic-proof',$2,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,carry=EXCLUDED.carry,updated_at=now()";
+const BLOB_REGISTER: &str = "INSERT INTO core.blobs (id,blake3,size_bytes,root,status) VALUES ($1,$2,$3,$4,'writing') ON CONFLICT (blake3) DO NOTHING";
+const BLOB_LOOKUP: &str = "SELECT id,size_bytes,root FROM core.blobs WHERE blake3=$1";
+const BLOB_PRESENT: &str = "UPDATE core.blobs SET status='present' WHERE id=$1";
+const WRITING_BLOBS: &str = "SELECT id,blake3 FROM core.blobs WHERE status='writing' AND root=$1";
+const RUN_INTERRUPT: &str =
+    "UPDATE core.runs SET status='interrupted',ended_at=now() WHERE status='running'";
+const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
+const RUN_START: &str = "INSERT INTO core.runs (id,manifest_id,service_name,host,status,effective_config_hash) VALUES ($1,$2,$3,$4,'running',$5)";
+const RUN_END: &str = "UPDATE core.runs SET status='completed',ended_at=now() WHERE id=$1";
+
+async fn start_run(conn: &mut PgConnection, identity: RuntimeIdentity) -> Result<Uuid> {
+    let mut tx = conn.begin().await?;
+    sqlx::query(RUN_INTERRUPT).execute(&mut *tx).await?;
+    let descriptor = serde_json::json!({"scope":"running_executable","retained":false});
+    let manifest: i32 = sqlx::query_scalar(MANIFEST)
+        .bind(&identity.service_name)
+        .bind(identity.version)
+        .bind(identity.executable_blake3)
+        .bind(descriptor)
+        .fetch_one(&mut *tx)
+        .await?;
+    let run_id = Uuid::now_v7();
+    sqlx::query(RUN_START)
+        .bind(run_id)
+        .bind(manifest)
+        .bind(identity.service_name)
+        .bind(identity.host)
+        .bind(identity.config_blake3)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(run_id)
+}
+
+fn parse_hash(name: &str) -> Result<hashed_blobs::Hash> {
+    let hex = name
+        .strip_prefix("blake3:")
+        .ok_or(Error::Invalid("invalid blob name"))?;
+    if hex.len() != 64
+        || !hex
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    {
+        return Err(Error::Invalid("invalid blob name"));
+    }
+    let mut raw = [0; 32];
+    for (i, b) in raw.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+            .map_err(|_| Error::Invalid("invalid blob name"))?;
+    }
+    Ok(hashed_blobs::Hash(raw))
+}
+
+/// Dynamic admission statements are prepared against the actual isolated schema by the
+/// integration test. Admin DDL and catalog queries execute through bootstrap/check.
+pub async fn prepare_admission_statements(admin_url: &str) -> Result<()> {
+    let mut conn = PgConnection::connect(admin_url).await?;
+    for sql in [
+        COUNTER,
+        MATERIAL,
+        EVENT,
+        LOG,
+        PROGRESS,
+        BLOB_REGISTER,
+        BLOB_LOOKUP,
+        BLOB_PRESENT,
+        WRITING_BLOBS,
+        RUN_INTERRUPT,
+        MANIFEST,
+        RUN_START,
+        RUN_END,
+        "SELECT current_user::text",
+        "SELECT pg_try_advisory_lock(73018924012)",
+    ] {
+        conn.prepare(sql).await?;
+    }
+    Ok(())
+}
+
+impl WriterPool {
+    async fn run(mut self, mut rx: mpsc::Receiver<Command>) -> Result<()> {
+        let mut shutdown = None;
+        while let Some(command) = rx.recv().await {
+            match command {
+                Command::Admit(event, reply) => {
+                    // A disconnected caller cannot cancel a queued transaction midway.
+                    // Its receipt may be undeliverable, but the database result is durable.
+                    let result = self.admit(event).await;
+                    if reply.send(result).is_err() { /* caller gone; no commit is undone */ }
+                }
+                Command::Shutdown(reply) => {
+                    rx.close();
+                    shutdown = Some(reply);
+                }
+            }
+        }
+        sqlx::query(RUN_END)
+            .bind(self.run_id)
+            .execute(&mut self.connection)
+            .await?;
+        self.connection.close().await?;
+        if let Some(reply) = shutdown {
+            if reply.send(()).is_err() { /* requester gone */ }
+        }
+        Ok(())
+    }
+
+    async fn recover_blobs(&mut self) -> Result<()> {
+        use sqlx::Row;
+        let rows = sqlx::query(WRITING_BLOBS)
+            .bind(&self.root)
+            .fetch_all(&mut self.connection)
+            .await?;
+        for row in rows {
+            let id: Uuid = row.try_get("id")?;
+            let hash = parse_hash(&row.try_get::<String, _>("blake3")?)?;
+            let store = self.blobs.clone();
+            match tokio::task::spawn_blocking(move || store.verify(&hash)).await?? {
+                hashed_blobs::Verified::Intact => {
+                    sqlx::query(BLOB_PRESENT)
+                        .bind(id)
+                        .execute(&mut self.connection)
+                        .await?;
+                }
+                hashed_blobs::Verified::Missing => { /* tracked writing row remains retryable; never called present */
+                }
+                _ => {
+                    return Err(Error::Invalid(
+                        "tracked incomplete blob failed integrity verification",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "product"))]
+    async fn admit(&mut self, _event: MaterialEvent) -> Result<Receipt> {
+        Err(Error::ProductUnavailable)
+    }
+
+    #[cfg(feature = "product")]
+    async fn admit(&mut self, event: MaterialEvent) -> Result<Receipt> {
+        if event.bytes.len() > 1024 * 1024 {
+            return Err(Error::Invalid("synthetic proof material exceeds 1 MiB"));
+        }
+        if event.bytes.is_empty()
+            || event.anchor_byte < 0
+            || event.anchor_byte as usize >= event.bytes.len()
+            || event.ordinal < 0
+        {
+            return Err(Error::Invalid(
+                "anchor must address retained bytes and ordinal must be nonnegative",
+            ));
+        }
+        if !dotted(&event.source)
+            || event.event_type != "synthetic.observed"
+            || !event.payload.is_object()
+        {
+            return Err(Error::Invalid(
+                "dotted source/type and object payload required",
+            ));
+        }
+        let length = event.bytes.len() as i64;
+        let record_hash = blake3::hash(&event.bytes).as_bytes().to_vec();
+        let hash = hashed_blobs::Hash::of(&event.bytes);
+        let blob_name = hash.to_string();
+        // Row-first custody: an interrupted file write has an explicit tracked owner.
+        let new_blob_id = Uuid::now_v7();
+        sqlx::query!("INSERT INTO core.blobs (id,blake3,size_bytes,root,status) VALUES ($1,$2,$3,$4,'writing') ON CONFLICT (blake3) DO NOTHING",new_blob_id,blob_name,length,self.root).execute(&mut self.connection).await?;
+        let row = sqlx::query!(
+            "SELECT id,size_bytes,root FROM core.blobs WHERE blake3=$1",
+            blob_name
+        )
+        .fetch_one(&mut self.connection)
+        .await?;
+        let blob_id = row.id;
+        if row.size_bytes != length || row.root != self.root {
+            return Err(Error::Invalid("existing blob registry identity differs"));
+        }
+        let store = self.blobs.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            store.put(event.bytes.as_slice(), 3)?;
+            if store.verify(&hash)? != hashed_blobs::Verified::Intact {
+                return Err(Error::Invalid(
+                    "stored material failed integrity verification",
+                ));
+            }
+            Ok(())
+        })
+        .await??;
+        let event_id = Uuid::now_v7();
+        let material_id = Uuid::now_v7();
+        let mut tx = self.connection.begin().await?;
+        // UPDATE locks the counter row until commit, assigning visibility order.
+        let seq =
+            sqlx::query_scalar!("UPDATE core.commit_counter SET seq=seq+1 WHERE one RETURNING seq")
+                .fetch_one(&mut *tx)
+                .await?;
+        sqlx::query!(
+            "UPDATE core.blobs SET status='present' WHERE id=$1",
+            blob_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("INSERT INTO raw.source_material_registry (id,material_kind,source_identifier,status,ts_quality,blob_id,total_bytes,durable_bytes) VALUES ($1,'file',$2,'completed','unknown',$3,$4,$4)",material_id,event.source,blob_id,length).execute(&mut *tx).await?;
+        sqlx::query!("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_quality,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id) VALUES ($1,$2,$3,$4,NULL,'unknown',$5,$6,$7,$8,$9,$10)",event_id,event.source,event.event_type,event.payload,seq,material_id,event.anchor_byte,event.ordinal,record_hash,self.run_id).execute(&mut *tx).await?;
+        sqlx::query!("INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id) VALUES ($1,$2,0,0,1)",seq,event_id).execute(&mut *tx).await?;
+        let position = serde_json::json!({"material":material_id,"byte_offset":length});
+        sqlx::query!("INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,'synthetic-proof',$2,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,carry=EXCLUDED.carry,updated_at=now()",event.source,position).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(Receipt {
+            event_id,
+            material_id,
+            commit_seq: seq,
+            blob_name,
+        })
+    }
+}
+
+fn dotted(s: &str) -> bool {
+    s.len() <= 128
+        && s.contains('.')
+        && s.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dotted;
+    #[test]
+    fn rejects_empty_source_segments() {
+        assert!(!dotted("synthetic..case"));
+        assert!(dotted("synthetic.case"));
+    }
+}

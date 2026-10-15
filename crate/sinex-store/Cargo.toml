@@ -1,0 +1,20 @@
+[package]
+name = "sinex-store"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+product = []
+
+[dependencies]
+blake3 = "1.8"
+hashed-blobs = { path = "../../vendor/hashed-blobs" }
+fs2 = "0.4"
+sea-query = { version = "0.32.7", default-features = false, features = ["backend-postgres"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "json", "macros"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "fs", "macros"] }
+uuid = { version = "1", features = ["v7", "serde"] }

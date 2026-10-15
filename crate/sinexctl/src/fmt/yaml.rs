@@ -1,8 +1,0 @@
-use serde::Serialize;
-
-use crate::Result;
-
-/// Format output as YAML
-pub fn format_yaml<T: Serialize + ?Sized>(value: &T) -> Result<String> {
-    serde_yml::to_string(value).map_err(Into::into)
-}

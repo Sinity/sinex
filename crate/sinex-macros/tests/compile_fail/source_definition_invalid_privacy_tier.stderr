@@ -1,5 +1,0 @@
-error: expected identifier
-  --> tests/compile_fail/source_definition_invalid_privacy_tier.rs:17:20
-   |
-17 |     privacy_tier = "SuperSensitive"
-   |                    ^^^^^^^^^^^^^^^^

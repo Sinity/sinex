@@ -1,120 +1,63 @@
 schema = 1
-
 [project]
 id = "sinex"
-display_name = "Sinex"
+display_name = "Sinex isolated foundation"
 root_markers = ["Cargo.toml", "flake.nix", "xtask"]
-
 [environment]
 kind = "nix-develop"
-command = ["nix", "develop", "--accept-flake-config", "--command"]
-inherit = ["HOME", "USER", "LANG", "TERM", "SSH_AUTH_SOCK", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "SINEX_SOURCE_BINDINGS_PATH", "CARGO_BUILD_JOBS", "SINEX_CARGO_TIMEOUT", "SINEX_POLYLOGUE_PYTHON", "SINEX_POLYLOGUE_CHECKOUT"]
-unset = ["PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "_PYTHON_SYSCONFIGDATA_NAME", "_PYTHON_HOST_PLATFORM", "PYTHONPYCACHEPREFIX"]
-
-[workspace]
-root = "/realm/worktree"
-default_base = "origin/master"
-verify = { focused = "verify_quick", candidate = "check_default" }
-publish = "pr"
-
-[operations.dev_services]
-description = "Run Sinex development Postgres and NATS in the foreground"
-exec = ["nix", "run", ".#xtask", "--", "infra", "lease-services"]
-ready_probe = ["bash", "-c", "test -f \"$AGENTCTL_SERVICE_READY\""]
-ready_timeout_seconds = 7200
-pool = "service"
-result = "exit"
-cache = "tree+environment"
-timeout_seconds = 28800
-
-[operations.check_default]
-description = "Run Sinex's default foreground verification command"
-exec = ["xtask", "check"]
-requires = ["dev_services"]
+command = ["nix", "develop", "--command"]
+inherit = ["HOME", "USER", "LANG", "PATH", "XDG_RUNTIME_DIR"]
+unset = ["DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
+[operations.foundation_build]
+description = "Build query-free schema/admin foundation"
+exec = ["cargo", "build", "-p", "sinexd", "--no-default-features"]
 pool = "bulk"
 result = "exit"
-cache = "tree+environment"
-timeout_seconds = 7200
-
-[operations.verify_quick]
-description = "Check changed Rust formatting, blocking ast-grep rules, and Git diff whitespace without compiling"
-exec = ["bash", "xtask/scripts/verify-quick.sh"]
-pool = "normal"
-result = "exit"
-cache = "tree+environment"
-
-[operations.build_default]
-description = "Build Sinex packages through the foreground semantic build route"
-exec = ["xtask", "build"]
-pool = "bulk"
-result = "exit"
-cache = "tree+environment"
-
-[operations.fix_default]
-description = "Apply Sinex fixes through the foreground semantic fix workflow"
-exec = ["xtask", "fix"]
-pool = "normal"
-result = "exit"
-cache = "tree+environment"
-
-[operations.run_core]
-description = "Run the default local Sinex core bundle through AgentCTL"
-exec = ["xtask", "run", "core"]
-pool = "normal"
-result = "exit"
-cache = "none"
-timeout_seconds = 28800
-
-[operations.run_all_automatons]
-description = "Run the default local Sinex automaton supervisor through AgentCTL"
-exec = ["xtask", "run", "all-automatons"]
-pool = "normal"
-result = "exit"
-cache = "none"
-timeout_seconds = 28800
-
-[operations.run_all_sources]
-description = "Run Sinex's manifest-driven source bindings through AgentCTL"
-exec = ["xtask", "run", "all-sources"]
-pool = "normal"
-result = "exit"
-cache = "none"
-timeout_seconds = 28800
-
-[operations.vm_smoke]
-description = "Run Sinex's default foreground NixOS VM smoke suite through AgentCTL"
-exec = ["xtask", "test", "vm"]
-pool = "normal"
-result = "exit"
-cache = "tree+environment"
-
-[operations.vm_validate]
-description = "Validate Sinex's foreground VM scenario surface through AgentCTL"
-exec = ["xtask", "test", "vm", "--validate"]
-pool = "normal"
-result = "exit"
-cache = "tree+environment"
-
-[operations.test_default]
-description = "Run Sinex's foreground nextest workflow through its semantic test planner"
-exec = ["xtask", "test"]
-pool = "bulk"
-result = "exit"
-cache = "tree+environment"
-
-[operations.verify_plan]
-description = "Validate Sinex's phase verification manifest"
-exec = ["xtask", "verify", "plan", "--check"]
-pool = "normal"
-result = "exit"
-cache = "tree+environment"
 timeout_seconds = 1800
-
-[operations.verify_closure]
-description = "Verify one closed Sinex Bead's acceptance criteria and evidence"
-exec = ["xtask", "verify", "closure"]
+cache = "none"
+[operations.foundation_acceptance]
+description = "Cold bootstrap and real-client foundation acceptance in owned isolated PostgreSQL"
+exec = ["python3", "tests/foundation.py"]
 pool = "bulk"
 result = "exit"
+timeout_seconds = 2400
 cache = "none"
-timeout_seconds = 1800
-arguments = "required"
+[operations.foundation_package]
+description = "Build fresh source packages with query-free schema bootstrap inside the Nix builder"
+exec = ["nix", "build", "--no-link", ".#default", "--print-build-logs", "--max-jobs", "1"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"
+
+[operations.foundation_format]
+description = "Format the foundation workspace before candidate qualification"
+exec = ["cargo", "fmt", "--package", "sinex-model", "--package", "sinex-protocol", "--package", "sinex-store", "--package", "sinexd", "--package", "sinexctl", "--package", "xtask"]
+pool = "normal"
+result = "exit"
+timeout_seconds = 300
+cache = "none"
+
+[operations.foundation_lock]
+description = "Resolve the foundation dependency lock from the retained local crate index"
+exec = ["cargo", "generate-lockfile", "--offline"]
+pool = "normal"
+result = "exit"
+timeout_seconds = 300
+cache = "none"
+
+[operations.foundation_contracts]
+description = "Run pure concrete model and wire boundary tests without a database"
+exec = ["cargo", "test", "--locked", "-p", "sinex-model", "-p", "sinex-protocol"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 900
+cache = "none"
+
+[operations.foundation_package_acceptance]
+description = "Exercise actual Nix-packaged daemon and CLI against owned isolated PostgreSQL"
+exec = ["python3", "tests/foundation.py", "--packaged"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"
