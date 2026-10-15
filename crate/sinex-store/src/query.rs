@@ -226,14 +226,83 @@ impl Cursor {
         Ok(c)
     }
 }
+// A cancelled SQLx fetch alone can leave its backend executing while the pool
+// waits to recycle it. Keep the checked-out connection until its own backend has
+// been stopped. The separate restricted-reader control pool cannot deadlock
+// behind exhausted read slots; holding this connection also prevents PID reuse.
+struct ReadLease {
+    connection: Option<sqlx::pool::PoolConnection<Postgres>>,
+    cancellation: sqlx::PgPool,
+    pid: i32,
+}
+impl Drop for ReadLease {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.take() {
+            let cancellation = self.cancellation.clone();
+            let pid = self.pid;
+            tokio::spawn(async move {
+                let result = sqlx::query_scalar::<_, bool>("SELECT pg_terminate_backend($1,1000)")
+                    .bind(pid)
+                    .fetch_one(&cancellation)
+                    .await;
+                if !matches!(result, Ok(true)) {
+                    eprintln!("read cancellation cleanup unavailable");
+                }
+                let _ = connection.close().await;
+            });
+        }
+    }
+}
 impl ReadPool {
     pub async fn query(&self, text: &str, cursor: Option<&str>) -> Result<Value> {
+        self.query_with_timeout(text, cursor, std::time::Duration::from_secs(10))
+            .await
+    }
+    pub async fn query_with_timeout(
+        &self,
+        text: &str,
+        cursor: Option<&str>,
+        budget: std::time::Duration,
+    ) -> Result<Value> {
+        match tokio::time::timeout(budget, self.query_page(text, cursor, budget)).await {
+            Err(_) => Err(Error::Deadline),
+            Ok(Err(Error::Database(sqlx::Error::Database(error))))
+                if error.code().as_deref() == Some("57014") =>
+            {
+                Err(Error::Deadline)
+            }
+            Ok(result) => result,
+        }
+    }
+    async fn query_page(
+        &self,
+        text: &str,
+        cursor: Option<&str>,
+        budget: std::time::Duration,
+    ) -> Result<Value> {
         let filters = parse(text).map_err(|e| Error::Invalid(e.0))?;
         let digest = question(&filters)?;
         let clock = OffsetDateTime::now_utc();
         let mut conn = self.0.acquire().await?;
-        let mut tx = conn.begin().await?;
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *conn)
+            .await?;
+        let mut lease = ReadLease {
+            connection: Some(conn),
+            cancellation: self.3.clone(),
+            pid,
+        };
+        let mut tx = lease
+            .connection
+            .as_mut()
+            .expect("owned read connection")
+            .begin()
+            .await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SELECT set_config('statement_timeout',$1,true)")
+            .bind(format!("{}ms", budget.as_millis().max(1)))
             .execute(&mut *tx)
             .await?;
         let current: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
@@ -363,6 +432,8 @@ impl ReadPool {
         let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason FROM raw.observations WHERE input_id=i.id AND commit_seq<=$1 ORDER BY seq DESC LIMIT 1) o ON true").bind(seq).fetch_all(&mut *tx).await?;
         let complete = source_status.iter().all(|s| s["status"] == "completed");
         tx.commit().await?;
+        // Only a fully committed read may return its connection to the pool.
+        drop(lease.connection.take());
         Ok(
             json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Raw live activity events matching {text}, ordered by original time then interpretation ID; shell fusion and coverage claims unavailable."),"excluded":{}}),
         )

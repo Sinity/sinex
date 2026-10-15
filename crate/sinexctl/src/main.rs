@@ -13,6 +13,9 @@ struct Args {
     token_file: PathBuf,
     #[arg(long, global = true)]
     json: bool,
+    /// Query execution deadline; includes PostgreSQL pool acquisition and all page statements.
+    #[arg(long, global = true, default_value_t = 60_000, value_parser = clap::value_parser!(u64).range(1..=3_600_000))]
+    query_timeout_ms: u64,
     #[command(subcommand)]
     command: Command,
 }
@@ -42,7 +45,7 @@ enum Command {
 }
 fn main() -> std::process::ExitCode {
     let args = Args::parse();
-    let (method, params) = match args.command {
+    let (method, mut params) = match args.command {
         Command::Status => (Method::Status, serde_json::json!({})),
         Command::Version => (Method::Version, serde_json::json!({})),
         Command::ConfigShow => (Method::ConfigShow, serde_json::json!({})),
@@ -65,6 +68,9 @@ fn main() -> std::process::ExitCode {
             serde_json::json!({"bytes":bytes,"ref":if id.starts_with("sinex:") {id} else {format!("sinex:ev/{id}")}}),
         ),
     };
+    if method == Method::Query {
+        params["timeout_ms"] = serde_json::json!(args.query_timeout_ms);
+    }
     let token = match std::fs::read_to_string(&args.token_file) {
         Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
         _ => {
@@ -74,7 +80,13 @@ fn main() -> std::process::ExitCode {
     };
     let request = RpcRequest::new(RpcId::Number(1), method, params);
     let result = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_millis(
+            if method == Method::Query {
+                args.query_timeout_ms + 5_000
+            } else {
+                10_000
+            },
+        ))
         .build()
         .and_then(|c| {
             c.post(&args.endpoint)
@@ -111,6 +123,13 @@ fn main() -> std::process::ExitCode {
                     std::process::ExitCode::from(e.kind.exit_code())
                 }
             }
+        }
+        Err(error) if error.is_timeout() => {
+            fail(
+                "budget",
+                "configured daemon transport deadline exceeded; no complete response received",
+            );
+            std::process::ExitCode::from(ErrorKind::Budget.exit_code())
         }
         Err(_) => {
             fail(

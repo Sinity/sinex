@@ -93,13 +93,24 @@ pub mod rpc {
                 .ok_or_else(|| RpcError::method_not_found(&self.method))?;
             match method {
                 Method::Query => {
-                    serde_json::from_value::<QueryParams>(self.params.clone()).map_err(|_| {
-                        RpcError::new(
+                    let params = serde_json::from_value::<QueryParams>(self.params.clone())
+                        .map_err(|_| {
+                            RpcError::new(
+                                ErrorKind::BadQuery,
+                                "query requires text, optional page cursor and optional integer timeout_ms",
+                                Value::Null,
+                            )
+                        })?;
+                    if params
+                        .timeout_ms
+                        .is_some_and(|ms| !(1..=3_600_000).contains(&ms))
+                    {
+                        return Err(RpcError::new(
                             ErrorKind::BadQuery,
-                            "query requires query text and optional page cursor",
+                            "query timeout_ms must be 1..=3600000",
                             Value::Null,
-                        )
-                    })?;
+                        ));
+                    }
                     return Ok(method);
                 }
                 Method::Show | Method::Trace => {
@@ -134,6 +145,9 @@ pub mod rpc {
         pub query: String,
         #[serde(default)]
         pub cursor: Option<String>,
+        /// Whole-request read deadline; omitted API requests default to 10 seconds.
+        #[serde(default)]
+        pub timeout_ms: Option<u64>,
     }
     #[derive(Clone, Debug, Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]

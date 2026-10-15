@@ -18,6 +18,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--packaged", action="store_true", help="build and exercise the Nix package entrypoints")
+parser.add_argument("--read-lifecycle", action="store_true", help="qualify blocked reads and cancellation through actual packaged clients")
 parser.add_argument("--live-cursor", action="store_true", help="qualify current-state raw-event continuation through packaged clients")
 parser.add_argument("--startup-coverage", action="store_true", help="qualify configured initial source coverage before its first read")
 parser.add_argument("--atuin", action="store_true", help="qualify retained synthetic Atuin through real clients")
@@ -26,6 +27,8 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.read_lifecycle and (not OPTIONS.packaged or OPTIONS.live_cursor or OPTIONS.atuin or OPTIONS.demo_spec or OPTIONS.startup_coverage):
+    parser.error("read lifecycle qualification requires --packaged and its own scenario selector")
 if OPTIONS.live_cursor and (not OPTIONS.packaged or OPTIONS.atuin or OPTIONS.demo_spec or OPTIONS.startup_coverage):
     parser.error("live cursor qualification requires --packaged and its own scenario selector")
 if OPTIONS.startup_coverage and not OPTIONS.packaged:
@@ -57,6 +60,8 @@ if OPTIONS.demo_provider_loss:
     PLANNED = PLANNED[:2] + ["pinned independent fixture preparation", "uninterrupted boundary baseline", "observed transaction-staged kill and provider loss", "observed transaction-committed kill and provider loss"]
 if OPTIONS.live_cursor:
     PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "raw current-state continuation and change disclosure", "cursor refusal and compatible restart"]
+if OPTIONS.read_lifecycle:
+    PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "disconnected actual client releases blocked snapshot", "API default deadline returns budget and releases snapshot", "CLI default deadline returns budget and releases snapshot", "CLI configured deadline returns budget and releases snapshot", "queued deadline and concurrent disconnect reclaim both reader slots"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -142,7 +147,7 @@ try:
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
     (WORK/"pg").mkdir()
     (WORK/"socket").mkdir()
     ENV.update(PGDATA=str(WORK/"pg"), PGHOST=str(WORK/"socket"), PGPORT=str(free_port()))
@@ -158,7 +163,7 @@ try:
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=BIN_DIR/"sinexd" if OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor else ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
     scenario("canonical schema cold apply and idempotent check", lambda: (
         run([admin_binary,"admin","schema","--connection-file",WORK/"admin"]),
@@ -173,7 +178,7 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor): scenario("checked runtime build and pure contracts", lambda: (
+    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle): scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
     if not OPTIONS.packaged:
@@ -183,7 +188,10 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.live_cursor:
+    if OPTIONS.read_lifecycle:
+        import read_lifecycle_cases
+        read_lifecycle_cases.exercise(globals())
+    elif OPTIONS.live_cursor:
         import live_cursor_cases
         live_cursor_cases.exercise(globals())
     elif OPTIONS.startup_coverage:

@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 default = ["runtime"]
-runtime = ["sinex-store/product", "dep:axum"]
+runtime = ["sinex-store/product", "dep:axum", "dep:futures-util"]
 
 [dependencies]
 sinex-model = { path = "../sinex-model" }
@@ -25,3 +25,5 @@ blake3 = "1"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 time = { version = "0.3", features = ["formatting"] }
+
+futures-util = { version = "0.3", default-features = false, features = ["std"], optional = true }

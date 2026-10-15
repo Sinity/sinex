@@ -1719,6 +1719,7 @@ dependencies = [
  "blake3",
  "clap",
  "fs2",
+ "futures-util",
  "schemars",
  "serde",
  "serde_json",

@@ -1,7 +1,7 @@
 use crate::config::{Config, secret};
 use axum::{
     Json, Router,
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
@@ -145,7 +145,11 @@ async fn shutdown_signal() {
         .expect("SIGTERM handler");
     tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
 }
-async fn rpc(State(state): State<Arc<App>>, headers: HeaderMap, body: Bytes) -> impl IntoResponse {
+async fn rpc(
+    State(state): State<Arc<App>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> axum::response::Response {
     let authenticated = headers
         .get("authorization")
         .and_then(|h| h.to_str().ok())
@@ -161,7 +165,8 @@ async fn rpc(State(state): State<Arc<App>>, headers: HeaderMap, body: Bytes) -> 
                     serde_json::Value::Null,
                 ),
             )),
-        );
+        )
+            .into_response();
     }
     let request: RpcRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
@@ -169,7 +174,8 @@ async fn rpc(State(state): State<Arc<App>>, headers: HeaderMap, body: Bytes) -> 
             return (
                 StatusCode::OK,
                 Json(RpcResponse::failure(None, RpcError::parse_error())),
-            );
+            )
+                .into_response();
         }
     };
     let method = match request.validate() {
@@ -178,9 +184,26 @@ async fn rpc(State(state): State<Arc<App>>, headers: HeaderMap, body: Bytes) -> 
             return (
                 StatusCode::OK,
                 Json(RpcResponse::failure(Some(request.id), e)),
-            );
+            )
+                .into_response();
         }
     };
+    // The connection owns this body future. Hyper drops it when the receiver
+    // disconnects, so it drops the in-flight read instead of detaching a handler.
+    let body = Body::from_stream(futures_util::stream::once(async move {
+        let response = execute(state, request, method).await;
+        Ok::<_, std::convert::Infallible>(Bytes::from(
+            serde_json::to_vec(&response).expect("RPC response serializes"),
+        ))
+    }));
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(body)
+        .expect("valid RPC response headers")
+}
+
+async fn execute(state: Arc<App>, request: RpcRequest, method: Method) -> RpcResponse {
     let result = match method {
         Method::Status => match (
             state.reader.schema_status().await,
@@ -232,6 +255,7 @@ async fn rpc(State(state): State<Arc<App>>, headers: HeaderMap, body: Bytes) -> 
         Method::Query => {
             let params: sinex_protocol::QueryParams =
                 serde_json::from_value(request.params.clone()).expect("validated query params");
+            let timeout_ms = params.timeout_ms.unwrap_or(10_000);
             match sinex_store::validate_query(&params.query) {
                 Err(e) => Err(RpcError::new(
                     ErrorKind::BadQuery,
@@ -240,9 +264,16 @@ async fn rpc(State(state): State<Arc<App>>, headers: HeaderMap, body: Bytes) -> 
                 )),
                 Ok(()) => state
                     .reader
-                    .query(&params.query, params.cursor.as_deref())
+                    .query_with_timeout(
+                        &params.query,
+                        params.cursor.as_deref(),
+                        std::time::Duration::from_millis(timeout_ms),
+                    )
                     .await
-                    .map_err(read_error),
+                    .map_err(|error| match error {
+                        sinex_store::Error::Deadline => deadline_error(timeout_ms),
+                        other => read_error(other),
+                    }),
             }
         }
         Method::Show | Method::Trace => {
@@ -300,11 +331,23 @@ async fn rpc(State(state): State<Arc<App>>, headers: HeaderMap, body: Bytes) -> 
         }
         Ok(value)
     });
-    let response = match result {
+    match result {
         Ok(v) => RpcResponse::success(request.id, v),
         Err(e) => RpcResponse::failure(Some(request.id), e),
-    };
-    (StatusCode::OK, Json(response))
+    }
+}
+
+fn deadline_error(timeout_ms: u64) -> RpcError {
+    RpcError::new(
+        ErrorKind::Budget,
+        "query execution deadline exceeded",
+        serde_json::json!({
+            "reason": "execution_deadline",
+            "timeout_ms": timeout_ms,
+            "estimate": null,
+            "suggestion": "Narrow the supported source, kind, id or payload filters, or retry after contention ends.",
+        }),
+    )
 }
 
 fn read_error(error: sinex_store::Error) -> RpcError {

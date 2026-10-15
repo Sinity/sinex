@@ -125,3 +125,5 @@ and reporting-control qualification; it cannot combine with the other demo modes
 expiry/context refusals and compatible restart against an independent synthetic
 fixture. See the [owning continuation contract](docs/rewrite/atuin.md#raw-event-continuation)
 for the concrete page fields, fixed 100-row size and source-coverage distinction.
+
+`read_lifecycle_acceptance` observes packaged client disconnects and query deadlines under a real owned PostgreSQL lock. The [read lifecycle contract](docs/rewrite/atuin.md#raw-event-read-deadlines-and-cancellation) describes API/CLI defaults, configuration, typed errors and the currently qualified scope.

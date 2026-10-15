@@ -62,3 +62,35 @@ fn owned_writer_state_rejects_unavailable_reason() {
             .is_err()
     );
 }
+
+#[test]
+fn query_deadline_is_optional_bounded_and_does_not_change_its_question() {
+    for timeout in [None, Some(1), Some(10_000), Some(60_000), Some(3_600_000)] {
+        let mut params = json!({"query":"events"});
+        if let Some(ms) = timeout {
+            params["timeout_ms"] = json!(ms);
+        }
+        assert_eq!(
+            RpcRequest::new(RpcId::Number(1), Method::Query, params)
+                .validate()
+                .unwrap(),
+            Method::Query
+        );
+    }
+    for invalid in [
+        json!(0),
+        json!(-1),
+        json!(3_600_001),
+        json!("1000"),
+        json!(1.5),
+    ] {
+        let params = json!({"query":"events", "timeout_ms":invalid});
+        assert_eq!(
+            RpcRequest::new(RpcId::Number(1), Method::Query, params)
+                .validate()
+                .unwrap_err()
+                .kind,
+            ErrorKind::BadQuery
+        );
+    }
+}

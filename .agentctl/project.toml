@@ -120,3 +120,11 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.read_lifecycle_acceptance]
+description = "Packaged blocked-read deadline and disconnect resource qualification in owned PostgreSQL"
+exec = ["python3", "tests/foundation.py", "--packaged", "--read-lifecycle"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

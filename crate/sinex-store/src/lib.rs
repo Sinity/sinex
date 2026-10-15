@@ -32,6 +32,8 @@ pub enum Error {
     Schema(String),
     #[error("invalid foundation admission: {0}")]
     Invalid(&'static str),
+    #[error("read execution deadline exceeded")]
+    Deadline,
     #[error("writer already owned by another connection")]
     WriterOwned,
     #[error("admission owner has stopped")]
@@ -84,7 +86,7 @@ pub struct StoreStatus {
 
 /// Actual restricted reader credential. The underlying pool is intentionally private.
 #[derive(Clone)]
-pub struct ReadPool(PgPool, std::sync::Arc<hashed_blobs::Reader>, String);
+pub struct ReadPool(PgPool, std::sync::Arc<hashed_blobs::Reader>, String, PgPool);
 impl ReadPool {
     pub async fn schema_status(&self) -> Result<SchemaStatus> {
         let mut conn = self.0.acquire().await?;
@@ -106,6 +108,7 @@ impl ReadPool {
     }
     pub async fn close(&self) {
         self.0.close().await;
+        self.3.close().await;
     }
 }
 
@@ -241,6 +244,19 @@ impl Store {
             reader_pool,
             std::sync::Arc::new(hashed_blobs::Reader::new(owner.root.clone(), vec![])),
             owner.root.clone(),
+            // Cancellation must not queue behind the two reads it needs to stop.
+            PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .after_connect(|conn, _| {
+                    Box::pin(async move {
+                        sqlx::query("SET statement_timeout='2s'")
+                            .execute(conn)
+                            .await?;
+                        Ok(())
+                    })
+                })
+                .connect_lazy(reader_url)?,
         );
         let writer = tokio::spawn(owner.run(rx));
         Ok(Self {
