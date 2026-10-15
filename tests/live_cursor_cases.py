@@ -10,8 +10,8 @@ def exercise(h):
     binaries = h['BIN_DIR']
     db = work/'cursor.db'
     epoch = 1_700_000_000_123_456_789
-    # Every pair shares the exact nanosecond. IDs must settle each tie.
-    original = [(f'row-{n:03}', epoch+(n//2)*2, 1, 0, f'echo synthetic {n}', '/synthetic', 'cursor', 'fixture', None) for n in range(241)]
+    # Each triple shares the exact nanosecond. A 100-row page cuts through a tie.
+    original = [(f'row-{n:03}', epoch+(n//3)*2, 1, 0, f'echo synthetic {n}', '/synthetic', 'cursor', 'fixture', None) for n in range(241)]
     with sqlite3.connect(db) as con:
         con.execute('CREATE TABLE history (id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,duration INTEGER NOT NULL,exit INTEGER NOT NULL,command TEXT NOT NULL,cwd TEXT NOT NULL,session TEXT NOT NULL,hostname TEXT NOT NULL,deleted_at INTEGER)')
         con.executemany('INSERT INTO history VALUES (?,?,?,?,?,?,?,?,?)', original)
@@ -64,13 +64,15 @@ poll_interval_ms = 60000
         wait(lambda o:o['status']=='completed' and o['rows_read']==241)
         first=cli()
         assert first['total']==241 and len(first['rows'])==100 and first['complete'] is True
-        assert all(r['payload']['timestamp_ns']==epoch+(int(r['payload']['native_id'][4:])//2)*2 for r in first['rows'])
+        assert all(r['payload']['timestamp_ns']==epoch+(int(r['payload']['native_id'][4:])//3)*2 for r in first['rows'])
         assert first['rows'][0]['when']=='2023-11-14T22:13:20.123456789Z'
         assert [(r['when'],r['id']) for r in first['rows']]==sorted((r['when'],r['id']) for r in first['rows'])
         unchanged=cli(restated,first['page']['cursor'])
         assert unchanged['resolved']['commit_seq']==first['resolved']['commit_seq']
         assert unchanged['page']['changed_since_first_page'] is False and unchanged['page']['change_notice'] is None
         assert unchanged['resolved']['now']==first['resolved']['now']
+        assert first['rows'][-1]['when']==unchanged['rows'][0]['when']
+        assert first['rows'][-1]['id']<unchanged['rows'][0]['id']
         stop(proc)
         # Remove a future row and append on both sides of the continuation key.
         with sqlite3.connect(db) as con:
