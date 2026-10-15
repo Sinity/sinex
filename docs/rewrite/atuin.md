@@ -103,8 +103,10 @@ state. Normal `query`, `show`, `trace --bytes` and `sources` establish that
 committed event identities, retained ranges and masked canonical row values
 survive. The independent pinned oracle checks all malformed-fixture query facts
 without changing its expectations. The query envelope remains incomplete with
-CLI exit 5 and an unavailable source reason. The latest source observation has
-read no rows; this does not erase earlier committed custody or claim a completed
+CLI exit 5. Source status settles to unavailable with its read-only-open
+failure reason; a query overlapping a fresh failed poll may briefly see reading
+with no reason yet. Both envelopes remain incomplete. The unavailable observation
+has read no rows; this does not erase earlier committed custody or claim a completed
 empty source. Repeated unavailable polls must not create a replacement database.
 
 A `transaction-staged` contrast moves the provider away after the observed

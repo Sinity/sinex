@@ -92,11 +92,23 @@ created_by = "operator"
                     current = listed[0]
                     if current['last_run'] and current['last_run']['status'] == 'unavailable' and current['last_run']['id'] != after:
                         current = sources()
-                        assert current['last_run']['status'] == 'unavailable'
-                        return current
+                        if current['last_run']['status'] == 'unavailable' and current['last_run']['id'] != after:
+                            return current
                 except (OSError, ValueError): pass
                 time.sleep(.025)
             raise AssertionError(name+' never reported unavailable provider')
+        def assert_provider_partial(answer):
+            assert answer['complete'] is False, 'missing provider fabricated completeness'
+            states = answer['source_status']
+            assert states, 'partial answer omitted source status'
+            for state in states:
+                # A fresh poll briefly registers reading before its failed open
+                # commits unavailable. Both envelopes are incomplete, never zero-complete.
+                assert state['status'] in ('reading', 'unavailable'), states
+                if state['status'] == 'unavailable':
+                    assert state['reason'] == 'Atuin database unavailable (read-only open failed)', states
+                else:
+                    assert state['reason'] is None, states
         def query_complete():
             deadline = time.monotonic()+30
             while time.monotonic() < deadline:
@@ -122,8 +134,7 @@ created_by = "operator"
                 answers = []
                 for index, check in enumerate(expected['query_checks']):
                     answer, path = cli('query', check['query'], partial=True)
-                    assert answer['complete'] is False
-                    assert answer['source_status'] and all(s['status'] == 'unavailable' and s['reason'] for s in answer['source_status'])
+                    assert_provider_partial(answer)
                     run(['python3', report/'oracle'/DEMO/'check_answer.py', 'sinex', 'malformed', expected_path, path, '--query-index', str(index)], label=name+' independent retained fact oracle')
                     answers.append(answer)
                 answer = answers[0]
@@ -250,7 +261,7 @@ created_by = "operator"
                     else:
                         answer, _ = cli('query', expected['query_checks'][0]['query'], partial=True)
                         assert answer['total'] == 0 and answer['rows'] == [] and answer['complete'] is False
-                        assert all(s['status'] == 'unavailable' and s['reason'] for s in answer['source_status'])
+                        assert_provider_partial(answer)
                         assert current['last_run']['rows_read'] == 0 and current['last_run']['admitted'] == 0
                     second = wait_unavailable(after=current['last_run']['id'])
                     assert second['last_run']['rows_read'] == second['last_run']['admitted'] == 0
