@@ -1,3 +1,5 @@
+#[cfg(feature = "runtime")]
+mod atuin;
 mod config;
 #[cfg(feature = "runtime")]
 mod server;

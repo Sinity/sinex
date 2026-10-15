@@ -5,6 +5,32 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct AtuinConfig {
+    pub path: PathBuf,
+    #[serde(default = "poll_interval")]
+    pub poll_interval_ms: u64,
+}
+fn poll_interval() -> u64 {
+    30_000
+}
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PrivacyConfig {
+    pub pattern: String,
+    pub replacement: String,
+    pub created_by: String,
+}
+impl PrivacyConfig {
+    pub fn rule(&self) -> sinex_store::PrivacyRule {
+        sinex_store::PrivacyRule {
+            pattern: self.pattern.clone(),
+            replacement: self.replacement.clone(),
+            created_by: self.created_by.clone(),
+        }
+    }
+}
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub listen: String,
     pub state_dir: PathBuf,
@@ -16,6 +42,9 @@ pub struct Config {
     pub sources: Vec<String>,
     #[serde(default)]
     pub automata: Vec<String>,
+    pub atuin: Option<AtuinConfig>,
+    #[serde(default)]
+    pub privacy_rules: Vec<PrivacyConfig>,
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) input_blake3: String,
@@ -41,10 +70,29 @@ impl Config {
         if !address.ip().is_loopback() {
             return Err("foundation listens only on loopback".into());
         }
-        if !self.sources.is_empty() || !self.automata.is_empty() {
+        if self.sources.iter().any(|s| s != sinex_store::ATUIN_SOURCE)
+            || self.sources.len() > 1
+            || !self.automata.is_empty()
+        {
             return Err(
-                "sources and automata are not supported by this foundation candidate".into(),
+                "only the registered Atuin source is supported; automata are unavailable".into(),
             );
+        }
+        if self.sources.is_empty() != self.atuin.is_none() {
+            return Err("Atuin source enablement and [atuin] configuration must agree".into());
+        }
+        if let Some(atuin) = &self.atuin {
+            if !atuin.path.is_absolute() || !(100..=3_600_000).contains(&atuin.poll_interval_ms) {
+                return Err(
+                    "Atuin requires an absolute path and poll interval 100..=3600000 ms".into(),
+                );
+            }
+        }
+        if self.privacy_rules.len() > 32 {
+            return Err("at most 32 privacy rules are supported".into());
+        }
+        for rule in &self.privacy_rules {
+            rule.rule().validate()?;
         }
         for path in [
             &self.state_dir,

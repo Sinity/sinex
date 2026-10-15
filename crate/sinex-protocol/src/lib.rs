@@ -4,7 +4,17 @@ pub mod rpc {
     use serde_json::Value;
     use sinex_model::{CommitSeq, ValidationError};
 
-    pub const SUPPORTED_METHODS: &[&str] = &["status", "version", "config.show", "catalog"];
+    pub use sinex_model::DATA_NOTICE;
+    pub const SUPPORTED_METHODS: &[&str] = &[
+        "status",
+        "version",
+        "config.show",
+        "catalog",
+        "sources.list",
+        "query.run",
+        "object.show",
+        "object.trace",
+    ];
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
     pub enum Method {
         #[serde(rename = "status")]
@@ -15,6 +25,14 @@ pub mod rpc {
         ConfigShow,
         #[serde(rename = "catalog")]
         Catalog,
+        #[serde(rename = "sources.list")]
+        Sources,
+        #[serde(rename = "query.run")]
+        Query,
+        #[serde(rename = "object.show")]
+        Show,
+        #[serde(rename = "object.trace")]
+        Trace,
     }
     impl Method {
         pub const fn as_str(self) -> &'static str {
@@ -23,6 +41,10 @@ pub mod rpc {
                 Self::Version => "version",
                 Self::ConfigShow => "config.show",
                 Self::Catalog => "catalog",
+                Self::Sources => "sources.list",
+                Self::Query => "query.run",
+                Self::Show => "object.show",
+                Self::Trace => "object.trace",
             }
         }
         pub fn parse(value: &str) -> Option<Self> {
@@ -31,6 +53,10 @@ pub mod rpc {
                 "version" => Some(Self::Version),
                 "config.show" => Some(Self::ConfigShow),
                 "catalog" => Some(Self::Catalog),
+                "sources.list" => Some(Self::Sources),
+                "query.run" => Some(Self::Query),
+                "object.show" => Some(Self::Show),
+                "object.trace" => Some(Self::Trace),
                 _ => None,
             }
         }
@@ -65,7 +91,29 @@ pub mod rpc {
             }
             let method = Method::parse(&self.method)
                 .ok_or_else(|| RpcError::method_not_found(&self.method))?;
-            // All supported foundation methods currently take an empty object.
+            match method {
+                Method::Query => {
+                    serde_json::from_value::<QueryParams>(self.params.clone()).map_err(|_| {
+                        RpcError::new(
+                            ErrorKind::BadQuery,
+                            "query requires query text and optional page cursor",
+                            Value::Null,
+                        )
+                    })?;
+                    return Ok(method);
+                }
+                Method::Show | Method::Trace => {
+                    serde_json::from_value::<ShowParams>(self.params.clone()).map_err(|_| {
+                        RpcError::new(
+                            ErrorKind::BadQuery,
+                            "show requires an interpretation reference",
+                            Value::Null,
+                        )
+                    })?;
+                    return Ok(method);
+                }
+                _ => {}
+            }
             if !self
                 .params
                 .as_object()
@@ -79,6 +127,21 @@ pub mod rpc {
             }
             Ok(method)
         }
+    }
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct QueryParams {
+        pub query: String,
+        #[serde(default)]
+        pub cursor: Option<String>,
+    }
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct ShowParams {
+        #[serde(rename = "ref")]
+        pub reference: String,
+        #[serde(default)]
+        pub bytes: bool,
     }
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
@@ -289,6 +352,22 @@ pub mod rpc {
                 "Public configuration with secret file references",
             ),
             (Method::Catalog, "Implemented foundation methods"),
+            (
+                Method::Sources,
+                "Retained source observations, accounting and incomplete reads",
+            ),
+            (
+                Method::Query,
+                "Raw events with explicit supported filters and snapshot pages",
+            ),
+            (
+                Method::Show,
+                "Read one raw event, including archived or source-removed readings",
+            ),
+            (
+                Method::Trace,
+                "Inspect a masked retained row with exact material coordinates",
+            ),
         ]
         .into_iter()
         .map(|(method, description)| CatalogEntry {

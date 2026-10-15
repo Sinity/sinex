@@ -61,3 +61,19 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
 cache = "none"
+
+[operations.atuin_acceptance]
+description = "Retained synthetic Atuin through the owned writer and actual daemon/client"
+exec = ["python3", "tests/foundation.py", "--atuin"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"
+
+[operations.atuin_package_acceptance]
+description = "Retained synthetic Atuin through Nix-packaged daemon and CLI"
+exec = ["python3", "tests/foundation.py", "--atuin", "--packaged"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

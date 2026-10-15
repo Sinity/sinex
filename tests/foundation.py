@@ -18,6 +18,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--packaged", action="store_true", help="build and exercise the Nix package entrypoints")
+parser.add_argument("--atuin", action="store_true", help="qualify retained synthetic Atuin through real clients")
 OPTIONS = parser.parse_args()
 BIN_DIR = Path(os.environ.get("SINEX_FOUNDATION_BIN_DIR", str(ROOT/"target/debug")))
 WORK = Path(tempfile.mkdtemp(prefix="sinex-foundation-", dir="/realm/tmp/work"))
@@ -26,8 +27,11 @@ REPORT.mkdir(parents=True, exist_ok=False)
 COMMANDS = []
 SCENARIOS = []
 PLANNED = ["cold query-free admin build", "canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "checked runtime build and pure contracts", "canonical hypertables, real role grants, writer admission and restart", "invalid and unsupported config fail before startup", "occupied endpoint leaves unowned resources untouched", "actual daemon CLI transport and truthful scope", "partial start cannot steal writer and clean shutdown releases ownership"]
+if OPTIONS.atuin:
+    PLANNED = PLANNED[:4] + ["Atuin retained source and real-client query", "Atuin repeat and late open-row update", "Atuin soft delete and source evidence", "Atuin empty malformed and unavailable outcomes", "Atuin restart and bounded retained cursor"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
+print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
 PROCESSES = []
 CHILDREN = []
 ENV = os.environ.copy()
@@ -82,6 +86,7 @@ def rpc(endpoint, token, method="status"):
 def start_daemon(config, name):
     stdout = (REPORT / (name+".stdout")).open("w")
     stderr = (REPORT / (name+".stderr")).open("w")
+    (REPORT/(name+"-config.toml")).write_text(Path(config).read_text())
     proc = subprocess.Popen([str(BIN_DIR/"sinexd"),"serve","--config",str(config)], env=ENV, stdout=stdout, stderr=stderr)
     CHILDREN.append((proc,stdout,stderr))
     PROCESSES.append({"pid":proc.pid,"argv":[str(BIN_DIR/"sinexd"),"serve","--config",str(config)],"stdout":name+".stdout","stderr":name+".stderr"})
@@ -139,81 +144,107 @@ try:
     ENV["DATABASE_URL"] = admin
     scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
-        run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd"],label="pure and configuration contracts")))
-    ENV.update(SINEX_TEST_ADMIN_URL=admin,SINEX_TEST_WRITER_URL=writer,SINEX_TEST_READER_URL=reader,SINEX_TEST_STORE_DIR=str(WORK/"proof-store"))
-    scenario("canonical hypertables, real role grants, writer admission and restart", lambda: run(["cargo","test","--locked","-p","sinex-store","--features","product","--test","postgres","--","--ignored","--nocapture"], label="real restricted roles and durable admission"))
-    port=free_port()
-    endpoint=f"http://127.0.0.1:{port}/rpc"
-    conf=WORK/"config.toml"
-    def config_text(port_value=port, suffix="service"):
-        return f'''listen = "127.0.0.1:{port_value}"
-state_dir = "{WORK/suffix}"
-store_dir = "{WORK/(suffix+'-blobs')}"
-writer_connection_file = "{WORK/'writer'}"
-reader_connection_file = "{WORK/'reader'}"
-token_file = "{WORK/'token'}"
-sources = []
-automata = []
-'''
-    conf.write_text(config_text())
-    def bad_config():
-        bad=WORK/"bad.toml"; bad.write_text(config_text()+"unexpected = true\n")
-        run([daemon,"serve","--config",bad],expected=1,label="unknown config rejected")
-        assert not (WORK/"service").exists(), "invalid config acquired runtime state"
-        bad.write_text(config_text().replace("sources = []",'sources = ["terminal.atuin-history"]'))
-        run([daemon,"serve","--config",bad],expected=1,label="unsupported source rejected")
-    scenario("invalid and unsupported config fail before startup",bad_config)
-    def occupied_endpoint():
-        with socket.socket() as occupied:
-            occupied.bind(("127.0.0.1",0)); occupied.listen()
-            occupied_config=WORK/"occupied.toml"; occupied_config.write_text(config_text(occupied.getsockname()[1],"occupied-state"))
-            run([daemon,"serve","--config",occupied_config],expected=1,label="occupied endpoint")
-            assert not (WORK/"occupied-state").exists(), "occupied endpoint acquired state"
-    scenario("occupied endpoint leaves unowned resources untouched",occupied_endpoint)
-    proc=start_daemon(conf,"daemon")
-    deadline=time.monotonic()+15
-    while True:
-        if proc.poll() is not None: raise AssertionError("daemon failed before actual client response")
-        try:
-            status=rpc(endpoint,"synthetic-foundation-token")
-            if "result" in status: break
-        except (OSError,ValueError): pass
-        if time.monotonic()>deadline: raise AssertionError("actual RPC did not become ready")
-        time.sleep(0.05)
-    def client_routes():
-        cli=BIN_DIR/"sinexctl"
-        for command in ["status","version","catalog","config-show"]:
-            answer=run([cli,"--endpoint",endpoint,"--token-file",WORK/"token",command,"--json"],label="actual CLI "+command)
-            decoded=json.loads(answer.stdout)
-            if command=="status": assert decoded["supported_sources"]==[] and decoded["writer"]["state"]=="owned"
-            assert "synthetic-foundation-token" not in answer.stdout and writer not in answer.stdout
-        (WORK/"wrong-token").write_text("wrong-token")
-        refused=run([cli,"--endpoint",endpoint,"--token-file",WORK/"wrong-token","status","--json"],expected=4,label="actual CLI token refusal")
-        assert json.loads(refused.stderr)["kind"]=="refused"
-        assert rpc(endpoint,"wrong-token")["error"]["kind"]=="refused"
-        assert rpc(endpoint,"synthetic-foundation-token","query.run")["error"]["kind"]=="not_found"
-    scenario("actual daemon CLI transport and truthful scope",client_routes)
-    def collision_and_shutdown():
-        other=WORK/"second.toml"; other.write_text(config_text(free_port(),"other-state"))
-        run([daemon,"serve","--config",other],expected=1,label="same database writer refused")
-        assert proc.poll() is None and "result" in rpc(endpoint,"synthetic-foundation-token")
-        stop(proc)
-        replacement=start_daemon(conf,"restart")
+        run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
+    if not OPTIONS.packaged:
+        # Admin-only builds use the same Cargo output name. Bind execution to a retained
+        # per-run copy so another build cannot change the tested executable mid-scenario.
+        runtime_bin=WORK/"runtime-bin"; runtime_bin.mkdir()
+        for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
+        BIN_DIR=runtime_bin
+        daemon=BIN_DIR/"sinexd"
+    if OPTIONS.atuin:
+        import atuin_cases
+        atuin_cases.exercise(globals())
+    else:
+        ENV.update(SINEX_TEST_ADMIN_URL=admin,SINEX_TEST_WRITER_URL=writer,SINEX_TEST_READER_URL=reader,SINEX_TEST_STORE_DIR=str(WORK/"proof-store"))
+        scenario("canonical hypertables, real role grants, writer admission and restart", lambda: run(["cargo","test","--locked","-p","sinex-store","--features","product","--test","postgres","--","--ignored","--nocapture"], label="real restricted roles and durable admission"))
+        port=free_port()
+        endpoint=f"http://127.0.0.1:{port}/rpc"
+        conf=WORK/"config.toml"
+        def config_text(port_value=port, suffix="service"):
+            return f'''listen = "127.0.0.1:{port_value}"
+    state_dir = "{WORK/suffix}"
+    store_dir = "{WORK/(suffix+'-blobs')}"
+    writer_connection_file = "{WORK/'writer'}"
+    reader_connection_file = "{WORK/'reader'}"
+    token_file = "{WORK/'token'}"
+    sources = []
+    automata = []
+    '''
+        conf.write_text(config_text())
+        def bad_config():
+            bad=WORK/"bad.toml"; bad.write_text(config_text()+"unexpected = true\n")
+            run([daemon,"serve","--config",bad],expected=1,label="unknown config rejected")
+            assert not (WORK/"service").exists(), "invalid config acquired runtime state"
+            bad.write_text(config_text().replace("sources = []",'sources = ["terminal.atuin-history"]'))
+            run([daemon,"serve","--config",bad],expected=1,label="source without Atuin configuration rejected")
+        scenario("invalid and unsupported config fail before startup",bad_config)
+        def occupied_endpoint():
+            with socket.socket() as occupied:
+                occupied.bind(("127.0.0.1",0)); occupied.listen()
+                occupied_config=WORK/"occupied.toml"; occupied_config.write_text(config_text(occupied.getsockname()[1],"occupied-state"))
+                run([daemon,"serve","--config",occupied_config],expected=1,label="occupied endpoint")
+                assert not (WORK/"occupied-state").exists(), "occupied endpoint acquired state"
+        scenario("occupied endpoint leaves unowned resources untouched",occupied_endpoint)
+        proc=start_daemon(conf,"daemon")
         deadline=time.monotonic()+15
         while True:
-            if replacement.poll() is not None: raise AssertionError("restart failed")
+            if proc.poll() is not None: raise AssertionError("daemon failed before actual client response")
             try:
-                if "result" in rpc(endpoint,"synthetic-foundation-token"): break
-            except OSError: pass
-            if time.monotonic()>deadline: raise AssertionError("restart unavailable")
+                status=rpc(endpoint,"synthetic-foundation-token")
+                if "result" in status: break
+            except (OSError,ValueError): pass
+            if time.monotonic()>deadline: raise AssertionError("actual RPC did not become ready")
             time.sleep(0.05)
-        stop(replacement)
-    scenario("partial start cannot steal writer and clean shutdown releases ownership",collision_and_shutdown)
+        def client_routes():
+            cli=BIN_DIR/"sinexctl"
+            for command in ["status","version","catalog","config-show"]:
+                answer=run([cli,"--endpoint",endpoint,"--token-file",WORK/"token",command,"--json"],label="actual CLI "+command)
+                decoded=json.loads(answer.stdout)
+                if command=="status": assert decoded["supported_sources"]==[] and decoded["writer"]["state"]=="owned"
+                assert "synthetic-foundation-token" not in answer.stdout and writer not in answer.stdout
+            (WORK/"wrong-token").write_text("wrong-token")
+            refused=run([cli,"--endpoint",endpoint,"--token-file",WORK/"wrong-token","status","--json"],expected=4,label="actual CLI token refusal")
+            assert json.loads(refused.stderr)["kind"]=="refused"
+            assert rpc(endpoint,"wrong-token")["error"]["kind"]=="refused"
+            assert rpc(endpoint,"synthetic-foundation-token","replay")["error"]["kind"]=="not_found"
+        scenario("actual daemon CLI transport and truthful scope",client_routes)
+        def collision_and_shutdown():
+            other=WORK/"second.toml"; other.write_text(config_text(free_port(),"other-state"))
+            run([daemon,"serve","--config",other],expected=1,label="same database writer refused")
+            assert proc.poll() is None and "result" in rpc(endpoint,"synthetic-foundation-token")
+            stop(proc)
+            replacement=start_daemon(conf,"restart")
+            deadline=time.monotonic()+15
+            while True:
+                if replacement.poll() is not None: raise AssertionError("restart failed")
+                try:
+                    if "result" in rpc(endpoint,"synthetic-foundation-token"): break
+                except OSError: pass
+                if time.monotonic()>deadline: raise AssertionError("restart unavailable")
+                time.sleep(0.05)
+            stop(replacement)
+        scenario("partial start cannot steal writer and clean shutdown releases ownership",collision_and_shutdown)
     success=True
 except Exception as error:
     success=False
     failure=str(error)
 finally:
+    if not success:
+        for proc,_,_ in CHILDREN:
+            if proc.poll() is not None: continue
+            observed={"pid":proc.pid}
+            for entry in ["wchan","status","cgroup","syscall"]:
+                try: observed[entry]=(Path("/proc")/str(proc.pid)/entry).read_text()
+                except OSError as error: observed[entry]=str(error)
+            (REPORT/f"failure-process-{proc.pid}.json").write_text(json.dumps(observed,indent=2)+"\n")
+    if PG_STARTED and not success:
+        try:
+            diagnostic=subprocess.run(["psql",admin,"--no-psqlrc","--tuples-only","--no-align","-c","SELECT pid,datname,usename,state,wait_event_type,wait_event,query FROM pg_stat_activity"],env=ENV,capture_output=True,text=True,timeout=10)
+            (REPORT/"failure-pg-activity.stdout").write_text(diagnostic.stdout)
+            (REPORT/"failure-pg-activity.stderr").write_text(diagnostic.stderr)
+        except Exception as diagnostic_error:
+            (REPORT/"failure-pg-activity.stderr").write_text(str(diagnostic_error))
     for proc,out,err in CHILDREN:
         if proc.poll() is None:
             proc.send_signal(signal.SIGTERM)
@@ -231,8 +262,8 @@ finally:
         if name not in {s["name"] for s in SCENARIOS}:
             SCENARIOS.append({"name":name,"outcome":"unrun","reason":failure if not success else "not exercised"})
     for record,(proc,_,_) in zip(PROCESSES,CHILDREN): record["exit"]=proc.returncode
-    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else "development_build","binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"runtime_state":"owned disposable state removed after captured evidence","unimplemented":["Atuin/M1","MCP","confirmed delivery","full target schema and Timescale","sealed lifecycle","owner-tag shared dependency publication"]}
+    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else "development_build","binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"runtime_state":"owned disposable state removed after captured evidence" if success else str(WORK),"unimplemented":["formal M1/demo driver and fault-boundary qualification","MCP","confirmed delivery","full target schema and Timescale","sealed lifecycle","owner-tag shared dependency publication"]}
     (REPORT/"result.json").write_text(json.dumps(report,indent=2)+"\n")
-    shutil.rmtree(WORK)
+    if success: shutil.rmtree(WORK)
     print(json.dumps({"success":success,"report":str(REPORT/"result.json"),"scenarios":len(SCENARIOS)}))
     sys.exit(0 if success else 1)

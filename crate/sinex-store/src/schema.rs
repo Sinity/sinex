@@ -124,6 +124,14 @@ const EVENT_CONSTRAINTS: &[(&str, &str)] = &[
     ),
     ("payload_object", "CHECK (jsonb_typeof(payload)='object')"),
     (
+        "event_payload_schema",
+        "FOREIGN KEY (payload_schema_id) REFERENCES sinex_schemas.payload_schemas(id)",
+    ),
+    (
+        "registered_atuin_payload",
+        "CHECK (event_type<>'command.executed' OR (payload_schema_id IS NOT DISTINCT FROM 2 AND source='terminal.atuin-history' AND equivalence_key IS NOT NULL AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'native_id') IS NOT DISTINCT FROM 'string' AND payload ? 'exit_code' AND payload ? 'duration_ns'))",
+    ),
+    (
         "event_material",
         "FOREIGN KEY (source_material_id) REFERENCES raw.source_material_registry(id)",
     ),
@@ -131,6 +139,57 @@ const EVENT_CONSTRAINTS: &[(&str, &str)] = &[
 ];
 
 const TABLES: &[Definition] = &[
+    Definition {
+        schema: "raw",
+        name: "inputs",
+        columns: &[
+            col!("id", "uuid"),
+            col!("binding", "text"),
+            col!("locator", "text"),
+            col!("kind", "text"),
+        ],
+        constraints: &[
+            ("inputs_pkey", "PRIMARY KEY (id)"),
+            ("input_locator", "UNIQUE (binding,locator)"),
+            ("input_kind", "CHECK (kind='sqlite')"),
+        ],
+    },
+    Definition {
+        schema: "raw",
+        name: "observations",
+        columns: &[
+            col!("id", "uuid"),
+            col!("input_id", "uuid"),
+            col!("seq", "bigint"),
+            col!("observed_at", "timestamp with time zone"),
+            col!("source_provenance", "jsonb"),
+            col!("metadata", "jsonb"),
+            col!("status", "text"),
+            col!("reason", "text", null),
+            col!("rows_read", "bigint", default "0"),
+            col!("admitted", "bigint", default "0"),
+            col!("repeated", "bigint", default "0"),
+            col!("removed", "bigint", default "0"),
+            col!("record_errors", "bigint", default "0"),
+            col!("commit_seq", "bigint", default "0"),
+        ],
+        constraints: &[
+            ("observations_pkey", "PRIMARY KEY (id)"),
+            (
+                "observation_input",
+                "FOREIGN KEY (input_id) REFERENCES raw.inputs(id)",
+            ),
+            ("observation_order", "UNIQUE (input_id,seq)"),
+            (
+                "observation_state",
+                "CHECK (status IN ('reading','completed','unavailable','interrupted'))",
+            ),
+            (
+                "observation_accounting",
+                "CHECK (rows_read=admitted+repeated+record_errors AND removed<=admitted AND removed>=0)",
+            ),
+        ],
+    },
     Definition {
         schema: "sinex_schemas",
         name: "definition",
@@ -174,7 +233,10 @@ const TABLES: &[Definition] = &[
             col!("status", "text"),
             col!("ts_quality", "text"),
             col!("staged_at", "timestamp with time zone", default "now()"),
-            col!("blob_id", "uuid"),
+            col!("blob_id", "uuid", null),
+            col!("input_id", "uuid", null),
+            col!("observation_id", "uuid", null),
+            col!("parser_provenance", "jsonb", default "'{}'::jsonb"),
             col!("total_bytes", "bigint"),
             col!("durable_bytes", "bigint"),
             col!("parsed_event_count", "bigint", default "0"),
@@ -194,8 +256,44 @@ const TABLES: &[Definition] = &[
                 "FOREIGN KEY (blob_id) REFERENCES core.blobs(id)",
             ),
             (
+                "material_input",
+                "FOREIGN KEY (input_id) REFERENCES raw.inputs(id)",
+            ),
+            (
+                "material_observation",
+                "FOREIGN KEY (observation_id) REFERENCES raw.observations(id)",
+            ),
+            (
+                "row_material_custody",
+                "CHECK (material_kind<>'stream_chunk' OR (input_id IS NOT NULL AND observation_id IS NOT NULL))",
+            ),
+            (
                 "foundation_closed_material",
-                "CHECK (status = 'completed'::text AND material_kind = 'file'::text AND ts_quality = 'unknown'::text)",
+                "CHECK (status IN ('capturing','completed','recovered_partial') AND material_kind IN ('file','stream_chunk') AND ts_quality = 'unknown' AND ((status='capturing' AND blob_id IS NULL) OR (status<>'capturing' AND blob_id IS NOT NULL)))",
+            ),
+        ],
+    },
+    Definition {
+        schema: "raw",
+        name: "record_failures",
+        columns: &[
+            col!("observation_id", "uuid"),
+            col!("material_id", "uuid"),
+            col!("anchor_byte", "bigint"),
+            col!("reason", "text"),
+        ],
+        constraints: &[
+            (
+                "record_failures_pkey",
+                "PRIMARY KEY (material_id,anchor_byte)",
+            ),
+            (
+                "failure_observation",
+                "FOREIGN KEY (observation_id) REFERENCES raw.observations(id)",
+            ),
+            (
+                "failure_material",
+                "FOREIGN KEY (material_id) REFERENCES raw.source_material_registry(id)",
             ),
         ],
     },
@@ -241,6 +339,20 @@ const TABLES: &[Definition] = &[
                 "run_manifest",
                 "FOREIGN KEY (manifest_id) REFERENCES core.manifests(id)",
             ),
+        ],
+    },
+    Definition {
+        schema: "sinex_schemas",
+        name: "payload_schemas",
+        columns: &[
+            col!("id", "integer"),
+            col!("event_type", "text"),
+            col!("version", "text"),
+            col!("schema", "jsonb"),
+        ],
+        constraints: &[
+            ("payload_schemas_pkey", "PRIMARY KEY (id)"),
+            ("payload_schema_type", "UNIQUE (event_type,version)"),
         ],
     },
     Definition {
@@ -496,7 +608,9 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
             tx.execute(ddl.as_str()).await?;
         }
         configure_events(&mut tx).await?;
-        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed')")
+        sqlx::query("INSERT INTO sinex_schemas.payload_schemas (id,event_type,version,schema) VALUES (2,'command.executed','atuin-v1',$1)")
+            .bind(crate::atuin::payload_schema()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed')")
             .execute(&mut *tx)
             .await?;
         sqlx::query("INSERT INTO core.commit_counter (one,seq) VALUES (true,0)")
@@ -512,7 +626,7 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         .bind(catalog)
         .execute(&mut *tx)
         .await?;
-        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit TO sinex_writer,sinex_reader; GRANT INSERT ON core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests TO sinex_writer; GRANT INSERT,UPDATE ON raw.source_cursors,core.blobs,core.runs TO sinex_writer; GRANT UPDATE ON core.commit_counter TO sinex_writer; GRANT UPDATE(parsed_event_count) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
+        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit TO sinex_writer,sinex_reader; GRANT INSERT ON core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
     }
     let status = inspect(&mut tx).await?;
     tx.commit().await?;
@@ -721,6 +835,12 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             "canonical catalog receipt has a non-owner mutation grant".into(),
         ));
     }
+    let registered: Option<serde_json::Value> = sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=2 AND event_type='command.executed' AND version='atuin-v1'").fetch_optional(&mut *conn).await?;
+    if registered.as_ref() != Some(&crate::atuin::payload_schema()) {
+        return Err(Error::Schema(
+            "registered Atuin payload schema differs".into(),
+        ));
+    }
     let counters: i64 = sqlx::query_scalar("SELECT count(*) FROM core.commit_counter WHERE one")
         .fetch_one(&mut *conn)
         .await?;
@@ -751,20 +871,29 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 | "core.live_coordinates"
                 | "core.live_equivalence"
                 | "audit.archived"
+                | "raw.inputs"
+                | "raw.observations"
+                | "raw.record_failures"
         );
         let writer_update = matches!(
             table.as_str(),
-            "core.commit_counter" | "raw.source_cursors" | "core.blobs" | "core.runs"
+            "core.commit_counter"
+                | "raw.source_cursors"
+                | "core.blobs"
+                | "core.runs"
+                | "raw.observations"
+                | "core.live_equivalence"
+                | "core.live_coordinates"
         );
-        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND NOT has_table_privilege('sinex_writer',$1,'DELETE,TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
+        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1='core.live_coordinates') AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
         if !good {
             return Err(Error::Schema(format!("writer grants differ for {table}")));
         }
     }
-    let material_column_grants_bad:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid='raw.source_material_registry'::regclass AND a.attnum>0 AND NOT a.attisdropped AND has_column_privilege('sinex_writer',a.attrelid,a.attname,'UPDATE')<>(a.attname='parsed_event_count'))").fetch_one(&mut *conn).await?;
+    let material_column_grants_bad:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid='raw.source_material_registry'::regclass AND a.attnum>0 AND NOT a.attisdropped AND has_column_privilege('sinex_writer',a.attrelid,a.attname,'UPDATE')<>(a.attname IN ('parsed_event_count','blob_id','status','total_bytes','durable_bytes')))").fetch_one(&mut *conn).await?;
     if material_column_grants_bad {
         return Err(Error::Schema(
-            "writer material UPDATE grant must cover only parsed_event_count".into(),
+            "writer material UPDATE columns differ".into(),
         ));
     }
     let schema_grants_bad: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit') AND (r.rolname IN ('sinex_reader','sinex_writer') OR has_schema_privilege('sinex_reader',n.oid,'CREATE') OR has_schema_privilege('sinex_writer',n.oid,'CREATE') OR NOT has_schema_privilege('sinex_reader',n.oid,'USAGE') OR NOT has_schema_privilege('sinex_writer',n.oid,'USAGE')))").fetch_one(&mut *conn).await?;

@@ -1,5 +1,10 @@
 //! Foundation storage authority. No connection or transaction escapes the writer owner.
+mod atuin;
 mod event_storage;
+mod query;
+pub use atuin::mask as present;
+pub use atuin::{AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule, SOURCE as ATUIN_SOURCE};
+pub use query::validate_query;
 mod schema;
 pub use schema::{
     CAPTURED_FUTURE_SKEW_SECONDS, READER_ROLE, SchemaStatus, TIMESCALEDB_VERSION, WRITER_ROLE,
@@ -77,7 +82,7 @@ pub struct StoreStatus {
 
 /// Actual restricted reader credential. The underlying pool is intentionally private.
 #[derive(Clone)]
-pub struct ReadPool(PgPool);
+pub struct ReadPool(PgPool, std::sync::Arc<hashed_blobs::Reader>, String);
 impl ReadPool {
     pub async fn schema_status(&self) -> Result<SchemaStatus> {
         let mut conn = self.0.acquire().await?;
@@ -105,6 +110,14 @@ impl ReadPool {
 #[derive(Clone)]
 pub struct Admission(mpsc::Sender<Command>);
 impl Admission {
+    pub async fn submit_atuin(&self, step: AtuinStep) -> Result<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .send(Command::Atuin(step, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
     pub fn is_available(&self) -> bool {
         !self.0.is_closed()
     }
@@ -120,6 +133,7 @@ impl Admission {
 }
 enum Command {
     Admit(MaterialEvent, oneshot::Sender<Result<Receipt>>),
+    Atuin(AtuinStep, oneshot::Sender<Result<serde_json::Value>>),
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -182,11 +196,18 @@ impl Store {
         .await??;
         let mut connection = PgConnection::connect(writer_url).await?;
         require_role(&mut connection, WRITER_ROLE).await?;
-        let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(73018924012)")
-            .fetch_one(&mut connection)
-            .await?;
-        if !locked {
-            return Err(Error::WriterOwned);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(73018924012)")
+                .fetch_one(&mut connection)
+                .await?;
+            if locked {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(Error::WriterOwned);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         let reader_pool = PgPoolOptions::new()
             .max_connections(2)
@@ -209,11 +230,17 @@ impl Store {
             run_id,
         };
         owner.recover_blobs().await?;
+        owner.recover_parts().await?;
         let (tx, rx) = mpsc::channel(capacity);
+        let reader = ReadPool(
+            reader_pool,
+            std::sync::Arc::new(hashed_blobs::Reader::new(owner.root.clone(), vec![])),
+            owner.root.clone(),
+        );
         let writer = tokio::spawn(owner.run(rx));
         Ok(Self {
             admission: Admission(tx),
-            reader: ReadPool(reader_pool),
+            reader,
             writer,
         })
     }
@@ -257,7 +284,7 @@ const BLOB_PRESENT: &str = "UPDATE core.blobs SET status='present' WHERE id=$1";
 const WRITING_BLOBS: &str = "SELECT id,blake3 FROM core.blobs WHERE status='writing' AND root=$1";
 const RUN_INTERRUPT: &str =
     "UPDATE core.runs SET status='interrupted',ended_at=now() WHERE status='running'";
-const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
+const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed','command.executed']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
 const RUN_START: &str = "INSERT INTO core.runs (id,manifest_id,service_name,host,status,effective_config_hash) VALUES ($1,$2,$3,$4,'running',$5)";
 const RUN_END: &str = "UPDATE core.runs SET status='completed',ended_at=now() WHERE id=$1";
 
@@ -340,6 +367,10 @@ impl WriterPool {
                     // Its receipt may be undeliverable, but the database result is durable.
                     let result = self.admit(event).await;
                     if reply.send(result).is_err() { /* caller gone; no commit is undone */ }
+                }
+                Command::Atuin(step, reply) => {
+                    let result = self.admit_atuin(step).await;
+                    let _ = reply.send(result);
                 }
                 Command::Shutdown(reply) => {
                     rx.close();

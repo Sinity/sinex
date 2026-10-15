@@ -35,8 +35,8 @@ fn surface_failures_have_declared_exit_and_application_codes() {
     }
 }
 #[test]
-fn foundation_does_not_offer_source_or_query_stubs() {
-    for method in ["query.run", "sources.list", "replay", "polylogue.have"] {
+fn unimplemented_surfaces_are_absent_and_real_methods_validate_params() {
+    for method in ["replay", "polylogue.have", "commands"] {
         let request: RpcRequest =
             serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":method,"params":{}}))
                 .unwrap();

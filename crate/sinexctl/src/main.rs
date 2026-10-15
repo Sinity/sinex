@@ -22,14 +22,48 @@ enum Command {
     Version,
     ConfigShow,
     Catalog,
+    Sources,
+    Query {
+        query: String,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    Search {
+        text: String,
+    },
+    Show {
+        id: String,
+    },
+    Trace {
+        id: String,
+        #[arg(long)]
+        bytes: bool,
+    },
 }
 fn main() -> std::process::ExitCode {
     let args = Args::parse();
-    let method = match args.command {
-        Command::Status => Method::Status,
-        Command::Version => Method::Version,
-        Command::ConfigShow => Method::ConfigShow,
-        Command::Catalog => Method::Catalog,
+    let (method, params) = match args.command {
+        Command::Status => (Method::Status, serde_json::json!({})),
+        Command::Version => (Method::Version, serde_json::json!({})),
+        Command::ConfigShow => (Method::ConfigShow, serde_json::json!({})),
+        Command::Catalog => (Method::Catalog, serde_json::json!({})),
+        Command::Sources => (Method::Sources, serde_json::json!({})),
+        Command::Query { query, cursor } => (
+            Method::Query,
+            serde_json::json!({"query":query,"cursor":cursor}),
+        ),
+        Command::Search { text } => (
+            Method::Query,
+            serde_json::json!({"query":format!("events where payload.command ~ {}",serde_json::to_string(&text).expect("text encoding"))}),
+        ),
+        Command::Show { id } => (
+            Method::Show,
+            serde_json::json!({"ref":if id.starts_with("sinex:") {id} else {format!("sinex:ev/{id}")}}),
+        ),
+        Command::Trace { id, bytes } => (
+            Method::Trace,
+            serde_json::json!({"bytes":bytes,"ref":if id.starts_with("sinex:") {id} else {format!("sinex:ev/{id}")}}),
+        ),
     };
     let token = match std::fs::read_to_string(&args.token_file) {
         Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
@@ -38,7 +72,7 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let request = RpcRequest::new(RpcId::Number(1), method, serde_json::json!({}));
+    let request = RpcRequest::new(RpcId::Number(1), method, params);
     let result = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -63,7 +97,11 @@ fn main() -> std::process::ExitCode {
             match reply.into_outcome() {
                 Ok(value) => {
                     println!("{}", value);
-                    std::process::ExitCode::SUCCESS
+                    if value.get("complete") == Some(&serde_json::Value::Bool(false)) {
+                        std::process::ExitCode::from(ErrorKind::Partial.exit_code())
+                    } else {
+                        std::process::ExitCode::SUCCESS
+                    }
                 }
                 Err(e) => {
                     eprintln!(

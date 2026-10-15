@@ -18,9 +18,9 @@ BEGIN
  END IF;
  IF NEW.source_material_id IS NOT NULL THEN
   SELECT m.total_bytes,m.durable_bytes,m.status,b.status AS blob_status INTO material
-   FROM raw.source_material_registry m JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=NEW.source_material_id;
+   FROM raw.source_material_registry m LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=NEW.source_material_id;
   IF NOT FOUND OR NEW.anchor_byte IS NULL OR NEW.anchor_byte<0 OR NEW.anchor_byte>=material.durable_bytes
-   OR (material.status='completed' AND material.blob_status<>'present')
+   OR (material.status<>'capturing' AND material.blob_status IS DISTINCT FROM 'present')
    OR ((NEW.offset_start IS NOT NULL OR NEW.offset_end IS NOT NULL) AND
       (NEW.offset_start IS NULL OR NEW.offset_end IS NULL OR NEW.offset_start<0 OR NEW.offset_end<NEW.offset_start OR NEW.offset_end>material.durable_bytes)) THEN
    RAISE EXCEPTION 'event range is outside durable material' USING ERRCODE='23514';
@@ -52,6 +52,6 @@ END $$"#.to_owned()];
             statements.push(template.replace("$TABLE", &table));
         }
     }
-    statements.push("CREATE VIEW core.live_events AS SELECT e.* FROM core.events e WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.id=e.id)".into());
+    statements.push("CREATE VIEW core.live_events AS SELECT e.* FROM core.events e WHERE e.record_state='present' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.id=e.id)".into());
     statements
 }
