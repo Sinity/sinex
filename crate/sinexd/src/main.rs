@@ -18,6 +18,10 @@ enum Command {
     Serve {
         #[arg(long)]
         config: PathBuf,
+        #[arg(long, requires = "qualification_socket")]
+        qualification_boundary: Option<String>,
+        #[arg(long, requires = "qualification_boundary")]
+        qualification_socket: Option<PathBuf>,
     },
     Config {
         #[command(subcommand)]
@@ -103,9 +107,25 @@ async fn run(args: Args) -> Result<(), String> {
             );
         }
         #[cfg(feature = "runtime")]
-        Command::Serve { config: path } => {
+        Command::Serve {
+            config: path,
+            qualification_boundary,
+            qualification_socket,
+        } => {
             let conf = config::Config::load(&path)?;
-            server::serve(conf).await?;
+            let qualification = match (qualification_boundary, qualification_socket) {
+                (Some(point), Some(socket)) => Some(
+                    sinex_store::QualificationBoundary::new(point, socket)
+                        .map_err(public_store_error)?,
+                ),
+                (None, None) => None,
+                _ => {
+                    return Err(
+                        "qualification boundary and socket must be supplied together".into(),
+                    );
+                }
+            };
+            server::serve(conf, qualification).await?;
         }
     }
     Ok(())

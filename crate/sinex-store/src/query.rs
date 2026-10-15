@@ -293,6 +293,32 @@ impl ReadPool {
                 json!({"event":id,"material":material,"anchor":anchor,"end":end,"record_state":state,"archive":archive,"representation":"canonical_sqlite_row"}),
             ));
         }
+        let (record, _) = self.retained_record(material, anchor, Some(end)).await?;
+        Ok(Some(
+            json!({"event":id,"material":material,"anchor":anchor,"end":end,"representation":"canonical_sqlite_row","record_state":state,"archive":archive,"record":record,"privacy":"presentation masked; original raw rows retained as plain evidence"}),
+        ))
+    }
+    pub(crate) async fn retained_record(
+        &self,
+        material: Uuid,
+        anchor: i64,
+        end: Option<i64>,
+    ) -> Result<(Value, i64)> {
+        let row = sqlx::query("SELECT m.durable_bytes,b.blake3,m.parser_provenance FROM raw.source_material_registry m LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=$1").bind(material).fetch_one(&self.0).await?;
+        let durable: i64 = row.try_get("durable_bytes")?;
+        let expected_end = end;
+        let end = end.unwrap_or_else(|| {
+            anchor
+                .saturating_add(crate::MAX_STEP_BYTES as i64)
+                .min(durable)
+        });
+        if anchor < 0
+            || end <= anchor
+            || end > durable
+            || end - anchor > crate::MAX_STEP_BYTES as i64
+        {
+            return Err(Error::Invalid("retained record range unavailable"));
+        }
         let blob: Option<String> = row.try_get("blake3")?;
         let blobs = self.1.clone();
         let root = self.2.clone();
@@ -317,16 +343,22 @@ impl ReadPool {
             }
         })
         .await??;
-        let mut record: Value = serde_json::from_slice(&bytes)
+        let length = bytes
+            .iter()
+            .position(|b| *b == b'\n')
+            .ok_or(Error::Invalid("retained row terminator unavailable"))?
+            + 1;
+        if expected_end.is_some_and(|end| end != anchor + length as i64) {
+            return Err(Error::Invalid("retained record range spans other data"));
+        }
+        let mut record: Value = serde_json::from_slice(&bytes[..length])
             .map_err(|_| Error::Invalid("retained row envelope is invalid"))?;
         let provenance: Value = row.try_get("parser_provenance")?;
         let rules: Vec<crate::PrivacyRule> =
             serde_json::from_value(provenance["privacy_rules"].clone())
                 .map_err(|_| Error::Invalid("retained privacy provenance unavailable"))?;
         crate::atuin::mask(&mut record, &rules)?;
-        Ok(Some(
-            json!({"event":id,"material":material,"anchor":anchor,"end":end,"representation":"canonical_sqlite_row","record_state":state,"archive":archive,"record":record,"privacy":"presentation masked; original raw rows retained as plain evidence"}),
-        ))
+        Ok((record, anchor + length as i64))
     }
 }
 #[cfg(test)]

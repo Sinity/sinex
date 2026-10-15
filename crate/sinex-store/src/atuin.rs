@@ -353,6 +353,15 @@ impl WriterPool {
             })
             .await??;
         }
+        let boundary_evidence = json!({"input":input,"observation":step.observation,"material":material,"start":start,"end":start+bytes.len() as i64,"canonical_bytes":bytes.len(),"canonical_blake3":blake3::hash(&bytes).to_hex().to_string(),"step_rows":prepared.len(),"source_eof":step.complete,"acknowledged":false});
+        if !bytes.is_empty() {
+            crate::QualificationBoundary::reach(
+                &mut self.qualification,
+                "retained-fsynced",
+                boundary_evidence.clone(),
+            )
+            .await?;
+        }
         let mut tx = self.connection.begin().await?;
         let mut last_seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
         if let Some(id) = material {
@@ -433,7 +442,20 @@ impl WriterPool {
             .bind(step.observation).bind(admitted).bind(repeated).bind(failures).bind(removed).bind(status).bind(step.unavailable).bind(last_seq).fetch_one(&mut *tx).await?;
         sqlx::query("INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,$2,$3,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,updated_at=now()")
             .bind(SOURCE).bind(input.to_string()).bind(&summary).execute(&mut *tx).await?;
+        let committed_evidence = json!({"custody":boundary_evidence,"progress":summary});
+        crate::QualificationBoundary::reach(
+            &mut self.qualification,
+            "transaction-staged",
+            committed_evidence.clone(),
+        )
+        .await?;
         tx.commit().await?;
+        crate::QualificationBoundary::reach(
+            &mut self.qualification,
+            "transaction-committed",
+            committed_evidence,
+        )
+        .await?;
         if step.complete {
             let open: Option<Uuid> = sqlx::query_scalar("SELECT id FROM raw.source_material_registry WHERE input_id=$1 AND status='capturing' LIMIT 1").bind(input).fetch_optional(&mut self.connection).await?;
             if let Some(id) = open {
@@ -446,7 +468,30 @@ impl WriterPool {
 
 impl ReadPool {
     pub async fn sources(&self) -> Result<Value> {
-        let rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation','canonical_sqlite_rows','sqlite_snapshots','unavailable_until_1c','last_run',to_jsonb(o)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true ORDER BY i.binding,i.locator").fetch_all(&self.0).await?;
+        let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation','canonical_sqlite_rows','sqlite_snapshots','unavailable_until_1c','last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'first_record_error',(SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true ORDER BY i.binding,i.locator").fetch_all(&self.0).await?;
+        for source in &mut rows {
+            if !source["first_record_error"].is_null() {
+                let failure = &mut source["first_record_error"];
+                let material: Uuid = serde_json::from_value(failure["material_id"].clone())
+                    .map_err(|_| Error::Invalid("record failure material unavailable"))?;
+                let anchor = failure["anchor_byte"]
+                    .as_i64()
+                    .ok_or(Error::Invalid("record failure anchor unavailable"))?;
+                match self.retained_record(material, anchor, None).await {
+                    Ok((record, end)) => {
+                        failure["record"] = record;
+                        failure["end"] = json!(end);
+                        failure["evidence_status"] = json!("available");
+                    }
+                    Err(_) => {
+                        failure["record"] = Value::Null;
+                        failure["end"] = Value::Null;
+                        failure["evidence_status"] = json!("unavailable");
+                    }
+                }
+                failure["representation"] = json!("canonical_sqlite_row");
+            }
+        }
         Ok(json!({"notice":sinex_model::DATA_NOTICE,"sources":rows}))
     }
 }

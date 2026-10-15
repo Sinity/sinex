@@ -19,7 +19,10 @@ struct App {
     reader: sinex_store::ReadPool,
     admission: sinex_store::Admission,
 }
-pub async fn serve(config: Config) -> Result<(), String> {
+pub async fn serve(
+    config: Config,
+    qualification: Option<sinex_store::QualificationBoundary>,
+) -> Result<(), String> {
     eprintln!(
         "{}",
         serde_json::json!({"component":"sinexd","phase":"starting"})
@@ -77,12 +80,18 @@ pub async fn serve(config: Config) -> Result<(), String> {
         "{}",
         serde_json::json!({"component":"sinexd","phase":"connecting_store"})
     );
-    let store =
-        sinex_store::Store::connect(&writer, &reader, config.store_dir.clone(), 16, identity)
-            .await
-            .map_err(|_| {
-                "database schema, roles, writer ownership or content store unavailable".to_string()
-            })?;
+    let store = sinex_store::Store::connect(
+        &writer,
+        &reader,
+        config.store_dir.clone(),
+        16,
+        identity,
+        qualification,
+    )
+    .await
+    .map_err(|_| {
+        "database schema, roles, writer ownership or content store unavailable".to_string()
+    })?;
     eprintln!(
         "{}",
         serde_json::json!({"component":"sinexd","phase":"store_ready"})

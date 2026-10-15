@@ -86,3 +86,12 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.kestrel_boundary_acceptance]
+description = "Observed packaged Atuin retention and transaction boundary kills, same-state recovery and existing Kestrel reporting controls"
+exec = ["python3", "tests/demo.py", "--controls", "--boundaries"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

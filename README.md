@@ -62,7 +62,7 @@ retained diagnostics, then exercises base, repeated, same-path append, empty and
 malformed Kestrel inputs through actual source admission and CLI queries. It
 reuses the foundation harness's isolated PostgreSQL owner and result store;
 unchanged foundational regression qualification is separate. `xtask demo
-<workspace> <spec-repository> [--controls]` is the corresponding frontend and
+<workspace> <spec-repository> [--controls] [--boundaries]` is the corresponding frontend and
 requires explicit source paths, including when xtask itself is packaged.
 
 Each run retains exact prepared/exercised synthetic inputs, oracle source and
@@ -70,7 +70,37 @@ digests, expected and actual answers, command exits, source observations and
 owned process logs. `comparisons.json` and `diagnostic.txt` identify expected and
 actual values; `result.json` marks dependent cases unrun on failure. State is
 removed only after successful evidence capture; failed owned state is retained
-with PostgreSQL stopped. These controls qualify failure reporting, not kills at
-observed retention, admission or index boundaries. Physical SQLite snapshots,
-a general read model/index, client-visible exact malformed-record reasons,
-formal M1 acceptance and task-routing gates remain open.
+with PostgreSQL stopped. The reporting controls qualify failed-run diagnostics. The connected boundary
+operation below qualifies observed retention/admission process kills. Physical
+SQLite snapshots, a general read model/index, formal M1 acceptance and task-routing
+gates remain open.
+
+
+`kestrel_boundary_acceptance` takes the same required specification-repository
+argument and adds actual writer-boundary recovery to the packaged demonstration.
+The driver first records an uninterrupted malformed-fixture baseline, then uses
+an explicit one-shot Unix-socket rendezvous at `retained-fsynced`,
+`transaction-staged` and `transaction-committed`. It receives the actual writer's
+PID, material/range, observation and progress evidence before killing only that
+recorded child with SIGKILL. There are no elapsed-time kill triggers. The same
+packaged candidate restarts with its unchanged source, database and state;
+normal queries, sources and retained traces establish recovered facts, accounting,
+provenance and repeat suppression against the baseline. `boundaries.json` holds
+the observed frames and kill outcomes in the existing run report.
+
+The daemon opt-in is `serve --config CONFIG --qualification-boundary POINT
+--qualification-socket ABSOLUTE_SOCKET`. Both arguments are required together.
+Only one matching instruction rendezvouses; without these arguments the normal
+writer runs directly. The controller sends `c` to continue or kills its recorded
+child. A missing controller, disconnect, refusal or timeout fails that admission;
+it never silently crosses the requested boundary. This control can hold a real
+transaction and is only intended for owned isolated qualification. See
+[Atuin durability and source diagnostics](docs/rewrite/atuin.md).
+
+
+Report-owned artifact references are relative to their owning report directory,
+including nested query captures and expected/actual diagnostics. The driver checks
+a copied report tree and refuses a deliberately restored absolute scratch link
+before succeeding, so archival remains inspectable after
+scratch cleanup. Exact executed argv, configuration/source coordinates and raw
+stdout/stderr keep their original values as execution evidence.

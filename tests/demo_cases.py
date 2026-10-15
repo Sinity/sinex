@@ -13,10 +13,8 @@ INPUTS = [f'{DEMO}/prepare.py', f'{DEMO}/check_answer.py',
           'sinex-spec/examples/kestrel/raw/home/iris/.local/share/atuin/history.db']
 
 
-def exercise(h):
-    work, report, env, options = (h[k] for k in ['WORK', 'REPORT', 'ENV', 'OPTIONS'])
-    run, scenario, start, stop = (h[k] for k in ['run', 'scenario', 'start_daemon', 'stop'])
-    binaries = h['BIN_DIR']
+def prepare_fixture(h):
+    report, options, run, scenario = (h[k] for k in ['REPORT', 'OPTIONS', 'run', 'scenario'])
     basis = report/'oracle'; prepared = report/'prepared'
     def prepare():
         manifest = {'revision': ORACLE_REVISION, 'files': {}}
@@ -28,6 +26,15 @@ def exercise(h):
         (report/'oracle-basis.json').write_text(json.dumps(manifest, indent=2)+'\n')
         run(['python3', basis/DEMO/'prepare.py', prepared], label='pinned independent preparer')
     scenario('pinned independent fixture preparation', prepare)
+    return prepared
+
+
+def exercise(h):
+    work, report, env, options = (h[k] for k in ['WORK', 'REPORT', 'ENV', 'OPTIONS'])
+    run, scenario, start, stop = (h[k] for k in ['run', 'scenario', 'start_daemon', 'stop'])
+    binaries = h['BIN_DIR']
+    prepared = prepare_fixture(h)
+    basis = report/'oracle'
     expected_path = prepared/'expected.json'
     expected = json.loads(expected_path.read_text())['sinex']['cases']
     expected_digest = hashlib.sha256(expected_path.read_bytes()).hexdigest()
@@ -124,11 +131,11 @@ created_by = "operator"
                 compared.write_text(json.dumps(decoded, indent=2)+'\n')
             check = expected[case]['query_checks'][index]
             diagnostic = {'case': case, 'query_index': index, 'query': query['query'], 'expected': check,
-                          'actual': str(path), 'compared': str(compared), 'control': options.demo_control,
+                          'actual': path.name, 'compared': compared.name, 'control': options.demo_control,
                           'expected_sha256': expected_digest, 'comparison': 'pending'}
             results.append(diagnostic)
             (report/'comparisons.json').write_text(json.dumps(results, indent=2)+'\n')
-            (report/'diagnostic.txt').write_text(f"Case: {case}, query {index}: {check['name']}\nQuery: {query['query']}\nExpected total: {check['total']}\nExpected rows: {json.dumps(check['expected_rows'], indent=2)}\nActual captured answer: {path}\nCompared answer: {compared}\nCaptured actual total: {json.loads(actual.stdout).get('total')}\nCompared total: {decoded.get('total')}\n")
+            (report/'diagnostic.txt').write_text(f"Case: {case}, query {index}: {check['name']}\nQuery: {query['query']}\nExpected total: {check['total']}\nExpected rows: {json.dumps(check['expected_rows'], indent=2)}\nActual captured answer: {path.name}\nCompared answer: {compared.name}\nCaptured actual total: {json.loads(actual.stdout).get('total')}\nCompared total: {decoded.get('total')}\n")
             try:
                 run(['python3', basis/DEMO/'check_answer.py', 'sinex', case, expected_path, compared, '--query-index', str(index)], label=f'independent oracle {case}/{index}')
             except AssertionError:
@@ -146,7 +153,7 @@ created_by = "operator"
         nonlocal previous, base_ids
         install('base'); launch('base'); previous = wait_cycle('base')
         answer = answers('base'); base_ids = {r['id'] for r in answer['rows']}
-        cli('sources')
+        assert json.loads(cli('sources').stdout)['sources'][0]['first_record_error'] is None
         for row in answer['rows']:
             trace = json.loads(cli('trace', row['id'], '--bytes').stdout)['row']
             assert trace['record']['id'] == row['payload']['native_id']
@@ -170,7 +177,13 @@ created_by = "operator"
         scenario('Kestrel append at the same source path', append)
         for case in ['empty', 'malformed']:
             def isolated(case=case):
-                install(case); launch(case, fresh=True); wait_cycle(case); answers(case); cli('sources'); stop(proc)
+                install(case); launch(case, fresh=True); wait_cycle(case); answers(case)
+                diagnostic = json.loads(cli('sources').stdout)['sources'][0]['first_record_error']
+                if case == 'empty': assert diagnostic is None
+                else:
+                    assert diagnostic['record']['timestamp'] == 'not-a-time' and diagnostic['evidence_status'] == 'available'
+                    assert diagnostic['reason'] and diagnostic['end'] > diagnostic['anchor_byte']
+                stop(proc)
             scenario('Kestrel '+case+' actual answers', isolated)
         assert hashlib.sha256(expected_path.read_bytes()).hexdigest() == expected_digest
     finally:

@@ -60,9 +60,9 @@ async fn real_roles_owned_writer_and_atomic_material_admission()
         Some("42501")
     );
     writer_conn.close().await?;
-    let store = Store::connect(&writer, &reader, state.clone(), 2, identity()?).await?;
+    let store = Store::connect(&writer, &reader, state.clone(), 2, identity()?, None).await?;
     assert!(matches!(
-        Store::connect(&writer, &reader, state.clone(), 2, identity()?).await,
+        Store::connect(&writer, &reader, state.clone(), 2, identity()?, None).await,
         Err(Error::WriterOwned)
     ));
     let receipt = store
@@ -111,7 +111,7 @@ async fn real_roles_owned_writer_and_atomic_material_admission()
             .await
             .is_err()
     );
-    let restarted = Store::connect(&writer, &reader, state, 2, identity()?).await?;
+    let restarted = Store::connect(&writer, &reader, state, 2, identity()?, None).await?;
     restarted.shutdown().await?;
     let mut helper_admin = PgConnection::connect(&admin).await?;
     helper_admin

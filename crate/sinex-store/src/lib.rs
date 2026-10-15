@@ -1,9 +1,11 @@
 //! Foundation storage authority. No connection or transaction escapes the writer owner.
 mod atuin;
 mod event_storage;
+mod qualification;
 mod query;
 pub use atuin::mask as present;
 pub use atuin::{AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule, SOURCE as ATUIN_SOURCE};
+pub use qualification::QualificationBoundary;
 pub use query::validate_query;
 mod schema;
 pub use schema::{
@@ -145,6 +147,7 @@ struct WriterPool {
     _lock: std::fs::File,
     root: String,
     run_id: Uuid,
+    qualification: Option<QualificationBoundary>,
 }
 
 pub struct Store {
@@ -159,6 +162,7 @@ impl Store {
         state_dir: PathBuf,
         capacity: usize,
         identity: RuntimeIdentity,
+        qualification: Option<QualificationBoundary>,
     ) -> Result<Self> {
         if capacity == 0 || capacity > 1024 {
             return Err(Error::Invalid("queue capacity must be 1..=1024"));
@@ -228,6 +232,7 @@ impl Store {
             _lock: lock,
             root,
             run_id,
+            qualification,
         };
         owner.recover_blobs().await?;
         owner.recover_parts().await?;
