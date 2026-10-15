@@ -61,7 +61,9 @@ substituted for reaching the boundary. A one-shot release or kill is required;
 control failure fails the admission. Normal operation enables no rendezvous.
 
 The first two states have acknowledged no source success and expose no staged
-events or progress to readers. Their fsynced but uncommitted tail is deliberately
+events or data progress to readers. The separately committed reading registration
+remains visible with zero acquired rows; it is not completed empty coverage.
+Their fsynced but uncommitted tail is deliberately
 truncated to the committed durable length on recovery; a fresh read of the
 unchanged SQLite input then admits its rows. The third state has committed facts
 and progress even though its source reply has not been delivered. Recovery closes

@@ -27,6 +27,8 @@ parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer
 OPTIONS = parser.parse_args()
 if OPTIONS.startup_coverage and not OPTIONS.packaged:
     parser.error("initial coverage qualification requires --packaged")
+if OPTIONS.startup_coverage and (OPTIONS.atuin or OPTIONS.demo_spec):
+    parser.error("initial coverage qualification cannot combine with other scenario selectors")
 if OPTIONS.demo_spec and not OPTIONS.packaged:
     parser.error("the demonstration requires --packaged")
 if (OPTIONS.demo_control or OPTIONS.demo_boundaries or OPTIONS.demo_provider_loss) and not OPTIONS.demo_spec:

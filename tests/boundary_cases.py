@@ -200,8 +200,10 @@ created_by = "operator"
                     status = sources()
                     committed = point == 'transaction-committed'
                     assert before['total'] == (len(expected['live_commands']) if committed else 0)
+                    assert before['complete'] is committed
                     assert status['last_run']['rows_read'] == (expected['rows_read'] if committed else 0)
-                    assert (status['cursor'] is not None) == committed
+                    assert status['cursor']['observation'] == custody['observation']
+                    assert status['cursor']['rows_read'] == (expected['rows_read'] if committed else 0)
                     if committed:
                         assert status['cursor'] == frame['evidence']['progress']
                         assert status['first_record_error']['record']['timestamp'] == 'not-a-time'
@@ -217,6 +219,8 @@ created_by = "operator"
                         finally:
                             hidden.rename(path)
                     else:
+                        assert status['cursor']['status'] == 'reading'
+                        assert all(status['cursor'][key] == 0 for key in ('admitted', 'repeated', 'removed', 'record_errors'))
                         assert status['first_record_error'] is None
                     held_traces = {}
                     if lose_provider and committed:
