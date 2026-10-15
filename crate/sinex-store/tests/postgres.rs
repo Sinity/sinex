@@ -1,4 +1,6 @@
 //! Run only on the runner-created disposable PostgreSQL 18 database.
+#[path = "support/event_contract.rs"]
+mod event_contract;
 use sinex_store::{
     Error, MaterialEvent, RuntimeIdentity, Store, bootstrap, check_schema,
     prepare_admission_statements,
@@ -17,6 +19,23 @@ async fn real_roles_owned_writer_and_atomic_material_admission()
     assert_eq!(first.fingerprint, bootstrap(&admin).await?.fingerprint);
     prepare_admission_statements(&admin).await?;
     let mut read_conn = PgConnection::connect(&reader).await?;
+    let settings_error = read_conn
+        .execute("SHOW shared_preload_libraries")
+        .await
+        .expect_err("reader must not receive broad settings visibility");
+    assert_eq!(
+        settings_error
+            .as_database_error()
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("42501")
+    );
+    let preloaded: bool = sqlx::query_scalar("SELECT sinex_schemas.timescale_preloaded()")
+        .fetch_one(&mut read_conn)
+        .await?;
+    assert!(preloaded);
+    check_schema(&reader).await?;
+
     for statement in [
         "UPDATE core.commit_counter SET seq=seq+1 WHERE one",
         "DELETE FROM core.events",
@@ -94,6 +113,27 @@ async fn real_roles_owned_writer_and_atomic_material_admission()
     );
     let restarted = Store::connect(&writer, &reader, state, 2, identity()?).await?;
     restarted.shutdown().await?;
+    let mut helper_admin = PgConnection::connect(&admin).await?;
+    helper_admin
+        .execute("GRANT EXECUTE ON FUNCTION sinex_schemas.timescale_preloaded() TO PUBLIC")
+        .await?;
+    let acl_drift = check_schema(&reader).await;
+    helper_admin
+        .execute("REVOKE EXECUTE ON FUNCTION sinex_schemas.timescale_preloaded() FROM PUBLIC")
+        .await?;
+    assert!(matches!(acl_drift, Err(Error::Schema(_))));
+    check_schema(&reader).await?;
+    let original: String = sqlx::query_scalar(
+        "SELECT pg_get_functiondef('sinex_schemas.timescale_preloaded()'::regprocedure)",
+    )
+    .fetch_one(&mut helper_admin)
+    .await?;
+    helper_admin.execute("CREATE OR REPLACE FUNCTION sinex_schemas.timescale_preloaded() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS 'SELECT 1/0=0'").await?;
+    let body_drift = check_schema(&reader).await;
+    helper_admin.execute(original.as_str()).await?;
+    // A Database division-by-zero error would show the changed privileged body ran.
+    assert!(matches!(body_drift, Err(Error::Schema(_))));
+    check_schema(&reader).await?;
     // PostgreSQL 18 represents NOT NULL in pg_constraint as well as attnotnull.
     // Explicit constraints exclude those duplicate catalog rows, while nullability
     // must still detect a real weakening of the canonical column declaration.
@@ -124,6 +164,7 @@ async fn real_roles_owned_writer_and_atomic_material_admission()
         .await?;
     assert!(matches!(checked, Err(Error::Schema(_))));
     check_schema(&admin).await?;
+    event_contract::verify(&admin, &reader, receipt.event_id, receipt.material_id).await?;
     Ok(())
 }
 

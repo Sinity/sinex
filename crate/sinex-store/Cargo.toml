@@ -8,6 +8,7 @@ default = []
 product = []
 
 [dependencies]
+sinex-model = { path = "../sinex-model" }
 blake3 = "1.8"
 hashed-blobs = { path = "../../vendor/hashed-blobs" }
 fs2 = "0.4"

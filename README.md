@@ -14,14 +14,14 @@ nix develop --command cargo build -p sinexd --no-default-features
 
 That command does not need a database. `sinexd config schema` and `sinexd catalog` likewise need no daemon. The admin-only binary explicitly refuses `serve`.
 
-Provision an isolated PostgreSQL 18 database with unprivileged `sinex_writer` and `sinex_reader` login roles. Put its administrative connection URI in a mode-0600 file, then apply/check the canonical schema with:
+Provision an isolated PostgreSQL 18.4 database with TimescaleDB 2.27.2 preloaded, data checksums enabled, `timescaledb.enable_chunk_skipping=on`, and unprivileged `sinex_writer` and `sinex_reader` login roles. Put its administrative connection URI in a mode-0600 file, then apply/check the canonical schema with:
 
 ```
 target/debug/sinexd admin schema --connection-file /absolute/path/admin-connection
 target/debug/sinexd admin schema --connection-file /absolute/path/admin-connection --check
 ```
 
-Schema checks reject incompatible definitions or unsafe grants without resetting data. Set `DATABASE_URL` only to this development schema when building the runtime through `xtask` or Cargo. No offline SQLx cache is used. `nix build .#default` performs its own query-free bootstrap within an isolated builder before compiling checked product queries.
+Schema checks reject incompatible definitions or unsafe grants without resetting data. The event stores use the canonical row shape, UUIDv7 partitions, occurrence side tables and logical archive view. Their declared indexes, guards, compression policy and sparse indexes are checked by definition. General event admission, payload-schema registration and upgrades from earlier preparation schemas remain unimplemented. Set `DATABASE_URL` only to this development schema when building the runtime through `xtask` or Cargo. No offline SQLx cache is used. `nix build .#default` performs its own query-free bootstrap within an isolated builder before compiling checked product queries.
 
 ## Configure and run
 
@@ -48,6 +48,6 @@ The client requires its explicit endpoint and has no installed-service fallback.
 
 ## Verification
 
-Use declared AgentCTL `foundation_build`, `foundation_acceptance`, and `foundation_package` and `foundation_package_acceptance` operations from this checkout. `foundation_format` formats owned workspace code before qualification. The acceptance runner owns a fresh PostgreSQL cluster and launches real built entrypoints; `foundation_package_acceptance` explicitly selects the Nix package binaries; it records command exits, raw output and scenario results in private scratch. Failures still emit `result.json` and return nonzero. It never targets production services.
+Use declared AgentCTL `foundation_build`, `foundation_acceptance`, `foundation_package`, and `foundation_package_acceptance` operations from this checkout. `foundation_format` formats owned workspace code before qualification. The acceptance runner owns a fresh PostgreSQL cluster and launches real built entrypoints; `foundation_package_acceptance` explicitly selects the Nix package binaries; it records command exits, raw output and scenario results in private scratch. Failures still emit `result.json` and return nonzero. It never targets production services.
 
-The real-role integration test exercises a bounded synthetic material event through the private writer channel. It is not a registered ingestion API and does not qualify Atuin or the full target schema. Exact package/build/client and operational criteria remain open until their reported checks actually pass. No source replacement PR, host activation, consumer update or external task migration is performed by these commands.
+The real-role integration test exercises a bounded synthetic material event through the private writer channel, and checks event constraints, actual compression and definition-drift refusals. It is not a registered ingestion API and does not qualify Atuin or the full target schema. Exact package/build/client and operational criteria remain open until their reported checks actually pass. No source replacement PR, host activation, consumer update or external task migration is performed by these commands.

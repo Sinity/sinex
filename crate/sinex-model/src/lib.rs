@@ -106,52 +106,61 @@ pub mod events {
         Material { coordinates: Coordinates },
         Derived { parents: NonEmptyVec<EventId> },
     }
-    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    pub enum TimeQuality {
-        Captured,
-        Intrinsic { field: String },
-        FileMtime,
-        FileCtime,
-        Operator,
-        Staged,
-    }
-    #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-    #[serde(tag = "precision", rename_all = "snake_case", deny_unknown_fields)]
-    pub enum TimePrecision {
-        Instant,
-        Second,
-        Minute,
-        Day,
-        Month,
-        Year,
-        Bounded { until: OffsetDateTime },
-    }
-    impl<'de> Deserialize<'de> for TimePrecision {
-        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            // Empty struct variants enforce leftover-field rejection; serde unit variants do not.
-            #[derive(Deserialize)]
-            #[serde(tag = "precision", rename_all = "snake_case", deny_unknown_fields)]
-            enum Wire {
-                Instant {},
-                Second {},
-                Minute {},
-                Day {},
-                Month {},
-                Year {},
-                Bounded { until: OffsetDateTime },
+    // One catalog owns the wire label and database CHECK vocabulary. Unknown is
+    // TsOrig's separate state, never a fabricated quality on a known timestamp.
+    macro_rules! time_quality_catalog {
+        ($($variant:ident $({ $field:ident: $ty:ty })? => $label:literal),* $(,)?) => {
+            #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+            pub enum TimeQuality {
+                $(#[serde(rename = $label)] $variant $({ $field: $ty })?),*
             }
-            Ok(match Wire::deserialize(deserializer)? {
-                Wire::Instant {} => Self::Instant,
-                Wire::Second {} => Self::Second,
-                Wire::Minute {} => Self::Minute,
-                Wire::Day {} => Self::Day,
-                Wire::Month {} => Self::Month,
-                Wire::Year {} => Self::Year,
-                Wire::Bounded { until } => Self::Bounded { until },
-            })
-        }
+            pub const TIME_QUALITY_LABELS: &[&str] = &["unknown", $($label),*];
+        };
     }
+    time_quality_catalog! {
+        Captured => "captured",
+        Intrinsic { field: String } => "intrinsic",
+        FileMtime => "file_mtime",
+        FileCtime => "file_ctime",
+        Operator => "operator",
+        Staged => "staged",
+    }
+
+    macro_rules! time_precision_catalog {
+        ($($variant:ident $({ $field:ident: $ty:ty })? => $label:literal),* $(,)?) => {
+            #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+            #[serde(tag = "precision", deny_unknown_fields)]
+            pub enum TimePrecision {
+                $(#[serde(rename = $label)] $variant $({ $field: $ty })?),*
+            }
+            pub const TIME_PRECISION_LABELS: &[&str] = &[$($label),*];
+            impl<'de> Deserialize<'de> for TimePrecision {
+                fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                    // Empty struct variants reject leftover fields; serde unit variants do not.
+                    #[derive(Deserialize)]
+                    #[serde(tag = "precision", deny_unknown_fields)]
+                    enum Wire {
+                        $(#[serde(rename = $label)] $variant { $($field: $ty)? }),*
+                    }
+                    Ok(match Wire::deserialize(deserializer)? {
+                        $(Wire::$variant { $($field)? } => Self::$variant $({ $field })?),*
+                    })
+                }
+            }
+        };
+    }
+    time_precision_catalog! {
+        Instant => "instant",
+        Second => "second",
+        Minute => "minute",
+        Day => "day",
+        Month => "month",
+        Year => "year",
+        Bounded { until: OffsetDateTime } => "bounded",
+    }
+
+    /// Only Sinex-driver captured times have a hard future bound; source clocks do not.
+    pub const CAPTURED_FUTURE_SKEW_SECONDS: i64 = 300;
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(try_from = "TimeWire", into = "TimeWire")]
     pub struct TsOrig(TimeWire);
@@ -174,8 +183,10 @@ pub mod events {
                 ..
             } = &value
             {
-                if until <= at {
-                    return Err(ValidationError("bounded time must end after its start"));
+                if until < at {
+                    return Err(ValidationError(
+                        "bounded time must not end before its start",
+                    ));
                 }
             }
             if let TimeWire::Known {

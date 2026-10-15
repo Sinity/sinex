@@ -1,6 +1,10 @@
 //! Foundation storage authority. No connection or transaction escapes the writer owner.
+mod event_storage;
 mod schema;
-pub use schema::{READER_ROLE, SchemaStatus, WRITER_ROLE, bootstrap, check_schema};
+pub use schema::{
+    CAPTURED_FUTURE_SKEW_SECONDS, READER_ROLE, SchemaStatus, TIMESCALEDB_VERSION, WRITER_ROLE,
+    bootstrap, check_schema,
+};
 
 use fs2::FileExt;
 use serde::Serialize;
@@ -81,7 +85,7 @@ impl ReadPool {
     }
     #[cfg(feature = "product")]
     pub async fn status(&self) -> Result<StoreStatus> {
-        let row = sqlx::query!("SELECT (SELECT count(*) FROM core.events) AS \"event_count!\", (SELECT count(*) FROM raw.source_material_registry) AS \"material_count!\", (SELECT seq FROM core.commit_counter WHERE one) AS \"commit_seq!\", (SELECT count(*) FROM raw.source_cursors) AS \"progress_count!\"").fetch_one(&self.0).await?;
+        let row = sqlx::query!("SELECT (SELECT count(*) FROM core.live_events) AS \"event_count!\", (SELECT count(*) FROM raw.source_material_registry) AS \"material_count!\", (SELECT seq FROM core.commit_counter WHERE one) AS \"commit_seq!\", (SELECT count(*) FROM raw.source_cursors) AS \"progress_count!\"").fetch_one(&self.0).await?;
         Ok(StoreStatus {
             event_count: row.event_count,
             material_count: row.material_count,
@@ -454,6 +458,19 @@ impl WriterPool {
         .await?;
         sqlx::query!("INSERT INTO raw.source_material_registry (id,material_kind,source_identifier,status,ts_quality,blob_id,total_bytes,durable_bytes) VALUES ($1,'file',$2,'completed','unknown',$3,$4,$4)",material_id,event.source,blob_id,length).execute(&mut *tx).await?;
         sqlx::query!("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_quality,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id) VALUES ($1,$2,$3,$4,NULL,'unknown',$5,$6,$7,$8,$9,$10)",event_id,event.source,event.event_type,event.payload,seq,material_id,event.anchor_byte,event.ordinal,record_hash,self.run_id).execute(&mut *tx).await?;
+        let coordinate = coordinate_hash(
+            material_id,
+            event.anchor_byte,
+            &event.event_type,
+            event.ordinal,
+        );
+        sqlx::query!(
+            "INSERT INTO core.live_coordinates (store,occ_hash,event_id) VALUES (0,$1,$2)",
+            coordinate,
+            event_id
+        )
+        .execute(&mut *tx)
+        .await?;
         sqlx::query!("INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id) VALUES ($1,$2,0,0,1)",seq,event_id).execute(&mut *tx).await?;
         let position = serde_json::json!({"material":material_id,"byte_offset":length});
         sqlx::query!("INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,'synthetic-proof',$2,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,carry=EXCLUDED.carry,updated_at=now()",event.source,position).execute(&mut *tx).await?;
@@ -465,6 +482,16 @@ impl WriterPool {
             blob_name,
         })
     }
+}
+
+fn coordinate_hash(material: Uuid, anchor: i64, event_type: &str, ordinal: i16) -> Vec<u8> {
+    let mut hash = blake3::Hasher::new();
+    hash.update(material.as_bytes());
+    hash.update(&anchor.to_be_bytes());
+    hash.update(&(event_type.len() as u64).to_be_bytes());
+    hash.update(event_type.as_bytes());
+    hash.update(&ordinal.to_be_bytes());
+    hash.finalize().as_bytes()[..16].to_vec()
 }
 
 fn dotted(s: &str) -> bool {

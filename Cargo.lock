@@ -1643,6 +1643,7 @@ dependencies = [
  "sea-query",
  "serde",
  "serde_json",
+ "sinex-model",
  "sqlx",
  "thiserror",
  "tokio",

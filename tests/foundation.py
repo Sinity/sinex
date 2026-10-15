@@ -25,7 +25,7 @@ REPORT = Path(os.environ.get("SINEX_FOUNDATION_REPORT_DIR", str(WORK.parent / (W
 REPORT.mkdir(parents=True, exist_ok=False)
 COMMANDS = []
 SCENARIOS = []
-PLANNED = ["cold query-free admin build", "canonical schema cold apply and idempotent check", "checked runtime build and pure contracts", "real role grants, writer admission and restart", "invalid and unsupported config fail before startup", "occupied endpoint leaves unowned resources untouched", "actual daemon CLI transport and truthful scope", "partial start cannot steal writer and clean shutdown releases ownership"]
+PLANNED = ["cold query-free admin build", "canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "checked runtime build and pure contracts", "canonical hypertables, real role grants, writer admission and restart", "invalid and unsupported config fail before startup", "occupied endpoint leaves unowned resources untouched", "actual daemon CLI transport and truthful scope", "partial start cannot steal writer and clean shutdown releases ownership"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 PROCESSES = []
@@ -110,8 +110,8 @@ try:
     (WORK/"pg").mkdir()
     (WORK/"socket").mkdir()
     ENV.update(PGDATA=str(WORK/"pg"), PGHOST=str(WORK/"socket"), PGPORT=str(free_port()))
-    run(["initdb","--no-locale","--auth=trust"],label="isolated cluster")
-    run(["pg_ctl","-D",WORK/"pg","-l",REPORT/"postgres.log","-o",f"-k {WORK/'socket'} -c listen_addresses= -p {ENV['PGPORT']}","-w","start"])
+    run(["initdb","--no-locale","--auth=trust","--data-checksums"],label="isolated cluster")
+    run(["pg_ctl","-D",WORK/"pg","-l",REPORT/"postgres.log","-o",f"-k {WORK/'socket'} -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -p {ENV['PGPORT']}","-w","start"])
     PG_STARTED = True
     run(["createdb","foundation"])
     run(["createuser","sinex_writer"])
@@ -128,12 +128,20 @@ try:
         run([admin_binary,"admin","schema","--connection-file",WORK/"admin"]),
         run([admin_binary,"admin","schema","--connection-file",WORK/"admin","--check"]),
         run([admin_binary,"admin","schema","--connection-file",WORK/"admin"])))
+    def database_contract():
+        actual = run(["psql", admin, "--no-psqlrc", "--tuples-only", "--no-align", "-v", "ON_ERROR_STOP=1", "--command", "SELECT json_build_object('postgres_version',version(),'server_version_num',current_setting('server_version_num'),'data_checksums',current_setting('data_checksums'),'shared_preload_libraries',current_setting('shared_preload_libraries'),'timescaledb_version',(SELECT extversion FROM pg_extension WHERE extname='timescaledb'))"], label="actual isolated database contract")
+        observed = json.loads(actual.stdout)
+        assert int(observed["server_version_num"]) >= 180000
+        assert observed["data_checksums"] == "on"
+        assert "timescaledb" in [name.strip() for name in observed["shared_preload_libraries"].split(",")]
+        assert observed["timescaledb_version"], "canonical extension absent"
+    scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
     scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd"],label="pure and configuration contracts")))
     ENV.update(SINEX_TEST_ADMIN_URL=admin,SINEX_TEST_WRITER_URL=writer,SINEX_TEST_READER_URL=reader,SINEX_TEST_STORE_DIR=str(WORK/"proof-store"))
-    scenario("real role grants, writer admission and restart", lambda: run(["cargo","test","--locked","-p","sinex-store","--features","product","--test","postgres","--","--ignored","--nocapture"], label="real restricted roles and durable admission"))
+    scenario("canonical hypertables, real role grants, writer admission and restart", lambda: run(["cargo","test","--locked","-p","sinex-store","--features","product","--test","postgres","--","--ignored","--nocapture"], label="real restricted roles and durable admission"))
     port=free_port()
     endpoint=f"http://127.0.0.1:{port}/rpc"
     conf=WORK/"config.toml"

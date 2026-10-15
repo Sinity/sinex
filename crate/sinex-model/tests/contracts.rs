@@ -76,3 +76,21 @@ fn tagged_empty_variants_reject_fields_from_other_states() {
         .is_err()
     );
 }
+
+#[test]
+fn bounded_time_preserves_equal_endpoints_and_rejects_reversed_bounds() {
+    let at = time::OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+    assert!(
+        TsOrig::from_record_field(at, "observed_at", TimePrecision::Bounded { until: at }).is_ok()
+    );
+    assert!(
+        TsOrig::from_record_field(
+            at,
+            "observed_at",
+            TimePrecision::Bounded {
+                until: at - time::Duration::NANOSECOND
+            },
+        )
+        .is_err()
+    );
+}

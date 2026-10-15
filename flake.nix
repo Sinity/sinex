@@ -4,19 +4,23 @@
   outputs = { self, nixpkgs }:
     let
       system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; };
+      pkgs = import nixpkgs {
+        inherit system;
+        config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "timescaledb" ];
+      };
+      postgres = pkgs.postgresql_18.withPackages (p: [ p.timescaledb ]);
       package = pkgs.rustPlatform.buildRustPackage {
         pname = "sinex-foundation";
         version = "0.1.0";
         src = ./.;
         cargoLock.lockFile = ./Cargo.lock;
-        nativeBuildInputs = [ pkgs.postgresql_18 ];
+        nativeBuildInputs = [ postgres ];
         preBuild = ''
           export PGDATA=$(mktemp -d)
           export PGHOST=$(mktemp -d)
           export PGPORT=55439
-          initdb --no-locale --auth=trust > /dev/null
-          pg_ctl -D "$PGDATA" -o "-k $PGHOST -c listen_addresses= -p $PGPORT" -w start > /dev/null
+          initdb --no-locale --auth=trust --data-checksums > /dev/null
+          pg_ctl -D "$PGDATA" -o "-k $PGHOST -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -p $PGPORT" -w start > /dev/null
           trap 'pg_ctl -D "$PGDATA" -m immediate -w stop >/dev/null || true' EXIT
           createdb foundation
           createuser sinex_writer
@@ -33,7 +37,7 @@
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ pkgs.cargo pkgs.rustc pkgs.rustfmt pkgs.clippy pkgs.postgresql_18 pkgs.python3 pkgs.pkg-config ];
+        packages = [ pkgs.cargo pkgs.rustc pkgs.rustfmt pkgs.clippy postgres pkgs.python3 pkgs.pkg-config ];
         shellHook = "export CARGO_TARGET_DIR=\"$PWD/target\"";
       };
     };
