@@ -104,3 +104,11 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.startup_coverage_acceptance]
+description = "Packaged initial configured-source coverage under a real owned SQLite read lock"
+exec = ["python3", "tests/foundation.py", "--packaged", "--startup-coverage"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

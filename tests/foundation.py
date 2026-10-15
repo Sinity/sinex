@@ -18,12 +18,15 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--packaged", action="store_true", help="build and exercise the Nix package entrypoints")
+parser.add_argument("--startup-coverage", action="store_true", help="qualify configured initial source coverage before its first read")
 parser.add_argument("--atuin", action="store_true", help="qualify retained synthetic Atuin through real clients")
 parser.add_argument("--demo-spec", type=Path, help="read-only specification Git repository for the pinned Kestrel driver")
 parser.add_argument("--demo-boundaries", action="store_true", help="qualify observed writer boundary kills using the pinned fixture")
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.startup_coverage and not OPTIONS.packaged:
+    parser.error("initial coverage qualification requires --packaged")
 if OPTIONS.demo_spec and not OPTIONS.packaged:
     parser.error("the demonstration requires --packaged")
 if (OPTIONS.demo_control or OPTIONS.demo_boundaries or OPTIONS.demo_provider_loss) and not OPTIONS.demo_spec:
@@ -39,6 +42,8 @@ SCENARIOS = []
 PLANNED = ["cold query-free admin build", "canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "checked runtime build and pure contracts", "canonical hypertables, real role grants, writer admission and restart", "invalid and unsupported config fail before startup", "occupied endpoint leaves unowned resources untouched", "actual daemon CLI transport and truthful scope", "partial start cannot steal writer and clean shutdown releases ownership"]
 if OPTIONS.atuin:
     PLANNED = PLANNED[:4] + ["Atuin retained source and real-client query", "Atuin repeat and late open-row update", "Atuin soft delete and source evidence", "Atuin empty malformed and unavailable outcomes", "Atuin restart and bounded retained cursor"]
+if OPTIONS.startup_coverage:
+    PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "unconfigured empty coverage", "configured blocked first read and recovery", "configured blocked empty read and restart", "missing source stays unavailable without creation"]
 if OPTIONS.demo_spec:
     PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "pinned independent fixture preparation", "Kestrel base actual answers", "Kestrel repeated snapshot", "Kestrel append at the same source path", "Kestrel empty actual answers", "Kestrel malformed actual answers"]
 if OPTIONS.demo_boundaries:
@@ -130,7 +135,7 @@ try:
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    if not OPTIONS.demo_spec: scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
     (WORK/"pg").mkdir()
     (WORK/"socket").mkdir()
     ENV.update(PGDATA=str(WORK/"pg"), PGHOST=str(WORK/"socket"), PGPORT=str(free_port()))
@@ -146,7 +151,7 @@ try:
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=BIN_DIR/"sinexd" if OPTIONS.demo_spec else ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if OPTIONS.demo_spec or OPTIONS.startup_coverage else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
     scenario("canonical schema cold apply and idempotent check", lambda: (
         run([admin_binary,"admin","schema","--connection-file",WORK/"admin"]),
@@ -161,7 +166,7 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    if not OPTIONS.demo_spec: scenario("checked runtime build and pure contracts", lambda: (
+    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage): scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
     if not OPTIONS.packaged:
@@ -171,7 +176,10 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.demo_spec:
+    if OPTIONS.startup_coverage:
+        import startup_coverage_cases
+        startup_coverage_cases.exercise(globals())
+    elif OPTIONS.demo_spec:
         if OPTIONS.demo_boundaries or OPTIONS.demo_provider_loss:
             import boundary_cases
             boundary_cases.exercise(globals(), provider_loss=OPTIONS.demo_provider_loss)

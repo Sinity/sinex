@@ -98,16 +98,20 @@ pub async fn serve(
     );
     let (source_stop, source_shutdown) = tokio::sync::watch::channel(false);
     let (source_ended, mut source_ended_rx) = tokio::sync::watch::channel(false);
-    let mut source = config.atuin.clone().map(|atuin| {
-        let rules = config.privacy_rules.iter().map(|r| r.rule()).collect();
+    let mut source = if let Some(atuin) = config.atuin.clone() {
+        let rules: Vec<_> = config.privacy_rules.iter().map(|r| r.rule()).collect();
         let admission = store.admission.clone();
+        let observation = crate::atuin::begin_poll(&atuin.path, &rules, &admission).await?;
         let ended = source_ended.clone();
-        tokio::spawn(async move {
-            let result = crate::atuin::run(atuin, rules, admission, source_shutdown).await;
+        Some(tokio::spawn(async move {
+            let result =
+                crate::atuin::run(atuin, rules, admission, source_shutdown, observation).await;
             let _ = ended.send(true);
             result
-        })
-    });
+        }))
+    } else {
+        None
+    };
     let state = Arc::new(App {
         config,
         token,

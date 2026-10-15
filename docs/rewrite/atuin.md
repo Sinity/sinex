@@ -20,6 +20,8 @@ created_by = "operator"
 
 Privacy patterns are Rust regular expressions with literal replacement text. They apply before storing event payloads and again on read. Source identity and row fingerprints use original unmasked fields. Retained canonical rows are explicitly plain evidence. Guarded/sealed storage and privacy administration are unavailable.
 
+Before RPC admission at startup, the writer commits the configured input and an empty `reading` observation through the normal Atuin admission path. The first poll reuses that observation. Each subsequent poll likewise commits its reading observation before SQLite open/read. Queries therefore report incomplete coverage while the initial open/read is blocked, including after a previously completed zero-row poll and restart. With no configured or retained inputs, empty coverage remains complete. Only reaching EOF establishes completed zero; open/read errors establish unavailable.
+
 Each poll opens SQLite read-only without the create flag and reads one consistent transaction. The initial implementation performs a full row pass every poll. It yields at most 64 rows and 1 MiB of canonical row bytes per writer step. This keeps late open-row updates visible without guessing a trailing window, but does not implement the final new/open/daily-full scheduler, transaction-time adaptation or resource acceptance. A single row over the byte budget leaves the poll unavailable, with no completed-zero claim.
 
 The input registry identifies the source database separately from its acquired row materials. Canonical sorted-key JSON lines retain SQLite values and an `_from` observation/table/rowid reference. Rowid is acquisition evidence only; equivalence uses the registered input and Atuin native ID. `_end_not_recorded` records whether a later command in the same session proves that an unfinished row cannot close. Fingerprints exclude the acquisition observation and rowid. Later changed readings supersede their prior event; soft deletes become removed readings, preserved in history and absent from ordinary event queries. Unknown exit values stay null. Integer source timestamps and duration values retain nanoseconds; PostgreSQL's timestamp carries the microsecond portion and `ts_orig_tiebreak` carries the remaining nanoseconds.
@@ -47,7 +49,7 @@ SQLite snapshots and formal task-routing/M0/M1 gates remain open.
 ## Observed durability boundaries
 
 The explicit qualification socket control holds the real writer at three named
-instructions: `retained-fsynced` after the canonical open-part write and
+data-bearing instructions (empty reading registration, EOF and unavailable accounting do not rendezvous): `retained-fsynced` after the canonical open-part write and
 `sync_all` have returned, before the admission transaction; `transaction-staged`
 after events, failures, durable length, observation accounting and cursor have
 been staged in that transaction, before COMMIT; and `transaction-committed`

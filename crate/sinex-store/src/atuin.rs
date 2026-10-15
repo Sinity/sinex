@@ -90,6 +90,7 @@ pub fn mask(value: &mut Value, rules: &[PrivacyRule]) -> Result<()> {
 
 /// One bounded read from the source's consistent SQLite transaction. Fields name acquisition
 /// evidence, never synthetic event IDs. Admission derives the event type and equivalence key.
+#[derive(Clone)]
 pub struct AtuinStep {
     pub observation: Uuid,
     pub observed_at: String,
@@ -443,19 +444,25 @@ impl WriterPool {
         sqlx::query("INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,$2,$3,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,updated_at=now()")
             .bind(SOURCE).bind(input.to_string()).bind(&summary).execute(&mut *tx).await?;
         let committed_evidence = json!({"custody":boundary_evidence,"progress":summary});
-        crate::QualificationBoundary::reach(
-            &mut self.qualification,
-            "transaction-staged",
-            committed_evidence.clone(),
-        )
-        .await?;
+        // Empty reading registration and EOF/unavailable accounting are not
+        // retained data boundaries. Keep qualification on data-bearing steps.
+        if !bytes.is_empty() {
+            crate::QualificationBoundary::reach(
+                &mut self.qualification,
+                "transaction-staged",
+                committed_evidence.clone(),
+            )
+            .await?;
+        }
         tx.commit().await?;
-        crate::QualificationBoundary::reach(
-            &mut self.qualification,
-            "transaction-committed",
-            committed_evidence,
-        )
-        .await?;
+        if !bytes.is_empty() {
+            crate::QualificationBoundary::reach(
+                &mut self.qualification,
+                "transaction-committed",
+                committed_evidence,
+            )
+            .await?;
+        }
         if step.complete {
             let open: Option<Uuid> = sqlx::query_scalar("SELECT id FROM raw.source_material_registry WHERE input_id=$1 AND status='capturing' LIMIT 1").bind(input).fetch_optional(&mut self.connection).await?;
             if let Some(id) = open {

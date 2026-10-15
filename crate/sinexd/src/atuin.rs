@@ -16,24 +16,28 @@ pub async fn run(
     rules: Vec<PrivacyRule>,
     admission: Admission,
     mut stop: tokio::sync::watch::Receiver<bool>,
+    mut observation: AtuinStep,
 ) -> Result<(), String> {
     loop {
         if *stop.borrow() {
             return Ok(());
         }
-        poll(&config.path, &rules, &admission, &stop).await?;
+        poll(&config.path, observation, &admission, &stop).await?;
         tokio::select! {
             changed = stop.changed() => { let _ = changed; return Ok(()); }
             _ = tokio::time::sleep(std::time::Duration::from_millis(config.poll_interval_ms)) => {}
         }
+        observation = begin_poll(&config.path, &rules, &admission).await?;
     }
 }
-async fn poll(
+
+/// Commit the configured input and its reading observation before SQLite I/O.
+/// Startup awaits only this writer admission, never the provider read.
+pub async fn begin_poll(
     path: &Path,
     rules: &[PrivacyRule],
     admission: &Admission,
-    stop: &tokio::sync::watch::Receiver<bool>,
-) -> Result<(), String> {
+) -> Result<AtuinStep, String> {
     let observation = Uuid::now_v7();
     let observed_at = OffsetDateTime::now_utc()
         .format(&Rfc3339)
@@ -45,15 +49,34 @@ async fn poll(
         }
         Err(_) => json!({"path":path,"stat":"unavailable"}),
     };
-    let make_step = |rows, complete, unavailable| AtuinStep {
+    let step = AtuinStep {
         observation,
-        observed_at: observed_at.clone(),
-        locator: locator.clone(),
-        metadata: metadata.clone(),
+        observed_at,
+        locator,
+        metadata,
+        rows: vec![],
+        complete: false,
+        unavailable: None,
+        privacy_rules: rules.to_vec(),
+    };
+    admission
+        .submit_atuin(step.clone())
+        .await
+        .map_err(|_| "Atuin reading observation could not commit")?;
+    Ok(step)
+}
+
+async fn poll(
+    path: &Path,
+    observation: AtuinStep,
+    admission: &Admission,
+    stop: &tokio::sync::watch::Receiver<bool>,
+) -> Result<(), String> {
+    let make_step = |rows, complete, unavailable| AtuinStep {
         rows,
         complete,
         unavailable,
-        privacy_rules: rules.to_vec(),
+        ..observation.clone()
     };
     let options = SqliteConnectOptions::new()
         .filename(path)
