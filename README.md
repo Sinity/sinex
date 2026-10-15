@@ -51,3 +51,26 @@ The client requires its explicit endpoint and has no installed-service fallback.
 Use declared AgentCTL `foundation_build`, `foundation_acceptance`, `foundation_package`, and `foundation_package_acceptance` operations from this checkout. `foundation_format` formats owned workspace code before qualification. The acceptance runner owns a fresh PostgreSQL cluster and launches real built entrypoints; `foundation_package_acceptance` explicitly selects the Nix package binaries; it records command exits, raw output and scenario results in private scratch. Failures still emit `result.json` and return nonzero. It never targets production services.
 
 `atuin_acceptance` and `atuin_package_acceptance` exercise retained synthetic Atuin through actual daemon and CLI processes. The original real-role integration test separately exercises event constraints, compression and definition-drift refusals; its synthetic proof API is not a source route. Exact package/build/client and operational criteria remain open until their reported checks actually pass. No source replacement PR, host activation, consumer update or external task migration is performed by these commands.
+
+
+The `kestrel_demo` operation takes the read-only specification Git repository as its
+required argument (after `--`). It runs the unchanged preparer and nanosecond-exact
+oracle pinned to `ba29767740bc70fbb8eaffcfd99127ceb1e7e4ea`, selecting packaged
+binaries with no installed-service fallback. It first requires real candidate
+launch failure and deliberately corrupted captured-answer runs to fail with
+retained diagnostics, then exercises base, repeated, same-path append, empty and
+malformed Kestrel inputs through actual source admission and CLI queries. It
+reuses the foundation harness's isolated PostgreSQL owner and result store;
+unchanged foundational regression qualification is separate. `xtask demo
+<workspace> <spec-repository> [--controls]` is the corresponding frontend and
+requires explicit source paths, including when xtask itself is packaged.
+
+Each run retains exact prepared/exercised synthetic inputs, oracle source and
+digests, expected and actual answers, command exits, source observations and
+owned process logs. `comparisons.json` and `diagnostic.txt` identify expected and
+actual values; `result.json` marks dependent cases unrun on failure. State is
+removed only after successful evidence capture; failed owned state is retained
+with PostgreSQL stopped. These controls qualify failure reporting, not kills at
+observed retention, admission or index boundaries. Physical SQLite snapshots,
+a general read model/index, client-visible exact malformed-record reasons,
+formal M1 acceptance and task-routing gates remain open.

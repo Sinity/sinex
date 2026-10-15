@@ -77,3 +77,12 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.kestrel_demo]
+description = "Packaged actual Kestrel paths plus launch and captured-answer reporting controls; requires a specification Git repository argument"
+exec = ["python3", "tests/demo.py", "--controls"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

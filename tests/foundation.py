@@ -19,7 +19,13 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--packaged", action="store_true", help="build and exercise the Nix package entrypoints")
 parser.add_argument("--atuin", action="store_true", help="qualify retained synthetic Atuin through real clients")
+parser.add_argument("--demo-spec", type=Path, help="read-only specification Git repository for the pinned Kestrel driver")
+parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.demo_spec and not OPTIONS.packaged:
+    parser.error("the demonstration requires --packaged")
+if OPTIONS.demo_control and not OPTIONS.demo_spec:
+    parser.error("--demo-control requires --demo-spec")
 BIN_DIR = Path(os.environ.get("SINEX_FOUNDATION_BIN_DIR", str(ROOT/"target/debug")))
 WORK = Path(tempfile.mkdtemp(prefix="sinex-foundation-", dir="/realm/tmp/work"))
 REPORT = Path(os.environ.get("SINEX_FOUNDATION_REPORT_DIR", str(WORK.parent / (WORK.name + "-result"))))
@@ -29,6 +35,8 @@ SCENARIOS = []
 PLANNED = ["cold query-free admin build", "canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "checked runtime build and pure contracts", "canonical hypertables, real role grants, writer admission and restart", "invalid and unsupported config fail before startup", "occupied endpoint leaves unowned resources untouched", "actual daemon CLI transport and truthful scope", "partial start cannot steal writer and clean shutdown releases ownership"]
 if OPTIONS.atuin:
     PLANNED = PLANNED[:4] + ["Atuin retained source and real-client query", "Atuin repeat and late open-row update", "Atuin soft delete and source evidence", "Atuin empty malformed and unavailable outcomes", "Atuin restart and bounded retained cursor"]
+if OPTIONS.demo_spec:
+    PLANNED = ["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "pinned independent fixture preparation", "Kestrel base actual answers", "Kestrel repeated snapshot", "Kestrel append at the same source path", "Kestrel empty actual answers", "Kestrel malformed actual answers"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -53,7 +61,7 @@ def run(args, *, expected=0, env=None, label=None):
     (REPORT / f"{index:03}.stdout").write_text(result.stdout)
     (REPORT / f"{index:03}.stderr").write_text(result.stderr)
     COMMANDS.append({"argv": [str(a) for a in args], "exit": result.returncode, "expected_exit": expected, "label": label})
-    if result.returncode != expected:
+    if result.returncode not in (expected if isinstance(expected, tuple) else (expected,)):
         raise AssertionError(f"command {index} ({label or args[0]}) exit {result.returncode}, expected {expected}; see retained output")
     return result
 
@@ -109,9 +117,12 @@ try:
             assert len(outputs) == 1, "package build did not return exactly one output"
             BIN_DIR = Path(outputs[0]) / "bin"
             assert all((BIN_DIR/name).is_file() for name in ["sinexd", "sinexctl"]), "package entrypoints absent"
+            if OPTIONS.demo_spec:
+                run([BIN_DIR/"xtask", "demo", ROOT, "--help"], label="packaged xtask driver forwarding")
+                run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not OPTIONS.demo_spec: scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
     (WORK/"pg").mkdir()
     (WORK/"socket").mkdir()
     ENV.update(PGDATA=str(WORK/"pg"), PGHOST=str(WORK/"socket"), PGPORT=str(free_port()))
@@ -127,7 +138,7 @@ try:
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if OPTIONS.demo_spec else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
     scenario("canonical schema cold apply and idempotent check", lambda: (
         run([admin_binary,"admin","schema","--connection-file",WORK/"admin"]),
@@ -142,7 +153,7 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    scenario("checked runtime build and pure contracts", lambda: (
+    if not OPTIONS.demo_spec: scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
     if not OPTIONS.packaged:
@@ -152,7 +163,10 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.atuin:
+    if OPTIONS.demo_spec:
+        import demo_cases
+        demo_cases.exercise(globals())
+    elif OPTIONS.atuin:
         import atuin_cases
         atuin_cases.exercise(globals())
     else:
@@ -257,12 +271,14 @@ finally:
         if result.returncode: success=False; failure="owned PostgreSQL shutdown failed"
     revision=subprocess.run(["git","rev-parse","HEAD"],cwd=ROOT,capture_output=True,text=True).stdout.strip()
     used = {c["argv"][0] for c in COMMANDS} | {p["argv"][0] for p in PROCESSES}
-    binary_hashes={name:hashlib.sha256((BIN_DIR/name).read_bytes()).hexdigest() for name in ["sinexd","sinexctl"] if (BIN_DIR/name).exists() and str(BIN_DIR/name) in used}
+    binary_hashes={name:hashlib.sha256((BIN_DIR/name).read_bytes()).hexdigest() for name in ["sinexd","sinexctl","xtask"] if (BIN_DIR/name).exists() and str(BIN_DIR/name) in used}
     for name in PLANNED:
         if name not in {s["name"] for s in SCENARIOS}:
             SCENARIOS.append({"name":name,"outcome":"unrun","reason":failure if not success else "not exercised"})
     for record,(proc,_,_) in zip(PROCESSES,CHILDREN): record["exit"]=proc.returncode
-    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else "development_build","binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"runtime_state":"owned disposable state removed after captured evidence" if success else str(WORK),"unimplemented":["formal M1/demo driver and fault-boundary qualification","MCP","confirmed delivery","full target schema and Timescale","sealed lifecycle","owner-tag shared dependency publication"]}
+    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else "development_build","binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"runtime_state":"owned disposable state removed after captured evidence" if success else str(WORK),"unimplemented":["formal M1 acceptance and observed retention/admission/index fault boundaries","MCP","confirmed delivery","full target schema and Timescale","sealed lifecycle","owner-tag shared dependency publication"]}
+    if OPTIONS.demo_spec:
+        report["demo"]={"oracle_revision":__import__("demo_cases").ORACLE_REVISION,"control":OPTIONS.demo_control,"scope":"packaged Atuin raw-event driver; canonical row material, no SQLite snapshot retention or read-model index"}
     (REPORT/"result.json").write_text(json.dumps(report,indent=2)+"\n")
     if success: shutil.rmtree(WORK)
     print(json.dumps({"success":success,"report":str(REPORT/"result.json"),"scenarios":len(SCENARIOS)}))
