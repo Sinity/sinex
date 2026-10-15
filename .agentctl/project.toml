@@ -146,3 +146,11 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.credential_output_acceptance]
+description = "Packaged fixed credential presentation with empty optional rules"
+exec = ["python3", "tests/foundation.py", "--packaged", "--credential-output"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

@@ -9,6 +9,8 @@ default = ["runtime"]
 runtime = ["sinex-store/product", "dep:axum", "dep:futures-util"]
 
 [dependencies]
+# Temporary qualification binding. Integration replaces this exact owner source with its immutable remote tag.
+credential-output = { git = "file:///realm/worktree/polylogue-credential-output-20261015", rev = "0fc160e803018c6c65b36a20630d95f7a18b6efb" }
 sinex-model = { path = "../sinex-model" }
 sinex-protocol = { path = "../sinex-protocol" }
 sinex-store = { path = "../sinex-store", default-features = false }

@@ -130,3 +130,5 @@ for the concrete page fields, fixed 100-row size and source-coverage distinction
 
 
 `retained_replay_acceptance` qualifies the packaged retained-material replay subset, including a changed historical interpretation, restored omission, provider removal, bounded replacement kills, automatic owner continuation, current authorization, cancellation and refusal controls. The [owning replay contract](docs/rewrite/retained-replay.md) defines direct run, optional preview basis, request identity, progress/effect accounting and unsupported shapes.
+
+Registered readers enforce the fixed credential presentation floor independently of optional admission rules. [Credential output scope and refusal semantics](docs/credential-output.md) describe logical strings, opaque identities, row flags and qualification.

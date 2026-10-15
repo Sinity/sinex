@@ -18,6 +18,9 @@
         src = ./.;
         cargoLock = {
           lockFile = ./Cargo.lock;
+          # Temporary exact local owner Git binding for qualification only.
+          # Integration removes this when the remote immutable tag/hash lands.
+          allowBuiltinFetchGit = true;
           outputHashes."hashed-blobs-0.1.0" = "sha256-pXXYpwvsA0xtEhHshHSgatLdf+bFnZmlkQcdpv6HlKw=";
         };
         nativeBuildInputs = [ postgres ];

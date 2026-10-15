@@ -362,6 +362,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
 
 [[package]]
+name = "credential-output"
+version = "0.1.0"
+source = "git+file:///realm/worktree/polylogue-credential-output-20261015?rev=0fc160e803018c6c65b36a20630d95f7a18b6efb#0fc160e803018c6c65b36a20630d95f7a18b6efb"
+
+[[package]]
 name = "crossbeam-queue"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1719,6 +1724,7 @@ dependencies = [
  "axum",
  "blake3",
  "clap",
+ "credential-output",
  "fs2",
  "futures-util",
  "schemars",

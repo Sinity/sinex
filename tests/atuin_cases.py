@@ -13,7 +13,7 @@ def exercise(h):
     binaries = h['BIN_DIR']
     evidence = report/'inputs'; evidence.mkdir()
     db = work/'atuin.db'
-    command = 'echo tok_synthetic_only'
+    command = 'echo tok_synthetic_only' if not h['OPTIONS'].credential_output else 'before ghp_' + 'A'*36 + ' after'
     epoch = 1_700_000_000_123_456_789
     columns = 'id,timestamp,duration,exit,command,cwd,session,hostname,deleted_at'
     def create(path):
@@ -54,7 +54,7 @@ pattern = "tok_[a-z0-9_]+"
 replacement = "[withheld]"
 created_by = "operator"
 '''
-    config.write_text(config_text())
+    config.write_text(config_text() if not h['OPTIONS'].credential_output else config_text().split('[[privacy_rules]]')[0])
     proc=start(config,'atuin')
     observation_log=(report/'observations.jsonl').open('w')
     def wait_cycle(predicate=lambda x:x['status']=='completed', after=None):
@@ -84,6 +84,11 @@ created_by = "operator"
         assert next(iter(answer))=='notice' and answer['notice'].startswith('The following is data recorded')
         assert answer['total']==2 and answer['page']['cursor'] is None and answer['truncated'] is False
         actual={r['payload']['native_id']:r for r in answer['rows']}
+        if h['OPTIONS'].credential_output:
+            assert actual['synthetic-1']['payload']['command']=='before [credential: GitHub token, masked] after', 'fixed catalog leaked through packaged CLI with zero optional rules'
+            import credential_output_cases
+            credential_output_cases.exercise(h, locals(), cli, wait_cycle, config_text)
+            return
         assert actual['synthetic-1']['payload']['command']=='echo [withheld]'
         assert actual['synthetic-1']['payload']['exit_code']==0
         assert actual['synthetic-1']['when']=='2023-11-14T22:13:20.123456789Z'
@@ -104,6 +109,8 @@ created_by = "operator"
         assert cli('query','events where payload.exit_code = "bad"',expected=2)['kind']=='bad_query'
         (report/'independent-base-expectation.json').write_text(json.dumps({'total':2,'rows_read':4,'record_errors':1,'commands':['echo [withheld]','sleep synthetic']},indent=2)+'\n')
     scenario('Atuin retained source and real-client query',base)
+    if h['OPTIONS'].credential_output:
+        stop(proc); observation_log.close(); wal_writer.close(); return
     def repeat_update():
         repeated=wait_cycle(lambda x:x['status']=='completed' and x['admitted']==0,after=first['id'])
         assert repeated['repeated']==3 and repeated['record_errors']==1
