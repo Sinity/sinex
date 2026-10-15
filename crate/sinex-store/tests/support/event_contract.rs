@@ -15,6 +15,7 @@ struct Case<'a> {
     until: Option<&'a str>,
     clock: &'a str,
     key: Option<&'a str>,
+    suspect: Option<&'a str>,
 }
 impl Case<'_> {
     fn derived(parent: Uuid) -> Self {
@@ -29,6 +30,7 @@ impl Case<'_> {
             until: None,
             clock: "sinex",
             key: Some("synthetic:derived"),
+            suspect: None,
         }
     }
 }
@@ -38,7 +40,7 @@ async fn insert_into(
     c: &Case<'_>,
     reflection: bool,
 ) -> std::result::Result<(), sqlx::Error> {
-    let sql="INSERT INTO core.events (id,source,event_type,payload,commit_seq,source_material_id,anchor_byte,source_event_ids,producer_version_id,run_id,record_hash,ts_orig,ts_quality,ts_precision,ts_orig_until,ts_clock,equivalence_key) VALUES ($1,'synthetic.schema','synthetic.observed','{}',1000000,$2,CASE WHEN $2::uuid IS NULL THEN NULL ELSE 0 END,$3,$4,$5,$6,$7::text::timestamptz,$8,$9,$10::text::timestamptz,$11,$12)".replace("core.events",if reflection {"reflection.events"} else {"core.events"});
+    let sql="INSERT INTO core.events (id,source,event_type,payload,commit_seq,source_material_id,anchor_byte,source_event_ids,producer_version_id,run_id,record_hash,ts_orig,ts_quality,ts_precision,ts_orig_until,ts_clock,equivalence_key,time_suspect) VALUES ($1,'synthetic.schema','synthetic.observed','{}',1000000,$2,CASE WHEN $2::uuid IS NULL THEN NULL ELSE 0 END,$3,$4,$5,$6,$7::text::timestamptz,$8,$9,$10::text::timestamptz,$11,$12,$13)".replace("core.events",if reflection {"reflection.events"} else {"core.events"});
     sqlx::query(&sql)
         .bind(c.id)
         .bind(c.material)
@@ -52,6 +54,7 @@ async fn insert_into(
         .bind(c.until)
         .bind(c.clock)
         .bind(c.key)
+        .bind(c.suspect)
         .execute(conn)
         .await?;
     Ok(())
@@ -109,6 +112,51 @@ pub async fn verify(admin: &str, reader: &str, parent: Uuid, material: Uuid) -> 
     let mut c = Case::derived(parent);
     c.quality = None;
     denied(&mut conn, run, &c, "23502").await?;
+    // Omitted capture origin is not repaired to the Sinex clock by a database default.
+    for target in ["core.events", "reflection.events"] {
+        let sql = "INSERT INTO core.events (id,source,event_type,payload,commit_seq,source_event_ids,producer_version_id,run_id,record_hash,ts_orig,ts_quality,equivalence_key) VALUES ($1,'synthetic.schema','synthetic.observed','{}',1000000,$2,$3,$4,$5,'2000-01-01T00:00:00Z','captured','synthetic:missing-clock')".replace("core.events", target);
+        let error = sqlx::query(&sql)
+            .bind(Uuid::now_v7())
+            .bind(vec![parent])
+            .bind(Uuid::now_v7())
+            .bind(run)
+            .bind(vec![0_u8; 32])
+            .execute(&mut conn)
+            .await
+            .expect_err("captured INSERT must supply its clock");
+        let db = error
+            .as_database_error()
+            .expect("missing clock fails in database");
+        assert_eq!(db.code().as_deref(), Some("23502"));
+        assert_eq!(
+            db.downcast_ref::<sqlx::postgres::PgDatabaseError>()
+                .column(),
+            Some("ts_clock")
+        );
+    }
+    // Both hypertables enforce time/quality pairing independently of constructors.
+    for reflection in [false, true] {
+        for (original, quality) in [
+            (Some("2000-01-01T00:00:00Z"), Some("unknown")),
+            (None, Some("intrinsic")),
+            (None, Some("captured")),
+            (None, Some("staged")),
+            (None, None),
+        ] {
+            let mut c = Case::derived(parent);
+            c.original = original;
+            c.quality = quality;
+            let error = insert_into(&mut conn, run, &c, reflection)
+                .await
+                .expect_err("mismatched time and quality must fail");
+            assert_eq!(
+                error.as_database_error().and_then(|e| e.code()).as_deref(),
+                Some(if quality.is_none() { "23502" } else { "23514" })
+            );
+        }
+        let c = Case::derived(parent);
+        insert_into(&mut conn, run, &c, reflection).await?;
+    }
     let valid = Uuid::now_v7();
     let mut v4 = *valid.as_bytes();
     v4[6] = (v4[6] & 15) | 0x40;
@@ -179,6 +227,7 @@ pub async fn verify(admin: &str, reader: &str, parent: Uuid, material: Uuid) -> 
     denied(&mut conn, run, &c, "23514").await?;
     let mut c = Case::derived(parent);
     c.original = Some("2000-01-02T00:00:00Z");
+    c.quality = Some("intrinsic");
     c.precision = "bounded";
     c.until = Some("2000-01-01T00:00:00Z");
     denied(&mut conn, run, &c, "23514").await?;
@@ -194,7 +243,31 @@ pub async fn verify(admin: &str, reader: &str, parent: Uuid, material: Uuid) -> 
     external.original = Some("2100-01-01T00:00:00Z");
     external.quality = Some("captured");
     external.clock = "producer";
+    let at = serde_json::from_value(serde_json::json!([2100, 1, 0, 0, 0, 0, 0, 0, 0]))?;
+    let projected = sinex_model::events::TsOrig::captured(
+        at,
+        sinex_model::events::CaptureClock::Producer,
+        sinex_model::events::TimePrecision::Instant,
+    )?
+    .project(
+        sinex_model::events::EventId::try_from(external.id)?,
+        sinex_model::events::CaptureClock::Producer,
+    )?;
+    assert_eq!(projected.quality, external.quality.unwrap());
+    assert_eq!(projected.clock.label(), external.clock);
+    assert_eq!(projected.suspect, Some("future"));
+    external.suspect = projected.suspect;
     insert(&mut conn, run, &external).await?;
+    let stored: (String, String, String) =
+        sqlx::query_as("SELECT ts_orig::text,ts_clock,time_suspect FROM core.events WHERE id=$1")
+            .bind(external.id)
+            .fetch_one(&mut conn)
+            .await?;
+    assert!(stored.0.starts_with("2100-01-01 00:00:00"));
+    assert_eq!(
+        (stored.1.as_str(), stored.2.as_str()),
+        ("producer", "future")
+    );
     let mut bounded = Case::derived(parent);
     bounded.original = Some("2000-01-01T00:00:00Z");
     bounded.quality = Some("intrinsic");
@@ -208,7 +281,7 @@ pub async fn verify(admin: &str, reader: &str, parent: Uuid, material: Uuid) -> 
     .bind(material)
     .fetch_one(&mut conn)
     .await?;
-    sqlx::query("INSERT INTO core.events (id,source,event_type,payload,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id,ts_quality) SELECT id,source,event_type,payload,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id,ts_quality FROM core.events WHERE id=$1 ON CONFLICT(id) DO NOTHING").bind(parent).execute(&mut conn).await?;
+    sqlx::query("INSERT INTO core.events (id,source,event_type,payload,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id,ts_quality,ts_clock) SELECT id,source,event_type,payload,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id,ts_quality,ts_clock FROM core.events WHERE id=$1 ON CONFLICT(id) DO NOTHING").bind(parent).execute(&mut conn).await?;
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT parsed_event_count FROM raw.source_material_registry WHERE id=$1"
@@ -317,7 +390,7 @@ pub async fn verify(admin: &str, reader: &str, parent: Uuid, material: Uuid) -> 
     old.quality = Some("intrinsic");
     insert(&mut conn, run, &old).await?;
     // Reflection has its own hypertable; insert explicit non-generated columns.
-    sqlx::query("INSERT INTO reflection.events (id,source,event_type,payload,commit_seq,source_event_ids,producer_version_id,run_id,record_hash,ts_quality,equivalence_key) VALUES ($1,'synthetic.schema','synthetic.observed','{}',1000001,$2,$3,$4,$5,'unknown','synthetic:self')").bind(old.id).bind(vec![parent]).bind(Uuid::now_v7()).bind(run).bind(vec![0_u8;32]).execute(&mut conn).await?;
+    sqlx::query("INSERT INTO reflection.events (id,source,event_type,payload,commit_seq,source_event_ids,producer_version_id,run_id,record_hash,ts_quality,equivalence_key,ts_clock) VALUES ($1,'synthetic.schema','synthetic.observed','{}',1000001,$2,$3,$4,$5,'unknown','synthetic:self','sinex')").bind(old.id).bind(vec![parent]).bind(Uuid::now_v7()).bind(run).bind(vec![0_u8;32]).execute(&mut conn).await?;
     let self_before: serde_json::Value =
         sqlx::query_scalar("SELECT to_jsonb(e) FROM reflection.events e WHERE id=$1")
             .bind(old.id)

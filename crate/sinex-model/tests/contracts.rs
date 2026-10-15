@@ -94,3 +94,73 @@ fn bounded_time_preserves_equal_endpoints_and_rejects_reversed_bounds() {
         .is_err()
     );
 }
+
+#[test]
+fn capture_clock_is_required_and_projection_preserves_evidence() {
+    let id = EventId::new_v7();
+    let future = time::OffsetDateTime::from_unix_timestamp(4_102_444_800).unwrap();
+    let producer = TsOrig::captured(
+        future,
+        CaptureClock::Producer,
+        TimePrecision::Bounded { until: future },
+    )
+    .unwrap();
+    let wire = serde_json::to_value(&producer).unwrap();
+    assert_eq!(
+        serde_json::from_value::<TsOrig>(wire.clone()).unwrap(),
+        producer
+    );
+    let mut missing = wire.clone();
+    missing["quality"]["captured"]
+        .as_object_mut()
+        .unwrap()
+        .remove("clock");
+    assert!(serde_json::from_value::<TsOrig>(missing).is_err());
+    let mut extra = wire;
+    extra["quality"]["captured"]["extra"] = json!(true);
+    assert!(serde_json::from_value::<TsOrig>(extra).is_err());
+    let row = producer.project(id, CaptureClock::Producer).unwrap();
+    assert_eq!(row.at, Some(future));
+    assert_eq!(row.until, Some(future));
+    assert_eq!(row.precision, "bounded");
+    assert_eq!(row.suspect, Some("future"));
+    assert!(producer.project(id, CaptureClock::Sinex).is_err());
+    assert!(
+        TsOrig::captured(future, CaptureClock::Sinex, TimePrecision::Instant)
+            .unwrap()
+            .project(id, CaptureClock::Sinex)
+            .is_err()
+    );
+    let unknown = TsOrig::unknown()
+        .project(id, CaptureClock::Producer)
+        .unwrap();
+    assert_eq!(
+        (unknown.at, unknown.quality, unknown.suspect),
+        (None, "unknown", None)
+    );
+    let intrinsic = TsOrig::from_record_field(future, "observed_at", TimePrecision::Year).unwrap();
+    assert_eq!(
+        intrinsic.project(id, CaptureClock::Sinex).unwrap().at,
+        Some(future)
+    );
+    let (seconds, nanos) = id.as_uuid().get_timestamp().unwrap().to_unix();
+    let boundary = time::OffsetDateTime::from_unix_timestamp(seconds as i64).unwrap()
+        + time::Duration::nanoseconds(nanos.into())
+        + time::Duration::seconds(CAPTURED_FUTURE_SKEW_SECONDS);
+    assert!(
+        TsOrig::captured(boundary, CaptureClock::Sinex, TimePrecision::Instant)
+            .unwrap()
+            .project(id, CaptureClock::Sinex)
+            .is_ok()
+    );
+    assert!(
+        TsOrig::captured(
+            boundary + time::Duration::NANOSECOND,
+            CaptureClock::Sinex,
+            TimePrecision::Instant
+        )
+        .unwrap()
+        .project(id, CaptureClock::Sinex)
+        .is_err()
+    );
+}

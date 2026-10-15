@@ -53,7 +53,7 @@ macro_rules! col {
 
 pub const TIMESCALEDB_VERSION: &str = "2.27.2";
 pub use sinex_model::events::CAPTURED_FUTURE_SKEW_SECONDS;
-const TIME_CLOCK_LABELS: &[&str] = &["sinex", "producer"];
+use sinex_model::events::TIME_CLOCK_LABELS;
 const EVENT_COLUMNS: &[Column] = &[
     col!("id", "uuid"),
     col!("source", "text"),
@@ -66,7 +66,7 @@ const EVENT_COLUMNS: &[Column] = &[
     col!("time_suspect", "text", null),
     col!("ts_precision","text",default "'instant'::text"),
     col!("ts_orig_until", "timestamp with time zone", null),
-    col!("ts_clock","text",default "'sinex'::text"),
+    col!("ts_clock", "text"),
     col!("ts_coided","timestamp with time zone",generated "uuid_extract_timestamp(id)"),
     col!("ts_persisted","timestamp with time zone",default "now()"),
     col!("commit_seq", "bigint"),
@@ -103,6 +103,10 @@ const EVENT_CONSTRAINTS: &[(&str, &str)] = &[
     ),
     ("captured_not_ahead", ""),
     ("event_quality", ""),
+    (
+        "event_time_pair",
+        "CHECK ((ts_orig IS NULL) = (ts_quality = 'unknown'))",
+    ),
     ("event_precision", ""),
     (
         "event_bounded_time",

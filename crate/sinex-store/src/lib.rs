@@ -248,7 +248,7 @@ async fn require_role(connection: &mut PgConnection, role: &str) -> Result<()> {
 
 const COUNTER: &str = "UPDATE core.commit_counter SET seq=seq+1 WHERE one RETURNING seq";
 const MATERIAL: &str = "INSERT INTO raw.source_material_registry (id,material_kind,source_identifier,status,ts_quality,blob_id,total_bytes,durable_bytes) VALUES ($1,'file',$2,'completed','unknown',$3,$4,$4)";
-const EVENT: &str = "INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_quality,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id) VALUES ($1,$2,$3,$4,NULL,'unknown',$5,$6,$7,$8,$9,$10)";
+const EVENT: &str = "INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_quality,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id,ts_precision,ts_orig_until,ts_clock,time_suspect) VALUES ($1,$2,$3,$4,$11::text::timestamptz,$12,$5,$6,$7,$8,$9,$10,$13,$14::text::timestamptz,$15,$16)";
 const LOG: &str = "INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id) VALUES ($1,$2,0,0,1)";
 const PROGRESS: &str = "INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,'synthetic-proof',$2,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,carry=EXCLUDED.carry,updated_at=now()";
 const BLOB_REGISTER: &str = "INSERT INTO core.blobs (id,blake3,size_bytes,root,status) VALUES ($1,$2,$3,$4,'writing') ON CONFLICT (blake3) DO NOTHING";
@@ -443,6 +443,15 @@ impl WriterPool {
         })
         .await??;
         let event_id = Uuid::now_v7();
+        let resolved_time = sinex_model::events::TsOrig::unknown()
+            .project(
+                sinex_model::events::EventId::try_from(event_id)
+                    .map_err(|e| Error::Invalid(e.0))?,
+                sinex_model::events::CaptureClock::Sinex,
+            )
+            .map_err(|e| Error::Invalid(e.0))?;
+        let original = resolved_time.at.map(|at| at.to_string());
+        let until = resolved_time.until.map(|at| at.to_string());
         let material_id = Uuid::now_v7();
         let mut tx = self.connection.begin().await?;
         // UPDATE locks the counter row until commit, assigning visibility order.
@@ -457,7 +466,7 @@ impl WriterPool {
         .execute(&mut *tx)
         .await?;
         sqlx::query!("INSERT INTO raw.source_material_registry (id,material_kind,source_identifier,status,ts_quality,blob_id,total_bytes,durable_bytes) VALUES ($1,'file',$2,'completed','unknown',$3,$4,$4)",material_id,event.source,blob_id,length).execute(&mut *tx).await?;
-        sqlx::query!("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_quality,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id) VALUES ($1,$2,$3,$4,NULL,'unknown',$5,$6,$7,$8,$9,$10)",event_id,event.source,event.event_type,event.payload,seq,material_id,event.anchor_byte,event.ordinal,record_hash,self.run_id).execute(&mut *tx).await?;
+        sqlx::query!("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_quality,commit_seq,source_material_id,anchor_byte,ordinal,record_hash,run_id,ts_precision,ts_orig_until,ts_clock,time_suspect) VALUES ($1,$2,$3,$4,$11::text::timestamptz,$12,$5,$6,$7,$8,$9,$10,$13,$14::text::timestamptz,$15,$16)",event_id,event.source,event.event_type,event.payload,seq,material_id,event.anchor_byte,event.ordinal,record_hash,self.run_id,original,resolved_time.quality,resolved_time.precision,until,resolved_time.clock.label(),resolved_time.suspect).execute(&mut *tx).await?;
         let coordinate = coordinate_hash(
             material_id,
             event.anchor_byte,

@@ -111,6 +111,7 @@ pub mod events {
     macro_rules! time_quality_catalog {
         ($($variant:ident $({ $field:ident: $ty:ty })? => $label:literal),* $(,)?) => {
             #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+            #[serde(deny_unknown_fields)]
             pub enum TimeQuality {
                 $(#[serde(rename = $label)] $variant $({ $field: $ty })?),*
             }
@@ -118,12 +119,40 @@ pub mod events {
         };
     }
     time_quality_catalog! {
-        Captured => "captured",
+        Captured { clock: CaptureClock } => "captured",
         Intrinsic { field: String } => "intrinsic",
         FileMtime => "file_mtime",
         FileCtime => "file_ctime",
         Operator => "operator",
         Staged => "staged",
+    }
+
+    /// Set from the trusted acquisition channel, never defaulted on wire input.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum CaptureClock {
+        Sinex,
+        Producer,
+    }
+    pub const TIME_CLOCK_LABELS: &[&str] = &["sinex", "producer"];
+    impl CaptureClock {
+        pub fn label(self) -> &'static str {
+            match self {
+                Self::Sinex => "sinex",
+                Self::Producer => "producer",
+            }
+        }
+    }
+
+    /// Lossless projection of resolved evidence. General source admission remains unavailable.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct TimeProjection {
+        pub at: Option<OffsetDateTime>,
+        pub quality: &'static str,
+        pub precision: &'static str,
+        pub until: Option<OffsetDateTime>,
+        pub clock: CaptureClock,
+        pub suspect: Option<&'static str>,
     }
 
     macro_rules! time_precision_catalog {
@@ -223,8 +252,82 @@ pub mod events {
                 precision,
             })
         }
-        pub fn captured(at: OffsetDateTime) -> Self {
-            Self::instant(at, TimeQuality::Captured)
+        pub fn captured(
+            at: OffsetDateTime,
+            clock: CaptureClock,
+            precision: TimePrecision,
+        ) -> Result<Self, ValidationError> {
+            Self::try_from(TimeWire::Known {
+                at,
+                quality: TimeQuality::Captured { clock },
+                precision,
+            })
+        }
+        pub fn project(
+            &self,
+            id: EventId,
+            channel: CaptureClock,
+        ) -> Result<TimeProjection, ValidationError> {
+            let (seconds, nanos) = id
+                .as_uuid()
+                .get_timestamp()
+                .expect("validated UUIDv7")
+                .to_unix();
+            let interpreted = OffsetDateTime::from_unix_timestamp(seconds as i64)
+                .map_err(|_| ValidationError("interpretation time out of range"))?
+                + time::Duration::nanoseconds(nanos.into());
+            let TimeWire::Known {
+                at,
+                quality,
+                precision,
+            } = &self.0
+            else {
+                return Ok(TimeProjection {
+                    at: None,
+                    quality: "unknown",
+                    precision: "instant",
+                    until: None,
+                    clock: channel,
+                    suspect: None,
+                });
+            };
+            let label = match quality {
+                TimeQuality::Captured { clock } => {
+                    if *clock != channel {
+                        return Err(ValidationError(
+                            "captured clock differs from acquisition channel",
+                        ));
+                    }
+                    if *clock == CaptureClock::Sinex
+                        && *at > interpreted + time::Duration::seconds(CAPTURED_FUTURE_SKEW_SECONDS)
+                    {
+                        return Err(ValidationError("driver capture exceeds future skew"));
+                    }
+                    "captured"
+                }
+                TimeQuality::Intrinsic { .. } => "intrinsic",
+                TimeQuality::FileMtime => "file_mtime",
+                TimeQuality::FileCtime => "file_ctime",
+                TimeQuality::Operator => "operator",
+                TimeQuality::Staged => "staged",
+            };
+            let (precision, until) = match precision {
+                TimePrecision::Instant => ("instant", None),
+                TimePrecision::Second => ("second", None),
+                TimePrecision::Minute => ("minute", None),
+                TimePrecision::Day => ("day", None),
+                TimePrecision::Month => ("month", None),
+                TimePrecision::Year => ("year", None),
+                TimePrecision::Bounded { until } => ("bounded", Some(*until)),
+            };
+            Ok(TimeProjection {
+                at: Some(*at),
+                quality: label,
+                precision,
+                until,
+                clock: channel,
+                suspect: (*at > interpreted).then_some("future"),
+            })
         }
         pub fn from_file_mtime(at: OffsetDateTime) -> Self {
             Self::instant(at, TimeQuality::FileMtime)
