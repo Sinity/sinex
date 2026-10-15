@@ -170,3 +170,11 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.atuin_contracts]
+description = "Check Atuin source interpretation boundaries without a database"
+exec = ["cargo", "test", "--locked", "-p", "sinex-store", "--lib", "atuin::tests"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 900
+cache = "none"
