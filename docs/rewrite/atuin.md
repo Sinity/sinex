@@ -18,7 +18,7 @@ replacement = "[withheld]"
 created_by = "operator"
 ```
 
-Privacy patterns are Rust regular expressions with literal replacement text. They apply before storing event payloads and again on read. Source identity and row fingerprints use original unmasked fields. Retained canonical rows are explicitly plain evidence. Guarded/sealed storage and privacy administration are unavailable.
+Privacy patterns are Rust regular expressions with literal replacement text. They apply once before storing each event interpretation, including replay from retained original rows. Ordinary reads preserve those stored values. Retained raw-row reads separately apply the rules attributed to that material once because original rows remain plain evidence; changing current rules does not reinterpret stored payloads or replace that retained attribution. The fixed credential output floor still applies to every response. Source identity and row fingerprints use original unmasked fields. Retained canonical rows are explicitly plain evidence. Guarded/sealed storage and privacy administration are unavailable.
 
 Before RPC admission at startup, the writer commits the configured input and an empty `reading` observation through the normal Atuin admission path. The first poll reuses that observation. Each subsequent poll likewise commits its reading observation before SQLite open/read. Queries therefore report incomplete coverage while the initial open/read is blocked, including after a previously completed zero-row poll and restart. With no configured or retained inputs, empty coverage remains complete. Only reaching EOF establishes completed zero; open/read errors establish unavailable.
 

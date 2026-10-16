@@ -584,43 +584,6 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
     } else {
         result
     };
-    let result = result.and_then(|mut value| {
-        if matches!(
-            method,
-            Method::Query | Method::Search | Method::Show | Method::Trace
-        ) {
-            crate::output::validate_read(&value).map_err(|_| {
-                RpcError::new(
-                    ErrorKind::Refused,
-                    "credential presentation unavailable",
-                    serde_json::Value::Null,
-                )
-            })?;
-            let original = value.clone();
-            sinex_store::present(
-                &mut value,
-                &state
-                    .config
-                    .privacy_rules
-                    .iter()
-                    .map(|r| r.rule())
-                    .collect::<Vec<_>>(),
-            )
-            .map_err(read_error)?;
-            if !crate::output::same_bindings(&original, &value) {
-                return Err(RpcError::new(
-                    ErrorKind::Refused,
-                    "presentation rule changes an opaque selector",
-                    serde_json::Value::Null,
-                ));
-            }
-            crate::output::prepare_snippets(&original, &mut value);
-            if let Some(notice) = value.get_mut("notice") {
-                *notice = serde_json::json!(sinex_protocol::DATA_NOTICE);
-            }
-        }
-        Ok(value)
-    });
     match result {
         Ok(v) => RpcResponse::success(request.id, v),
         Err(e) => RpcResponse::failure(Some(request.id), e),

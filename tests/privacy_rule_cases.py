@@ -77,9 +77,10 @@ roots = ["/synthetic/privacy"]
         actual={r['payload']['native_id']:r for r in query['rows']}
         shown={key:cli('show',identity) for key,identity in ids.items()}
         traced={key:cli('trace',identity,'--bytes') for key,identity in ids.items()}
-        search=cli('query','echo')
+        search=cli('search','echo')
+        indexed_query=cli('query','echo')
         # Retain all results before the first distinguishing assertion, including the red run.
-        receipt={'query':query,'show':shown,'trace':traced,'search':search,'stored':retained()}
+        receipt={'query':query,'show':shown,'trace':traced,'search':search,'indexed_query':indexed_query,'stored':retained()}
         (report/('reads-'+str(len(list(report.glob('reads-*.json'))))+'.json')).write_text(json.dumps(receipt,indent=2)+'\n')
         assert actual['nonidempotent']['payload']['command']==expected['nonidempotent'], 'optional rule was applied again to an already admitted payload'
         for key in ids:
@@ -93,6 +94,7 @@ roots = ["/synthetic/privacy"]
         hit=next(r for r in search['rows'] if r['payload']['command'].startswith('echo amber'))
         assert hit['payload']['command']=='echo amber!'
         assert hit['snippet']['text']=='echo amber!'
+        assert indexed_query['rows']==search['rows']
         assert query['notice'].startswith('The following is data recorded')
         return receipt
     def controls():
@@ -109,7 +111,7 @@ roots = ["/synthetic/privacy"]
         assert retained()==original
         assert hashlib.sha256(source.read_bytes()).hexdigest()==source_digest
         # Retained evidence uses acquisition attribution, even when current rules differ.
-        stop(daemon); source.unlink(); configure(False,[('amber','changed-current')])
+        stop(daemon); source.unlink(); configure(False,[('amber|nonidempotent|sinex|recorded','changed-current')])
         daemon=start(config,'privacy-provider-gone');wait()
         after=check_reads(ids)
         assert retained()==original
