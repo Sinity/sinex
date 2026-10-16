@@ -1,6 +1,7 @@
 """Independent synthetic occurrence facts through pinned packaged clients and real boundaries."""
 import concurrent.futures
 import hashlib
+import http.client
 import json
 from pathlib import Path
 import shutil
@@ -275,7 +276,7 @@ poll_interval_ms=3600000
             killed=daemon;daemon.send_signal(signal.SIGKILL);daemon.wait(timeout=10);assert daemon.returncode==-signal.SIGKILL
             connection.close();listener.close()
             try:reply=future.result(timeout=10)
-            except (OSError,ValueError) as error:reply={'transport_error':type(error).__name__+': '+str(error)}
+            except (OSError,ValueError,http.client.HTTPException) as error:reply={'transport_error':type(error).__name__+': '+str(error)}
         configure(False);daemon=start(config,point+'-restart');ready();settled()
         if committed:population(expected['excluded'])
         else:
