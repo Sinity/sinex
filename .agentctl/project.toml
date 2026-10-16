@@ -195,3 +195,11 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 1800
 cache = "none"
+
+[operations.dependency_boundaries]
+description = "Qualify workspace dependency boundaries and actual copied-manifest refusal controls without PostgreSQL"
+exec = ["python3", "tests/dependency_boundaries.py"]
+pool = "normal"
+result = "exit"
+timeout_seconds = 900
+cache = "none"

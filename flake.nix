@@ -23,6 +23,7 @@
         };
         nativeBuildInputs = [ postgres ];
         preBuild = ''
+          cargo run --offline --locked -p xtask -- boundaries
           export PGDATA=$(mktemp -d)
           export PGHOST=$(mktemp -d)
           export PGPORT=55439
@@ -39,7 +40,7 @@
         '';
         cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "xtask" ];
         doCheck = true;
-        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinexd" "-p" "sinex-store" ];
+        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinexd" "-p" "sinex-store" "-p" "xtask" ];
       };
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };
