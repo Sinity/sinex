@@ -542,7 +542,19 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
                 .strip_prefix("sinex:ev/")
                 .unwrap_or(&params.reference);
             match if method == Method::Trace {
-                state.reader.trace(id, params.bytes).await
+                state
+                    .reader
+                    .trace(
+                        id,
+                        params.bytes,
+                        &state
+                            .config
+                            .privacy_rules
+                            .iter()
+                            .map(|r| r.rule())
+                            .collect::<Vec<_>>(),
+                    )
+                    .await
             } else {
                 state.reader.show(id).await
             } {
@@ -584,43 +596,6 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
     } else {
         result
     };
-    let result = result.and_then(|mut value| {
-        if matches!(
-            method,
-            Method::Query | Method::Search | Method::Show | Method::Trace
-        ) {
-            crate::output::validate_read(&value).map_err(|_| {
-                RpcError::new(
-                    ErrorKind::Refused,
-                    "credential presentation unavailable",
-                    serde_json::Value::Null,
-                )
-            })?;
-            let original = value.clone();
-            sinex_store::present(
-                &mut value,
-                &state
-                    .config
-                    .privacy_rules
-                    .iter()
-                    .map(|r| r.rule())
-                    .collect::<Vec<_>>(),
-            )
-            .map_err(read_error)?;
-            if !crate::output::same_bindings(&original, &value) {
-                return Err(RpcError::new(
-                    ErrorKind::Refused,
-                    "presentation rule changes an opaque selector",
-                    serde_json::Value::Null,
-                ));
-            }
-            crate::output::prepare_snippets(&original, &mut value);
-            if let Some(notice) = value.get_mut("notice") {
-                *notice = serde_json::json!(sinex_protocol::DATA_NOTICE);
-            }
-        }
-        Ok(value)
-    });
     match result {
         Ok(v) => RpcResponse::success(request.id, v),
         Err(e) => RpcResponse::failure(Some(request.id), e),
@@ -722,6 +697,7 @@ fn present_response(response: RpcResponse) -> impl IntoResponse {
 }
 
 struct PendingApp {
+    privacy_rules: Vec<sinex_store::PrivacyRule>,
     reader: sinex_store::ReadPool,
     token: String,
     operator: Option<String>,
@@ -733,6 +709,7 @@ async fn serve_pending(
     operator: Option<String>,
     reader: String,
 ) -> Result<(), String> {
+    let privacy_rules = config.privacy_rules.iter().map(|r| r.rule()).collect();
     let reader = sinex_store::ReadPool::installed(&reader, config.store_dir)
         .await
         .map_err(super::public_store_error)?;
@@ -740,6 +717,7 @@ async fn serve_pending(
         .route("/rpc", post(pending_rpc))
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(Arc::new(PendingApp {
+            privacy_rules,
             reader,
             token,
             operator,
@@ -860,7 +838,10 @@ async fn pending_read(
                 .strip_prefix("sinex:ev/")
                 .unwrap_or(&params.reference);
             let row = if method == Method::Trace {
-                state.reader.trace(id, params.bytes).await
+                state
+                    .reader
+                    .trace(id, params.bytes, &state.privacy_rules)
+                    .await
             } else {
                 state.reader.show(id).await
             }

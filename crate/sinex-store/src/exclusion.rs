@@ -375,7 +375,11 @@ mod tests {
         let a_key: String = a.try_get("equivalence_key")?;
         let material: Uuid = a.try_get("source_material_id")?;
         let b_id:Uuid=sqlx::query_scalar("SELECT id FROM core.live_events WHERE payload->>'native_id'='occurrence-b' AND event_type='command.executed'").fetch_one(&mut conn).await?;
-        let old_trace = store.reader.trace(&a_id.to_string(), true).await?.unwrap();
+        let old_trace = store
+            .reader
+            .trace(&a_id.to_string(), true, &[])
+            .await?
+            .unwrap();
         let request = Request {
             reference: format!("sinex:ev/{a_id}"),
             action_id: Uuid::now_v7(),
@@ -436,7 +440,11 @@ mod tests {
                 .await?,
             missing
         );
-        let final_trace = store.reader.trace(&a_id.to_string(), true).await?.unwrap();
+        let final_trace = store
+            .reader
+            .trace(&a_id.to_string(), true, &[])
+            .await?
+            .unwrap();
         for key in ["material", "anchor", "end", "record"] {
             assert_eq!(old_trace[key], final_trace[key]);
         }
@@ -527,7 +535,7 @@ mod tests {
         assert_ne!(a_id, restored_id);
         let restored_trace = store
             .reader
-            .trace(&restored_id.to_string(), true)
+            .trace(&restored_id.to_string(), true, &[])
             .await?
             .unwrap();
         for key in ["material", "anchor", "end", "record"] {

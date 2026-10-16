@@ -69,26 +69,6 @@ fn display_field(key: &str, presentation: bool) -> bool {
                     | "text"
             ))
 }
-/// Optional presentation rules must also preserve selectors and control metadata.
-pub fn same_bindings(before: &Value, after: &Value) -> bool {
-    fn equal(a: &Value, b: &Value, display: bool) -> bool {
-        match (a, b) {
-            (Value::String(_), Value::String(_)) => display || a == b,
-            (Value::Array(a), Value::Array(b)) => {
-                a.len() == b.len() && a.iter().zip(b).all(|(a, b)| equal(a, b, display))
-            }
-            (Value::Object(a), Value::Object(b)) => {
-                a.len() == b.len()
-                    && a.iter().all(|(key, a)| {
-                        b.get(key)
-                            .is_some_and(|b| equal(a, b, display_field(key, display)))
-                    })
-            }
-            _ => a == b,
-        }
-    }
-    equal(before, after, false)
-}
 pub fn admit(value: &mut Value) -> Result<bool, ()> {
     walk(value, false)
 }
@@ -144,21 +124,6 @@ fn walk(value: &mut Value, presentation: bool) -> Result<bool, ()> {
             Ok(changed)
         }
         _ => Ok(false),
-    }
-}
-/// Optional presentation can move offsets too. A changed logical string never
-/// keeps highlight ranges from its earlier representation.
-pub fn prepare_snippets(before: &Value, after: &mut Value) {
-    if let (Some(before), Some(after)) = (
-        before.get("rows").and_then(Value::as_array),
-        after.get_mut("rows").and_then(Value::as_array_mut),
-    ) {
-        for (a, b) in before.iter().zip(after) {
-            if a["snippet"]["text"] != b["snippet"]["text"] && b.get("snippet").is_some() {
-                b["snippet"]["spans"] = serde_json::json!([]);
-                b["snippet"]["highlights_unavailable"] = serde_json::json!("masked");
-            }
-        }
     }
 }
 /// Cutting happens only after the complete logical string passed the fixed
@@ -351,10 +316,4 @@ pub fn request_safe(id: &RpcId, params: &Value) -> bool {
         }
     }
     id_safe && safe(params)
-}
-
-/// Validate raw identities/keys before optional presentation rules can alter them.
-/// Discard the masked copy; only the final encoder renders the fixed floor.
-pub fn validate_read(value: &Value) -> Result<(), ()> {
-    admit(&mut value.clone()).map(|_| ())
 }

@@ -24,7 +24,7 @@ pub(crate) fn payload_schema() -> Value {
         "exit_code":{"type":["integer","null"],"minimum":0},"duration_ns":{"type":["integer","null"],"minimum":0},"timestamp_ns":{"type":"integer"},"completion":{"enum":["running","end_not_recorded","ended"]}}})
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrivacyRule {
     pub pattern: String,
@@ -590,7 +590,7 @@ impl ReadPool {
                 let anchor = failure["anchor_byte"]
                     .as_i64()
                     .ok_or(Error::Invalid("record failure anchor unavailable"))?;
-                match self.retained_record(material, anchor, None).await {
+                match self.retained_record(material, anchor, None, &[]).await {
                     Ok((record, end)) => {
                         failure["record"] = record;
                         failure["end"] = json!(end);
@@ -669,7 +669,7 @@ mod tests {
         assert_eq!(old.try_get::<Value, _>("payload")?["completion"], "running");
         let before = store
             .reader
-            .trace(&old_id.to_string(), true)
+            .trace(&old_id.to_string(), true, &[])
             .await?
             .unwrap();
         async fn canonical(conn: &mut sqlx::PgConnection, parent: Uuid) -> Result<Uuid> {
@@ -734,7 +734,7 @@ mod tests {
         );
         let after = store
             .reader
-            .trace(&old_id.to_string(), true)
+            .trace(&old_id.to_string(), true, &[])
             .await?
             .unwrap();
         for field in ["material", "anchor", "end", "record"] {

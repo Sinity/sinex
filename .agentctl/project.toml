@@ -282,3 +282,12 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
 cache = "none"
+
+[operations.privacy_rule_acceptance]
+description = "Optional admission-once rules through isolated packaged read, retained evidence and replay paths"
+exec = ["python3", "tests/foundation.py", "--privacy-rules", "--packaged"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"
