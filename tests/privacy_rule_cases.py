@@ -64,7 +64,8 @@ roots = ["/synthetic/privacy"]
                 value=h['rpc'](endpoint,'synthetic-foundation-token')
                 if 'result' in value:
                     status=value['result']; p=status['indexed_retrieval']
-                    if p.get('serving') and not p['pending_canonical'] and p['position']==status['commit_seq'] and p['fusion']['phase']=='settled' and p['fusion']['scanned']>=4:return
+                    if p.get('serving') and not p['pending_canonical'] and p['position']==status['commit_seq'] and p['fusion']['phase']=='settled' and p['fusion']['scanned']>=4:
+                        if sql("SELECT to_json(coalesce((SELECT status='completed' FROM raw.observations ORDER BY seq DESC LIMIT 1),false))"):return
             except (OSError,ValueError): pass
             assert time.monotonic()<deadline, 'privacy source/projection did not settle'
             time.sleep(.025)
@@ -72,7 +73,7 @@ roots = ["/synthetic/privacy"]
         return json.loads(run(['psql',h['reader'],'-XAt','-v','ON_ERROR_STOP=1','-c',query],label='independent read-only privacy receipt').stdout)
     def retained():
         return sql("SELECT json_agg(json_build_object('id',e.id,'payload',e.payload,'hash',encode(e.record_hash,'hex'),'material',e.source_material_id,'anchor',e.anchor_byte,'end',e.offset_end,'provenance',m.parser_provenance,'blob',b.blake3) ORDER BY e.id) FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE e.source='terminal.atuin-history'")
-    def check_reads(ids):
+    def check_reads(ids, raw_expected=expected):
         query=cli('query','events where source = terminal.atuin-history')
         actual={r['payload']['native_id']:r for r in query['rows']}
         shown={key:cli('show',identity) for key,identity in ids.items()}
@@ -87,7 +88,7 @@ roots = ["/synthetic/privacy"]
             assert actual[key]['id']==ids[key]
             assert actual[key]['payload']['command']==expected[key]
             assert shown[key]['row']['payload']['command']==expected[key]
-            assert traced[key]['row']['record']['command']==expected[key]
+            assert traced[key]['row']['record']['command']==raw_expected[key]
             assert actual[key]['secret']==(key in ('injected','fixed'))
             assert shown[key]['row']['secret']==actual[key]['secret']
             assert traced[key]['row']['secret']==actual[key]['secret']
@@ -111,11 +112,14 @@ roots = ["/synthetic/privacy"]
         assert retained()==original
         assert hashlib.sha256(source.read_bytes()).hexdigest()==source_digest
         # Retained evidence uses acquisition attribution, even when current rules differ.
-        stop(daemon); source.unlink(); configure(False,[('amber|nonidempotent|sinex|recorded','changed-current')])
+        stop(daemon); source.unlink(); configure(False,[('amber','changed-current')])
         daemon=start(config,'privacy-provider-gone');wait()
-        after=check_reads(ids)
+        raw_expected=dict(expected, nonidempotent='echo changed-current!')
+        after=check_reads(ids, raw_expected)
         assert retained()==original
-        assert before['trace']==after['trace']
+        for key in ids:
+            for field in ['event','material','anchor','end','representation']:
+                assert before['trace'][key]['row'][field]==after['trace'][key]['row'][field]
         material=before['trace']['nonidempotent']['row']['material']
         # Replay starts from retained original bytes and current optional rules exactly once.
         stop(daemon);configure(False);daemon=start(config,'privacy-replay');wait()
@@ -131,6 +135,31 @@ roots = ["/synthetic/privacy"]
             old=cli('show',ids[key])
             assert old['resolved']=='archived' and old['row']['payload']['command']==expected[key]
             assert old['row']['archive']['operation_id']==replay['operation_id']
+        # Current rules protect evidence acquired before any optional rules existed.
+        # A new acquired recipe creates current interpretations without rewriting old rows.
+        stop(daemon); source.write_bytes((report/'source.db').read_bytes());configure(True, [])
+        daemon=start(config,'privacy-empty-attribution');wait()
+        deadline=time.monotonic()+30
+        while True:
+            empty_rows=cli('query','events where source = terminal.atuin-history')['rows']
+            empty=next(r for r in empty_rows if r['payload']['native_id']=='nonidempotent')
+            if empty['payload']['command']=='echo amber':break
+            assert time.monotonic()<deadline
+            time.sleep(.025)
+        empty_id=empty['id']
+        stop(daemon);source.unlink();configure(False, [('amber','amber!')])
+        daemon=start(config,'privacy-protect-old-plain');wait()
+        ordinary=cli('show',empty_id)
+        protected=cli('trace',empty_id,'--bytes')
+        assert ordinary['row']['payload']['command']=='echo amber'
+        assert protected['row']['record']['command']=='echo amber!'
+        (report/'old-plain-protection.json').write_text(json.dumps({'show':ordinary,'trace':protected},indent=2)+'\n')
+        # Current rules cannot rewrite opaque native IDs while protecting raw values.
+        stop(daemon);configure(False,[('nonidempotent|sinex|recorded','changed-current')])
+        daemon=start(config,'privacy-identity-control');wait()
+        assert cli('show',empty_id)['row']['payload']['native_id']=='nonidempotent'
+        assert cli('query','events where source = terminal.atuin-history')['notice'].startswith('The following is data recorded')
+        assert cli('trace',empty_id,'--bytes',expected_exit=4)['kind']=='refused'
         # The mandatory credential floor still refuses an unsafe opaque request selector.
         refused=cli('show',credential,expected_exit=4)
         assert refused['kind']=='refused' and credential not in json.dumps(refused)

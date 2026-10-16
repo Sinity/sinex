@@ -542,7 +542,19 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
                 .strip_prefix("sinex:ev/")
                 .unwrap_or(&params.reference);
             match if method == Method::Trace {
-                state.reader.trace(id, params.bytes).await
+                state
+                    .reader
+                    .trace(
+                        id,
+                        params.bytes,
+                        &state
+                            .config
+                            .privacy_rules
+                            .iter()
+                            .map(|r| r.rule())
+                            .collect::<Vec<_>>(),
+                    )
+                    .await
             } else {
                 state.reader.show(id).await
             } {
@@ -685,6 +697,7 @@ fn present_response(response: RpcResponse) -> impl IntoResponse {
 }
 
 struct PendingApp {
+    privacy_rules: Vec<sinex_store::PrivacyRule>,
     reader: sinex_store::ReadPool,
     token: String,
     operator: Option<String>,
@@ -696,6 +709,7 @@ async fn serve_pending(
     operator: Option<String>,
     reader: String,
 ) -> Result<(), String> {
+    let privacy_rules = config.privacy_rules.iter().map(|r| r.rule()).collect();
     let reader = sinex_store::ReadPool::installed(&reader, config.store_dir)
         .await
         .map_err(super::public_store_error)?;
@@ -703,6 +717,7 @@ async fn serve_pending(
         .route("/rpc", post(pending_rpc))
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(Arc::new(PendingApp {
+            privacy_rules,
             reader,
             token,
             operator,
@@ -823,7 +838,10 @@ async fn pending_read(
                 .strip_prefix("sinex:ev/")
                 .unwrap_or(&params.reference);
             let row = if method == Method::Trace {
-                state.reader.trace(id, params.bytes).await
+                state
+                    .reader
+                    .trace(id, params.bytes, &state.privacy_rules)
+                    .await
             } else {
                 state.reader.show(id).await
             }

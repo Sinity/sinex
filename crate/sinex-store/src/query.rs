@@ -509,7 +509,12 @@ impl ReadPool {
         lease.finish();
         Ok(row)
     }
-    pub async fn trace(&self, id: &str, bytes_requested: bool) -> Result<Option<Value>> {
+    pub async fn trace(
+        &self,
+        id: &str,
+        bytes_requested: bool,
+        current_rules: &[crate::PrivacyRule],
+    ) -> Result<Option<Value>> {
         let id = Uuid::parse_str(id).map_err(|_| Error::Invalid("invalid event ID"))?;
         let mut lease = self.read_lease().await?;
         let parents: Option<Vec<Uuid>> =
@@ -523,7 +528,7 @@ impl ReadPool {
             let mut evidence = Vec::new();
             for parent in parents {
                 evidence.push(
-                    Box::pin(self.trace(&parent.to_string(), bytes_requested))
+                    Box::pin(self.trace(&parent.to_string(), bytes_requested, current_rules))
                         .await?
                         .ok_or(Error::Invalid("canonical parent evidence unavailable"))?,
                 );
@@ -536,9 +541,15 @@ impl ReadPool {
                 json!({"event":id,"representation":if current["kind"]=="activity.session.boundary"{"shell_session"}else{"canonical_shell_group"},"parents":evidence,"archive":current["archive"],"current_eligible":current["current_eligible"]}),
             ));
         }
-        self.trace_material(id, bytes_requested).await
+        self.trace_material(id, bytes_requested, current_rules)
+            .await
     }
-    async fn trace_material(&self, id: Uuid, bytes_requested: bool) -> Result<Option<Value>> {
+    async fn trace_material(
+        &self,
+        id: Uuid,
+        bytes_requested: bool,
+        current_rules: &[crate::PrivacyRule],
+    ) -> Result<Option<Value>> {
         let mut lease = self.read_lease().await?;
         let row=sqlx::query("SELECT e.source_material_id,e.anchor_byte,e.offset_end,e.record_state,(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id) AS archive,m.status,m.durable_bytes,b.blake3,m.parser_provenance FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE e.id=$1").bind(id).fetch_optional(lease.connection()).await?;
         lease.finish();
@@ -562,9 +573,11 @@ impl ReadPool {
                 json!({"event":id,"material":material,"anchor":anchor,"end":end,"record_state":state,"archive":archive,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"}}),
             ));
         }
-        let (record, _) = self.retained_record(material, anchor, Some(end)).await?;
+        let (record, _) = self
+            .retained_record(material, anchor, Some(end), current_rules)
+            .await?;
         Ok(Some(
-            json!({"event":id,"material":material,"anchor":anchor,"end":end,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"},"record_state":state,"archive":archive,"record":record,"privacy":"presentation masked; original raw rows retained as plain evidence"}),
+            json!({"event":id,"material":material,"anchor":anchor,"end":end,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"},"record_state":state,"archive":archive,"record":record,"privacy":"raw projection: attributed rule sequence, then current rules absent from attributed tuples; original raw rows retained as plain evidence"}),
         ))
     }
     pub(crate) async fn retained_record(
@@ -572,15 +585,17 @@ impl ReadPool {
         material: Uuid,
         anchor: i64,
         end: Option<i64>,
+        current_rules: &[crate::PrivacyRule],
     ) -> Result<(Value, i64)> {
-        self.retained_record_raw(material, anchor, end, true).await
+        self.retained_record_raw(material, anchor, end, Some(current_rules))
+            .await
     }
     pub(crate) async fn retained_record_raw(
         &self,
         material: Uuid,
         anchor: i64,
         end: Option<i64>,
-        presentation: bool,
+        presentation: Option<&[crate::PrivacyRule]>,
     ) -> Result<(Value, i64)> {
         let mut lease = self.read_lease().await?;
         let row = sqlx::query("SELECT m.durable_bytes,b.blake3,m.parser_provenance FROM raw.source_material_registry m LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=$1").bind(material).fetch_one(lease.connection()).await?;
@@ -641,8 +656,8 @@ impl ReadPool {
             let rules: Vec<crate::PrivacyRule> =
                 serde_json::from_value(provenance["privacy_rules"].clone())
                     .map_err(|_| Error::Invalid("retained privacy provenance unavailable"))?;
-            if presentation {
-                crate::present(&mut record, &rules)?;
+            if let Some(current_rules) = presentation {
+                protect_retained(&mut record, &rules, current_rules)?;
             }
             return Ok((record, anchor + length as i64));
         }
@@ -660,12 +675,48 @@ impl ReadPool {
         let rules: Vec<crate::PrivacyRule> =
             serde_json::from_value(provenance["privacy_rules"].clone())
                 .map_err(|_| Error::Invalid("retained privacy provenance unavailable"))?;
-        if presentation {
-            crate::atuin::mask(&mut record, &rules)?;
+        if let Some(current_rules) = presentation {
+            protect_retained(&mut record, &rules, current_rules)?;
         }
         Ok((record, anchor + length as i64))
     }
 }
+// Retained evidence is an original source projection, not an admitted payload.
+// Keep the full attributed sequence, then append current entries whose exact
+// tuple is absent there. Duplicate entries within either sequence retain their
+// multiplicity; this is deliberately not policy equivalence or normalization.
+fn protect_retained(
+    record: &mut Value,
+    attributed: &[crate::PrivacyRule],
+    current: &[crate::PrivacyRule],
+) -> Result<()> {
+    let before = record.clone();
+    let rules: Vec<_> = attributed
+        .iter()
+        .chain(current.iter().filter(|r| !attributed.contains(r)))
+        .cloned()
+        .collect();
+    crate::atuin::mask(record, &rules)?;
+    let original = before
+        .as_object()
+        .ok_or(Error::Invalid("retained record is not an object"))?;
+    for (key, value) in original {
+        if !matches!(
+            key.as_str(),
+            "command" | "cwd" | "hostname" | "unmetafied_record"
+        ) && record.get(key) != Some(value)
+        {
+            return Err(Error::ReplayRefused(
+                "raw privacy projection changes an opaque selector",
+            ));
+        }
+    }
+    Ok(())
+}
+#[cfg(test)]
+#[path = "query_privacy_tests.rs"]
+mod privacy_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
