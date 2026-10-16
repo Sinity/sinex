@@ -16,7 +16,7 @@ use std::sync::Arc;
 struct App {
     config: Config,
     token: String,
-    replay_token: Option<String>,
+    operator_token: Option<String>,
     indexed: bool,
     reader: sinex_store::ReadPool,
     admission: sinex_store::Admission,
@@ -39,13 +39,13 @@ pub async fn serve(
         serde_json::json!({"component":"sinexd","phase":"endpoint_reserved"})
     );
     let token = secret(&config.token_file)?;
-    let replay_token = config
-        .replay_token_file
+    let operator_token = config
+        .operator_token_file
         .as_deref()
         .map(secret)
         .transpose()?;
-    if replay_token.as_ref() == Some(&token) {
-        return Err("replay operator credential must differ from the read-only credential".into());
+    if operator_token.as_ref() == Some(&token) {
+        return Err("operator credential must differ from the read-only credential".into());
     }
     let writer = secret(&config.writer_connection_file)?;
     let reader = secret(&config.reader_connection_file)?;
@@ -110,7 +110,7 @@ pub async fn serve(
     store
         .admission
         .set_replay_profile(
-            replay_token
+            operator_token
                 .as_ref()
                 .map(|_| config.privacy_rules.iter().map(|r| r.rule()).collect()),
         )
@@ -165,7 +165,7 @@ pub async fn serve(
         indexed: config.read_model_connection_file.is_some(),
         config,
         token,
-        replay_token,
+        operator_token,
         reader: store.reader.clone(),
         admission: store.admission.clone(),
     });
@@ -212,7 +212,7 @@ async fn rpc(
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "));
     let operator = state
-        .replay_token
+        .operator_token
         .as_deref()
         .is_some_and(|token| Some(token) == supplied);
     let authenticated = operator || supplied == Some(state.token.as_str());
@@ -257,14 +257,18 @@ async fn rpc(
                 .into_response();
         }
     };
-    if matches!(method, Method::ReplayStart | Method::ReplayCancel) && !operator {
+    if matches!(
+        method,
+        Method::ReplayStart | Method::ReplayCancel | Method::Delete | Method::DeleteUndo
+    ) && !operator
+    {
         return (
             StatusCode::OK,
             present_response(RpcResponse::failure(
                 Some(request.id),
                 RpcError::new(
                     ErrorKind::Refused,
-                    "explicit replay operator profile required",
+                    "explicit operator profile required",
                     serde_json::Value::Null,
                 ),
             )),
@@ -325,7 +329,7 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
                 },
                 commit_seq: status.commit_seq,
                 replays,
-                replay_authorized: state.replay_token.is_some(),
+                replay_authorized: state.operator_token.is_some(),
                 indexed_retrieval: serde_json::Value::Null,
                 supported_sources: state.config.sources.clone(),
                 supported_methods: SUPPORTED_METHODS.iter().map(|s| s.to_string()).collect(),
@@ -343,6 +347,15 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
                 serde_json::Value::Null,
             )),
         },
+        Method::Delete | Method::DeleteUndo => {
+            let params: sinex_model::exclusion::Request =
+                serde_json::from_value(request.params.clone()).expect("validated exclusion");
+            state.admission.exclude(if method==Method::Delete {sinex_model::exclusion::Action::Exclude}else{sinex_model::exclusion::Action::Undo},params).await.map_err(|error| {
+                if matches!(error,sinex_store::Error::Invalid(_)|sinex_store::Error::ReplayRefused(_)) {read_error(error)} else {
+                    RpcError::new(ErrorKind::Partial,"mutation outcome unavailable; retry the same action identity",serde_json::json!({"outcome":"indeterminate","action_id":request.params["action_id"]}))
+                }
+            }).and_then(exclusion_outcome)
+        }
         Method::ReplayPlan | Method::ReplayStart | Method::ReplayCancel => {
             let command = match method {
                 Method::ReplayPlan => sinex_store::ReplayCommand::Plan(
@@ -560,6 +573,43 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
     match result {
         Ok(v) => RpcResponse::success(request.id, v),
         Err(e) => RpcResponse::failure(Some(request.id), e),
+    }
+}
+
+fn exclusion_outcome(mut value: serde_json::Value) -> Result<serde_json::Value, RpcError> {
+    // Effects may already be durable. A presentation refusal must not imply a failed mutation.
+    let identity = serde_json::json!({"action_id":value["action_id"],"operation_id":value["operation_id"],"outcome":"retained_but_unpresentable"});
+    if crate::output::admit(&mut value).is_err() {
+        return Err(RpcError::new(
+            ErrorKind::Partial,
+            "durable mutation outcome cannot be presented; recover the same action identity",
+            identity,
+        ));
+    }
+    match value["state"].as_str() {
+        Some("refused") => Err(RpcError::new(
+            ErrorKind::Refused,
+            "exclusion action refused",
+            value,
+        )),
+        Some("not_found") => Err(RpcError::new(
+            ErrorKind::NotFound,
+            "raw interpretation not found",
+            value,
+        )),
+        _ => Ok(value),
+    }
+}
+#[cfg(test)]
+mod exclusion_tests {
+    use super::*;
+    #[test]
+    fn committed_outcome_presentation_refusal_is_not_no_effect_failure() {
+        let value = serde_json::json!({"action_id":"01800000-0000-7000-8000-000000000001","operation_id":"01800000-0000-7000-8000-000000000002","state":"completed","occurrence":{"equivalence_key":"Authorization: Bearer synthetic_sensitive_value"}});
+        let error = exclusion_outcome(value).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Partial);
+        assert_eq!(error.data["outcome"], "retained_but_unpresentable");
+        assert!(error.data["operation_id"].as_str().is_some());
     }
 }
 

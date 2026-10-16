@@ -36,7 +36,7 @@ sources = []
 automata = []
 ```
 
-Connection files hold PostgreSQL URIs; the token file holds the bearer token. Diagnostics and public config never emit their contents. Configuration requires absolute paths and loopback binding, rejects unknown keys, and does not inherit connection overrides from environment variables. The token authorizes read RPC methods; optional `replay_token_file` enables the separate fixed operator profile described in the replay contract. Configured sources submit their acquired rows directly to the same private writer owner.
+Connection files hold PostgreSQL URIs; the token file holds the bearer token. Diagnostics and public config never emit their contents. Configuration requires absolute paths and loopback binding, rejects unknown keys, and does not inherit connection overrides from environment variables. The token authorizes read RPC methods; optional `operator_token_file` enables the fixed operator profile for replay and reversible exclusion. Configured sources submit their acquired rows directly to the same private writer owner.
 
 ```
 sinexd config check --config /absolute/path/config.toml
@@ -45,6 +45,10 @@ sinexctl --endpoint http://127.0.0.1:41037/rpc --token-file /absolute/path/token
 ```
 
 The client requires its explicit endpoint and has no installed-service fallback. SIGINT/SIGTERM stops request admission, drains the owned writer and releases locks. An occupied endpoint fails before acquiring database/state ownership. Persistent state is never deleted by daemon shutdown.
+
+## Reversible exclusion
+
+`delete RAW_REF [--action-id UUID]` excludes one retained Atuin occurrence; `delete --undo RAW_REF [--action-id UUID]` removes only that exclusion. Both require `operator_token_file` through the explicit client token option. The original bytes and archived interpretations remain inspectable. Undo itself does not restore an answer; retained replay or a later normal acquisition can admit it again. See the [supported exclusion contract](docs/rewrite/reversible-exclusion.md) for stable keys, exact retry outcomes, refusals and qualification limits.
 
 ## Query quick start
 

@@ -19,6 +19,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
 parser.add_argument("--indexed",action="store_true",help="qualify indexed shell retrieval and actual MCP transport")
 parser.add_argument("--retained-replay", action="store_true", help="qualify retained Atuin replay through actual packaged clients")
 parser.add_argument("--packaged", action="store_true", help="build and exercise the Nix package entrypoints")
@@ -32,6 +33,8 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.exclusion_contracts and (OPTIONS.packaged or OPTIONS.indexed or OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.credential_output):
+    parser.error("typed exclusion contracts require their own development selector")
 if OPTIONS.credential_output: OPTIONS.atuin = True
 if OPTIONS.indexed and (OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage): parser.error("indexed qualification owns its own scenarios")
 if OPTIONS.retained_replay and (not OPTIONS.packaged or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.atuin or OPTIONS.demo_spec or OPTIONS.startup_coverage):
@@ -78,6 +81,8 @@ if OPTIONS.credential_output:
     PLANNED = PLANNED[:4] + ["Atuin retained source and real-client query"]
 if OPTIONS.indexed:
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","bound SQL null semantics","restricted profile and store binding","indexed fixture, independent full-population ranking and semantic controls","actual MCP transport and cross-client identity","project component-depth ambiguity and wildcard boundary","projection interruption and same-state reconstruction","source replacement removal replay and project rebuild","retained navigation without provider after restart","indexed deadlines cancellation and credential presentation"]
+if OPTIONS.exclusion_contracts:
+    PLANNED=["cold query-free admin build","canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","checked runtime build and pure contracts","typed occurrence exclusion retained evidence and action recovery"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -209,7 +214,13 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.indexed:
+    if OPTIONS.exclusion_contracts:
+        def exclusion_contract():
+            isolated=ENV.copy()
+            isolated.update(SINEX_TEST_ADMIN_URL=admin,SINEX_TEST_WRITER_URL=writer,SINEX_TEST_READER_URL=reader,SINEX_TEST_STORE_DIR=str(WORK/'exclusion-contract-store'))
+            run(["cargo","test","--locked","-p","sinex-store","--features","product","--lib","exclusion::tests::occurrence_exclusion_preserves_evidence_and_finalized_actions","--","--ignored","--nocapture"],env=isolated,label="typed writer exclusion, retained evidence, undo and finalized request recovery")
+        scenario("typed occurrence exclusion retained evidence and action recovery",exclusion_contract)
+    elif OPTIONS.indexed:
         scenario("bound SQL null semantics",lambda:run(["cargo","test","--locked","-p","sinex-store","--features","product","--lib","search::tests::bound_unknown_time_preserves_three_valued_negation","--","--ignored"],label="actual typed SQL null truth control"))
         import indexed_cases
         indexed_cases.exercise(globals())

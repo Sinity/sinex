@@ -1,6 +1,7 @@
 //! Foundation storage authority. No connection or transaction escapes the writer owner.
 mod atuin;
 mod event_storage;
+mod exclusion;
 mod projection;
 mod qualification;
 mod query;
@@ -157,6 +158,18 @@ impl Admission {
         }
         rx.await.map_err(|_| Error::Stopped)?
     }
+    pub async fn exclude(
+        &self,
+        action: sinex_model::exclusion::Action,
+        request: sinex_model::exclusion::Request,
+    ) -> Result<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .send(Command::Exclude(action, request, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
     pub async fn set_replay_profile(&self, rules: Option<Vec<PrivacyRule>>) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.0
@@ -192,6 +205,11 @@ pub enum ReplayCommand {
     Cancel(sinex_model::replay::Operation),
 }
 enum Command {
+    Exclude(
+        sinex_model::exclusion::Action,
+        sinex_model::exclusion::Request,
+        oneshot::Sender<Result<serde_json::Value>>,
+    ),
     ShellEnable(oneshot::Sender<Result<()>>),
     ReplayProfile(Option<Vec<PrivacyRule>>, oneshot::Sender<()>),
     Replay(ReplayCommand, oneshot::Sender<Result<serde_json::Value>>),
@@ -493,6 +511,10 @@ impl WriterPool {
                 }
                 Command::Atuin(step, reply) => {
                     let result = self.admit_atuin(step).await;
+                    let _ = reply.send(result);
+                }
+                Command::Exclude(action, request, reply) => {
+                    let result = self.exclude(action, request).await;
                     let _ = reply.send(result);
                 }
                 Command::Replay(command, reply) => {

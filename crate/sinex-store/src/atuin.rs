@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{Connection, Row};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
@@ -130,6 +130,13 @@ pub(crate) struct Parsed {
     pub(crate) removed: bool,
     pub(crate) nanos: i32,
     pub(crate) time_evidence: sinex_model::events::TsOrig,
+}
+pub(crate) fn occurrence(input: Uuid, native_id: &str) -> (String, Vec<u8>) {
+    let key = json!([input, native_id]).to_string();
+    let hash = blake3::hash(format!("{SOURCE}\x1fcommand.executed\x1f{key}").as_bytes()).as_bytes()
+        [..16]
+        .to_vec();
+    (key, hash)
 }
 pub(crate) fn parse(row: &Value) -> std::result::Result<Parsed, &'static str> {
     let r: AtuinRow = serde_json::from_value(row.clone())
@@ -418,7 +425,8 @@ impl WriterPool {
         if let Some(id) = material {
             sqlx::query("UPDATE raw.source_material_registry SET total_bytes=$2,durable_bytes=$2 WHERE id=$1").bind(id).bind(start+bytes.len() as i64).execute(&mut *tx).await?;
         }
-        let (mut admitted, mut repeated, mut removed, mut failures) = (0i64, 0i64, 0i64, 0i64);
+        let (mut admitted, mut repeated, mut removed, mut failures, mut excluded) =
+            (0i64, 0i64, 0i64, 0i64, 0i64);
         for (anchor, end, record_hash, result) in prepared {
             let material = material.ok_or(Error::Invalid("row material missing"))?;
             let anchor = start + anchor;
@@ -437,11 +445,15 @@ impl WriterPool {
                 failures += 1;
                 continue;
             }
-            let key = json!([input, parsed.native_id]).to_string();
-            let key_hash =
-                blake3::hash(format!("{SOURCE}\x1fcommand.executed\x1f{key}").as_bytes())
-                    .as_bytes()[..16]
-                    .to_vec();
+            let (key, key_hash) = occurrence(input, &parsed.native_id);
+            if sqlx::query_scalar::<_, bool>(crate::exclusion::EXCLUDED)
+                .bind(&key)
+                .fetch_one(&mut *tx)
+                .await?
+            {
+                excluded += 1;
+                continue;
+            }
             let old = sqlx::query("SELECT l.event_id,l.read_order,l.record_hash,p.version AS parser FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id LEFT JOIN core.producer_versions p ON p.id=e.producer_version_id AND p.name='parser.terminal.atuin-history' WHERE l.store=0 AND l.key_hash=$1").bind(&key_hash).fetch_optional(&mut *tx).await?;
             if let Some(ref old) = old {
                 if (old.try_get::<Vec<u8>, _>("record_hash")? == record_hash
@@ -508,8 +520,8 @@ impl WriterPool {
         } else {
             "reading"
         };
-        let summary: Value = sqlx::query_scalar("UPDATE raw.observations SET rows_read=rows_read+$2+$3+$4,admitted=admitted+$2,repeated=repeated+$3,record_errors=record_errors+$4,removed=removed+$5,status=$6,reason=$7,commit_seq=$8 WHERE id=$1 RETURNING jsonb_build_object('observation',id,'status',status,'rows_read',rows_read,'admitted',admitted,'repeated',repeated,'removed',removed,'record_errors',record_errors,'commit_seq',commit_seq)")
-            .bind(step.observation).bind(admitted).bind(repeated).bind(failures).bind(removed).bind(status).bind(step.unavailable).bind(last_seq).fetch_one(&mut *tx).await?;
+        let summary: Value = sqlx::query_scalar("UPDATE raw.observations SET rows_read=rows_read+$2+$3+$4+$9,excluded=excluded+$9,admitted=admitted+$2,repeated=repeated+$3,record_errors=record_errors+$4,removed=removed+$5,status=$6,reason=$7,commit_seq=$8 WHERE id=$1 RETURNING jsonb_build_object('observation',id,'status',status,'rows_read',rows_read,'admitted',admitted,'repeated',repeated,'excluded',excluded,'removed',removed,'record_errors',record_errors,'commit_seq',commit_seq)")
+            .bind(step.observation).bind(admitted).bind(repeated).bind(failures).bind(removed).bind(status).bind(step.unavailable).bind(last_seq).bind(excluded).fetch_one(&mut *tx).await?;
         sqlx::query("INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,$2,$3,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,updated_at=now()")
             .bind(SOURCE).bind(input.to_string()).bind(&summary).execute(&mut *tx).await?;
         let committed_evidence = json!({"custody":boundary_evidence,"progress":summary});

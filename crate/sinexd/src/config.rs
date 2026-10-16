@@ -55,8 +55,8 @@ pub struct Config {
     pub writer_connection_file: PathBuf,
     pub reader_connection_file: PathBuf,
     pub token_file: PathBuf,
-    /// Explicit fixed operator profile for replay; the ordinary token remains read-only.
-    pub replay_token_file: Option<PathBuf>,
+    /// Explicit fixed operator profile for replay and exclusion; the ordinary token remains read-only.
+    pub operator_token_file: Option<PathBuf>,
     #[serde(default)]
     pub sources: Vec<String>,
     #[serde(default)]
@@ -132,11 +132,11 @@ impl Config {
             rule.rule().validate()?;
         }
         if self
-            .replay_token_file
+            .operator_token_file
             .as_ref()
             .is_some_and(|p| !p.is_absolute())
         {
-            return Err("replay token path must be absolute".into());
+            return Err("operator token path must be absolute".into());
         }
         for path in [
             &self.state_dir,
@@ -168,6 +168,20 @@ pub fn schema() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retired_replay_credential_field_is_not_an_alias() {
+        let base = r#"listen="127.0.0.1:41037"
+state_dir="/synthetic/state"
+store_dir="/synthetic/store"
+writer_connection_file="/synthetic/writer"
+reader_connection_file="/synthetic/reader"
+token_file="/synthetic/read-token"
+"#;
+        let old = format!("{base}replay_token_file=\"/synthetic/operator-token\"\n");
+        assert!(toml::from_str::<Config>(&old).is_err());
+        let new = format!("{base}operator_token_file=\"/synthetic/operator-token\"\n");
+        assert!(toml::from_str::<Config>(&new).unwrap().validate().is_ok());
+    }
     #[test]
     fn unknown_configuration_is_rejected_before_startup() {
         assert!(toml::from_str::<Config>("unknown = true").is_err());

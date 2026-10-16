@@ -19,9 +19,15 @@ pub mod rpc {
         "replay.start",
         "replay.status",
         "replay.cancel",
+        "delete.run",
+        "delete.undo",
     ];
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
     pub enum Method {
+        #[serde(rename = "delete.run")]
+        Delete,
+        #[serde(rename = "delete.undo")]
+        DeleteUndo,
         #[serde(rename = "status")]
         Status,
         #[serde(rename = "replay.plan")]
@@ -52,6 +58,8 @@ pub mod rpc {
     impl Method {
         pub const fn as_str(self) -> &'static str {
             match self {
+                Self::Delete => "delete.run",
+                Self::DeleteUndo => "delete.undo",
                 Self::Status => "status",
                 Self::ReplayPlan => "replay.plan",
                 Self::ReplayStart => "replay.start",
@@ -69,6 +77,8 @@ pub mod rpc {
         }
         pub fn parse(value: &str) -> Option<Self> {
             match value {
+                "delete.run" => Some(Self::Delete),
+                "delete.undo" => Some(Self::DeleteUndo),
                 "status" => Some(Self::Status),
                 "replay.plan" => Some(Self::ReplayPlan),
                 "replay.start" => Some(Self::ReplayStart),
@@ -117,6 +127,33 @@ pub mod rpc {
             let method = Method::parse(&self.method)
                 .ok_or_else(|| RpcError::method_not_found(&self.method))?;
             match method {
+                Method::Delete | Method::DeleteUndo => {
+                    let params = serde_json::from_value::<sinex_model::exclusion::Request>(
+                        self.params.clone(),
+                    )
+                    .map_err(|_| {
+                        RpcError::new(
+                            ErrorKind::BadQuery,
+                            "delete requires ref, action_id and optional expected_key",
+                            Value::Null,
+                        )
+                    })?;
+                    params.event_id().map_err(|message| {
+                        RpcError::new(ErrorKind::BadQuery, message, Value::Null)
+                    })?;
+                    if params
+                        .expected_key
+                        .as_ref()
+                        .is_some_and(|key| key.len() > 2048)
+                    {
+                        return Err(RpcError::new(
+                            ErrorKind::BadQuery,
+                            "expected_key exceeds 2048 bytes",
+                            Value::Null,
+                        ));
+                    }
+                    return Ok(method);
+                }
                 Method::ReplayPlan
                 | Method::ReplayStart
                 | Method::ReplayStatus
@@ -418,6 +455,14 @@ pub mod rpc {
     }
     pub fn catalog() -> Vec<CatalogEntry> {
         [
+            (
+                Method::Delete,
+                "Exclude one retained raw Atuin occurrence; keep original evidence",
+            ),
+            (
+                Method::DeleteUndo,
+                "Remove only an exclusion; no implicit readmission",
+            ),
             (
                 Method::ReplayPlan,
                 "Plan bounded retained Atuin material replay",
