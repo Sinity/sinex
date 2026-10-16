@@ -31,7 +31,10 @@ def main():
         target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
         binary = target.resolve() / "debug/xtask"
         run("native-graph", [binary, "boundaries", ROOT])
-        run("normal-check-frontend", [binary, "check", "--locked", "--offline", "-p", "xtask"])
+        # The existing frontend selects --workspace; exclude products for this
+        # database-free forwarding control rather than changing that contract.
+        excludes = [arg for name in ["sinex-model", "sinex-protocol", "sinex-store", "sinexd", "sinexctl"] for arg in ["--exclude", name]]
+        run("normal-check-frontend", [binary, "check", "--locked", "--offline", *excludes])
         copied = report / "workspace"
         copied.mkdir()
         for name in ["Cargo.toml", "Cargo.lock"]:
