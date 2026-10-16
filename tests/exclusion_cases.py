@@ -297,14 +297,14 @@ poll_interval_ms=3600000
     def lost_reply():
         population(expected['restored']);action=new_action();listener=hold('delete-committed','lost-cli-reply')
         args=[str(bins/'sinexctl'),'--endpoint',endpoint,'--token-file',str(work/'operator'),'delete',a_ref,'--action-id',action,'--json']
-        out=(report/'lost-cli-reply.stdout').open('w');err=(report/'lost-cli-reply.stderr').open('w')
+        out=(report/'lost-client-reply.stdout').open('w');err=(report/'lost-client-reply.stderr').open('w')
         client=subprocess.Popen(args,cwd=h['ROOT'],env=h['ENV'],stdout=out,stderr=err)
-        h['CHILDREN'].append((client,out,err));h['PROCESSES'].append({'pid':client.pid,'argv':args,'stdout':'lost-cli-reply.stdout','stderr':'lost-cli-reply.stderr'})
+        h['CHILDREN'].append((client,out,err));h['PROCESSES'].append({'pid':client.pid,'argv':args,'stdout':'lost-client-reply.stdout','stderr':'lost-client-reply.stderr'})
         connection,frame=accept(listener,'delete-committed')
         before=action_audit(action);assert before['operations']==1
         client.send_signal(signal.SIGKILL);client.wait(timeout=10);assert client.returncode==-signal.SIGKILL
         connection.sendall(b'c');connection.close();listener.close();settled()
-        assert daemon.poll() is None and not (report/'lost-cli-reply.stdout').read_text()
+        assert daemon.poll() is None and not (report/'lost-client-reply.stdout').read_text()
         recovered=deletion(a_ref,action);assert recovered==frame['evidence']['outcome']
         after=action_audit(action);assert before==after
         population(expected['excluded'])
@@ -319,9 +319,17 @@ poll_interval_ms=3600000
         wrong_action=new_action();wrong=deletion(a_ref,wrong_action,expected_key='wrong stable occurrence key',expected_exit=4)
         assert wrong['details']['state']=='refused' and wrong['details']['archived']==[]
         assert deletion(a_ref,wrong_action,expected_key='wrong stable occurrence key',expected_exit=4)==wrong
-        absent_action=new_action();absent_ref=new_action()
-        absent=deletion(absent_ref,absent_action,expected_exit=3);assert absent['details']['state']=='not_found'
-        assert deletion(absent_ref,absent_action,expected_exit=3)==absent
+        absent_controls=[]
+        for absent_ref in [new_action(),'01800000-0000-7000-8000-000000000099']:
+            absent_action=new_action()
+            absent=deletion(absent_ref,absent_action,expected_exit=3);assert absent['details']['state']=='not_found'
+            assert deletion(absent_ref,absent_action,expected_exit=3)==absent
+            wire=api('delete.run',{'ref':absent_ref,'action_id':absent_action},True)
+            assert wire['error']['kind']=='not_found' and wire['error']['data']==absent['details']
+            audit=action_audit(absent_action)
+            assert audit['operations']==1 and len(audit['rows'][0]['effects'])==1
+            assert audit['rows'][0]['archives']==audit['rows'][0]['exclusions']==[]
+            absent_controls.append({'target':absent_ref,'cli':absent,'api':wire,'audit':audit})
         canonical=deletion(canonicals['occurrence-b']['id'],expected_exit=4)
         assert canonical['details']['raw_ref']=='sinex:ev/'+b_ref and canonical['details']['archived']==[]
         invalid=api('delete.run',{'ref':'events where kind = command.executed','action_id':new_action()},True)
@@ -340,7 +348,7 @@ poll_interval_ms=3600000
         assert before==after
         population(expected['excluded'])
         full=sql("SELECT jsonb_build_object('operations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM core.operations_log o),'effects',(SELECT jsonb_agg(to_jsonb(f) ORDER BY operation_id,step_no) FROM core.operation_effects f),'excluded',(SELECT jsonb_agg(to_jsonb(d)) FROM core.deleted_occurrences d),'archives',(SELECT jsonb_agg(to_jsonb(a) ORDER BY id) FROM audit.archived a))")
-        (report/'actual-finalized-action-controls.json').write_text(json.dumps({'before':before,'after':after,'noop':noop,'wrong_key':wrong,'absent':absent,'canonical_refusal':canonical,'invalid_shape':invalid,'missing_request':missing,'request_blob_sha256':blob_hash,'audit':full},indent=2)+'\n')
+        (report/'actual-finalized-action-controls.json').write_text(json.dumps({'before':before,'after':after,'noop':noop,'wrong_key':wrong,'absent_controls':absent_controls,'canonical_refusal':canonical,'invalid_shape':invalid,'missing_request':missing,'request_blob_sha256':blob_hash,'audit':full},indent=2)+'\n')
         stop(daemon)
         shutil.copytree(store,report/'retained-store')
         original={str(p.relative_to(store)):hashlib.sha256(p.read_bytes()).hexdigest() for p in store.rglob('*') if p.is_file()}

@@ -137,7 +137,13 @@ impl WriterPool {
             exclusion_added: None,
             exclusion_removed: None,
         };
-        let row=sqlx::query("SELECT source,event_type,equivalence_key,source_material_id,anchor_byte,source_event_ids FROM core.events WHERE id=$1").bind(target).fetch_optional(&mut self.connection).await?;
+        // Every stored event ID is v7. Other well-formed UUIDs are absent, and
+        // Timescale's UUID time partition rejects them before a lookup can run.
+        let row = if target.get_version_num() == 7 {
+            sqlx::query("SELECT source,event_type,equivalence_key,source_material_id,anchor_byte,source_event_ids FROM core.events WHERE id=$1").bind(target).fetch_optional(&mut self.connection).await?
+        } else {
+            None
+        };
         let mut current = None;
         if let Some(row) = row {
             let source: String = row.try_get("source")?;
