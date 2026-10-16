@@ -25,6 +25,7 @@ impl QualificationBoundary {
                     | "transaction-committed"
                     | "delete-staged"
                     | "delete-committed"
+                    | "fusion-replacement-committed"
             ))
             || !socket.is_absolute()
         {

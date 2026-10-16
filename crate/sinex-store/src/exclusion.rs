@@ -205,7 +205,7 @@ impl WriterPool {
                                 if let Some(ref current) = current {
                                     let raw: Uuid = current.try_get("id")?;
                                     effects.archived.push(raw);
-                                    let children:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM core.live_events WHERE event_type='command.canonical' AND source_event_ids=ARRAY[$1]::uuid[]").bind(raw).fetch_all(&mut self.connection).await?;
+                                    let children:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM core.live_events WHERE event_type='command.canonical' AND $1=ANY(source_event_ids)").bind(raw).fetch_all(&mut self.connection).await?;
                                     effects.archived.extend(children);
                                 }
                                 effects.exclusion_added = Some(id);

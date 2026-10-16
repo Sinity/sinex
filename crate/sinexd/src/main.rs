@@ -5,6 +5,8 @@ mod config;
 mod output;
 #[cfg(feature = "runtime")]
 mod server;
+#[cfg(feature = "runtime")]
+mod zsh;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 

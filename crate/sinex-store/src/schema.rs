@@ -142,8 +142,12 @@ const EVENT_CONSTRAINTS: &[(&str, &str)] = &[
         "FOREIGN KEY(producer_version_id) REFERENCES core.producer_versions(id)",
     ),
     (
+        "registered_zsh_payload",
+        "CHECK (event_type<>'command.imported' OR (payload_schema_id IS NOT DISTINCT FROM 4 AND source='terminal.zsh-history' AND equivalence_key IS NOT NULL AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND payload ? 'identity' AND payload ? 'continuity'))",
+    ),
+    (
         "registered_shell_payload",
-        "CHECK (event_type<>'command.canonical' OR (payload_schema_id IS NOT DISTINCT FROM 3 AND source='fusion.shell-command' AND cardinality(source_event_ids)=1 AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'observed_by') IS NOT DISTINCT FROM 'array'))",
+        "CHECK (event_type<>'command.canonical' OR (payload_schema_id IS NOT DISTINCT FROM 3 AND source='fusion.shell-command' AND cardinality(source_event_ids) BETWEEN 1 AND 2 AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'observed_by') IS NOT DISTINCT FROM 'array'))",
     ),
 ];
 
@@ -160,7 +164,7 @@ const TABLES: &[Definition] = &[
         constraints: &[
             ("inputs_pkey", "PRIMARY KEY (id)"),
             ("input_locator", "UNIQUE (binding,locator)"),
-            ("input_kind", "CHECK (kind='sqlite')"),
+            ("input_kind", "CHECK (kind IN ('sqlite','file'))"),
         ],
     },
     Definition {
@@ -612,8 +616,33 @@ const TABLES: &[Definition] = &[
     Definition {
         schema: "derivation",
         name: "shell_dirty",
-        columns: &[col!("parent_id", "uuid")],
+        columns: &[col!("parent_id", "uuid"), col!("dirty_seq", "bigint")],
         constraints: &[("shell_dirty_pkey", "PRIMARY KEY (parent_id)")],
+    },
+    Definition {
+        schema: "derivation",
+        name: "shell_progress",
+        columns: &[
+            col!("one", "boolean"),
+            col!("basis","bigint",default "0"),
+            col!("last_evaluated","bigint",default "0"),
+            col!("phase","text",default "'settled'::text"),
+            col!("scanned","bigint",default "0"),
+            col!("replaced","bigint",default "0"),
+            col!("failure", "text", null),
+        ],
+        constraints: &[
+            ("shell_progress_pkey", "PRIMARY KEY(one)"),
+            ("shell_progress_one", "CHECK(one)"),
+            (
+                "shell_progress_nonnegative",
+                "CHECK(basis>=0 AND last_evaluated>=0 AND scanned>=0 AND replaced>=0)",
+            ),
+            (
+                "shell_progress_phase",
+                "CHECK(phase IN ('settled','scan','count2','pair2','count60','pair60','single','publish','archive'))",
+            ),
+        ],
     },
     Definition {
         schema: "derivation",
@@ -802,11 +831,15 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         configure_events(&mut tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas (id,event_type,version,schema) VALUES (2,'command.executed','atuin-v1',$1)")
             .bind(crate::atuin::payload_schema()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(3,'command.canonical','shell-command-v1-single-source',$1)").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed'),(3,'command.canonical')")
+        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(3,'command.canonical','shell-command-v1-atuin-zsh',$1)").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(4,'command.imported','zsh-extended-v1',$1)").bind(crate::zsh::payload_schema()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed'),(3,'command.canonical'),(4,'command.imported')")
             .execute(&mut *tx)
             .await?;
         sqlx::query("INSERT INTO core.commit_counter (one,seq) VALUES (true,0)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO derivation.shell_progress(one) VALUES(true)")
             .execute(&mut *tx)
             .await?;
         let catalog = capture_catalog(&mut tx).await?;
@@ -820,7 +853,7 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         .execute(&mut *tx)
         .await?;
         sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sinex_read_model') THEN CREATE ROLE sinex_read_model LOGIN; END IF; END $$; GRANT USAGE ON SCHEMA core,raw,audit,sinex_schemas,derivation,reflection TO sinex_read_model; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,audit,sinex_schemas,derivation,reflection TO sinex_read_model; GRANT INSERT,UPDATE,DELETE ON core.search_text,core.event_project,derivation.read_model_position TO sinex_read_model").execute(&mut *tx).await?;
-        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT INSERT ON core.deleted_occurrences,core.producer_versions,derivation.shell_dirty,core.operation_effects,core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON core.operations_log,raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON core.deleted_occurrences,core.live_equivalence,derivation.shell_dirty,core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
+        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT INSERT ON core.deleted_occurrences,core.producer_versions,derivation.shell_dirty,core.operation_effects,core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON core.operations_log,raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON core.deleted_occurrences,core.live_equivalence,derivation.shell_dirty,core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates,derivation.shell_dirty,derivation.shell_progress TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
     }
     let status = inspect(&mut tx).await?;
     tx.commit().await?;
@@ -1035,7 +1068,13 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             "registered Atuin payload schema differs".into(),
         ));
     }
-    let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=3 AND event_type='command.canonical' AND version='shell-command-v1-single-source'").fetch_optional(&mut *conn).await?;
+    let zsh:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=4 AND event_type='command.imported' AND version='zsh-extended-v1'").fetch_optional(&mut *conn).await?;
+    if zsh.as_ref() != Some(&crate::zsh::payload_schema()) {
+        return Err(Error::Schema(
+            "registered zsh payload schema differs".into(),
+        ));
+    }
+    let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=3 AND event_type='command.canonical' AND version='shell-command-v1-atuin-zsh'").fetch_optional(&mut *conn).await?;
     if canonical.as_ref() != Some(&crate::shell::payload_schema()) {
         return Err(Error::Schema(
             "registered canonical payload schema differs".into(),
@@ -1090,6 +1129,8 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 | "raw.observations"
                 | "core.live_equivalence"
                 | "core.live_coordinates"
+                | "derivation.shell_dirty"
+                | "derivation.shell_progress"
         );
         let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1 IN ('core.deleted_occurrences','core.live_equivalence','core.live_coordinates','derivation.shell_dirty')) AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
         if !good {

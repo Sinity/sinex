@@ -249,12 +249,12 @@ impl ReadPool {
         if !state.try_get::<bool, _>("serving")?
             || state.try_get::<Option<String>, _>("failure")?.is_some()
             || position != current
-            || dirty
         {
             return Err(Error::ProjectionUnavailable(
                 "canonical interpretation or indexed projection has not caught up; retry or inspect status",
             ));
         }
+        let fusion:Value=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('current_now_settled',NOT EXISTS(SELECT 1 FROM derivation.shell_dirty),'scope','whole-input baseline; component-targeted efficiency unqualified') FROM derivation.shell_progress p WHERE one").fetch_one(&mut *tx).await?;
         let after: Option<Cursor> = cursor
             .map(|raw| {
                 if raw.len() > 4096 {
@@ -318,7 +318,8 @@ impl ReadPool {
         } else {
             q.push("0::float8");
         }
-        q.push(" AS rank,CASE WHEN s.ts_orig IS NULL THEN NULL ELSE to_char(s.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(s.ts_orig_tiebreak,0)::text,3,'0') || 'Z' END AS at FROM core.search_text s LEFT JOIN core.event_project p ON p.generation=s.generation AND p.event_id=s.id WHERE s.generation=").push_bind(generation);
+        q.push(" AS rank,CASE WHEN s.ts_orig IS NULL THEN NULL ELSE to_char(s.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(s.ts_orig_tiebreak,0)::text,3,'0') || 'Z' END AS at FROM core.search_text s JOIN core.live_events eligible ON eligible.id=s.id LEFT JOIN core.event_project p ON p.generation=s.generation AND p.event_id=s.id WHERE s.generation=").push_bind(generation);
+        q.push(" AND NOT EXISTS(SELECT 1 FROM unnest(eligible.source_event_ids) parent(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=parent.id AND raw.record_state='present'))");
         if let Some(filter) = &bound.filter {
             q.push(" AND ");
             expression(&mut q, filter);
@@ -398,17 +399,22 @@ impl ReadPool {
         } else {
             None
         };
-        let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true").fetch_all(&mut *tx).await?;
-        let complete = source_status.iter().all(|s| s["status"] == "completed");
+        let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason,'record_errors',o.record_errors) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason,record_errors FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true").fetch_all(&mut *tx).await?;
+        let complete = source_status
+            .iter()
+            .all(|s| s["status"] == "completed" && s["record_errors"].as_i64() == Some(0))
+            && !dirty
+            && fusion["phase"] == "settled"
+            && fusion["failure"].is_null();
         tx.commit().await?;
         drop(lease.0.take());
         Ok(
-            json!({"notice":sinex_model::DATA_NOTICE,"unit":bound.unit,"query":text,"rows":rows,"total":total,"complete":complete,"coverage":"unknown; retained shell observations do not prove continuous capture","source_status":source_status,"truncated":more && next.is_none(),"page":{"size":page,"cursor":next,"first_commit_seq":first,"changed_since_first_page":first!=current,"change_notice":if first!=current{Some("Current-state continuation; additions or changed rank/order keys may be absent or repeated.")}else{None}},"resolved":{"commit_seq":current,"projection_seq":position,"generation":generation,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Eligible live single-source canonical commands matching {text}; {}. Continuous source coverage is unknown.",if ranked{"ranked over every selected match, then original time and ID"}else if desc{"ordered by original time descending, unknown last, then ID"}else{"ordered by original time ascending, unknown last, then ID"}),"excluded":{}}),
+            json!({"notice":sinex_model::DATA_NOTICE,"unit":bound.unit,"query":text,"rows":rows,"total":total,"complete":complete,"fusion":fusion,"coverage":"unknown; retained shell observations do not prove continuous capture","source_status":source_status,"truncated":more && next.is_none(),"page":{"size":page,"cursor":next,"first_commit_seq":first,"changed_since_first_page":first!=current,"change_notice":if first!=current{Some("Current-state continuation; additions or changed rank/order keys may be absent or repeated.")}else{None}},"resolved":{"commit_seq":current,"projection_seq":position,"generation":generation,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Eligible live policy-selected canonical commands matching {text}; {}. Continuous source coverage is unknown.",if ranked{"ranked over every selected match, then original time and ID"}else if desc{"ordered by original time descending, unknown last, then ID"}else{"ordered by original time ascending, unknown last, then ID"}),"excluded":{}}),
         )
     }
     pub async fn projection_status(&self) -> Result<Value> {
         let mut lease = self.read_lease().await?;
-        let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p) || jsonb_build_object('current_commit_seq',(SELECT seq FROM core.commit_counter WHERE one),'pending_canonical',(SELECT count(*) FROM derivation.shell_dirty)) FROM derivation.read_model_position p WHERE name='shell-search'").fetch_optional(lease.connection()).await?;
+        let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p) || jsonb_build_object('current_commit_seq',(SELECT seq FROM core.commit_counter WHERE one),'pending_canonical',(SELECT count(*) FROM derivation.shell_dirty),'fusion',(SELECT to_jsonb(f) FROM derivation.shell_progress f WHERE one)) FROM derivation.read_model_position p WHERE name='shell-search'").fetch_optional(lease.connection()).await?;
         lease.finish();
         Ok(row.unwrap_or(json!({"state":"not_configured"})))
     }

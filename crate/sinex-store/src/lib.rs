@@ -1,5 +1,7 @@
 //! Foundation storage authority. No connection or transaction escapes the writer owner.
 mod atuin;
+mod zsh;
+pub use zsh::{PROTOCOL as ZSH_PROTOCOL, SOURCE as ZSH_SOURCE, ZshStep};
 mod event_storage;
 mod exclusion;
 mod projection;
@@ -140,6 +142,15 @@ impl Admission {
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
     }
+    pub async fn submit_zsh(&self, step: ZshStep) -> Result<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .send(Command::Zsh(step, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
+
     pub async fn replay(&self, command: ReplayCommand) -> Result<serde_json::Value> {
         let cancelled = match &command {
             ReplayCommand::Cancel(p) => Some(p.operation_id),
@@ -215,6 +226,7 @@ enum Command {
     Replay(ReplayCommand, oneshot::Sender<Result<serde_json::Value>>),
     Admit(MaterialEvent, oneshot::Sender<Result<Receipt>>),
     Atuin(AtuinStep, oneshot::Sender<Result<serde_json::Value>>),
+    Zsh(ZshStep, oneshot::Sender<Result<serde_json::Value>>),
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -229,6 +241,8 @@ struct WriterPool {
     reader: ReadPool,
     replay_rules: Option<Vec<PrivacyRule>>,
     shell_producer: Option<Uuid>,
+    shell_work: Option<shell::Work>,
+    shell_failed: bool,
     qualification: Option<QualificationBoundary>,
 }
 
@@ -335,6 +349,8 @@ impl Store {
             reader: reader.clone(),
             replay_rules: None,
             shell_producer: None,
+            shell_work: None,
+            shell_failed: false,
             qualification,
         };
         owner.recover_blobs().await?;
@@ -392,7 +408,7 @@ const BLOB_PRESENT: &str = "UPDATE core.blobs SET status='present' WHERE id=$1";
 const WRITING_BLOBS: &str = "SELECT id,blake3 FROM core.blobs WHERE status='writing' AND root=$1";
 const RUN_INTERRUPT: &str =
     "UPDATE core.runs SET status='interrupted',ended_at=now() WHERE status='running'";
-const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed','command.executed','command.canonical']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
+const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed','command.executed','command.canonical','command.imported']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
 const RUN_START: &str = "INSERT INTO core.runs (id,manifest_id,service_name,host,status,effective_config_hash) VALUES ($1,$2,$3,$4,'running',$5)";
 const RUN_END: &str = "UPDATE core.runs SET status='completed',ended_at=now() WHERE id=$1";
 
@@ -468,6 +484,7 @@ pub async fn prepare_admission_statements(admin_url: &str) -> Result<()> {
 impl WriterPool {
     async fn run(mut self, mut rx: mpsc::Receiver<Command>) -> Result<()> {
         let mut shutdown = None;
+        let mut replay_turn = false;
         loop {
             // A pending operation belongs to this writer, not to an HTTP waiter.
             // Give queued control/live work the next turn between bounded chunks.
@@ -478,8 +495,40 @@ impl WriterPool {
                     Ok(command) => Some(command),
                     Err(mpsc::error::TryRecvError::Disconnected) => None,
                     Err(mpsc::error::TryRecvError::Empty) => {
-                        if self.shell_step().await? {
-                            continue;
+                        // Alternate bounded background owners as well as servicing
+                        // queued source/control commands before either one.
+                        if replay_turn && self.replay_rules.is_some() {
+                            replay_turn = false;
+                            if let Some(request) = self.next_replay().await? {
+                                self.replay(ReplayCommand::Start(request)).await?;
+                                continue;
+                            }
+                        }
+                        replay_turn = true;
+                        if !self.shell_failed {
+                            match self.shell_step().await {
+                                Ok(true) => continue,
+                                Ok(false) => {}
+                                Err(error) => {
+                                    // Only static validation reasons are safe to publish;
+                                    // database diagnostics may contain captured values.
+                                    let reason = match error {
+                                        Error::Invalid(reason) => format!(
+                                            "shell recomputation unavailable: {reason}; dirty work retained"
+                                        ),
+                                        _ => "shell recomputation unavailable; dirty work retained"
+                                            .into(),
+                                    };
+                                    self.shell_failed = true;
+                                    self.shell_work = None;
+                                    sqlx::query(
+                                        "UPDATE derivation.shell_progress SET failure=$1 WHERE one",
+                                    )
+                                    .bind(reason)
+                                    .execute(&mut self.connection)
+                                    .await?;
+                                }
+                            }
                         }
                         if self.replay_rules.is_some()
                             && let Some(request) = self.next_replay().await?
@@ -509,15 +558,33 @@ impl WriterPool {
                     let result = self.admit(event).await;
                     if reply.send(result).is_err() { /* caller gone; no commit is undone */ }
                 }
+                Command::Zsh(step, reply) => {
+                    let result = self.admit_zsh(step).await;
+                    if result.as_ref().is_ok_and(|outcome| {
+                        outcome["admitted"].as_i64().unwrap_or(0) > 0
+                            || outcome["removed"].as_i64().unwrap_or(0) > 0
+                    }) {
+                        self.shell_failed = false;
+                    }
+                    let _ = reply.send(result);
+                }
                 Command::Atuin(step, reply) => {
                     let result = self.admit_atuin(step).await;
+                    if result.as_ref().is_ok_and(|outcome| {
+                        outcome["admitted"].as_i64().unwrap_or(0) > 0
+                            || outcome["removed"].as_i64().unwrap_or(0) > 0
+                    }) {
+                        self.shell_failed = false;
+                    }
                     let _ = reply.send(result);
                 }
                 Command::Exclude(action, request, reply) => {
+                    self.shell_failed = false;
                     let result = self.exclude(action, request).await;
                     let _ = reply.send(result);
                 }
                 Command::Replay(command, reply) => {
+                    self.shell_failed = false;
                     let result = self.replay(command).await;
                     let _ = reply.send(result);
                 }

@@ -161,6 +161,19 @@ pub async fn serve(
     } else {
         None
     };
+    let zsh_source = if let Some(zsh) = config.zsh.clone() {
+        let rules = config.privacy_rules.iter().map(|r| r.rule()).collect();
+        let admission = store.admission.clone();
+        let stop = source_stop.subscribe();
+        let ended = source_ended.clone();
+        Some(tokio::spawn(async move {
+            let result = crate::zsh::run(zsh, rules, admission, stop).await;
+            let _ = ended.send(true);
+            result
+        }))
+    } else {
+        None
+    };
     let state = Arc::new(App {
         indexed: config.read_model_connection_file.is_some(),
         config,
@@ -184,6 +197,11 @@ pub async fn serve(
     } else {
         Ok(())
     };
+    let zsh_result = if let Some(source) = zsh_source {
+        source.await.map_err(|_| "zsh source task failed")?
+    } else {
+        Ok(())
+    };
     if let Some(projection) = projection {
         projection
             .shutdown()
@@ -192,6 +210,7 @@ pub async fn serve(
     }
     let stopped = store.shutdown().await;
     source_result?;
+    zsh_result?;
     drop(lock);
     result.map_err(|_| "HTTP server failed".to_string())?;
     stopped.map_err(|_| "writer shutdown failed".to_string())?;

@@ -195,3 +195,21 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 1800
 cache = "none"
+
+[operations.fusion_acceptance]
+description = "Selected retained Atuin/zsh grouping lifecycle with independent specification and actual CLI/API/MCP"
+exec = ["python3", "tests/foundation.py", "--fusion"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
+
+[operations.fusion_package_acceptance]
+description = "Packaged selected Atuin/zsh grouping, exact retained parent bindings, bounded restart and privacy refusals"
+exec = ["python3", "tests/foundation.py", "--fusion", "--packaged"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

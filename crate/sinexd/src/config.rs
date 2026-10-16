@@ -10,6 +10,16 @@ pub struct AtuinConfig {
     #[serde(default = "poll_interval")]
     pub poll_interval_ms: u64,
 }
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ZshConfig {
+    pub path: PathBuf,
+    pub execution_host: String,
+    /// Independently declared protocol premise, not proof supplied by a prefix test.
+    pub protocol: String,
+    #[serde(default = "poll_interval")]
+    pub poll_interval_ms: u64,
+}
 fn poll_interval() -> u64 {
     30_000
 }
@@ -62,6 +72,7 @@ pub struct Config {
     #[serde(default)]
     pub automata: Vec<String>,
     pub atuin: Option<AtuinConfig>,
+    pub zsh: Option<ZshConfig>,
     #[serde(default)]
     pub privacy_rules: Vec<PrivacyConfig>,
     #[serde(skip)]
@@ -107,16 +118,35 @@ impl Config {
         if !address.ip().is_loopback() {
             return Err("foundation listens only on loopback".into());
         }
-        if self.sources.iter().any(|s| s != sinex_store::ATUIN_SOURCE)
-            || self.sources.len() > 1
+        if self
+            .sources
+            .iter()
+            .any(|s| s != sinex_store::ATUIN_SOURCE && s != sinex_store::ZSH_SOURCE)
+            || self
+                .sources
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != self.sources.len()
             || !self.automata.is_empty()
         {
-            return Err(
-                "only Atuin and the indexed singleton shell interpretation are implemented; automata configuration is unavailable".into(),
-            );
+            return Err("only Atuin, append-only extended zsh and the shell fusion interpretation are implemented; general automata configuration is unavailable".into());
         }
-        if self.sources.is_empty() != self.atuin.is_none() {
+        if self.sources.iter().any(|s| s == sinex_store::ATUIN_SOURCE) != self.atuin.is_some() {
             return Err("Atuin source enablement and [atuin] configuration must agree".into());
+        }
+        if self.sources.iter().any(|s| s == sinex_store::ZSH_SOURCE) != self.zsh.is_some() {
+            return Err("zsh source enablement and [zsh] configuration must agree".into());
+        }
+        if let Some(zsh) = &self.zsh {
+            if !zsh.path.is_absolute()
+                || !(100..=3_600_000).contains(&zsh.poll_interval_ms)
+                || zsh.execution_host.trim().is_empty()
+                || zsh.execution_host.len() > 255
+                || zsh.protocol != sinex_store::ZSH_PROTOCOL
+            {
+                return Err("zsh requires absolute path, execution_host, append_only_extended_v1 protocol and poll interval100..=3600000ms".into());
+            }
         }
         if let Some(atuin) = &self.atuin {
             if !atuin.path.is_absolute() || !(100..=3_600_000).contains(&atuin.poll_interval_ms) {
@@ -124,6 +154,9 @@ impl Config {
                     "Atuin requires an absolute path and poll interval 100..=3600000 ms".into(),
                 );
             }
+        }
+        if self.zsh.is_some() && !self.privacy_rules.is_empty() {
+            return Err("optional ingest privacy transformations are unavailable for the selected zsh/two-source capability; Atuin-only reading and mandatory credential presentation remain supported".into());
         }
         if self.privacy_rules.len() > 32 {
             return Err("at most 32 privacy rules are supported".into());

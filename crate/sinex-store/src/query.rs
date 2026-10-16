@@ -314,10 +314,15 @@ impl ReadPool {
                 .map_err(|_| Error::Invalid("cursor expiry encoding failed"))?,
         };
         let seq = current;
+        let canonical_scope = !filters.iter().any(|f| {
+            (f.field == "kind" && f.value.as_str() != Some("command.canonical"))
+                || (f.field == "source" && f.value.as_str() != Some("fusion.shell-command"))
+        });
         let mut q: QueryBuilder<Postgres> = QueryBuilder::new(format!(
             "WITH matching AS (SELECT {EVENT_VIEW} AS event FROM core.events e WHERE e.record_state='present' AND e.commit_seq<="
         ));
         q.push_bind(seq).push(" AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=").push_bind(seq).push(")");
+        q.push(" AND (e.event_type<>'command.canonical' OR NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) parent(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=parent.id AND raw.record_state='present')))");
         for f in filters {
             q.push(" AND ");
             match f.field {
@@ -418,13 +423,21 @@ impl ReadPool {
         } else {
             None
         };
-        let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason FROM raw.observations WHERE input_id=i.id AND commit_seq<=$1 ORDER BY seq DESC LIMIT 1) o ON true").bind(seq).fetch_all(&mut *tx).await?;
-        let complete = source_status.iter().all(|s| s["status"] == "completed");
+        let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason,'record_errors',o.record_errors) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason,record_errors FROM raw.observations WHERE input_id=i.id AND commit_seq<=$1 ORDER BY seq DESC LIMIT 1) o ON true").bind(seq).fetch_all(&mut *tx).await?;
+        let fusion:Value=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('current_now_settled',NOT EXISTS(SELECT 1 FROM derivation.shell_dirty),'enabled',EXISTS(SELECT 1 FROM core.producer_versions WHERE name='fusion.shell-command'),'scope','whole-input baseline; component-targeted efficiency unqualified') FROM derivation.shell_progress p WHERE one").fetch_one(&mut *tx).await?;
+        let complete = source_status.iter().all(|s| {
+            s["status"] == "completed"
+                && (s["source"] != crate::ZSH_SOURCE || s["record_errors"].as_i64() == Some(0))
+        }) && (!canonical_scope
+            || fusion["enabled"] != true
+            || (fusion["current_now_settled"] == true
+                && fusion["phase"] == "settled"
+                && fusion["failure"].is_null()));
         tx.commit().await?;
         // Only a fully committed read may return its connection to the pool.
         drop(lease.0.take());
         Ok(
-            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Raw live activity events matching {text}, ordered by original time then interpretation ID; shell fusion and coverage claims unavailable."),"excluded":{}}),
+            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"fusion":fusion,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Raw live activity events matching {text}, ordered by original time then interpretation ID; source coverage is unknown; canonical rows are policy-selected groups with their own parent evidence."),"excluded":{}}),
         )
     }
     pub async fn show(&self, id: &str) -> Result<Option<Value>> {
@@ -480,12 +493,12 @@ impl ReadPool {
         let archive: Option<Value> = row.try_get("archive")?;
         if !bytes_requested {
             return Ok(Some(
-                json!({"event":id,"material":material,"anchor":anchor,"end":end,"record_state":state,"archive":archive,"representation":"canonical_sqlite_row"}),
+                json!({"event":id,"material":material,"anchor":anchor,"end":end,"record_state":state,"archive":archive,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"}}),
             ));
         }
         let (record, _) = self.retained_record(material, anchor, Some(end)).await?;
         Ok(Some(
-            json!({"event":id,"material":material,"anchor":anchor,"end":end,"representation":"canonical_sqlite_row","record_state":state,"archive":archive,"record":record,"privacy":"presentation masked; original raw rows retained as plain evidence"}),
+            json!({"event":id,"material":material,"anchor":anchor,"end":end,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"},"record_state":state,"archive":archive,"record":record,"privacy":"presentation masked; original raw rows retained as plain evidence"}),
         ))
     }
     pub(crate) async fn retained_record(
@@ -544,6 +557,29 @@ impl ReadPool {
             }
         })
         .await??;
+        let provenance: Value = row.try_get("parser_provenance")?;
+        if provenance["source"] == crate::ZSH_SOURCE {
+            let length = bytes
+                .iter()
+                .enumerate()
+                .find(|(i, b)| **b == b'\n' && (*i == 0 || bytes[*i - 1] != b'\\'))
+                .map(|(i, _)| i + 1)
+                .ok_or(Error::Invalid("retained zsh record terminator unavailable"))?;
+            if expected_end.is_some_and(|end| end != anchor + length as i64) {
+                return Err(Error::Invalid("retained zsh range spans other data"));
+            }
+            let text =
+                String::from_utf8(crate::zsh::unmetafy(&bytes[..length]).map_err(Error::Invalid)?)
+                    .map_err(|_| Error::Invalid("retained zsh UTF-8 unavailable"))?;
+            let mut record = json!({"unmetafied_record":text,"original_blake3":blake3::hash(&bytes[..length]).to_hex().to_string(),"representation":"zsh-unmetafied-utf8","byte_presentation":"original bytes retained; encoded bytes are not exposed through masked output"});
+            let rules: Vec<crate::PrivacyRule> =
+                serde_json::from_value(provenance["privacy_rules"].clone())
+                    .map_err(|_| Error::Invalid("retained privacy provenance unavailable"))?;
+            if presentation {
+                crate::present(&mut record, &rules)?;
+            }
+            return Ok((record, anchor + length as i64));
+        }
         let length = bytes
             .iter()
             .position(|b| *b == b'\n')
