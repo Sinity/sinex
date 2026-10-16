@@ -2,6 +2,7 @@
 import hashlib
 import json
 import sqlite3
+import shutil
 import time
 import uuid
 
@@ -184,6 +185,7 @@ roots = ["/synthetic/privacy"]
             'replay_operation':replay['operation_id'],'original_ids':ids,'replayed_ids':new_ids,
             'fixed_floor_and_request_refusal':True},indent=2)+'\n')
         stop(daemon)
+        shutil.copytree(work/'privacy-store',report/'retained-atuin')
     h['scenario']('optional privacy rules preserve admission meaning and retained protection',controls)
 
     def zsh_retained():
@@ -257,4 +259,5 @@ poll_interval_ms = 3600000
         assert all(protected['row'][key]==traced['row'][key] for key in ['event','material','anchor','end'])
         (report/'zsh-current-raw-protection.json').write_text(json.dumps({'stored':stored,'protected_raw':protected,'original_raw':traced},indent=2)+'\n')
         stop(daemon)
+        shutil.copytree(work/'zsh-privacy-store',report/'retained-zsh')
     h['scenario']('zsh retained original protection uses current rules once',zsh_retained)
