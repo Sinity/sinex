@@ -127,18 +127,24 @@ poll_interval_ms={poll}
         return json.loads(result.stdout or result.stderr)
     def sql(statement,url=None):return json.loads(run(['psql',url or h['reader'],'-XAt','-v','ON_ERROR_STOP=1','-c',statement],label='independent read-only fusion binding audit').stdout)
     def wait(predicate,seconds=45):
-        deadline=time.monotonic()+seconds
+        started=time.monotonic();deadline=started+seconds;latest=None;progress=[]
         while True:
             assert daemon.poll() is None,'owned daemon exited; see exact stderr'
             try:
                 status=api('status').get('result')
-                if status and predicate(status):return status
+                if status:
+                    latest=status;indexed=status.get('indexed_retrieval') or {}
+                    step={'commit_seq':status.get('commit_seq'),'position':indexed.get('position'),'pending_canonical':indexed.get('pending_canonical'),'fusion':indexed.get('fusion'),'projection_failure':indexed.get('failure')}
+                    if not progress or progress[-1]!=step:progress.append(step)
+                    if predicate(status):return status
             except (OSError,ValueError):pass
-            assert time.monotonic()<deadline,'fusion frontier did not reach required state'
+            if time.monotonic()>=deadline:
+                (report/'watchdog-failure.json').write_text(json.dumps({'seconds':seconds,'elapsed':time.monotonic()-started,'latest_status':latest,'ordered_progress':progress,'wire_evidence':'actual-api.jsonl'},indent=2)+'\n')
+                raise AssertionError('fusion frontier did not reach required state; see watchdog-failure.json')
             time.sleep(.025)
     def ready():return wait(lambda _:True)
     def settled():
-        return wait(lambda s:s['indexed_retrieval'].get('serving') and s['indexed_retrieval']['position']==s['commit_seq'] and s['indexed_retrieval']['pending_canonical']==0 and s['indexed_retrieval']['fusion']['phase']=='settled' and s['indexed_retrieval']['fusion']['failure'] is None)
+        return wait(lambda s:s['indexed_retrieval'].get('serving') and s['indexed_retrieval']['position']==s['commit_seq'] and s['indexed_retrieval']['pending_canonical']==0 and s['indexed_retrieval']['fusion']['phase']=='settled' and s['indexed_retrieval']['fusion']['failure'] is None,seconds=180)
     def acquired():return wait(lambda s:len((sources:=api('sources.list').get('result',{}).get('sources',[])))==2 and all(x['last_run'] and x['last_run']['status']=='completed' for x in sources))
     def launch(name,acquire=True,*extra,**kw):
         nonlocal daemon

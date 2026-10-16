@@ -20,7 +20,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--reversible-exclusion",action="store_true",help="qualify packaged exact occurrence exclusion with an explicit immutable package pin")
-parser.add_argument("--package-pin",type=Path,help="reuse the exact clean candidate/package/binary SHA256 pin for reversible exclusion; never build or fall back")
+parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion or fusion; never build or fall back")
 parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
 parser.add_argument("--fusion",action="store_true",help="qualify selected Atuin/zsh fusion lifecycle using a pinned independent specification")
 parser.add_argument("--fusion-focus",choices=["changed-seams","source-codec"],help="development-only projection/head-race or zsh source-codec controls; reuse separately retained journey proof")
@@ -40,9 +40,11 @@ parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer
 OPTIONS = parser.parse_args()
 if OPTIONS.fusion_focus and (not OPTIONS.fusion or OPTIONS.packaged): parser.error("fusion focus requires the development --fusion selector")
 if OPTIONS.fusion != bool(OPTIONS.fusion_spec): parser.error("fusion requires --fusion --fusion-spec GIT_REPOSITORY")
-if OPTIONS.fusion and any([OPTIONS.reversible_exclusion,OPTIONS.package_pin,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output]): parser.error("fusion owns its own scenario selector")
-if OPTIONS.package_pin and not OPTIONS.reversible_exclusion:
-    parser.error("prebuilt package pins are supported only by reversible exclusion qualification")
+if OPTIONS.fusion and any([OPTIONS.reversible_exclusion,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output]): parser.error("fusion owns its own scenario selector")
+if OPTIONS.package_pin and not (OPTIONS.reversible_exclusion or OPTIONS.fusion):
+    parser.error("prebuilt package pins are supported only by exclusion or fusion qualification")
+if OPTIONS.fusion and OPTIONS.package_pin and not OPTIONS.packaged:
+    parser.error("fusion prebuilt package pins require --packaged")
 if OPTIONS.reversible_exclusion and (not OPTIONS.packaged or not OPTIONS.package_pin or OPTIONS.exclusion_contracts or OPTIONS.indexed or OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.credential_output):
     parser.error("reversible exclusion requires --packaged --package-pin FILE and its own scenario selector")
 
