@@ -774,8 +774,8 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hashed-blobs"
-version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue?tag=hashed-blobs-v0.1.0#99972871d8ee48614a6206a10761e5b703c21f54"
+version = "0.1.1"
+source = "git+https://github.com/Sinity/polylogue?tag=hashed-blobs-v0.1.1#2cbe3f12805641631906a36a87cdac1830dc2eb3"
 dependencies = [
  "blake3",
  "chacha20poly1305",
