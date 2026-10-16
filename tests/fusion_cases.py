@@ -407,6 +407,7 @@ poll_interval_ms={poll}
             rows=[('hours-a90' if n==90 else f'maintenance-{n}',20_000_000_000_000+n*1_000_000_000,1,0,f'echo maintenance-{n}','/work/harbor','maintenance-session','fixture-host',None) for n in range(130)]
             with sqlite3.connect(source) as con:con.executemany('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',rows)
             launch('maintenance-earlier-material');acquired();settled()
+            assert 'atuin-step-enqueued' not in (report/'maintenance-earlier-material.stderr').read_text()
             schema_ids=sql("SELECT jsonb_agg(DISTINCT payload_schema_id ORDER BY payload_schema_id) FROM core.live_events WHERE event_type='command.canonical'");assert schema_ids==[5]
             (report/'independent-maintenance-inputs.json').write_text(json.dumps({'earlier_rows':rows,'expected_new_canonical_schema_ids':[5]},indent=2)+'\n')
         scenario('independent maintenance source setup',maintenance_setup)
@@ -423,12 +424,28 @@ poll_interval_ms={poll}
             with conn:
                 notice=json.loads(conn.makefile('r').readline());basis=notice['evidence']['basis'];assert notice['pid']==daemon.pid
                 assert notice['evidence']['queued_background_turns']>0,notice
-                with sqlite3.connect(source) as con:con.execute('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',('fair-later',901_000_000_000_000,1,0,'echo fair-later','/work/harbor','fair-session','fixture-host',None))
-                # New source read can enqueue while writer is parked. Release it;
-                # bounded turns allow the queued admission before old pass ends.
-                time.sleep(.2);conn.sendall(b'c')
+                with sqlite3.connect(source) as con:
+                    con.execute('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',('fair-later',901_000_000_000_000,1,0,'echo fair-later','/work/harbor','fair-session','fixture-host',None))
+                    later_rowid=con.execute("SELECT rowid FROM history WHERE id='fair-later'").fetchone()[0]
+                # Let the writer acknowledge earlier batches so the source can reach
+                # the tail. Provider visibility alone does not establish enqueue.
+                conn.sendall(b'c')
+        queued=[]
+        def later_enqueued(status):
+            queued.clear()
+            for line in (report/'fair-live.stderr').read_text().splitlines():
+                try:message=json.loads(line)
+                except ValueError:continue
+                if message.get('qualification_phase')=='atuin-step-enqueued' and later_rowid in message['sqlite_rowids']:queued.append(message)
+            return bool(queued)
+        queued_status=wait(later_enqueued)
+        queued_observed_at=time.monotonic()
+        assert queued_status['indexed_retrieval']['fusion']['basis']==basis and queued_status['indexed_retrieval']['fusion']['phase']!='settled',queued_status
+        enqueue_basis=sql("SELECT to_jsonb(p) FROM derivation.shell_progress p WHERE one")
+        assert enqueue_basis['basis']==basis and enqueue_basis['phase']!='settled',enqueue_basis
+        (report/'fair-enqueue-basis.json').write_text(json.dumps({'replacement_boundary':notice,'queued_step':queued,'selected_provider_record':{'native_id':'fair-later','sqlite_rowid':later_rowid},'enqueue_status':queued_status,'atomic_enqueue_basis':enqueue_basis},indent=2)+'\n')
         during=[]
-        deadline=time.monotonic()+30
+        deadline=queued_observed_at+30
         seed=None
         while time.monotonic()<deadline:
             state=api('status')['result'];during.append(state)
@@ -448,7 +465,7 @@ poll_interval_ms={poll}
         shutdown=sql("SELECT jsonb_build_object('runs',(SELECT jsonb_agg(jsonb_build_object('id',id,'status',status,'ended',ended_at IS NOT NULL) ORDER BY id) FROM core.runs WHERE id IN ("+','.join("'"+rid+"'" for rid in running)+")), 'open_materials',(SELECT count(*) FROM raw.source_material_registry WHERE status='capturing'))")
         assert all(r['status']=='completed' and r['ended'] for r in shutdown['runs']) and shutdown['open_materials']==0,shutdown
         launch('fair-restart',False);settled();after=sql("SELECT jsonb_agg(id ORDER BY id) FROM core.live_events WHERE event_type='command.canonical'");assert before==after
-        (report/'actual-fair-frontier.json').write_text(json.dumps({'boundary':notice,'audit':audit,'during_old_pass':during,'atomic_seed_and_old_pass':atomic,'stable_ids':before,'clean_shutdown':shutdown,'scope':'at most two queued commands before one bounded background turn; replay/shell alternate; no full three-channel or corpus-performance claim'},indent=2)+'\n')
+        (report/'actual-fair-frontier.json').write_text(json.dumps({'boundary':notice,'audit':audit,'during_old_pass':during,'atomic_seed_and_old_pass':atomic,'stable_ids':before,'clean_shutdown':shutdown,'queued_later_step':queued,'enqueue_basis':enqueue_basis,'selected_provider_record':{'native_id':'fair-later','sqlite_rowid':later_rowid},'scope':'at most two queued commands before one bounded background turn; replay/shell alternate; no full three-channel or corpus-performance claim'},indent=2)+'\n')
     if not focus or focus=='maintenance':scenario(PLANNED[7],fairness)
     def pending_head_race():
         nonlocal daemon

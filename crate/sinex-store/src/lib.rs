@@ -154,19 +154,39 @@ impl ReadPool {
 }
 
 #[derive(Clone)]
-pub struct Admission(mpsc::Sender<Command>);
+pub struct Admission {
+    sender: mpsc::Sender<Command>,
+    observe_atuin_queue: bool,
+}
 impl Admission {
     pub async fn submit_atuin(&self, step: AtuinStep) -> Result<serde_json::Value> {
+        // Explicit synthetic qualification only. Opaque hashes and source record
+        // addresses identify a prepared bounded step without logging captured keys.
+        let evidence = self.observe_atuin_queue.then(|| serde_json::json!({
+            "component":"sinex-store",
+            "qualification_phase":"atuin-step-enqueued",
+            "observation":step.observation,
+            "sqlite_rowids":step.rows.iter().filter_map(|row| row["_rowid"].as_i64()).collect::<Vec<_>>(),
+            "native_key_hashes":step.rows.iter().filter_map(|row| row["id"].as_str()).map(|key| blake3::hash(key.as_bytes()).to_hex().to_string()).collect::<Vec<_>>(),
+            "source_eof":step.complete,
+            "admission":"accepted by existing bounded writer channel",
+            "custody":"writer acknowledgement not observed; retention and commit unconfirmed"
+        }));
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::Atuin(step, tx))
             .await
             .map_err(|_| Error::Stopped)?;
+        if let Some(evidence) = evidence {
+            // Successful channel send precedes this notice; no producer/writer
+            // barrier is introduced and the writer can acknowledge earlier batches.
+            eprintln!("{evidence}");
+        }
         rx.await.map_err(|_| Error::Stopped)?
     }
     pub async fn submit_zsh(&self, step: ZshStep) -> Result<serde_json::Value> {
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::Zsh(step, tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -179,7 +199,7 @@ impl Admission {
             _ => None,
         };
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::Replay(command, tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -197,7 +217,7 @@ impl Admission {
         request: sinex_model::exclusion::Request,
     ) -> Result<serde_json::Value> {
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::Exclude(action, request, tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -205,7 +225,7 @@ impl Admission {
     }
     pub async fn set_replay_profile(&self, rules: Option<Vec<PrivacyRule>>) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::ReplayProfile(rules, tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -213,19 +233,19 @@ impl Admission {
     }
     pub async fn enable_shell(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::ShellEnable(tx))
             .await
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
     }
     pub fn is_available(&self) -> bool {
-        !self.0.is_closed()
+        !self.sender.is_closed()
     }
     /// Backpressure awaits bounded capacity; success means the transaction committed.
     pub async fn submit_synthetic(&self, event: MaterialEvent) -> Result<Receipt> {
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::Admit(event, tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -366,6 +386,9 @@ impl Store {
             std::sync::Arc::new(hashed_blobs::Reader::new(root.clone(), vec![])),
             root.clone(),
         );
+        let observe_atuin_queue = qualification
+            .as_ref()
+            .is_some_and(QualificationBoundary::observes_atuin_queue);
         let mut owner = WriterPool {
             connection,
             blobs: std::sync::Arc::new(blobs),
@@ -385,7 +408,10 @@ impl Store {
         let writer = tokio::spawn(owner.run(rx));
         Ok(Self {
             run_id,
-            admission: Admission(tx),
+            admission: Admission {
+                sender: tx,
+                observe_atuin_queue,
+            },
             reader,
             writer,
         })
@@ -400,7 +426,7 @@ impl Store {
     pub async fn shutdown(self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.admission
-            .0
+            .sender
             .send(Command::Shutdown(tx))
             .await
             .map_err(|_| Error::Stopped)?;
