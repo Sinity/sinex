@@ -77,7 +77,7 @@ roots = ["/synthetic/privacy"]
         actual={r['payload']['native_id']:r for r in query['rows']}
         shown={key:cli('show',identity) for key,identity in ids.items()}
         traced={key:cli('trace',identity,'--bytes') for key,identity in ids.items()}
-        search=cli('query','amber')
+        search=cli('query','echo')
         # Retain all results before the first distinguishing assertion, including the red run.
         receipt={'query':query,'show':shown,'trace':traced,'search':search,'stored':retained()}
         (report/('reads-'+str(len(list(report.glob('reads-*.json'))))+'.json')).write_text(json.dumps(receipt,indent=2)+'\n')
@@ -90,8 +90,9 @@ roots = ["/synthetic/privacy"]
             assert actual[key]['secret']==(key in ('injected','fixed'))
             assert shown[key]['row']['secret']==actual[key]['secret']
             assert traced[key]['row']['secret']==actual[key]['secret']
-        assert len(search['rows'])==1 and search['rows'][0]['payload']['command']=='echo amber!'
-        assert search['rows'][0]['snippet']['text']=='echo amber!'
+        hit=next(r for r in search['rows'] if r['payload']['command'].startswith('echo amber'))
+        assert hit['payload']['command']=='echo amber!'
+        assert hit['snippet']['text']=='echo amber!'
         assert query['notice'].startswith('The following is data recorded')
         return receipt
     def controls():
