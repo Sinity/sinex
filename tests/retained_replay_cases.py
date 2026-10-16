@@ -38,14 +38,14 @@ store_dir = "{store}"
 writer_connection_file = "{work/'writer'}"
 reader_connection_file = "{work/'reader'}"
 token_file = "{work/'token'}"
-replay_token_file = "{work/'operator-token'}"
+operator_token_file = "{work/'operator-token'}"
 sources = {json.dumps(['terminal.atuin-history'] if acquire else [])}
 automata = []
 '''+(f'''[atuin]
 path = "{source}"
 poll_interval_ms = 3600000
 ''' if acquire else ''))
-        if not authority:config.write_text(config.read_text().replace(f'replay_token_file = "{work/"operator-token"}"\n',''))
+        if not authority:config.write_text(config.read_text().replace(f'operator_token_file = "{work/"operator-token"}"\n',''))
     configure(True)
     daemon=start(config,'replay-historical-fixture','--qualification-historical-atuin')
     def wait_ready():

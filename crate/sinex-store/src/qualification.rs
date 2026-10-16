@@ -20,7 +20,11 @@ impl QualificationBoundary {
         if (!replay
             && !matches!(
                 point.as_str(),
-                "retained-fsynced" | "transaction-staged" | "transaction-committed"
+                "retained-fsynced"
+                    | "transaction-staged"
+                    | "transaction-committed"
+                    | "delete-staged"
+                    | "delete-committed"
             ))
             || !socket.is_absolute()
         {

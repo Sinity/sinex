@@ -178,6 +178,7 @@ const TABLES: &[Definition] = &[
             col!("rows_read", "bigint", default "0"),
             col!("admitted", "bigint", default "0"),
             col!("repeated", "bigint", default "0"),
+            col!("excluded", "bigint", default "0"),
             col!("removed", "bigint", default "0"),
             col!("record_errors", "bigint", default "0"),
             col!("commit_seq", "bigint", default "0"),
@@ -195,7 +196,7 @@ const TABLES: &[Definition] = &[
             ),
             (
                 "observation_accounting",
-                "CHECK (rows_read=admitted+repeated+record_errors AND removed<=admitted AND removed>=0)",
+                "CHECK (rows_read=admitted+repeated+excluded+record_errors AND excluded>=0 AND removed<=admitted AND removed>=0)",
             ),
         ],
     },
@@ -339,7 +340,7 @@ const TABLES: &[Definition] = &[
             ),
             (
                 "operation_scope",
-                "CHECK (operation_type='replay' AND action_principal='foundation.operator' AND request_format='sinex.replay.request.v1')",
+                "CHECK (action_principal='foundation.operator' AND ((operation_type='replay' AND request_format='sinex.replay.request.v1') OR (operation_type IN ('delete','delete.undo') AND request_format='sinex.delete.request.v1')))",
             ),
             (
                 "operation_state",
@@ -348,6 +349,43 @@ const TABLES: &[Definition] = &[
             (
                 "operation_outcome",
                 "CHECK ((outcome_format IS NULL)=(outcome_ref IS NULL) AND (admission_state='recorded' OR outcome_ref IS NOT NULL))",
+            ),
+        ],
+    },
+    Definition {
+        schema: "core",
+        name: "deleted_occurrences",
+        columns: &[
+            col!("store", "smallint"),
+            col!("source", "text"),
+            col!("event_type", "text"),
+            col!("equivalence_key", "text"),
+            col!("material_id", "uuid"),
+            col!("anchor", "bigint"),
+            col!("kind", "text"),
+            col!("operation_id", "uuid"),
+            col!("deleted_at", "timestamp with time zone", default "now()"),
+        ],
+        constraints: &[
+            (
+                "deleted_occurrences_pkey",
+                "PRIMARY KEY (store,source,event_type,equivalence_key)",
+            ),
+            (
+                "deleted_kind",
+                "CHECK (kind IN ('exclude','excise','purge'))",
+            ),
+            (
+                "deleted_scope",
+                "CHECK (store=0 AND source='terminal.atuin-history' AND event_type='command.executed' AND anchor>=0)",
+            ),
+            (
+                "deleted_operation",
+                "FOREIGN KEY (operation_id) REFERENCES core.operations_log(id)",
+            ),
+            (
+                "deleted_material",
+                "FOREIGN KEY (material_id) REFERENCES raw.source_material_registry(id)",
             ),
         ],
     },
@@ -375,7 +413,7 @@ const TABLES: &[Definition] = &[
             ),
             (
                 "effect_step",
-                "CHECK (step_no>=0 AND effect_format='sinex.replay.effects.v1')",
+                "CHECK (step_no>=0 AND effect_format IN ('sinex.replay.effects.v1','sinex.delete.effects.v1'))",
             ),
         ],
     },
@@ -782,7 +820,7 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         .execute(&mut *tx)
         .await?;
         sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sinex_read_model') THEN CREATE ROLE sinex_read_model LOGIN; END IF; END $$; GRANT USAGE ON SCHEMA core,raw,audit,sinex_schemas,derivation,reflection TO sinex_read_model; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,audit,sinex_schemas,derivation,reflection TO sinex_read_model; GRANT INSERT,UPDATE,DELETE ON core.search_text,core.event_project,derivation.read_model_position TO sinex_read_model").execute(&mut *tx).await?;
-        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT INSERT ON core.producer_versions,derivation.shell_dirty,core.operation_effects,core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON core.operations_log,raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON derivation.shell_dirty,core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
+        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT INSERT ON core.deleted_occurrences,core.producer_versions,derivation.shell_dirty,core.operation_effects,core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON core.operations_log,raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON core.deleted_occurrences,core.live_equivalence,derivation.shell_dirty,core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
     }
     let status = inspect(&mut tx).await?;
     tx.commit().await?;
@@ -1025,6 +1063,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             "core.events"
                 | "core.operations_log"
                 | "core.operation_effects"
+                | "core.deleted_occurrences"
                 | "core.commit_log"
                 | "raw.source_material_registry"
                 | "raw.source_cursors"
@@ -1052,7 +1091,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 | "core.live_equivalence"
                 | "core.live_coordinates"
         );
-        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1 IN ('core.live_coordinates','derivation.shell_dirty')) AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
+        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1 IN ('core.deleted_occurrences','core.live_equivalence','core.live_coordinates','derivation.shell_dirty')) AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
         if !good {
             return Err(Error::Schema(format!("writer grants differ for {table}")));
         }

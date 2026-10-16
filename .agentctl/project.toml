@@ -178,3 +178,20 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 900
 cache = "none"
+
+[operations.exclusion_contracts]
+description = "Typed exact-occurrence exclusion, undo, replay eligibility and finalized action recovery in owned isolated PostgreSQL"
+exec = ["python3", "tests/foundation.py", "--exclusion-contracts"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 1800
+cache = "none"
+
+[operations.exclusion_package_acceptance]
+description = "Exact retained Atuin exclusion through the explicitly pinned package; actual CLI/API, provider loss, replay, and observed transaction interruptions without rebuilding"
+exec = ["python3", "tests/foundation.py", "--packaged", "--reversible-exclusion"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 1800
+cache = "none"

@@ -19,6 +19,9 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--reversible-exclusion",action="store_true",help="qualify packaged exact occurrence exclusion with an explicit immutable package pin")
+parser.add_argument("--package-pin",type=Path,help="reuse the exact clean candidate/package/binary SHA256 pin for reversible exclusion; never build or fall back")
+parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
 parser.add_argument("--indexed",action="store_true",help="qualify indexed shell retrieval and actual MCP transport")
 parser.add_argument("--retained-replay", action="store_true", help="qualify retained Atuin replay through actual packaged clients")
 parser.add_argument("--packaged", action="store_true", help="build and exercise the Nix package entrypoints")
@@ -32,6 +35,13 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.package_pin and not OPTIONS.reversible_exclusion:
+    parser.error("prebuilt package pins are supported only by reversible exclusion qualification")
+if OPTIONS.reversible_exclusion and (not OPTIONS.packaged or not OPTIONS.package_pin or OPTIONS.exclusion_contracts or OPTIONS.indexed or OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.credential_output):
+    parser.error("reversible exclusion requires --packaged --package-pin FILE and its own scenario selector")
+
+if OPTIONS.exclusion_contracts and (OPTIONS.packaged or OPTIONS.indexed or OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.credential_output):
+    parser.error("typed exclusion contracts require their own development selector")
 if OPTIONS.credential_output: OPTIONS.atuin = True
 if OPTIONS.indexed and (OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage): parser.error("indexed qualification owns its own scenarios")
 if OPTIONS.retained_replay and (not OPTIONS.packaged or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.atuin or OPTIONS.demo_spec or OPTIONS.startup_coverage):
@@ -78,6 +88,11 @@ if OPTIONS.credential_output:
     PLANNED = PLANNED[:4] + ["Atuin retained source and real-client query"]
 if OPTIONS.indexed:
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","bound SQL null semantics","restricted profile and store binding","indexed fixture, independent full-population ranking and semantic controls","actual MCP transport and cross-client identity","project component-depth ambiguity and wildcard boundary","projection interruption and same-state reconstruction","source replacement removal replay and project rebuild","retained navigation without provider after restart","indexed deadlines cancellation and credential presentation"]
+if OPTIONS.exclusion_contracts:
+    PLANNED=["cold query-free admin build","canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","checked runtime build and pure contracts","typed occurrence exclusion retained evidence and action recovery"]
+if OPTIONS.reversible_exclusion:
+    import exclusion_cases
+    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+exclusion_cases.PLANNED
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -87,6 +102,7 @@ ENV = os.environ.copy()
 for key in ("DATABASE_URL", "SQLX_OFFLINE", "PGHOST", "PGPORT", "PGUSER", "PGDATABASE"):
     ENV.pop(key, None)
 PG_STARTED = False
+PREBUILT_PIN = None
 
 
 def run(args, *, expected=0, env=None, label=None):
@@ -155,11 +171,30 @@ def stop(proc):
 try:
     if OPTIONS.packaged:
         def select_package():
-            global BIN_DIR
-            built = run(["nix", "build", "--no-link", ".#default", "--print-out-paths", "--max-jobs", "1"], label="actual Nix package")
-            outputs = built.stdout.splitlines()
-            assert len(outputs) == 1, "package build did not return exactly one output"
-            BIN_DIR = Path(outputs[0]) / "bin"
+            global BIN_DIR,PREBUILT_PIN
+            if OPTIONS.package_pin:
+                pin_bytes=OPTIONS.package_pin.read_bytes()
+                pin=json.loads(pin_bytes)
+                package=Path(pin['package'])
+                assert package.parent==Path('/nix/store') and package.resolve(strict=True)==package and package.is_dir(), "prebuilt package must name one immutable /nix/store output"
+                assert pin['exit_code']==0 and pin['dirty'] is False, "package pin must record a successful clean build"
+                observed_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+                observed_tree=subprocess.check_output(['git','write-tree'],cwd=ROOT,text=True).strip()
+                assert pin['candidate']==observed_head and pin['tree']==observed_tree and not subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True), "prebuilt package pin differs from the clean current candidate"
+                BIN_DIR=package/'bin'
+                for name in ['sinexd','sinexctl']:
+                    binary=BIN_DIR/name
+                    assert pin['binaries'][name]['path']==str(binary) and binary.is_file() and binary.resolve().is_relative_to(package), "prebuilt entrypoint is outside its specified immutable package"
+                    assert hashlib.sha256(binary.read_bytes()).hexdigest()==pin['binaries'][name]['sha256'], "prebuilt entrypoint hash differs from package pin"
+                (REPORT/'prebuilt-package-pin.json').write_bytes(pin_bytes)
+                PREBUILT_PIN={'selection':'explicit_immutable_prebuilt','pin_sha256':hashlib.sha256(pin_bytes).hexdigest(),'pin':pin,'builds_invoked':False}
+                run([BIN_DIR/'sinexctl','--version'],label='actual explicitly pinned CLI entrypoint')
+                run([BIN_DIR/'sinexd','--version'],label='actual explicitly pinned daemon entrypoint')
+            else:
+                built = run(["nix", "build", "--no-link", ".#default", "--print-out-paths", "--max-jobs", "1"], label="actual Nix package")
+                outputs = built.stdout.splitlines()
+                assert len(outputs) == 1, "package build did not return exactly one output"
+                BIN_DIR = Path(outputs[0]) / "bin"
             assert all((BIN_DIR/name).is_file() for name in ["sinexd", "sinexctl"]), "package entrypoints absent"
             refused = run([BIN_DIR/"sinexctl", "--endpoint", "http://127.0.0.1:1/rpc", "--token-file", WORK/"not-created", "--query-timeout-ms", "500", "status"], expected=2, label="query deadline refused on non-query command")
             assert json.loads(refused.stderr)["kind"] == "bad_query"
@@ -168,7 +203,7 @@ try:
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or (OPTIONS.indexed and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not (OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or (OPTIONS.indexed and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
     (WORK/"pg").mkdir()
     (WORK/"socket").mkdir()
     ENV.update(PGDATA=str(WORK/"pg"), PGHOST=str(WORK/"socket"), PGPORT=str(free_port()))
@@ -184,7 +219,7 @@ try:
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=BIN_DIR/"sinexd" if OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or (OPTIONS.indexed and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or (OPTIONS.indexed and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
     scenario("canonical schema cold apply and idempotent check", lambda: (
         run([admin_binary,"admin","schema","--connection-file",WORK/"admin"]),
@@ -199,7 +234,7 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    if not (OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or (OPTIONS.indexed and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
+    if not (OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or (OPTIONS.indexed and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
     if not OPTIONS.packaged:
@@ -209,7 +244,15 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.indexed:
+    if OPTIONS.reversible_exclusion:
+        exclusion_cases.exercise(globals())
+    elif OPTIONS.exclusion_contracts:
+        def exclusion_contract():
+            isolated=ENV.copy()
+            isolated.update(SINEX_TEST_ADMIN_URL=admin,SINEX_TEST_WRITER_URL=writer,SINEX_TEST_READER_URL=reader,SINEX_TEST_STORE_DIR=str(WORK/'exclusion-contract-store'))
+            run(["cargo","test","--locked","-p","sinex-store","--features","product","--lib","exclusion::tests::occurrence_exclusion_preserves_evidence_and_finalized_actions","--","--ignored","--nocapture"],env=isolated,label="typed writer exclusion, retained evidence, undo and finalized request recovery")
+        scenario("typed occurrence exclusion retained evidence and action recovery",exclusion_contract)
+    elif OPTIONS.indexed:
         scenario("bound SQL null semantics",lambda:run(["cargo","test","--locked","-p","sinex-store","--features","product","--lib","search::tests::bound_unknown_time_preserves_three_valued_negation","--","--ignored"],label="actual typed SQL null truth control"))
         import indexed_cases
         indexed_cases.exercise(globals())
@@ -349,7 +392,7 @@ finally:
         if name not in {s["name"] for s in SCENARIOS}:
             SCENARIOS.append({"name":name,"outcome":"unrun","reason":failure if not success else "not exercised"})
     for record,(proc,_,_) in zip(PROCESSES,CHILDREN): record["exit"]=proc.returncode
-    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else "development_build","binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"runtime_state":"owned disposable state removed after captured evidence" if success else str(WORK),"unimplemented":["formal M1 acceptance", "full query/surface/fusion scope", "snapshot bootstrap after pruning and purge/cutover", "remaining MCP tools","confirmed delivery","full target schema and Timescale","sealed lifecycle"]}
+    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else "development_build","prebuilt_package":PREBUILT_PIN,"binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"runtime_state":"owned disposable state removed after captured evidence" if success else str(WORK),"unimplemented":["formal M1 acceptance", "full query/surface/fusion scope", "snapshot bootstrap after pruning and purge/cutover", "remaining MCP tools","confirmed delivery","full target schema and Timescale","sealed lifecycle"]}
     if OPTIONS.demo_spec:
         report["demo"]={"oracle_revision":__import__("demo_cases").ORACLE_REVISION,"control":OPTIONS.demo_control,"provider_loss":OPTIONS.demo_provider_loss,"scope":"packaged Atuin raw-event driver; canonical row material, no SQLite snapshot retention or read-model index"}
     (REPORT/"result.json").write_text(json.dumps(report,indent=2)+"\n")

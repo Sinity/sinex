@@ -57,6 +57,17 @@ projection returns partial (exit 5)."#
         #[arg(long)]
         page: Option<u32>,
     },
+    /// Exclude one raw Atuin occurrence, or remove its exclusion without readmitting it.
+    Delete {
+        reference: String,
+        #[arg(long)]
+        undo: bool,
+        #[arg(long)]
+        action_id: Option<String>,
+        /// Optional exact source occurrence key; mismatches refuse.
+        #[arg(long)]
+        expected_key: Option<String>,
+    },
     /// Reparse one closed retained Atuin material. Repeat an explicit action to resume.
     Replay {
         query: String,
@@ -112,6 +123,26 @@ fn main() -> std::process::ExitCode {
     let mut wait_replay = false;
     let (method, mut params) = match args.command {
         Command::Mcp => unreachable!(),
+        Command::Delete {
+            reference,
+            undo,
+            action_id,
+            expected_key,
+        } => {
+            let action_id=action_id.unwrap_or_else(|| {
+                let id=sinex_protocol::fresh_action_id().to_string();
+                eprintln!("{}",serde_json::json!({"kind":"operation","action_id":id,"message":"Retain this action identity to recover a lost delete/undo reply."}));
+                id
+            });
+            (
+                if undo {
+                    Method::DeleteUndo
+                } else {
+                    Method::Delete
+                },
+                serde_json::json!({"ref":reference,"action_id":action_id,"expected_key":expected_key}),
+            )
+        }
         Command::Replay {
             query,
             dry_run,
@@ -231,6 +262,9 @@ fn main() -> std::process::ExitCode {
                 if (reply.outcome().is_ok() || reply.id().is_some())
                     && reply.id() != Some(&RpcId::Number(1))
                 {
+                    if matches!(method, Method::Delete | Method::DeleteUndo) {
+                        return exclusion_indeterminate(&request.params["action_id"]);
+                    }
                     fail(
                         "internal",
                         "daemon returned an incompatible response identity",
@@ -239,6 +273,11 @@ fn main() -> std::process::ExitCode {
                 }
                 match reply.into_outcome() {
                     Ok(value) => {
+                        if matches!(method, Method::Delete | Method::DeleteUndo)
+                            && !exclusion_reply_matches(method, &request.params, &value)
+                        {
+                            return exclusion_indeterminate(&request.params["action_id"]);
+                        }
                         if wait_replay
                             && matches!(value["state"].as_str(), Some("recorded" | "running"))
                         {
@@ -266,6 +305,9 @@ fn main() -> std::process::ExitCode {
                     }
                 }
             }
+            Err(_) if matches!(method, Method::Delete | Method::DeleteUndo) => {
+                exclusion_indeterminate(&request.params["action_id"])
+            }
             Err(error) if error.is_timeout() => {
                 fail(
                     "budget",
@@ -288,4 +330,40 @@ fn fail(kind: &str, message: &str) {
         "{}",
         serde_json::json!({"kind":kind,"message":message,"details":null})
     );
+}
+
+fn exclusion_indeterminate(action_id: &serde_json::Value) -> std::process::ExitCode {
+    eprintln!(
+        "{}",
+        serde_json::json!({"kind":"partial","message":"Mutation outcome indeterminate; retry the same action identity.","details":{"action_id":action_id}})
+    );
+    std::process::ExitCode::from(ErrorKind::Partial.exit_code())
+}
+
+fn exclusion_reply_matches(
+    method: Method,
+    params: &serde_json::Value,
+    value: &serde_json::Value,
+) -> bool {
+    let Ok(request) = serde_json::from_value::<sinex_protocol::ExclusionRequest>(params.clone())
+    else {
+        return false;
+    };
+    let Ok(outcome) = serde_json::from_value::<sinex_protocol::ExclusionOutcome>(value.clone())
+    else {
+        return false;
+    };
+    outcome.action_id == request.action_id
+        && outcome.method == method.as_str()
+        && request.event_id().ok() == Some(outcome.target)
+        && matches!(
+            outcome.state,
+            sinex_protocol::ExclusionState::Completed | sinex_protocol::ExclusionState::Noop
+        )
+        && request.expected_key.as_ref().is_none_or(|key| {
+            outcome
+                .occurrence
+                .as_ref()
+                .is_some_and(|occurrence| &occurrence.equivalence_key == key)
+        })
 }

@@ -41,7 +41,7 @@ writer_connection_file = "{work/'writer'}"
 reader_connection_file = "{work/'reader'}"
 read_model_connection_file = "{work/'read-model'}"
 token_file = "{work/'token'}"
-replay_token_file = "{work/'operator'}"
+operator_token_file = "{work/'operator'}"
 sources = {json.dumps(['terminal.atuin-history'] if source else [])}
 automata = []
 [[projects]]

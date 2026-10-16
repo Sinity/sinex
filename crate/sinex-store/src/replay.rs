@@ -8,7 +8,7 @@ use sinex_model::replay::{Outcome, State};
 use sqlx::{Connection, Row};
 use uuid::Uuid;
 
-const PRINCIPAL: &str = "foundation.operator";
+pub(crate) const PRINCIPAL: &str = "foundation.operator";
 const MAX_SELECTION: usize = 4096;
 const CHUNK: usize = 64;
 
@@ -36,6 +36,8 @@ struct Record {
     anchor: i64,
     end: i64,
     interpretation: Option<Uuid>,
+    #[serde(default)]
+    excluded: bool,
 }
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -119,6 +121,11 @@ impl WriterPool {
             "replay requires an existing closed retained Atuin logical-row material",
         ))?;
         self.verify_material(material).await?;
+        let input: Uuid =
+            sqlx::query_scalar("SELECT input_id FROM raw.source_material_registry WHERE id=$1")
+                .bind(material)
+                .fetch_one(&mut self.connection)
+                .await?;
         let mut records = Vec::new();
         let mut anchor = 0;
         while anchor < durable {
@@ -127,16 +134,23 @@ impl WriterPool {
                     "material exceeds the supported 4096 retained record selection budget",
                 ));
             }
-            let (_, end) = self
+            let (record, end) = self
                 .reader
                 .retained_record_raw(material, anchor, None, false)
                 .await
                 .map_err(|_| Error::ReplayRefused("retained row unavailable or malformed"))?;
             let interpretation:Option<Uuid>=sqlx::query_scalar("SELECT id FROM core.events e WHERE source_material_id=$1 AND anchor_byte=$2 AND ordinal=0 AND source=$3 AND event_type='command.executed' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id)").bind(material).bind(anchor).bind(crate::ATUIN_SOURCE).fetch_optional(&mut self.connection).await?;
+            let parsed = crate::atuin::parse(&record).map_err(Error::ReplayRefused)?;
+            let (key, _) = crate::atuin::occurrence(input, &parsed.native_id);
+            let excluded = sqlx::query_scalar::<_, bool>(crate::exclusion::EXCLUDED)
+                .bind(key)
+                .fetch_one(&mut self.connection)
+                .await?;
             records.push(Record {
                 anchor,
                 end,
                 interpretation,
+                excluded,
             });
             anchor = end;
         }
@@ -155,7 +169,7 @@ impl WriterPool {
     }
     // Row-first blob custody is shared with normal admission. The material has no
     // selection authority until an operation/effect binding commits its reference.
-    async fn retain_record(&mut self, value: &Value) -> Result<Uuid> {
+    pub(crate) async fn retain_record(&mut self, value: &Value) -> Result<Uuid> {
         let bytes = serde_json::to_vec(value)
             .map_err(|_| Error::Invalid("cannot encode retained replay record"))?;
         if bytes.len() > crate::MAX_STEP_BYTES {
@@ -200,7 +214,7 @@ impl WriterPool {
             .await?;
         sqlx::query(MATERIAL)
             .bind(id)
-            .bind("sinex.replay.action")
+            .bind("sinex.action")
             .bind(blob)
             .bind(length)
             .execute(&mut *tx)
@@ -254,12 +268,7 @@ impl WriterPool {
             );
             let record_hash = fingerprint.as_bytes()[..16].to_vec();
             let mut parsed = crate::atuin::parse(&record).map_err(Error::ReplayRefused)?;
-            let key = json!([input, parsed.native_id]).to_string();
-            let key_hash = blake3::hash(
-                format!("{}\x1fcommand.executed\x1f{key}", crate::ATUIN_SOURCE).as_bytes(),
-            )
-            .as_bytes()[..16]
-                .to_vec();
+            let (key, key_hash) = crate::atuin::occurrence(input, &parsed.native_id);
             if let Some(row) = &old {
                 let hash = format!(
                     "\\x{}",
@@ -276,6 +285,18 @@ impl WriterPool {
                         "retained row differs from admitted occurrence evidence",
                     ));
                 }
+            }
+            let excluded = sqlx::query_scalar::<_, bool>(crate::exclusion::EXCLUDED)
+                .bind(&key)
+                .fetch_one(&mut self.connection)
+                .await?;
+            if excluded != expected.excluded {
+                return Err(Error::ReplayRefused(
+                    "selected occurrence exclusion changed; request a new replay action",
+                ));
+            }
+            if excluded {
+                continue;
             }
             let equivalent:Option<(Uuid,i64)>=sqlx::query_as("SELECT event_id,read_order FROM core.live_equivalence WHERE store=0 AND key_hash=$1").bind(&key_hash).fetch_optional(&mut self.connection).await?;
             if equivalent.as_ref().map(|(id, _)| *id) != old_id {
@@ -334,15 +355,19 @@ impl WriterPool {
                 let ids = self.replay_scope(material).await?;
                 let mut from = 0;
                 let mut chunks = 0;
+                let (mut would_admit, mut would_archive) = (0usize, 0usize);
                 while from < ids.len() {
                     let through = chunk_end(&ids, from);
-                    self.prepare_replay(material, &ids[from..through], &rules)
+                    let prepared = self
+                        .prepare_replay(material, &ids[from..through], &rules)
                         .await?;
+                    would_admit += prepared.len();
+                    would_archive += prepared.iter().filter(|row| row.old.is_some()).count();
                     from = through;
                     chunks += 1;
                 }
                 Ok(
-                    json!({"material_id":material,"basis":self.replay_basis(material,&ids,&rules).await?,"selected":ids.len(),"chunks":chunks.max(1),"chunk_max_records":CHUNK,"chunk_max_bytes":crate::MAX_STEP_BYTES,"representation":"canonical_sqlite_rows","dry_run":true,"search_projection":{"enabled":self.shell_producer.is_some(),"status":self.reader.projection_status().await?}}),
+                    json!({"material_id":material,"basis":self.replay_basis(material,&ids,&rules).await?,"selected":ids.len(),"would_admit":would_admit,"would_archive":would_archive,"excluded":ids.iter().filter(|row|row.excluded).count(),"chunks":chunks.max(1),"chunk_max_records":CHUNK,"chunk_max_bytes":crate::MAX_STEP_BYTES,"representation":"canonical_sqlite_rows","dry_run":true,"search_projection":{"enabled":self.shell_producer.is_some(),"status":self.reader.projection_status().await?}}),
                 )
             }
             ReplayCommand::Start(p) => {
@@ -444,7 +469,7 @@ impl WriterPool {
                         from = through;
                     }
                     let retained = self.retain_record(&json!(request)).await?;
-                    sqlx::query("INSERT INTO core.operations_log (id,operation_type,actor,action_principal,action_id,request_format,request_ref,scope,admission_state,progress) VALUES ($1,'replay',$2,$3,$4,'sinex.replay.request.v1',$5,$6,'recorded',$7)").bind(id).bind(json!({"kind":"operator","principal":PRINCIPAL,"profile":"explicit_replay_token"})).bind(PRINCIPAL).bind(p.action_id).bind(retained).bind(json!({"records":ids,"preflight_validated":refusal.is_none(),"preflight_refusal":refusal})).bind(json!(initial)).execute(&mut self.connection).await?;
+                    sqlx::query("INSERT INTO core.operations_log (id,operation_type,actor,action_principal,action_id,request_format,request_ref,scope,admission_state,progress) VALUES ($1,'replay',$2,$3,$4,'sinex.replay.request.v1',$5,$6,'recorded',$7)").bind(id).bind(json!({"kind":"operator","principal":PRINCIPAL,"profile":"explicit_operator_token"})).bind(PRINCIPAL).bind(p.action_id).bind(retained).bind(json!({"records":ids,"preflight_validated":refusal.is_none(),"preflight_refusal":refusal})).bind(json!(initial)).execute(&mut self.connection).await?;
                     if let Some(reason) = refusal {
                         return self
                             .finish_without_effect(initial, reason, State::Refused)
@@ -542,7 +567,7 @@ impl WriterPool {
     }
     pub(crate) async fn next_replay(&mut self) -> Result<Option<sinex_model::replay::Start>> {
         loop {
-            let row=sqlx::query("SELECT id,action_id,request_format,request_ref,progress FROM core.operations_log WHERE progress->>'state' IN ('recorded','running') ORDER BY id LIMIT 1").fetch_optional(&mut self.connection).await?;
+            let row=sqlx::query("SELECT id,action_id,request_format,request_ref,progress FROM core.operations_log WHERE operation_type='replay' AND progress->>'state' IN ('recorded','running') ORDER BY id LIMIT 1").fetch_optional(&mut self.connection).await?;
             let Some(row) = row else { return Ok(None) };
             if let Err(error) = self.reader.replay_status(row.try_get("id")?).await {
                 let progress: Outcome = serde_json::from_value(row.try_get("progress")?)
@@ -600,7 +625,7 @@ impl WriterPool {
         rules: &[crate::PrivacyRule],
     ) -> Result<String> {
         let interpretation_basis = self.interpretation_basis(rules).await?;
-        let bytes=serde_json::to_vec(&json!({"format":"sinex.replay.basis.v1","material":material,"records":ids,"interpretation_basis":interpretation_basis})).map_err(|_|Error::Invalid("cannot encode replay basis"))?;
+        let bytes=serde_json::to_vec(&json!({"format":"sinex.replay.basis.v2","material":material,"records":ids,"interpretation_basis":interpretation_basis})).map_err(|_|Error::Invalid("cannot encode replay basis"))?;
         Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
     }
     async fn replay_status(&mut self, id: Uuid) -> Result<Value> {
@@ -611,9 +636,9 @@ impl WriterPool {
     }
 }
 impl ReadPool {
-    async fn action_record(&self, id: Uuid, format: &str) -> Result<Value> {
+    pub(crate) async fn action_record(&self, id: Uuid, format: &str) -> Result<Value> {
         let mut lease = self.read_lease().await?;
-        let row=sqlx::query("SELECT b.blake3,m.durable_bytes FROM raw.source_material_registry m JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=$1 AND m.material_kind='file' AND m.status='completed' AND m.source_identifier='sinex.replay.action' AND b.status='present'").bind(id).fetch_optional(lease.connection()).await?.ok_or(Error::ReplayRefused("retained action backing unavailable"))?;
+        let row=sqlx::query("SELECT b.blake3,m.durable_bytes FROM raw.source_material_registry m JOIN core.blobs b ON b.id=m.blob_id WHERE m.id=$1 AND m.material_kind='file' AND m.status='completed' AND m.source_identifier IN ('sinex.replay.action','sinex.action') AND b.status='present'").bind(id).fetch_optional(lease.connection()).await?.ok_or(Error::ReplayRefused("retained action backing unavailable"))?;
         lease.finish();
         let length: i64 = row.try_get("durable_bytes")?;
         if !(1..=crate::MAX_STEP_BYTES as i64).contains(&length) {
@@ -640,7 +665,7 @@ impl ReadPool {
     }
     pub async fn replay_status(&self, id: Uuid) -> Result<Option<Value>> {
         let mut lease = self.read_lease().await?;
-        let row=sqlx::query("SELECT request_format,request_ref,outcome_format,outcome_ref,progress FROM core.operations_log WHERE id=$1 AND action_principal=$2").bind(id).bind(PRINCIPAL).fetch_optional(lease.connection()).await?;
+        let row=sqlx::query("SELECT request_format,request_ref,outcome_format,outcome_ref,progress FROM core.operations_log WHERE id=$1 AND action_principal=$2 AND operation_type='replay'").bind(id).bind(PRINCIPAL).fetch_optional(lease.connection()).await?;
         lease.finish();
         let Some(row) = row else { return Ok(None) };
         if row.try_get::<String, _>("request_format")? != "sinex.replay.request.v1" {
@@ -682,7 +707,7 @@ impl ReadPool {
     pub async fn replay_operations(&self) -> Result<Vec<Outcome>> {
         let mut lease = self.read_lease().await?;
         let ids: Vec<Uuid> =
-            sqlx::query_scalar("SELECT id FROM core.operations_log ORDER BY id DESC LIMIT 32")
+            sqlx::query_scalar("SELECT id FROM core.operations_log WHERE operation_type='replay' ORDER BY id DESC LIMIT 32")
                 .fetch_all(lease.connection())
                 .await?;
         lease.finish();
