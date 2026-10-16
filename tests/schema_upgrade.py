@@ -17,6 +17,7 @@ import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--review-controls',action='store_true',help='run affected guard/environment/restart controls; unchanged full qualification is separate')
 parser.add_argument('--predecessor-package',type=Path,required=True)
 parser.add_argument('--predecessor-publication',type=Path,required=True)
 args=parser.parse_args()
@@ -47,9 +48,9 @@ def sql(text,*,url=None,expected=0):
 def port():
     with socket.socket() as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
 
-def launch(argv,name):
+def launch(argv,name,env=None):
     out=(REPORT/(name+'.stdout')).open('w');err=(REPORT/(name+'.stderr')).open('w')
-    p=subprocess.Popen(list(map(str,argv)),cwd=ROOT,env=ENV,stdout=out,stderr=err)
+    p=subprocess.Popen(list(map(str,argv)),cwd=ROOT,env=env or ENV,stdout=out,stderr=err)
     CHILDREN.append((p,out,err));save(name+'-process.json',{'pid':p.pid,'argv':list(map(str,argv))});return p
 
 def stop(p):
@@ -147,6 +148,7 @@ poll_interval_ms=3600000
     baseline_rows=snapshot();(REPORT/'retained-before.json').write_text(baseline_rows+'\n')
     published_status=schema(old_binary,None,'--check');save('published-schema.json',published_status)
     old_payload=json.loads(sql("SELECT to_jsonb(p) FROM sinex_schemas.payload_schemas p WHERE id=3"));save('published-payload-schema3.json',old_payload)
+    pending_processes=[]
     def pending():
         before=sql('SELECT fingerprint,catalog FROM sinex_schemas.definition');actual_schema=schema_dump()
         value=schema(binary);assert [c['number'] for c in value['pending_changes']]==[1,2]
@@ -157,7 +159,7 @@ poll_interval_ms=3600000
         assert sql('SELECT pg_try_advisory_lock(73018924012)')=='t'
         assert cli('query',raw_query)['rows']==baseline['rows']
         refusal=cli('query','commands',expected=2);assert refusal['kind']=='bad_query'
-        save('pending-status.json',status);stop(proc)
+        save('pending-status.json',status);pending_processes.append(proc)
         assert snapshot()==baseline_rows and schema_dump()==actual_schema
     scenario('pending inspection/startup preserves catalog and admits no writer while retained raw reads work',pending)
     def dump_failure():
@@ -168,7 +170,7 @@ poll_interval_ms=3600000
         assert sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')==before and snapshot()==baseline_rows
         assert sql("SELECT to_regclass('sinex_schemas.applied_changes') IS NULL")=='t' and schema_dump()==actual_schema
         assert (WORK/'failed.dump.stderr').read_text()=='synthetic-dump-failure\n'
-    scenario('failed dump leaves populated catalog data and progress absent',dump_failure)
+    if not args.review_controls:scenario('failed dump leaves populated catalog data and progress absent',dump_failure)
     def refuse_damage():
         before=sql('SELECT fingerprint FROM sinex_schemas.definition')
         sql("UPDATE sinex_schemas.definition SET fingerprint='unrecognized'")
@@ -180,7 +182,24 @@ poll_interval_ms=3600000
         assert not (WORK/'damaged.dump').exists()
         sql('ALTER TABLE derivation.shell_dirty RENAME COLUMN damaged_parent TO parent_id')
         schema(binary,None,'--check')
-    scenario('unknown definition and missing structure refuse before a dump or mutation',refuse_damage)
+    if not args.review_controls:scenario('unknown definition and missing structure refuse before a dump or mutation',refuse_damage)
+    run(['createdb','decoy'])
+    dump_probe=WORK/'dump-probe';dump_probe.mkdir()
+    actual_dump=shutil.which('pg_dump',path=ENV['PATH']);assert actual_dump
+    capture=REPORT/'actual-dump-child-environment.json'
+    wrapper=chr(10).join([
+        '#!/usr/bin/env python3','import json,os,sys','from pathlib import Path',
+        f'Path({str(capture)!r}).write_text(json.dumps({{"arguments":sys.argv[1:],"libpq":{{k:v for k,v in os.environ.items() if k.startswith("PG")}}}},sort_keys=True,indent=2)+chr(10))',
+        f'os.execv({actual_dump!r},[{actual_dump!r},*sys.argv[1:]])',''])
+    (dump_probe/'pg_dump').write_text(wrapper);(dump_probe/'pg_dump').chmod(0o700)
+    service=WORK/'pg_service.conf';owner=sql('SELECT current_user')
+    service.write_text(chr(10).join(['[decoy]',f"host={WORK/'socket'}",f"port={ENV['PGPORT']}",f"user={owner}",'dbname=decoy','']))
+    redirected={**ENV,'PATH':str(dump_probe)+':'+ENV['PATH'],'PGSERVICE':'decoy','PGSERVICEFILE':str(service),'PGHOSTADDR':'192.0.2.1','PGDATABASE':'decoy','PGUSER':owner,'PGPASSWORD':'synthetic-default-password'}
+    # This read-only control proves that the unfiltered service really changes
+    # libpq's database basis despite the URI components' ordinary env defaults.
+    wrong_env={**{k:v for k,v in redirected.items() if k!='PGHOSTADDR'},'PGDATABASE':'upgrade'}
+    wrong=run(['psql','-XAt','-c','SELECT current_database()'],env=wrong_env,label='unfiltered native libpq service redirects to decoy')
+    assert wrong.stdout.strip()=='decoy'
     def interrupt():
         out=(REPORT/'lock.stdout').open('w');err=(REPORT/'lock.stderr').open('w')
         locker=subprocess.Popen(['psql',admin,'-XAt','-v','ON_ERROR_STOP=1'],stdin=subprocess.PIPE,stdout=out,stderr=err,text=True,env=ENV)
@@ -190,9 +209,13 @@ poll_interval_ms=3600000
         while sql("SELECT count(*) FROM pg_locks WHERE relation='derivation.shell_dirty'::regclass AND mode='ShareLock' AND granted")!='1':
             assert time.monotonic()<until;time.sleep(.05)
         blocker_backend=int(sql("SELECT pid FROM pg_locks WHERE relation='derivation.shell_dirty'::regclass AND mode='ShareLock' AND granted"))
-        upgrading=launch([binary,'admin','schema','--connection-file',WORK/'admin','--apply','--dump-file',WORK/'first.dump'],'interrupted-admin')
+        upgrading=launch([binary,'admin','schema','--connection-file',WORK/'admin','--apply','--dump-file',WORK/'first.dump'],'interrupted-admin',env=redirected)
         observed=wait(lambda:sql("SELECT CASE WHEN to_regclass('sinex_schemas.applied_changes') IS NULL THEN false ELSE EXISTS(SELECT 1 FROM pg_locks WHERE relation='derivation.shell_dirty'::regclass AND mode='AccessExclusiveLock' AND NOT granted) END")=='t',upgrading,'real second entry waiting after first commit')
         progress=sql('SELECT json_agg(number ORDER BY number) FROM sinex_schemas.applied_changes');assert json.loads(progress)==[1]
+        child_basis=json.loads(capture.read_text());assert child_basis['arguments']==['--format=custom','--no-password']
+        observed_env=child_basis['libpq']
+        assert observed_env['PGDATABASE']=='upgrade' and observed_env['PGUSER']==owner and observed_env['PGPASSWORD']=='synthetic-default-password' and observed_env['PGHOST']==str(WORK/'socket')
+        assert observed_env['PGPASSFILE']=='/dev/null' and all(key not in observed_env for key in ['PGSERVICE','PGSERVICEFILE','PGHOSTADDR'])
         save('observed-interruption.json',{'pid':upgrading.pid,'committed_progress':json.loads(progress),'waiting_on_actual_dirty_table_alter':observed,'signal':'SIGKILL','blocker_backend_pid':blocker_backend})
         upgrading.kill();upgrading.wait(timeout=15);assert upgrading.returncode==-signal.SIGKILL
         # Terminate the actual blocker backend and client, rather than waiting on its sleep.
@@ -209,21 +232,36 @@ poll_interval_ms=3600000
         assert 'exact ordered prefix' in failure.stderr and not (WORK/'wrong-order.dump').exists()
         sql("UPDATE sinex_schemas.applied_changes SET number=1 WHERE number=2")
         status=schema(binary,None,'--apply','--dump-file',WORK/'resume.dump');assert status['pending_changes']==[]
+        assert status['checked_changes']==[{'number':2,'outcome':'applied'}]
         assert snapshot()==baseline_rows
         assert json.loads(sql("SELECT to_jsonb(p) FROM sinex_schemas.payload_schemas p WHERE id=3"))==old_payload
         registered=json.loads(payload_catalog());assert [(r['id'],r['version']) for r in registered]==[(2,'atuin-v1'),(3,'shell-command-v1-single-source'),(4,'zsh-extended-v1'),(5,'shell-command-v1-atuin-zsh')]
         save('upgraded-payload-catalog.json',registered)
         assert int(sql('SELECT count(*) FROM derivation.shell_dirty'))==2
         assert sql('SELECT bool_and(dirty_seq=(SELECT seq FROM core.commit_counter WHERE one)) FROM derivation.shell_dirty')=='t'
-        run(['pg_restore','--list',WORK/'first.dump'],label='complete pre-mutation custom dump')
+        listing=run(['pg_restore','--list',WORK/'first.dump'],label='complete pre-mutation custom dump')
+        assert 'TABLE DATA raw inputs' in listing.stdout and 'TABLE DATA sinex_schemas payload_schemas' in listing.stdout
     scenario('observed committed real entry survives SIGKILL and ordinary explicit apply resumes exact prefix',interrupt)
+    def pending_after_apply():
+        proc=pending_processes[0];assert proc.poll() is None
+        status=cli('status')
+        assert status['schema'].get('pending_changes',[])==[] and status['schema']['compatible'] is True
+        assert status['indexed_retrieval']['state']=='restart_required' and status['writer']['state']=='unavailable'
+        assert cli('query',raw_query)['rows']==baseline['rows']
+        cli('query','events',expected=2)
+        save('existing-pending-after-apply.json',status);stop(proc)
+    scenario('existing installed-schema process reports restart required after admin completion',pending_after_apply)
     def fresh_and_repeat():
         run(['createdb','fresh']);fresh=admin.replace('/upgrade?','/fresh?');(WORK/'fresh-admin').write_text(fresh);(WORK/'fresh-admin').chmod(0o600)
         created=schema(binary,WORK/'fresh-admin');assert created['pending_changes']==[]
+        assert created['checked_changes']==[{'number':1,'outcome':'old_objects_absent'},{'number':2,'outcome':'old_objects_absent'}]
         assert sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')==sql('SELECT fingerprint,catalog FROM sinex_schemas.definition',url=fresh)
         before=sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')
         repeated=schema(binary,None,'--apply','--dump-file',WORK/'no-op.dump');assert repeated['pending_changes']==[] and not (WORK/'no-op.dump').exists()
         assert sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')==before and snapshot()==baseline_rows
+        assert payload_catalog()==sql("SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM sinex_schemas.payload_schemas p",url=fresh)
+        if args.review_controls:
+            save('fresh-and-upgraded-schema.json',created);return
         sql('UPDATE sinex_schemas.applied_changes SET number=99 WHERE number=1',url=reader,expected=1)
         sql('UPDATE derivation.shell_progress SET basis=1',url=reader,expected=1)
         sql('ALTER TABLE raw.inputs ADD COLUMN forbidden integer',url=reader,expected=1)
@@ -238,7 +276,7 @@ poll_interval_ms=3600000
             assert 'registered_shell_payload' in refused.stderr
         assert snapshot()==baseline_rows
         save('fresh-and-upgraded-schema.json',created)
-    scenario('fresh/upgraded definition catalogs match repeat is no-op and restricted reader cannot mutate',fresh_and_repeat)
+    scenario('fresh shared guards precede convergence and fresh/upgraded catalogs match' if args.review_controls else 'fresh/upgraded catalogs match repeat is no-op and restricted reader cannot mutate',fresh_and_repeat)
     def after():
         configure(False);proc=launch([binary,'serve','--config',config],'upgraded-runtime')
         status=wait(lambda:(lambda v:v if v and v['writer']['state']=='owned' else None)(rpc('status').get('result')),proc,'upgraded normal writer')
@@ -257,7 +295,7 @@ poll_interval_ms=3600000
         value=wait(lambda:(lambda v:v if v and v.get('total')==3 else None)(rpc('query.run',{'query':raw_query}).get('result')),proc,'real post-upgrade acquisition')
         assert any(r['payload']['native_id']=='native-three' and r['payload']['command']=='echo newly admitted' for r in value['rows'])
         stop(proc)
-    scenario('upgraded actual writer queries retained traces canonical recomputation and later admission work',after)
+    if not args.review_controls:scenario('upgraded actual writer queries retained traces canonical recomputation and later admission work',after)
     success=True
 except Exception as error:
     failure=str(error);(REPORT/'failure.txt').write_text(traceback.format_exc())
@@ -283,7 +321,7 @@ finally:
             shutil.rmtree(WORK);retained_state='removed after private artifact preservation'
     except Exception as error:
         success=False;failure=(failure or '')+' private artifact preservation failed: '+str(error)
-    save('result.json',{'success':success,'failure':failure,'scenarios':SCENARIOS,'commands':COMMANDS,'retained_owned_state':retained_state,'report':str(REPORT)})
+    save('result.json',{'success':success,'failure':failure,'scope':'review-controls' if args.review_controls else 'full','unchanged_full_qualification_reused_separately':bool(args.review_controls),'scenarios':SCENARIOS,'commands':COMMANDS,'retained_owned_state':retained_state,'report':str(REPORT)})
     print(json.dumps({'success':success,'report':str(REPORT),'failure':failure}))
     if not success:sys_exit=1
     else:sys_exit=0

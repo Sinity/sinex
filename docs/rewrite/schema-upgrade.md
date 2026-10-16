@@ -11,8 +11,10 @@ production column rename is introduced.
 `sinexd admin schema --connection-file FILE` creates a fresh database or
 inspects an existing one. `--check` only inspects. An existing database with
 waiting entries is reported with `pending_changes`; neither route changes
-its schema, data, grants or progress. A fresh database has the same declared
-catalog and applied-change records as an upgraded database.
+its schema, data, grants or progress. A fresh database invokes the same real entry guards before target creation;
+missing old objects are a no-op. It records those entries after target creation
+and has the same declared catalog as an upgraded database. Admin output reports
+the ordered `checked_changes` and each guard outcome.
 
 The query-free operator route applies a populated supported predecessor:
 
@@ -56,13 +58,16 @@ the restricted reader. Status names the waiting entries and unavailable
 writer, acquisition, replay, exclusion and canonical/indexed paths. Verified
 installed-schema raw queries with an explicit noncanonical source or kind,
 and retained show/trace, remain available. No state directory, writer run,
-source task or projection is started. Restart after explicit apply to start
-the ordinary writer. No RPC mutation transport is added for schema changes.
+source task or projection is started. An existing pending daemon reports `restart_required` once apply has completed.
+Restart after explicit apply to start the ordinary writer. No RPC mutation transport is added for schema changes.
 
 `schema_upgrade_contracts` checks the fixed released declaration fingerprint
 and decoded dump connection fields without a database. The dump process receives
-connection fields through libpq environment variables; its argv contains no
-connection URI or password.
+resolved connection fields, including password/defaults and TLS settings, through
+libpq environment variables. It clears inherited PG variables and disables a
+second password-file lookup, so services and hostaddr cannot redirect the dump.
+Its argv contains no connection URI or password. TLS certificate/key inputs
+for this dump route must name files; inline PEM inputs refuse before mutation.
 
 The declared `schema_upgrade_acceptance` operation takes
 `--predecessor-package /nix/store/OUTPUT --predecessor-publication FILE`. It
@@ -75,3 +80,10 @@ the ordinary route. It checks dump failure without mutation, refusal controls,
 fresh/upgraded catalog equality, retained rows and trace bytes, reader denials,
 repeat no-op, normal writer recomputation and later admission. Raw output,
 source/package bindings and failed state remain in the private report.
+
+
+Pass `--review-controls` to the acceptance operation to select the affected
+shared-guard ordering, actual child dump connection, progress resume, fresh
+catalog equality and surviving pending-process status controls. Unchanged full
+writer and refusal qualification stays separate; this mode does not claim to
+repeat it.

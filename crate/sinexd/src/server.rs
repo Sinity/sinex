@@ -803,7 +803,7 @@ async fn pending_read(
             serde_json::to_value(Status{
                 schema:SchemaStatus{version:1,expected_version:1,compatible:numbers.is_empty(),pending_changes:numbers,unavailable_paths:unavailable},
                 writer:WriterOwnership::Unavailable{reason:"installed-schema read mode; apply waiting changes with admin schema --apply --dump-file and restart".into()},
-                commit_seq:status.commit_seq,supported_sources:vec![],supported_methods:vec!["status".into(),"query.run".into(),"object.show".into(),"object.trace".into()],replays:vec![],replay_authorized:false,indexed_retrieval:serde_json::json!({"state":"schema_changes_pending"}),
+                commit_seq:status.commit_seq,supported_sources:vec![],supported_methods:vec!["status".into(),"query.run".into(),"object.show".into(),"object.trace".into()],replays:vec![],replay_authorized:false,indexed_retrieval:serde_json::json!({"state":if waiting.pending_changes.is_empty(){"restart_required"}else{"schema_changes_pending"},"mode":"installed_schema_read_only"}),
             }).map_err(|_|RpcError::new(ErrorKind::Internal,"cannot encode status",serde_json::Value::Null))
         }
         Method::Query => {
