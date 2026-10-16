@@ -203,3 +203,12 @@ pool = "normal"
 result = "exit"
 timeout_seconds = 900
 cache = "none"
+
+[operations.dependency_routing_control]
+description = "Dependency qualification plus actual alternate-manifest reproduction with an explicit pre-fix xtask executable"
+exec = ["python3", "tests/dependency_boundaries.py", "--before-checker"]
+arguments = "required"
+pool = "normal"
+result = "exit"
+timeout_seconds = 900
+cache = "none"

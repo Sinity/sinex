@@ -1,4 +1,5 @@
 """Real Cargo graph controls over a disposable copy of the native manifests."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--before-checker", type=Path, help="explicit pre-fix xtask executable for the routing regression reproduction")
+    before = parser.parse_args().before_checker
     report = Path(tempfile.mkdtemp(prefix="sinex-dependency-boundaries-"))
     results = []
 
@@ -17,7 +21,7 @@ def main():
         result = subprocess.run(args, cwd=cwd, text=True, capture_output=True, env=env)
         (report / f"{label}.stdout").write_text(result.stdout)
         (report / f"{label}.stderr").write_text(result.stderr)
-        results.append({"case": label, "argv": [str(x) for x in args], "exit": result.returncode})
+        results.append({"case": label, "argv": [str(x) for x in args], "cwd": str(cwd), "exit": result.returncode})
         if expected is None:
             assert result.returncode == 0, f"{label} failed: {result.stderr}"
         else:
@@ -35,6 +39,10 @@ def main():
         # database-free forwarding control rather than changing that contract.
         excludes = [arg for name in ["sinex-model", "sinex-protocol", "sinex-store", "sinexd", "sinexctl"] for arg in ["--exclude", name]]
         run("normal-check-frontend", [binary, "check", "--locked", "--offline", *excludes])
+        # Cargo's ordinary selectors still reach the native operation. Metadata
+        # covers all workspace features/targets, including explicit -F requests.
+        for feature in [["--features", "sinex-store/product"], ["--features=sinex-store/product"], ["-F", "sinex-store/product"], ["-Fsinex-store/product"]]:
+            run(f"ordinary-selection-{len(results)}", [binary, "check", "--locked", "--offline", "--package=xtask", *excludes, *feature])
         copied = report / "workspace"
         copied.mkdir()
         for name in ["Cargo.toml", "Cargo.lock"]:
@@ -58,6 +66,17 @@ def main():
             run(f"{case}-resolve", ["cargo", "generate-lockfile", "--offline"], copied)
             run(f"forbidden-{case}", [binary, "boundaries", copied], expected="forbidden dependency: sinex-protocol -> sinex-store")
             if case == "normal":
+                # These are actual copied native manifests with an illegal edge.
+                # Cargo itself accepts the alternate workspace while xtask must
+                # refuse graph-routing overrides before validating/compiling.
+                (report / "forbidden-protocol-manifest.toml").write_text(text)
+                if before:
+                    for index, option in enumerate([["--manifest-path", str(copied / "Cargo.toml")], [f"--manifest-path={copied / 'Cargo.toml'}"]]):
+                        run(f"pre-fix-routing-bypass-{index}", [before.resolve(), "check", *option, "--offline", *excludes])
+                for frontend in ["check", "build", "test"]:
+                    for option in [["--manifest-path", str(copied / "Cargo.toml")], [f"--manifest-path={copied / 'Cargo.toml'}"], ["--config", "net.offline=true"], ["--config=net.offline=true"], ["--lockfile-path", str(copied / "Cargo.lock")], ["-C", str(copied)]]:
+                        label = f"routing-{frontend}-{len(results)}"
+                        run(label, [binary, frontend, *option], expected="unsupported Cargo routing override")
                 for frontend in ["check", "build", "test"]:
                     run(f"{frontend}-forbidden-edge", [binary, frontend], cwd=copied, expected="forbidden dependency: sinex-protocol -> sinex-store")
             manifest.write_text(original)

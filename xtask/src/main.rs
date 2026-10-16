@@ -4,6 +4,17 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "help".into());
     let tail: Vec<_> = args.collect();
+    let features = if matches!(cmd.as_str(), "build" | "test" | "check") {
+        match boundaries::routing_features(&tail) {
+            Ok(features) => features,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        Vec::new()
+    };
     if matches!(cmd.as_str(), "boundaries" | "build" | "test" | "check") {
         if cmd == "boundaries" && tail.len() > 1 {
             eprintln!("xtask boundaries [workspace]");
@@ -14,7 +25,7 @@ fn main() -> ExitCode {
         } else {
             "."
         };
-        if let Err(error) = boundaries::check(std::path::Path::new(root)) {
+        if let Err(error) = boundaries::check(std::path::Path::new(root), &features) {
             eprintln!("{error}");
             return ExitCode::FAILURE;
         }

@@ -169,7 +169,37 @@ fn validate(metadata: Metadata) -> Result<(), String> {
     Ok(())
 }
 
-pub fn check(root: &Path) -> Result<(), String> {
+// Keep the frontend bound to its current workspace/configuration. Cargo itself
+// parses the ordinary selection/compiler/test flags after this narrow guard.
+pub fn routing_features(args: &[String]) -> Result<Vec<String>, String> {
+    let mut features = Vec::new();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            break;
+        }
+        if ["--manifest-path", "--config", "--lockfile-path"]
+            .iter()
+            .any(|key| arg == key || arg.starts_with(&format!("{key}=")))
+            || arg.starts_with("-C")
+        {
+            return Err(format!(
+                "unsupported Cargo routing override: {arg}; run xtask from the intended workspace with its own Cargo configuration"
+            ));
+        }
+        if arg == "--features" || arg == "-F" {
+            let value = args
+                .next()
+                .ok_or_else(|| format!("missing feature selection after {arg}"))?;
+            features.extend(["--features".to_owned(), value.clone()]);
+        } else if arg.starts_with("--features=") || (arg.starts_with("-F") && arg.len() > 2) {
+            features.push(arg.clone());
+        }
+    }
+    Ok(features)
+}
+
+pub fn check(root: &Path, features: &[String]) -> Result<(), String> {
     let output = Command::new("cargo")
         .args([
             "metadata",
@@ -178,6 +208,7 @@ pub fn check(root: &Path) -> Result<(), String> {
             "--all-features",
             "--locked",
         ])
+        .args(features)
         .current_dir(root)
         .output()
         .map_err(|e| format!("could not execute cargo metadata: {e}"))?;
