@@ -67,6 +67,10 @@ def exercise(h):
     prepared={};aliases={};versions={};old_evidence={};daemon=None
     focus=h['OPTIONS'].fusion_focus
     with sqlite3.connect(source) as con:
+        # The synthetic producer must append while a parked source read keeps its
+        # old snapshot. Select and confirm WAL before any native reader starts.
+        journal_mode=con.execute('PRAGMA journal_mode=WAL').fetchone()[0];assert journal_mode=='wal'
+        (report/'provider-journal-mode.json').write_text(json.dumps({'path':str(source),'journal_mode':journal_mode,'phase':'before native readers'})+'\n')
         con.execute('CREATE TABLE history(id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,duration INTEGER NOT NULL,exit INTEGER NOT NULL,command TEXT NOT NULL,cwd TEXT NOT NULL,session TEXT NOT NULL,hostname TEXT NOT NULL,deleted_at INTEGER)')
     def arow(o):return (o['native_key'],o['start_ns'],o['duration_ns'] or 1_000_000_000,o['exit'] if o['exit'] is not None else -1,o['command'],o['cwd'] or '', 'synthetic-fusion-session',o['host'],None)
     def metafy(data):
