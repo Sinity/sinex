@@ -37,6 +37,7 @@ PLANNED=[
 
 def planned(focus):
     if focus=='source-codec':return [PLANNED[0],PLANNED[8]]
+    if focus=='source-privacy':return [PLANNED[0],PLANNED[8],PLANNED[9]]
     if focus=='maintenance':return [PLANNED[0],'independent maintenance source setup',PLANNED[7],PLANNED[11],PLANNED[12],PLANNED[8],PLANNED[9]]
     return [PLANNED[0],'independent changed-seam source setup',PLANNED[11],PLANNED[12],PLANNED[8]] if focus else PLANNED
 
@@ -548,7 +549,7 @@ poll_interval_ms={poll}
             schema_ids=sql("SELECT jsonb_agg(DISTINCT payload_schema_id ORDER BY payload_schema_id) FROM core.live_events WHERE event_type='command.canonical'");assert schema_ids==[5]
             (report/'independent-changed-seam-inputs.json').write_text(json.dumps({'earlier_rows':rows,'later_native_id':'fair-later','expected_new_canonical_schema_ids':[5]},indent=2)+'\n')
         scenario('independent changed-seam source setup',focus_setup)
-    if focus!='source-codec':scenario(PLANNED[11],pending_head_race)
+    if focus not in ('source-codec','source-privacy'):scenario(PLANNED[11],pending_head_race)
     def reconstruction():
         nonlocal daemon
         launch('reconstruction-before',False);settled();before=query('commands');old_generation=api('status')['result']['indexed_retrieval']['generation']
@@ -569,7 +570,7 @@ poll_interval_ms={poll}
         run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',statement],label='restore exact controlled synthetic log fixture')
         configure(False);daemon_start('restored-log-reconstruction');settled();restored=query('commands');assert restored['rows']==before['rows'] and restored['total']==before['total']
         (report/'actual-canonical-reconstruction.json').write_text(json.dumps({'before':before,'rebuilt':after,'old_generation':old_generation,'rebuilt_generation':rebuilt_generation,'controlled_missing_log':log,'unavailable_status':unavailable,'api_refusal':refused,'cli_refusal':refused_cli,'valid_raw_control':raw_control,'restored':restored},indent=2)+'\n')
-    if focus!='source-codec':scenario(PLANNED[12],reconstruction)
+    if focus not in ('source-codec','source-privacy'):scenario(PLANNED[12],reconstruction)
     def source_controls():
         # Exact retained-byte framing, including metafied UTF-8 and continuation.
         unicode_command='printf zażółć\nnext';credential='echo ghp_'+'A'*36
@@ -585,7 +586,11 @@ poll_interval_ms={poll}
         assert row['payload']['command']==unicode_command;original_trace=trace(row['id']);data=material_bytes(row['material']);assert data[row['anchor']:row['end']]==record
         codec_actual=sql("SELECT jsonb_agg(jsonb_build_object('id',id,'command',payload->>'command','anchor',anchor_byte,'end',offset_end,'material',source_material_id) ORDER BY anchor_byte) FROM core.live_events WHERE source='terminal.zsh-history' AND ts_orig=to_timestamp(954000)")
         assert [r['command'] for r in codec_actual]==[expected for expected,_ in codec],codec_actual
-        codec_query=raw_z+' and when >= '+rfc3339(954_000_000_000_000)+' and when < '+rfc3339(954_001_000_000_000)
+        unsupported_range=raw_z+' and when >= '+rfc3339(954_000_000_000_000)+' and when < '+rfc3339(954_001_000_000_000)
+        range_refusal=api('query.run',{'query':unsupported_range});assert range_refusal['error']['kind']=='bad_query' and 'result' not in range_refusal
+        # All seven codec records share this exact original timestamp. Raw reads
+        # support equality; indexed events without words remain unsupported.
+        codec_query=raw_z+' and when = '+rfc3339(954_000_000_000_000)
         codec_api=query(codec_query);codec_cli=cli('query',codec_query)
         assert codec_api['total']==codec_cli['total']==len(codec)
         for answer in [codec_api,codec_cli]:
@@ -594,7 +599,7 @@ poll_interval_ms={poll}
             assert [r['payload']['command'] for r in rows]==[expected for expected,_ in codec]
         for actual,(_,wire) in zip(codec_actual,codec):
             assert material_bytes(actual['material'])[actual['anchor']:actual['end']]==b': 954000:0;'+wire+b'\n'
-        (report/'actual-installed-zsh-codec.json').write_text(json.dumps({'expected_commands':[expected for expected,_ in codec],'literal_source_hex':codec_bytes.hex(),'actual':codec_actual,'api':codec_api,'cli':codec_cli},indent=2)+'\n')
+        (report/'actual-installed-zsh-codec.json').write_text(json.dumps({'expected_commands':[expected for expected,_ in codec],'literal_source_hex':codec_bytes.hex(),'unsupported_range_refusal':range_refusal,'actual':codec_actual,'api':codec_api,'cli':codec_cli},indent=2)+'\n')
         secret=cli('query',raw_z);assert 'A'*30 not in json.dumps(secret)
         safe_trace=trace(sql("SELECT to_jsonb(id) FROM core.live_events WHERE source='terminal.zsh-history' AND payload->>'command' LIKE 'echo ghp_%' LIMIT 1"));assert 'A'*30 not in json.dumps(safe_trace)
         stop(daemon);zsh.write_bytes(b': 1:0;rewrite\n');configure();daemon_start('zsh-truncated')
@@ -657,5 +662,5 @@ created_by="operator"
         restored=cli('replay',f'materials where id = {material}','--action-id',str(uuid.uuid4()),op=True,expected=0);assert restored['admitted']==2
         settled();answer=query('commands');assert answer['total']==3 and all(len(r['parents'])==1 for r in answer['rows']),answer
         (report/'actual-privacy-basis.json').write_text(json.dumps({'lossy_atuin':q,'blocked_status':blocked,'unavailable_query':unavailable,'retained_replay':restored,'recovered':answer},indent=2)+'\n')
-    if not focus or focus=='maintenance':scenario(PLANNED[9],privacy)
+    if not focus or focus in ('maintenance','source-privacy'):scenario(PLANNED[9],privacy)
     stop(daemon)
