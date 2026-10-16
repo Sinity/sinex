@@ -500,11 +500,11 @@ pub mod rpc {
             ),
             (
                 Method::Query,
-                "Shared bound query owner: raw event pages or registered indexed shell queries",
+                "Shared bound query owner: raw event pages, registered indexed shell queries or configured recall last",
             ),
             (
                 Method::Show,
-                "Read a raw observation or canonical command, including historical evidence and current eligibility",
+                "Read a raw observation, canonical command or shell session, including historical evidence and current eligibility",
             ),
             (
                 Method::Trace,

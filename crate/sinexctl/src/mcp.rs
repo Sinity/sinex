@@ -49,6 +49,14 @@ struct Reference {
     #[serde(rename = "ref")]
     reference: String,
 }
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Recall {
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
 impl Reader {
     async fn call(
         &self,
@@ -101,6 +109,31 @@ impl Reader {
 }
 #[tool_router]
 impl Reader {
+    #[tool(
+        description = "Recover the latest retained shell policy session, optionally scoped to a configured project. Focus, AFK and attention remain unknown; unavailable or pending derivation refuses a settled answer."
+    )]
+    async fn sinex_recall(
+        &self,
+        Parameters(p): Parameters<Recall>,
+        ctx: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        self.query(
+            Method::Query,
+            Query {
+                query: p.project.map_or("recall last".into(), |project| {
+                    format!(
+                        "recall last where project = {}",
+                        serde_json::to_string(&project).unwrap()
+                    )
+                }),
+                page: Some(100),
+                cursor: None,
+                timeout_ms: p.timeout_ms,
+            },
+            ctx,
+        )
+        .await
+    }
     #[tool(
         description = "Find retained shell work with words or a quoted phrase. Returns indexed ranked snippets and honest coverage; optional query adds shared clauses."
     )]

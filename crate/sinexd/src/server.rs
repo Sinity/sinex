@@ -122,6 +122,13 @@ pub async fn serve(
         )
         .await
         .map_err(|_| "cannot configure replay authority".to_string())?;
+    if config.automata.iter().any(|a| a == "session") {
+        store
+            .admission
+            .enable_sessions()
+            .await
+            .map_err(|_| "cannot enable shell session interpretation")?;
+    }
     let projection = if let Some(path) = &config.read_model_connection_file {
         store
             .admission
@@ -449,7 +456,24 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
                 serde_json::from_value(request.params.clone()).expect("validated query params");
             let timeout_ms = params.timeout_ms.unwrap_or(10_000);
             let indexed = method == Method::Search || sinex_store::is_indexed_query(&params.query);
-            if indexed {
+            if sinex_store::is_recall(&params.query) {
+                state
+                    .reader
+                    .recall_with_timeout(
+                        &params.query,
+                        params.cursor.as_deref(),
+                        params.page.unwrap_or(100),
+                        std::time::Duration::from_millis(timeout_ms),
+                    )
+                    .await
+                    .map_err(|e| {
+                        if matches!(e, sinex_store::Error::Deadline) {
+                            deadline_error(timeout_ms)
+                        } else {
+                            read_error(e)
+                        }
+                    })
+            } else if indexed {
                 if let Err(message) = sinex_model::retrieval::bind(&params.query) {
                     Err(RpcError::new(
                         ErrorKind::BadQuery,

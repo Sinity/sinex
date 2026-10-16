@@ -29,6 +29,13 @@ enum Command {
     ConfigShow,
     Catalog,
     Sources,
+    /// Recover the latest retained shell policy session, optionally scoped to a configured project.
+    Recall {
+        #[arg(value_parser=["last"])]
+        target: String,
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Read raw events or run supported indexed queries.
     #[command(
         after_help = r#"Pass the query as one shell argument after your endpoint/token options.
@@ -179,6 +186,10 @@ fn main() -> std::process::ExitCode {
         Command::ReplayCancel { operation_id } => (
             Method::ReplayCancel,
             serde_json::json!({"operation_id":operation_id}),
+        ),
+        Command::Recall { target: _, project } => (
+            Method::Query,
+            serde_json::json!({"query":project.map_or("recall last".into(),|p|format!("recall last where project = {}",serde_json::to_string(&p).unwrap())),"page":100}),
         ),
         Command::Status => (Method::Status, serde_json::json!({})),
         Command::Version => (Method::Version, serde_json::json!({})),
