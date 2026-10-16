@@ -109,13 +109,21 @@ roots = ["/synthetic/privacy"]
         assert by_key['fixed']['payload']['command']=='echo '+credential
         ids={key:r['id'] for key,r in by_key.items()}
         before=check_reads(ids)
+        first_page=cli('search','echo','--page','1')
+        cursor=first_page['page']['cursor']
+        assert isinstance(cursor,str) and len(cursor)>80
         assert retained()==original
         assert hashlib.sha256(source.read_bytes()).hexdigest()==source_digest
         # Retained evidence uses acquisition attribution, even when current rules differ.
-        stop(daemon); source.unlink(); configure(False,[('amber','changed-current')])
+        stop(daemon); source.unlink(); configure(False,[('amber','changed-current'),('^.{80,}$','opaque-rewrite')])
         daemon=start(config,'privacy-provider-gone');wait()
         raw_expected=dict(expected, nonidempotent='echo changed-current!')
         after=check_reads(ids, raw_expected)
+        continued=cli('search','echo','--page','1','--cursor',cursor)
+        assert len(continued['rows'])==1
+        assert continued['rows'][0]['id']!=first_page['rows'][0]['id']
+        assert isinstance(continued['page']['cursor'],str) and len(continued['page']['cursor'])>80
+        (report/'cursor-binding-control.json').write_text(json.dumps({'first':first_page,'continued':continued,'current_rule':{'pattern':'^.{80,}$','replacement':'opaque-rewrite'}},indent=2)+'\n')
         assert retained()==original
         for key in ids:
             for field in ['event','material','anchor','end','representation']:
