@@ -179,6 +179,14 @@ result = "exit"
 timeout_seconds = 900
 cache = "none"
 
+[operations.zsh_contracts]
+description = "Check exact installed-provider zsh record codec controls without a database"
+exec = ["cargo", "test", "--locked", "-p", "sinex-store", "--lib", "zsh::tests"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 900
+cache = "none"
+
 [operations.exclusion_contracts]
 description = "Typed exact-occurrence exclusion, undo, replay eligibility and finalized action recovery in owned isolated PostgreSQL"
 exec = ["python3", "tests/foundation.py", "--exclusion-contracts"]

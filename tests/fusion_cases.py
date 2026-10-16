@@ -36,6 +36,7 @@ PLANNED=[
 
 
 def planned(focus):
+    if focus=='source-codec':return [PLANNED[0],PLANNED[8]]
     return [PLANNED[0],'independent changed-seam source setup',PLANNED[11],PLANNED[12],PLANNED[8]] if focus else PLANNED
 
 
@@ -73,7 +74,10 @@ def exercise(h):
             if c==0 or c>=0x80:result.extend([0x83,c^0x20])
             else:result.append(c)
         return bytes(result)
-    def zrecord(at,command):return metafy(f': {at//1_000_000_000}:0;'.encode()+command.replace('\n','\\\n').encode()+b'\n')
+    def zrecord(at,command):
+        wire=command.replace('\n','\\\n')
+        if wire.rstrip(' ').endswith('\\'):wire+=' '
+        return metafy(f': {at//1_000_000_000}:0;'.encode()+wire.encode()+b'\n')
     def prepare():
         run(['python3','-m','unittest','discover','-s',oracle,'-p','test_selected_journey.py'],label='pinned independent selected oracle controls')
         with sqlite3.connect(source) as con:
@@ -487,7 +491,7 @@ poll_interval_ms={poll}
         assert audit['effects']==refused_outcome['steps'] and audit['progress']==refused_outcome
         fresh=cli('replay',selection,'--action-id',str(uuid.uuid4()),op=True,expected=0);assert fresh['state']=='completed' and fresh['processed']==preview['selected'];settled()
         (report/'actual-pending-replay-head-race.json').write_text(json.dumps({'preview':preview,'committed_frame':frame,'lost_response':lost,'same_hash_different_heads':proof,'refused_prior_operation':refused_outcome,'preserved_effects':audit,'fresh_action':fresh},indent=2)+'\n')
-    if focus:
+    if focus=='changed-seams':
         def focus_setup():
             rows=[('hours-a90' if n==90 else f'focus-{n}',20_000_000_000_000+n*1_000_000_000,1,0,'echo focus-target' if n==90 else f'echo focus-{n}','/work/harbor','focus-session','fixture-host',None) for n in range(130)]
             with sqlite3.connect(source) as con:con.executemany('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',rows)
@@ -498,7 +502,7 @@ poll_interval_ms={poll}
             schema_ids=sql("SELECT jsonb_agg(DISTINCT payload_schema_id ORDER BY payload_schema_id) FROM core.live_events WHERE event_type='command.canonical'");assert schema_ids==[5]
             (report/'independent-changed-seam-inputs.json').write_text(json.dumps({'earlier_rows':rows,'later_native_id':'fair-later','expected_new_canonical_schema_ids':[5]},indent=2)+'\n')
         scenario('independent changed-seam source setup',focus_setup)
-    scenario(PLANNED[11],pending_head_race)
+    if focus!='source-codec':scenario(PLANNED[11],pending_head_race)
     def reconstruction():
         nonlocal daemon
         launch('reconstruction-before',False);settled();before=query('commands');old_generation=api('status')['result']['indexed_retrieval']['generation']
@@ -519,21 +523,38 @@ poll_interval_ms={poll}
         run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',statement],label='restore exact controlled synthetic log fixture')
         configure(False);daemon_start('restored-log-reconstruction');settled();restored=query('commands');assert restored['rows']==before['rows'] and restored['total']==before['total']
         (report/'actual-canonical-reconstruction.json').write_text(json.dumps({'before':before,'rebuilt':after,'old_generation':old_generation,'rebuilt_generation':rebuilt_generation,'controlled_missing_log':log,'unavailable_status':unavailable,'api_refusal':refused,'cli_refusal':refused_cli,'valid_raw_control':raw_control,'restored':restored},indent=2)+'\n')
-    scenario(PLANNED[12],reconstruction)
+    if focus!='source-codec':scenario(PLANNED[12],reconstruction)
     def source_controls():
         # Exact retained-byte framing, including metafied UTF-8 and continuation.
         unicode_command='printf zażółć\nnext';credential='echo ghp_'+'A'*36
         original=zsh.read_bytes();offset=len(original);record=zrecord(950_000_000_000_000,unicode_command)
-        zsh.write_bytes(original+record+zrecord(951_000_000_000_000,credential))
+        # Literal installed zsh 5.9.2 fc-W output, independently reimported
+        # through fc-R. One sentinel ASCII space follows trailing slash/spaces.
+        codec=[('echo slash\\',b'echo slash\\ '),('echo slashspace\\ ',b'echo slashspace\\  '),('echo slashspaces\\  ',b'echo slashspaces\\   '),('echo slashtab\\\t',b'echo slashtab\\\t'),('echo slashtabspace\\\t ',b'echo slashtabspace\\\t '),('echo slashnewline\\\nnext',b'echo slashnewline\\\\\nnext'),('echo plainspace  ',b'echo plainspace  ')]
+        codec_bytes=b''.join(b': 954000:0;'+wire+b'\n' for _,wire in codec)
+        source_bytes=original+record+zrecord(951_000_000_000_000,credential)+codec_bytes
+        zsh.write_bytes(source_bytes)
         launch('zsh-unicode');acquired();settled()
         row=sql("SELECT jsonb_build_object('id',id,'material',source_material_id,'anchor',anchor_byte,'end',offset_end,'payload',payload) FROM core.live_events WHERE source='terminal.zsh-history' AND payload->>'native_id'='chain-record:"+str(offset)+"'")
         assert row['payload']['command']==unicode_command;original_trace=trace(row['id']);data=material_bytes(row['material']);assert data[row['anchor']:row['end']]==record
+        codec_actual=sql("SELECT jsonb_agg(jsonb_build_object('id',id,'command',payload->>'command','anchor',anchor_byte,'end',offset_end,'material',source_material_id) ORDER BY anchor_byte) FROM core.live_events WHERE source='terminal.zsh-history' AND ts_orig=to_timestamp(954000)")
+        assert [r['command'] for r in codec_actual]==[expected for expected,_ in codec],codec_actual
+        codec_query=raw_z+' and when >= '+rfc3339(954_000_000_000_000)+' and when < '+rfc3339(954_001_000_000_000)
+        codec_api=query(codec_query);codec_cli=cli('query',codec_query)
+        assert codec_api['total']==codec_cli['total']==len(codec)
+        for answer in [codec_api,codec_cli]:
+            rows=sorted(answer['rows'],key=lambda r:r['anchor'])
+            assert [r['id'] for r in rows]==[r['id'] for r in codec_actual]
+            assert [r['payload']['command'] for r in rows]==[expected for expected,_ in codec]
+        for actual,(_,wire) in zip(codec_actual,codec):
+            assert material_bytes(actual['material'])[actual['anchor']:actual['end']]==b': 954000:0;'+wire+b'\n'
+        (report/'actual-installed-zsh-codec.json').write_text(json.dumps({'expected_commands':[expected for expected,_ in codec],'literal_source_hex':codec_bytes.hex(),'actual':codec_actual,'api':codec_api,'cli':codec_cli},indent=2)+'\n')
         secret=cli('query',raw_z);assert 'A'*30 not in json.dumps(secret)
         safe_trace=trace(sql("SELECT to_jsonb(id) FROM core.live_events WHERE source='terminal.zsh-history' AND payload->>'command' LIKE 'echo ghp_%' LIMIT 1"));assert 'A'*30 not in json.dumps(safe_trace)
         stop(daemon);zsh.write_bytes(b': 1:0;rewrite\n');configure();daemon_start('zsh-truncated')
         wait(lambda _:any(x['source']=='terminal.zsh-history' and x['last_run']['status']=='unavailable' for x in api('sources.list')['result']['sources']))
         assert trace(row['id'])==original_trace
-        stop(daemon);zsh.write_bytes(original+record+zrecord(951_000_000_000_000,credential));configure();daemon_start('zsh-restored-prefix-refused')
+        stop(daemon);zsh.write_bytes(source_bytes);configure();daemon_start('zsh-restored-prefix-refused')
         wait(lambda _:any(x['source']=='terminal.zsh-history' and x['last_run']['status']=='unavailable' for x in api('sources.list')['result']['sources']))
         state=sql("SELECT jsonb_agg(position) FROM raw.source_cursors WHERE binding='terminal.zsh-history'");assert any(p.get('chain_broken') for p in state)
         assert trace(row['id'])==original_trace

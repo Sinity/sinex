@@ -23,7 +23,7 @@ parser.add_argument("--reversible-exclusion",action="store_true",help="qualify p
 parser.add_argument("--package-pin",type=Path,help="reuse the exact clean candidate/package/binary SHA256 pin for reversible exclusion; never build or fall back")
 parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
 parser.add_argument("--fusion",action="store_true",help="qualify selected Atuin/zsh fusion lifecycle using a pinned independent specification")
-parser.add_argument("--fusion-focus",choices=["changed-seams"],help="development-only projection/head-race and zsh refusal controls; reuse separately retained journey proof")
+parser.add_argument("--fusion-focus",choices=["changed-seams","source-codec"],help="development-only projection/head-race or zsh source-codec controls; reuse separately retained journey proof")
 parser.add_argument("--fusion-spec",type=Path,help="read-only specification Git repository for selected fusion fixture")
 parser.add_argument("--indexed",action="store_true",help="qualify indexed shell retrieval and actual MCP transport")
 parser.add_argument("--retained-replay", action="store_true", help="qualify retained Atuin replay through actual packaged clients")

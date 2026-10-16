@@ -7,7 +7,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 pub const SOURCE: &str = "terminal.zsh-history";
 pub const PROTOCOL: &str = "append_only_extended_v1";
-const PARSER: &str = "zsh-extended-v1";
+const PARSER: &str = "zsh-extended-v2";
 #[derive(Clone)]
 pub struct ZshStep {
     pub observation: Uuid,
@@ -81,6 +81,14 @@ pub(crate) fn parse(bytes: &[u8]) -> std::result::Result<(i64, String), &'static
         .checked_mul(1_000_000_000)
         .ok_or("zsh time out of range")?;
     OffsetDateTime::from_unix_timestamp(start).map_err(|_| "zsh time out of range")?;
+    // zsh writes one sentinel ASCII space when the last non-space byte is
+    // a backslash. Remove only that space, preserving the command's own spaces
+    // and tabs. Decode escaped physical newlines after this record boundary.
+    let command = if command.trim_end_matches(' ').ends_with('\\') {
+        command.strip_suffix(' ').unwrap_or(command)
+    } else {
+        command
+    };
     Ok((timestamp, command.replace("\\\n", "\n")))
 }
 impl WriterPool {
@@ -236,6 +244,28 @@ impl WriterPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn installed_zsh_sentinel_keeps_original_backslashes_spaces_and_tabs() {
+        let records: &[(&[u8], &str)] = &[
+            (b": 1:0;echo slash\\ \n", "echo slash\\"),
+            (b": 1:0;echo slashspace\\  \n", "echo slashspace\\ "),
+            (b": 1:0;echo slashspaces\\   \n", "echo slashspaces\\  "),
+            (b": 1:0;echo slashtab\\\t\n", "echo slashtab\\\t"),
+            (
+                b": 1:0;echo slashtabspace\\\t \n",
+                "echo slashtabspace\\\t ",
+            ),
+            (
+                b": 1:0;echo slashnewline\\\\\nnext\n",
+                "echo slashnewline\\\nnext",
+            ),
+            (b": 1:0;echo plainspace  \n", "echo plainspace  "),
+        ];
+        for (record, expected) in records {
+            assert_eq!(frame(record).unwrap(), vec![(0, record.len())]);
+            assert_eq!(parse(record).unwrap().1, *expected);
+        }
+    }
     #[test]
     fn frame_and_unmetafy_preserve_distinct_records() {
         let bytes =
