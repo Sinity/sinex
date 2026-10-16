@@ -102,8 +102,14 @@ Included configured derived families must be settled for `complete: true`;
 retained `show`/`trace` remains available independently of enablement. Current
 session eligibility checks both canonical parents and retained grandparents.
 Ordinary recall briefly waits up to the indexed owner's existing 500ms settling
-window for transient collector/projection catch-up, within the request deadline;
-held or slower work still returns `partial`.
+window when the indexed projection has not reached the current commit position,
+within the request deadline. Pending session or fusion work refuses immediately.
+Once the retained assembly is available, source polling completeness is evaluated
+without waiting for an in-progress observation: recall returns the retained answer
+with `complete: false` while any latest observation is `reading`. This can recur
+on unchanged input because each poll registers its observation before checking
+the provider. A later completed poll can restore polling completeness; it does
+not establish continuous capture.
 
 Dirty rows retain an inclusive `through_day` bound. Admission/archive invalidation,
 upgrade seeding and changed old/new output spans extend this bound. Completing a
