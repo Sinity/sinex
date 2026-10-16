@@ -10,10 +10,29 @@ const MAX_PARENTS: usize = 8192;
 pub(crate) fn payload_schema() -> Value {
     json!({"type":"object","required":["start_ns","end_ns","owner_day","profile","continuity","attention","afk","claim_scope"],"properties":{"profile":{"const":"shell-session-v1-warsaw04-gap300"},"continuity":{"type":"null"},"attention":{"type":"null"},"afk":{"type":"null"},"claim_scope":{"const":"recorded-shell-policy-grouping"}}})
 }
-// Recorded spans dirty an inclusive day range with adjacent keys. The scan
-// reaches true boundaries and compares the earlier owner's whole grouping.
+// Admission/archive and guarded-upgrade seeding use the same range rule.
+// An exact ID includes its archived interpretation; a null ID seeds live inputs.
+pub(crate) const DIRTY_SPANS: &str = r#"
+INSERT INTO derivation.session_dirty(day,dirty_seq,through_day)
+SELECT (((e.ts_orig AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date-1)::text,
+       c.seq,
+       max(((((e.ts_orig+greatest(coalesce((e.payload->>'duration_ns')::numeric,0),0)
+           /1000000000*interval '1 second') AT TIME ZONE 'Europe/Warsaw')
+           -interval '4 hours')::date+1)::text)
+FROM core.events e CROSS JOIN core.commit_counter c
+WHERE c.one AND e.event_type='command.canonical' AND e.ts_orig IS NOT NULL
+  AND (e.id=$1::uuid OR ($1::uuid IS NULL AND e.record_state='present'
+       AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id)))
+GROUP BY 1,c.seq
+ON CONFLICT(day) DO UPDATE
+SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq),
+    through_day=greatest(coalesce(session_dirty.through_day,session_dirty.day),EXCLUDED.through_day)
+"#;
 pub(crate) async fn dirty(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, id: Uuid) -> Result<()> {
-    sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq,through_day) SELECT (((e.ts_orig AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date-1)::text,c.seq,(((((e.ts_orig+greatest(coalesce((e.payload->>'duration_ns')::numeric,0),0)/1000000000*interval '1 second') AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date+1)::text FROM core.events e CROSS JOIN core.commit_counter c WHERE e.id=$1 AND e.event_type='command.canonical' AND e.ts_orig IS NOT NULL AND c.one ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq),through_day=greatest(coalesce(session_dirty.through_day,session_dirty.day),EXCLUDED.through_day)").bind(id).execute(&mut **tx).await?;
+    sqlx::query(DIRTY_SPANS)
+        .bind(Some(id))
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 // One durable range bound in the existing dirty ledger. Completion advances

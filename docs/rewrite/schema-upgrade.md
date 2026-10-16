@@ -88,4 +88,4 @@ catalog equality and surviving pending-process status controls. Unchanged full
 writer and refusal qualification stays separate; this mode does not claim to
 repeat it.
 
-Entry 3 registers the [selected shell session](shell-sessions.md) contract and seeds durable logical-day dirty work from existing canonical endpoints. Its qualification uses the unchanged runtime of published `88a7a641de4517307a0e723e40ecac8ff50aa7d7`, with the original immutable package and the retained publication binding, rather than synthesizing a predecessor schema.
+Entry 3 registers the [selected shell session](shell-sessions.md) contract and seeds durable logical-day dirty work from existing canonical recorded spans, using the same range rule as admission and archival. Its qualification uses the unchanged runtime of published `88a7a641de4517307a0e723e40ecac8ff50aa7d7`, with the original immutable package and the retained publication binding, rather than synthesizing a predecessor schema.
