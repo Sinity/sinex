@@ -303,6 +303,8 @@ poll_interval_ms = 1000
             committed = append(batch); current = wait(f'batch-{batch} acquisition/projection', acquired)
             rows = observe(f'batch-{batch}')
             queried = time.monotonic()
+            newest = max(rows, key=lambda r:r['payload']['timestamp_ns'])
+            citations(f'batch-{batch}-newest', rows, [newest['id']])
             assert all(snapshots[f'batch-{batch}'][k]['id'] == v['id'] for k,v in previous.items())
             previous = snapshots[f'batch-{batch}']
             measured = storage(f'batch-{batch}')
@@ -336,6 +338,8 @@ poll_interval_ms = 1000
         current = wait('same-state offline catch-up', acquired)
         rows = observe('restarted')
         queried = time.monotonic()
+        newest = max(rows, key=lambda r:r['payload']['timestamp_ns'])
+        citations('catchup-newest', rows, [newest['id']])
         assert current['input'] == old_input
         assert all(snapshots['restarted'][k]['id'] == v['id'] for k,v in old.items())
         assert hashlib.sha256(config.read_bytes()).hexdigest() == config_hash
@@ -391,5 +395,5 @@ Timings start at the synthetic producer commit or daemon restart and end after b
 
 The collector configuration, provider path, state and store are unchanged across all producer batches and restart. Only producer appends, one prescribed restart and one prescribed provider-path outage occur. The 180-second maintenance watchdog is a finite completion guard, not a performance acceptance target. Full-snapshot Atuin rereads and whole-input shell reconciliation remain explicit costs. No daily scalability, productivity benefit, source completeness, deployment or full milestone claim follows.
 
-See [measurements and interventions](measurements.json), [independent source facts](independent-source-facts.json), [MCP discovery](discovered-tools.json), [actual MCP wire calls](continuation-mcp.jsonl), [actual API calls](continuation-api.jsonl), [unchanged restart citations](after-restart-citations.json), [unavailable retained citations](after-unavailable-citations.json), [lifecycle](lifecycle.json) and the enclosing [source/binary/command/cleanup result](result.json). Package build source and qualification harness identities remain distinct in [the retained pin](prebuilt-package-pin.json). Earlier real-history, combined-investigation, schema and split fusion qualifications retain their original bindings and were not rerun here.
+See [measurements and interventions](measurements.json), [independent source facts](independent-source-facts.json), [MCP discovery](discovered-tools.json), [actual MCP wire calls](continuation-mcp.jsonl), [actual API calls](continuation-api.jsonl), [first later batch parent](batch-0-newest-citations.json), [second later batch parent](batch-1-newest-citations.json), [third later batch parent](batch-2-newest-citations.json), [new catch-up parent](catchup-newest-citations.json), [unchanged restart citations](after-restart-citations.json), [unavailable retained citations](after-unavailable-citations.json), [lifecycle](lifecycle.json) and the enclosing [source/binary/command/cleanup result](result.json). Package build source and qualification harness identities remain distinct in [the retained pin](prebuilt-package-pin.json). Earlier real-history, combined-investigation, schema and split fusion qualifications retain their original bindings and were not rerun here.
 ''')
