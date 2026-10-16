@@ -247,3 +247,11 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.schema_upgrade_contracts]
+description = "Check released predecessor declaration binding and decoded secret-free dump connection arguments without PostgreSQL"
+exec = ["cargo", "test", "--locked", "-p", "sinex-store", "--lib", "upgrade_tests"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 900
+cache = "none"

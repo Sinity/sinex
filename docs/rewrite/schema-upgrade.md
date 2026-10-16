@@ -59,6 +59,11 @@ and retained show/trace, remain available. No state directory, writer run,
 source task or projection is started. Restart after explicit apply to start
 the ordinary writer. No RPC mutation transport is added for schema changes.
 
+`schema_upgrade_contracts` checks the fixed released declaration fingerprint
+and decoded dump connection fields without a database. The dump process receives
+connection fields through libpq environment variables; its argv contains no
+connection URI or password.
+
 The declared `schema_upgrade_acceptance` operation takes
 `--predecessor-package /nix/store/OUTPUT --predecessor-publication FILE`. It
 builds the actual candidate package and uses an owned PostgreSQL cluster. A

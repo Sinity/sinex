@@ -1344,6 +1344,71 @@ fn predecessor_shell_payload() -> serde_json::Value {
     schema
 }
 
+// libpq does not expand a URI supplied through PGDATABASE. Match the already
+// verified SQLx connection through decoded libpq fields, keeping secrets out of argv.
+fn dump_environment(admin_url: &str) -> Result<Vec<(&'static str, String)>> {
+    use sqlx::postgres::{PgConnectOptions, PgSslMode};
+    let options: PgConnectOptions = admin_url.parse()?;
+    let uri = url::Url::parse(admin_url)
+        .map_err(|_| Error::Invalid("invalid administrative connection URI"))?;
+    let mut env = vec![
+        (
+            "PGHOST",
+            options
+                .get_socket()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| options.get_host().to_owned()),
+        ),
+        ("PGPORT", options.get_port().to_string()),
+        (
+            "PGDATABASE",
+            options
+                .get_database()
+                .unwrap_or(options.get_username())
+                .to_owned(),
+        ),
+        ("PGUSER", options.get_username().to_owned()),
+        (
+            "PGSSLMODE",
+            match options.get_ssl_mode() {
+                PgSslMode::Disable => "disable",
+                PgSslMode::Allow => "allow",
+                PgSslMode::Prefer => "prefer",
+                PgSslMode::Require => "require",
+                PgSslMode::VerifyCa => "verify-ca",
+                PgSslMode::VerifyFull => "verify-full",
+            }
+            .to_owned(),
+        ),
+    ];
+    if let Some(password) = uri.password() {
+        env.push((
+            "PGPASSWORD",
+            percent_encoding::percent_decode_str(password)
+                .decode_utf8()
+                .map_err(|_| Error::Invalid("invalid administrative password encoding"))?
+                .into_owned(),
+        ));
+    }
+    if let Some(value) = options.get_options() {
+        env.push(("PGOPTIONS", value.to_owned()));
+    }
+    if let Some(value) = options.get_application_name() {
+        env.push(("PGAPPNAME", value.to_owned()));
+    }
+    for (key, value) in uri.query_pairs() {
+        let target = match key.as_ref() {
+            "password" => "PGPASSWORD",
+            "sslrootcert" | "ssl-root-cert" | "ssl-ca" => "PGSSLROOTCERT",
+            "sslcert" | "ssl-cert" => "PGSSLCERT",
+            "sslkey" | "ssl-key" => "PGSSLKEY",
+            _ => continue,
+        };
+        env.push((target, value.into_owned()));
+    }
+    Ok(env)
+}
+
 /// Explicit operator upgrade. No DDL or data writes happen before a complete dump.
 /// Each committed entry is a guarded catalog state that the next invocation checks.
 pub async fn apply_changes(admin_url: &str, dump_file: &std::path::Path) -> Result<SchemaStatus> {
@@ -1381,13 +1446,13 @@ pub async fn apply_changes(admin_url: &str, dump_file: &std::path::Path) -> Resu
         .parent()
         .expect("absolute dump path has parent")
         .to_owned();
-    let url = admin_url.to_owned();
+    let dump_environment = dump_environment(admin_url)?;
     let (complete, exit_code) =
         tokio::task::spawn_blocking(move || -> std::io::Result<(bool, Option<i32>)> {
             let output = dump.try_clone()?;
             let result = std::process::Command::new("pg_dump")
                 .args(["--format=custom", "--no-password"])
-                .env("PGDATABASE", url)
+                .envs(dump_environment)
                 .stdout(std::process::Stdio::from(output))
                 .stderr(std::process::Stdio::from(diagnostic.try_clone()?))
                 .status()?;
@@ -1477,6 +1542,16 @@ pub async fn apply_changes(admin_url: &str, dump_file: &std::path::Path) -> Resu
 
 #[cfg(test)]
 mod upgrade_tests {
+    #[test]
+    fn dump_uses_decoded_connection_fields_without_a_secret_argument() {
+        let fields:std::collections::BTreeMap<_,_>=super::dump_environment("postgresql://synthetic:p%40ss%2Bword@localhost/synthetic%20db?host=%2Fsynthetic%2Fsocket&port=55431&ssl-mode=verify-full&ssl-ca=%2Fsynthetic%2Fca").unwrap().into_iter().collect();
+        assert_eq!(fields["PGDATABASE"], "synthetic db");
+        assert_eq!(fields["PGHOST"], "/synthetic/socket");
+        assert_eq!(fields["PGPORT"], "55431");
+        assert_eq!(fields["PGPASSWORD"], "p@ss+word");
+        assert_eq!(fields["PGSSLMODE"], "verify-full");
+        assert_eq!(fields["PGSSLROOTCERT"], "/synthetic/ca");
+    }
     #[test]
     fn published_predecessor_declarations_retain_the_released_binding() {
         // Observed from the independently built and published 4b5bf0619 package.

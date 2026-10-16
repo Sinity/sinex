@@ -189,14 +189,19 @@ poll_interval_ms=3600000
         until=time.monotonic()+15
         while sql("SELECT count(*) FROM pg_locks WHERE relation='derivation.shell_dirty'::regclass AND mode='ShareLock' AND granted")!='1':
             assert time.monotonic()<until;time.sleep(.05)
+        blocker_backend=int(sql("SELECT pid FROM pg_locks WHERE relation='derivation.shell_dirty'::regclass AND mode='ShareLock' AND granted"))
         upgrading=launch([binary,'admin','schema','--connection-file',WORK/'admin','--apply','--dump-file',WORK/'first.dump'],'interrupted-admin')
         observed=wait(lambda:sql("SELECT CASE WHEN to_regclass('sinex_schemas.applied_changes') IS NULL THEN false ELSE EXISTS(SELECT 1 FROM pg_locks WHERE relation='derivation.shell_dirty'::regclass AND mode='AccessExclusiveLock' AND NOT granted) END")=='t',upgrading,'real second entry waiting after first commit')
         progress=sql('SELECT json_agg(number ORDER BY number) FROM sinex_schemas.applied_changes');assert json.loads(progress)==[1]
-        save('observed-interruption.json',{'pid':upgrading.pid,'committed_progress':json.loads(progress),'waiting_on_actual_dirty_table_alter':observed,'signal':'SIGKILL'})
+        save('observed-interruption.json',{'pid':upgrading.pid,'committed_progress':json.loads(progress),'waiting_on_actual_dirty_table_alter':observed,'signal':'SIGKILL','blocker_backend_pid':blocker_backend})
         upgrading.kill();upgrading.wait(timeout=15);assert upgrading.returncode==-signal.SIGKILL
         # Terminate the actual blocker backend and client, rather than waiting on its sleep.
-        sql("SELECT pg_terminate_backend(pid) FROM pg_locks WHERE relation='derivation.shell_dirty'::regclass AND mode='ShareLock' AND granted AND pid<>pg_backend_pid()")
+        sql(f"SELECT pg_terminate_backend({blocker_backend})")
         locker.wait(timeout=15)
+        released_by=time.monotonic()+15
+        while sql('SELECT pg_try_advisory_lock(73018924012)')!='t':
+            assert time.monotonic()<released_by,'killed admin backend did not release its writer exclusion'
+            time.sleep(.05)
         assert snapshot()==baseline_rows
         status=schema(binary,None,'--check');assert [c['number'] for c in status['pending_changes']]==[2]
         sql("UPDATE sinex_schemas.applied_changes SET number=2 WHERE number=1")
