@@ -22,6 +22,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--reversible-exclusion",action="store_true",help="qualify packaged exact occurrence exclusion with an explicit immutable package pin")
 parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion, fusion or configured continuation; never build or fall back")
 parser.add_argument("--sessions",action="store_true",help="qualify selected logical-day shell reconciliation and project recall")
+parser.add_argument("--session-resume",type=Path,help="continue remaining controls from an exact failed owned session report; no build or source reset")
 parser.add_argument("--session-predecessor-pin",type=Path,help="exact immutable existing stage-2 package pin for guarded session upgrade")
 parser.add_argument("--configured-continuation",action="store_true",help="measure finite ongoing Atuin acquisition and same-state recovery through pinned ordinary clients")
 parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
@@ -41,6 +42,7 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.session_resume and not OPTIONS.sessions: parser.error("session resume requires --sessions")
 if OPTIONS.configured_continuation and (not OPTIONS.packaged or not OPTIONS.package_pin or any([OPTIONS.fusion,OPTIONS.fusion_focus,OPTIONS.fusion_spec,OPTIONS.reversible_exclusion,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output,OPTIONS.demo_control,OPTIONS.demo_boundaries,OPTIONS.demo_provider_loss])):
     parser.error("configured continuation requires --packaged --package-pin FILE and its own scenario selector")
 if OPTIONS.fusion_focus and not OPTIONS.fusion: parser.error("fusion focus requires --fusion")
@@ -75,9 +77,26 @@ if (OPTIONS.demo_control or OPTIONS.demo_boundaries or OPTIONS.demo_provider_los
 if OPTIONS.demo_provider_loss and (OPTIONS.demo_boundaries or OPTIONS.demo_control):
     parser.error("provider-loss qualification cannot combine with other demonstration controls")
 BIN_DIR = Path(os.environ.get("SINEX_FOUNDATION_BIN_DIR", str(ROOT/"target/debug")))
-WORK = Path(tempfile.mkdtemp(prefix="sinex-foundation-", dir="/realm/tmp/work"))
-REPORT = Path(os.environ.get("SINEX_FOUNDATION_REPORT_DIR", str(WORK.parent / (WORK.name + "-result"))))
+SESSION_RESUME = None
+if OPTIONS.session_resume:
+    prior=json.loads(OPTIONS.session_resume.read_text())
+    assert prior['success'] is False and prior['postgres_stop_exit']==0, "resume requires a stopped failed owned run"
+    WORK=Path(prior['runtime_state']).resolve(strict=True)
+    assert WORK.parent==Path('/realm/tmp/work') and WORK.name.startswith('sinex-foundation-') and (WORK/'pg/PG_VERSION').is_file() and not (WORK/'pg/postmaster.pid').exists(), "resume state is not a stopped owned foundation cluster"
+    observed_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+    prior_tree=subprocess.check_output(['git','rev-parse',prior['candidate_head']+'^{tree}'],cwd=ROOT,text=True).strip()
+    assert prior_tree==prior['candidate_index_tree'] and prior['candidate_tracked_diff_sha256']==hashlib.sha256(b'').hexdigest(), "prior runtime source was not clean"
+    changed=subprocess.check_output(['git','diff','--name-only',prior['candidate_head'],observed_head],cwd=ROOT,text=True).splitlines()
+    assert not subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True) and all(x.startswith(('tests/','docs/')) or x in ('README.md','.agentctl/project.toml') for x in changed), "resume requires unchanged runtime/build source and a clean harness candidate"
+    BIN_DIR=WORK/'runtime-bin'
+    for name in ['sinexd','sinexctl']:
+        assert hashlib.sha256((BIN_DIR/name).read_bytes()).hexdigest()==prior['binary_sha256'][name], "retained runtime differs from failed run"
+    SESSION_RESUME={'report':str(OPTIONS.session_resume.resolve()),'report_sha256':hashlib.sha256(OPTIONS.session_resume.read_bytes()).hexdigest(),'runtime_candidate':prior['candidate_head'],'runtime_tree':prior_tree,'harness_candidate':observed_head,'harness_only_difference':changed,'binaries':prior['binary_sha256']}
+else:
+    WORK = Path(tempfile.mkdtemp(prefix="sinex-foundation-", dir="/realm/tmp/work"))
+REPORT = Path(os.environ.get("SINEX_FOUNDATION_REPORT_DIR", str(WORK.parent / (WORK.name + ("-resume-"+str(time.time_ns()) if SESSION_RESUME else "-result")))))
 REPORT.mkdir(parents=True, exist_ok=False)
+if SESSION_RESUME: (REPORT/'runtime-identity.json').write_text(json.dumps(SESSION_RESUME,indent=2)+'\n')
 COMMANDS = []
 COMMAND_LOCK = threading.Lock()
 SCENARIOS = []
@@ -119,6 +138,7 @@ if OPTIONS.sessions:
         parser.error("sessions requires --session-predecessor-pin FILE and its own development selector")
     import session_cases
     PLANNED=["cold query-free admin build","canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","checked runtime build and pure contracts"]+session_cases.PLANNED
+    if SESSION_RESUME: PLANNED=["retained owned schema check","owned PostgreSQL extension and checksum contract"]+session_cases.RESUME_PLANNED
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -237,28 +257,41 @@ try:
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    if not (OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
-    (WORK/"pg").mkdir()
-    (WORK/"socket").mkdir()
+    if not (SESSION_RESUME or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not SESSION_RESUME:
+        (WORK/"pg").mkdir()
+        (WORK/"socket").mkdir()
     ENV.update(PGDATA=str(WORK/"pg"), PGHOST=str(WORK/"socket"), PGPORT=str(free_port()))
-    run(["initdb","--no-locale","--auth=trust","--data-checksums"],label="isolated cluster")
+    if not SESSION_RESUME: run(["initdb","--no-locale","--auth=trust","--data-checksums"],label="isolated cluster")
     run(["pg_ctl","-D",WORK/"pg","-l",REPORT/"postgres.log","-o",f"-k {WORK/'socket'} -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -p {ENV['PGPORT']}","-w","start"])
     PG_STARTED = True
-    run(["createdb","foundation"])
-    run(["createuser","sinex_writer"])
-    run(["createuser","sinex_reader"])
+    if not SESSION_RESUME:
+        run(["createdb","foundation"])
+        run(["createuser","sinex_writer"])
+        run(["createuser","sinex_reader"])
     admin = f"postgresql:///foundation?host={WORK/'socket'}&port={ENV['PGPORT']}"
     writer = f"postgresql://sinex_writer@localhost/foundation?host={WORK/'socket'}&port={ENV['PGPORT']}"
     reader = f"postgresql://sinex_reader@localhost/foundation?host={WORK/'socket'}&port={ENV['PGPORT']}"
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=BIN_DIR/"sinexd" if OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if SESSION_RESUME or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
-    scenario("canonical schema cold apply and idempotent check", lambda: (
-        run([admin_binary,"admin","schema","--connection-file",WORK/"admin"]),
-        run([admin_binary,"admin","schema","--connection-file",WORK/"admin","--check"]),
-        run([admin_binary,"admin","schema","--connection-file",WORK/"admin"])))
+    if SESSION_RESUME:
+        for database in ['foundation','session_predecessor']:
+            dump=REPORT/(database+'-before-continuation.dump')
+            run(['pg_dump',admin.replace('/foundation?','/'+database+'?'),'--format=custom','--file',dump],label='preserve failed owned database before continuation')
+            dump.chmod(0o600)
+            with dump.open('rb') as held: os.fsync(held.fileno())
+        directory_fd=os.open(REPORT,os.O_DIRECTORY)
+        try: os.fsync(directory_fd)
+        finally: os.close(directory_fd)
+        scenario("retained owned schema check",lambda:run([admin_binary,'admin','schema','--connection-file',WORK/'admin','--check']))
+    else:
+        scenario("canonical schema cold apply and idempotent check", lambda: (
+            run([admin_binary,"admin","schema","--connection-file",WORK/"admin"]),
+            run([admin_binary,"admin","schema","--connection-file",WORK/"admin","--check"]),
+            run([admin_binary,"admin","schema","--connection-file",WORK/"admin"])))
     def database_contract():
         actual = run(["psql", admin, "--no-psqlrc", "--tuples-only", "--no-align", "-v", "ON_ERROR_STOP=1", "--command", "SELECT json_build_object('postgres_version',version(),'server_version_num',current_setting('server_version_num'),'data_checksums',current_setting('data_checksums'),'shared_preload_libraries',current_setting('shared_preload_libraries'),'timescaledb_version',(SELECT extversion FROM pg_extension WHERE extname='timescaledb'))"], label="actual isolated database contract")
         observed = json.loads(actual.stdout)
@@ -268,10 +301,10 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    if not (OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
+    if not (SESSION_RESUME or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
-    if not OPTIONS.packaged:
+    if not OPTIONS.packaged and not SESSION_RESUME:
         # Admin-only builds use the same Cargo output name. Bind execution to a retained
         # per-run copy so another build cannot change the tested executable mid-scenario.
         runtime_bin=WORK/"runtime-bin"; runtime_bin.mkdir()
@@ -433,10 +466,10 @@ finally:
         if name not in {s["name"] for s in SCENARIOS}:
             SCENARIOS.append({"name":name,"outcome":"unrun","reason":failure if not success else "not exercised"})
     for record,(proc,_,_) in zip(PROCESSES,CHILDREN): record["exit"]=proc.returncode
-    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else "development_build","prebuilt_package":PREBUILT_PIN,"binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"postgres_stop_exit":POSTGRES_STOP_EXIT,"runtime_state":"owned disposable state removed after captured evidence" if success else str(WORK),"unimplemented":["formal M1 acceptance", "full query/surface/fusion scope", "snapshot bootstrap after pruning and purge/cutover", "remaining MCP tools","confirmed delivery","full target schema and Timescale","sealed lifecycle"]}
+    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else ("retained_development_build" if SESSION_RESUME else "development_build"),"prebuilt_package":PREBUILT_PIN,"retained_runtime":SESSION_RESUME,"binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"postgres_stop_exit":POSTGRES_STOP_EXIT,"runtime_state":"owned disposable state removed after captured evidence" if success and not SESSION_RESUME else str(WORK),"unimplemented":["formal M1 acceptance", "full query/surface/fusion scope", "snapshot bootstrap after pruning and purge/cutover", "remaining MCP tools","confirmed delivery","full target schema and Timescale","sealed lifecycle"]}
     if OPTIONS.demo_spec:
         report["demo"]={"oracle_revision":__import__("demo_cases").ORACLE_REVISION,"control":OPTIONS.demo_control,"provider_loss":OPTIONS.demo_provider_loss,"scope":"packaged Atuin raw-event driver; canonical row material, no SQLite snapshot retention or read-model index"}
     (REPORT/"result.json").write_text(json.dumps(report,indent=2)+"\n")
-    if success: shutil.rmtree(WORK)
+    if success and not SESSION_RESUME: shutil.rmtree(WORK)
     print(json.dumps({"success":success,"report":str(REPORT/"result.json"),"scenarios":len(SCENARIOS)}))
     sys.exit(0 if success else 1)

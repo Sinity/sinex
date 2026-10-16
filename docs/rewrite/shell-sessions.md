@@ -108,3 +108,12 @@ metadata exposes the in-flight and pending through-day bounds. There is no
 materialized date-range queue or second work ledger. The native controls add a
 late day1-to-day5 span over a day3 grouping, with empty day2/day4, and its inverse
 removal; settled answers match the independent full evaluation in both cases.
+
+For a stopped failed synthetic session run, pass `--session-resume REPORT` to
+that same operation with its predecessor pin. The harness verifies the retained
+runtime hashes, the exact original source tree and a clean harness-only source
+delta before opening the preserved owned cluster. It saves database dumps before
+resuming owed work, then qualifies the remaining empty-ledger deadline, compatible
+restart and provider-loss reads through ordinary CLI/MCP. It performs no build,
+source reset or schema apply; original failures and passed assertions retain their
+original scope. The owned state stays available after this continuation.

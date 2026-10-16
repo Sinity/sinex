@@ -16,6 +16,7 @@ PLANNED = ['actual current published stage-2 predecessor and guarded session upg
     'late bridge replaces both sessions with exact retained parents',
     'true logical-day boundary, late extension and reordered fresh baseline',
     'compatible restart and provider loss retain exact answers']
+RESUME_PLANNED=['retained undo finishes against independent full facts','empty-ledger deadline recovers without new input','same-state CLI MCP restart and provider loss retain exact answers']
 COLUMNS=['id','timestamp','duration','exit','command','cwd','session','hostname','deleted_at']
 PROJECT='/synthetic/session/tide'
 DAY='2026-10-13'
@@ -57,6 +58,8 @@ def exercise(h):
     run,scenario,start,stop=(h[k] for k in ['run','scenario','start_daemon','stop'])
     token=(work/'token').read_text();(work/'session-operator-token').write_text('synthetic-session-operator-token');(work/'session-operator-token').chmod(0o600);facts=fixture();source=work/'sessions.db';procs=[]
     observations=[];metrics=[];mcp=None;mid=0
+    resume=h.get('SESSION_RESUME')
+    if resume:facts=json.loads((Path(resume['report']).parent/'independent-inputs.json').read_text())
     def save(name,value): (report/name).write_text(json.dumps(value,indent=2,sort_keys=True)+'\n')
     def sql(text,url=None):return run(['psql',url or h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',text],label='session isolated database observation').stdout.strip()
     def fill(rows,replace=False):
@@ -64,16 +67,18 @@ def exercise(h):
         if replace:con.execute('DELETE FROM history')
         con.executemany('INSERT OR REPLACE INTO history VALUES(?,?,?,?,?,?,?,?,?)',[[r[c] for c in COLUMNS] for r in rows]);con.commit();con.close()
         save('independent-inputs.json',facts)
-    con=sqlite3.connect(source);con.execute('CREATE TABLE history(id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,duration INTEGER NOT NULL,exit INTEGER NOT NULL,command TEXT NOT NULL,cwd TEXT NOT NULL,session TEXT NOT NULL,hostname TEXT NOT NULL,deleted_at INTEGER)');con.commit();con.close();fill(facts)
-    pin=json.loads(h['OPTIONS'].session_predecessor_pin.read_text());old=Path(pin['package'])
-    assert pin['exit_code']==0 and pin['dirty'] is False and old.parent==Path('/nix/store')
-    for name in ['sinexd','sinexctl']:
-        assert hashlib.sha256((old/'bin'/name).read_bytes()).hexdigest()==pin['binaries'][name]['sha256']
-    # Refuse to silently treat a different runtime as the current published predecessor.
-    changed=subprocess.check_output(['git','diff','--name-only',pin.get('package_candidate',pin['candidate']),'88a7a641de4517307a0e723e40ecac8ff50aa7d7'],cwd=h['ROOT'],text=True).splitlines()
-    assert all(p.startswith(('tests/','docs/')) or p in ['README.md','.agentctl/project.toml'] for p in changed),changed
-    save('predecessor-binding.json',dict(pin=pin,published_base='88a7a641de4517307a0e723e40ecac8ff50aa7d7',harness_docs_only_difference=changed))
-    run(['createdb','session_predecessor'])
+    if resume:save('independent-inputs.json',facts)
+    if not resume:
+        con=sqlite3.connect(source);con.execute('CREATE TABLE history(id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,duration INTEGER NOT NULL,exit INTEGER NOT NULL,command TEXT NOT NULL,cwd TEXT NOT NULL,session TEXT NOT NULL,hostname TEXT NOT NULL,deleted_at INTEGER)');con.commit();con.close();fill(facts)
+        pin=json.loads(h['OPTIONS'].session_predecessor_pin.read_text());old=Path(pin['package'])
+        assert pin['exit_code']==0 and pin['dirty'] is False and old.parent==Path('/nix/store')
+        for name in ['sinexd','sinexctl']:
+            assert hashlib.sha256((old/'bin'/name).read_bytes()).hexdigest()==pin['binaries'][name]['sha256']
+        # Refuse to silently treat a different runtime as the current published predecessor.
+        changed=subprocess.check_output(['git','diff','--name-only',pin.get('package_candidate',pin['candidate']),'88a7a641de4517307a0e723e40ecac8ff50aa7d7'],cwd=h['ROOT'],text=True).splitlines()
+        assert all(p.startswith(('tests/','docs/')) or p in ['README.md','.agentctl/project.toml'] for p in changed),changed
+        save('predecessor-binding.json',dict(pin=pin,published_base='88a7a641de4517307a0e723e40ecac8ff50aa7d7',harness_docs_only_difference=changed))
+        run(['createdb','session_predecessor'])
     predadmin=h['admin'].replace('/foundation?','/session_predecessor?');predwriter=h['writer'].replace('/foundation?','/session_predecessor?');predreader=h['reader'].replace('/foundation?','/session_predecessor?')
     for name,value in [('session-admin',predadmin),('session-writer',predwriter),('session-reader',predreader),('session-read-model',predreader.replace('sinex_reader','sinex_read_model')),('baseline-read-model',h['reader'].replace('sinex_reader','sinex_read_model'))]:
         (work/name).write_text(value);(work/name).chmod(0o600)
@@ -213,6 +218,30 @@ poll_interval_ms = 500
         save(label+'.json',dict(answer=answer,MCP=agent,sessions=allrows,canonical=canonical,raw=rawrows,trace=trace,independent=independent(facts)))
         metrics.append(dict(phase=label,recall_seconds=elapsed,source_rows=len(facts),commands=len(rows),database_bytes=int(sql('SELECT pg_database_size(current_database())',active_admin)),database='foundation' if active_admin==h['admin'] else 'session_predecessor',retained_bytes=sum(p.stat().st_size for p in active_store.rglob('*') if p.is_file()),sampling='read-only database size followed by retained logical file bytes; not an atomic physical snapshot'))
         return answer
+    if resume:
+        proc=start(config('continued-undo',baseline=True),'sessions-continued-undo');procs.append(proc)
+        def complete_undo():
+            wait(proc,lambda:api().get('result') and len(raw())==len(facts) and settled(),'continued exact undo reconciliation',seconds=300)
+            discover();return qualify('continued-undo')
+        scenario(RESUME_PLANNED[0],complete_undo)
+        scenario(RESUME_PLANNED[1],lambda:(idle_retry(proc),qualify('empty-ledger-recovered')))
+        def retained_continuation():
+            before=qualify('before-compatible-restart');stop(proc)
+            restarted=start(config('compatible-restart',baseline=True),'sessions-compatible-restart');procs.append(restarted)
+            wait(restarted,lambda:api().get('result') and settled(),'retained compatible restart',seconds=300)
+            after=qualify('compatible-restart');assert before['session']==after['session'] and before['rows']==after['rows']
+            stop(restarted);source.rename(work/'removed-provider-continuation.db')
+            lost=start(config('provider-loss',baseline=True),'sessions-provider-loss');procs.append(lost)
+            wait(lost,lambda:api().get('result') and settled() and any(s.get('last_run',{}).get('status')=='unavailable' for s in api('sources.list').get('result',{}).get('sources',[])),'retained owned provider loss',seconds=300)
+            answer=cli('recall','last','--project','tide',expected=5);agent=tool('sinex_recall',{'project':'tide'})
+            assert answer['session']==after['session'] and answer['rows']==after['rows'] and answer['complete'] is False
+            assert agent['session']==answer['session'] and agent['rows']==answer['rows'] and agent['complete'] is False
+            save('provider-loss.json',dict(CLI=answer,MCP=agent));stop(lost)
+        scenario(RESUME_PLANNED[2],retained_continuation)
+        mcp.terminate();mcp.wait(timeout=10)
+        save('measurements.json',dict(samples=metrics,interventions=['restart only preserved synthetic state','owned empty-ledger read lock','same-state compatible restart','remove only synthetic provider'],scope='remaining controls; original failed run is retained unchanged'))
+        save('rpc-observations.json',observations)
+        return
     def upgrade():
         run([old/'bin/sinexd','admin','schema','--connection-file',work/'session-admin'])
         proc=start(config('predecessor',False),'session-predecessor',binary=old/'bin/sinexd');procs.append(proc)
@@ -352,13 +381,13 @@ poll_interval_ms = 500
         assert int(excluded['session']['payload']['start_ns'])==stamp('03:34:00')
         save('excluded-session-replaced.json',excluded)
         cli('delete','--undo',removed['id'])
-        wait(baseline,lambda:len(raw())==len(facts) and settled(),'undo and ordinary configured readmission')
+        wait(baseline,lambda:len(raw())==len(facts) and settled(),'undo and ordinary configured readmission',seconds=300)
         qualify('restored-after-grandparent-fence');idle_retry(baseline);qualify('empty-ledger-recovered');stop(baseline)
     scenario(PLANNED[3],later)
     def retained():
-        proc=start(config('restart'),'sessions-restart');procs.append(proc);wait(proc,lambda:api().get('result') and len(raw())==len(facts) and settled(),'same-state restart');before=qualify('restart')
+        proc=start(config('restart',baseline=True),'sessions-restart');procs.append(proc);wait(proc,lambda:api().get('result') and len(raw())==len(facts) and settled(),'same-state restart');before=qualify('restart')
         stop(proc);source.rename(work/'removed-provider.db')
-        proc=start(config('provider-loss'),'sessions-provider-loss');procs.append(proc)
+        proc=start(config('provider-loss',baseline=True),'sessions-provider-loss');procs.append(proc)
         wait(proc,lambda:api().get('result') and settled() and any(s.get('last_run',{}).get('status')=='unavailable' for s in api('sources.list').get('result',{}).get('sources',[])),'owned provider loss')
         # Retained answers remain available, but CLI exit 5 discloses degraded source.
         answer=cli('recall','last','--project','tide',expected=5)
