@@ -117,6 +117,20 @@ fn parse(text: &str) -> std::result::Result<Vec<Filter>, QueryError> {
     }
     Ok(filters)
 }
+pub fn validate_installed_raw_query(text: &str) -> std::result::Result<(), QueryError> {
+    let filters = parse(text)?;
+    if filters.iter().any(|f| {
+        (f.field == "kind" && f.value.as_str() != Some("command.canonical"))
+            || (f.field == "source" && f.value.as_str() != Some("fusion.shell-command"))
+    }) {
+        Ok(())
+    } else {
+        Err(QueryError(
+            "canonical queries unavailable in installed-schema read mode; apply waiting changes and restart",
+        ))
+    }
+}
+
 pub fn validate_query(text: &str) -> std::result::Result<(), QueryError> {
     parse(text).map(|_| ())
 }

@@ -802,8 +802,8 @@ async fn pending_read(
             let status = state.reader.status().await.map_err(read_error)?;
             serde_json::to_value(Status{
                 schema:SchemaStatus{version:1,expected_version:1,compatible:numbers.is_empty(),pending_changes:numbers,unavailable_paths:unavailable},
-                writer:WriterOwnership::Unavailable{reason:"ordered schema changes pending; run admin schema --apply --dump-file before restarting".into()},
-                commit_seq:status.commit_seq,supported_sources:vec![],supported_methods:vec!["status".into(),"query (raw events only)".into(),"show".into(),"trace".into()],replays:vec![],replay_authorized:false,indexed_retrieval:serde_json::json!({"state":"schema_changes_pending"}),
+                writer:WriterOwnership::Unavailable{reason:"installed-schema read mode; apply waiting changes with admin schema --apply --dump-file and restart".into()},
+                commit_seq:status.commit_seq,supported_sources:vec![],supported_methods:vec!["status".into(),"query.run".into(),"object.show".into(),"object.trace".into()],replays:vec![],replay_authorized:false,indexed_retrieval:serde_json::json!({"state":"schema_changes_pending"}),
             }).map_err(|_|RpcError::new(ErrorKind::Internal,"cannot encode status",serde_json::Value::Null))
         }
         Method::Query => {
@@ -816,7 +816,7 @@ async fn pending_read(
                     serde_json::Value::Null,
                 ));
             }
-            sinex_store::validate_query(&params.query)
+            sinex_store::validate_installed_raw_query(&params.query)
                 .map_err(|e| RpcError::new(ErrorKind::BadQuery, e.0, serde_json::Value::Null))?;
             state
                 .reader

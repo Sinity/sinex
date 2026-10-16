@@ -147,7 +147,7 @@ const EVENT_CONSTRAINTS: &[(&str, &str)] = &[
     ),
     (
         "registered_shell_payload",
-        "CHECK (event_type<>'command.canonical' OR (payload_schema_id IS NOT DISTINCT FROM 3 AND source='fusion.shell-command' AND cardinality(source_event_ids) BETWEEN 1 AND 2 AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'observed_by') IS NOT DISTINCT FROM 'array'))",
+        "CHECK (event_type<>'command.canonical' OR (source='fusion.shell-command' AND ((payload_schema_id IS NOT DISTINCT FROM 3 AND cardinality(source_event_ids)=1) OR (payload_schema_id IS NOT DISTINCT FROM 5 AND cardinality(source_event_ids) BETWEEN 1 AND 2)) AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'observed_by') IS NOT DISTINCT FROM 'array'))",
     ),
 ];
 
@@ -885,7 +885,8 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         configure_events(&mut tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas (id,event_type,version,schema) VALUES (2,'command.executed','atuin-v1',$1)")
             .bind(crate::atuin::payload_schema()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(3,'command.canonical','shell-command-v1-atuin-zsh',$1)").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(3,'command.canonical','shell-command-v1-single-source',$1)").bind(predecessor_shell_payload()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(5,'command.canonical','shell-command-v1-atuin-zsh',$1)").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(4,'command.imported','zsh-extended-v1',$1)").bind(crate::zsh::payload_schema()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed'),(3,'command.canonical'),(4,'command.imported')")
             .execute(&mut *tx)
@@ -1171,17 +1172,27 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 "registered zsh payload schema differs".into(),
             ));
         }
-        let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=3 AND event_type='command.canonical' AND version='shell-command-v1-atuin-zsh'").fetch_optional(&mut *conn).await?;
+        let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=5 AND event_type='command.canonical' AND version='shell-command-v1-atuin-zsh'").fetch_optional(&mut *conn).await?;
         if canonical.as_ref() != Some(&crate::shell::payload_schema()) {
             return Err(Error::Schema(
                 "registered canonical payload schema differs".into(),
             ));
         }
-    } else {
+    }
+    {
         let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=3 AND event_type='command.canonical' AND version='shell-command-v1-single-source'").fetch_optional(&mut *conn).await?;
         if canonical.as_ref() != Some(&predecessor_shell_payload()) {
             return Err(Error::Schema("released singleton payload differs".into()));
         }
+    }
+    let payload_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sinex_schemas.payload_schemas")
+            .fetch_one(&mut *conn)
+            .await?;
+    if payload_count != if stage == 0 { 2 } else { 4 } {
+        return Err(Error::Schema(
+            "payload schema catalog contains an unsupported registration".into(),
+        ));
     }
     let event_types: Vec<(i32, String)> =
         sqlx::query_as("SELECT id,name FROM core.event_types ORDER BY id")
@@ -1359,24 +1370,41 @@ pub async fn apply_changes(admin_url: &str, dump_file: &std::path::Path) -> Resu
         .write(true)
         .mode(0o600)
         .open(dump_file)?;
+    let mut diagnostic_path = dump_file.as_os_str().to_os_string();
+    diagnostic_path.push(".stderr");
+    let diagnostic = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(std::path::Path::new(&diagnostic_path))?;
+    let parent = dump_file
+        .parent()
+        .expect("absolute dump path has parent")
+        .to_owned();
     let url = admin_url.to_owned();
-    let complete = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
-        let output = dump.try_clone()?;
-        let result = std::process::Command::new("pg_dump")
-            .args(["--format=custom", "--no-password"])
-            .env("PGDATABASE", url)
-            .stdout(std::process::Stdio::from(output))
-            .stderr(std::process::Stdio::null())
-            .status()?;
-        dump.sync_all()?;
-        Ok(result.success() && dump.metadata()?.len() > 0)
-    })
-    .await
-    .map_err(|_| Error::Schema("dump worker failed; no schema change applied".into()))??;
+    let (complete, exit_code) =
+        tokio::task::spawn_blocking(move || -> std::io::Result<(bool, Option<i32>)> {
+            let output = dump.try_clone()?;
+            let result = std::process::Command::new("pg_dump")
+                .args(["--format=custom", "--no-password"])
+                .env("PGDATABASE", url)
+                .stdout(std::process::Stdio::from(output))
+                .stderr(std::process::Stdio::from(diagnostic.try_clone()?))
+                .status()?;
+            dump.sync_all()?;
+            diagnostic.sync_all()?;
+            std::fs::File::open(parent)?.sync_all()?;
+            Ok((
+                result.success() && dump.metadata()?.len() > 0,
+                result.code(),
+            ))
+        })
+        .await
+        .map_err(|_| Error::Schema("dump worker failed; no schema change applied".into()))??;
     if !complete {
-        return Err(Error::Schema(
-            "pg_dump failed; no schema change applied (partial dump retained)".into(),
-        ));
+        return Err(Error::Schema(format!(
+            "pg_dump failed (exit {exit_code:?}); no schema change applied (partial dump and raw diagnostics retained)"
+        )));
     }
     for entry in status.pending_changes {
         // inspect validates the exact live state and prefix before every entry.
@@ -1412,7 +1440,7 @@ pub async fn apply_changes(admin_url: &str, dump_file: &std::path::Path) -> Resu
                     }
                 }
                 sqlx::raw_sql("ALTER TABLE raw.inputs DROP CONSTRAINT input_kind; ALTER TABLE raw.inputs ADD CONSTRAINT input_kind CHECK(kind IN ('sqlite','file')); GRANT SELECT ON sinex_schemas.applied_changes TO sinex_reader,sinex_writer,sinex_read_model; INSERT INTO core.event_types(id,name) VALUES(4,'command.imported')").execute(&mut *tx).await?;
-                sqlx::query("UPDATE sinex_schemas.payload_schemas SET version='shell-command-v1-atuin-zsh',schema=$1 WHERE id=3").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(5,'command.canonical','shell-command-v1-atuin-zsh',$1)").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
                 sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(4,'command.imported','zsh-extended-v1',$1)").bind(crate::zsh::payload_schema()).execute(&mut *tx).await?;
             }
             2 => {
@@ -1445,4 +1473,16 @@ pub async fn apply_changes(admin_url: &str, dump_file: &std::path::Path) -> Resu
         tx.commit().await?;
     }
     inspect(&mut conn).await
+}
+
+#[cfg(test)]
+mod upgrade_tests {
+    #[test]
+    fn published_predecessor_declarations_retain_the_released_binding() {
+        // Observed from the independently built and published 4b5bf0619 package.
+        assert_eq!(
+            super::fingerprint_at(0).unwrap(),
+            "2e82b6514b2a7104dbed73a52dfac34e89fbec9e99e9adb0af10e05604c41a9b"
+        );
+    }
 }

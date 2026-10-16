@@ -58,7 +58,9 @@ def stop(p):
 
 def rpc(method,params=None):
     req=urllib.request.Request(endpoint,data=json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params or {}}).encode(),headers={'Authorization':'Bearer synthetic-schema-token','Content-Type':'application/json'})
-    with urllib.request.urlopen(req,timeout=3) as response:return json.load(response)
+    with urllib.request.urlopen(req,timeout=3) as response:value=json.load(response)
+    with (REPORT/'rpc-observations.jsonl').open('a') as log:log.write(json.dumps({'method':method,'params':params or {},'response':value})+'\n')
+    return value
 
 def wait(fn,proc,reason,seconds=40):
     until=time.monotonic()+seconds
@@ -81,6 +83,14 @@ def schema(binary,connection=None,*extra,expected=0,env=None):
 
 def snapshot():
     return sql("SELECT jsonb_build_object('events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM core.events e),'materials',(SELECT jsonb_agg(to_jsonb(m) ORDER BY id) FROM raw.source_material_registry m),'producers',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM core.producer_versions p),'inputs',(SELECT jsonb_agg(to_jsonb(i) ORDER BY id) FROM raw.inputs i),'archive',(SELECT jsonb_agg(to_jsonb(a) ORDER BY id) FROM audit.archived a),'counter',(SELECT seq FROM core.commit_counter WHERE one))")
+
+def schema_dump():
+    text=run(['pg_dump',admin,'--schema-only'],label='independent schema and grants dump').stdout
+    return '\n'.join(line for line in text.splitlines() if not line.startswith(('\\restrict ','\\unrestrict ')))
+
+def payload_catalog():
+    return sql("SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM sinex_schemas.payload_schemas p")
+
 
 success=False;failure=None
 try:
@@ -130,14 +140,15 @@ poll_interval_ms=3600000
     configure()
     proc=launch([old_binary,'serve','--config',config],'published-population')
     raw_query='events where source = terminal.atuin-history and kind = command.executed'
-    baseline=wait(lambda:(lambda v:v.get('result') if v.get('result',{}).get('total')==2 else None)(rpc('query',{'query':raw_query})),proc,'published predecessor raw population')
-    wait(lambda:rpc('query',{'query':'events where kind = command.canonical'}).get('result',{}).get('total')==2,proc,'published singleton canonical population')
+    baseline=wait(lambda:(lambda v:v.get('result') if v.get('result',{}).get('total')==2 else None)(rpc('query.run',{'query':raw_query})),proc,'published predecessor raw population')
+    wait(lambda:rpc('query.run',{'query':'events where kind = command.canonical'}).get('result',{}).get('total')==2,proc,'published singleton canonical population')
     assert {r['payload']['native_id']:r['payload']['command'] for r in baseline['rows']}=={v[0]:v[4] for v in fixtures}
     save('published-baseline.json',baseline);stop(proc)
     baseline_rows=snapshot();(REPORT/'retained-before.json').write_text(baseline_rows+'\n')
     published_status=schema(old_binary,None,'--check');save('published-schema.json',published_status)
+    old_payload=json.loads(sql("SELECT to_jsonb(p) FROM sinex_schemas.payload_schemas p WHERE id=3"));save('published-payload-schema3.json',old_payload)
     def pending():
-        before=sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')
+        before=sql('SELECT fingerprint,catalog FROM sinex_schemas.definition');actual_schema=schema_dump()
         value=schema(binary);assert [c['number'] for c in value['pending_changes']]==[1,2]
         assert sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')==before and sql("SELECT to_regclass('derivation.shell_progress') IS NULL AND to_regclass('sinex_schemas.applied_changes') IS NULL")=='t'
         proc=launch([binary,'serve','--config',config],'pending-reader')
@@ -147,15 +158,16 @@ poll_interval_ms=3600000
         assert cli('query',raw_query)['rows']==baseline['rows']
         refusal=cli('query','commands',expected=2);assert refusal['kind']=='bad_query'
         save('pending-status.json',status);stop(proc)
-        assert snapshot()==baseline_rows
+        assert snapshot()==baseline_rows and schema_dump()==actual_schema
     scenario('pending inspection/startup preserves catalog and admits no writer while retained raw reads work',pending)
     def dump_failure():
-        before=sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')
-        fake=WORK/'dump-failure-bin';fake.mkdir();(fake/'pg_dump').write_text('#!/bin/sh\nexit 23\n');(fake/'pg_dump').chmod(0o700)
+        before=sql('SELECT fingerprint,catalog FROM sinex_schemas.definition');actual_schema=schema_dump()
+        fake=WORK/'dump-failure-bin';fake.mkdir();(fake/'pg_dump').write_text('#!/bin/sh\necho synthetic-dump-failure >&2\nexit 23\n');(fake/'pg_dump').chmod(0o700)
         failed=schema(binary,None,'--apply','--dump-file',WORK/'failed.dump',expected=1,env={**ENV,'PATH':str(fake)+':'+ENV['PATH']})
         assert 'pg_dump failed' in failed.stderr
         assert sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')==before and snapshot()==baseline_rows
-        assert sql("SELECT to_regclass('sinex_schemas.applied_changes') IS NULL")=='t'
+        assert sql("SELECT to_regclass('sinex_schemas.applied_changes') IS NULL")=='t' and schema_dump()==actual_schema
+        assert (WORK/'failed.dump.stderr').read_text()=='synthetic-dump-failure\n'
     scenario('failed dump leaves populated catalog data and progress absent',dump_failure)
     def refuse_damage():
         before=sql('SELECT fingerprint FROM sinex_schemas.definition')
@@ -193,6 +205,9 @@ poll_interval_ms=3600000
         sql("UPDATE sinex_schemas.applied_changes SET number=1 WHERE number=2")
         status=schema(binary,None,'--apply','--dump-file',WORK/'resume.dump');assert status['pending_changes']==[]
         assert snapshot()==baseline_rows
+        assert json.loads(sql("SELECT to_jsonb(p) FROM sinex_schemas.payload_schemas p WHERE id=3"))==old_payload
+        registered=json.loads(payload_catalog());assert [(r['id'],r['version']) for r in registered]==[(2,'atuin-v1'),(3,'shell-command-v1-single-source'),(4,'zsh-extended-v1'),(5,'shell-command-v1-atuin-zsh')]
+        save('upgraded-payload-catalog.json',registered)
         assert int(sql('SELECT count(*) FROM derivation.shell_dirty'))==2
         assert sql('SELECT bool_and(dirty_seq=(SELECT seq FROM core.commit_counter WHERE one)) FROM derivation.shell_dirty')=='t'
         run(['pg_restore','--list',WORK/'first.dump'],label='complete pre-mutation custom dump')
@@ -207,6 +222,16 @@ poll_interval_ms=3600000
         sql('UPDATE sinex_schemas.applied_changes SET number=99 WHERE number=1',url=reader,expected=1)
         sql('UPDATE derivation.shell_progress SET basis=1',url=reader,expected=1)
         sql('ALTER TABLE raw.inputs ADD COLUMN forbidden integer',url=reader,expected=1)
+        assert payload_catalog()==sql("SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM sinex_schemas.payload_schemas p",url=fresh)
+        columns=sql("SELECT string_agg(quote_ident(attname),',' ORDER BY attnum) FROM pg_attribute WHERE attrelid='reflection.events'::regclass AND attnum>0 AND NOT attisdropped AND attgenerated=''")
+        projected=','.join('(r).'+c for c in columns.split(','))
+        parents=[row['id'] for row in baseline['rows']]
+        for schema_id,ids in [(3,parents),(5,parents+[parents[0]])]:
+            patch=json.dumps({'source_event_ids':ids,'payload_schema_id':schema_id})
+            statement="WITH source AS (SELECT jsonb_populate_record(null::reflection.events,to_jsonb(e)||'"+patch+"'::jsonb||jsonb_build_object('id',uuidv7())) AS r FROM core.events e WHERE event_type='command.canonical' LIMIT 1) INSERT INTO reflection.events("+columns+") SELECT "+projected+" FROM source"
+            refused=run(['psql',admin,'-XAt','-v','ON_ERROR_STOP=1','-c',statement],expected=1,label=f'actual schema {schema_id} parent-cardinality refusal')
+            assert 'registered_shell_payload' in refused.stderr
+        assert snapshot()==baseline_rows
         save('fresh-and-upgraded-schema.json',created)
     scenario('fresh/upgraded definition catalogs match repeat is no-op and restricted reader cannot mutate',fresh_and_repeat)
     def after():
@@ -216,12 +241,15 @@ poll_interval_ms=3600000
         answer=cli('query',raw_query);assert answer['rows']==baseline['rows']
         for row in baseline['rows']:
             traced=cli('trace',row['id'],'--bytes')['row'];assert traced['record']['command']==row['payload']['command'];save('trace-'+row['payload']['native_id']+'.json',traced)
-        wait(lambda:(lambda v:v and v.get('fusion',{}).get('current_now_settled') and v.get('total')==2)(rpc('query',{'query':'events where kind = command.canonical'}).get('result')),proc,'upgraded canonical recomputation')
+        wait(lambda:(lambda v:v and v.get('fusion',{}).get('current_now_settled') and v.get('total')==2)(rpc('query.run',{'query':'events where kind = command.canonical'}).get('result')),proc,'upgraded canonical recomputation')
+        assert sql("SELECT bool_and(payload_schema_id=5) FROM core.live_events WHERE event_type='command.canonical'")=='t'
+        assert sql("SELECT count(*) FROM core.events WHERE event_type='command.canonical' AND payload_schema_id=3")=='2'
+        assert json.loads(sql("SELECT to_jsonb(p) FROM sinex_schemas.payload_schemas p WHERE id=3"))==old_payload
         save('upgraded-status.json',status);save('upgraded-raw.json',answer);stop(proc)
         # Actual new acquisition proves writer admission, without relying on relabelled retained parser metadata.
         with sqlite3.connect(db) as con:con.execute('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',('native-three',1700000002123456789,1000000000,0,'echo newly admitted','/synthetic/schema','session','schema-host',None))
         configure(True);proc=launch([binary,'serve','--config',config],'upgraded-admission')
-        value=wait(lambda:(lambda v:v if v and v.get('total')==3 else None)(rpc('query',{'query':raw_query}).get('result')),proc,'real post-upgrade acquisition')
+        value=wait(lambda:(lambda v:v if v and v.get('total')==3 else None)(rpc('query.run',{'query':raw_query}).get('result')),proc,'real post-upgrade acquisition')
         assert any(r['payload']['native_id']=='native-three' and r['payload']['command']=='echo newly admitted' for r in value['rows'])
         stop(proc)
     scenario('upgraded actual writer queries retained traces canonical recomputation and later admission work',after)
@@ -239,7 +267,18 @@ finally:
         p=subprocess.run(['pg_ctl','-D',str(WORK/'pg'),'-m','immediate','-w','stop'],env=ENV,capture_output=True,text=True)
         (REPORT/'pg-stop.stdout').write_text(p.stdout);(REPORT/'pg-stop.stderr').write_text(p.stderr)
         if p.returncode!=0:success=False;failure=(failure or '')+' PostgreSQL stop failed'
-    save('result.json',{'success':success,'failure':failure,'scenarios':SCENARIOS,'commands':COMMANDS,'retained_owned_state':str(WORK),'report':str(REPORT)})
+    retained_state=str(WORK)
+    try:
+        artifacts=REPORT/'owned-artifacts';artifacts.mkdir()
+        for path in WORK.glob('*.dump*'):
+            if path.is_file():shutil.copy2(path,artifacts/path.name)
+        if (WORK/'blobs').is_dir():shutil.copytree(WORK/'blobs',artifacts/'retained-store')
+        if (WORK/'config.toml').is_file():shutil.copy2(WORK/'config.toml',artifacts/'config.toml')
+        if success:
+            shutil.rmtree(WORK);retained_state='removed after private artifact preservation'
+    except Exception as error:
+        success=False;failure=(failure or '')+' private artifact preservation failed: '+str(error)
+    save('result.json',{'success':success,'failure':failure,'scenarios':SCENARIOS,'commands':COMMANDS,'retained_owned_state':retained_state,'report':str(REPORT)})
     print(json.dumps({'success':success,'report':str(REPORT),'failure':failure}))
     if not success:sys_exit=1
     else:sys_exit=0

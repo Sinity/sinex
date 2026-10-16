@@ -17,7 +17,7 @@ pub use atuin::{
 };
 pub use projection::Projection;
 pub use qualification::QualificationBoundary;
-pub use query::validate_query;
+pub use query::{validate_installed_raw_query, validate_query};
 pub use search::indexed as is_indexed_query;
 mod schema;
 pub use schema::{
