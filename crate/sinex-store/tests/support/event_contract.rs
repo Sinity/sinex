@@ -40,6 +40,11 @@ async fn insert_into(
     c: &Case<'_>,
     reflection: bool,
 ) -> std::result::Result<(), sqlx::Error> {
+    // Positive structural fixtures must name a real declared producer. This
+    // does not bypass the producer FK or make this an admission route.
+    if let Some(producer) = c.producer {
+        sqlx::query("INSERT INTO core.producer_versions(id,name,version,run_id,configuration) VALUES($1,'synthetic.schema-contract','fixture-v1',$2,'{\"fixture\":\"direct structural SQL, not a product producer\"}'::jsonb) ON CONFLICT(id) DO NOTHING").bind(producer).bind(run).execute(&mut *conn).await?;
+    }
     let sql="INSERT INTO core.events (id,source,event_type,payload,commit_seq,source_material_id,anchor_byte,source_event_ids,producer_version_id,run_id,record_hash,ts_orig,ts_quality,ts_precision,ts_orig_until,ts_clock,equivalence_key,time_suspect) VALUES ($1,'synthetic.schema','synthetic.observed','{}',1000000,$2,CASE WHEN $2::uuid IS NULL THEN NULL ELSE 0 END,$3,$4,$5,$6,$7::text::timestamptz,$8,$9,$10::text::timestamptz,$11,$12,$13)".replace("core.events",if reflection {"reflection.events"} else {"core.events"});
     sqlx::query(&sql)
         .bind(c.id)
@@ -390,7 +395,7 @@ pub async fn verify(admin: &str, reader: &str, parent: Uuid, material: Uuid) -> 
     old.quality = Some("intrinsic");
     insert(&mut conn, run, &old).await?;
     // Reflection has its own hypertable; insert explicit non-generated columns.
-    sqlx::query("INSERT INTO reflection.events (id,source,event_type,payload,commit_seq,source_event_ids,producer_version_id,run_id,record_hash,ts_quality,equivalence_key,ts_clock) VALUES ($1,'synthetic.schema','synthetic.observed','{}',1000001,$2,$3,$4,$5,'unknown','synthetic:self','sinex')").bind(old.id).bind(vec![parent]).bind(Uuid::now_v7()).bind(run).bind(vec![0_u8;32]).execute(&mut conn).await?;
+    sqlx::query("INSERT INTO reflection.events (id,source,event_type,payload,commit_seq,source_event_ids,producer_version_id,run_id,record_hash,ts_quality,equivalence_key,ts_clock) VALUES ($1,'synthetic.schema','synthetic.observed','{}',1000001,$2,$3,$4,$5,'unknown','synthetic:self','sinex')").bind(old.id).bind(vec![parent]).bind(old.producer).bind(run).bind(vec![0_u8;32]).execute(&mut conn).await?;
     let self_before: serde_json::Value =
         sqlx::query_scalar("SELECT to_jsonb(e) FROM reflection.events e WHERE id=$1")
             .bind(old.id)

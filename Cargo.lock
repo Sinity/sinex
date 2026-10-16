@@ -1941,6 +1941,7 @@ dependencies = [
  "blake3",
  "fs2",
  "hashed-blobs",
+ "percent-encoding",
  "regex",
  "sea-query",
  "serde",
@@ -1952,6 +1953,7 @@ dependencies = [
  "time",
  "tokio",
  "unicode-segmentation",
+ "url",
  "uuid",
 ]
 

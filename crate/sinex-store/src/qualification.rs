@@ -25,6 +25,7 @@ impl QualificationBoundary {
                     | "transaction-committed"
                     | "delete-staged"
                     | "delete-committed"
+                    | "fusion-replacement-committed"
             ))
             || !socket.is_absolute()
         {
@@ -33,6 +34,9 @@ impl QualificationBoundary {
             ));
         }
         Ok(Self { point, socket })
+    }
+    pub(crate) fn observes_atuin_queue(&self) -> bool {
+        self.point == "fusion-replacement-committed"
     }
     pub(crate) async fn reach(
         control: &mut Option<Self>,

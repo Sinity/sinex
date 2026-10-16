@@ -36,6 +36,11 @@ struct Record {
     anchor: i64,
     end: i64,
     interpretation: Option<Uuid>,
+    /// Pinned live occurrence head, independently of the selected material.
+    #[serde(default)]
+    head: Option<Uuid>,
+    #[serde(default)]
+    head_hash: Option<Vec<u8>>,
     #[serde(default)]
     excluded: bool,
 }
@@ -77,6 +82,7 @@ impl RequestRecord {
 }
 struct Prepared {
     old: Option<Uuid>,
+    head_hash: Option<Vec<u8>>,
     id: Uuid,
     anchor: i64,
     end: i64,
@@ -141,7 +147,8 @@ impl WriterPool {
                 .map_err(|_| Error::ReplayRefused("retained row unavailable or malformed"))?;
             let interpretation:Option<Uuid>=sqlx::query_scalar("SELECT id FROM core.events e WHERE source_material_id=$1 AND anchor_byte=$2 AND ordinal=0 AND source=$3 AND event_type='command.executed' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id)").bind(material).bind(anchor).bind(crate::ATUIN_SOURCE).fetch_optional(&mut self.connection).await?;
             let parsed = crate::atuin::parse(&record).map_err(Error::ReplayRefused)?;
-            let (key, _) = crate::atuin::occurrence(input, &parsed.native_id);
+            let (key, key_hash) = crate::atuin::occurrence(input, &parsed.native_id);
+            let head:Option<(Uuid,Vec<u8>)>=sqlx::query_as("SELECT l.event_id,l.record_hash FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE l.store=0 AND l.key_hash=$1 AND e.source=$2 AND e.event_type='command.executed' AND e.equivalence_key=$3").bind(key_hash).bind(crate::ATUIN_SOURCE).bind(&key).fetch_optional(&mut self.connection).await?;
             let excluded = sqlx::query_scalar::<_, bool>(crate::exclusion::EXCLUDED)
                 .bind(key)
                 .fetch_one(&mut self.connection)
@@ -150,6 +157,8 @@ impl WriterPool {
                 anchor,
                 end,
                 interpretation,
+                head: head.as_ref().map(|(id, _)| *id),
+                head_hash: head.map(|(_, hash)| hash),
                 excluded,
             });
             anchor = end;
@@ -298,22 +307,42 @@ impl WriterPool {
             if excluded {
                 continue;
             }
-            let equivalent:Option<(Uuid,i64)>=sqlx::query_as("SELECT event_id,read_order FROM core.live_equivalence WHERE store=0 AND key_hash=$1").bind(&key_hash).fetch_optional(&mut self.connection).await?;
-            if equivalent.as_ref().map(|(id, _)| *id) != old_id {
+            let equivalent:Option<(Uuid,i64,Vec<u8>,String)>=sqlx::query_as("SELECT l.event_id,l.read_order,l.record_hash,e.equivalence_key FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE l.store=0 AND l.key_hash=$1 AND e.source=$2 AND e.event_type='command.executed'").bind(&key_hash).bind(crate::ATUIN_SOURCE).fetch_optional(&mut self.connection).await?;
+            // Older same-material operation scopes pin the immutable selected
+            // interpretation. Never discover a replacement head on resume.
+            let expected_head = expected.head.or(expected.interpretation);
+            let head_hash = expected
+                .head_hash
+                .clone()
+                .or_else(|| old_id.map(|_| record_hash.clone()));
+            if equivalent.as_ref().map(|(id, _, _, _)| *id) != expected_head
+                || equivalent
+                    .as_ref()
+                    .is_some_and(|(_, _, hash, k)| Some(hash) != head_hash.as_ref() || k != &key)
+            {
                 return Err(Error::ReplayRefused(
-                    "selected source key has another current interpretation; request current material",
+                    "selected occurrence head changed; request a new action",
+                ));
+            }
+            if equivalent
+                .as_ref()
+                .is_some_and(|(_, _, hash, _)| hash != &record_hash)
+            {
+                return Err(Error::ReplayRefused(
+                    "selected retained content differs from the current occurrence reading; request current material",
                 ));
             }
             crate::atuin::mask(&mut parsed.payload, rules)?;
             prepared.push(Prepared {
-                old: old_id,
+                old: expected_head,
+                head_hash,
                 id: Uuid::now_v7(),
                 anchor: expected.anchor,
                 end: expected.end,
                 record_hash,
                 key,
                 key_hash,
-                read_order: equivalent.map(|(_, order)| order).unwrap_or(order),
+                read_order: equivalent.map(|(_, order, _, _)| order).unwrap_or(order),
                 parsed,
             });
         }
@@ -507,10 +536,29 @@ impl WriterPool {
                     .retain_record(&json!({"format":"sinex.replay.outcome.v1","outcome":done}))
                     .await?;
                 let mut tx = self.connection.begin().await?;
-                let producer =
-                    crate::atuin::parser_producer(&mut tx, self.run_id, crate::atuin::PARSER)
-                        .await?;
+                let producer = crate::atuin::parser_producer(
+                    &mut tx,
+                    self.run_id,
+                    crate::atuin::PARSER,
+                    &rules,
+                )
+                .await?;
                 for p in prepared {
+                    let current:Option<(Uuid,Vec<u8>,String)>=sqlx::query_as("SELECT l.event_id,l.record_hash,e.equivalence_key FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE l.store=0 AND l.key_hash=$1 AND e.source=$2 AND e.event_type='command.executed' FOR UPDATE OF l").bind(&p.key_hash).bind(crate::ATUIN_SOURCE).fetch_optional(&mut *tx).await?;
+                    let excluded = sqlx::query_scalar::<_, bool>(crate::exclusion::EXCLUDED)
+                        .bind(&p.key)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                    if excluded
+                        || current.as_ref().map(|(id, _, _)| *id) != p.old
+                        || current.as_ref().is_some_and(|(_, hash, key)| {
+                            Some(hash) != p.head_hash.as_ref() || key != &p.key
+                        })
+                    {
+                        return Err(Error::ReplayRefused(
+                            "occurrence admission precondition changed",
+                        ));
+                    }
                     if let Some(old) = p.old {
                         crate::shell::dirty(&mut tx, old).await?;
                         let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
@@ -625,7 +673,7 @@ impl WriterPool {
         rules: &[crate::PrivacyRule],
     ) -> Result<String> {
         let interpretation_basis = self.interpretation_basis(rules).await?;
-        let bytes=serde_json::to_vec(&json!({"format":"sinex.replay.basis.v2","material":material,"records":ids,"interpretation_basis":interpretation_basis})).map_err(|_|Error::Invalid("cannot encode replay basis"))?;
+        let bytes=serde_json::to_vec(&json!({"format":"sinex.replay.basis.v3","material":material,"records":ids,"interpretation_basis":interpretation_basis})).map_err(|_|Error::Invalid("cannot encode replay basis"))?;
         Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
     }
     async fn replay_status(&mut self, id: Uuid) -> Result<Value> {

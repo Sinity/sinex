@@ -205,7 +205,7 @@ impl WriterPool {
                                 if let Some(ref current) = current {
                                     let raw: Uuid = current.try_get("id")?;
                                     effects.archived.push(raw);
-                                    let children:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM core.live_events WHERE event_type='command.canonical' AND source_event_ids=ARRAY[$1]::uuid[]").bind(raw).fetch_all(&mut self.connection).await?;
+                                    let children:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM core.live_events WHERE event_type='command.canonical' AND $1=ANY(source_event_ids)").bind(raw).fetch_all(&mut self.connection).await?;
                                     effects.archived.extend(children);
                                 }
                                 effects.exclusion_added = Some(id);
@@ -246,7 +246,12 @@ impl WriterPool {
             for event in &effects.archived {
                 let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
                 sqlx::query("INSERT INTO audit.archived(id,archived_seq,reason,operation_id) VALUES($1,$2,'delete',$3)").bind(event).bind(seq).bind(id).execute(&mut *tx).await?;
-                sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id) SELECT $1,id,1,0,payload_schema_id FROM core.events WHERE id=$2").bind(seq).bind(event).execute(&mut *tx).await?;
+                let logged = sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id) SELECT $1,e.id,1,0,t.id FROM core.events e JOIN core.event_types t ON t.name=e.event_type WHERE e.id=$2").bind(seq).bind(event).execute(&mut *tx).await?;
+                if logged.rows_affected() != 1 {
+                    return Err(Error::Schema(
+                        "archive commit log target or registered event type unavailable".into(),
+                    ));
+                }
                 sqlx::query("DELETE FROM core.live_coordinates WHERE store=0 AND event_id=$1")
                     .bind(event)
                     .execute(&mut *tx)

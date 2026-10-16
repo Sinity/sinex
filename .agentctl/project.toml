@@ -179,6 +179,14 @@ result = "exit"
 timeout_seconds = 900
 cache = "none"
 
+[operations.zsh_contracts]
+description = "Check exact installed-provider zsh record codec controls without a database"
+exec = ["cargo", "test", "--locked", "-p", "sinex-store", "--lib", "zsh::tests"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 900
+cache = "none"
+
 [operations.exclusion_contracts]
 description = "Typed exact-occurrence exclusion, undo, replay eligibility and finalized action recovery in owned isolated PostgreSQL"
 exec = ["python3", "tests/foundation.py", "--exclusion-contracts"]
@@ -196,6 +204,24 @@ result = "exit"
 timeout_seconds = 1800
 cache = "none"
 
+[operations.fusion_acceptance]
+description = "Selected retained Atuin/zsh grouping lifecycle with independent specification and actual CLI/API/MCP"
+exec = ["python3", "tests/foundation.py", "--fusion"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
+
+[operations.fusion_package_acceptance]
+description = "Packaged selected Atuin/zsh grouping, exact retained parent bindings, bounded restart and privacy refusals"
+exec = ["python3", "tests/foundation.py", "--fusion", "--packaged"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
+
 [operations.dependency_boundaries]
 description = "Qualify workspace dependency boundaries and actual copied-manifest refusal controls without PostgreSQL"
 exec = ["python3", "tests/dependency_boundaries.py"]
@@ -209,6 +235,23 @@ description = "Dependency qualification plus actual alternate-manifest reproduct
 exec = ["python3", "tests/dependency_boundaries.py", "--before-checker"]
 arguments = "required"
 pool = "normal"
+result = "exit"
+timeout_seconds = 900
+cache = "none"
+
+[operations.schema_upgrade_acceptance]
+description = "Packaged guarded populated published predecessor upgrade, dump refusal, real interrupted progress, catalog equivalence and retained reads"
+exec = ["python3", "tests/schema_upgrade.py"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
+
+[operations.schema_upgrade_contracts]
+description = "Check released predecessor declaration binding and decoded secret-free dump connection arguments without PostgreSQL"
+exec = ["cargo", "test", "--locked", "-p", "sinex-store", "--lib", "upgrade_tests"]
+pool = "bulk"
 result = "exit"
 timeout_seconds = 900
 cache = "none"

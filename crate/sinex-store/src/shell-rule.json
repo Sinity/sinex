@@ -1,0 +1,19 @@
+{
+  "id":"shell-command",
+  "version":1,
+  "implementation":"atuin-zsh-v1",
+  "sources":["terminal.atuin-history","terminal.zsh-history"],
+  "bucket_seconds":3600,
+  "window_ns":2000000000,
+  "fallback_ns":60000000000,
+  "normalization":"trim",
+  "partition":["hostname"],
+  "time":"best_quality",
+  "unique":"mutual_single_at_strategy_entry",
+  "prefer":{
+    "command":["terminal.atuin-history","terminal.zsh-history"],
+    "cwd":["terminal.atuin-history"],
+    "exit_code":["terminal.atuin-history"],
+    "duration_ns":["terminal.atuin-history"]
+  }
+}

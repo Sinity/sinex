@@ -20,8 +20,11 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--reversible-exclusion",action="store_true",help="qualify packaged exact occurrence exclusion with an explicit immutable package pin")
-parser.add_argument("--package-pin",type=Path,help="reuse the exact clean candidate/package/binary SHA256 pin for reversible exclusion; never build or fall back")
+parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion or fusion; never build or fall back")
 parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
+parser.add_argument("--fusion",action="store_true",help="qualify selected Atuin/zsh fusion lifecycle using a pinned independent specification")
+parser.add_argument("--fusion-focus",choices=["changed-seams","source-codec","maintenance","source-privacy"],help="focused projection/head-race, source-codec, packaged maintenance or remaining source/privacy controls; reuse separately retained journey proof")
+parser.add_argument("--fusion-spec",type=Path,help="read-only specification Git repository for selected fusion fixture")
 parser.add_argument("--indexed",action="store_true",help="qualify indexed shell retrieval and actual MCP transport")
 parser.add_argument("--retained-replay", action="store_true", help="qualify retained Atuin replay through actual packaged clients")
 parser.add_argument("--packaged", action="store_true", help="build and exercise the Nix package entrypoints")
@@ -35,8 +38,14 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
-if OPTIONS.package_pin and not OPTIONS.reversible_exclusion:
-    parser.error("prebuilt package pins are supported only by reversible exclusion qualification")
+if OPTIONS.fusion_focus and not OPTIONS.fusion: parser.error("fusion focus requires --fusion")
+if OPTIONS.packaged and OPTIONS.fusion_focus in ("changed-seams","source-codec"): parser.error("this fusion focus is development-only; packaged focus supports maintenance or source-privacy")
+if OPTIONS.fusion != bool(OPTIONS.fusion_spec): parser.error("fusion requires --fusion --fusion-spec GIT_REPOSITORY")
+if OPTIONS.fusion and any([OPTIONS.reversible_exclusion,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output]): parser.error("fusion owns its own scenario selector")
+if OPTIONS.package_pin and not (OPTIONS.reversible_exclusion or OPTIONS.fusion):
+    parser.error("prebuilt package pins are supported only by exclusion or fusion qualification")
+if OPTIONS.fusion and OPTIONS.package_pin and not OPTIONS.packaged:
+    parser.error("fusion prebuilt package pins require --packaged")
 if OPTIONS.reversible_exclusion and (not OPTIONS.packaged or not OPTIONS.package_pin or OPTIONS.exclusion_contracts or OPTIONS.indexed or OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.credential_output):
     parser.error("reversible exclusion requires --packaged --package-pin FILE and its own scenario selector")
 
@@ -93,6 +102,10 @@ if OPTIONS.exclusion_contracts:
 if OPTIONS.reversible_exclusion:
     import exclusion_cases
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+exclusion_cases.PLANNED
+if OPTIONS.fusion:
+    import fusion_cases
+    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+fusion_cases.planned(OPTIONS.fusion_focus)
+    if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -203,7 +216,7 @@ try:
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    if not (OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or (OPTIONS.indexed and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not (OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
     (WORK/"pg").mkdir()
     (WORK/"socket").mkdir()
     ENV.update(PGDATA=str(WORK/"pg"), PGHOST=str(WORK/"socket"), PGPORT=str(free_port()))
@@ -219,7 +232,7 @@ try:
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=BIN_DIR/"sinexd" if OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or (OPTIONS.indexed and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
     scenario("canonical schema cold apply and idempotent check", lambda: (
         run([admin_binary,"admin","schema","--connection-file",WORK/"admin"]),
@@ -234,7 +247,7 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    if not (OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or (OPTIONS.indexed and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
+    if not (OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
     if not OPTIONS.packaged:
@@ -244,7 +257,9 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.reversible_exclusion:
+    if OPTIONS.fusion:
+        fusion_cases.exercise(globals())
+    elif OPTIONS.reversible_exclusion:
         exclusion_cases.exercise(globals())
     elif OPTIONS.exclusion_contracts:
         def exclusion_contract():

@@ -410,6 +410,10 @@ pub mod rpc {
         pub version: i64,
         pub expected_version: i64,
         pub compatible: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub pending_changes: Vec<i32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub unavailable_paths: Vec<String>,
     }
     #[derive(Clone, Debug, Serialize)]
     #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
@@ -500,11 +504,11 @@ pub mod rpc {
             ),
             (
                 Method::Show,
-                "Read one raw event, including archived or source-removed readings",
+                "Read a raw observation or canonical command, including historical evidence and current eligibility",
             ),
             (
                 Method::Trace,
-                "Inspect a masked retained row with exact material coordinates",
+                "Follow canonical parents to exact retained coordinates and masked source records",
             ),
         ]
         .into_iter()

@@ -1,5 +1,7 @@
 //! Foundation storage authority. No connection or transaction escapes the writer owner.
 mod atuin;
+mod zsh;
+pub use zsh::{PROTOCOL as ZSH_PROTOCOL, SOURCE as ZSH_SOURCE, ZshStep};
 mod event_storage;
 mod exclusion;
 mod projection;
@@ -15,12 +17,12 @@ pub use atuin::{
 };
 pub use projection::Projection;
 pub use qualification::QualificationBoundary;
-pub use query::validate_query;
+pub use query::{validate_installed_raw_query, validate_query};
 pub use search::indexed as is_indexed_query;
 mod schema;
 pub use schema::{
     CAPTURED_FUTURE_SKEW_SECONDS, READER_ROLE, SchemaStatus, TIMESCALEDB_VERSION, WRITER_ROLE,
-    bootstrap, check_schema,
+    apply_changes, bootstrap, check_schema,
 };
 
 use fs2::FileExt;
@@ -102,6 +104,28 @@ pub struct StoreStatus {
 #[derive(Clone)]
 pub struct ReadPool(PgPool, std::sync::Arc<hashed_blobs::Reader>, String);
 impl ReadPool {
+    /// Read the verified installed schema without writer ownership or state creation.
+    pub async fn installed(reader_url: &str, root: PathBuf) -> Result<Self> {
+        check_schema(reader_url).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(reader_url)
+            .await?;
+        let role: String = sqlx::query_scalar("SELECT current_user::text")
+            .fetch_one(&pool)
+            .await?;
+        if role != READER_ROLE {
+            return Err(Error::Invalid(
+                "reader URL must authenticate as sinex_reader",
+            ));
+        }
+        let root = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        Ok(Self(
+            pool,
+            std::sync::Arc::new(hashed_blobs::Reader::new(root.clone(), vec![])),
+            root,
+        ))
+    }
     pub async fn schema_status(&self) -> Result<SchemaStatus> {
         let mut lease = self.read_lease().await?;
         let status = schema::inspect(lease.connection()).await?;
@@ -130,23 +154,52 @@ impl ReadPool {
 }
 
 #[derive(Clone)]
-pub struct Admission(mpsc::Sender<Command>);
+pub struct Admission {
+    sender: mpsc::Sender<Command>,
+    observe_atuin_queue: bool,
+}
 impl Admission {
     pub async fn submit_atuin(&self, step: AtuinStep) -> Result<serde_json::Value> {
+        // Explicit synthetic qualification only. Opaque hashes and source record
+        // addresses identify a prepared bounded step without logging captured keys.
+        let evidence = self.observe_atuin_queue.then(|| serde_json::json!({
+            "component":"sinex-store",
+            "qualification_phase":"atuin-step-enqueued",
+            "observation":step.observation,
+            "sqlite_rowids":step.rows.iter().filter_map(|row| row["_rowid"].as_i64()).collect::<Vec<_>>(),
+            "native_key_hashes":step.rows.iter().filter_map(|row| row["id"].as_str()).map(|key| blake3::hash(key.as_bytes()).to_hex().to_string()).collect::<Vec<_>>(),
+            "source_eof":step.complete,
+            "admission":"accepted by existing bounded writer channel",
+            "custody":"writer acknowledgement not observed; retention and commit unconfirmed"
+        }));
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::Atuin(step, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        if let Some(evidence) = evidence {
+            // Successful channel send precedes this notice; no producer/writer
+            // barrier is introduced and the writer can acknowledge earlier batches.
+            eprintln!("{evidence}");
+        }
+        rx.await.map_err(|_| Error::Stopped)?
+    }
+    pub async fn submit_zsh(&self, step: ZshStep) -> Result<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::Zsh(step, tx))
             .await
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
     }
+
     pub async fn replay(&self, command: ReplayCommand) -> Result<serde_json::Value> {
         let cancelled = match &command {
             ReplayCommand::Cancel(p) => Some(p.operation_id),
             _ => None,
         };
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::Replay(command, tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -164,7 +217,7 @@ impl Admission {
         request: sinex_model::exclusion::Request,
     ) -> Result<serde_json::Value> {
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::Exclude(action, request, tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -172,7 +225,7 @@ impl Admission {
     }
     pub async fn set_replay_profile(&self, rules: Option<Vec<PrivacyRule>>) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::ReplayProfile(rules, tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -180,19 +233,19 @@ impl Admission {
     }
     pub async fn enable_shell(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::ShellEnable(tx))
             .await
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
     }
     pub fn is_available(&self) -> bool {
-        !self.0.is_closed()
+        !self.sender.is_closed()
     }
     /// Backpressure awaits bounded capacity; success means the transaction committed.
     pub async fn submit_synthetic(&self, event: MaterialEvent) -> Result<Receipt> {
         let (tx, rx) = oneshot::channel();
-        self.0
+        self.sender
             .send(Command::Admit(event, tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -215,6 +268,7 @@ enum Command {
     Replay(ReplayCommand, oneshot::Sender<Result<serde_json::Value>>),
     Admit(MaterialEvent, oneshot::Sender<Result<Receipt>>),
     Atuin(AtuinStep, oneshot::Sender<Result<serde_json::Value>>),
+    Zsh(ZshStep, oneshot::Sender<Result<serde_json::Value>>),
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -229,6 +283,8 @@ struct WriterPool {
     reader: ReadPool,
     replay_rules: Option<Vec<PrivacyRule>>,
     shell_producer: Option<Uuid>,
+    shell_work: Option<shell::Work>,
+    shell_failed: bool,
     qualification: Option<QualificationBoundary>,
 }
 
@@ -260,7 +316,11 @@ impl Store {
                 "actual executable/config hashes and runtime identity required",
             ));
         }
-        check_schema(writer_url).await?;
+        if !check_schema(writer_url).await?.pending_changes.is_empty() {
+            return Err(Error::Schema(
+                "ordered schema changes pending; use admin schema --apply with a dump path".into(),
+            ));
+        }
         let (lock, root, blobs) = tokio::task::spawn_blocking(move || -> Result<_> {
             std::fs::create_dir_all(&state_dir)?;
             let root = std::fs::canonicalize(&state_dir)?;
@@ -326,6 +386,9 @@ impl Store {
             std::sync::Arc::new(hashed_blobs::Reader::new(root.clone(), vec![])),
             root.clone(),
         );
+        let observe_atuin_queue = qualification
+            .as_ref()
+            .is_some_and(QualificationBoundary::observes_atuin_queue);
         let mut owner = WriterPool {
             connection,
             blobs: std::sync::Arc::new(blobs),
@@ -335,6 +398,8 @@ impl Store {
             reader: reader.clone(),
             replay_rules: None,
             shell_producer: None,
+            shell_work: None,
+            shell_failed: false,
             qualification,
         };
         owner.recover_blobs().await?;
@@ -343,7 +408,10 @@ impl Store {
         let writer = tokio::spawn(owner.run(rx));
         Ok(Self {
             run_id,
-            admission: Admission(tx),
+            admission: Admission {
+                sender: tx,
+                observe_atuin_queue,
+            },
             reader,
             writer,
         })
@@ -358,7 +426,7 @@ impl Store {
     pub async fn shutdown(self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.admission
-            .0
+            .sender
             .send(Command::Shutdown(tx))
             .await
             .map_err(|_| Error::Stopped)?;
@@ -392,7 +460,7 @@ const BLOB_PRESENT: &str = "UPDATE core.blobs SET status='present' WHERE id=$1";
 const WRITING_BLOBS: &str = "SELECT id,blake3 FROM core.blobs WHERE status='writing' AND root=$1";
 const RUN_INTERRUPT: &str =
     "UPDATE core.runs SET status='interrupted',ended_at=now() WHERE status='running'";
-const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed','command.executed','command.canonical']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
+const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed','command.executed','command.canonical','command.imported']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
 const RUN_START: &str = "INSERT INTO core.runs (id,manifest_id,service_name,host,status,effective_config_hash) VALUES ($1,$2,$3,$4,'running',$5)";
 const RUN_END: &str = "UPDATE core.runs SET status='completed',ended_at=now() WHERE id=$1";
 
@@ -468,32 +536,41 @@ pub async fn prepare_admission_statements(admin_url: &str) -> Result<()> {
 impl WriterPool {
     async fn run(mut self, mut rx: mpsc::Receiver<Command>) -> Result<()> {
         let mut shutdown = None;
+        let mut replay_turn = false;
+        let mut queued_turns = 0_u8;
         loop {
-            // A pending operation belongs to this writer, not to an HTTP waiter.
-            // Give queued control/live work the next turn between bounded chunks.
+            // Live/control work is preferred, but continuous admission cannot starve
+            // an admitted replay or pinned fusion pass: at most two queued commands
+            // precede one bounded background turn. Shutdown instead closes and drains.
             let command = if shutdown.is_none()
                 && (self.replay_rules.is_some() || self.shell_producer.is_some())
             {
-                match rx.try_recv() {
-                    Ok(command) => Some(command),
-                    Err(mpsc::error::TryRecvError::Disconnected) => None,
-                    Err(mpsc::error::TryRecvError::Empty) => {
-                        if self.shell_step().await? {
-                            continue;
-                        }
-                        if self.replay_rules.is_some()
-                            && let Some(request) = self.next_replay().await?
-                        {
-                            self.replay(ReplayCommand::Start(request)).await?;
-                            continue;
-                        }
-                        rx.recv().await
+                if rx.is_closed() && rx.is_empty() {
+                    break;
+                }
+                let queued = if queued_turns < 2 {
+                    match rx.try_recv() {
+                        Ok(command) => Some(command),
+                        Err(mpsc::error::TryRecvError::Disconnected) => break,
+                        Err(mpsc::error::TryRecvError::Empty) => None,
                     }
+                } else {
+                    None
+                };
+                if queued.is_some() {
+                    queued
+                } else {
+                    queued_turns = 0;
+                    if self.background_step(&mut replay_turn, rx.len()).await? {
+                        continue;
+                    }
+                    rx.recv().await
                 }
             } else {
                 rx.recv().await
             };
             let Some(command) = command else { break };
+            queued_turns = queued_turns.saturating_add(1).min(2);
             match command {
                 Command::ShellEnable(reply) => {
                     let result = self.shell_enable().await;
@@ -509,15 +586,33 @@ impl WriterPool {
                     let result = self.admit(event).await;
                     if reply.send(result).is_err() { /* caller gone; no commit is undone */ }
                 }
+                Command::Zsh(step, reply) => {
+                    let result = self.admit_zsh(step).await;
+                    if result.as_ref().is_ok_and(|outcome| {
+                        outcome["admitted"].as_i64().unwrap_or(0) > 0
+                            || outcome["removed"].as_i64().unwrap_or(0) > 0
+                    }) {
+                        self.shell_failed = false;
+                    }
+                    let _ = reply.send(result);
+                }
                 Command::Atuin(step, reply) => {
                     let result = self.admit_atuin(step).await;
+                    if result.as_ref().is_ok_and(|outcome| {
+                        outcome["admitted"].as_i64().unwrap_or(0) > 0
+                            || outcome["removed"].as_i64().unwrap_or(0) > 0
+                    }) {
+                        self.shell_failed = false;
+                    }
                     let _ = reply.send(result);
                 }
                 Command::Exclude(action, request, reply) => {
+                    self.shell_failed = false;
                     let result = self.exclude(action, request).await;
                     let _ = reply.send(result);
                 }
                 Command::Replay(command, reply) => {
+                    self.shell_failed = false;
                     let result = self.replay(command).await;
                     let _ = reply.send(result);
                 }
@@ -536,6 +631,51 @@ impl WriterPool {
             if reply.send(()).is_err() { /* requester gone */ }
         }
         Ok(())
+    }
+
+    async fn background_step(
+        &mut self,
+        replay_turn: &mut bool,
+        queued_commands: usize,
+    ) -> Result<bool> {
+        // Keep replay and shell ownership alternating when both have runnable work.
+        if *replay_turn && self.replay_rules.is_some() {
+            *replay_turn = false;
+            if let Some(request) = self.next_replay().await? {
+                self.replay(ReplayCommand::Start(request)).await?;
+                return Ok(true);
+            }
+        }
+        *replay_turn = true;
+        if !self.shell_failed {
+            match self.shell_step(queued_commands).await {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(error) => {
+                    // Only static validation reasons are safe to publish;
+                    // database diagnostics may contain captured values.
+                    let reason = match error {
+                        Error::Invalid(reason) => format!(
+                            "shell recomputation unavailable: {reason}; dirty work retained"
+                        ),
+                        _ => "shell recomputation unavailable; dirty work retained".into(),
+                    };
+                    self.shell_failed = true;
+                    self.shell_work = None;
+                    sqlx::query("UPDATE derivation.shell_progress SET failure=$1 WHERE one")
+                        .bind(reason)
+                        .execute(&mut self.connection)
+                        .await?;
+                }
+            }
+        }
+        if self.replay_rules.is_some()
+            && let Some(request) = self.next_replay().await?
+        {
+            self.replay(ReplayCommand::Start(request)).await?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     async fn recover_blobs(&mut self) -> Result<()> {

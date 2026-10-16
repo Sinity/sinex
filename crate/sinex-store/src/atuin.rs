@@ -177,17 +177,24 @@ pub(crate) fn parse(row: &Value) -> std::result::Result<Parsed, &'static str> {
     })
 }
 
+pub(crate) fn shell_field_basis(rules: &[PrivacyRule]) -> Value {
+    json!({"contract":"sinex.shell-field-basis.v1","comparable":rules.is_empty(),"privacy_rules_blake3":format!("blake3:{}",blake3::hash(&serde_json::to_vec(rules).expect("typed privacy rules")))})
+}
+
 pub(crate) async fn parser_producer(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     run: Uuid,
     parser: &str,
+    rules: &[PrivacyRule],
 ) -> Result<Uuid> {
+    let configuration = json!({"representation":"canonical_sqlite_rows","parser":parser,"qualification_fixture":parser!=PARSER,"shell_field_basis":shell_field_basis(rules)});
     if let Some(id) = sqlx::query_scalar(
-        "SELECT id FROM core.producer_versions WHERE name=$1 AND version=$2 AND run_id=$3 LIMIT 1",
+        "SELECT id FROM core.producer_versions WHERE name=$1 AND version=$2 AND run_id=$3 AND configuration=$4 LIMIT 1",
     )
     .bind(PARSER_NAME)
     .bind(parser)
     .bind(run)
+    .bind(&configuration)
     .fetch_optional(&mut **tx)
     .await?
     {
@@ -196,7 +203,7 @@ pub(crate) async fn parser_producer(
     let id = Uuid::now_v7();
     sqlx::query("INSERT INTO core.producer_versions(id,name,version,run_id,configuration) VALUES($1,$2,$3,$4,$5)")
         .bind(id).bind(PARSER_NAME).bind(parser).bind(run)
-        .bind(json!({"representation":"canonical_sqlite_rows","parser":parser,"qualification_fixture":parser!=PARSER}))
+        .bind(configuration)
         .execute(&mut **tx).await?;
     Ok(id)
 }
@@ -228,7 +235,7 @@ impl WriterPool {
         Ok(())
     }
 
-    async fn close_part(&mut self, material: Uuid, status: &str) -> Result<()> {
+    pub(crate) async fn close_part(&mut self, material: Uuid, status: &str) -> Result<()> {
         let path = std::path::Path::new(&self.root)
             .join("open")
             .join(material.to_string());
@@ -281,6 +288,66 @@ impl WriterPool {
             .join(material.to_string());
         std::fs::remove_file(path)?;
         Ok(())
+    }
+
+    /// Shared bounded exact-byte custody for source adapters. The caller commits
+    /// durable_bytes with admission/progress after this fsync, through this writer.
+    pub(crate) async fn retain_stream_step(
+        &mut self,
+        source: &str,
+        input: Uuid,
+        observation: Uuid,
+        provenance: &Value,
+        bytes: &[u8],
+    ) -> Result<(Option<Uuid>, i64)> {
+        let mut material = None;
+        let mut start = 0i64;
+        if !bytes.is_empty() {
+            let open = sqlx::query("SELECT id,durable_bytes FROM raw.source_material_registry WHERE input_id=$1 AND status='capturing' ORDER BY staged_at DESC LIMIT 1").bind(input).fetch_optional(&mut self.connection).await?;
+            if let Some(row) = open {
+                material = Some(row.try_get::<Uuid, _>("id")?);
+                start = row.try_get("durable_bytes")?;
+            }
+            if start as u64 + bytes.len() as u64 > PART_BYTES {
+                self.close_part(
+                    material.ok_or(Error::Invalid("open material missing"))?,
+                    "completed",
+                )
+                .await?;
+                material = None;
+                start = 0;
+            }
+            if material.is_none() {
+                let id = Uuid::now_v7();
+                std::fs::create_dir_all(std::path::Path::new(&self.root).join("open"))?;
+                let path = std::path::Path::new(&self.root)
+                    .join("open")
+                    .join(id.to_string());
+                let file = std::fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(path)?;
+                file.sync_all()?;
+                std::fs::File::open(std::path::Path::new(&self.root).join("open"))?.sync_all()?;
+                sqlx::query("INSERT INTO raw.source_material_registry (id,material_kind,source_identifier,status,ts_quality,blob_id,total_bytes,durable_bytes,input_id,observation_id,parser_provenance) VALUES ($1,'stream_chunk',$2,'capturing','unknown',NULL,0,0,$3,$4,$5)")
+                    .bind(id).bind(source).bind(input).bind(observation).bind(&provenance).execute(&mut self.connection).await?;
+                material = Some(id);
+            }
+            let path = std::path::Path::new(&self.root)
+                .join("open")
+                .join(material.unwrap().to_string());
+            let write_bytes = bytes.to_vec();
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
+                file.set_len(start as u64)?;
+                file.seek(SeekFrom::Start(start as u64))?;
+                file.write_all(&write_bytes)?;
+                file.sync_all()?;
+                Ok(())
+            })
+            .await??;
+        }
+        Ok((material, start))
     }
 
     pub(crate) async fn admit_atuin(&mut self, step: AtuinStep) -> Result<Value> {
@@ -363,53 +430,9 @@ impl WriterPool {
         if bytes.len() > MAX_STEP_BYTES {
             return Err(Error::Invalid("Atuin step exceeds retained byte budget"));
         }
-        let mut material = None;
-        let mut start = 0i64;
-        if !bytes.is_empty() {
-            let open = sqlx::query("SELECT id,durable_bytes FROM raw.source_material_registry WHERE input_id=$1 AND status='capturing' ORDER BY staged_at DESC LIMIT 1").bind(input).fetch_optional(&mut self.connection).await?;
-            if let Some(row) = open {
-                material = Some(row.try_get::<Uuid, _>("id")?);
-                start = row.try_get("durable_bytes")?;
-            }
-            if start as u64 + bytes.len() as u64 > PART_BYTES {
-                self.close_part(
-                    material.ok_or(Error::Invalid("open material missing"))?,
-                    "completed",
-                )
-                .await?;
-                material = None;
-                start = 0;
-            }
-            if material.is_none() {
-                let id = Uuid::now_v7();
-                std::fs::create_dir_all(std::path::Path::new(&self.root).join("open"))?;
-                let path = std::path::Path::new(&self.root)
-                    .join("open")
-                    .join(id.to_string());
-                let file = std::fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(path)?;
-                file.sync_all()?;
-                std::fs::File::open(std::path::Path::new(&self.root).join("open"))?.sync_all()?;
-                sqlx::query("INSERT INTO raw.source_material_registry (id,material_kind,source_identifier,status,ts_quality,blob_id,total_bytes,durable_bytes,input_id,observation_id,parser_provenance) VALUES ($1,'stream_chunk',$2,'capturing','unknown',NULL,0,0,$3,$4,$5)")
-                    .bind(id).bind(SOURCE).bind(input).bind(step.observation).bind(&provenance).execute(&mut self.connection).await?;
-                material = Some(id);
-            }
-            let path = std::path::Path::new(&self.root)
-                .join("open")
-                .join(material.unwrap().to_string());
-            let write_bytes = bytes.clone();
-            tokio::task::spawn_blocking(move || -> Result<()> {
-                let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
-                file.set_len(start as u64)?;
-                file.seek(SeekFrom::Start(start as u64))?;
-                file.write_all(&write_bytes)?;
-                file.sync_all()?;
-                Ok(())
-            })
-            .await??;
-        }
+        let (material, start) = self
+            .retain_stream_step(SOURCE, input, step.observation, &provenance, &bytes)
+            .await?;
         let boundary_evidence = json!({"input":input,"observation":step.observation,"material":material,"start":start,"end":start+bytes.len() as i64,"canonical_bytes":bytes.len(),"canonical_blake3":blake3::hash(&bytes).to_hex().to_string(),"step_rows":prepared.len(),"source_eof":step.complete,"acknowledged":false});
         if !bytes.is_empty() {
             crate::QualificationBoundary::reach(
@@ -421,7 +444,7 @@ impl WriterPool {
         }
         let mut tx = self.connection.begin().await?;
         let mut last_seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
-        let producer = parser_producer(&mut tx, self.run_id, parser).await?;
+        let producer = parser_producer(&mut tx, self.run_id, parser, &step.privacy_rules).await?;
         if let Some(id) = material {
             sqlx::query("UPDATE raw.source_material_registry SET total_bytes=$2,durable_bytes=$2 WHERE id=$1").bind(id).bind(start+bytes.len() as i64).execute(&mut *tx).await?;
         }
@@ -557,7 +580,7 @@ impl WriterPool {
 impl ReadPool {
     pub async fn sources(&self) -> Result<Value> {
         let mut lease = self.read_lease().await?;
-        let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation','canonical_sqlite_rows','sqlite_snapshots','unavailable_until_1c','last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'first_record_error',(SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true ORDER BY i.binding,i.locator").fetch_all(lease.connection()).await?;
+        let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation',CASE WHEN i.binding='terminal.atuin-history' THEN 'canonical_sqlite_rows' ELSE 'original_zsh_history' END,'sqlite_snapshots',CASE WHEN i.binding='terminal.atuin-history' THEN 'unavailable_until_1c' ELSE NULL END,'last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'first_record_error',(SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true ORDER BY i.binding,i.locator").fetch_all(lease.connection()).await?;
         lease.finish();
         for source in &mut rows {
             if !source["first_record_error"].is_null() {

@@ -5,6 +5,8 @@ mod config;
 mod output;
 #[cfg(feature = "runtime")]
 mod server;
+#[cfg(feature = "runtime")]
+mod zsh;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -51,8 +53,12 @@ enum AdminCommand {
     Schema {
         #[arg(long)]
         connection_file: PathBuf,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "apply")]
         check: bool,
+        #[arg(long, requires = "dump_file")]
+        apply: bool,
+        #[arg(long, requires = "apply")]
+        dump_file: Option<PathBuf>,
     },
 }
 #[tokio::main]
@@ -97,10 +103,15 @@ async fn run(args: Args) -> Result<(), String> {
                 AdminCommand::Schema {
                     connection_file,
                     check,
+                    apply,
+                    dump_file,
                 },
         } => {
             let url = config::secret(&connection_file)?;
-            let status = if check {
+            let status = if apply {
+                sinex_store::apply_changes(&url, dump_file.as_deref().expect("required by clap"))
+                    .await
+            } else if check {
                 sinex_store::check_schema(&url).await
             } else {
                 sinex_store::bootstrap(&url).await

@@ -49,6 +49,12 @@ pub async fn serve(
     }
     let writer = secret(&config.writer_connection_file)?;
     let reader = secret(&config.reader_connection_file)?;
+    let installed = sinex_store::check_schema(&reader)
+        .await
+        .map_err(super::public_store_error)?;
+    if !installed.pending_changes.is_empty() {
+        return serve_pending(listener, config, token, operator_token, reader).await;
+    }
     std::fs::create_dir_all(&config.state_dir)
         .map_err(|_| "cannot create configured state directory".to_string())?;
     let lock = std::fs::OpenOptions::new()
@@ -161,6 +167,19 @@ pub async fn serve(
     } else {
         None
     };
+    let zsh_source = if let Some(zsh) = config.zsh.clone() {
+        let rules = config.privacy_rules.iter().map(|r| r.rule()).collect();
+        let admission = store.admission.clone();
+        let stop = source_stop.subscribe();
+        let ended = source_ended.clone();
+        Some(tokio::spawn(async move {
+            let result = crate::zsh::run(zsh, rules, admission, stop).await;
+            let _ = ended.send(true);
+            result
+        }))
+    } else {
+        None
+    };
     let state = Arc::new(App {
         indexed: config.read_model_connection_file.is_some(),
         config,
@@ -184,6 +203,11 @@ pub async fn serve(
     } else {
         Ok(())
     };
+    let zsh_result = if let Some(source) = zsh_source {
+        source.await.map_err(|_| "zsh source task failed")?
+    } else {
+        Ok(())
+    };
     if let Some(projection) = projection {
         projection
             .shutdown()
@@ -192,6 +216,7 @@ pub async fn serve(
     }
     let stopped = store.shutdown().await;
     source_result?;
+    zsh_result?;
     drop(lock);
     result.map_err(|_| "HTTP server failed".to_string())?;
     stopped.map_err(|_| "writer shutdown failed".to_string())?;
@@ -319,6 +344,8 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
                     version: i64::from(schema.version),
                     expected_version: 1,
                     compatible: true,
+                    pending_changes: vec![],
+                    unavailable_paths: vec![],
                 },
                 writer: if state.admission.is_available() {
                     WriterOwnership::Owned
@@ -668,4 +695,167 @@ fn present_response(response: RpcResponse) -> impl IntoResponse {
         [(axum::http::header::CONTENT_TYPE, "application/json")],
         crate::output::encode(response),
     )
+}
+
+struct PendingApp {
+    reader: sinex_store::ReadPool,
+    token: String,
+    operator: Option<String>,
+}
+async fn serve_pending(
+    listener: tokio::net::TcpListener,
+    config: Config,
+    token: String,
+    operator: Option<String>,
+    reader: String,
+) -> Result<(), String> {
+    let reader = sinex_store::ReadPool::installed(&reader, config.store_dir)
+        .await
+        .map_err(super::public_store_error)?;
+    let app = Router::new()
+        .route("/rpc", post(pending_rpc))
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
+        .with_state(Arc::new(PendingApp {
+            reader,
+            token,
+            operator,
+        }));
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .map_err(|_| "pending schema HTTP server failed".to_owned())
+}
+async fn pending_rpc(
+    State(state): State<Arc<PendingApp>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> axum::response::Response {
+    let supplied = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "));
+    if supplied != Some(state.token.as_str())
+        && !state
+            .operator
+            .as_deref()
+            .is_some_and(|v| supplied == Some(v))
+    {
+        return (
+            StatusCode::UNAUTHORIZED,
+            present_response(RpcResponse::failure(
+                None,
+                RpcError::new(
+                    ErrorKind::Refused,
+                    "token required",
+                    serde_json::Value::Null,
+                ),
+            )),
+        )
+            .into_response();
+    }
+    let request: RpcRequest = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => {
+            return present_response(RpcResponse::failure(None, RpcError::parse_error()))
+                .into_response();
+        }
+    };
+    if !crate::output::request_safe(&request.id, &request.params) {
+        return present_response(crate::output::refusal(Some(request.id))).into_response();
+    }
+    let method = match request.validate() {
+        Ok(m) => m,
+        Err(e) => {
+            return present_response(RpcResponse::failure(Some(request.id), e)).into_response();
+        }
+    };
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        pending_read(&state, &request, method),
+    )
+    .await
+    .unwrap_or_else(|_| Err(deadline_error(10000)));
+    present_response(match result {
+        Ok(v) => RpcResponse::success(request.id, v),
+        Err(e) => RpcResponse::failure(Some(request.id), e),
+    })
+    .into_response()
+}
+async fn pending_read(
+    state: &PendingApp,
+    request: &RpcRequest,
+    method: Method,
+) -> Result<serde_json::Value, RpcError> {
+    let waiting = state.reader.schema_status().await.map_err(read_error)?;
+    let numbers = waiting
+        .pending_changes
+        .iter()
+        .map(|c| c.number)
+        .collect::<Vec<_>>();
+    let unavailable = vec![
+        "writer/source acquisition".to_owned(),
+        "replay/exclusion".to_owned(),
+        "canonical/indexed queries".to_owned(),
+    ];
+    match method {
+        Method::Status => {
+            let status = state.reader.status().await.map_err(read_error)?;
+            serde_json::to_value(Status{
+                schema:SchemaStatus{version:1,expected_version:1,compatible:numbers.is_empty(),pending_changes:numbers,unavailable_paths:unavailable},
+                writer:WriterOwnership::Unavailable{reason:"installed-schema read mode; apply waiting changes with admin schema --apply --dump-file and restart".into()},
+                commit_seq:status.commit_seq,supported_sources:vec![],supported_methods:vec!["status".into(),"query.run".into(),"object.show".into(),"object.trace".into()],replays:vec![],replay_authorized:false,indexed_retrieval:serde_json::json!({"state":if waiting.pending_changes.is_empty(){"restart_required"}else{"schema_changes_pending"},"mode":"installed_schema_read_only"}),
+            }).map_err(|_|RpcError::new(ErrorKind::Internal,"cannot encode status",serde_json::Value::Null))
+        }
+        Method::Query => {
+            let params: sinex_protocol::QueryParams =
+                serde_json::from_value(request.params.clone()).expect("validated query");
+            if params.page.is_some() {
+                return Err(RpcError::new(
+                    ErrorKind::BadQuery,
+                    "raw events retain their fixed 100-row page",
+                    serde_json::Value::Null,
+                ));
+            }
+            sinex_store::validate_installed_raw_query(&params.query)
+                .map_err(|e| RpcError::new(ErrorKind::BadQuery, e.0, serde_json::Value::Null))?;
+            state
+                .reader
+                .query_with_timeout(
+                    &params.query,
+                    params.cursor.as_deref(),
+                    std::time::Duration::from_millis(params.timeout_ms.unwrap_or(10000)),
+                )
+                .await
+                .map_err(read_error)
+        }
+        Method::Show | Method::Trace => {
+            let params: sinex_protocol::ShowParams =
+                serde_json::from_value(request.params.clone()).expect("validated show");
+            let id = params
+                .reference
+                .strip_prefix("sinex:ev/")
+                .unwrap_or(&params.reference);
+            let row = if method == Method::Trace {
+                state.reader.trace(id, params.bytes).await
+            } else {
+                state.reader.show(id).await
+            }
+            .map_err(read_error)?
+            .ok_or_else(|| {
+                RpcError::new(
+                    ErrorKind::NotFound,
+                    "event not found",
+                    serde_json::Value::Null,
+                )
+            })?;
+            Ok(
+                serde_json::json!({"notice":sinex_protocol::DATA_NOTICE,"ref":format!("sinex:ev/{id}"),"resolved":if row.get("archive").is_some_and(|v|!v.is_null()){"archived"}else{"live"},"row":row}),
+            )
+        }
+        _ => Err(RpcError::new(
+            ErrorKind::Partial,
+            "path unavailable until ordered schema changes are applied",
+            serde_json::json!({"pending_changes":numbers,"unavailable_paths":unavailable}),
+        )),
+    }
 }
