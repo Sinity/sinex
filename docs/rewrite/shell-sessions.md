@@ -51,7 +51,9 @@ statement has a two-second deadline and each ordinary computation turn a
 three-second deadline. A failure retains the dirty key and publishes its
 unavailable status. Transient statement/turn deadlines retry after 250ms through
 the same writer scheduler, which wakes even without new source input; permanent
-representation or validation failures remain unavailable. The explicit qualification rendezvous keeps its existing
+representation or validation failures remain unavailable. A successful empty-ledger
+observation clears a recovered transient failure, including an uncertain final
+commit, without requiring new source input. The explicit qualification rendezvous keeps its existing
 120-second controller deadline instead of the ordinary turn timeout.
 
 The current exact event representation supports at most 8,192 canonical parents

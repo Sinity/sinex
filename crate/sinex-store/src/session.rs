@@ -89,7 +89,13 @@ impl WriterPool {
                 return Ok(false);
             }
             let row=sqlx::query("SELECT day,coalesce(through_day,day) AS through_day FROM derivation.session_dirty ORDER BY dirty_seq,day LIMIT 1").fetch_optional(&mut self.connection).await?;
-            let Some(row) = row else { return Ok(false) };
+            let Some(row) = row else {
+                // A transient read failure, or an uncertain final commit, may leave
+                // a failure notice after owed work is gone. A successful empty
+                // ledger observation by this writer is the recovery fence.
+                sqlx::query("UPDATE derivation.session_progress SET failure=NULL WHERE one AND failure IS NOT NULL").execute(&mut self.connection).await?;
+                return Ok(false);
+            };
             let day: String = row.try_get("day")?;
             let through_day: String = row.try_get("through_day")?;
             let basis: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")

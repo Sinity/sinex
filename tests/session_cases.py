@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import time
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from pathlib import Path
 import urllib.request
 
@@ -121,6 +122,29 @@ poll_interval_ms = 500
             except (OSError,KeyError,ValueError):pass
             time.sleep(.05)
         save('rpc-observations.json',observations);raise AssertionError(label+' did not settle')
+    @contextmanager
+    def ledger_lock(mode,label):
+        err=(report/(label+'.stderr')).open('w')
+        argv=['psql',active_admin,'-XAt','-v','ON_ERROR_STOP=1']
+        client=subprocess.Popen(argv,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=err,text=True,bufsize=1)
+        h['CHILDREN'].append((client,client.stdout,err));h['PROCESSES'].append({'pid':client.pid,'argv':argv,'stderr':label+'.stderr'})
+        client.stdin.write(f"BEGIN; LOCK TABLE derivation.session_dirty IN {mode} MODE;\n\\echo locked\n");client.stdin.flush()
+        ready,_,_=select.select([client.stdout],[],[],5);assert ready,'retry lock acquisition deadline'
+        for expected in ['BEGIN','LOCK TABLE','locked']:assert client.stdout.readline().strip()==expected
+        try:yield
+        finally:
+            client.stdin.write('COMMIT;\n\\q\n');client.stdin.flush();client.wait(timeout=10);assert client.returncode==0
+    def idle_retry(proc):
+        before=raw();assert sql('SELECT count(*) FROM derivation.session_dirty',active_admin)=='0'
+        log=report/'postgres.log';offset=len(log.read_text());began=time.monotonic()
+        with ledger_lock('ACCESS EXCLUSIVE','session-idle-retry-lock'):
+            wait(proc,lambda:sql("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE usename='sinex_writer' AND wait_event_type='Lock' AND query LIKE '%SELECT day,coalesce(through_day,day)%')",active_admin)=='t','actual empty-ledger reader blocked',seconds=15)
+            time.sleep(2.2)
+        wait(proc,lambda:settled(),'empty-ledger transient clears failure without new input')
+        evidence=log.read_text()[offset:]
+        assert 'canceling statement due to statement timeout' in evidence and 'SELECT day,coalesce(through_day,day)' in evidence
+        assert raw()==before,'an idle retry must not need new source admission'
+        save('empty-ledger-transient-recovery.json',dict(status=api(),seconds=time.monotonic()-began,database_deadline_evidence=evidence,raw_rows=len(before),intervention='owned ACCESS EXCLUSIVE dirty-ledger lock; no source mutation'))
     def settled(sessions=True):
         s=api().get('result',{});idx=s.get('indexed_retrieval',{})
         return idx and idx.get('serving') and idx.get('position')==s['commit_seq'] and idx.get('pending_canonical')==0 and (not sessions or idx.get('pending_sessions')==0) and idx.get('failure') is None and (not sessions or idx.get('sessions',{}).get('failure') is None)
@@ -269,7 +293,7 @@ poll_interval_ms = 500
         def span_at(day,clock):return int(datetime.fromisoformat(f'2026-10-{day:02}T{clock}+02:00').timestamp())*1_000_000_000+123
         points=[]
         for day in [1,3,5]:points.append(dict(zip(COLUMNS,[f'span-day{day}',span_at(day,'06:00:00'),0,0,f'echo span day {day}','/synthetic/session/span','synthetic-shell','synthetic-host:user',None])))
-        facts.extend(points);fill(points);wait(baseline,lambda:len(raw())==len(facts) and settled(),'multi-day initial middle grouping')
+        facts.extend(points);fill(points);wait(baseline,lambda:len(raw())==len(facts) and settled(),'multi-day initial middle grouping',seconds=180)
         qualify('multi-day-before')
         pointcommands=query_all('commands where project = span sort when limit 100');pointids={r['id'] for r in pointcommands}
         beforegroups=[g for g in current() if set(g['parents']) & pointids];assert len(beforegroups)==3
@@ -286,29 +310,18 @@ poll_interval_ms = 500
         # Hold only dirty-ledger writes after publication. Reads remain available,
         # and the ordinary statement deadline must expose pending work then retry
         # without a new source admission once the owned lock is released.
-        lockerr=(report/'session-retry-lock.stderr').open('w')
-        lockargv=['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1']
-        locker=subprocess.Popen(lockargv,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=lockerr,text=True,bufsize=1)
-        h['CHILDREN'].append((locker,locker.stdout,lockerr));h['PROCESSES'].append({'pid':locker.pid,'argv':lockargv,'stderr':'session-retry-lock.stderr'})
-        locker.stdin.write("BEGIN; LOCK TABLE derivation.session_dirty IN SHARE MODE;\n\\echo locked\n");locker.stdin.flush()
-        ready,_,_=select.select([locker.stdout],[],[],5);assert ready,'retry lock acquisition deadline'
-        assert locker.stdout.readline().strip()=='BEGIN'
-        assert locker.stdout.readline().strip()=='LOCK TABLE'
-        assert locker.stdout.readline().strip()=='locked'
-        try:
+        with ledger_lock('SHARE','session-retry-lock'):
             connection.sendall(b'c');connection.close();multi.close()
             failure=wait(baseline,lambda:api().get('result',{}).get('indexed_retrieval',{}).get('sessions',{}).get('failure'),'bounded session deadline visible',seconds=15)
             unavailable=cli('recall','last','--project','span',expected=5);assert unavailable['kind']=='partial'
             save('transient-session-deadline.json',dict(failure=failure,recall=unavailable,status=api(),lock='owned dirty-ledger SHARE lock; no source mutations before autonomous recovery'))
-        finally:
-            locker.stdin.write('COMMIT;\n\\q\n');locker.stdin.flush();locker.wait(timeout=10);assert locker.returncode==0
-        wait(baseline,lambda:len(raw())==len(facts) and settled(),'multi-day late bridge complete replacement after autonomous retry')
+        wait(baseline,lambda:len(raw())==len(facts) and settled(),'multi-day late bridge complete replacement after autonomous retry',seconds=180)
         qualify('multi-day-bridged');merged=cli('recall','last','--project','span')
         assert int(merged['session']['payload']['start_ns'])==bridge_start and int(merged['session']['payload']['end_ns'])==bridge_end and len(merged['session']['parents'])==4
         assert not {g['id'] for g in beforegroups} & {g['id'] for g in current()}
         bridge_raw=next(r for r in raw() if r['payload']['native_id']=='span-bridge');cli('delete',bridge_raw['id'])
         con=sqlite3.connect(source);con.execute('DELETE FROM history WHERE id=?',('span-bridge',));con.commit();con.close();facts[:]=[r for r in facts if r['id']!='span-bridge'];save('independent-inputs.json',facts)
-        wait(baseline,lambda:len(raw())==len(facts) and settled(),'multi-day inverse removal through empty days')
+        wait(baseline,lambda:len(raw())==len(facts) and settled(),'multi-day inverse removal through empty days',seconds=180)
         qualify('multi-day-removed')
         restored=[g for g in current() if set(g['parents']) & pointids]
         def shape(groups):return sorted((g['payload']['start_ns'],g['payload']['end_ns'],sorted(g['parents'])) for g in groups)
@@ -340,7 +353,7 @@ poll_interval_ms = 500
         save('excluded-session-replaced.json',excluded)
         cli('delete','--undo',removed['id'])
         wait(baseline,lambda:len(raw())==len(facts) and settled(),'undo and ordinary configured readmission')
-        qualify('restored-after-grandparent-fence');stop(baseline)
+        qualify('restored-after-grandparent-fence');idle_retry(baseline);qualify('empty-ledger-recovered');stop(baseline)
     scenario(PLANNED[3],later)
     def retained():
         proc=start(config('restart'),'sessions-restart');procs.append(proc);wait(proc,lambda:api().get('result') and len(raw())==len(facts) and settled(),'same-state restart');before=qualify('restart')
@@ -352,6 +365,6 @@ poll_interval_ms = 500
         assert answer['rows']==before['rows'] and answer['session']==before['session'] and not answer['complete']
         save('provider-loss.json',answer);agent=tool('sinex_recall',{'project':'tide'});assert agent['rows']==answer['rows'] and agent['complete'] is False;stop(proc)
     scenario(PLANNED[4],retained)
-    save('measurements.json',dict(samples=metrics,interventions=['seed synthetic provider','append bridge','append extension','restart same owned state','remove only synthetic provider','fresh independent reversed input baseline','observed publication kill and same-state recovery','large-session refusal and retained inspection','owned raw exclusion and undo at observed fusion fence'],limits=['finite shell-only fixture; no daily capacity claim','full frontier scan per dirty logical day; component-targeted efficiency unqualified','8192 exact parents per output and 100 commands per recall; excess refuses incomplete','unknown focus/AFK/attention; grouping is not real task or continuous activity proof']))
+    save('measurements.json',dict(samples=metrics,interventions=['seed synthetic provider','append bridge','append extension','restart same owned state','remove only synthetic provider','fresh independent reversed input baseline','observed publication kill and same-state recovery','large-session refusal and retained inspection','owned raw exclusion and undo at observed fusion fence','long overlapping nested recorded intervals','late day1-to-day5 span and inverse removal across empty days','held dirty-ledger write and empty-ledger read deadlines with autonomous recovery','configured provider rewrite while canonical archival is held'],limits=['finite shell-only fixture; no daily capacity claim','full frontier scan per dirty logical day; component-targeted efficiency unqualified','8192 exact parents per output and 100 commands per recall; excess refuses incomplete','unknown focus/AFK/attention; grouping is not real task or continuous activity proof']))
     if mcp is not None:mcp.terminate();mcp.wait(timeout=10)
     save('rpc-observations.json',observations)
