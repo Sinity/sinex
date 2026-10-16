@@ -696,9 +696,17 @@ impl ReadPool {
         }
         let hash = crate::parse_hash(&row.try_get::<String, _>("blake3")?)?;
         let reader = self.1.clone();
-        let bytes = tokio::task::spawn_blocking(move || reader.read_range(&hash, 0, length as u64))
-            .await?
-            .map_err(|_| Error::ReplayRefused("retained action backing missing or corrupt"))?;
+        let bytes = tokio::task::spawn_blocking(move || {
+            reader.read_range_checked::<hashed_blobs::Error>(
+                &hash,
+                Some(length as u64),
+                0,
+                length as u64,
+                || Ok(()),
+            )
+        })
+        .await?
+        .map_err(|_| Error::ReplayRefused("retained action backing missing or corrupt"))?;
         if hashed_blobs::Hash::of(&bytes) != hash {
             return Err(Error::ReplayRefused(
                 "retained action content identity differs",
