@@ -213,7 +213,7 @@ poll_interval_ms = 3600000
                 pending = run([bins/'sinexctl', '--endpoint', endpoint, '--token-file', work/'token', 'recall', 'last', '--json'], expected=5, label='typed pending recall refuses after bounded settling')
                 elapsed = time.monotonic()-began
                 fault = json.loads(pending.stderr)
-                assert fault['kind']=='partial' and fault['data']['reason']=='projection_unavailable'
+                assert fault['kind']=='partial' and fault['details']['reason']=='projection_unavailable'
                 assert elapsed>=.45, 'projection pending skipped the existing 500ms settling window'
                 save('typed-projection-pending.json', dict(fault=fault, seconds=elapsed, boundary=frame, status=state))
                 conn.sendall(b'c')
@@ -224,7 +224,7 @@ poll_interval_ms = 3600000
         launch('corrected-disabled')
         refused = run([bins/'sinexctl', '--endpoint', endpoint, '--token-file', work/'token', 'recall', 'last', '--json'], expected=5, label='disabled capability remains a permanent partial refusal')
         fault = json.loads(refused.stderr)
-        assert fault['kind']=='partial' and fault['data']['reason']=='projection_unavailable'
+        assert fault['kind']=='partial' and fault['details']['reason']=='projection_unavailable'
         save('typed-disabled-refusal.json', fault)
         stop(daemon)
     scenario(PLANNED[5], typed_pending)
