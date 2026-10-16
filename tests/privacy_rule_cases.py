@@ -64,8 +64,7 @@ roots = ["/synthetic/privacy"]
                 value=h['rpc'](endpoint,'synthetic-foundation-token')
                 if 'result' in value:
                     status=value['result']; p=status['indexed_retrieval']
-                    sources=h['rpc'](endpoint,'synthetic-foundation-token','sources.list').get('result',{}).get('sources',[])
-                    if p.get('serving') and not p['pending_canonical'] and p['position']==status['commit_seq'] and sources and sources[0]['last_run']['status']=='completed':return
+                    if p.get('serving') and not p['pending_canonical'] and p['position']==status['commit_seq'] and p['fusion']['phase']=='settled' and p['fusion']['scanned']>=4:return
             except (OSError,ValueError): pass
             assert time.monotonic()<deadline, 'privacy source/projection did not settle'
             time.sleep(.025)
