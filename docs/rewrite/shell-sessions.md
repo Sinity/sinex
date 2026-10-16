@@ -33,7 +33,7 @@ Time-window, mark, general session-query and other-source recall remain unavaila
 
 The writer dirties logical days for admitted or archived canonical evidence,
 including known span ends and adjacent keys. The existing background scheduler
-loads a pinned canonical frontier in 64-row turns into temporary PostgreSQL
+loads a pinned canonical frontier in 16-row turns into temporary PostgreSQL
 tables, sorts recorded-span pages and reaches true grouping boundaries. It emits
 only groupings starting in the key's day. A backward crossing is compared with
 the stored owner's complete bounds and parents. A changed forward crossing or
@@ -42,14 +42,16 @@ not dirty each other forever. The selected implementation scans the complete
 retained canonical frontier per dirty day. Targeted day-input efficiency is
 unqualified.
 
-Publication commits at most eight complete outputs per turn, then archives old
-outputs in 64-row turns. The dirty row stays until every replacement step has
+Publication commits at most two complete outputs per turn, then archives old
+outputs in 16-row turns. The dirty row stays until every replacement step has
 committed against its basis. Newer dirty positions survive. Restart discards
 only temporary work and recomputes the durable dirty key. Ordinary controls and
 source admission run between turns; shutdown stops background work. Each
 statement has a two-second deadline and each ordinary computation turn a
 three-second deadline. A failure retains the dirty key and publishes its
-unavailable status. The explicit qualification rendezvous keeps its existing
+unavailable status. Transient statement/turn deadlines retry after 250ms through
+the same writer scheduler, which wakes even without new source input; permanent
+representation or validation failures remain unavailable. The explicit qualification rendezvous keeps its existing
 120-second controller deadline instead of the ordinary turn timeout.
 
 The current exact event representation supports at most 8,192 canonical parents
@@ -94,3 +96,13 @@ session eligibility checks both canonical parents and retained grandparents.
 Ordinary recall briefly waits up to the indexed owner's existing 500ms settling
 window for transient collector/projection catch-up, within the request deadline;
 held or slower work still returns `partial`.
+
+Dirty rows retain an inclusive `through_day` bound. Admission/archive invalidation,
+upgrade seeding and changed old/new output spans extend this bound. Completing a
+key enqueues at most its next day, so empty intermediate days cannot hide a
+multi-day ownership change. Each advancement commits with replacement progress;
+newer dirty positions and enlarged bounds survive completion. Status/raw-session
+metadata exposes the in-flight and pending through-day bounds. There is no
+materialized date-range queue or second work ledger. The native controls add a
+late day1-to-day5 span over a day3 grouping, with empty day2/day4, and its inverse
+removal; settled answers match the independent full evaluation in both cases.

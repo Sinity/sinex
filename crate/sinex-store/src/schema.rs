@@ -653,7 +653,11 @@ const TABLES: &[Definition] = &[
     Definition {
         schema: "derivation",
         name: "session_dirty",
-        columns: &[col!("day", "text"), col!("dirty_seq", "bigint")],
+        columns: &[
+            col!("day", "text"),
+            col!("dirty_seq", "bigint"),
+            col!("through_day", "text", null),
+        ],
         constraints: &[("session_dirty_pkey", "PRIMARY KEY(day)")],
     },
     Definition {
@@ -663,6 +667,7 @@ const TABLES: &[Definition] = &[
             col!("one", "boolean"),
             col!("basis","bigint",default "0"),
             col!("day", "text", null),
+            col!("through_day", "text", null),
             col!("phase","text",default "'settled'::text"),
             col!("failure", "text", null),
         ],
@@ -1592,7 +1597,7 @@ async fn apply_change_entry(
             }
             sqlx::raw_sql("INSERT INTO derivation.session_progress(one) VALUES(true); INSERT INTO core.event_types(id,name) VALUES(5,'activity.session.boundary'); GRANT SELECT ON derivation.session_dirty,derivation.session_progress TO sinex_reader,sinex_writer,sinex_read_model; GRANT INSERT,UPDATE,DELETE ON derivation.session_dirty TO sinex_writer; GRANT UPDATE ON derivation.session_progress TO sinex_writer").execute(&mut *conn).await?;
             sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(6,'activity.session.boundary','shell-session-v1',$1)").bind(crate::session::payload_schema()).execute(&mut *conn).await?;
-            sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq) SELECT DISTINCT ((p.at AT TIME ZONE 'Europe/Warsaw')-interval '4 hours'+n*interval '1 day')::date::text,c.seq FROM core.live_events e CROSS JOIN core.commit_counter c CROSS JOIN LATERAL (VALUES(e.ts_orig),(e.ts_orig+greatest(coalesce((e.payload->>'duration_ns')::numeric,0),0)/1000000000*interval '1 second')) p(at) CROSS JOIN generate_series(-1,1) n WHERE c.one AND e.event_type='command.canonical' AND p.at IS NOT NULL ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq)").execute(&mut *conn).await?;
+            sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq,through_day) SELECT (((e.ts_orig AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date-1)::text,c.seq,max(((((e.ts_orig+greatest(coalesce((e.payload->>'duration_ns')::numeric,0),0)/1000000000*interval '1 second') AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date+1)::text) FROM core.live_events e CROSS JOIN core.commit_counter c WHERE c.one AND e.event_type='command.canonical' AND e.ts_orig IS NOT NULL GROUP BY 1,c.seq ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq),through_day=greatest(coalesce(session_dirty.through_day,session_dirty.day),EXCLUDED.through_day)").execute(&mut *conn).await?;
         }
         _ => return Err(Error::Schema("unknown schema change".into())),
     }

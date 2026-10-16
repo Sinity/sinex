@@ -300,6 +300,7 @@ struct WriterPool {
     session_producer: Option<Uuid>,
     session_work: Option<session::Work>,
     session_failed: bool,
+    session_retry_at: Option<tokio::time::Instant>,
     qualification: Option<QualificationBoundary>,
 }
 
@@ -418,6 +419,7 @@ impl Store {
             session_producer: None,
             session_work: None,
             session_failed: false,
+            session_retry_at: None,
             qualification,
         };
         owner.recover_blobs().await?;
@@ -582,7 +584,11 @@ impl WriterPool {
                     if self.background_step(&mut replay_turn, rx.len()).await? {
                         continue;
                     }
-                    rx.recv().await
+                    if let Some(at) = self.session_retry_at {
+                        tokio::select! {command=rx.recv()=>command,_=tokio::time::sleep_until(at)=>{continue;}}
+                    } else {
+                        rx.recv().await
+                    }
                 }
             } else {
                 rx.recv().await
@@ -616,6 +622,7 @@ impl WriterPool {
                     }) {
                         self.shell_failed = false;
                         self.session_failed = false;
+                        self.session_retry_at = None;
                     }
                     let _ = reply.send(result);
                 }
@@ -627,18 +634,21 @@ impl WriterPool {
                     }) {
                         self.shell_failed = false;
                         self.session_failed = false;
+                        self.session_retry_at = None;
                     }
                     let _ = reply.send(result);
                 }
                 Command::Exclude(action, request, reply) => {
                     self.shell_failed = false;
                     self.session_failed = false;
+                    self.session_retry_at = None;
                     let result = self.exclude(action, request).await;
                     let _ = reply.send(result);
                 }
                 Command::Replay(command, reply) => {
                     self.shell_failed = false;
                     self.session_failed = false;
+                    self.session_retry_at = None;
                     let result = self.replay(command).await;
                     let _ = reply.send(result);
                 }
@@ -673,6 +683,13 @@ impl WriterPool {
             }
         }
         *replay_turn = true;
+        if self
+            .session_retry_at
+            .is_some_and(|at| tokio::time::Instant::now() >= at)
+        {
+            self.session_failed = false;
+            self.session_retry_at = None;
+        }
         if !self.session_failed && self.session_producer.is_some() {
             sqlx::query("SET statement_timeout='2000ms'")
                 .execute(&mut self.connection)
@@ -692,6 +709,15 @@ impl WriterPool {
                 Ok(true) => return Ok(true),
                 Ok(false) => {}
                 Err(error) => {
+                    let transient = matches!(
+                        &error,
+                        Error::Invalid(
+                            "session computation turn exceeded 3 seconds; dirty key retained"
+                        )
+                    ) || matches!(&error,Error::Database(sqlx::Error::Database(e)) if e.code().as_deref()==Some("57014"));
+                    self.session_retry_at = transient.then(|| {
+                        tokio::time::Instant::now() + std::time::Duration::from_millis(250)
+                    });
                     let reason = match error {
                         Error::Invalid(reason) => reason,
                         _ => "session recomputation unavailable; dirty keys retained",

@@ -76,8 +76,11 @@ def exercise(h):
     predadmin=h['admin'].replace('/foundation?','/session_predecessor?');predwriter=h['writer'].replace('/foundation?','/session_predecessor?');predreader=h['reader'].replace('/foundation?','/session_predecessor?')
     for name,value in [('session-admin',predadmin),('session-writer',predwriter),('session-reader',predreader),('session-read-model',predreader.replace('sinex_reader','sinex_read_model')),('baseline-read-model',h['reader'].replace('sinex_reader','sinex_read_model'))]:
         (work/name).write_text(value);(work/name).chmod(0o600)
+    active_admin=predadmin;active_store=work/'session-blobs'
     endpoint=f'http://127.0.0.1:{h["free_port"]()}/rpc'
     def config(name,session=True,baseline=False):
+        nonlocal active_admin,active_store
+        active_admin=h['admin'] if baseline else predadmin;active_store=work/('baseline-blobs' if baseline else 'session-blobs')
         p=work/(name+'.toml');p.write_text(f'''listen = "{endpoint.removeprefix('http://').removesuffix('/rpc')}"
 state_dir = "{work/('baseline-state' if baseline else 'session-state')}"
 store_dir = "{work/('baseline-blobs' if baseline else 'session-blobs')}"
@@ -97,6 +100,9 @@ roots = ["/synthetic/session/large"]
 [[projects]]
 name = "long"
 roots = ["/synthetic/session/long"]
+[[projects]]
+name = "span"
+roots = ["/synthetic/session/span"]
 [atuin]
 path = "{source}"
 poll_interval_ms = 500
@@ -181,7 +187,7 @@ poll_interval_ms = 500
             assert all(original['record'][c]==fact[c] for c in COLUMNS)
         assert header['payload']['sources']==['terminal.atuin-history']
         save(label+'.json',dict(answer=answer,MCP=agent,sessions=allrows,canonical=canonical,raw=rawrows,trace=trace,independent=independent(facts)))
-        metrics.append(dict(phase=label,recall_seconds=elapsed,source_rows=len(facts),commands=len(rows),database_bytes=int(sql('SELECT pg_database_size(current_database())',predadmin)),retained_bytes=sum(p.stat().st_size for p in (work/'session-blobs').rglob('*') if p.is_file())))
+        metrics.append(dict(phase=label,recall_seconds=elapsed,source_rows=len(facts),commands=len(rows),database_bytes=int(sql('SELECT pg_database_size(current_database())',active_admin)),database='foundation' if active_admin==h['admin'] else 'session_predecessor',retained_bytes=sum(p.stat().st_size for p in active_store.rglob('*') if p.is_file()),sampling='read-only database size followed by retained logical file bytes; not an atomic physical snapshot'))
         return answer
     def upgrade():
         run([old/'bin/sinexd','admin','schema','--connection-file',work/'session-admin'])
@@ -222,9 +228,9 @@ poll_interval_ms = 500
     def merge():
         began=time.monotonic();facts.append(bridge());fill([facts[-1]])
         wait(proc,lambda:len(raw())==len(facts) and settled(),'late bridging replacement')
-        answer=qualify('bridged');assert answer['session']['id'] not in oldids
+        ready=time.monotonic();answer=qualify('bridged');read_seconds=metrics[-1]['recall_seconds'];assert answer['session']['id'] not in oldids
         live=current();assert len(live)==2 and not oldids.intersection({r['id'] for r in live})-set(r['id'] for r in live if int(r['payload']['start_ns'])==stamp('05:00:00'))
-        metrics.append({'phase':'bridge-acquisition-to-recall','seconds':time.monotonic()-began})
+        metrics.append({'phase':'bridge-acquisition-to-recall','source_write_to_settled_seconds':ready-began,'first_CLI_recall_seconds':read_seconds,'upper_bound_first_recall_seconds':ready-began+read_seconds,'through_verified_CLI_MCP_provenance_inspection_seconds':time.monotonic()-began})
     scenario(PLANNED[2],merge)
     def later():
         facts.append(extension());fill([facts[-1]]);wait(proc,lambda:len(raw())==len(facts) and settled(),'late extension true boundary');qualify('extended')
@@ -258,22 +264,76 @@ poll_interval_ms = 500
         assert int(crossing['payload']['start_ns'])==stamp('03:40:00')+86400_000_000_000 and int(crossing['payload']['end_ns'])==stamp('04:40:00')+86400_000_000_000
         assert len(actual)==3 and sum(len(g['parents']) for g in actual)==len(longmap)
         save('long-overlapping-nested-cross-day-controls.json',dict(inputs=long,commands=longcommands,groups=actual))
+        # A late day1->day5 interval must retire a middle-day owner;
+        # empty day2/day4 still carry bounded invalidation to day5.
+        def span_at(day,clock):return int(datetime.fromisoformat(f'2026-10-{day:02}T{clock}+02:00').timestamp())*1_000_000_000+123
+        points=[]
+        for day in [1,3,5]:points.append(dict(zip(COLUMNS,[f'span-day{day}',span_at(day,'06:00:00'),0,0,f'echo span day {day}','/synthetic/session/span','synthetic-shell','synthetic-host:user',None])))
+        facts.extend(points);fill(points);wait(baseline,lambda:len(raw())==len(facts) and settled(),'multi-day initial middle grouping')
+        qualify('multi-day-before')
+        pointcommands=query_all('commands where project = span sort when limit 100');pointids={r['id'] for r in pointcommands}
+        beforegroups=[g for g in current() if set(g['parents']) & pointids];assert len(beforegroups)==3
+        stop(baseline)
+        multi=socket.socket(socket.AF_UNIX);multi.bind(str(work/'multi-day-publish.sock'));multi.listen(1);multi.settimeout(60)
+        baseline=start(config('multi-day',baseline=True),'sessions-multi-day','--qualification-boundary','session-replacement-committed','--qualification-socket',work/'multi-day-publish.sock');procs.append(baseline)
+        wait(baseline,lambda:api().get('result') and settled(),'multi-day compatible restart')
+        bridge_start=span_at(1,'05:59:00');bridge_end=span_at(5,'06:01:00')
+        spanbridge=dict(zip(COLUMNS,['span-bridge',bridge_start,bridge_end-bridge_start,0,'synthetic multi-day recorded span','/synthetic/session/span','synthetic-shell','synthetic-host:user',None]))
+        facts.append(spanbridge);fill([spanbridge])
+        connection,_=multi.accept();connection.settimeout(5);frame=json.loads(connection.makefile('rb').readline());assert frame['pid']==baseline.pid and frame['evidence']['through_day']>='2026-10-05'
+        pending=cli('query','events where kind = activity.session.boundary',expected=5);assert not pending['complete'] and pending['sessions']['pending_through_day']>='2026-10-05'
+        save('multi-day-owed-range.json',dict(frame=frame,pending=pending,status=api()))
+        # Hold only dirty-ledger writes after publication. Reads remain available,
+        # and the ordinary statement deadline must expose pending work then retry
+        # without a new source admission once the owned lock is released.
+        lockerr=(report/'session-retry-lock.stderr').open('w')
+        lockargv=['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1']
+        locker=subprocess.Popen(lockargv,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=lockerr,text=True,bufsize=1)
+        h['CHILDREN'].append((locker,locker.stdout,lockerr));h['PROCESSES'].append({'pid':locker.pid,'argv':lockargv,'stderr':'session-retry-lock.stderr'})
+        locker.stdin.write("BEGIN; LOCK TABLE derivation.session_dirty IN SHARE MODE;\n\\echo locked\n");locker.stdin.flush()
+        ready,_,_=select.select([locker.stdout],[],[],5);assert ready,'retry lock acquisition deadline'
+        assert locker.stdout.readline().strip()=='BEGIN'
+        assert locker.stdout.readline().strip()=='LOCK TABLE'
+        assert locker.stdout.readline().strip()=='locked'
+        try:
+            connection.sendall(b'c');connection.close();multi.close()
+            failure=wait(baseline,lambda:api().get('result',{}).get('indexed_retrieval',{}).get('sessions',{}).get('failure'),'bounded session deadline visible',seconds=15)
+            unavailable=cli('recall','last','--project','span',expected=5);assert unavailable['kind']=='partial'
+            save('transient-session-deadline.json',dict(failure=failure,recall=unavailable,status=api(),lock='owned dirty-ledger SHARE lock; no source mutations before autonomous recovery'))
+        finally:
+            locker.stdin.write('COMMIT;\n\\q\n');locker.stdin.flush();locker.wait(timeout=10);assert locker.returncode==0
+        wait(baseline,lambda:len(raw())==len(facts) and settled(),'multi-day late bridge complete replacement after autonomous retry')
+        qualify('multi-day-bridged');merged=cli('recall','last','--project','span')
+        assert int(merged['session']['payload']['start_ns'])==bridge_start and int(merged['session']['payload']['end_ns'])==bridge_end and len(merged['session']['parents'])==4
+        assert not {g['id'] for g in beforegroups} & {g['id'] for g in current()}
+        bridge_raw=next(r for r in raw() if r['payload']['native_id']=='span-bridge');cli('delete',bridge_raw['id'])
+        con=sqlite3.connect(source);con.execute('DELETE FROM history WHERE id=?',('span-bridge',));con.commit();con.close();facts[:]=[r for r in facts if r['id']!='span-bridge'];save('independent-inputs.json',facts)
+        wait(baseline,lambda:len(raw())==len(facts) and settled(),'multi-day inverse removal through empty days')
+        qualify('multi-day-removed')
+        restored=[g for g in current() if set(g['parents']) & pointids]
+        def shape(groups):return sorted((g['payload']['start_ns'],g['payload']['end_ns'],sorted(g['parents'])) for g in groups)
+        assert shape(restored)==shape(beforegroups) and {g['payload']['owner_day'] for g in restored}=={'2026-10-01','2026-10-03','2026-10-05'}
+        save('multi-day-inverse-removal.json',dict(before=beforegroups,merged=merged,restored=restored,removed=cli('show',bridge_raw['id'])['row']))
         # Exercise only the new session-grandparent fence through the existing
         # ordinary exclusion route, held at actual bounded fusion publication.
         original=qualify('large-population')
-        oldsession=original['session']['id'];removed=next(r for r in raw() if r['payload']['native_id']=='a0')
+        oldsession=original['session']['id'];oldcanonical=next(r for r in original['rows'] if r['payload']['native_id']=='a0')
         stop(baseline)
         fence=socket.socket(socket.AF_UNIX);fence.bind(str(work/'grandparent-fence.sock'));fence.listen(1);fence.settimeout(30)
         baseline=start(config('grandparent-fence',baseline=True),'sessions-grandparent-fence','--qualification-boundary','fusion-replacement-committed','--qualification-socket',work/'grandparent-fence.sock');procs.append(baseline)
         wait(baseline,lambda:api().get('result') and settled(),'grandparent fence restart')
-        deleted=cli('delete',removed['id']);assert deleted
+        rewritten_fact=next(r for r in facts if r['id']=='a0');rewritten_fact['command']+=' revised retained reading';fill([rewritten_fact])
         connection,_=fence.accept();connection.settimeout(5);frame=json.loads(connection.makefile('rb').readline());assert frame['pid']==baseline.pid
         shown=cli('show',oldsession)['row'];assert shown['current_eligible'] is False
+        intermediate=cli('show',oldcanonical['id'])['row'];assert intermediate['archive'] is None and intermediate['current_eligible'] is False,'the canonical body must still be live so this distinguishes the grandparent fence'
         pending=cli('query','events where kind = activity.session.boundary',expected=5)
         assert not pending['complete'] and oldsession not in {r['id'] for r in pending['rows']}
         refused=cli('recall','last','--project','tide',expected=5);assert refused['kind']=='partial'
-        save('current-grandparent-fence.json',dict(frame=frame,delete=deleted,old_session=shown,raw_pending=pending,recall=refused))
+        save('current-grandparent-fence.json',dict(frame=frame,still_live_canonical=intermediate,old_session=shown,raw_pending=pending,recall=refused))
         connection.sendall(b'c');connection.close();fence.close()
+        wait(baseline,lambda:settled(),'rewritten source and session replacement')
+        rewritten=qualify('after-provider-rewrite');oldsession=rewritten['session']['id'];removed=next(r for r in raw() if r['payload']['native_id']=='a0')
+        deleted=cli('delete',removed['id']);assert deleted
         wait(baseline,lambda:settled(),'excluded session replacement')
         excluded=cli('recall','last','--project','tide');assert 'a0' not in {r['payload']['native_id'] for r in excluded['rows']} and excluded['session']['id']!=oldsession
         assert int(excluded['session']['payload']['start_ns'])==stamp('03:34:00')

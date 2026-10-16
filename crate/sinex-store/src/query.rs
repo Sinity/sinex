@@ -472,7 +472,7 @@ impl ReadPool {
                 .fetch_one(&mut *tx)
                 .await?;
         let sessions = if installed_sessions {
-            sqlx::query_scalar::<_,Value>("SELECT to_jsonb(p)||jsonb_build_object('enabled',EXISTS(SELECT 1 FROM core.producer_versions v JOIN core.runs r ON r.id=v.run_id WHERE v.name='session' AND r.status='running'),'pending_keys',(SELECT count(*) FROM derivation.session_dirty)) FROM derivation.session_progress p WHERE one").fetch_one(&mut *tx).await?
+            sqlx::query_scalar::<_,Value>("SELECT to_jsonb(p)||jsonb_build_object('enabled',EXISTS(SELECT 1 FROM core.producer_versions v JOIN core.runs r ON r.id=v.run_id WHERE v.name='session' AND r.status='running'),'pending_keys',(SELECT count(*) FROM derivation.session_dirty),'pending_through_day',(SELECT max(coalesce(through_day,day)) FROM derivation.session_dirty)) FROM derivation.session_progress p WHERE one").fetch_one(&mut *tx).await?
         } else {
             json!({"enabled":false,"state":"schema_changes_pending"})
         };

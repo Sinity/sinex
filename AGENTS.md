@@ -8,4 +8,6 @@ Keep concrete domain types and wire errors in sinex-model and sinex-protocol. si
 
 Register only implemented operations. The README and owning contracts in docs/rewrite define supported source, query, indexed retrieval, MCP and replay subsets. Do not turn unavailable into empty success. Preserve authored state and exact retained material; do not touch live stores, consumer pins, master or external task routing during foundation preparation.
 
+Keep substantial unit-test bodies and fixtures in external private `#[cfg(test)]` modules. Tiny tests may remain inline. Exercise CLI, MCP and integration acceptance through public routes; never widen runtime visibility merely to relocate tests.
+
 Stage explicit paths, review public content and run scoped checks before a normal local commit. Product publication and activation require their own integration decision. Preserve other agents' edits and use named ownership for shared seams. Fixtures are synthetic; private run evidence stays outside tracked files.
