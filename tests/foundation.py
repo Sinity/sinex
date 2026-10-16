@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--privacy-rules", action="store_true", help="qualify admission-once optional rules and retained evidence through actual clients")
 parser.add_argument("--reversible-exclusion",action="store_true",help="qualify packaged exact occurrence exclusion with an explicit immutable package pin")
-parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion, fusion or configured continuation; never build or fall back")
+parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion, fusion, privacy rules or configured continuation; never build or fall back")
 parser.add_argument("--recall-coverage",action="store_true",help="qualify narrow recall polling/error coverage through packaged CLI and MCP")
 parser.add_argument("--recall-coverage-before-pin",type=Path,help="exact immutable pre-fix package for recall coverage contrast")
 parser.add_argument("--sessions",action="store_true",help="qualify selected logical-day shell reconciliation and project recall")
@@ -56,7 +56,7 @@ if OPTIONS.packaged and OPTIONS.fusion_focus in ("changed-seams","source-codec")
 if OPTIONS.fusion != bool(OPTIONS.fusion_spec): parser.error("fusion requires --fusion --fusion-spec GIT_REPOSITORY")
 if OPTIONS.fusion and any([OPTIONS.reversible_exclusion,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output]): parser.error("fusion owns its own scenario selector")
 if OPTIONS.package_pin and not (OPTIONS.reversible_exclusion or OPTIONS.fusion or OPTIONS.configured_continuation or OPTIONS.privacy_rules):
-    parser.error("prebuilt package pins are supported only by exclusion, fusion or configured continuation qualification")
+    parser.error("prebuilt package pins are supported only by exclusion, fusion, privacy rules or configured continuation qualification")
 if OPTIONS.fusion and OPTIONS.package_pin and not OPTIONS.packaged:
     parser.error("fusion prebuilt package pins require --packaged")
 if OPTIONS.reversible_exclusion and (not OPTIONS.packaged or not OPTIONS.package_pin or OPTIONS.exclusion_contracts or OPTIONS.indexed or OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.credential_output):
@@ -149,7 +149,7 @@ if OPTIONS.recall_coverage:
     import recall_coverage_cases
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+recall_coverage_cases.PLANNED
 if OPTIONS.privacy_rules:
-    PLANNED=["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "optional privacy rules preserve admission meaning and retained protection"]
+    PLANNED=["canonical schema cold apply and idempotent check", "owned PostgreSQL extension and checksum contract", "optional privacy rules preserve admission meaning and retained protection", "zsh retained original protection uses current rules once"]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)

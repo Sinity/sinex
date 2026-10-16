@@ -127,6 +127,7 @@ roots = ["/synthetic/privacy"]
         replay=cli('replay',f'materials where id = {material}','--action-id',action,operator=True)
         assert replay['state']=='completed' and replay['action_id']==action
         assert cli('replay',f'materials where id = {material}','--action-id',action,operator=True)==replay
+        wait()
         new_rows=cli('query','events where source = terminal.atuin-history')['rows']
         new_ids={r['payload']['native_id']:r['id'] for r in new_rows}
         assert all(new_ids[key]!=ids[key] for key in ids)
@@ -136,14 +137,21 @@ roots = ["/synthetic/privacy"]
             assert old['resolved']=='archived' and old['row']['payload']['command']==expected[key]
             assert old['row']['archive']['operation_id']==replay['operation_id']
         # Current rules protect evidence acquired before any optional rules existed.
-        # A new acquired recipe creates current interpretations without rewriting old rows.
-        stop(daemon); source.write_bytes((report/'source.db').read_bytes());configure(True, [])
+        # A newly appended native occurrence is admitted under empty rules. Repeated
+        # existing rows retain their interpretation until explicit replay.
+        stop(daemon); source.write_bytes((report/'source.db').read_bytes())
+        with sqlite3.connect(source) as con:
+            con.execute('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',
+                ('oldplain',1_700_000_009_000_000_000,1_000_000_000,0,'echo amber',
+                 '/synthetic/privacy','synthetic-session','fixture-host',None))
+        (report/'old-plain-source.db').write_bytes(source.read_bytes())
+        configure(True, [])
         daemon=start(config,'privacy-empty-attribution');wait()
         deadline=time.monotonic()+30
         while True:
             empty_rows=cli('query','events where source = terminal.atuin-history')['rows']
-            empty=next(r for r in empty_rows if r['payload']['native_id']=='nonidempotent')
-            if empty['payload']['command']=='echo amber':break
+            empty=next((r for r in empty_rows if r['payload']['native_id']=='oldplain'),None)
+            if empty and empty['payload']['command']=='echo amber':break
             assert time.monotonic()<deadline
             time.sleep(.025)
         empty_id=empty['id']
@@ -155,9 +163,9 @@ roots = ["/synthetic/privacy"]
         assert protected['row']['record']['command']=='echo amber!'
         (report/'old-plain-protection.json').write_text(json.dumps({'show':ordinary,'trace':protected},indent=2)+'\n')
         # Current rules cannot rewrite opaque native IDs while protecting raw values.
-        stop(daemon);configure(False,[('nonidempotent|sinex|recorded','changed-current')])
+        stop(daemon);configure(False,[('oldplain|sinex|recorded','changed-current')])
         daemon=start(config,'privacy-identity-control');wait()
-        assert cli('show',empty_id)['row']['payload']['native_id']=='nonidempotent'
+        assert cli('show',empty_id)['row']['payload']['native_id']=='oldplain'
         assert cli('query','events where source = terminal.atuin-history')['notice'].startswith('The following is data recorded')
         assert cli('trace',empty_id,'--bytes',expected_exit=4)['kind']=='refused'
         # The mandatory credential floor still refuses an unsafe opaque request selector.
@@ -169,3 +177,74 @@ roots = ["/synthetic/privacy"]
             'fixed_floor_and_request_refusal':True},indent=2)+'\n')
         stop(daemon)
     h['scenario']('optional privacy rules preserve admission meaning and retained protection',controls)
+
+    def zsh_retained():
+        nonlocal daemon
+        run(['createdb','privacy_zsh'],label='isolated zsh privacy database')
+        for name in ['admin','writer','reader']:
+            (work/('zsh-'+name)).write_text(h[name].replace('/foundation?','/privacy_zsh?'))
+        run([bins/'sinexd','admin','schema','--connection-file',work/'zsh-admin'],label='isolated zsh privacy schema')
+        zsh=work/'privacy.zsh';zsh.write_bytes(b': 1700000000:0;echo amber\n')
+        (report/'original-zsh').write_bytes(zsh.read_bytes())
+        config.write_text(f'''listen = "127.0.0.1:{port}"
+state_dir = "{work/'zsh-privacy-state'}"
+store_dir = "{work/'zsh-privacy-store'}"
+writer_connection_file = "{work/'zsh-writer'}"
+reader_connection_file = "{work/'zsh-reader'}"
+token_file = "{work/'token'}"
+sources = ["terminal.zsh-history"]
+automata = []
+[zsh]
+path = "{zsh}"
+execution_host = "amber-host"
+protocol = "append_only_extended_v1"
+poll_interval_ms = 3600000
+''')
+        daemon=start(config,'privacy-zsh-original')
+        deadline=time.monotonic()+30
+        while True:
+            assert daemon.poll() is None
+            try:
+                state=h['rpc'](endpoint,'synthetic-foundation-token','sources.list')
+                if state.get('result',{}).get('sources',[]) and state['result']['sources'][0]['last_run']['status']=='completed':break
+            except (OSError,ValueError):pass
+            assert time.monotonic()<deadline
+            time.sleep(.025)
+        query=cli('query','events where source = terminal.zsh-history')
+        row=query['rows'][0]
+        shown=cli('show',row['id'])
+        traced=cli('trace',row['id'],'--bytes')
+        receipt=json.loads(run(['psql',(work/'zsh-reader').read_text(),'-XAt','-v','ON_ERROR_STOP=1','-c',"SELECT json_build_object('host',host,'payload',payload) FROM core.events WHERE source='terminal.zsh-history'"],label='independent zsh admitted host receipt').stdout)
+        (report/'zsh-host.json').write_text(json.dumps({'query':query,'show':shown,'trace':traced,'stored':receipt},indent=2)+'\n')
+        assert receipt['host']==receipt['payload']['hostname']=='amber-host'
+        assert row['host']==row['payload']['hostname']=='amber-host'
+        assert row['payload']['command']=='echo amber'
+        assert shown['row']['host']=='amber-host'
+        assert traced['row']['record']['unmetafied_record']==': 1700000000:0;echo amber\n'
+        assert zsh.read_bytes()==(report/'original-zsh').read_bytes()
+        stop(daemon)
+        # Optional rules are unavailable during zsh acquisition. Current protection
+        # still applies to retained originals after acquisition is disabled.
+        zsh.unlink()
+        config.write_text(config.read_text().split('[zsh]')[0].replace(
+            'sources = ["terminal.zsh-history"]','sources = []')+
+            '[[privacy_rules]]\npattern = "amber"\nreplacement = "amber!"\ncreated_by = "operator"\n')
+        daemon=start(config,'privacy-zsh-provider-gone')
+        deadline=time.monotonic()+30
+        while True:
+            assert daemon.poll() is None
+            try:
+                if 'result' in h['rpc'](endpoint,'synthetic-foundation-token'):break
+            except (OSError,ValueError):pass
+            assert time.monotonic()<deadline
+            time.sleep(.025)
+        stored=cli('show',row['id'])
+        protected=cli('trace',row['id'],'--bytes')
+        assert stored['row']['payload']['command']=='echo amber'
+        assert stored['row']['host']=='amber-host'
+        assert protected['row']['record']['unmetafied_record']==': 1700000000:0;echo amber!\n'
+        assert protected['row']['record']['original_blake3']==traced['row']['record']['original_blake3']
+        assert all(protected['row'][key]==traced['row'][key] for key in ['event','material','anchor','end'])
+        (report/'zsh-current-raw-protection.json').write_text(json.dumps({'stored':stored,'protected_raw':protected,'original_raw':traced},indent=2)+'\n')
+        stop(daemon)
+    h['scenario']('zsh retained original protection uses current rules once',zsh_retained)
