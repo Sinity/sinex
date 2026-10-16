@@ -3,9 +3,10 @@
 Enable `automata = ["session"]` alongside indexed retrieval and the configured
 Atuin source. The implemented immutable profile is
 `shell-session-v1-warsaw04-gap300`: Europe/Warsaw logical days from 04:00, with
-a new grouping when consecutive recorded command endpoints are more than 300
-seconds apart. Each canonical command supplies its start and its known end;
-an unknown end supplies only the start. The underlying command's outcome is
+a new grouping when the next command starts more than 300 seconds after the
+current group's maximum recorded end. Each canonical command supplies one
+recorded span; an unknown end is a point. Overlapping and nested spans extend
+that same group, so a command belongs to exactly one grouping. The underlying command's outcome is
 not inferred from a wrapper, shell pipeline or launcher result.
 
 The input population is canonical commands, counted once with every exact
@@ -31,9 +32,9 @@ neighbor root such as `/work/tide-neighbor` does not match `/work/tide`.
 Time-window, mark, general session-query and other-source recall remain unavailable.
 
 The writer dirties logical days for admitted or archived canonical evidence,
-including known endpoints and adjacent keys. The existing background scheduler
+including known span ends and adjacent keys. The existing background scheduler
 loads a pinned canonical frontier in 64-row turns into temporary PostgreSQL
-tables, sorts endpoint pages and reaches true grouping boundaries. It emits
+tables, sorts recorded-span pages and reaches true grouping boundaries. It emits
 only groupings starting in the key's day. A backward crossing is compared with
 the stored owner's complete bounds and parents. A changed forward crossing or
 removed old crossing dirties the affected neighbor/owner; equal groupings do
@@ -61,7 +62,7 @@ apply to recall. Pending fusion, session or projection work refuses a settled
 recall answer; `status` exposes session dirty count, basis, day, phase and failure.
 
 Missing focus and AFK sources leave continuity, active seconds, switches and
-attention unknown. The gap rule is a classification of recorded endpoints,
+attention unknown. The gap rule is a classification of recorded spans,
 not evidence of a real task boundary, continuous attention or actual execution
 count. Source disappearance preserves retained answers and returns incomplete
 coverage with the source's unavailable state. Successful polling never certifies
@@ -69,7 +70,7 @@ continuous capture.
 
 Schema entry 3 extends the existing guarded upgrade owner with the registered
 session payload/event type, dirty-day table and progress singleton. It seeds
-existing canonical endpoints, with reader/select and writer-only mutation grants.
+existing canonical spans, with reader/select and writer-only mutation grants.
 A populated exact current published stage-2 database requires the same explicit
 fsynced dump before apply. Original event IDs, source material and producer
 contracts are preserved. There is no reset or parallel schema framework.

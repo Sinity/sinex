@@ -13,7 +13,7 @@ pub(crate) fn payload_schema() -> Value {
 // Both endpoints dirty their owning day and adjacent keys. The scan below reaches
 // true boundaries and compares the earlier owner's whole grouping before adding it.
 pub(crate) async fn dirty(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, id: Uuid) -> Result<()> {
-    sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq) SELECT DISTINCT ((p.at AT TIME ZONE 'Europe/Warsaw')-interval '4 hours'+n*interval '1 day')::date::text,c.seq FROM core.events e CROSS JOIN core.commit_counter c CROSS JOIN LATERAL (VALUES(e.ts_orig),(e.ts_orig+greatest(coalesce((e.payload->>'duration_ns')::numeric,0),0)/1000000000*interval '1 second')) p(at) CROSS JOIN generate_series(-1,1) n WHERE e.id=$1 AND p.at IS NOT NULL AND c.one ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq)").bind(id).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq) SELECT DISTINCT ((p.at AT TIME ZONE 'Europe/Warsaw')-interval '4 hours'+n*interval '1 day')::date::text,c.seq FROM core.events e CROSS JOIN core.commit_counter c CROSS JOIN LATERAL (VALUES(e.ts_orig),(e.ts_orig+greatest(coalesce((e.payload->>'duration_ns')::numeric,0),0)/1000000000*interval '1 second')) p(at) CROSS JOIN generate_series(-1,1) n WHERE e.id=$1 AND e.event_type='command.canonical' AND p.at IS NOT NULL AND c.one ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq)").bind(id).execute(&mut **tx).await?;
     Ok(())
 }
 enum Phase {
@@ -38,7 +38,7 @@ pub(crate) struct Work {
 impl WriterPool {
     pub(crate) async fn session_enable(&mut self) -> Result<()> {
         let producer = Uuid::now_v7();
-        sqlx::query("INSERT INTO core.producer_versions(id,name,version,run_id,configuration) VALUES($1,'session','shell-session-v1',$2,$3)").bind(producer).bind(self.run_id).bind(json!({"profile":"shell-session-v1-warsaw04-gap300","zone":"Europe/Warsaw","logical_start":"04:00","gap_seconds":300,"inputs":"command.canonical start and known end","focus":"unavailable","afk":"unavailable"})).execute(&mut self.connection).await?;
+        sqlx::query("INSERT INTO core.producer_versions(id,name,version,run_id,configuration) VALUES($1,'session','shell-session-v1',$2,$3)").bind(producer).bind(self.run_id).bind(json!({"profile":"shell-session-v1-warsaw04-gap300","zone":"Europe/Warsaw","logical_start":"04:00","gap_seconds":300,"inputs":"command.canonical recorded spans; unknown end is a point","focus":"unavailable","afk":"unavailable"})).execute(&mut self.connection).await?;
         self.session_producer = Some(producer);
         Ok(())
     }
@@ -66,7 +66,7 @@ impl WriterPool {
                 .await?;
             for statement in [
                 "DROP TABLE IF EXISTS pg_temp.sinex_session_points,pg_temp.sinex_session_groups",
-                "CREATE TEMP TABLE sinex_session_points(at numeric NOT NULL,id uuid NOT NULL,endpoint smallint NOT NULL,PRIMARY KEY(at,id,endpoint))",
+                "CREATE TEMP TABLE sinex_session_points(at numeric NOT NULL,id uuid NOT NULL,endpoint smallint NOT NULL,end_at numeric NOT NULL,PRIMARY KEY(at,id,endpoint))",
                 "CREATE TEMP TABLE sinex_session_groups(token uuid PRIMARY KEY,start_ns numeric NOT NULL,end_ns numeric NOT NULL,owner_day text NOT NULL,parents uuid[] NOT NULL,retained uuid,done boolean NOT NULL DEFAULT false)",
             ] {
                 sqlx::query(statement).execute(&mut self.connection).await?;
@@ -106,16 +106,14 @@ impl WriterPool {
                         let end = start
                             .checked_add(duration)
                             .ok_or(Error::Invalid("session endpoint overflow"))?;
-                        for (endpoint, at) in [(0i16, start), (1, end)] {
-                            sqlx::query("INSERT INTO sinex_session_points(at,id,endpoint) VALUES($1::text::numeric,$2,$3)").bind(at.to_string()).bind(id).bind(endpoint).execute(&mut *tx).await?;
-                        }
+                        sqlx::query("INSERT INTO sinex_session_points(at,id,endpoint,end_at) VALUES($1::text::numeric,$2,0,$3::text::numeric)").bind(start.to_string()).bind(id).bind(end.to_string()).execute(&mut *tx).await?;
                         w.cursor = Some(id);
                     }
                     tx.commit().await?;
                 }
             }
             Phase::Group => {
-                let rows=sqlx::query("SELECT at::text,id,endpoint FROM sinex_session_points WHERE ($1::text IS NULL OR (at,id,endpoint)>($1::text::numeric,$2,$3)) ORDER BY at,id,endpoint LIMIT 64").bind(w.point.as_ref().map(|p|p.0.clone())).bind(w.point.as_ref().map(|p|p.1)).bind(w.point.as_ref().map(|p|p.2)).fetch_all(&mut self.connection).await?;
+                let rows=sqlx::query("SELECT at::text,end_at::text,id,endpoint FROM sinex_session_points WHERE ($1::text IS NULL OR (at,id,endpoint)>($1::text::numeric,$2,$3)) ORDER BY at,id,endpoint LIMIT 64").bind(w.point.as_ref().map(|p|p.0.clone())).bind(w.point.as_ref().map(|p|p.1)).bind(w.point.as_ref().map(|p|p.2)).fetch_all(&mut self.connection).await?;
                 if rows.is_empty() {
                     if let Some(g) = w.group.take() {
                         self.session_group(&w.day, g, w.basis).await?;
@@ -130,6 +128,10 @@ impl WriterPool {
                         let at: i128 = ns
                             .parse()
                             .map_err(|_| Error::Invalid("session point unavailable"))?;
+                        let end: i128 = row
+                            .try_get::<String, _>("end_at")?
+                            .parse()
+                            .map_err(|_| Error::Invalid("session end unavailable"))?;
                         let id: Uuid = row.try_get("id")?;
                         if w.group.as_ref().is_some_and(|g| at - g.end > GAP) {
                             let g = w.group.take().unwrap();
@@ -140,7 +142,7 @@ impl WriterPool {
                             end: at,
                             parents: vec![],
                         });
-                        g.end = at;
+                        g.end = g.end.max(end);
                         if !g.parents.contains(&id) {
                             if g.parents.len() == MAX_PARENTS {
                                 return Err(Error::Invalid(
@@ -165,7 +167,7 @@ impl WriterPool {
                         let end: String = row.try_get("end_ns")?;
                         let parents: Vec<Uuid> = row.try_get("parents")?;
                         let sources:Value=sqlx::query_scalar("SELECT coalesce(jsonb_agg(DISTINCT source_name ORDER BY source_name),'[]'::jsonb) FROM core.events e CROSS JOIN LATERAL jsonb_array_elements_text(e.payload->'observed_by') AS observed(source_name) WHERE e.id=ANY($1)").bind(&parents).fetch_one(&mut self.connection).await?;
-                        let payload = json!({"start_ns":start,"end_ns":end,"owner_day":w.day,"profile":"shell-session-v1-warsaw04-gap300","sources":sources,"continuity":null,"attention":null,"afk":null,"active_s":null,"switches":null,"claim_scope":"recorded-shell-policy-grouping","coverage":"unknown; no focus or AFK observations; known command endpoints are recorded claims, not continuous activity"});
+                        let payload = json!({"start_ns":start,"end_ns":end,"owner_day":w.day,"profile":"shell-session-v1-warsaw04-gap300","sources":sources,"continuity":null,"attention":null,"afk":null,"active_s":null,"switches":null,"claim_scope":"recorded-shell-policy-grouping","coverage":"unknown; no focus or AFK observations; known command spans are recorded claims, not continuous activity"});
                         let key = json!(["session.shell-v1", start, end]).to_string();
                         let mut tx = self.connection.begin().await?;
                         let active:i64=sqlx::query_scalar("SELECT count(*) FROM core.live_events e WHERE e.id=ANY($1) AND e.record_state='present' AND NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) p(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=p.id AND raw.record_state='present'))").bind(&parents).fetch_one(&mut *tx).await?;

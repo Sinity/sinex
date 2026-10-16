@@ -42,21 +42,19 @@ def extension():
     return dict(zip(COLUMNS,['extension',stamp('04:32:00'),-1,-1,'sleep shell-session unknown end',PROJECT,'synthetic-shell','synthetic-host:user',None]))
 
 def independent(rows):
-    points=[]
-    for row in rows:
-        points.append((row['timestamp'],row['id']))
-        if row['duration']>=0: points.append((row['timestamp']+row['duration'],row['id']))
+    """Recorded intervals grouped once; no endpoint becomes another occurrence."""
     groups=[]
-    for at,key in sorted(points):
-        if not groups or at-groups[-1]['end_ns']>300_000_000_000:
-            groups.append({'start_ns':at,'end_ns':at,'parents':set()})
-        groups[-1]['end_ns']=at;groups[-1]['parents'].add(key)
+    for row in sorted(rows,key=lambda r:(r['timestamp'],r['id'])):
+        start=row['timestamp'];end=start+max(0,row['duration'])
+        if not groups or start-groups[-1]['end_ns']>300_000_000_000:
+            groups.append({'start_ns':start,'end_ns':end,'parents':set()})
+        groups[-1]['end_ns']=max(groups[-1]['end_ns'],end);groups[-1]['parents'].add(row['id'])
     return [dict(g,parents=sorted(g['parents'])) for g in groups]
 
 def exercise(h):
     work,report,env,bins=(h[k] for k in ['WORK','REPORT','ENV','BIN_DIR'])
     run,scenario,start,stop=(h[k] for k in ['run','scenario','start_daemon','stop'])
-    token=(work/'token').read_text();facts=fixture();source=work/'sessions.db';procs=[]
+    token=(work/'token').read_text();(work/'session-operator-token').write_text('synthetic-session-operator-token');(work/'session-operator-token').chmod(0o600);facts=fixture();source=work/'sessions.db';procs=[]
     observations=[];metrics=[];mcp=None;mid=0
     def save(name,value): (report/name).write_text(json.dumps(value,indent=2,sort_keys=True)+'\n')
     def sql(text,url=None):return run(['psql',url or h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',text],label='session isolated database observation').stdout.strip()
@@ -85,7 +83,7 @@ state_dir = "{work/('baseline-state' if baseline else 'session-state')}"
 store_dir = "{work/('baseline-blobs' if baseline else 'session-blobs')}"
 writer_connection_file = "{work/('writer' if baseline else 'session-writer')}"
 reader_connection_file = "{work/('reader' if baseline else 'session-reader')}"
-operator_token_file = "{work/'token'}"
+operator_token_file = "{work/'session-operator-token'}"
 read_model_connection_file = "{work/('baseline-read-model' if baseline else 'session-read-model')}"
 token_file = "{work/'token'}"
 sources = ["terminal.atuin-history"]
@@ -96,6 +94,9 @@ roots = ["{PROJECT}"]
 [[projects]]
 name = "large"
 roots = ["/synthetic/session/large"]
+[[projects]]
+name = "long"
+roots = ["/synthetic/session/long"]
 [atuin]
 path = "{source}"
 poll_interval_ms = 500
@@ -118,7 +119,7 @@ poll_interval_ms = 500
         s=api().get('result',{});idx=s.get('indexed_retrieval',{})
         return idx and idx.get('serving') and idx.get('position')==s['commit_seq'] and idx.get('pending_canonical')==0 and (not sessions or idx.get('pending_sessions')==0) and idx.get('failure') is None and (not sessions or idx.get('sessions',{}).get('failure') is None)
     def cli(command,*args,expected=(0,5),binary=None):
-        p=run([binary or bins/'sinexctl','--endpoint',endpoint,'--token-file',work/'token',command,*args,'--json'],expected=expected,label='session actual CLI '+command)
+        p=run([binary or bins/'sinexctl','--endpoint',endpoint,'--token-file',work/('session-operator-token' if command=='delete' else 'token'),command,*args,'--json'],expected=expected,label='session actual CLI '+command)
         return json.loads(p.stdout or p.stderr)
     def mcp_call(method,params):
         nonlocal mid
@@ -169,6 +170,7 @@ poll_interval_ms = 500
             for p in group['parents']:
                 row=next(r for r in canonical if r['id']==p);assert row['parents']==[rawmap[row['payload']['native_id']]['id']]
         assert sorted(actual,key=lambda x:x['start_ns'])==independent(facts)
+        assert sum(len(g['parents']) for g in actual)==len({p for g in actual for p in g['parents']})==len(facts),'one canonical occurrence must belong to exactly one shell grouping'
         if 'bridge' in names:assert header['payload']['owner_day']=='2026-10-12'
         trace=cli('trace','sinex:ev/'+header['id'],'--bytes')['row'];assert trace['representation']=='shell_session'
         assert sorted(x['event'] for x in trace['parents'])==sorted(header['parents'])
@@ -227,7 +229,10 @@ poll_interval_ms = 500
         large=[]
         for n in range(107):
             row=dict(zip(COLUMNS,[f'large-{n:03}',stamp('06:00:00')+n*1_000_000_000,0,0,f'echo bounded recall {n}','/synthetic/session/large','synthetic-shell','synthetic-host:user',None]));large.append(row)
-        facts.extend(large);fill(large)
+        long=[]
+        for name,clock,duration,offset in [('long-solo','07:00:00',600,0),('long-outer','03:40:00',3000,86400),('long-nested','03:45:00',300,86400),('long-overlap','04:25:00',900,86400),('long-after','04:46:00',0,86400)]:
+            long.append(dict(zip(COLUMNS,[name,stamp(clock)+offset*1_000_000_000,duration*1_000_000_000,0,'synthetic interval '+name,'/synthetic/session/long','synthetic-shell','synthetic-host:user',None])))
+        facts.extend(large+long);fill(large+long)
         wait(baseline,lambda:len(raw())==len(facts) and settled(),'large-session refusal population')
         refused=cli('recall','last','--project','large',expected=5);assert refused['kind']=='partial' and 'assembly exceeds' in refused['message']
         supported=query_all('commands where project = large sort when limit 200')
@@ -238,6 +243,14 @@ poll_interval_ms = 500
             assert shown['current_eligible'] and traced['parents'][0]['record']['id']==row['payload']['native_id']
             fallback.append(dict(show=shown,trace=traced))
         save('large-session-refusal-and-retained-inspection.json',dict(refused=refused,commands=supported,fallback=fallback))
+        longcommands=query_all('commands where project = long sort when limit 100')
+        longmap={r['payload']['native_id']:r['id'] for r in longcommands};longgroups=current()
+        actual=[g for g in longgroups if set(g['parents']) & set(longmap.values())]
+        solo=next(g for g in actual if longmap['long-solo'] in g['parents']);assert solo['parents']==[longmap['long-solo']] and int(solo['payload']['end_ns'])-int(solo['payload']['start_ns'])==600_000_000_000
+        crossing=next(g for g in actual if longmap['long-outer'] in g['parents']);assert set(crossing['parents'])=={longmap[k] for k in ['long-outer','long-nested','long-overlap']} and crossing['payload']['owner_day']=='2026-10-13'
+        assert int(crossing['payload']['start_ns'])==stamp('03:40:00')+86400_000_000_000 and int(crossing['payload']['end_ns'])==stamp('04:40:00')+86400_000_000_000
+        assert len(actual)==3 and sum(len(g['parents']) for g in actual)==len(longmap)
+        save('long-overlapping-nested-cross-day-controls.json',dict(inputs=long,commands=longcommands,groups=actual))
         # Exercise only the new session-grandparent fence through the existing
         # ordinary exclusion route, held at actual bounded fusion publication.
         original=qualify('large-population')
@@ -255,6 +268,9 @@ poll_interval_ms = 500
         save('current-grandparent-fence.json',dict(frame=frame,delete=deleted,old_session=shown,raw_pending=pending,recall=refused))
         connection.sendall(b'c');connection.close();fence.close()
         wait(baseline,lambda:settled(),'excluded session replacement')
+        excluded=cli('recall','last','--project','tide');assert 'a0' not in {r['payload']['native_id'] for r in excluded['rows']} and excluded['session']['id']!=oldsession
+        assert int(excluded['session']['payload']['start_ns'])==stamp('03:34:00')
+        save('excluded-session-replaced.json',excluded)
         cli('delete','--undo',removed['id'])
         wait(baseline,lambda:len(raw())==len(facts) and settled(),'undo and ordinary configured readmission')
         qualify('restored-after-grandparent-fence');stop(baseline)
