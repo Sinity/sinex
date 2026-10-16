@@ -129,5 +129,8 @@ narrow polling/error boundary through packaged CLI and MCP. It reproduces both
 pre-fix false completeness cases using the exact immutable reviewed predecessor,
 then checks latest Atuin errors, clean recovery, malformed zsh append and a later
 error-free poll/restart whose retained chain still contains an omitted record.
-This reuses the separate session lifecycle evidence; it does not rerun that
+A held projection step also checks the bounded settling window and disabled
+recall remains a partial refusal. Session timeout retry is classified by the
+typed deadline or SQLSTATE; validation failures never acquire retry authority
+from their diagnostic text. This reuses the separate session lifecycle evidence; it does not rerun that
 journey or claim continuous coverage.

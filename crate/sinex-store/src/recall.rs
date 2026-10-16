@@ -4,6 +4,13 @@ use crate::{Error, ReadPool, Result};
 use serde_json::{Value, json};
 use sqlx::{Connection, Row};
 use uuid::Uuid;
+// Only projection catch-up is eligible for the short settling window. Missing
+// capability, owed session work and representation refusal stay ordinary errors.
+enum RecallAttempt {
+    Ready(Value),
+    ProjectionPending,
+}
+
 pub fn is_recall(text: &str) -> bool {
     text.split_whitespace()
         .next()
@@ -51,11 +58,15 @@ impl ReadPool {
             loop {
                 let remaining=deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero(){return Err(Error::Deadline);}
-                let result=self.recall_last(text,project.clone(),page,remaining).await;
-                if matches!(&result,Err(Error::ProjectionUnavailable(reason)) if *reason=="shell sessions or indexed projection pending; inspect status; no settled recall answer is available") && tokio::time::Instant::now()<settle {
-                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;continue;
+                match self.recall_last(text,project.clone(),page,remaining).await? {
+                    RecallAttempt::Ready(value) => break Ok(value),
+                    RecallAttempt::ProjectionPending if tokio::time::Instant::now()<settle => {
+                        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                    }
+                    RecallAttempt::ProjectionPending => break Err(Error::ProjectionUnavailable(
+                        "shell sessions or indexed projection pending; inspect status; no settled recall answer is available",
+                    )),
                 }
-                break result;
             }
         }).await {
             Err(_) => Err(Error::Deadline),
@@ -73,7 +84,7 @@ impl ReadPool {
         project: Option<String>,
         page: u32,
         budget: std::time::Duration,
-    ) -> Result<Value> {
+    ) -> Result<RecallAttempt> {
         let mut lease = self.read_lease().await?;
         let mut tx = lease.connection().begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
@@ -102,9 +113,7 @@ impl ReadPool {
             ));
         }
         if !state.try_get::<bool, _>("serving")? || state.try_get::<i64, _>("position")? != seq {
-            return Err(Error::ProjectionUnavailable(
-                "shell sessions or indexed projection pending; inspect status; no settled recall answer is available",
-            ));
+            return Ok(RecallAttempt::ProjectionPending);
         }
         let generation: Uuid = state.try_get("generation")?;
         let session:Option<Value>=sqlx::query_scalar(&format!("SELECT {} FROM core.live_events e WHERE e.event_type='activity.session.boundary' AND ($1::text IS NULL OR EXISTS(SELECT 1 FROM core.event_project p WHERE p.generation=$2 AND p.project=$1 AND p.event_id=ANY(e.source_event_ids))) ORDER BY e.ts_orig DESC,e.ts_orig_tiebreak DESC,e.id LIMIT 1",crate::query::EVENT_VIEW)).bind(&project).bind(generation).fetch_optional(&mut *tx).await?;
@@ -132,9 +141,9 @@ impl ReadPool {
             && crate::source_coverage::interpreted_complete(&source_status);
         tx.commit().await?;
         lease.finish();
-        Ok(
+        Ok(RecallAttempt::Ready(
             json!({"notice":sinex_model::DATA_NOTICE,"unit":"recall","query":text,"session":session,"rows":rows,"total":total,"project":project,"complete":complete,"truncated":false,"source_status":source_status,"coverage":"unknown; retained shell policy grouping; focus, AFK, attention and underlying command outcomes are not inferred","resolved":{"commit_seq":seq,"projection_seq":seq,"zone":"Europe/Warsaw","logical_start":"04:00"},"read_as":"Latest retained shell session containing the selected project; command rows are project-scoped; the header and exact session parents describe the entire policy grouping."}),
-        )
+        ))
     }
 }
 #[cfg(test)]

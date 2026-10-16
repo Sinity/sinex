@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import select
+import socket
 import sqlite3
 import subprocess
 import time
@@ -11,7 +12,8 @@ PLANNED = ['pre-fix completed poll falsely completes recall',
     'recall and search disclose current record failures',
     'clean polls restore interpreted completeness without asserting continuity',
     'zsh malformed append remains incomplete after later clean poll',
-    'pre-fix retained-error contrast and corrected CLI MCP recall']
+    'pre-fix retained-error contrast and corrected CLI MCP recall',
+    'typed projection settling and disabled-capability refusal']
 
 
 def exercise(h):
@@ -69,6 +71,9 @@ poll_interval_ms = 3600000
     def launch(label, binary=None):
         nonlocal daemon
         daemon = start(config, label, binary=binary)
+        return settled(label)
+
+    def settled(label):
         deadline = time.monotonic()+120
         last = None
         while time.monotonic()<deadline:
@@ -110,7 +115,7 @@ poll_interval_ms = 3600000
         assert sorted(row['payload']['command'] for row in answer['rows'])==sorted(names)
         assert set(answer['session']['parents'])=={row['id'] for row in answer['rows']}
         assert answer['coverage'].startswith('unknown;')
-        indexed = cli('query', 'commands sort when limit 10000', expected=0 if expected_complete else 5)
+        indexed = cli('query', 'commands sort when limit 10000', expected=0 if expected_complete and corrected else 5)
         assert indexed['complete'] is (expected_complete if corrected else False)
         raw = cli('query', 'events')
         assert raw['complete'] is all(s.get('retained_record_errors', 0)==0 for s in raw['source_status'])
@@ -179,3 +184,47 @@ poll_interval_ms = 3600000
         assert next(s for s in answer['source_status'] if s['source']=='terminal.zsh-history')['retained_record_errors']==1
         stop(daemon)
     scenario(PLANNED[4], retained_contrast)
+
+    def typed_pending():
+        nonlocal daemon
+        # A supported project change asks the actual projection owner to rebuild.
+        # Its existing rendezvous holds an uncommitted projection step, without
+        # modifying progress or depending on a race to acquire a database lock.
+        config.write_text(config.read_text()+'\n[[projects]]\nname = "coverage"\nroots = ["/synthetic/coverage"]\n')
+        boundary = work/'recall-projection.sock'
+        with socket.socket(socket.AF_UNIX) as controller:
+            controller.bind(str(boundary)); controller.listen(1); controller.settimeout(20)
+            daemon = start(config, 'corrected-typed-pending', '--qualification-boundary', 'projection-staged-0', '--qualification-socket', boundary)
+            conn, _ = controller.accept()
+            with conn:
+                frame = json.loads(conn.makefile('r').readline())
+                assert frame['pid']==daemon.pid and frame['evidence']['through']>frame['evidence']['from']
+                deadline = time.monotonic()+20
+                while True:
+                    try:
+                        state = h['rpc'](endpoint, 'synthetic-foundation-token')['result']['indexed_retrieval']
+                        if state['pending_sessions']==state['pending_canonical']==0 and state['serving'] is False:
+                            break
+                    except (OSError, KeyError, ValueError):
+                        pass
+                    assert time.monotonic()<deadline, 'pending projection RPC readiness'
+                    time.sleep(.05)
+                began = time.monotonic()
+                pending = run([bins/'sinexctl', '--endpoint', endpoint, '--token-file', work/'token', 'recall', 'last', '--json'], expected=5, label='typed pending recall refuses after bounded settling')
+                elapsed = time.monotonic()-began
+                fault = json.loads(pending.stderr)
+                assert fault['kind']=='partial' and fault['data']['reason']=='projection_unavailable'
+                assert elapsed>=.45, 'projection pending skipped the existing 500ms settling window'
+                save('typed-projection-pending.json', dict(fault=fault, seconds=elapsed, boundary=frame, status=state))
+                conn.sendall(b'c')
+        settled('projection released')
+        answers('typed-projection-recovered', False, all_names)
+        stop(daemon)
+        config.write_text(config.read_text().replace('automata = ["session"]', 'automata = []'))
+        launch('corrected-disabled')
+        refused = run([bins/'sinexctl', '--endpoint', endpoint, '--token-file', work/'token', 'recall', 'last', '--json'], expected=5, label='disabled capability remains a permanent partial refusal')
+        fault = json.loads(refused.stderr)
+        assert fault['kind']=='partial' and fault['data']['reason']=='projection_unavailable'
+        save('typed-disabled-refusal.json', fault)
+        stop(daemon)
+    scenario(PLANNED[5], typed_pending)

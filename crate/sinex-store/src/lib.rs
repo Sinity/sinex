@@ -670,6 +670,11 @@ impl WriterPool {
         Ok(())
     }
 
+    fn session_retryable(error: &Error) -> bool {
+        matches!(error, Error::Deadline)
+            || matches!(error,Error::Database(sqlx::Error::Database(e)) if e.code().as_deref()==Some("57014"))
+    }
+
     async fn background_step(
         &mut self,
         replay_turn: &mut bool,
@@ -700,9 +705,7 @@ impl WriterPool {
                 self.session_step(),
             )
             .await
-            .unwrap_or(Err(Error::Invalid(
-                "session computation turn exceeded 3 seconds; dirty key retained",
-            )));
+            .unwrap_or(Err(Error::Deadline));
             sqlx::query("SET statement_timeout=0")
                 .execute(&mut self.connection)
                 .await?;
@@ -710,16 +713,14 @@ impl WriterPool {
                 Ok(true) => return Ok(true),
                 Ok(false) => {}
                 Err(error) => {
-                    let transient = matches!(
-                        &error,
-                        Error::Invalid(
-                            "session computation turn exceeded 3 seconds; dirty key retained"
-                        )
-                    ) || matches!(&error,Error::Database(sqlx::Error::Database(e)) if e.code().as_deref()==Some("57014"));
+                    let transient = Self::session_retryable(&error);
                     self.session_retry_at = transient.then(|| {
                         tokio::time::Instant::now() + std::time::Duration::from_millis(250)
                     });
                     let reason = match error {
+                        Error::Deadline => {
+                            "session computation turn exceeded 3 seconds; dirty key retained"
+                        }
                         Error::Invalid(reason) => reason,
                         _ => "session recomputation unavailable; dirty keys retained",
                     };
@@ -918,6 +919,9 @@ fn dotted(s: &str) -> bool {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
         })
 }
+
+#[cfg(test)]
+mod session_retry_tests;
 
 #[cfg(test)]
 mod tests {
