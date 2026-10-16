@@ -273,6 +273,11 @@ fn main() -> std::process::ExitCode {
                 }
                 match reply.into_outcome() {
                     Ok(value) => {
+                        if matches!(method, Method::Delete | Method::DeleteUndo)
+                            && !exclusion_reply_matches(method, &request.params, &value)
+                        {
+                            return exclusion_indeterminate(&request.params["action_id"]);
+                        }
                         if wait_replay
                             && matches!(value["state"].as_str(), Some("recorded" | "running"))
                         {
@@ -333,4 +338,32 @@ fn exclusion_indeterminate(action_id: &serde_json::Value) -> std::process::ExitC
         serde_json::json!({"kind":"partial","message":"Mutation outcome indeterminate; retry the same action identity.","details":{"action_id":action_id}})
     );
     std::process::ExitCode::from(ErrorKind::Partial.exit_code())
+}
+
+fn exclusion_reply_matches(
+    method: Method,
+    params: &serde_json::Value,
+    value: &serde_json::Value,
+) -> bool {
+    let Ok(request) = serde_json::from_value::<sinex_protocol::ExclusionRequest>(params.clone())
+    else {
+        return false;
+    };
+    let Ok(outcome) = serde_json::from_value::<sinex_protocol::ExclusionOutcome>(value.clone())
+    else {
+        return false;
+    };
+    outcome.action_id == request.action_id
+        && outcome.method == method.as_str()
+        && request.event_id().ok() == Some(outcome.target)
+        && matches!(
+            outcome.state,
+            sinex_protocol::ExclusionState::Completed | sinex_protocol::ExclusionState::Noop
+        )
+        && request.expected_key.as_ref().is_none_or(|key| {
+            outcome
+                .occurrence
+                .as_ref()
+                .is_some_and(|occurrence| &occurrence.equivalence_key == key)
+        })
 }

@@ -186,3 +186,12 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 1800
 cache = "none"
+
+[operations.exclusion_package_acceptance]
+description = "Exact retained Atuin exclusion through the explicitly pinned package; actual CLI/API, provider loss, replay, and observed transaction interruptions without rebuilding"
+exec = ["python3", "tests/foundation.py", "--packaged", "--reversible-exclusion"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 1800
+cache = "none"

@@ -518,3 +518,7 @@ pub mod rpc {
 pub use rpc::*;
 
 pub use sinex_model::replay::{Operation as ReplayOperation, fresh_action_id};
+
+pub use sinex_model::exclusion::{
+    Outcome as ExclusionOutcome, Request as ExclusionRequest, State as ExclusionState,
+};
