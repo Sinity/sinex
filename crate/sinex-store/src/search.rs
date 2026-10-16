@@ -399,12 +399,9 @@ impl ReadPool {
         } else {
             None
         };
-        let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason,'record_errors',o.record_errors,'retained_record_errors',CASE WHEN i.binding='terminal.zsh-history' THEN coalesce((SELECT (c.position->>'record_errors')::bigint FROM raw.source_cursors c WHERE c.binding=i.binding AND c.input=i.id::text),0) ELSE 0 END) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason,record_errors FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true").fetch_all(&mut *tx).await?;
-        let complete = source_status.iter().all(|s| {
-            s["status"] == "completed"
-                && s["record_errors"].as_i64() == Some(0)
-                && s["retained_record_errors"].as_i64() == Some(0)
-        }) && !dirty
+        let source_status = crate::source_coverage::read(&mut tx, current).await?;
+        let complete = crate::source_coverage::interpreted_complete(&source_status)
+            && !dirty
             && fusion["phase"] == "settled"
             && fusion["failure"].is_null();
         tx.commit().await?;

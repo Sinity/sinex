@@ -127,9 +127,9 @@ impl ReadPool {
             }
             rows=sqlx::query_scalar(&format!("SELECT {} FROM core.live_events s CROSS JOIN unnest(s.source_event_ids) parent(id) JOIN core.live_events e ON e.id=parent.id WHERE s.id=$1 AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM core.event_project p WHERE p.generation=$3 AND p.event_id=e.id AND p.project=$2)) ORDER BY e.ts_orig,e.ts_orig_tiebreak,e.id LIMIT 100",crate::query::EVENT_VIEW)).bind(id).bind(&project).bind(generation).fetch_all(&mut *tx).await?;
         }
-        let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'status',o.status,'reason',o.reason,'observed_at',o.observed_at) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason,observed_at FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true").fetch_all(&mut *tx).await?;
-        let complete =
-            !source_status.is_empty() && source_status.iter().all(|s| s["status"] == "completed");
+        let source_status = crate::source_coverage::read(&mut tx, seq).await?;
+        let complete = !source_status.is_empty()
+            && crate::source_coverage::interpreted_complete(&source_status);
         tx.commit().await?;
         lease.finish();
         Ok(

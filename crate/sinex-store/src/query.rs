@@ -451,7 +451,7 @@ impl ReadPool {
         } else {
             None
         };
-        let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason,'record_errors',o.record_errors,'retained_record_errors',CASE WHEN i.binding='terminal.zsh-history' THEN coalesce((SELECT (c.position->>'record_errors')::bigint FROM raw.source_cursors c WHERE c.binding=i.binding AND c.input=i.id::text),0) ELSE 0 END) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason,record_errors FROM raw.observations WHERE input_id=i.id AND commit_seq<=$1 ORDER BY seq DESC LIMIT 1) o ON true").bind(seq).fetch_all(&mut *tx).await?;
+        let source_status = crate::source_coverage::read(&mut tx, seq).await?;
         let installed_progress: bool =
             sqlx::query_scalar("SELECT to_regclass('derivation.shell_progress') IS NOT NULL")
                 .fetch_one(&mut *tx)
@@ -489,11 +489,7 @@ impl ReadPool {
                 && fusion["failure"].is_null()
                 && sessions["phase"] == "settled"
                 && sessions["failure"].is_null()))
-            && source_status.iter().all(|s| {
-                s["status"] == "completed"
-                    && (s["source"] != crate::ZSH_SOURCE
-                        || s["retained_record_errors"].as_i64() == Some(0))
-            })
+            && crate::source_coverage::admitted_complete(&source_status)
             && (!canonical_scope
                 || fusion["enabled"] != true
                 || (fusion["current_now_settled"] == true

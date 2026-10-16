@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--reversible-exclusion",action="store_true",help="qualify packaged exact occurrence exclusion with an explicit immutable package pin")
 parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion, fusion or configured continuation; never build or fall back")
+parser.add_argument("--recall-coverage",action="store_true",help="qualify narrow recall polling/error coverage through packaged CLI and MCP")
+parser.add_argument("--recall-coverage-before-pin",type=Path,help="exact immutable pre-fix package for recall coverage contrast")
 parser.add_argument("--sessions",action="store_true",help="qualify selected logical-day shell reconciliation and project recall")
 parser.add_argument("--session-resume",type=Path,help="continue remaining controls from an exact failed owned session report; no build or source reset")
 parser.add_argument("--session-predecessor-pin",type=Path,help="exact immutable existing stage-2 package pin for guarded session upgrade")
@@ -42,6 +44,9 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.recall_coverage_before_pin and not OPTIONS.recall_coverage: parser.error("recall coverage contrast requires --recall-coverage")
+if OPTIONS.recall_coverage and (not OPTIONS.packaged or not OPTIONS.recall_coverage_before_pin or any((OPTIONS.package_pin,OPTIONS.sessions,OPTIONS.session_resume,OPTIONS.indexed,OPTIONS.fusion,OPTIONS.configured_continuation,OPTIONS.atuin,OPTIONS.retained_replay,OPTIONS.reversible_exclusion,OPTIONS.exclusion_contracts,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output))):
+    parser.error("recall coverage requires --packaged --recall-coverage-before-pin FILE and its own selector")
 if OPTIONS.session_resume and not OPTIONS.sessions: parser.error("session resume requires --sessions")
 if OPTIONS.configured_continuation and (not OPTIONS.packaged or not OPTIONS.package_pin or any([OPTIONS.fusion,OPTIONS.fusion_focus,OPTIONS.fusion_spec,OPTIONS.reversible_exclusion,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output,OPTIONS.demo_control,OPTIONS.demo_boundaries,OPTIONS.demo_provider_loss])):
     parser.error("configured continuation requires --packaged --package-pin FILE and its own scenario selector")
@@ -139,6 +144,9 @@ if OPTIONS.sessions:
     import session_cases
     PLANNED=["cold query-free admin build","canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","checked runtime build and pure contracts"]+session_cases.PLANNED
     if SESSION_RESUME: PLANNED=["retained owned schema check","owned PostgreSQL extension and checksum contract"]+session_cases.RESUME_PLANNED
+if OPTIONS.recall_coverage:
+    import recall_coverage_cases
+    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+recall_coverage_cases.PLANNED
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -257,7 +265,7 @@ try:
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    if not (SESSION_RESUME or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not (SESSION_RESUME or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
     if not SESSION_RESUME:
         (WORK/"pg").mkdir()
         (WORK/"socket").mkdir()
@@ -275,7 +283,7 @@ try:
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=BIN_DIR/"sinexd" if SESSION_RESUME or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if SESSION_RESUME or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
     if SESSION_RESUME:
         for database in ['foundation','session_predecessor']:
@@ -301,7 +309,7 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    if not (SESSION_RESUME or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
+    if not (SESSION_RESUME or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
     if not OPTIONS.packaged and not SESSION_RESUME:
@@ -311,7 +319,9 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.sessions:
+    if OPTIONS.recall_coverage:
+        recall_coverage_cases.exercise(globals())
+    elif OPTIONS.sessions:
         session_cases.exercise(globals())
     elif OPTIONS.configured_continuation:
         configured_continuation_cases.exercise(globals())

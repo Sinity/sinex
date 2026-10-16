@@ -273,3 +273,12 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
 cache = "none"
+
+[operations.recall_coverage_acceptance]
+description = "Packaged recall source-poll completeness with exact pre-fix contrast, retained zsh errors and actual CLI/MCP"
+exec = ["python3", "tests/foundation.py", "--packaged", "--recall-coverage"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"

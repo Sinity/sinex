@@ -69,8 +69,14 @@ Missing focus and AFK sources leave continuity, active seconds, switches and
 attention unknown. The gap rule is a classification of recorded spans,
 not evidence of a real task boundary, continuous attention or actual execution
 count. Source disappearance preserves retained answers and returns incomplete
-coverage with the source's unavailable state. Successful polling never certifies
-continuous capture.
+coverage with the source's unavailable state. Recall and indexed search share
+source polling evidence: every input needs a completed latest observation with
+zero record errors. Known zsh append-chain errors remain incomplete after later
+clean or empty polls; `source_status` exposes both `record_errors` and
+`retained_record_errors`, with the input identity and latest observation time.
+Raw Atuin event reads retain their admitted-event availability semantics and
+report failed records separately. Successful polling never certifies continuous
+capture.
 
 Schema entry 3 extends the existing guarded upgrade owner with the registered
 session payload/event type, dirty-day table and progress singleton. It seeds
@@ -117,3 +123,11 @@ resuming owed work, then qualifies the remaining empty-ledger deadline, compatib
 restart and provider-loss reads through ordinary CLI/MCP. It performs no build,
 source reset or schema apply; original failures and passed assertions retain their
 original scope. The owned state stays available after this continuation.
+
+`recall_coverage_acceptance -- --recall-coverage-before-pin FILE` exercises the
+narrow polling/error boundary through packaged CLI and MCP. It reproduces both
+pre-fix false completeness cases using the exact immutable reviewed predecessor,
+then checks latest Atuin errors, clean recovery, malformed zsh append and a later
+error-free poll/restart whose retained chain still contains an omitted record.
+This reuses the separate session lifecycle evidence; it does not rerun that
+journey or claim continuous coverage.

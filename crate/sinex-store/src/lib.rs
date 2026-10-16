@@ -12,6 +12,7 @@ mod replay;
 mod search;
 mod session;
 mod shell;
+mod source_coverage;
 pub use atuin::mask as present;
 pub use atuin::{
     AtuinInterpretation, AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule,
