@@ -214,7 +214,9 @@ poll_interval_ms = 3600000
             assert daemon.poll() is None
             try:
                 state=h['rpc'](endpoint,'synthetic-foundation-token','sources.list')
-                if state.get('result',{}).get('sources',[]) and state['result']['sources'][0]['last_run']['status']=='completed':break
+                sources=state.get('result',{}).get('sources',[])
+                observation=sources[0]['last_run'] if sources else None
+                if observation and observation['status']=='completed':break
             except (OSError,ValueError):pass
             assert time.monotonic()<deadline
             time.sleep(.025)
