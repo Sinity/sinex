@@ -57,6 +57,7 @@ pub(crate) struct Work {
     pub basis: i64,
     phase: Phase,
     cursor: Option<Uuid>,
+    queued_turns: u64,
 }
 fn canonical(command: &str) -> Option<String> {
     let words = shlex::split(command)?;
@@ -169,9 +170,10 @@ impl WriterPool {
             basis,
             phase: Phase::Scan,
             cursor: None,
+            queued_turns: 0,
         }))
     }
-    pub(crate) async fn shell_step(&mut self) -> Result<bool> {
+    pub(crate) async fn shell_step(&mut self, queued_commands: usize) -> Result<bool> {
         if self.shell_producer.is_none() {
             return Ok(false);
         }
@@ -181,6 +183,9 @@ impl WriterPool {
         }) else {
             return Ok(false);
         };
+        if queued_commands > 0 {
+            work.queued_turns += 1;
+        }
         let r = rule();
         match work.phase {
             Phase::Scan => {
@@ -308,7 +313,7 @@ impl WriterPool {
                     crate::QualificationBoundary::reach(
                         &mut self.qualification,
                         "fusion-replacement-committed",
-                        json!({"basis":work.basis,"pending":true}),
+                        json!({"basis":work.basis,"pending":true,"queued_background_turns":work.queued_turns,"queued_commands_at_turn_entry":queued_commands}),
                     )
                     .await?;
                 }

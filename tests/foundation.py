@@ -23,7 +23,7 @@ parser.add_argument("--reversible-exclusion",action="store_true",help="qualify p
 parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion or fusion; never build or fall back")
 parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
 parser.add_argument("--fusion",action="store_true",help="qualify selected Atuin/zsh fusion lifecycle using a pinned independent specification")
-parser.add_argument("--fusion-focus",choices=["changed-seams","source-codec"],help="development-only projection/head-race or zsh source-codec controls; reuse separately retained journey proof")
+parser.add_argument("--fusion-focus",choices=["changed-seams","source-codec","maintenance"],help="focused projection/head-race, source-codec or packaged maintenance controls; reuse separately retained journey proof")
 parser.add_argument("--fusion-spec",type=Path,help="read-only specification Git repository for selected fusion fixture")
 parser.add_argument("--indexed",action="store_true",help="qualify indexed shell retrieval and actual MCP transport")
 parser.add_argument("--retained-replay", action="store_true", help="qualify retained Atuin replay through actual packaged clients")
@@ -38,7 +38,8 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
-if OPTIONS.fusion_focus and (not OPTIONS.fusion or OPTIONS.packaged): parser.error("fusion focus requires the development --fusion selector")
+if OPTIONS.fusion_focus and not OPTIONS.fusion: parser.error("fusion focus requires --fusion")
+if OPTIONS.packaged and OPTIONS.fusion_focus in ("changed-seams","source-codec"): parser.error("this fusion focus is development-only; packaged focus supports maintenance")
 if OPTIONS.fusion != bool(OPTIONS.fusion_spec): parser.error("fusion requires --fusion --fusion-spec GIT_REPOSITORY")
 if OPTIONS.fusion and any([OPTIONS.reversible_exclusion,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output]): parser.error("fusion owns its own scenario selector")
 if OPTIONS.package_pin and not (OPTIONS.reversible_exclusion or OPTIONS.fusion):

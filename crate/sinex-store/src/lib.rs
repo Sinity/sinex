@@ -511,64 +511,40 @@ impl WriterPool {
     async fn run(mut self, mut rx: mpsc::Receiver<Command>) -> Result<()> {
         let mut shutdown = None;
         let mut replay_turn = false;
+        let mut queued_turns = 0_u8;
         loop {
-            // A pending operation belongs to this writer, not to an HTTP waiter.
-            // Give queued control/live work the next turn between bounded chunks.
+            // Live/control work is preferred, but continuous admission cannot starve
+            // an admitted replay or pinned fusion pass: at most two queued commands
+            // precede one bounded background turn. Shutdown instead closes and drains.
             let command = if shutdown.is_none()
                 && (self.replay_rules.is_some() || self.shell_producer.is_some())
             {
-                match rx.try_recv() {
-                    Ok(command) => Some(command),
-                    Err(mpsc::error::TryRecvError::Disconnected) => None,
-                    Err(mpsc::error::TryRecvError::Empty) => {
-                        // Alternate bounded background owners as well as servicing
-                        // queued source/control commands before either one.
-                        if replay_turn && self.replay_rules.is_some() {
-                            replay_turn = false;
-                            if let Some(request) = self.next_replay().await? {
-                                self.replay(ReplayCommand::Start(request)).await?;
-                                continue;
-                            }
-                        }
-                        replay_turn = true;
-                        if !self.shell_failed {
-                            match self.shell_step().await {
-                                Ok(true) => continue,
-                                Ok(false) => {}
-                                Err(error) => {
-                                    // Only static validation reasons are safe to publish;
-                                    // database diagnostics may contain captured values.
-                                    let reason = match error {
-                                        Error::Invalid(reason) => format!(
-                                            "shell recomputation unavailable: {reason}; dirty work retained"
-                                        ),
-                                        _ => "shell recomputation unavailable; dirty work retained"
-                                            .into(),
-                                    };
-                                    self.shell_failed = true;
-                                    self.shell_work = None;
-                                    sqlx::query(
-                                        "UPDATE derivation.shell_progress SET failure=$1 WHERE one",
-                                    )
-                                    .bind(reason)
-                                    .execute(&mut self.connection)
-                                    .await?;
-                                }
-                            }
-                        }
-                        if self.replay_rules.is_some()
-                            && let Some(request) = self.next_replay().await?
-                        {
-                            self.replay(ReplayCommand::Start(request)).await?;
-                            continue;
-                        }
-                        rx.recv().await
+                if rx.is_closed() && rx.is_empty() {
+                    break;
+                }
+                let queued = if queued_turns < 2 {
+                    match rx.try_recv() {
+                        Ok(command) => Some(command),
+                        Err(mpsc::error::TryRecvError::Disconnected) => break,
+                        Err(mpsc::error::TryRecvError::Empty) => None,
                     }
+                } else {
+                    None
+                };
+                if queued.is_some() {
+                    queued
+                } else {
+                    queued_turns = 0;
+                    if self.background_step(&mut replay_turn, rx.len()).await? {
+                        continue;
+                    }
+                    rx.recv().await
                 }
             } else {
                 rx.recv().await
             };
             let Some(command) = command else { break };
+            queued_turns = queued_turns.saturating_add(1).min(2);
             match command {
                 Command::ShellEnable(reply) => {
                     let result = self.shell_enable().await;
@@ -629,6 +605,51 @@ impl WriterPool {
             if reply.send(()).is_err() { /* requester gone */ }
         }
         Ok(())
+    }
+
+    async fn background_step(
+        &mut self,
+        replay_turn: &mut bool,
+        queued_commands: usize,
+    ) -> Result<bool> {
+        // Keep replay and shell ownership alternating when both have runnable work.
+        if *replay_turn && self.replay_rules.is_some() {
+            *replay_turn = false;
+            if let Some(request) = self.next_replay().await? {
+                self.replay(ReplayCommand::Start(request)).await?;
+                return Ok(true);
+            }
+        }
+        *replay_turn = true;
+        if !self.shell_failed {
+            match self.shell_step(queued_commands).await {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(error) => {
+                    // Only static validation reasons are safe to publish;
+                    // database diagnostics may contain captured values.
+                    let reason = match error {
+                        Error::Invalid(reason) => format!(
+                            "shell recomputation unavailable: {reason}; dirty work retained"
+                        ),
+                        _ => "shell recomputation unavailable; dirty work retained".into(),
+                    };
+                    self.shell_failed = true;
+                    self.shell_work = None;
+                    sqlx::query("UPDATE derivation.shell_progress SET failure=$1 WHERE one")
+                        .bind(reason)
+                        .execute(&mut self.connection)
+                        .await?;
+                }
+            }
+        }
+        if self.replay_rules.is_some()
+            && let Some(request) = self.next_replay().await?
+        {
+            self.replay(ReplayCommand::Start(request)).await?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     async fn recover_blobs(&mut self) -> Result<()> {

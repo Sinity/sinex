@@ -37,6 +37,7 @@ PLANNED=[
 
 def planned(focus):
     if focus=='source-codec':return [PLANNED[0],PLANNED[8]]
+    if focus=='maintenance':return [PLANNED[0],'independent maintenance source setup',PLANNED[7],PLANNED[11],PLANNED[12],PLANNED[8],PLANNED[9]]
     return [PLANNED[0],'independent changed-seam source setup',PLANNED[11],PLANNED[12],PLANNED[8]] if focus else PLANNED
 
 
@@ -401,6 +402,14 @@ poll_interval_ms={poll}
         launch('component-removal');acquired();settled();controls['hours']['expected'].remove(['a40']);after=check_control('hours');assert len(after)==count-1
         (report/'actual-hours-removal.json').write_text(json.dumps({'before':before,'after':after,'independent_expected':controls['hours']['expected']},indent=2)+'\n')
     if not focus:scenario(PLANNED[6],component)
+    if focus=='maintenance':
+        def maintenance_setup():
+            rows=[('hours-a90' if n==90 else f'maintenance-{n}',20_000_000_000_000+n*1_000_000_000,1,0,f'echo maintenance-{n}','/work/harbor','maintenance-session','fixture-host',None) for n in range(130)]
+            with sqlite3.connect(source) as con:con.executemany('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',rows)
+            launch('maintenance-earlier-material');acquired();settled()
+            schema_ids=sql("SELECT jsonb_agg(DISTINCT payload_schema_id ORDER BY payload_schema_id) FROM core.live_events WHERE event_type='command.canonical'");assert schema_ids==[5]
+            (report/'independent-maintenance-inputs.json').write_text(json.dumps({'earlier_rows':rows,'expected_new_canonical_schema_ids':[5]},indent=2)+'\n')
+        scenario('independent maintenance source setup',maintenance_setup)
     def fairness():
         nonlocal daemon
         stop(daemon)
@@ -413,6 +422,7 @@ poll_interval_ms={poll}
             conn,_=listener.accept();conn.settimeout(15)
             with conn:
                 notice=json.loads(conn.makefile('r').readline());basis=notice['evidence']['basis'];assert notice['pid']==daemon.pid
+                assert notice['evidence']['queued_background_turns']>0,notice
                 with sqlite3.connect(source) as con:con.execute('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',('fair-later',901_000_000_000_000,1,0,'echo fair-later','/work/harbor','fair-session','fixture-host',None))
                 # New source read can enqueue while writer is parked. Release it;
                 # bounded turns allow the queued admission before old pass ends.
@@ -433,9 +443,13 @@ poll_interval_ms={poll}
         assert audit['new_seed']>basis and audit['dirty']==0 and audit['progress']['last_evaluated']>=audit['new_seed']
         # Stable reconstruction on compatible restart preserves settled IDs.
         before=sql("SELECT jsonb_agg(id ORDER BY id) FROM core.live_events WHERE event_type='command.canonical'")
+        running=sql("SELECT jsonb_agg(id ORDER BY id) FROM core.runs WHERE status='running'");assert running
+        stop(daemon)
+        shutdown=sql("SELECT jsonb_build_object('runs',(SELECT jsonb_agg(jsonb_build_object('id',id,'status',status,'ended',ended_at IS NOT NULL) ORDER BY id) FROM core.runs WHERE id IN ("+','.join("'"+rid+"'" for rid in running)+")), 'open_materials',(SELECT count(*) FROM raw.source_material_registry WHERE status='capturing'))")
+        assert all(r['status']=='completed' and r['ended'] for r in shutdown['runs']) and shutdown['open_materials']==0,shutdown
         launch('fair-restart',False);settled();after=sql("SELECT jsonb_agg(id ORDER BY id) FROM core.live_events WHERE event_type='command.canonical'");assert before==after
-        (report/'actual-fair-frontier.json').write_text(json.dumps({'boundary':notice,'audit':audit,'during_old_pass':during,'atomic_seed_and_old_pass':atomic,'stable_ids':before,'scope':'bounded whole-input pass; no corpus-performance claim'},indent=2)+'\n')
-    if not focus:scenario(PLANNED[7],fairness)
+        (report/'actual-fair-frontier.json').write_text(json.dumps({'boundary':notice,'audit':audit,'during_old_pass':during,'atomic_seed_and_old_pass':atomic,'stable_ids':before,'clean_shutdown':shutdown,'scope':'at most two queued commands before one bounded background turn; replay/shell alternate; no full three-channel or corpus-performance claim'},indent=2)+'\n')
+    if not focus or focus=='maintenance':scenario(PLANNED[7],fairness)
     def pending_head_race():
         nonlocal daemon
         raw_before=query(raw_a)['rows'];original=next(r for r in raw_before if r['payload']['native_id']=='hours-a90')
@@ -622,5 +636,5 @@ created_by="operator"
         restored=cli('replay',f'materials where id = {material}','--action-id',str(uuid.uuid4()),op=True,expected=0);assert restored['admitted']==2
         settled();answer=query('commands');assert answer['total']==3 and all(len(r['parents'])==1 for r in answer['rows']),answer
         (report/'actual-privacy-basis.json').write_text(json.dumps({'lossy_atuin':q,'blocked_status':blocked,'unavailable_query':unavailable,'retained_replay':restored,'recovered':answer},indent=2)+'\n')
-    if not focus:scenario(PLANNED[9],privacy)
+    if not focus or focus=='maintenance':scenario(PLANNED[9],privacy)
     stop(daemon)
