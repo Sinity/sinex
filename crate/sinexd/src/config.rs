@@ -108,6 +108,9 @@ impl Config {
         if !self.projects.is_empty() && self.read_model_connection_file.is_none() {
             return Err("projects require indexed retrieval configuration".into());
         }
+        if !self.automata.is_empty() && self.read_model_connection_file.is_none() {
+            return Err("session requires indexed retrieval configuration".into());
+        }
         let address: SocketAddr = self
             .listen
             .parse()
@@ -128,9 +131,9 @@ impl Config {
                 .collect::<std::collections::HashSet<_>>()
                 .len()
                 != self.sources.len()
-            || !self.automata.is_empty()
+            || !(self.automata.is_empty() || self.automata == ["session"])
         {
-            return Err("only Atuin, append-only extended zsh and the shell fusion interpretation are implemented; general automata configuration is unavailable".into());
+            return Err("only Atuin, append-only extended zsh and the shell fusion interpretation are implemented; only the session automaton is additionally supported".into());
         }
         if self.sources.iter().any(|s| s == sinex_store::ATUIN_SOURCE) != self.atuin.is_some() {
             return Err("Atuin source enablement and [atuin] configuration must agree".into());

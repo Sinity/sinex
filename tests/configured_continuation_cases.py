@@ -185,7 +185,7 @@ poll_interval_ms = 1000
             'clientInfo':{'name':'configured-continuation', 'version':'1'}})
         mcp.stdin.write(json.dumps({'jsonrpc':'2.0', 'method':'notifications/initialized'})+'\n'); mcp.stdin.flush()
         tools = mcp_call('tools/list', {})['result']['tools']
-        assert {t['name'] for t in tools} == {'sinex_search', 'sinex_query', 'sinex_show',
+        assert {t['name'] for t in tools} == {'sinex_search', 'sinex_query', 'sinex_recall', 'sinex_show',
             'sinex_trace', 'sinex_sources', 'sinex_status'}
         save('discovered-tools.json', tools)
 

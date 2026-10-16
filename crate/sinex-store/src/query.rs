@@ -8,6 +8,10 @@ use uuid::Uuid;
 
 pub(crate) const EVENT_VIEW: &str = "jsonb_build_object('id',e.id,'source',e.source,'host',e.host,'payload',e.payload,'parents',e.source_event_ids,'run',e.run_id,'operation',e.created_by_operation,'store','activity','time_suspect',e.time_suspect,'time_until',e.ts_orig_until,'written_by',e.written_by,'kind',e.event_type,'when',CASE WHEN e.ts_orig IS NULL THEN NULL ELSE to_char(e.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(e.ts_orig_tiebreak,0)::text,3,'0') || 'Z' END,'seen',to_char(e.ts_coided AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'written',to_char(e.ts_persisted AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'time_quality',e.ts_quality,'time_clock',e.ts_clock,'time_precision',e.ts_precision,'origin',CASE WHEN e.source_material_id IS NULL THEN 'derived' ELSE 'material' END,'material',e.source_material_id,'anchor',e.anchor_byte)";
 
+// The selected derived chain is session -> canonical -> retained observation.
+// Both levels are current eligibility fences during bounded replacement.
+const CURRENT_PARENTS: &str = "NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) parent(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events p WHERE p.id=parent.id AND p.record_state='present' AND NOT EXISTS(SELECT 1 FROM unnest(p.source_event_ids) grand(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=grand.id AND raw.record_state='present'))))";
+
 #[derive(Debug, Clone)]
 pub struct QueryError(pub &'static str);
 #[derive(Debug)]
@@ -328,6 +332,10 @@ impl ReadPool {
                 .map_err(|_| Error::Invalid("cursor expiry encoding failed"))?,
         };
         let seq = current;
+        let session_scope = !filters.iter().any(|f| {
+            (f.field == "kind" && f.value.as_str() != Some("activity.session.boundary"))
+                || (f.field == "source" && f.value.as_str() != Some("session"))
+        });
         let canonical_scope = !filters.iter().any(|f| {
             (f.field == "kind" && f.value.as_str() != Some("command.canonical"))
                 || (f.field == "source" && f.value.as_str() != Some("fusion.shell-command"))
@@ -336,7 +344,9 @@ impl ReadPool {
             "WITH matching AS (SELECT {EVENT_VIEW} AS event FROM core.events e WHERE e.record_state='present' AND e.commit_seq<="
         ));
         q.push_bind(seq).push(" AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=").push_bind(seq).push(")");
-        q.push(" AND (e.event_type<>'command.canonical' OR NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) parent(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=parent.id AND raw.record_state='present')))");
+        q.push(" AND (e.event_type NOT IN ('command.canonical','activity.session.boundary') OR ")
+            .push(CURRENT_PARENTS)
+            .push(")");
         for f in filters {
             q.push(" AND ");
             match f.field {
@@ -453,26 +463,44 @@ impl ReadPool {
         } else {
             json!({"enabled":false,"state":"schema_changes_pending","reason":"installed schema supports raw events only"})
         };
-        let complete = source_status.iter().all(|s| {
-            s["status"] == "completed"
-                && (s["source"] != crate::ZSH_SOURCE
-                    || s["retained_record_errors"].as_i64() == Some(0))
-        }) && (!canonical_scope
-            || fusion["enabled"] != true
-            || (fusion["current_now_settled"] == true
+        let installed_sessions: bool =
+            sqlx::query_scalar("SELECT to_regclass('derivation.session_progress') IS NOT NULL")
+                .fetch_one(&mut *tx)
+                .await?;
+        let sessions = if installed_sessions {
+            sqlx::query_scalar::<_,Value>("SELECT to_jsonb(p)||jsonb_build_object('enabled',EXISTS(SELECT 1 FROM core.producer_versions v JOIN core.runs r ON r.id=v.run_id WHERE v.name='session' AND r.status='running'),'pending_keys',(SELECT count(*) FROM derivation.session_dirty)) FROM derivation.session_progress p WHERE one").fetch_one(&mut *tx).await?
+        } else {
+            json!({"enabled":false,"state":"schema_changes_pending"})
+        };
+        let complete = (!session_scope
+            || sessions["enabled"] != true
+            || (sessions["pending_keys"] == 0
+                && fusion["current_now_settled"] == true
                 && fusion["phase"] == "settled"
-                && fusion["failure"].is_null()));
+                && fusion["failure"].is_null()
+                && sessions["phase"] == "settled"
+                && sessions["failure"].is_null()))
+            && source_status.iter().all(|s| {
+                s["status"] == "completed"
+                    && (s["source"] != crate::ZSH_SOURCE
+                        || s["retained_record_errors"].as_i64() == Some(0))
+            })
+            && (!canonical_scope
+                || fusion["enabled"] != true
+                || (fusion["current_now_settled"] == true
+                    && fusion["phase"] == "settled"
+                    && fusion["failure"].is_null()));
         tx.commit().await?;
         // Only a fully committed read may return its connection to the pool.
         drop(lease.0.take());
         Ok(
-            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"fusion":fusion,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Raw live activity events matching {text}, ordered by original time then interpretation ID; source coverage is unknown; canonical rows are policy-selected groups with their own parent evidence."),"excluded":{}}),
+            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"sessions":sessions,"fusion":fusion,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Raw live activity events matching {text}, ordered by original time then interpretation ID; source coverage is unknown; canonical rows are policy-selected groups with their own parent evidence."),"excluded":{}}),
         )
     }
     pub async fn show(&self, id: &str) -> Result<Option<Value>> {
         let id = Uuid::parse_str(id).map_err(|_| Error::Invalid("invalid event ID"))?;
         let mut lease = self.read_lease().await?;
-        let row:Option<Value>=sqlx::query_scalar(&format!("SELECT {EVENT_VIEW} || jsonb_build_object('current_eligible',e.record_state='present' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id) AND NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) parent(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=parent.id AND raw.record_state='present')),'kind',e.event_type,'archive',(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id),'source_state',CASE WHEN e.record_state='removed' THEN 'removed at source' ELSE 'present' END) FROM core.events e WHERE e.id=$1")).bind(id).fetch_optional(lease.connection()).await?;
+        let row:Option<Value>=sqlx::query_scalar(&format!("SELECT {EVENT_VIEW} || jsonb_build_object('current_eligible',e.record_state='present' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id) AND {CURRENT_PARENTS},'kind',e.event_type,'archive',(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id),'source_state',CASE WHEN e.record_state='removed' THEN 'removed at source' ELSE 'present' END) FROM core.events e WHERE e.id=$1")).bind(id).fetch_optional(lease.connection()).await?;
         lease.finish();
         Ok(row)
     }
@@ -490,7 +518,7 @@ impl ReadPool {
             let mut evidence = Vec::new();
             for parent in parents {
                 evidence.push(
-                    self.trace_material(parent, bytes_requested)
+                    Box::pin(self.trace(&parent.to_string(), bytes_requested))
                         .await?
                         .ok_or(Error::Invalid("canonical parent evidence unavailable"))?,
                 );
@@ -500,7 +528,7 @@ impl ReadPool {
                 .await?
                 .ok_or(Error::Invalid("canonical metadata unavailable"))?;
             return Ok(Some(
-                json!({"event":id,"representation":"canonical_shell_group","parents":evidence,"archive":current["archive"],"current_eligible":current["current_eligible"]}),
+                json!({"event":id,"representation":if current["kind"]=="activity.session.boundary"{"shell_session"}else{"canonical_shell_group"},"parents":evidence,"archive":current["archive"],"current_eligible":current["current_eligible"]}),
             ));
         }
         self.trace_material(id, bytes_requested).await

@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--reversible-exclusion",action="store_true",help="qualify packaged exact occurrence exclusion with an explicit immutable package pin")
 parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion, fusion or configured continuation; never build or fall back")
+parser.add_argument("--sessions",action="store_true",help="qualify selected logical-day shell reconciliation and project recall")
+parser.add_argument("--session-predecessor-pin",type=Path,help="exact immutable existing stage-2 package pin for guarded session upgrade")
 parser.add_argument("--configured-continuation",action="store_true",help="measure finite ongoing Atuin acquisition and same-state recovery through pinned ordinary clients")
 parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
 parser.add_argument("--fusion",action="store_true",help="qualify selected Atuin/zsh fusion lifecycle using a pinned independent specification")
@@ -112,6 +114,11 @@ if OPTIONS.fusion:
 if OPTIONS.configured_continuation:
     import configured_continuation_cases
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+configured_continuation_cases.PLANNED
+if OPTIONS.sessions:
+    if not OPTIONS.session_predecessor_pin or OPTIONS.packaged or any((OPTIONS.indexed,OPTIONS.fusion,OPTIONS.configured_continuation,OPTIONS.atuin,OPTIONS.retained_replay)):
+        parser.error("sessions requires --session-predecessor-pin FILE and its own development selector")
+    import session_cases
+    PLANNED=["cold query-free admin build","canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","checked runtime build and pure contracts"]+session_cases.PLANNED
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")
 print(json.dumps({"report":str(REPORT/"result.json"),"owned_state":str(WORK)}),flush=True)
@@ -271,7 +278,9 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.configured_continuation:
+    if OPTIONS.sessions:
+        session_cases.exercise(globals())
+    elif OPTIONS.configured_continuation:
         configured_continuation_cases.exercise(globals())
     elif OPTIONS.fusion:
         fusion_cases.exercise(globals())

@@ -7,8 +7,10 @@ mod exclusion;
 mod projection;
 mod qualification;
 mod query;
+mod recall;
 mod replay;
 mod search;
+mod session;
 mod shell;
 pub use atuin::mask as present;
 pub use atuin::{
@@ -18,6 +20,7 @@ pub use atuin::{
 pub use projection::Projection;
 pub use qualification::QualificationBoundary;
 pub use query::{validate_installed_raw_query, validate_query};
+pub use recall::{is_recall, validate_recall};
 pub use search::indexed as is_indexed_query;
 mod schema;
 pub use schema::{
@@ -239,6 +242,14 @@ impl Admission {
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
     }
+    pub async fn enable_sessions(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::SessionEnable(tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
     pub fn is_available(&self) -> bool {
         !self.sender.is_closed()
     }
@@ -264,6 +275,7 @@ enum Command {
         oneshot::Sender<Result<serde_json::Value>>,
     ),
     ShellEnable(oneshot::Sender<Result<()>>),
+    SessionEnable(oneshot::Sender<Result<()>>),
     ReplayProfile(Option<Vec<PrivacyRule>>, oneshot::Sender<()>),
     Replay(ReplayCommand, oneshot::Sender<Result<serde_json::Value>>),
     Admit(MaterialEvent, oneshot::Sender<Result<Receipt>>),
@@ -285,6 +297,9 @@ struct WriterPool {
     shell_producer: Option<Uuid>,
     shell_work: Option<shell::Work>,
     shell_failed: bool,
+    session_producer: Option<Uuid>,
+    session_work: Option<session::Work>,
+    session_failed: bool,
     qualification: Option<QualificationBoundary>,
 }
 
@@ -400,6 +415,9 @@ impl Store {
             shell_producer: None,
             shell_work: None,
             shell_failed: false,
+            session_producer: None,
+            session_work: None,
+            session_failed: false,
             qualification,
         };
         owner.recover_blobs().await?;
@@ -572,6 +590,10 @@ impl WriterPool {
             let Some(command) = command else { break };
             queued_turns = queued_turns.saturating_add(1).min(2);
             match command {
+                Command::SessionEnable(reply) => {
+                    let result = self.session_enable().await;
+                    let _ = reply.send(result);
+                }
                 Command::ShellEnable(reply) => {
                     let result = self.shell_enable().await;
                     let _ = reply.send(result);
@@ -593,6 +615,7 @@ impl WriterPool {
                             || outcome["removed"].as_i64().unwrap_or(0) > 0
                     }) {
                         self.shell_failed = false;
+                        self.session_failed = false;
                     }
                     let _ = reply.send(result);
                 }
@@ -603,16 +626,19 @@ impl WriterPool {
                             || outcome["removed"].as_i64().unwrap_or(0) > 0
                     }) {
                         self.shell_failed = false;
+                        self.session_failed = false;
                     }
                     let _ = reply.send(result);
                 }
                 Command::Exclude(action, request, reply) => {
                     self.shell_failed = false;
+                    self.session_failed = false;
                     let result = self.exclude(action, request).await;
                     let _ = reply.send(result);
                 }
                 Command::Replay(command, reply) => {
                     self.shell_failed = false;
+                    self.session_failed = false;
                     let result = self.replay(command).await;
                     let _ = reply.send(result);
                 }
@@ -647,6 +673,38 @@ impl WriterPool {
             }
         }
         *replay_turn = true;
+        if !self.session_failed && self.session_producer.is_some() {
+            sqlx::query("SET statement_timeout='2000ms'")
+                .execute(&mut self.connection)
+                .await?;
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(if self.qualification.is_some() { 125 } else { 3 }),
+                self.session_step(),
+            )
+            .await
+            .unwrap_or(Err(Error::Invalid(
+                "session computation turn exceeded 3 seconds; dirty key retained",
+            )));
+            sqlx::query("SET statement_timeout=0")
+                .execute(&mut self.connection)
+                .await?;
+            match result {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(error) => {
+                    let reason = match error {
+                        Error::Invalid(reason) => reason,
+                        _ => "session recomputation unavailable; dirty keys retained",
+                    };
+                    self.session_failed = true;
+                    self.session_work = None;
+                    sqlx::query("UPDATE derivation.session_progress SET failure=$1 WHERE one")
+                        .bind(reason)
+                        .execute(&mut self.connection)
+                        .await?;
+                }
+            }
+        }
         if !self.shell_failed {
             match self.shell_step(queued_commands).await {
                 Ok(true) => return Ok(true),

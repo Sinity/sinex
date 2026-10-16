@@ -415,7 +415,7 @@ impl ReadPool {
     }
     pub async fn projection_status(&self) -> Result<Value> {
         let mut lease = self.read_lease().await?;
-        let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p) || jsonb_build_object('current_commit_seq',(SELECT seq FROM core.commit_counter WHERE one),'pending_canonical',(SELECT count(*) FROM derivation.shell_dirty),'fusion',(SELECT to_jsonb(f) FROM derivation.shell_progress f WHERE one)) FROM derivation.read_model_position p WHERE name='shell-search'").fetch_optional(lease.connection()).await?;
+        let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p) || jsonb_build_object('current_commit_seq',(SELECT seq FROM core.commit_counter WHERE one),'pending_sessions',(SELECT count(*) FROM derivation.session_dirty),'sessions',(SELECT to_jsonb(s) FROM derivation.session_progress s WHERE one),'pending_canonical',(SELECT count(*) FROM derivation.shell_dirty),'fusion',(SELECT to_jsonb(f) FROM derivation.shell_progress f WHERE one)) FROM derivation.read_model_position p WHERE name='shell-search'").fetch_optional(lease.connection()).await?;
         lease.finish();
         Ok(row.unwrap_or(json!({"state":"not_configured"})))
     }

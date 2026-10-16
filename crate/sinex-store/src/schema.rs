@@ -652,6 +652,27 @@ const TABLES: &[Definition] = &[
     },
     Definition {
         schema: "derivation",
+        name: "session_dirty",
+        columns: &[col!("day", "text"), col!("dirty_seq", "bigint")],
+        constraints: &[("session_dirty_pkey", "PRIMARY KEY(day)")],
+    },
+    Definition {
+        schema: "derivation",
+        name: "session_progress",
+        columns: &[
+            col!("one", "boolean"),
+            col!("basis","bigint",default "0"),
+            col!("day", "text", null),
+            col!("phase","text",default "'settled'::text"),
+            col!("failure", "text", null),
+        ],
+        constraints: &[
+            ("session_progress_pkey", "PRIMARY KEY(one)"),
+            ("session_progress_one", "CHECK(one)"),
+        ],
+    },
+    Definition {
+        schema: "derivation",
         name: "read_model_position",
         columns: &[
             col!("name", "text"),
@@ -735,7 +756,9 @@ fn installed_tables(stage: usize) -> Vec<Definition> {
     TABLES
         .iter()
         .filter(|d| {
-            !(stage == 0 && d.name == "applied_changes" || stage < 2 && d.name == "shell_progress")
+            !(stage == 0 && d.name == "applied_changes"
+                || stage < 2 && d.name == "shell_progress"
+                || stage < 3 && d.name.starts_with("session_"))
         })
         .map(|d| Definition {
             schema: d.schema,
@@ -750,7 +773,7 @@ fn installed_tables(stage: usize) -> Vec<Definition> {
         .collect()
 }
 fn declarations() -> Result<Vec<String>> {
-    declarations_at(2)
+    declarations_at(3)
 }
 fn declarations_at(stage: usize) -> Result<Vec<String>> {
     installed_tables(stage)
@@ -806,7 +829,7 @@ async fn configure_events(conn: &mut PgConnection) -> Result<()> {
 }
 
 fn fingerprint() -> Result<String> {
-    fingerprint_at(2)
+    fingerprint_at(3)
 }
 fn fingerprint_at(stage: usize) -> Result<String> {
     Ok(blake3::hash(
@@ -851,6 +874,10 @@ pub fn schema_changes() -> Vec<SchemaChange> {
         SchemaChange {
             number: 2,
             description: "retain shell dirty frontier and initialize grouping progress",
+        },
+        SchemaChange {
+            number: 3,
+            description: "register shell sessions and durable logical-day reconciliation",
         },
     ]
 }
@@ -900,10 +927,14 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(3,'command.canonical','shell-command-v1-single-source',$1)").bind(predecessor_shell_payload()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(5,'command.canonical','shell-command-v1-atuin-zsh',$1)").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(4,'command.imported','zsh-extended-v1',$1)").bind(crate::zsh::payload_schema()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed'),(3,'command.canonical'),(4,'command.imported')")
+        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(6,'activity.session.boundary','shell-session-v1',$1)").bind(crate::session::payload_schema()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed'),(3,'command.canonical'),(4,'command.imported'),(5,'activity.session.boundary')")
             .execute(&mut *tx)
             .await?;
         sqlx::query("INSERT INTO core.commit_counter (one,seq) VALUES (true,0)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO derivation.session_progress(one) VALUES(true)")
             .execute(&mut *tx)
             .await?;
         sqlx::query("INSERT INTO derivation.shell_progress(one) VALUES(true)")
@@ -929,7 +960,7 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         .execute(&mut *tx)
         .await?;
         sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sinex_read_model') THEN CREATE ROLE sinex_read_model LOGIN; END IF; END $$; GRANT USAGE ON SCHEMA core,raw,audit,sinex_schemas,derivation,reflection TO sinex_read_model; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,audit,sinex_schemas,derivation,reflection TO sinex_read_model; GRANT INSERT,UPDATE,DELETE ON core.search_text,core.event_project,derivation.read_model_position TO sinex_read_model").execute(&mut *tx).await?;
-        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT INSERT ON core.deleted_occurrences,core.producer_versions,derivation.shell_dirty,core.operation_effects,core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON core.operations_log,raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON core.deleted_occurrences,core.live_equivalence,derivation.shell_dirty,core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates,derivation.shell_dirty,derivation.shell_progress TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
+        sqlx::raw_sql("GRANT USAGE ON SCHEMA core,raw,sinex_schemas TO sinex_writer,sinex_reader; GRANT USAGE ON SCHEMA reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT SELECT ON ALL TABLES IN SCHEMA core,raw,sinex_schemas,reflection,audit,derivation TO sinex_writer,sinex_reader; GRANT INSERT ON core.deleted_occurrences,core.producer_versions,derivation.shell_dirty,derivation.session_dirty,core.operation_effects,core.events,reflection.events,core.live_coordinates,core.live_equivalence,audit.archived,core.commit_log,raw.source_material_registry,core.manifests,raw.inputs,raw.record_failures TO sinex_writer; GRANT INSERT,UPDATE ON core.operations_log,raw.source_cursors,core.blobs,core.runs,raw.observations TO sinex_writer; GRANT DELETE ON core.deleted_occurrences,core.live_equivalence,derivation.shell_dirty,derivation.session_dirty,core.live_coordinates TO sinex_writer; GRANT UPDATE ON core.commit_counter,core.live_equivalence,core.live_coordinates,derivation.shell_dirty,derivation.shell_progress,derivation.session_dirty,derivation.session_progress TO sinex_writer; GRANT UPDATE(parsed_event_count,blob_id,status,total_bytes,durable_bytes) ON raw.source_material_registry TO sinex_writer").execute(&mut *tx).await?;
     }
     let mut status = inspect(&mut tx).await?;
     tx.commit().await?;
@@ -1043,7 +1074,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             .fetch_one(&mut *conn)
             .await?;
     let mut stage = None;
-    for candidate in 0..=2 {
+    for candidate in 0..=3 {
         if stored == fingerprint_at(candidate)? {
             stage = Some(candidate);
         }
@@ -1202,7 +1233,15 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
         sqlx::query_scalar("SELECT count(*) FROM sinex_schemas.payload_schemas")
             .fetch_one(&mut *conn)
             .await?;
-    if payload_count != if stage == 0 { 2 } else { 4 } {
+    if payload_count
+        != if stage == 0 {
+            2
+        } else if stage < 3 {
+            4
+        } else {
+            5
+        }
+    {
         return Err(Error::Schema(
             "payload schema catalog contains an unsupported registration".into(),
         ));
@@ -1219,10 +1258,24 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
     if stage > 0 {
         expected_types.push((4, "command.imported".to_owned()));
     }
+    if stage >= 3 {
+        expected_types.push((5, "activity.session.boundary".to_owned()));
+        let schema:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=6 AND event_type='activity.session.boundary' AND version='shell-session-v1'").fetch_optional(&mut *conn).await?;
+        if schema.as_ref() != Some(&crate::session::payload_schema()) {
+            return Err(Error::Schema("session payload registration differs".into()));
+        }
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM derivation.session_progress WHERE one")
+                .fetch_one(&mut *conn)
+                .await?;
+        if count != 1 {
+            return Err(Error::Schema("session progress absent".into()));
+        }
+    }
     if event_types != expected_types {
         return Err(Error::Schema("registered event types differ".into()));
     }
-    if stage == 2 {
+    if stage >= 2 {
         let singleton: i64 =
             sqlx::query_scalar("SELECT count(*) FROM derivation.shell_progress WHERE one")
                 .fetch_one(&mut *conn)
@@ -1269,8 +1322,9 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 | "raw.record_failures"
                 | "core.producer_versions"
                 | "derivation.shell_dirty"
+                | "derivation.session_dirty"
         );
-        let writer_update = (stage == 2 || table != "derivation.shell_dirty")
+        let writer_update = (stage >= 2 || table != "derivation.shell_dirty")
             && matches!(
                 table.as_str(),
                 "core.commit_counter"
@@ -1283,8 +1337,10 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                     | "core.live_coordinates"
                     | "derivation.shell_dirty"
                     | "derivation.shell_progress"
+                    | "derivation.session_dirty"
+                    | "derivation.session_progress"
             );
-        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1 IN ('core.deleted_occurrences','core.live_equivalence','core.live_coordinates','derivation.shell_dirty')) AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
+        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1 IN ('core.deleted_occurrences','core.live_equivalence','core.live_coordinates','derivation.shell_dirty','derivation.session_dirty')) AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
         if !good {
             return Err(Error::Schema(format!("writer grants differ for {table}")));
         }
@@ -1510,13 +1566,33 @@ async fn apply_change_entry(
                 });
             }
             sqlx::raw_sql("ALTER TABLE derivation.shell_dirty ADD COLUMN dirty_seq bigint; UPDATE derivation.shell_dirty SET dirty_seq=(SELECT seq FROM core.commit_counter WHERE one); ALTER TABLE derivation.shell_dirty ALTER COLUMN dirty_seq SET NOT NULL").execute(&mut *conn).await?;
-            let ddl = declarations()?;
-            let progress = TABLES
+            let ddl = declarations_at(2)?;
+            let progress = installed_tables(2)
                 .iter()
                 .position(|d| d.name == "shell_progress")
                 .unwrap();
             conn.execute(ddl[progress].as_str()).await?;
             sqlx::raw_sql("INSERT INTO derivation.shell_progress(one) VALUES(true); GRANT SELECT ON derivation.shell_progress TO sinex_reader,sinex_writer,sinex_read_model; GRANT UPDATE ON derivation.shell_dirty,derivation.shell_progress TO sinex_writer; INSERT INTO derivation.shell_dirty(parent_id,dirty_seq) SELECT e.id,c.seq FROM core.live_events e CROSS JOIN core.commit_counter c WHERE c.one AND e.source='terminal.atuin-history' AND e.event_type='command.executed' AND e.record_state='present' ON CONFLICT(parent_id) DO UPDATE SET dirty_seq=greatest(shell_dirty.dirty_seq,EXCLUDED.dirty_seq)").execute(&mut *conn).await?;
+        }
+        3 => {
+            let exists: bool = sqlx::query_scalar("SELECT to_regclass('core.events') IS NOT NULL")
+                .fetch_one(&mut *conn)
+                .await?;
+            if !exists {
+                return Ok(SchemaChangeCheck {
+                    number: entry.number,
+                    outcome: "old_objects_absent",
+                });
+            }
+            let ddl = declarations_at(3)?;
+            for (i, d) in installed_tables(3).iter().enumerate() {
+                if d.name.starts_with("session_") {
+                    conn.execute(ddl[i].as_str()).await?;
+                }
+            }
+            sqlx::raw_sql("INSERT INTO derivation.session_progress(one) VALUES(true); INSERT INTO core.event_types(id,name) VALUES(5,'activity.session.boundary'); GRANT SELECT ON derivation.session_dirty,derivation.session_progress TO sinex_reader,sinex_writer,sinex_read_model; GRANT INSERT,UPDATE,DELETE ON derivation.session_dirty TO sinex_writer; GRANT UPDATE ON derivation.session_progress TO sinex_writer").execute(&mut *conn).await?;
+            sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(6,'activity.session.boundary','shell-session-v1',$1)").bind(crate::session::payload_schema()).execute(&mut *conn).await?;
+            sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq) SELECT DISTINCT ((p.at AT TIME ZONE 'Europe/Warsaw')-interval '4 hours'+n*interval '1 day')::date::text,c.seq FROM core.live_events e CROSS JOIN core.commit_counter c CROSS JOIN LATERAL (VALUES(e.ts_orig),(e.ts_orig+greatest(coalesce((e.payload->>'duration_ns')::numeric,0),0)/1000000000*interval '1 second')) p(at) CROSS JOIN generate_series(-1,1) n WHERE c.one AND e.event_type='command.canonical' AND p.at IS NOT NULL ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq)").execute(&mut *conn).await?;
         }
         _ => return Err(Error::Schema("unknown schema change".into())),
     }

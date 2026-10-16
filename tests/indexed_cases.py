@@ -178,7 +178,7 @@ poll_interval_ms = {poll}
         nonlocal daemon
         stop(daemon);config.write_text(configuration(source=False));daemon=start(config,'stable-client-basis');settled()
         mcp_start('indexed-mcp')
-        listed=mcp_call('tools/list',{})['result']['tools'];assert {t['name'] for t in listed}=={'sinex_search','sinex_query','sinex_show','sinex_trace','sinex_sources','sinex_status'}
+        listed=mcp_call('tools/list',{})['result']['tools'];assert {t['name'] for t in listed}=={'sinex_search','sinex_query','sinex_recall','sinex_show','sinex_trace','sinex_sources','sinex_status'}
         api_answer=query('needle',20)
         shell_answer=cli('search','needle','--page','20')
         search_answer=api('search',{'query':'needle','page':20},name='api-indexed-search')['result']

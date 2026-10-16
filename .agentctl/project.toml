@@ -264,3 +264,12 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
 cache = "none"
+
+[operations.session_acceptance]
+description = "Selected shell sessions and project recall through real native clients, including guarded current-published-schema upgrade"
+exec = ["python3", "tests/foundation.py", "--sessions"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"

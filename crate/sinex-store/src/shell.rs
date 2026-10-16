@@ -345,6 +345,7 @@ impl WriterPool {
                     if !keep {
                         let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
                         sqlx::query("INSERT INTO audit.archived(id,archived_seq,reason) VALUES($1,$2,'supersede')").bind(id).bind(seq).execute(&mut *tx).await?;
+                        crate::session::dirty(&mut tx, id).await?;
                         sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id) VALUES($1,$2,1,0,3)").bind(seq).bind(id).execute(&mut *tx).await?;
                     }
                     work.cursor = Some(id);
@@ -526,6 +527,7 @@ impl WriterPool {
             let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
             let host = payload["hostname"].as_str().map(str::to_string);
             sqlx::query("INSERT INTO core.events(id,source,event_type,host,payload,ts_orig,ts_orig_tiebreak,ts_quality,time_suspect,ts_precision,ts_orig_until,ts_clock,commit_seq,record_hash,source_event_ids,producer_version_id,run_id,equivalence_key,payload_schema_id) SELECT $1,'fusion.shell-command','command.canonical',$2,$3,ts_orig,ts_orig_tiebreak,ts_quality,time_suspect,ts_precision,ts_orig_until,ts_clock,$4,$5,$6,$7,$8,$9,5 FROM core.events WHERE id=$10").bind(id).bind(host).bind(payload).bind(seq).bind(hash).bind(&parents).bind(self.shell_producer).bind(self.run_id).bind(key).bind(supplier).execute(&mut *tx).await?;
+            crate::session::dirty(&mut tx, id).await?;
             sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id) VALUES($1,$2,0,0,3)").bind(seq).bind(id).execute(&mut *tx).await?;
             id
         };

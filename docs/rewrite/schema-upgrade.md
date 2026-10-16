@@ -2,7 +2,7 @@
 
 The native schema owner recognizes the exact declarations published at
 `4b5bf06197ffb1d07d57794f37f7273b634e0efd`, the recorded intermediate
-state, and the current declarations. It refuses unrelated fingerprints,
+states, the current published stage-2 declarations and the new session declarations. It refuses unrelated fingerprints,
 changed definitions, missing objects, unsafe grants and change records that
 are not the exact ordered prefix. The protected definition receipt is checked
 against the live catalog before any change. No general migration framework or
@@ -87,3 +87,5 @@ shared-guard ordering, actual child dump connection, progress resume, fresh
 catalog equality and surviving pending-process status controls. Unchanged full
 writer and refusal qualification stays separate; this mode does not claim to
 repeat it.
+
+Entry 3 registers the [selected shell session](shell-sessions.md) contract and seeds durable logical-day dirty work from existing canonical endpoints. Its qualification uses the unchanged runtime of published `88a7a641de4517307a0e723e40ecac8ff50aa7d7`, with the original immutable package and the retained publication binding, rather than synthesizing a predecessor schema.
