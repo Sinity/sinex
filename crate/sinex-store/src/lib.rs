@@ -478,7 +478,7 @@ const BLOB_PRESENT: &str = "UPDATE core.blobs SET status='present' WHERE id=$1";
 const WRITING_BLOBS: &str = "SELECT id,blake3 FROM core.blobs WHERE status='writing' AND root=$1";
 const RUN_INTERRUPT: &str =
     "UPDATE core.runs SET status='interrupted',ended_at=now() WHERE status='running'";
-const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed','command.executed','command.canonical','command.imported']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
+const MANIFEST: &str = "INSERT INTO core.manifests (id,name,manifest_type,version,artifact_kind,artifact_digest,artifact_descriptor,emitted_event_types,consumed_event_types) SELECT COALESCE(MAX(id),0)+1,$1,'daemon',$2,'native_executable',$3,$4,ARRAY['synthetic.observed','command.executed','command.canonical','command.imported','activity.session.boundary']::text[],ARRAY[]::text[] FROM core.manifests RETURNING id";
 const RUN_START: &str = "INSERT INTO core.runs (id,manifest_id,service_name,host,status,effective_config_hash) VALUES ($1,$2,$3,$4,'running',$5)";
 const RUN_END: &str = "UPDATE core.runs SET status='completed',ended_at=now() WHERE id=$1";
 

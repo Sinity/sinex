@@ -42,7 +42,22 @@ impl ReadPool {
                 "recall last supports a single bounded assembly; no cursor; page must be 1..=100",
             ));
         }
-        match tokio::time::timeout(budget, self.recall_last(text, project, page, budget)).await {
+        match tokio::time::timeout(budget, async {
+            // The indexed owner uses this same bounded settling window. Normal
+            // collector commit/projection races need no manual client intervention;
+            // work still pending after the window remains explicitly unavailable.
+            let deadline=tokio::time::Instant::now()+budget;
+            let settle=tokio::time::Instant::now()+std::time::Duration::from_millis(500);
+            loop {
+                let remaining=deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero(){return Err(Error::Deadline);}
+                let result=self.recall_last(text,project.clone(),page,remaining).await;
+                if matches!(&result,Err(Error::ProjectionUnavailable(reason)) if *reason=="shell sessions or indexed projection pending; inspect status; no settled recall answer is available") && tokio::time::Instant::now()<settle {
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;continue;
+                }
+                break result;
+            }
+        }).await {
             Err(_) => Err(Error::Deadline),
             Ok(Err(Error::Database(sqlx::Error::Database(e))))
                 if e.code().as_deref() == Some("57014") =>
@@ -76,11 +91,17 @@ impl ReadPool {
         }
         let state=sqlx::query("SELECT generation,position,serving,failure FROM derivation.read_model_position WHERE name='shell-search'").fetch_optional(&mut *tx).await?.ok_or(Error::ProjectionUnavailable("indexed retrieval is not configured"))?;
         let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM derivation.session_dirty) OR EXISTS(SELECT 1 FROM derivation.shell_dirty) OR EXISTS(SELECT 1 FROM derivation.session_progress WHERE failure IS NOT NULL)").fetch_one(&mut *tx).await?;
-        if pending
-            || !state.try_get::<bool, _>("serving")?
-            || state.try_get::<Option<String>, _>("failure")?.is_some()
-            || state.try_get::<i64, _>("position")? != seq
-        {
+        if pending {
+            return Err(Error::ProjectionUnavailable(
+                "shell session reconciliation pending or failed; inspect status; no settled recall answer is available",
+            ));
+        }
+        if state.try_get::<Option<String>, _>("failure")?.is_some() {
+            return Err(Error::ProjectionUnavailable(
+                "indexed projection maintenance unavailable; inspect status",
+            ));
+        }
+        if !state.try_get::<bool, _>("serving")? || state.try_get::<i64, _>("position")? != seq {
             return Err(Error::ProjectionUnavailable(
                 "shell sessions or indexed projection pending; inspect status; no settled recall answer is available",
             ));

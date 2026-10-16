@@ -13,7 +13,7 @@ The input population is canonical commands, counted once with every exact
 canonical parent. Sessions cite those canonical event IDs; ordinary `show` and
 `trace` retain the path to original source coordinates. Their bounds determine
 the equivalence key. A changed bound or support set supersedes the old reading;
-it does not append a second settled live answer. The raw session events remain
+it does not append a second settled live answer. With the session reconciler configured, current raw session events are
 available through `query 'events where kind = activity.session.boundary'`.
 
 Use the ordinary configured endpoint and token:
@@ -83,3 +83,14 @@ observed pending publication, compatible restart and owned provider loss. Its
 private report retains exact inputs, command exits, citations, database/retained
 sizes, timings and interventions. Package publication, activation, live input,
 confirmed delivery/NATS, summaries, focus/AFK sources and full M1 remain separate.
+
+An explicit raw `kind = activity.session.boundary` or `source = session` query
+returns `partial` when the reconciler is disabled; an unavailable capability
+never becomes a complete empty session answer. Broad raw `events` reads list
+admitted interpretation rows and disclose session enablement/pending metadata.
+Included configured derived families must be settled for `complete: true`;
+retained `show`/`trace` remains available independently of enablement. Current
+session eligibility checks both canonical parents and retained grandparents.
+Ordinary recall briefly waits up to the indexed owner's existing 500ms settling
+window for transient collector/projection catch-up, within the request deadline;
+held or slower work still returns `partial`.

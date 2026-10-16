@@ -200,6 +200,13 @@ poll_interval_ms = 500
             b=next(x for x in before if x['id']==r['id']);assert all(r[k]==b[k] for k in ['payload','material','anchor'])
         save('upgrade-retention.json',dict(before=before,after=after,dump=str(dump.name)))
     scenario(PLANNED[0],upgrade)
+    disabled=start(config('sessions-disabled',False),'sessions-disabled');procs.append(disabled)
+    wait(disabled,lambda:api().get('result') and settled(False),'disabled session profile readiness')
+    absent=cli('query','events where kind = activity.session.boundary',expected=5);assert absent['kind']=='partial' and 'not configured' in absent['message']
+    absent_recall=cli('recall','last','--project','tide',expected=5);assert absent_recall['kind']=='partial'
+    observed=raw();assert len(observed)==len(facts)
+    save('disabled-session-family-refusal.json',dict(raw_session=absent,recall=absent_recall,raw_observations=observed,status=api()))
+    stop(disabled)
     control=socket.socket(socket.AF_UNIX);control.bind(str(work/'session-boundary.sock'));control.listen(1);control.settimeout(30)
     proc=start(config('sessions'),'sessions-initial','--qualification-boundary','session-replacement-committed','--qualification-socket',work/'session-boundary.sock');procs.append(proc)
     connection,_=control.accept();connection.settimeout(5);frame=json.loads(connection.makefile('rb').readline());assert frame['pid']==proc.pid and frame['evidence']['pending']

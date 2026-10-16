@@ -332,6 +332,10 @@ impl ReadPool {
                 .map_err(|_| Error::Invalid("cursor expiry encoding failed"))?,
         };
         let seq = current;
+        let explicit_session = filters.iter().any(|f| {
+            (f.field == "kind" && f.value.as_str() == Some("activity.session.boundary"))
+                || (f.field == "source" && f.value.as_str() == Some("session"))
+        });
         let session_scope = !filters.iter().any(|f| {
             (f.field == "kind" && f.value.as_str() != Some("activity.session.boundary"))
                 || (f.field == "source" && f.value.as_str() != Some("session"))
@@ -472,6 +476,11 @@ impl ReadPool {
         } else {
             json!({"enabled":false,"state":"schema_changes_pending"})
         };
+        if explicit_session && sessions["enabled"] != true {
+            return Err(Error::ProjectionUnavailable(
+                "shell session reconciliation is not configured; retained show/trace remains available",
+            ));
+        }
         let complete = (!session_scope
             || sessions["enabled"] != true
             || (sessions["pending_keys"] == 0
@@ -494,7 +503,7 @@ impl ReadPool {
         // Only a fully committed read may return its connection to the pool.
         drop(lease.0.take());
         Ok(
-            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"sessions":sessions,"fusion":fusion,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Raw live activity events matching {text}, ordered by original time then interpretation ID; source coverage is unknown; canonical rows are policy-selected groups with their own parent evidence."),"excluded":{}}),
+            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"sessions":sessions,"fusion":fusion,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Admitted live activity interpretations matching {text}, ordered by original time then interpretation ID; complete also requires included configured derived families to be settled. Explicit session-family reads require the reconciler; retained show/trace is separate. Continuous source coverage is unknown; canonical and session rows retain their policy and current parent evidence."),"excluded":{}}),
         )
     }
     pub async fn show(&self, id: &str) -> Result<Option<Value>> {
