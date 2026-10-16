@@ -230,3 +230,12 @@ pool = "normal"
 result = "exit"
 timeout_seconds = 900
 cache = "none"
+
+[operations.schema_upgrade_acceptance]
+description = "Packaged guarded populated published predecessor upgrade, dump refusal, real interrupted progress, catalog equivalence and retained reads"
+exec = ["python3", "tests/schema_upgrade.py"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

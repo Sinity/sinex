@@ -153,6 +153,12 @@ const EVENT_CONSTRAINTS: &[(&str, &str)] = &[
 
 const TABLES: &[Definition] = &[
     Definition {
+        schema: "sinex_schemas",
+        name: "applied_changes",
+        columns: &[col!("number", "integer"), col!("description", "text")],
+        constraints: &[("applied_changes_pkey", "PRIMARY KEY(number)")],
+    },
+    Definition {
         schema: "raw",
         name: "inputs",
         columns: &[
@@ -722,8 +728,32 @@ fn record_state_check() -> Result<String> {
     ))
 }
 
-fn declarations() -> Result<Vec<String>> {
+// This is the sole supported installed predecessor, published at 4b5bf0619.
+// Reuse unchanged declarations; spell out only the released differences.
+const OLD_SHELL_CHECK: &str = "CHECK (event_type<>'command.canonical' OR (payload_schema_id IS NOT DISTINCT FROM 3 AND source='fusion.shell-command' AND cardinality(source_event_ids)=1 AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'observed_by') IS NOT DISTINCT FROM 'array'))";
+fn installed_tables(stage: usize) -> Vec<Definition> {
     TABLES
+        .iter()
+        .filter(|d| {
+            !(stage == 0 && d.name == "applied_changes" || stage < 2 && d.name == "shell_progress")
+        })
+        .map(|d| Definition {
+            schema: d.schema,
+            name: d.name,
+            columns: if stage < 2 && d.name == "shell_dirty" {
+                &d.columns[..1]
+            } else {
+                d.columns
+            },
+            constraints: d.constraints,
+        })
+        .collect()
+}
+fn declarations() -> Result<Vec<String>> {
+    declarations_at(2)
+}
+fn declarations_at(stage: usize) -> Result<Vec<String>> {
+    installed_tables(stage)
         .iter()
         .map(|d| {
             let mut table = Table::create();
@@ -746,10 +776,13 @@ fn declarations() -> Result<Vec<String>> {
             // Only constants from this module enter DDL, never operator input.
             sql.pop();
             for (name, body) in d.constraints {
+                if stage==0 && *name=="registered_zsh_payload" { continue; }
                 sql.push_str(", CONSTRAINT \"");
                 sql.push_str(name);
                 sql.push_str("\" ");
                 let generated = match *name {
+                    "registered_shell_payload" if stage==0 => OLD_SHELL_CHECK.to_owned(),
+                    "input_kind" if stage==0 => "CHECK (kind='sqlite')".to_owned(),
                     "event_quality" => enum_check("ts_quality",sinex_model::events::TIME_QUALITY_LABELS),
                     "event_precision" => enum_check("ts_precision",sinex_model::events::TIME_PRECISION_LABELS),
                     "event_record_state" => record_state_check()?,
@@ -773,9 +806,12 @@ async fn configure_events(conn: &mut PgConnection) -> Result<()> {
 }
 
 fn fingerprint() -> Result<String> {
+    fingerprint_at(2)
+}
+fn fingerprint_at(stage: usize) -> Result<String> {
     Ok(blake3::hash(
         [
-            declarations()?,
+            declarations_at(stage)?,
             crate::event_storage::declarations(),
             vec![TIMESCALEDB_VERSION.to_owned()],
         ]
@@ -792,6 +828,24 @@ pub struct SchemaStatus {
     pub version: i32,
     pub fingerprint: String,
     pub table_count: usize,
+    pub pending_changes: Vec<SchemaChange>,
+}
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SchemaChange {
+    pub number: i32,
+    pub description: &'static str,
+}
+pub fn schema_changes() -> Vec<SchemaChange> {
+    vec![
+        SchemaChange {
+            number: 1,
+            description: "register retained zsh and two-parent shell contracts",
+        },
+        SchemaChange {
+            number: 2,
+            description: "retain shell dirty frontier and initialize grouping progress",
+        },
+    ]
 }
 
 /// Creates only an empty foundation database. Existing catalogs are checked, never reset.
@@ -842,6 +896,15 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         sqlx::query("INSERT INTO derivation.shell_progress(one) VALUES(true)")
             .execute(&mut *tx)
             .await?;
+        for entry in schema_changes() {
+            sqlx::query(
+                "INSERT INTO sinex_schemas.applied_changes(number,description) VALUES($1,$2)",
+            )
+            .bind(entry.number)
+            .bind(entry.description)
+            .execute(&mut *tx)
+            .await?;
+        }
         let catalog = capture_catalog(&mut tx).await?;
         let catalog = serde_json::to_value(catalog)
             .map_err(|_| Error::Schema("cannot encode canonical catalog".into()))?;
@@ -961,8 +1024,39 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
     if extension.as_deref() != Some(TIMESCALEDB_VERSION) {
         return Err(Error::Schema("TimescaleDB 2.27.2 is required".into()));
     }
+    let stored: String =
+        sqlx::query_scalar("SELECT fingerprint FROM sinex_schemas.definition WHERE version=1")
+            .fetch_one(&mut *conn)
+            .await?;
+    let mut stage = None;
+    for candidate in 0..=2 {
+        if stored == fingerprint_at(candidate)? {
+            stage = Some(candidate);
+        }
+    }
+    let stage = stage.ok_or_else(|| {
+        Error::Schema("unknown installed schema fingerprint; no repair performed".into())
+    })?;
+    let definitions = installed_tables(stage);
+    if stage > 0 {
+        let rows: Vec<(i32, String)> = sqlx::query_as(
+            "SELECT number,description FROM sinex_schemas.applied_changes ORDER BY number",
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        let expected: Vec<_> = schema_changes()
+            .into_iter()
+            .take(stage)
+            .map(|c| (c.number, c.description.to_owned()))
+            .collect();
+        if rows != expected {
+            return Err(Error::Schema(
+                "schema change progress is not the exact ordered prefix".into(),
+            ));
+        }
+    }
     let tables: Vec<String> = sqlx::query_scalar("SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('core','raw','sinex_schemas','reflection','audit','derivation') AND c.relkind IN ('r','p','v','m','f','S') ORDER BY 1").fetch_all(&mut *conn).await?;
-    let mut expected: Vec<String> = TABLES
+    let mut expected: Vec<String> = definitions
         .iter()
         .map(|t| [t.schema, ".", t.name].concat())
         .collect();
@@ -978,9 +1072,6 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             .fetch_one(&mut *conn)
             .await?;
     let stored: String = receipt.try_get("fingerprint")?;
-    if stored != fingerprint()? {
-        return Err(Error::Schema("schema version fingerprint differs".into()));
-    }
     let catalog: Catalog = serde_json::from_value(receipt.try_get("catalog")?)
         .map_err(|_| Error::Schema("canonical catalog receipt is invalid".into()))?;
     let actual_catalog = capture_catalog(conn).await?;
@@ -1000,7 +1091,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
     if !preloaded {
         return Err(Error::Schema("TimescaleDB must be preloaded".into()));
     }
-    for d in TABLES {
+    for d in &definitions {
         let cols = sqlx::query("SELECT a.attname,format_type(a.atttypid,a.atttypmod) AS ty,a.attnotnull,a.attgenerated::text,a.attidentity::text,pg_get_expr(ad.adbin,ad.adrelid) AS default_expr FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef ad ON ad.adrelid=c.oid AND ad.adnum=a.attnum WHERE n.nspname=$1 AND c.relname=$2 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum").bind(d.schema).bind(d.name).fetch_all(&mut *conn).await?;
         if cols.len() != d.columns.len() {
             return Err(Error::Schema(format!(
@@ -1028,13 +1119,18 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             }
         }
         let constraints = sqlx::query("SELECT con.conname,pg_get_constraintdef(con.oid) AS definition FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2 AND con.contype <> 'n'").bind(d.schema).bind(d.name).fetch_all(&mut *conn).await?;
-        if constraints.len() != d.constraints.len() {
+        if constraints.len()
+            != d.constraints.len() - usize::from(stage == 0 && matches!(d.name, "events"))
+        {
             return Err(Error::Schema(format!(
                 "{}.{} constraints differ",
                 d.schema, d.name
             )));
         }
         for (name, _body) in d.constraints {
+            if stage == 0 && *name == "registered_zsh_payload" {
+                continue;
+            }
             if !constraints.iter().any(|r| {
                 r.get::<String, _>("conname") == *name
                     && Some(&r.get::<String, _>("definition"))
@@ -1056,7 +1152,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             )));
         }
     }
-    let metadata_mutation_grant: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL aclexplode(c.relacl) acl WHERE n.nspname='sinex_schemas' AND c.relname='definition' AND acl.grantee<>c.relowner AND acl.privilege_type<>'SELECT') OR EXISTS(SELECT 1 FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL aclexplode(a.attacl) acl WHERE n.nspname='sinex_schemas' AND c.relname='definition' AND acl.grantee<>c.relowner AND acl.privilege_type<>'SELECT')").fetch_one(&mut *conn).await?;
+    let metadata_mutation_grant: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL aclexplode(c.relacl) acl WHERE n.nspname='sinex_schemas' AND c.relname IN ('definition','applied_changes') AND acl.grantee<>c.relowner AND acl.privilege_type<>'SELECT') OR EXISTS(SELECT 1 FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL aclexplode(a.attacl) acl WHERE n.nspname='sinex_schemas' AND c.relname IN ('definition','applied_changes') AND acl.grantee<>c.relowner AND acl.privilege_type<>'SELECT')").fetch_one(&mut *conn).await?;
     if metadata_mutation_grant {
         return Err(Error::Schema(
             "canonical catalog receipt has a non-owner mutation grant".into(),
@@ -1068,17 +1164,48 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             "registered Atuin payload schema differs".into(),
         ));
     }
-    let zsh:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=4 AND event_type='command.imported' AND version='zsh-extended-v1'").fetch_optional(&mut *conn).await?;
-    if zsh.as_ref() != Some(&crate::zsh::payload_schema()) {
-        return Err(Error::Schema(
-            "registered zsh payload schema differs".into(),
-        ));
+    if stage > 0 {
+        let zsh:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=4 AND event_type='command.imported' AND version='zsh-extended-v1'").fetch_optional(&mut *conn).await?;
+        if zsh.as_ref() != Some(&crate::zsh::payload_schema()) {
+            return Err(Error::Schema(
+                "registered zsh payload schema differs".into(),
+            ));
+        }
+        let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=3 AND event_type='command.canonical' AND version='shell-command-v1-atuin-zsh'").fetch_optional(&mut *conn).await?;
+        if canonical.as_ref() != Some(&crate::shell::payload_schema()) {
+            return Err(Error::Schema(
+                "registered canonical payload schema differs".into(),
+            ));
+        }
+    } else {
+        let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=3 AND event_type='command.canonical' AND version='shell-command-v1-single-source'").fetch_optional(&mut *conn).await?;
+        if canonical.as_ref() != Some(&predecessor_shell_payload()) {
+            return Err(Error::Schema("released singleton payload differs".into()));
+        }
     }
-    let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=3 AND event_type='command.canonical' AND version='shell-command-v1-atuin-zsh'").fetch_optional(&mut *conn).await?;
-    if canonical.as_ref() != Some(&crate::shell::payload_schema()) {
-        return Err(Error::Schema(
-            "registered canonical payload schema differs".into(),
-        ));
+    let event_types: Vec<(i32, String)> =
+        sqlx::query_as("SELECT id,name FROM core.event_types ORDER BY id")
+            .fetch_all(&mut *conn)
+            .await?;
+    let mut expected_types = vec![
+        (1, "synthetic.observed".to_owned()),
+        (2, "command.executed".to_owned()),
+        (3, "command.canonical".to_owned()),
+    ];
+    if stage > 0 {
+        expected_types.push((4, "command.imported".to_owned()));
+    }
+    if event_types != expected_types {
+        return Err(Error::Schema("registered event types differ".into()));
+    }
+    if stage == 2 {
+        let singleton: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM derivation.shell_progress WHERE one")
+                .fetch_one(&mut *conn)
+                .await?;
+        if singleton != 1 {
+            return Err(Error::Schema("shell progress singleton is absent".into()));
+        }
     }
     let counters: i64 = sqlx::query_scalar("SELECT count(*) FROM core.commit_counter WHERE one")
         .fetch_one(&mut *conn)
@@ -1119,19 +1246,20 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 | "core.producer_versions"
                 | "derivation.shell_dirty"
         );
-        let writer_update = matches!(
-            table.as_str(),
-            "core.commit_counter"
-                | "core.operations_log"
-                | "raw.source_cursors"
-                | "core.blobs"
-                | "core.runs"
-                | "raw.observations"
-                | "core.live_equivalence"
-                | "core.live_coordinates"
-                | "derivation.shell_dirty"
-                | "derivation.shell_progress"
-        );
+        let writer_update = (stage == 2 || table != "derivation.shell_dirty")
+            && matches!(
+                table.as_str(),
+                "core.commit_counter"
+                    | "core.operations_log"
+                    | "raw.source_cursors"
+                    | "core.blobs"
+                    | "core.runs"
+                    | "raw.observations"
+                    | "core.live_equivalence"
+                    | "core.live_coordinates"
+                    | "derivation.shell_dirty"
+                    | "derivation.shell_progress"
+            );
         let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1 IN ('core.deleted_occurrences','core.live_equivalence','core.live_coordinates','derivation.shell_dirty')) AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
         if !good {
             return Err(Error::Schema(format!("writer grants differ for {table}")));
@@ -1174,6 +1302,147 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
     Ok(SchemaStatus {
         version: 1,
         fingerprint: stored,
-        table_count: TABLES.len(),
+        table_count: definitions.len(),
+        pending_changes: schema_changes().into_iter().skip(stage).collect(),
     })
+}
+
+fn predecessor_shell_payload() -> serde_json::Value {
+    use serde_json::json;
+    let mut schema = crate::atuin::payload_schema();
+    let properties = schema["properties"].as_object_mut().unwrap();
+    properties.insert("canonical".into(), json!({"type":["string","null"]}));
+    properties.insert(
+        "observed_by".into(),
+        json!({"type":"array","items":{"const":crate::ATUIN_SOURCE},"minItems":1,"maxItems":1}),
+    );
+    properties.insert(
+        "association".into(),
+        json!({"type":"object","required":["basis","rule","version","ambiguous","candidates"]}),
+    );
+    properties.insert(
+        "field_evidence".into(),
+        json!({"type":"object","required":["all"]}),
+    );
+    for field in ["canonical", "observed_by", "association", "field_evidence"] {
+        schema["required"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(field));
+    }
+    schema
+}
+
+/// Explicit operator upgrade. No DDL or data writes happen before a complete dump.
+/// Each committed entry is a guarded catalog state that the next invocation checks.
+pub async fn apply_changes(admin_url: &str, dump_file: &std::path::Path) -> Result<SchemaStatus> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut conn = PgConnection::connect(admin_url).await?;
+    require_pg18(&mut conn).await?;
+    let locked: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_lock(73018924011) AND pg_try_advisory_lock(73018924012)",
+    )
+    .fetch_one(&mut conn)
+    .await?;
+    if !locked {
+        return Err(Error::Schema("schema or writer is already owned".into()));
+    }
+    let status = inspect(&mut conn).await?;
+    if status.pending_changes.is_empty() {
+        return Ok(status);
+    }
+    if !dump_file.is_absolute() {
+        return Err(Error::Invalid("absolute dump path required"));
+    }
+    let dump = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(dump_file)?;
+    let url = admin_url.to_owned();
+    let complete = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+        let output = dump.try_clone()?;
+        let result = std::process::Command::new("pg_dump")
+            .args(["--format=custom", "--no-password"])
+            .env("PGDATABASE", url)
+            .stdout(std::process::Stdio::from(output))
+            .stderr(std::process::Stdio::null())
+            .status()?;
+        dump.sync_all()?;
+        Ok(result.success() && dump.metadata()?.len() > 0)
+    })
+    .await
+    .map_err(|_| Error::Schema("dump worker failed; no schema change applied".into()))??;
+    if !complete {
+        return Err(Error::Schema(
+            "pg_dump failed; no schema change applied (partial dump retained)".into(),
+        ));
+    }
+    for entry in status.pending_changes {
+        // inspect validates the exact live state and prefix before every entry.
+        let current = inspect(&mut conn).await?;
+        if current.pending_changes.first().map(|c| c.number) != Some(entry.number) {
+            return Err(Error::Schema("schema changes are out of order".into()));
+        }
+        let mut tx = conn.begin().await?;
+        match entry.number {
+            1 => {
+                let ddl = declarations_at(1)?;
+                let metadata = installed_tables(1)
+                    .iter()
+                    .position(|d| d.name == "applied_changes")
+                    .unwrap();
+                tx.execute(ddl[metadata].as_str()).await?;
+                for table in ["core.events", "reflection.events"] {
+                    tx.execute(
+                        format!("ALTER TABLE {table} DROP CONSTRAINT registered_shell_payload")
+                            .as_str(),
+                    )
+                    .await?;
+                    for name in ["registered_shell_payload", "registered_zsh_payload"] {
+                        let body = EVENT_CONSTRAINTS
+                            .iter()
+                            .find(|(n, _)| *n == name)
+                            .unwrap()
+                            .1;
+                        tx.execute(
+                            format!("ALTER TABLE {table} ADD CONSTRAINT {name} {body}").as_str(),
+                        )
+                        .await?;
+                    }
+                }
+                sqlx::raw_sql("ALTER TABLE raw.inputs DROP CONSTRAINT input_kind; ALTER TABLE raw.inputs ADD CONSTRAINT input_kind CHECK(kind IN ('sqlite','file')); GRANT SELECT ON sinex_schemas.applied_changes TO sinex_reader,sinex_writer,sinex_read_model; INSERT INTO core.event_types(id,name) VALUES(4,'command.imported')").execute(&mut *tx).await?;
+                sqlx::query("UPDATE sinex_schemas.payload_schemas SET version='shell-command-v1-atuin-zsh',schema=$1 WHERE id=3").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(4,'command.imported','zsh-extended-v1',$1)").bind(crate::zsh::payload_schema()).execute(&mut *tx).await?;
+            }
+            2 => {
+                sqlx::raw_sql("ALTER TABLE derivation.shell_dirty ADD COLUMN dirty_seq bigint; UPDATE derivation.shell_dirty SET dirty_seq=(SELECT seq FROM core.commit_counter WHERE one); ALTER TABLE derivation.shell_dirty ALTER COLUMN dirty_seq SET NOT NULL").execute(&mut *tx).await?;
+                let ddl = declarations()?;
+                let progress = TABLES
+                    .iter()
+                    .position(|d| d.name == "shell_progress")
+                    .unwrap();
+                tx.execute(ddl[progress].as_str()).await?;
+                sqlx::raw_sql("INSERT INTO derivation.shell_progress(one) VALUES(true); GRANT SELECT ON derivation.shell_progress TO sinex_reader,sinex_writer,sinex_read_model; GRANT UPDATE ON derivation.shell_dirty,derivation.shell_progress TO sinex_writer; INSERT INTO derivation.shell_dirty(parent_id,dirty_seq) SELECT e.id,c.seq FROM core.live_events e CROSS JOIN core.commit_counter c WHERE c.one AND e.source='terminal.atuin-history' AND e.event_type='command.executed' AND e.record_state='present' ON CONFLICT(parent_id) DO UPDATE SET dirty_seq=greatest(shell_dirty.dirty_seq,EXCLUDED.dirty_seq)").execute(&mut *tx).await?;
+            }
+            _ => return Err(Error::Schema("unknown schema change".into())),
+        }
+        sqlx::query("INSERT INTO sinex_schemas.applied_changes(number,description) VALUES($1,$2)")
+            .bind(entry.number)
+            .bind(entry.description)
+            .execute(&mut *tx)
+            .await?;
+        let catalog = serde_json::to_value(capture_catalog(&mut tx).await?)
+            .map_err(|_| Error::Schema("cannot encode upgraded catalog".into()))?;
+        sqlx::query(
+            "UPDATE sinex_schemas.definition SET fingerprint=$1,catalog=$2 WHERE version=1",
+        )
+        .bind(fingerprint_at(entry.number as usize)?)
+        .bind(catalog)
+        .execute(&mut *tx)
+        .await?;
+        inspect(&mut tx).await?;
+        tx.commit().await?;
+    }
+    inspect(&mut conn).await
 }

@@ -410,6 +410,10 @@ pub mod rpc {
         pub version: i64,
         pub expected_version: i64,
         pub compatible: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub pending_changes: Vec<i32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub unavailable_paths: Vec<String>,
     }
     #[derive(Clone, Debug, Serialize)]
     #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]

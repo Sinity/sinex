@@ -22,7 +22,7 @@ pub use search::indexed as is_indexed_query;
 mod schema;
 pub use schema::{
     CAPTURED_FUTURE_SKEW_SECONDS, READER_ROLE, SchemaStatus, TIMESCALEDB_VERSION, WRITER_ROLE,
-    bootstrap, check_schema,
+    apply_changes, bootstrap, check_schema,
 };
 
 use fs2::FileExt;
@@ -104,6 +104,28 @@ pub struct StoreStatus {
 #[derive(Clone)]
 pub struct ReadPool(PgPool, std::sync::Arc<hashed_blobs::Reader>, String);
 impl ReadPool {
+    /// Read the verified installed schema without writer ownership or state creation.
+    pub async fn installed(reader_url: &str, root: PathBuf) -> Result<Self> {
+        check_schema(reader_url).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(reader_url)
+            .await?;
+        let role: String = sqlx::query_scalar("SELECT current_user::text")
+            .fetch_one(&pool)
+            .await?;
+        if role != READER_ROLE {
+            return Err(Error::Invalid(
+                "reader URL must authenticate as sinex_reader",
+            ));
+        }
+        let root = std::fs::canonicalize(root)?.to_string_lossy().into_owned();
+        Ok(Self(
+            pool,
+            std::sync::Arc::new(hashed_blobs::Reader::new(root.clone(), vec![])),
+            root,
+        ))
+    }
     pub async fn schema_status(&self) -> Result<SchemaStatus> {
         let mut lease = self.read_lease().await?;
         let status = schema::inspect(lease.connection()).await?;
@@ -274,7 +296,11 @@ impl Store {
                 "actual executable/config hashes and runtime identity required",
             ));
         }
-        check_schema(writer_url).await?;
+        if !check_schema(writer_url).await?.pending_changes.is_empty() {
+            return Err(Error::Schema(
+                "ordered schema changes pending; use admin schema --apply with a dump path".into(),
+            ));
+        }
         let (lock, root, blobs) = tokio::task::spawn_blocking(move || -> Result<_> {
             std::fs::create_dir_all(&state_dir)?;
             let root = std::fs::canonicalize(&state_dir)?;
