@@ -220,7 +220,7 @@ impl WriterPool {
             fenced["chain_broken"] = json!(true);
             sqlx::query("INSERT INTO raw.source_cursors(binding,input,position,carry) VALUES($1,$2,$3,'{}'::jsonb) ON CONFLICT(binding,input) DO UPDATE SET position=EXCLUDED.position,updated_at=now()").bind(SOURCE).bind(input.to_string()).bind(fenced).execute(&mut *tx).await?;
         } else if step.unavailable.is_none() {
-            let next = json!({"offset":source_start+step.bytes.len() as i64,"prefix_blake3":step.prefix_blake3,"protocol":PROTOCOL,"host":step.host});
+            let next = json!({"offset":source_start+step.bytes.len() as i64,"prefix_blake3":step.prefix_blake3,"protocol":PROTOCOL,"host":step.host,"record_errors":position["record_errors"].as_i64().unwrap_or(0)+failures});
             sqlx::query("INSERT INTO raw.source_cursors(binding,input,position,carry) VALUES($1,$2,$3,'{}'::jsonb) ON CONFLICT(binding,input) DO UPDATE SET position=EXCLUDED.position,updated_at=now()").bind(SOURCE).bind(input.to_string()).bind(next).execute(&mut *tx).await?;
         }
         tx.commit().await?;

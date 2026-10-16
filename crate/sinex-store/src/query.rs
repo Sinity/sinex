@@ -423,11 +423,12 @@ impl ReadPool {
         } else {
             None
         };
-        let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason,'record_errors',o.record_errors) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason,record_errors FROM raw.observations WHERE input_id=i.id AND commit_seq<=$1 ORDER BY seq DESC LIMIT 1) o ON true").bind(seq).fetch_all(&mut *tx).await?;
+        let source_status:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('input',i.id,'source',i.binding,'status',o.status,'reason',o.reason,'record_errors',o.record_errors,'retained_record_errors',CASE WHEN i.binding='terminal.zsh-history' THEN coalesce((SELECT (c.position->>'record_errors')::bigint FROM raw.source_cursors c WHERE c.binding=i.binding AND c.input=i.id::text),0) ELSE 0 END) FROM raw.inputs i LEFT JOIN LATERAL (SELECT status,reason,record_errors FROM raw.observations WHERE input_id=i.id AND commit_seq<=$1 ORDER BY seq DESC LIMIT 1) o ON true").bind(seq).fetch_all(&mut *tx).await?;
         let fusion:Value=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('current_now_settled',NOT EXISTS(SELECT 1 FROM derivation.shell_dirty),'enabled',EXISTS(SELECT 1 FROM core.producer_versions WHERE name='fusion.shell-command'),'scope','whole-input baseline; component-targeted efficiency unqualified') FROM derivation.shell_progress p WHERE one").fetch_one(&mut *tx).await?;
         let complete = source_status.iter().all(|s| {
             s["status"] == "completed"
-                && (s["source"] != crate::ZSH_SOURCE || s["record_errors"].as_i64() == Some(0))
+                && (s["source"] != crate::ZSH_SOURCE
+                    || s["retained_record_errors"].as_i64() == Some(0))
         }) && (!canonical_scope
             || fusion["enabled"] != true
             || (fusion["current_now_settled"] == true

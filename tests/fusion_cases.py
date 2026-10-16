@@ -1,5 +1,7 @@
 """Selected two-source policy grouping through real clients, never fixture group admission."""
+import concurrent.futures
 import hashlib
+import http.client
 import importlib.util
 import json
 from pathlib import Path
@@ -27,6 +29,7 @@ PLANNED=[
     'zsh original bytes Unicode continuation duplicate and rewrite refusal',
     'lossy privacy and historical comparison basis refusal and replay recovery',
     'cross-material replay fixed-head basis and divergent newer reading refusal',
+    'pending replay same-hash new-head race preserves committed ranges',
 ]
 
 
@@ -149,7 +152,12 @@ poll_interval_ms={poll}
         info=sql("SELECT jsonb_build_object('hash',b.blake3,'bytes',b.size_bytes) FROM raw.source_material_registry m JOIN core.blobs b ON b.id=m.blob_id WHERE m.id='"+str(uuid.UUID(material))+"'")
         digest=info['hash'].removeprefix('blake3:');path=store/'blobs'/digest[:2]/(digest+'.zst')
         # Binary subprocess: no replacement decoder may alter metafied source bytes.
-        result=subprocess.run(['zstd','-dc',str(path)],capture_output=True,env=h['ENV'],check=False)
+        argv=['zstd','-dc',str(path)]
+        with h['COMMAND_LOCK']:
+            index=len(h['COMMANDS']);h['COMMANDS'].append({'argv':argv,'exit':None,'expected_exit':0,'label':'independent retained original-byte decompression','stdout_encoding':'binary','stdout_file':f'{index:03}.stdout.bin'})
+        result=subprocess.run(argv,cwd=h['ROOT'],capture_output=True,env=h['ENV'],check=False,timeout=30)
+        (report/f'{index:03}.stdout.bin').write_bytes(result.stdout);(report/f'{index:03}.stderr').write_bytes(result.stderr)
+        h['COMMANDS'][index]['exit']=result.returncode
         assert result.returncode==0,result.stderr
         (report/('material-'+material+'.original')).write_bytes(result.stdout)
         assert len(result.stdout)==info['bytes']
@@ -377,10 +385,11 @@ poll_interval_ms={poll}
         seed=None
         while time.monotonic()<deadline:
             state=api('status')['result'];during.append(state)
-            seed=sql("SELECT coalesce(to_jsonb(max(commit_seq)),'null'::jsonb) FROM core.events WHERE source='terminal.atuin-history' AND payload->>'native_id'='fair-later'")
-            if seed is not None and state['indexed_retrieval']['fusion']['basis']==basis and state['indexed_retrieval']['fusion']['phase']!='settled':break
+            atomic=sql("SELECT jsonb_build_object('seed',(SELECT max(commit_seq) FROM core.events WHERE source='terminal.atuin-history' AND payload->>'native_id'='fair-later'),'progress',(SELECT to_jsonb(p) FROM derivation.shell_progress p WHERE one))")
+            seed=atomic['seed']
+            if seed is not None and atomic['progress']['basis']==basis and atomic['progress']['phase']!='settled':break
             time.sleep(.01)
-        assert seed is not None and seed>basis and during[-1]['indexed_retrieval']['fusion']['basis']==basis and during[-1]['indexed_retrieval']['fusion']['phase']!='settled',during[-1]
+        assert seed is not None and seed>basis and atomic['progress']['basis']==basis and atomic['progress']['phase']!='settled',atomic
         wait(lambda s:s['indexed_retrieval']['fusion']['last_evaluated']>=seed)
         settled()
         audit=sql("SELECT jsonb_build_object('new_seed',(SELECT commit_seq FROM core.events WHERE source='terminal.atuin-history' AND payload->>'native_id'='fair-later' ORDER BY commit_seq DESC LIMIT 1),'progress',(SELECT to_jsonb(p) FROM derivation.shell_progress p WHERE one),'dirty',(SELECT count(*) FROM derivation.shell_dirty))")
@@ -388,8 +397,53 @@ poll_interval_ms={poll}
         # Stable reconstruction on compatible restart preserves settled IDs.
         before=sql("SELECT jsonb_agg(id ORDER BY id) FROM core.live_events WHERE event_type='command.canonical'")
         launch('fair-restart',False);settled();after=sql("SELECT jsonb_agg(id ORDER BY id) FROM core.live_events WHERE event_type='command.canonical'");assert before==after
-        (report/'actual-fair-frontier.json').write_text(json.dumps({'boundary':notice,'audit':audit,'during_old_pass':during,'stable_ids':before,'scope':'bounded whole-input pass; no corpus-performance claim'},indent=2)+'\n')
+        (report/'actual-fair-frontier.json').write_text(json.dumps({'boundary':notice,'audit':audit,'during_old_pass':during,'atomic_seed_and_old_pass':atomic,'stable_ids':before,'scope':'bounded whole-input pass; no corpus-performance claim'},indent=2)+'\n')
     scenario(PLANNED[7],fairness)
+    def pending_head_race():
+        nonlocal daemon
+        original=next(r for r in query(raw_a)['rows'] if r['payload']['native_id']=='fair-later')
+        selected=trace(original['id'])['material'];selection=f'materials where id = {selected}'
+        preview=cli('replay',selection,'--dry-run',expected=0);assert preview['selected']>128
+        action=str(uuid.uuid4());stop(daemon)
+        address=work/'replay-head-race.sock';lost={}
+        def request():
+            try:return api('replay.start',{'query':selection,'action_id':action},True)
+            except (OSError,http.client.HTTPException) as error:
+                lost['transport_error']=type(error).__name__+': '+str(error);return None
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(str(address));listener.listen();listener.settimeout(45)
+            configure(False);daemon=start(config,'head-race-committed','--qualification-boundary','replay-committed-0','--qualification-socket',address);ready()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future=executor.submit(request);conn,_=listener.accept();conn.settimeout(10)
+                with conn:
+                    frame=json.loads(conn.makefile('r').readline());progress=frame['evidence']['operation'];assert frame['pid']==daemon.pid and progress['processed']==64 and progress['state']=='running'
+                    daemon.kill();daemon.wait(timeout=10)
+                assert future.result(timeout=20) is None and lost
+        daemon=None
+        # While authority is absent the admitted operation stays parked, but the
+        # ordinary source can produce a changed reading and then equal content.
+        for phase,command in [('changed','echo fair-later changed'),('equal','echo fair-later')]:
+            with sqlite3.connect(source) as con:con.execute('UPDATE history SET command=? WHERE id=?',(command,'fair-later'))
+            configure(True);config.write_text(config.read_text().replace('operator_token_file="'+str(work/'operator')+'"\n',''))
+            daemon_start('head-race-authority-disabled-'+phase);acquired();settled()
+            assert api('status')['result']['replay_authorized'] is False
+            retained=sql("SELECT progress FROM core.operations_log WHERE id='"+progress['operation_id']+"'");assert retained['processed']==64 and retained['state']=='running'
+            stop(daemon)
+        configure(False);daemon_start('head-race-reauthorized')
+        def refused(_):
+            value=api('replay.status',{'operation_id':progress['operation_id']}).get('result',{})
+            return value.get('state')=='refused'
+        wait(refused);settled()
+        refused_outcome=cli('replay',selection,'--action-id',action,op=True,expected=4)['details']
+        assert 64<=refused_outcome['processed']<preview['selected'] and refused_outcome['admitted']>=64 and 'head changed' in refused_outcome['reason'],refused_outcome
+        current=next(r for r in query(raw_a)['rows'] if r['payload']['native_id']=='fair-later');assert current['id']!=original['id']
+        proof=sql("SELECT jsonb_agg(jsonb_build_object('id',id,'hash',encode(record_hash,'hex'),'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id))) FROM core.events e WHERE id IN ('"+original['id']+"','"+current['id']+"')")
+        assert len({p['hash'] for p in proof})==1 and next(p for p in proof if p['id']==current['id'])['archived'] is False
+        audit=sql("SELECT jsonb_build_object('effects',(SELECT count(*) FROM core.operation_effects WHERE operation_id='"+progress['operation_id']+"'),'progress',(SELECT progress FROM core.operations_log WHERE id='"+progress['operation_id']+"'))")
+        assert audit['effects']==refused_outcome['steps'] and audit['progress']==refused_outcome
+        fresh=cli('replay',selection,'--action-id',str(uuid.uuid4()),op=True,expected=0);assert fresh['state']=='completed' and fresh['processed']==preview['selected'];settled()
+        (report/'actual-pending-replay-head-race.json').write_text(json.dumps({'preview':preview,'committed_frame':frame,'lost_response':lost,'same_hash_different_heads':proof,'refused_prior_operation':refused_outcome,'preserved_effects':audit,'fresh_action':fresh},indent=2)+'\n')
+    scenario(PLANNED[11],pending_head_race)
     def source_controls():
         # Exact retained-byte framing, including metafied UTF-8 and continuation.
         unicode_command='printf zażółć\nnext';credential='echo ghp_'+'A'*36
@@ -407,7 +461,23 @@ poll_interval_ms={poll}
         wait(lambda _:any(x['source']=='terminal.zsh-history' and x['last_run']['status']=='unavailable' for x in api('sources.list')['result']['sources']))
         state=sql("SELECT jsonb_agg(position) FROM raw.source_cursors WHERE binding='terminal.zsh-history'");assert any(p.get('chain_broken') for p in state)
         assert trace(row['id'])==original_trace
-        (report/'actual-zsh-source-controls.json').write_text(json.dumps({'row':row,'trace':original_trace,'durable_fence':state,'restored_prefix_sources':api('sources.list')},indent=2)+'\n')
+        stop(daemon)
+        bad=work/'zsh-unsupported';bad_bytes=b'plain-command\n'+zrecord(952_000_000_000_000,'valid-after-malformed');bad.write_bytes(bad_bytes)
+        configure(zpath=bad);daemon_start('zsh-malformed-record')
+        def bad_status(status):
+            rows=api('sources.list')['result']['sources']
+            return next((x for x in rows if x['locator']==str(bad) and x['last_run']['status']==status),None)
+        wait(lambda _:bad_status('completed') is not None)
+        malformed=bad_status('completed');assert malformed['last_run']['record_errors']==1 and malformed['last_run']['admitted']==1
+        failure=malformed['first_record_error'];assert material_bytes(failure['material_id']).startswith(bad_bytes)
+        stop(daemon);bad.write_bytes(bad_bytes+b': 953000:0;unfinished')
+        configure(zpath=bad);daemon_start('zsh-partial-record')
+        wait(lambda _:bad_status('unavailable') is not None);partial=bad_status('unavailable');assert partial['cursor']['offset']==len(bad_bytes)
+        stop(daemon);bad.write_bytes(bad.read_bytes()+b'\n')
+        configure(zpath=bad);daemon_start('zsh-finished-later-record')
+        wait(lambda _:bad_status('completed') is not None);finished=bad_status('completed');assert finished['last_run']['record_errors']==0 and finished['cursor']['record_errors']==1 and finished['cursor']['offset']==bad.stat().st_size
+        source_answer=query(raw_z);source_fact=next(x for x in source_answer['source_status'] if x['input']==finished['input']);assert source_fact['record_errors']==0 and source_fact['retained_record_errors']==1 and source_answer['complete'] is False
+        (report/'actual-zsh-source-controls.json').write_text(json.dumps({'row':row,'trace':original_trace,'durable_fence':state,'restored_prefix_sources':api('sources.list'),'malformed':malformed,'partial':partial,'finished_later':finished},indent=2)+'\n')
     scenario(PLANNED[8],source_controls)
     def privacy():
         nonlocal daemon,store
