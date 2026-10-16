@@ -29,10 +29,31 @@ enum Command {
     ConfigShow,
     Catalog,
     Sources,
+    /// Read raw events or run supported indexed queries.
+    #[command(
+        after_help = r#"Pass the query as one shell argument after your endpoint/token options.
+
+Raw events (available without an indexed projection):
+  query 'events'
+  query 'events where source = terminal.atuin-history and kind = command.executed'
+  query 'events where payload.command ~ "cargo test"'
+
+Indexed retrieval (requires a configured, caught-up projection):
+  query 'commands where cargo and exit_code != 0 sort when desc limit 20'
+
+commands selects canonical commands. Raw events use fixed pages of up to 100 rows;
+continue with --cursor from the response. Raw queries do not support limit or sort.
+Pipelines such as 'events | limit 20' are unsupported. Indexed limit is a clause,
+as shown above. Unsupported query shapes return bad_query; an unavailable indexed
+projection returns partial (exit 5)."#
+    )]
     Query {
+        /// Supported query text; quote it as one shell argument.
         query: String,
+        /// Opaque continuation cursor from a response to the same query.
         #[arg(long)]
         cursor: Option<String>,
+        /// Indexed page size (1-100); raw events use fixed 100-row pages.
         #[arg(long)]
         page: Option<u32>,
     },

@@ -46,6 +46,20 @@ sinexctl --endpoint http://127.0.0.1:41037/rpc --token-file /absolute/path/token
 
 The client requires its explicit endpoint and has no installed-service fallback. SIGINT/SIGTERM stops request admission, drains the owned writer and releases locks. An occupied endpoint fails before acquiring database/state ownership. Persistent state is never deleted by daemon shutdown.
 
+## Query quick start
+
+`query --help` lists supported examples. Pass the complete query as one shell argument after the endpoint and token options:
+
+```sh
+sinexctl --endpoint http://127.0.0.1:41037/rpc --token-file /absolute/path/token query 'events' --json
+sinexctl --endpoint http://127.0.0.1:41037/rpc --token-file /absolute/path/token query 'events where source = terminal.atuin-history and kind = command.executed' --json
+sinexctl --endpoint http://127.0.0.1:41037/rpc --token-file /absolute/path/token query 'events where payload.command ~ "cargo test"' --json
+```
+
+These [raw event reads](docs/rewrite/atuin.md) work without an indexed projection. Pages contain up to 100 rows; reuse the same query with `--cursor CURSOR` from the response to continue. Raw queries support the documented conjunction subset, without `limit` or `sort` clauses.
+
+For [indexed retrieval](docs/rewrite/indexed-retrieval.md), `query 'commands where cargo and exit_code != 0 sort when desc limit 20'` selects canonical commands and requires a configured, caught-up projection. An unavailable projection returns `partial` (CLI exit 5). Indexed `limit` is a query clause; pipeline forms such as `events | limit 20`, `commands | limit 20`, and `events where source = "terminal.atuin-history" | limit 20` are unsupported and return `bad_query`. The full general query language remains unavailable.
+
 ## Verification
 
 Use declared AgentCTL `foundation_build`, `foundation_acceptance`, `foundation_package`, and `foundation_package_acceptance` operations from this checkout. `foundation_format` formats owned workspace code before qualification. `foundation_lock` takes explicit Cargo update selectors (for example, `-- --workspace`) to preserve unrelated locked dependencies. `foundation_publish` takes explicit Git push arguments and runs the normal hooks; source publication and deployment remain separate decisions. The acceptance runner owns a fresh PostgreSQL cluster and launches real built entrypoints; `foundation_package_acceptance` explicitly selects the Nix package binaries; it records command exits, raw output and scenario results in private scratch. Failures still emit `result.json` and return nonzero. It never targets production services.
