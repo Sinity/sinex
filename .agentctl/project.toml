@@ -213,3 +213,20 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
 cache = "none"
+
+[operations.dependency_boundaries]
+description = "Qualify workspace dependency boundaries and actual copied-manifest refusal controls without PostgreSQL"
+exec = ["python3", "tests/dependency_boundaries.py"]
+pool = "normal"
+result = "exit"
+timeout_seconds = 900
+cache = "none"
+
+[operations.dependency_routing_control]
+description = "Dependency qualification plus actual alternate-manifest reproduction with an explicit pre-fix xtask executable"
+exec = ["python3", "tests/dependency_boundaries.py", "--before-checker"]
+arguments = "required"
+pool = "normal"
+result = "exit"
+timeout_seconds = 900
+cache = "none"

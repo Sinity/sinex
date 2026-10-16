@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Publication is separate from preparation; use the declared candidate qualification.
-# This hook checks the tree's deterministic formatting and rejects whitespace damage.
+# This hook checks dependency ownership, deterministic formatting and whitespace.
 nix develop --command cargo fmt --package sinex-model --package sinex-protocol --package sinex-store --package sinexd --package sinexctl --package xtask -- --check
+nix develop --command cargo run --locked --offline -p xtask -- boundaries
 git diff --check

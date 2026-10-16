@@ -1,8 +1,39 @@
+mod boundaries;
 use std::process::{Command, ExitCode};
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "help".into());
     let tail: Vec<_> = args.collect();
+    let features = if matches!(cmd.as_str(), "build" | "test" | "check") {
+        match boundaries::routing_features(&tail) {
+            Ok(features) => features,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    if matches!(cmd.as_str(), "boundaries" | "build" | "test" | "check") {
+        if cmd == "boundaries" && tail.len() > 1 {
+            eprintln!("xtask boundaries [workspace]");
+            return ExitCode::from(2);
+        }
+        let root = if cmd == "boundaries" {
+            tail.first().map(String::as_str).unwrap_or(".")
+        } else {
+            "."
+        };
+        if let Err(error) = boundaries::check(std::path::Path::new(root), &features) {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+        if cmd == "boundaries" {
+            println!("workspace dependency boundaries passed");
+            return ExitCode::SUCCESS;
+        }
+    }
     if cmd == "demo" {
         if tail.len() < 2 {
             eprintln!(
@@ -50,7 +81,7 @@ fn main() -> ExitCode {
         ],
         "help" => {
             println!(
-                "xtask build|test|check|fmt [cargo arguments]; xtask demo <workspace> <spec-repository> [--controls] [--boundaries] [--provider-loss]; runtime builds require an isolated development schema"
+                "xtask build|test|check|fmt [cargo arguments]; xtask boundaries [workspace]; xtask demo <workspace> <spec-repository> [--controls] [--boundaries] [--provider-loss]; runtime builds require an isolated development schema"
             );
             return ExitCode::SUCCESS;
         }
