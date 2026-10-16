@@ -39,10 +39,11 @@ def main():
         # database-free forwarding control rather than changing that contract.
         excludes = [arg for name in ["sinex-model", "sinex-protocol", "sinex-store", "sinexd", "sinexctl"] for arg in ["--exclude", name]]
         run("normal-check-frontend", [binary, "check", "--locked", "--offline", *excludes])
-        # Cargo's ordinary selectors still reach the native operation. Metadata
-        # covers all workspace features/targets, including explicit -F requests.
+        run("normal-package-frontend", [binary, "check", "--locked", "--offline", "--package=xtask", *excludes])
+        # Metadata validates an actual named product feature request. Cargo's
+        # help mode checks forwarding without compiling database-bound products.
         for feature in [["--features", "sinex-store/product"], ["--features=sinex-store/product"], ["-F", "sinex-store/product"], ["-Fsinex-store/product"]]:
-            run(f"ordinary-selection-{len(results)}", [binary, "check", "--locked", "--offline", "--package=xtask", *excludes, *feature])
+            run(f"ordinary-selection-{len(results)}", [binary, "check", "--help", *feature])
         copied = report / "workspace"
         copied.mkdir()
         for name in ["Cargo.toml", "Cargo.lock"]:
