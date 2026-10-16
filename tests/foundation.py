@@ -23,6 +23,7 @@ parser.add_argument("--reversible-exclusion",action="store_true",help="qualify p
 parser.add_argument("--package-pin",type=Path,help="reuse the exact clean candidate/package/binary SHA256 pin for reversible exclusion; never build or fall back")
 parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
 parser.add_argument("--fusion",action="store_true",help="qualify selected Atuin/zsh fusion lifecycle using a pinned independent specification")
+parser.add_argument("--fusion-focus",choices=["changed-seams"],help="development-only projection/head-race and zsh refusal controls; reuse separately retained journey proof")
 parser.add_argument("--fusion-spec",type=Path,help="read-only specification Git repository for selected fusion fixture")
 parser.add_argument("--indexed",action="store_true",help="qualify indexed shell retrieval and actual MCP transport")
 parser.add_argument("--retained-replay", action="store_true", help="qualify retained Atuin replay through actual packaged clients")
@@ -37,6 +38,7 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.fusion_focus and (not OPTIONS.fusion or OPTIONS.packaged): parser.error("fusion focus requires the development --fusion selector")
 if OPTIONS.fusion != bool(OPTIONS.fusion_spec): parser.error("fusion requires --fusion --fusion-spec GIT_REPOSITORY")
 if OPTIONS.fusion and any([OPTIONS.reversible_exclusion,OPTIONS.package_pin,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output]): parser.error("fusion owns its own scenario selector")
 if OPTIONS.package_pin and not OPTIONS.reversible_exclusion:
@@ -99,7 +101,7 @@ if OPTIONS.reversible_exclusion:
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+exclusion_cases.PLANNED
 if OPTIONS.fusion:
     import fusion_cases
-    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+fusion_cases.PLANNED
+    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+fusion_cases.planned(OPTIONS.fusion_focus)
     if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
 if OPTIONS.packaged:
     PLANNED.insert(0, "Nix package entrypoint selection")

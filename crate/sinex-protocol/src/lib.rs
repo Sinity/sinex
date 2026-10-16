@@ -500,11 +500,11 @@ pub mod rpc {
             ),
             (
                 Method::Show,
-                "Read one raw event, including archived or source-removed readings",
+                "Read a raw observation or canonical command, including historical evidence and current eligibility",
             ),
             (
                 Method::Trace,
-                "Inspect a masked retained row with exact material coordinates",
+                "Follow canonical parents to exact retained coordinates and masked source records",
             ),
         ]
         .into_iter()

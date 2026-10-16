@@ -1,4 +1,5 @@
 """Selected two-source policy grouping through real clients, never fixture group admission."""
+import contextlib
 import concurrent.futures
 import hashlib
 import http.client
@@ -30,7 +31,12 @@ PLANNED=[
     'lossy privacy and historical comparison basis refusal and replay recovery',
     'cross-material replay fixed-head basis and divergent newer reading refusal',
     'pending replay same-hash new-head race preserves committed ranges',
+    'canonical reconstruction and strict missing-log refusal',
 ]
+
+
+def planned(focus):
+    return [PLANNED[0],'independent changed-seam source setup',PLANNED[11],PLANNED[12],PLANNED[8]] if focus else PLANNED
 
 
 def exercise(h):
@@ -51,7 +57,13 @@ def exercise(h):
     (report/'oracle-basis.json').write_text(json.dumps(manifest,indent=2)+'\n')
     spec=importlib.util.spec_from_file_location('selected_fusion_oracle',oracle/'selected_journey.py');checker=importlib.util.module_from_spec(spec);spec.loader.exec_module(checker)
     fixture=checker.load();observations={o['key']:o for o in fixture['observations']}
+    def rfc3339(ns):
+        from datetime import datetime,timezone
+        sec,nano=divmod(ns,1_000_000_000)
+        return datetime.fromtimestamp(sec,timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')+f'.{nano:09}Z'
+    question_query='commands where project = harbor and exit_code != 0 and when >= '+rfc3339(fixture['question']['start_ns'])+' and when < '+rfc3339(fixture['question']['end_ns'])
     prepared={};aliases={};versions={};old_evidence={};daemon=None
+    focus=h['OPTIONS'].fusion_focus
     with sqlite3.connect(source) as con:
         con.execute('CREATE TABLE history(id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,duration INTEGER NOT NULL,exit INTEGER NOT NULL,command TEXT NOT NULL,cwd TEXT NOT NULL,session TEXT NOT NULL,hostname TEXT NOT NULL,deleted_at INTEGER)')
     def arow(o):return (o['native_key'],o['start_ns'],o['duration_ns'] or 1_000_000_000,o['exit'] if o['exit'] is not None else -1,o['command'],o['cwd'] or '', 'synthetic-fusion-session',o['host'],None)
@@ -183,6 +195,7 @@ poll_interval_ms={poll}
             key=next(k for k,o in observations.items() if r['source']==o['source'] and r['payload']['native_id']==(o['native_key'] if o['source'].endswith('atuin-history') else prepared[k]['native_id']))
             by_key[key]=r;bind(key,r);verify_record(key,r)
         actual=query('commands');assert actual['complete'],actual
+        assert sql("SELECT jsonb_agg(DISTINCT payload_schema_id ORDER BY payload_schema_id) FROM core.live_events WHERE event_type='command.canonical'")==[5]
         actual_rows=[]
         for r in actual['rows']:
             p=r['payload'];parents=r['parents'];keys=[next(k for k,v in by_key.items() if v['id']==pid) for pid in parents]
@@ -201,7 +214,7 @@ poll_interval_ms={poll}
         deleted=sql("SELECT coalesce(jsonb_agg(equivalence_key),'[]') FROM core.deleted_occurrences WHERE kind='exclude'")
         for key,o in observations.items():
             if o['source'].endswith('atuin-history') and any(json.loads(k)[1]==o['native_key'] for k in deleted):excluded_keys.append(key)
-        failed=query('commands where project = harbor and exit_code != 0')['rows']
+        failed=query(question_query)['rows']
         failed_groups=sorted('+'.join(next(k for k,v in by_key.items() if v['id']==pid) for pid in r['parents']) for r in failed)
         result={'stage':stage_name,'live_interpretations':{k:aliases[r['id']] for k,r in by_key.items()},'excluded_occurrences':sorted(excluded_keys),'archived_interpretations':sorted(aliases[i] for i in archives),'answer':{'complete':actual['complete'],'pending_owner_hours':[],'coverage':'continuous-capture-unknown' if all(r['payload']['capture_coverage']=='unknown' for r in actual['rows']) else 'unexpected','claim_scope':'selected-policy-grouping' if all(r['payload']['claim_scope']=='selected-policy-grouping' for r in actual['rows']) else 'unexpected','exact_execution_count':None if all(r['payload']['exact_execution_count'] is None for r in actual['rows']) else -1,'rows':actual_rows,'failed_groups':failed_groups,'failed_groups_exact':actual['complete']}}
         path=report/('selected-'+stage_name+'.json');path.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
@@ -211,7 +224,7 @@ poll_interval_ms={poll}
         return by_key,actual
     def before():
         launch('before-late');acquired();settled();capture('before-late')
-    scenario(PLANNED[1],before)
+    if not focus:scenario(PLANNED[1],before)
     late_boundary=None
     def late():
         nonlocal daemon,late_boundary
@@ -232,14 +245,12 @@ poll_interval_ms={poll}
                 (report/'actual-late-pending.json').write_text(json.dumps({'notice':notice,'query':pending},indent=2)+'\n')
                 daemon.kill();daemon.wait(timeout=10)
         daemon=None;launch('late-same-state-restart');acquired();settled();capture('late-settled')
-    scenario(PLANNED[2],late)
-    def clients():
-        launch('stable-no-provider-poll',False);settled();members,actual=capture('late-settled')
-        direct=cli('query','commands');assert direct['rows']==actual['rows']
-        canonical=actual['rows'][0];ref='sinex:ev/'+canonical['id']
+    if not focus:scenario(PLANNED[2],late)
+    @contextlib.contextmanager
+    def mcp_session(name):
         args=[str(bins/'sinexctl'),'--endpoint',endpoint,'--token-file',str(work/'token'),'mcp']
-        err=(report/'mcp.stderr').open('w');mcp=subprocess.Popen(args,env=h['ENV'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=err,text=True,bufsize=1)
-        h['CHILDREN'].append((mcp,mcp.stdout,err));h['PROCESSES'].append({'pid':mcp.pid,'argv':args,'stderr':'mcp.stderr'})
+        err=(report/(name+'.stderr')).open('w');mcp=subprocess.Popen(args,env=h['ENV'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=err,text=True,bufsize=1)
+        h['CHILDREN'].append((mcp,mcp.stdout,err));h['PROCESSES'].append({'pid':mcp.pid,'argv':args,'stderr':name+'.stderr'})
         log=[]
         def call(method,params):
             request={'jsonrpc':'2.0','id':len(log)+1,'method':method,'params':params};mcp.stdin.write(json.dumps(request)+'\n');mcp.stdin.flush();deadline=time.monotonic()+20
@@ -252,17 +263,27 @@ poll_interval_ms={poll}
         call('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'independent-selected-fusion','version':'1'}})
         mcp.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');mcp.stdin.flush()
         assert {t['name'] for t in call('tools/list',{})['tools']}=={'sinex_search','sinex_query','sinex_show','sinex_trace','sinex_sources','sinex_status'}
-        assert tool('sinex_query',{'query':'commands','page':100})['rows']==actual['rows']
-        assert tool('sinex_show',{'ref':ref})['row']==cli('show',ref)['row']
-        assert tool('sinex_trace',{'ref':ref})['row']==trace(ref,False)
-        indexed=tool('sinex_search',{'words':'cargo','page':100});assert indexed['rows']==cli('search','cargo','--page','100')['rows']
-        assert len(indexed['rows'])==2 and all(r['snippet']['spans'] for r in indexed['rows'])
-        (report/'actual-mcp-transport.json').write_text(json.dumps(log,ensure_ascii=False,indent=2)+'\n')
-        mcp.stdin.close();mcp.wait(timeout=5)
-    scenario(PLANNED[3],clients)
+        try:yield tool,call
+        finally:
+            (report/(name+'.wire.json')).write_text(json.dumps(log,ensure_ascii=False,indent=2)+'\n')
+            mcp.stdin.close();mcp.wait(timeout=5)
+    def clients():
+        launch('stable-no-provider-poll',False);settled();members,actual=capture('late-settled')
+        direct=cli('query','commands');assert direct['rows']==actual['rows']
+        canonical=actual['rows'][0];ref='sinex:ev/'+canonical['id']
+        with mcp_session('actual-mcp-transport') as (tool,call):
+            assert tool('sinex_query',{'query':'commands','page':100})['rows']==actual['rows']
+            assert tool('sinex_query',{'query':question_query,'page':100})['rows']==cli('query',question_query)['rows']==query(question_query)['rows']
+            assert tool('sinex_show',{'ref':ref})['row']==cli('show',ref)['row']
+            assert tool('sinex_trace',{'ref':ref})['row']==trace(ref,False)
+            indexed=tool('sinex_search',{'words':'cargo','page':100});assert indexed['rows']==cli('search','cargo','--page','100')['rows']
+            assert len(indexed['rows'])==2 and all(r['snippet']['spans'] for r in indexed['rows'])
+    if not focus:scenario(PLANNED[3],clients)
     def lifecycle():
-        members,_=capture('late-settled');a=members['a1'];material=trace(members['a2']['id'])['material']
+        members,canonical= capture('late-settled');a=members['a1'];material=trace(members['a2']['id'])['material']
         denied=cli('delete',a['id'],'--action-id',str(uuid.uuid4()),expected=4);assert denied['kind']=='refused'
+        pair=next(r for r in canonical['rows'] if len(r['parents'])==2)
+        canonical_refusal=cli('delete',pair['id'],'--action-id',str(uuid.uuid4()),op=True,expected=4);assert 'canonical references are not followed' in canonical_refusal['details']['reason']
         action=str(uuid.uuid4());deleted=cli('delete',a['id'],'--action-id',action,op=True,expected=0);assert deleted['state']=='completed'
         settled();capture('excluded');assert cli('delete',a['id'],'--action-id',action,op=True,expected=0)==deleted
         # Physical providers removed with source tasks stopped; retained bytes and
@@ -278,10 +299,11 @@ poll_interval_ms={poll}
         settled();capture('replayed-restored')
         for identity,old in old_evidence.items():assert trace(identity)==(old if old.get('archive') else {**old,'archive':trace(identity)['archive']})
         (report/'actual-lifecycle-operations.json').write_text(json.dumps({'exclude':deleted,'undo':undone,'excluded_replay':replay,'restored_replay':restored},indent=2)+'\n')
-    scenario(PLANNED[4],lifecycle)
+    if not focus:scenario(PLANNED[4],lifecycle)
     # Additional controls append distinct commands to the same declared chain;
     # every expected parent set below is independent literal synthetic truth.
-    (work/'atuin-provider-removed.db').rename(source);(work/'zsh-provider-removed').rename(zsh)
+    if not focus:
+        (work/'atuin-provider-removed.db').rename(source);(work/'zsh-provider-removed').rename(zsh)
     def replay_binding():
         with sqlite3.connect(source) as con:con.execute('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',('replay-binding',10_000_000_000_000,1,0,'echo replay-binding-original','/work/harbor','replay-binding','fixture-host',None))
         launch('replay-binding-initial');acquired();settled()
@@ -309,7 +331,7 @@ poll_interval_ms={poll}
     def daemon_start(name):
         nonlocal daemon
         daemon=start(config,name);ready()
-    scenario(PLANNED[10],replay_binding)
+    if not focus:scenario(PLANNED[10],replay_binding)
     controls={};next_start=20_000
     def control(name,aa,zz,expected,host='fixture-host'):
         nonlocal next_start
@@ -351,7 +373,7 @@ poll_interval_ms={poll}
         # Distinct zsh records remain distinct even with same timestamp/text.
         rr=raw();dup=[r for r in rr if r['payload']['native_id'] in [controls['duplicates-x'],controls['duplicates-y']]];assert len(dup)==2 and len({r['id'] for r in dup})==2
         (report/'independent-match-controls.json').write_text(json.dumps({'expected':controls,'actual':results},indent=2)+'\n')
-    scenario(PLANNED[5],matching)
+    if not focus:scenario(PLANNED[5],matching)
     def component():
         # Alternating 59-second edges span >3h. Every endpoint sees two
         # competing groups except physical ends; mutual uniqueness pairs none.
@@ -363,7 +385,7 @@ poll_interval_ms={poll}
         with sqlite3.connect(source) as con:con.execute("UPDATE history SET deleted_at=1 WHERE id='hours-a40'")
         launch('component-removal');acquired();settled();controls['hours']['expected'].remove(['a40']);after=check_control('hours');assert len(after)==count-1
         (report/'actual-hours-removal.json').write_text(json.dumps({'before':before,'after':after,'independent_expected':controls['hours']['expected']},indent=2)+'\n')
-    scenario(PLANNED[6],component)
+    if not focus:scenario(PLANNED[6],component)
     def fairness():
         nonlocal daemon
         stop(daemon)
@@ -398,12 +420,14 @@ poll_interval_ms={poll}
         before=sql("SELECT jsonb_agg(id ORDER BY id) FROM core.live_events WHERE event_type='command.canonical'")
         launch('fair-restart',False);settled();after=sql("SELECT jsonb_agg(id ORDER BY id) FROM core.live_events WHERE event_type='command.canonical'");assert before==after
         (report/'actual-fair-frontier.json').write_text(json.dumps({'boundary':notice,'audit':audit,'during_old_pass':during,'atomic_seed_and_old_pass':atomic,'stable_ids':before,'scope':'bounded whole-input pass; no corpus-performance claim'},indent=2)+'\n')
-    scenario(PLANNED[7],fairness)
+    if not focus:scenario(PLANNED[7],fairness)
     def pending_head_race():
         nonlocal daemon
-        original=next(r for r in query(raw_a)['rows'] if r['payload']['native_id']=='fair-later')
-        selected=trace(original['id'])['material'];selection=f'materials where id = {selected}'
+        raw_before=query(raw_a)['rows'];original=next(r for r in raw_before if r['payload']['native_id']=='hours-a90')
+        selected=trace(next(r for r in raw_before if r['payload']['native_id']=='fair-later')['id'])['material'];selection=f'materials where id = {selected}'
+        assert original['material']!=selected,'race must pin a head outside selected acquisition'
         preview=cli('replay',selection,'--dry-run',expected=0);assert preview['selected']>128
+        before_canonical=query('commands')['rows']
         action=str(uuid.uuid4());stop(daemon)
         address=work/'replay-head-race.sock';lost={}
         def request():
@@ -417,13 +441,32 @@ poll_interval_ms={poll}
                 future=executor.submit(request);conn,_=listener.accept();conn.settimeout(10)
                 with conn:
                     frame=json.loads(conn.makefile('r').readline());progress=frame['evidence']['operation'];assert frame['pid']==daemon.pid and progress['processed']==64 and progress['state']=='running'
+                    wait(lambda status:status['indexed_retrieval']['serving'] and status['indexed_retrieval']['position']==status['commit_seq'] and status['indexed_retrieval']['failure'] is None)
+                    archived={r['old'] for r in frame['evidence']['effects']['replacements'] if r['old']}
+                    expected_ids={r['id'] for r in before_canonical if not archived.intersection(r['parents'])}
+                    pending=query('commands');assert pending['total']==len(expected_ids) and {r['id'] for r in pending['rows']}==expected_ids and pending['complete'] is False
+                    inactive=next(r for r in before_canonical if archived.intersection(r['parents']))
+                    ref=inactive['id'];id_query='commands where id = '+ref
+                    hidden=query(id_query);assert hidden['rows']==[] and hidden['total']==0 and hidden['complete'] is False
+                    direct=cli('query',id_query,expected=5);assert direct['rows']==hidden['rows'] and direct['total']==0
+                    shown=cli('show',ref);navigation=trace(ref,False);assert shown['row']['current_eligible'] is False and navigation['current_eligible'] is False and any(p['archive'] for p in navigation['parents'])
+                    token=inactive['payload']['command'].strip().split()[0];search_text=token+' and id = '+ref
+                    search_api=api('search',{'query':search_text,'page':20})['result'];assert search_api['rows']==[] and search_api['total']==0 and search_api['complete'] is False
+                    search_cli=cli('search',token,'--query','and id = '+ref,expected=5);assert search_cli['rows']==[] and search_cli['total']==0
+                    with mcp_session('pending-mcp') as (tool,call):
+                        mq=tool('sinex_query',{'query':id_query,'page':20});ms=tool('sinex_search',{'words':token,'query':'and id = '+ref,'page':20})
+                        assert mq['rows']==ms['rows']==[] and mq['total']==ms['total']==0 and mq['complete'] is ms['complete'] is False
+                        assert tool('sinex_show',{'ref':ref})['row']==shown['row'] and tool('sinex_trace',{'ref':ref})['row']==navigation
+                    internal=sql("SELECT jsonb_build_object('canonical_live',EXISTS(SELECT 1 FROM core.live_events WHERE id='"+ref+"'),'indexed',EXISTS(SELECT 1 FROM core.search_text s JOIN derivation.read_model_position p ON p.generation=s.generation WHERE s.id='"+ref+"'),'ineligible_parents',(SELECT count(*) FROM core.events e,unnest(e.source_event_ids) parent(id) WHERE e.id='"+ref+"' AND NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=parent.id AND raw.record_state='present')))")
+                    assert internal['canonical_live'] and internal['indexed'] and internal['ineligible_parents']>0
+                    (report/'actual-pending-index-fence.json').write_text(json.dumps({'frame':frame,'expected_current_ids':sorted(expected_ids),'actual_pending':pending,'hidden_api':hidden,'hidden_cli':direct,'show':shown,'trace':navigation,'search_api':search_api,'search_cli':search_cli,'internal_body_fact':internal},indent=2)+'\n')
                     daemon.kill();daemon.wait(timeout=10)
                 assert future.result(timeout=20) is None and lost
         daemon=None
         # While authority is absent the admitted operation stays parked, but the
         # ordinary source can produce a changed reading and then equal content.
-        for phase,command in [('changed','echo fair-later changed'),('equal','echo fair-later')]:
-            with sqlite3.connect(source) as con:con.execute('UPDATE history SET command=? WHERE id=?',(command,'fair-later'))
+        for phase,command in [('changed','echo head-race-temporary'),('equal',original['payload']['command'])]:
+            with sqlite3.connect(source) as con:con.execute('UPDATE history SET command=? WHERE id=?',(command,'hours-a90'))
             configure(True);config.write_text(config.read_text().replace('operator_token_file="'+str(work/'operator')+'"\n',''))
             daemon_start('head-race-authority-disabled-'+phase);acquired();settled()
             assert api('status')['result']['replay_authorized'] is False
@@ -431,19 +474,52 @@ poll_interval_ms={poll}
             stop(daemon)
         configure(False);daemon_start('head-race-reauthorized')
         def refused(_):
-            value=api('replay.status',{'operation_id':progress['operation_id']}).get('result',{})
+            reply=api('replay.status',{'operation_id':progress['operation_id']})
+            value=reply.get('result') or reply.get('error',{}).get('data',{})
             return value.get('state')=='refused'
         wait(refused);settled()
         refused_outcome=cli('replay',selection,'--action-id',action,op=True,expected=4)['details']
         assert 64<=refused_outcome['processed']<preview['selected'] and refused_outcome['admitted']>=64 and 'head changed' in refused_outcome['reason'],refused_outcome
-        current=next(r for r in query(raw_a)['rows'] if r['payload']['native_id']=='fair-later');assert current['id']!=original['id']
+        current=next(r for r in query(raw_a)['rows'] if r['payload']['native_id']=='hours-a90');assert current['id']!=original['id']
         proof=sql("SELECT jsonb_agg(jsonb_build_object('id',id,'hash',encode(record_hash,'hex'),'archived',EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id))) FROM core.events e WHERE id IN ('"+original['id']+"','"+current['id']+"')")
         assert len({p['hash'] for p in proof})==1 and next(p for p in proof if p['id']==current['id'])['archived'] is False
         audit=sql("SELECT jsonb_build_object('effects',(SELECT count(*) FROM core.operation_effects WHERE operation_id='"+progress['operation_id']+"'),'progress',(SELECT progress FROM core.operations_log WHERE id='"+progress['operation_id']+"'))")
         assert audit['effects']==refused_outcome['steps'] and audit['progress']==refused_outcome
         fresh=cli('replay',selection,'--action-id',str(uuid.uuid4()),op=True,expected=0);assert fresh['state']=='completed' and fresh['processed']==preview['selected'];settled()
         (report/'actual-pending-replay-head-race.json').write_text(json.dumps({'preview':preview,'committed_frame':frame,'lost_response':lost,'same_hash_different_heads':proof,'refused_prior_operation':refused_outcome,'preserved_effects':audit,'fresh_action':fresh},indent=2)+'\n')
+    if focus:
+        def focus_setup():
+            rows=[('hours-a90' if n==90 else f'focus-{n}',20_000_000_000_000+n*1_000_000_000,1,0,'echo focus-target' if n==90 else f'echo focus-{n}','/work/harbor','focus-session','fixture-host',None) for n in range(130)]
+            with sqlite3.connect(source) as con:con.executemany('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',rows)
+            launch('focus-earlier-material');acquired();settled()
+            stop(daemon)
+            with sqlite3.connect(source) as con:con.execute('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',('fair-later',21_000_000_000_000,1,0,'echo focus-later','/work/harbor','focus-session','fixture-host',None))
+            configure();daemon_start('focus-later-material');acquired();settled();launch('focus-stable',False);settled()
+            schema_ids=sql("SELECT jsonb_agg(DISTINCT payload_schema_id ORDER BY payload_schema_id) FROM core.live_events WHERE event_type='command.canonical'");assert schema_ids==[5]
+            (report/'independent-changed-seam-inputs.json').write_text(json.dumps({'earlier_rows':rows,'later_native_id':'fair-later','expected_new_canonical_schema_ids':[5]},indent=2)+'\n')
+        scenario('independent changed-seam source setup',focus_setup)
     scenario(PLANNED[11],pending_head_race)
+    def reconstruction():
+        nonlocal daemon
+        launch('reconstruction-before',False);settled();before=query('commands');old_generation=api('status')['result']['indexed_retrieval']['generation']
+        stop(daemon);configure(False);config.write_text(config.read_text().replace('roots=["/work/harbor"]','roots=["/work/harbor","/synthetic/rebuild-one"]'));daemon_start('complete-log-reconstruction');settled()
+        after=query('commands');rebuilt_generation=api('status')['result']['indexed_retrieval']['generation'];assert rebuilt_generation!=old_generation and before['rows']==after['rows'] and before['total']==after['total']
+        log=sql("SELECT to_jsonb(l) FROM core.commit_log l WHERE l.event_id='"+before['rows'][0]['id']+"' AND l.change=0")
+        stop(daemon)
+        run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c','DELETE FROM core.commit_log WHERE commit_seq='+str(log['commit_seq'])],label='controlled synthetic missing canonical admission-log row')
+        configure(False);config.write_text(config.read_text().replace('roots=["/work/harbor"]','roots=["/work/harbor","/synthetic/rebuild-two"]'));daemon_start('missing-log-refusal')
+        unavailable=wait(lambda status:status['indexed_retrieval']['failure'] is not None)
+        refused=api('query.run',{'query':'commands'});assert refused['error']['kind']=='partial' and 'result' not in refused
+        refused_cli=cli('query','commands',expected=5);assert refused_cli['kind']=='partial' and 'rows' not in refused_cli
+        raw_control=query(raw_a);assert raw_control['total']>128 and raw_control['complete'] is True
+        stop(daemon)
+        # Restore the exact deliberately removed synthetic log row. The negative
+        # fixture is not a product pruning or recovery capability.
+        statement="INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id) VALUES("+str(log['commit_seq'])+",'"+log['event_id']+"',"+str(log['change'])+","+str(log['store'])+","+str(log['event_type_id'])+")"
+        run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',statement],label='restore exact controlled synthetic log fixture')
+        configure(False);daemon_start('restored-log-reconstruction');settled();restored=query('commands');assert restored['rows']==before['rows'] and restored['total']==before['total']
+        (report/'actual-canonical-reconstruction.json').write_text(json.dumps({'before':before,'rebuilt':after,'old_generation':old_generation,'rebuilt_generation':rebuilt_generation,'controlled_missing_log':log,'unavailable_status':unavailable,'api_refusal':refused,'cli_refusal':refused_cli,'valid_raw_control':raw_control,'restored':restored},indent=2)+'\n')
+    scenario(PLANNED[12],reconstruction)
     def source_controls():
         # Exact retained-byte framing, including metafied UTF-8 and continuation.
         unicode_command='printf zażółć\nnext';credential='echo ghp_'+'A'*36
@@ -514,5 +590,5 @@ created_by="operator"
         restored=cli('replay',f'materials where id = {material}','--action-id',str(uuid.uuid4()),op=True,expected=0);assert restored['admitted']==2
         settled();answer=query('commands');assert answer['total']==3 and all(len(r['parents'])==1 for r in answer['rows']),answer
         (report/'actual-privacy-basis.json').write_text(json.dumps({'lossy_atuin':q,'blocked_status':blocked,'unavailable_query':unavailable,'retained_replay':restored,'recovered':answer},indent=2)+'\n')
-    scenario(PLANNED[9],privacy)
+    if not focus:scenario(PLANNED[9],privacy)
     stop(daemon)

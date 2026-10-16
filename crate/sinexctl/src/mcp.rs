@@ -147,7 +147,7 @@ impl Reader {
             .await
     }
     #[tool(
-        description = "Follow a canonical command to exact retained material coordinates. Never returns raw bytes."
+        description = "Follow all canonical parents to exact retained coordinates, with current eligibility disclosed. Never returns raw bytes."
     )]
     async fn sinex_trace(
         &self,

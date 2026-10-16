@@ -150,7 +150,7 @@ impl Owner {
             if log.try_get::<i16, _>("change")? != 0 {
                 continue;
             }
-            let row=sqlx::query("SELECT payload,source,event_type,ts_orig::text AS at,ts_orig_tiebreak FROM core.live_events WHERE id=$1 AND event_type='command.canonical' AND NOT EXISTS(SELECT 1 FROM unnest(source_event_ids) p(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events parent WHERE parent.id=p.id))").bind(id).fetch_optional(&mut *tx).await?;
+            let row=sqlx::query("SELECT payload,source,event_type,ts_orig::text AS at,ts_orig_tiebreak FROM core.live_events WHERE id=$1 AND event_type='command.canonical'").bind(id).fetch_optional(&mut *tx).await?;
             let Some(row) = row else { continue };
             let payload: serde_json::Value = row.try_get("payload")?;
             let mut strings = Vec::new();
@@ -214,10 +214,15 @@ impl Owner {
         if !more {
             next = current;
         }
-        // Publication verifies the whole authoritative live population at this snapshot.
+        // Index the writer's whole live canonical population until its own archive
+        // log arrives. Parent eligibility is the reader's current-state fence;
+        // bounded replacement may leave an old canonical body live temporarily.
+        // Dropping it here would turn a complete log into a false reconstruction
+        // failure while older projection rows await that later archive transition.
+        // Publication still verifies the complete canonical population.
         // A missing old log row therefore cannot certify a complete empty projection.
         let exact = if !more {
-            sqlx::query_scalar::<_,bool>("SELECT NOT EXISTS((SELECT id FROM core.live_events e WHERE event_type='command.canonical' AND NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) p(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events parent WHERE parent.id=p.id)) EXCEPT SELECT id FROM core.search_text WHERE generation=$1) UNION ALL (SELECT id FROM core.search_text WHERE generation=$1 EXCEPT SELECT id FROM core.live_events e WHERE event_type='command.canonical' AND NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) p(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events parent WHERE parent.id=p.id))))").bind(generation).fetch_one(&mut *tx).await?
+            sqlx::query_scalar::<_,bool>("SELECT NOT EXISTS((SELECT id FROM core.live_events e WHERE event_type='command.canonical' EXCEPT SELECT id FROM core.search_text WHERE generation=$1) UNION ALL (SELECT id FROM core.search_text WHERE generation=$1 EXCEPT SELECT id FROM core.live_events e WHERE event_type='command.canonical'))").bind(generation).fetch_one(&mut *tx).await?
         } else {
             false
         };

@@ -444,7 +444,7 @@ impl ReadPool {
     pub async fn show(&self, id: &str) -> Result<Option<Value>> {
         let id = Uuid::parse_str(id).map_err(|_| Error::Invalid("invalid event ID"))?;
         let mut lease = self.read_lease().await?;
-        let row:Option<Value>=sqlx::query_scalar(&format!("SELECT {EVENT_VIEW} || jsonb_build_object('kind',e.event_type,'archive',(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id),'source_state',CASE WHEN e.record_state='removed' THEN 'removed at source' ELSE 'present' END) FROM core.events e WHERE e.id=$1")).bind(id).fetch_optional(lease.connection()).await?;
+        let row:Option<Value>=sqlx::query_scalar(&format!("SELECT {EVENT_VIEW} || jsonb_build_object('current_eligible',e.record_state='present' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id) AND NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) parent(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=parent.id AND raw.record_state='present')),'kind',e.event_type,'archive',(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id),'source_state',CASE WHEN e.record_state='removed' THEN 'removed at source' ELSE 'present' END) FROM core.events e WHERE e.id=$1")).bind(id).fetch_optional(lease.connection()).await?;
         lease.finish();
         Ok(row)
     }
@@ -467,8 +467,12 @@ impl ReadPool {
                         .ok_or(Error::Invalid("canonical parent evidence unavailable"))?,
                 );
             }
+            let current = self
+                .show(&id.to_string())
+                .await?
+                .ok_or(Error::Invalid("canonical metadata unavailable"))?;
             return Ok(Some(
-                json!({"event":id,"representation":"canonical_shell_group","parents":evidence,"archive":self.show(&id.to_string()).await?.and_then(|e|e.get("archive").cloned())}),
+                json!({"event":id,"representation":"canonical_shell_group","parents":evidence,"archive":current["archive"],"current_eligible":current["current_eligible"]}),
             ));
         }
         self.trace_material(id, bytes_requested).await
