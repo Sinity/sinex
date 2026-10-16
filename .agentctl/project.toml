@@ -255,3 +255,12 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 900
 cache = "none"
+
+[operations.configured_continuation]
+description = "Finite configured Atuin continuation through an explicitly pinned unchanged package, ordinary CLI/MCP, restart catch-up and retained cost evidence; never builds"
+exec = ["python3", "tests/foundation.py", "--packaged", "--configured-continuation"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"

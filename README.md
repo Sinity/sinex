@@ -158,6 +158,8 @@ For a separately built clean exclusion candidate, `exclusion_package_acceptance 
 
 `fusion_acceptance -- --fusion-spec /absolute/spec-repository` and `fusion_package_acceptance` qualify the [selected Atuin/zsh lifecycle](docs/rewrite/shell-fusion.md) against pinned independent expectations, original retained record bindings, real ordinary clients and bounded writer interruptions. They do not access private or live history.
 
+`configured_continuation -- --package-pin /absolute/qualification-pin.json` measures the [finite ongoing Atuin continuation](docs/rewrite/configured-continuation.md) through an unchanged pinned package, one configured collector and ordinary project-scoped CLI/MCP. Later producer batches, autonomous repeats, same-state restart catch-up and unavailable-versus-empty evidence retain exact facts, citations, timings, storage growth and interventions. It adds no product feature or daily-scalability claim and reuses earlier qualifications under their original bindings.
+
 `xtask boundaries [workspace]` checks the actual locked Cargo metadata graph without a database. Build, test and check frontends, the Nix package build and the pre-push hook run it. `dependency_boundaries` is the declared focused qualification operation; it tests the checker and alters copied native manifests to prove forbidden normal, renamed, optional, development, build and foreign-target edges fail, along with PostgreSQL ownership, pure-core, unknown-package and malformed-manifest controls. Cargo resolution and execution errors fail the command.
 
 The [dependency boundary contract](docs/rewrite/dependency-boundaries.md) defines the implemented package subset and provider SQLite seam.
