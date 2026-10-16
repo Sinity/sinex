@@ -290,6 +290,11 @@ poll_interval_ms={poll}
         canonical_refusal=cli('delete',pair['id'],'--action-id',str(uuid.uuid4()),op=True,expected=4);assert 'canonical references are not followed' in canonical_refusal['details']['reason']
         action=str(uuid.uuid4());deleted=cli('delete',a['id'],'--action-id',action,op=True,expected=0);assert deleted['state']=='completed'
         settled();capture('excluded');assert cli('delete',a['id'],'--action-id',action,op=True,expected=0)==deleted
+        archive_types=sql("SELECT jsonb_agg(jsonb_build_object('event',e.id,'kind',e.event_type,'schema',e.payload_schema_id,'logged_type',l.event_type_id,'registered_type',t.id) ORDER BY e.id) FROM core.commit_log l JOIN core.events e ON e.id=l.event_id JOIN core.event_types t ON t.name=e.event_type WHERE l.change=1 AND e.id IN ("+','.join("'"+i+"'" for i in deleted['archived'])+")")
+        assert {r['event'] for r in archive_types}==set(deleted['archived'])
+        assert all(r['logged_type']==r['registered_type'] for r in archive_types)
+        assert any(r['schema']==5 and r['logged_type']==3 for r in archive_types),archive_types
+        (report/'actual-exclusion-archive-types.json').write_text(json.dumps({'outcome':deleted,'archive_types':archive_types},indent=2)+'\n')
         # Physical providers removed with source tasks stopped; retained bytes and
         # identities remain available through ordinary authenticated clients.
         source.rename(work/'atuin-provider-removed.db');zsh.rename(work/'zsh-provider-removed')
