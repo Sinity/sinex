@@ -8,6 +8,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 PLANNED = [
     'configured completed-empty source and public discovery',
@@ -55,6 +56,7 @@ def exercise(h):
     facts, snapshots, measurements, interventions = [], {}, [], []
     daemon = mcp = None
     mcp_id = 0
+    materials = {}
     (work/'read-model').write_text(h['reader'].replace('sinex_reader', 'sinex_read_model'))
     (work/'read-model').chmod(0o600)
     con = sqlite3.connect(source)
@@ -258,6 +260,30 @@ poll_interval_ms = 1000
             'source_path':str(source), 'commit_seconds':committed-began, 'collector_was_running':daemon is not None and daemon.poll() is None})
         return committed
 
+    def material_bytes(material):
+        if material in materials: return materials[material]
+        # A validated native UUID selects one retained descriptor. No product query
+        # or fixture oracle is substituted for the actual addressed source bytes.
+        identity = str(uuid.UUID(material))
+        statement = "SELECT jsonb_build_object('hash',b.blake3,'bytes',b.size_bytes) FROM raw.source_material_registry m JOIN core.blobs b ON b.id=m.blob_id WHERE m.id='"+identity+"'"
+        info = json.loads(run(['psql',h['reader'],'-XAt','-v','ON_ERROR_STOP=1','-c',statement],
+            label='independent cited material descriptor').stdout)
+        digest = info['hash'].removeprefix('blake3:')
+        path = store/'blobs'/digest[:2]/(digest+'.zst')
+        argv = ['zstd','-dc',str(path)]
+        with h['COMMAND_LOCK']:
+            index = len(h['COMMANDS'])
+            h['COMMANDS'].append({'argv':argv,'exit':None,'expected_exit':0,
+                'label':'independent cited logical material decompression',
+                'stdout_encoding':'binary','stdout_file':f'{index:03}.stdout.bin'})
+        result = subprocess.run(argv,env=env,capture_output=True,timeout=30)
+        (report/f'{index:03}.stdout.bin').write_bytes(result.stdout)
+        (report/f'{index:03}.stderr').write_bytes(result.stderr)
+        h['COMMANDS'][index]['exit'] = result.returncode
+        assert result.returncode == 0 and len(result.stdout) == info['bytes']
+        materials[material] = result.stdout
+        return result.stdout
+
     def citations(label, rows, references=None):
         # References come only from actual public discovery results, never fixture IDs.
         chosen = [next(r for r in rows if r['payload']['exit_code'] == 101),
@@ -275,8 +301,14 @@ poll_interval_ms = 1000
             parent = traced['parents'][0]; fact = next(f for f in facts if f['id'] == row['payload']['native_id'])
             assert parent['event'] == row['parents'][0] and parent['material'] and parent['end'] > parent['anchor']
             assert parent['representation'] == 'canonical_sqlite_row'
-            for key in COLUMNS: assert parent['record'][key] == fact[key]
+            original = material_bytes(parent['material'])
+            assert 0 <= parent['anchor'] < parent['end'] <= len(original)
+            addressed = original[parent['anchor']:parent['end']]
+            decoded = json.loads(addressed)
+            assert decoded == parent['record']
+            for key in COLUMNS: assert decoded[key] == fact[key]
             result.append({'canonical':ref, 'shown':shown, 'trace':traced, 'MCP_metadata':metadata,
+                'addressed_record_sha256':hashlib.sha256(addressed).hexdigest(),
                 'outcome_scope':'recorded shell exit only; pipeline/queued invocation outcome remains unknown without separate result evidence'})
         save(label+'-citations.json', result)
         return result
