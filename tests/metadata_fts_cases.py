@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import select
 import sqlite3
 import subprocess
 import time
@@ -10,6 +11,7 @@ import uuid
 
 PLANNED = [
     'guarded stage-four metadata upgrade preserves evidence and refuses old writer',
+    'blocked optional receipts preserve the primary source snapshot and recover',
     'oversized text preserves exact later metadata and refuses every FTS shape',
     'unavailable text diagnostics honor current parent eligibility',
     'retained metadata restart provider-loss exclusion and replay keep capability truth',
@@ -118,6 +120,45 @@ full_interval_ms = 1000
             assert api('object.trace',{'ref':reference,'bytes':True})['result']==trace
             save('metadata-populated-upgrade',{'before':before,'pending':pending,'applied':result,'old_cursor_refusal':refusal,'preserved_trace':trace})
         scenario(PLANNED[0],upgrade)
+        def source_budget():
+            nonlocal daemon
+            # Freeze acquisition only for this control. An unchanged primary
+            # snapshot distinguishes optional failure from a later poll.
+            enabled=config.read_text();stop(daemon)
+            config.write_text(enabled.replace('sources = ["terminal.atuin-history"]','sources = []').split('[atuin]')[0])
+            daemon=start(config,'metadata-source-budget')
+            lock_err=(report/'source-budget-lock.stderr').open('w')
+            locker=None
+            try:
+                wait('source-budget metadata basis',lambda:settled(32,True))
+                before=cli('sources')['sources'][0]
+                locker=subprocess.Popen(['psql',connections['admin'],'--no-psqlrc','-qAt','-v','ON_ERROR_STOP=1'],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=lock_err,text=True,bufsize=1)
+                locker.stdin.write("BEGIN; LOCK TABLE core.events IN ACCESS EXCLUSIVE MODE; SELECT 'receipt-lock-held';\n");locker.stdin.flush()
+                ready,_,_=select.select([locker.stdout],[],[],15)
+                assert ready and locker.stdout.readline().strip()=='receipt-lock-held'
+                blocked=[]
+                for _ in range(3):
+                    began=time.monotonic();limited=cli('sources','--input',before['input'])['sources'][0]
+                    assert limited['last_run']==before['last_run'],'optional receipt timeout changed the primary observation'
+                    assert limited['acquisition']==before['acquisition']
+                    assert limited['inspection']['status']=='unavailable'
+                    assert limited['history']['complete'] is False and limited['receipts']['complete'] is False
+                    blocked.append({'seconds':time.monotonic()-began,'response':limited})
+                locker.stdin.write('ROLLBACK;\n\\q\n');locker.stdin.flush();locker.stdin.close();locker.wait(timeout=15)
+                assert locker.returncode==0
+                recovered=cli('sources','--input',before['input'])['sources'][0]
+                assert recovered['last_run']==before['last_run'] and recovered['inspection']['status']=='available'
+                answer=cli('query',broad,expected=(0,5))
+                assert answer['total']==32 and answer['full_text']['available']
+                save('source-budget-recovery',{'before':before,'blocked':blocked,'recovered':recovered,'ordinary_query':answer,'lock_exit':locker.returncode,'scope':'server-cancelled blocked receipt reads; primary repeatable-read evidence and subsequent pool reuse; no claim to reproduce the previous exact future-drop timing'})
+            finally:
+                if locker and locker.poll() is None:
+                    locker.stdin.write('ROLLBACK;\n\\q\n');locker.stdin.flush();locker.stdin.close();locker.wait(timeout=15)
+                    assert locker.returncode==0
+                lock_err.close();stop(daemon);config.write_text(enabled)
+                daemon=start(config,'metadata-source-budget-restored')
+                wait('source-budget acquisition restored',lambda:settled(32,True))
+        scenario(PLANNED[1],source_budget)
         oversized=[
             ('frequency',epoch+86_400_000_000_000,0,0,'repeat '*257,'/synthetic/tide','s','h',None),
             ('positions',epoch+86_400_000_000_001,0,0,' '.join('w'+str(n) for n in range(16001)),'/synthetic/tide','s','h',None),
@@ -144,7 +185,7 @@ full_interval_ms = 1000
             reference=answer['full_text']['first_affected_ref'];assert reference
             assert cli('show',reference)['row']['current_eligible']
             save('metadata-later-and-capabilities',{'query':selected_answer,'counts':values,'first_reference_trace':cli('trace',reference,'--bytes')})
-        scenario(PLANNED[1],metadata)
+        scenario(PLANNED[2],metadata)
         def authority():
             nonlocal daemon
             # Stop acquisition for this direct-state fence so an unrelated source
@@ -169,7 +210,7 @@ full_interval_ms = 1000
                 sql("DELETE FROM audit.archived WHERE id='"+parent+"'::uuid")
                 stop(daemon);config.write_text(enabled);daemon=start(config,'metadata-authority-restored')
                 wait('restored acquisition basis',lambda:settled(37,False))
-        scenario(PLANNED[2],authority)
+        scenario(PLANNED[3],authority)
         def retained():
             nonlocal daemon
             before=cli('query',selected,expected=(0,5));ref='sinex:ev/'+before['rows'][0]['id'];trace=cli('trace',ref,'--bytes')
@@ -192,7 +233,7 @@ full_interval_ms = 1000
             restored=next(r for r in current if r['payload']['native_id']==large[0]['payload']['native_id'])
             cli('delete','sinex:ev/'+restored['id'],operator=True);wait('replay removal restores text capability',lambda:settled(34,True))
             save('metadata-retained-lifecycle',{'before':before,'after_provider_loss':after,'trace':trace,'replay':replay})
-        scenario(PLANNED[3],retained)
+        scenario(PLANNED[4],retained)
         def maintenance():
             nonlocal daemon
             stop(daemon)
@@ -201,7 +242,7 @@ full_interval_ms = 1000
             wait('actual maintenance failure',lambda:api('status')['result']['indexed_retrieval'].get('failure'))
             for text in [selected,'commands where needle']:
                 error=cli('query',text,expected=5);assert error['kind']=='partial' and 'rows' not in error
-        scenario(PLANNED[4],maintenance)
+        scenario(PLANNED[5],maintenance)
         def plans():
             run(['createdb','fts_probe'],label='ordinary PostgreSQL readiness plan database')
             uri=connections['admin'].replace('/metadata_fts?','/fts_probe?')
@@ -226,6 +267,6 @@ EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE gene
                 assert any(n.get('Index Name')=='search_text_unavailable' for n in nodes(plan['Plan'])),plan
             assert actual[1]['Plan']['Actual Rows']==16
             save('unavailable-vector-query-plans',{'plans':actual,'scope':'ordinary PostgreSQL exact probe predicates; twenty-thousand real empty vectors and seventeen unavailable vectors; no forced planner settings or capacity claim'})
-        scenario(PLANNED[5],plans)
+        scenario(PLANNED[6],plans)
     finally:
         if daemon and daemon.poll() is None:stop(daemon)
