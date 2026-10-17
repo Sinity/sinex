@@ -33,6 +33,19 @@ fn download_guid_is_identity_and_zero_start_is_unknown_time() {
     assert_eq!(parsed.unix_us, None);
     assert!(parsed.unfinished);
     assert_eq!(parsed.payload["url"], "https://example.test/b");
+    let mut resumed = row.clone();
+    resumed["download"]["state"] = json!(4);
+    assert!(
+        parse(&resumed, "Default", Uuid::now_v7())
+            .unwrap()
+            .unfinished
+    );
+    resumed["download"]["state"] = json!(1);
+    assert!(
+        !parse(&resumed, "Default", Uuid::now_v7())
+            .unwrap()
+            .unfinished
+    );
     let mut missing = row;
     missing["download"]["guid"] = json!("");
     assert!(parse(&missing, "Default", Uuid::now_v7()).is_err());

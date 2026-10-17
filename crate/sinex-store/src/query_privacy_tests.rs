@@ -71,12 +71,12 @@ fn raw_projection_refuses_changed_opaque_source_selectors_and_hashes() {
 
 #[test]
 fn chromium_raw_content_can_be_protected_but_guid_and_custody_stay_opaque() {
-    let original = json!({"table":"downloads","coordinate":1,"download":{"id":1,"guid":"native-key","target_path":"/downloads/amber.pdf","hash":{"$blob":"deadbeef"}},"url_chain":[{"id":1,"chain_index":0,"url":"https://amber.invalid/"}],"_from":{"observation":"receipt","table":"downloads","rowid":1}});
+    let original = json!({"table":"downloads","coordinate":1,"download":{"id":1,"guid":"native-key","target_path":"/downloads/amber.pdf","hash":{"$blob":"deadbeef"},"nonfinite":{"sqlite_real_bits":"7ff0000000000000"}},"url_chain":[{"id":1,"chain_index":0,"url":"https://amber.invalid/"}],"_from":{"observation":"receipt","table":"downloads","rowid":1}});
     let mut shown = original.clone();
     protect_retained(&mut shown, &[rule("amber", "protected")], &[]).unwrap();
     assert_eq!(shown["download"]["target_path"], "/downloads/protected.pdf");
     assert_eq!(shown["_from"], original["_from"]);
-    for opaque in ["native-key", "receipt", "deadbeef"] {
+    for opaque in ["native-key", "receipt", "deadbeef", "7ff0000000000000"] {
         assert!(matches!(
             protect_retained(&mut original.clone(), &[rule(opaque, "changed")], &[]),
             Err(Error::ReplayRefused(_))

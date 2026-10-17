@@ -742,7 +742,14 @@ fn protect_retained(
                 Value::Object(fields) => fields.iter().all(|(key, value)| {
                     if matches!(
                         key.as_str(),
-                        "_from" | "table" | "coordinate" | "id" | "guid" | "chain_index" | "$blob"
+                        "_from"
+                            | "table"
+                            | "coordinate"
+                            | "id"
+                            | "guid"
+                            | "chain_index"
+                            | "$blob"
+                            | "sqlite_real_bits"
                     ) {
                         masked.get(key) == Some(value)
                     } else {

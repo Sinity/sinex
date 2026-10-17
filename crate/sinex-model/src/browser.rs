@@ -97,7 +97,7 @@ pub fn parse(row: &Value, profile: &str, generation: Uuid) -> Result<Parsed, &'s
                 key: id.to_string(),
                 unix_us: Some(unix_us(clock)?),
                 unfinished: duration == 0,
-                payload: json!({"profile":profile,"database_generation":generation,"visit_id":id,"url":text(url,"url")?,"title":match url.get("title") {None|Some(Value::Null)=>Value::Null,Some(_)=>json!(text(url,"title")?)},"visit_time_us":clock,"duration_us":duration,"transition":transition,"redirect":redirect,"from_visit":integer(visit,"from_visit")?,"referrer_url":row.get("referrer_url").cloned().unwrap_or(Value::Null),"duration_basis":"browser recorded elapsed duration; zero is not proof of an open tab; attention is unknown"}),
+                payload: json!({"profile":profile,"database_generation":generation,"visit_id":id,"url":text(url,"url")?,"title":match url.get("title") {None|Some(Value::Null)=>Value::Null,Some(_)=>json!(text(url,"title")?)},"visit_time_us":clock,"duration_us":duration,"transition":transition,"redirect":redirect,"from_visit":integer(visit,"from_visit")?,"referrer_url":row.get("referrer_url").cloned().unwrap_or(Value::Null),"referrer_basis":row.get("referrer_basis").cloned().unwrap_or(Value::Null),"duration_basis":"browser recorded elapsed duration; zero is not proof of an open tab; attention is unknown"}),
             })
         }
         Some("downloads") => {
@@ -152,7 +152,7 @@ pub fn parse(row: &Value, profile: &str, generation: Uuid) -> Result<Parsed, &'s
                 } else {
                     Some(unix_us(start)?)
                 },
-                unfinished: !matches!(state, 1 | 2 | 4),
+                unfinished: !matches!(state, 1 | 2),
                 payload: json!({"profile":profile,"database_generation":generation,"guid":original_guid,"download_id":id,"url_chain":chain.iter().map(|r|r["url"].clone()).collect::<Vec<_>>(),"url":chain.last().expect("nonempty chain")["url"],"target_path":text(download,"target_path")?,"current_path":text(download,"current_path")?,"start_time_us":start,"end_time_us":end,"end_unix_us":if end==0 {None}else{Some(unix_us(end)?)},"state":state,"state_label":state_label,"received_bytes":received,"total_bytes":total,"file_presence":"unknown; downloaded files were not read"}),
             })
         }

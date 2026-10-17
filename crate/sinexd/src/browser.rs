@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
+#[path = "browser/rows.rs"]
+mod rows;
+use rows::ProviderRows;
+
 pub struct Attempt {
     observation: Uuid,
     basis: ReadBasis,
@@ -50,6 +54,7 @@ pub async fn run(
 ) -> Result<(), String> {
     let mut custodian: Option<Custodian> = None;
     let mut full_due = None;
+    let mut snapshot_due = None;
     loop {
         if *stop.borrow() {
             return Ok(());
@@ -60,6 +65,7 @@ pub async fn run(
             &root,
             &mut custodian,
             &mut full_due,
+            &mut snapshot_due,
             &attempt,
             &admission,
             &stop,
@@ -70,6 +76,7 @@ pub async fn run(
             let fence = reason.contains("reconciliation required");
             custodian = None;
             full_due = None;
+            snapshot_due = None;
             admission.browser_step(BrowserStep{input:attempt.basis.input.ok_or("browser input absent")?,observation,rows:vec![],complete:false,unavailable:Some(reason),metadata:json!({"coverage":"unknown; previous retained values remain available"}),checkpoint:None,fence}).await.map_err(|_|"browser unavailable outcome could not commit")?;
         }
         let decision = tokio::time::Instant::now();
@@ -104,10 +111,16 @@ fn decode(row: SqliteRow) -> Result<Value, String> {
                     row.try_get::<i64, _>(name)
                         .map_err(|_| "browser integer decoding")?
                 ),
-                "REAL" => json!(
-                    row.try_get::<f64, _>(name)
-                        .map_err(|_| "browser real decoding")?
-                ),
+                "REAL" => {
+                    let real = row
+                        .try_get::<f64, _>(name)
+                        .map_err(|_| "browser real decoding")?;
+                    if real.is_finite() {
+                        json!(real)
+                    } else {
+                        json!({"sqlite_real_bits":format!("{:016x}",real.to_bits())})
+                    }
+                }
                 "BLOB" => {
                     json!({"sqlite_blob":row.try_get::<Vec<u8>,_>(name).map_err(|_|"browser blob decoding")?})
                 }
@@ -121,53 +134,74 @@ fn decode(row: SqliteRow) -> Result<Value, String> {
     }
     Ok(Value::Object(value))
 }
-async fn visit(connection: &mut SqliteConnection, id: i64) -> Result<Value, String> {
-    let visit = decode(
-        sqlx::query("SELECT * FROM visits WHERE id=?")
-            .bind(id)
-            .fetch_one(&mut *connection)
-            .await
-            .map_err(|_| "Chromium visit read unavailable")?,
-    )?;
-    let url = sqlx::query("SELECT * FROM urls WHERE id=?")
-        .bind(visit["url"].as_i64())
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(|_| "Chromium URL read unavailable")?
-        .map(decode)
-        .transpose()?
+async fn visit(
+    rows: &ProviderRows,
+    connection: &mut SqliteConnection,
+    id: i64,
+) -> Result<Value, String> {
+    let visit = rows
+        .read(connection, "visits", id, None)
+        .await?
+        .ok_or("Chromium visit missing in selected snapshot")?;
+    let url = rows
+        .read(
+            connection,
+            "urls",
+            visit["url"]
+                .as_i64()
+                .ok_or("Chromium URL key unavailable")?,
+            None,
+        )
+        .await?
         .unwrap_or(Value::Null);
-    let referrer: Option<String> =
+    let external = visit
+        .get("external_referrer_url")
+        .and_then(Value::as_str)
+        .filter(|v| !v.is_empty());
+    let referrer = if let Some(external) = external {
+        Some(external.to_owned())
+    } else {
+        let bytes: Option<i64> = sqlx::query_scalar("SELECT length(CAST(u.url AS BLOB)) FROM visits v JOIN urls u ON u.id=v.url WHERE v.id=?")
+            .bind(visit["from_visit"].as_i64()).fetch_optional(&mut *connection).await.map_err(|_|"Chromium referrer budget unavailable")?;
+        if bytes.is_some_and(|n| n < 0 || n > MAX_STEP_BYTES as i64) {
+            return Err(
+                "Chromium referrer exceeds retention budget before provider transfer".into(),
+            );
+        }
         sqlx::query_scalar("SELECT u.url FROM visits v JOIN urls u ON u.id=v.url WHERE v.id=?")
             .bind(visit["from_visit"].as_i64())
             .fetch_optional(&mut *connection)
             .await
-            .map_err(|_| "Chromium from-visit read unavailable")?;
-    Ok(json!({"table":"visits","coordinate":id,"visit":visit,"url":url,"referrer_url":referrer}))
+            .map_err(|_| "Chromium from-visit read unavailable")?
+    };
+    Ok(
+        json!({"table":"visits","coordinate":id,"visit":visit,"url":url,"referrer_url":referrer,"referrer_basis":if external.is_some(){"provider external_referrer_url"}else if referrer.is_some(){"provider from_visit URL in selected snapshot"}else{"unknown"}}),
+    )
 }
-async fn download(connection: &mut SqliteConnection, id: i64) -> Result<Value, String> {
-    let download = decode(
-        sqlx::query("SELECT * FROM downloads WHERE id=?")
-            .bind(id)
-            .fetch_one(&mut *connection)
-            .await
-            .map_err(|_| "Chromium download read unavailable")?,
-    )?;
+async fn download(
+    rows: &ProviderRows,
+    connection: &mut SqliteConnection,
+    id: i64,
+) -> Result<Value, String> {
+    let download = rows
+        .read(connection, "downloads", id, None)
+        .await?
+        .ok_or("Chromium download missing in selected snapshot")?;
     let mut chain = Vec::new();
     let mut after = None;
     let mut size = serde_json::to_vec(&download)
         .map_err(|_| "download encoding")?
         .len();
     loop {
-        let row=if let Some(after)=after{sqlx::query("SELECT * FROM downloads_url_chains WHERE id=? AND chain_index>? ORDER BY chain_index LIMIT 1").bind(id).bind(after).fetch_optional(&mut *connection).await}else{sqlx::query("SELECT * FROM downloads_url_chains WHERE id=? ORDER BY chain_index LIMIT 1").bind(id).fetch_optional(&mut *connection).await}.map_err(|_|"Chromium URL chain read unavailable")?;
-        let Some(row) = row else {
+        let index:Option<i64>=if let Some(after)=after{sqlx::query_scalar("SELECT chain_index FROM downloads_url_chains WHERE id=? AND chain_index>? ORDER BY chain_index LIMIT 1").bind(id).bind(after).fetch_optional(&mut *connection).await}else{sqlx::query_scalar("SELECT chain_index FROM downloads_url_chains WHERE id=? ORDER BY chain_index LIMIT 1").bind(id).fetch_optional(&mut *connection).await}.map_err(|_|"Chromium URL chain key unavailable")?;
+        let Some(index) = index else {
             break;
         };
-        after = Some(
-            row.try_get::<i64, _>("chain_index")
-                .map_err(|_| "download URL-chain key unavailable")?,
-        );
-        let row = decode(row)?;
+        after = Some(index);
+        let row = rows
+            .read(connection, "downloads_url_chains", id, Some(index))
+            .await?
+            .ok_or("Chromium chain row missing in selected snapshot")?;
         size = size
             .checked_add(
                 serde_json::to_vec(&row)
@@ -185,6 +219,7 @@ async fn download(connection: &mut SqliteConnection, id: i64) -> Result<Value, S
     }
     Ok(json!({"table":"downloads","coordinate":id,"download":download,"url_chain":chain}))
 }
+
 struct Batch<'a> {
     input: Uuid,
     observation: Uuid,
@@ -253,11 +288,37 @@ fn due(
             || clock(&c.full_due_at).is_ok_and(|t| OffsetDateTime::now_utc() >= t)
     }) || deadline.is_none_or(|t| tokio::time::Instant::now() >= t)
 }
+fn physical_deadline(
+    previous: Option<&Checkpoint>,
+    wall: OffsetDateTime,
+    monotonic: tokio::time::Instant,
+    interval_ms: u64,
+) -> Result<tokio::time::Instant, String> {
+    let interval = std::time::Duration::from_millis(interval_ms);
+    let remaining = previous
+        .and_then(|c| c.snapshot_at.as_deref())
+        .map(clock)
+        .transpose()?
+        .map(|at| {
+            at.checked_add(time::Duration::milliseconds(interval_ms as i64))
+                .ok_or("browser snapshot wall deadline overflow")
+        })
+        .transpose()?
+        .and_then(|target| (target - wall).try_into().ok())
+        .map_or(
+            std::time::Duration::ZERO,
+            |remaining: std::time::Duration| remaining.min(interval),
+        );
+    monotonic
+        .checked_add(remaining)
+        .ok_or_else(|| "browser snapshot monotonic deadline overflow".into())
+}
 async fn poll(
     config: &ChromiumConfig,
     root: &Path,
     custodian: &mut Option<Custodian>,
     full_due: &mut Option<tokio::time::Instant>,
+    snapshot_due: &mut Option<tokio::time::Instant>,
     attempt: &Attempt,
     admission: &Admission,
     stop: &tokio::sync::watch::Receiver<bool>,
@@ -369,6 +430,16 @@ async fn poll(
             return Err("unsupported Chromium primary-key/URL-chain declaration".into());
         }
     }
+    let oversized_guid: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM downloads WHERE length(CAST(guid AS BLOB))>512)",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|_| "Chromium GUID length budget unavailable")?;
+    if oversized_guid {
+        return Err("Chromium GUID exceeds supported key size before provider transfer".into());
+    }
+    let rows = ProviderRows::new(&mut tx).await?;
     let duplicate: Option<String> = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         sqlx::query_scalar(
@@ -394,20 +465,22 @@ async fn poll(
         return Err("Chromium visit sequence reset under declared generation; explicit reconciliation required".into());
     }
     let full = due(previous, epoch, schema, *full_due);
-    let now = OffsetDateTime::now_utc();
-    let snapshot_due = previous
-        .and_then(|c| c.snapshot_at.as_deref())
-        .and_then(|v| clock(v).ok())
-        .and_then(|t| {
-            t.checked_add(time::Duration::milliseconds(
-                config.snapshot_interval_ms as i64,
-            ))
-        })
-        .is_none_or(|due| now >= due);
+    // On a newly opened reader the persisted wall target supplies only a
+    // bounded remaining delay. Once established, the live deadline is monotonic.
+    let snapshot_deadline = match *snapshot_due {
+        Some(deadline) => deadline,
+        None => physical_deadline(
+            previous,
+            OffsetDateTime::now_utc(),
+            tokio::time::Instant::now(),
+            config.snapshot_interval_ms,
+        )?,
+    };
+    let snapshot_is_due = tokio::time::Instant::now() >= snapshot_deadline;
     let mut metadata = json!({"browser_read_plan_v1":{"kind":if full{"full_value_comparison"}else{"new_keys_and_prior_unfinished"},"custody":custody,"profile":config.profile,"generation":config.database_generation,"ordering_basis":"AUTOINCREMENT visits; GUID download key census, not an ID monotonicity claim","privacy_class":"plain","coverage":"selected retained values; no attention, population completeness or deletion inference"}});
-    let physical_snapshot = if snapshot_due {
+    let physical_snapshot = if snapshot_is_due {
         let bytes = crate::sqlite_custody::backup(&mut tx, &snapshot_path, stop).await?;
-        let snapshot = admission
+        let mut snapshot = admission
             .browser_snapshot(
                 attempt.basis.input.ok_or("browser input absent")?,
                 attempt.observation,
@@ -415,10 +488,22 @@ async fn poll(
             )
             .await
             .map_err(|_| "physical browser snapshot custody unavailable")?;
+        snapshot["writer_ack_observed_at"] = json!(
+            OffsetDateTime::now_utc()
+                .format(&Rfc3339)
+                .map_err(|_| "browser snapshot acknowledgment clock encoding")?
+        );
         metadata["physical_snapshot"] = snapshot.clone();
         metadata["browser_read_plan_v1"]["snapshot_copied_bytes"] = json!(bytes);
         let _ = std::fs::remove_file(&snapshot_path);
-        Some(snapshot)
+        Some((
+            snapshot,
+            tokio::time::Instant::now()
+                .checked_add(std::time::Duration::from_millis(
+                    config.snapshot_interval_ms,
+                ))
+                .ok_or("browser snapshot monotonic deadline overflow")?,
+        ))
     } else {
         None
     };
@@ -452,7 +537,7 @@ async fn poll(
         }
         for id in ids {
             through = id;
-            batch.push(visit(&mut tx, id).await?).await?;
+            batch.push(visit(&rows, &mut tx, id).await?).await?;
         }
     }
     let mut examined = 0u64;
@@ -498,7 +583,7 @@ async fn poll(
             download_max = download_max.max(id);
             examined += 1;
             if !known {
-                batch.push(download(&mut tx, id).await?).await?;
+                batch.push(download(&rows, &mut tx, id).await?).await?;
             }
         }
     }
@@ -525,23 +610,21 @@ async fn poll(
                             .await
                             .map_err(|_| "Chromium unfinished visit key unavailable")?;
                     if exists {
-                        batch.push(visit(&mut tx, key.coordinate).await?).await?;
+                        batch
+                            .push(visit(&rows, &mut tx, key.coordinate).await?)
+                            .await?;
                     }
                 } else if key.table == "downloads" {
-                    let current: Option<String> =
-                        sqlx::query_scalar("SELECT guid FROM downloads WHERE id=?")
-                            .bind(key.coordinate)
+                    // The persisted GUID owns identity; a provider may move its
+                    // numeric acquisition coordinate while this item is unfinished.
+                    let current: Option<i64> =
+                        sqlx::query_scalar("SELECT id FROM downloads WHERE lower(guid)=?")
+                            .bind(&key.key)
                             .fetch_optional(&mut *tx)
                             .await
                             .map_err(|_| "Chromium unfinished download key unavailable")?;
-                    if current
-                        .as_deref()
-                        .and_then(|v| Uuid::parse_str(v).ok())
-                        .map(|v| v.to_string())
-                        .as_deref()
-                        == Some(key.key.as_str())
-                    {
-                        batch.push(download(&mut tx, key.coordinate).await?).await?;
+                    if let Some(id) = current {
+                        batch.push(download(&rows, &mut tx, id).await?).await?;
                     }
                 }
             }
@@ -596,12 +679,13 @@ async fn poll(
     checkpoint.visits_through = checkpoint.visits_through.max(through);
     checkpoint.visits_sequence = sequence;
     checkpoint.download_max_coordinate = download_max;
-    if let Some(snapshot) = physical_snapshot {
+    if let Some((snapshot, _)) = &physical_snapshot {
         checkpoint.snapshot = serde_json::from_value(snapshot["material"].clone()).ok();
         checkpoint.snapshot_at = Some(
-            settled
-                .format(&Rfc3339)
-                .map_err(|_| "browser snapshot clock encoding")?,
+            snapshot["writer_ack_observed_at"]
+                .as_str()
+                .ok_or("browser snapshot acknowledgment clock missing")?
+                .to_owned(),
         );
     }
     batch.metadata["browser_read_plan_v1"]["selected_records"] = json!(batch.selected);
@@ -622,6 +706,7 @@ async fn poll(
         .await
         .map_err(|_| "Chromium final admission unavailable")?;
     *full_due = deadline;
+    *snapshot_due = Some(physical_snapshot.map_or(snapshot_deadline, |(_, deadline)| deadline));
     Ok(())
 }
 

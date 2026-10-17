@@ -145,6 +145,13 @@ snapshot_interval_ms = {snapshot}
         invoke('initialize',{'protocolVersion':'2024-11-05','capabilities':{},'clientInfo':{'name':'chromium-public-qualification','version':'1'}})
         mcp.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');mcp.stdin.flush()
         names=json.dumps(invoke('tools/list',{}));assert all(n in names for n in ['sinex_query','sinex_show','sinex_trace'])
+    def close_mcp():
+        nonlocal mcp
+        if mcp is not None:
+            if mcp.poll() is None:
+                mcp.stdin.close();mcp.wait(timeout=30)
+            assert mcp.returncode==0,('MCP graceful exit',mcp.returncode)
+            mcp=None
     visit_query='events where source = browser.history.chromium and kind = page.visited and payload.profile = main'
     download_query='events where source = browser.history.chromium and kind = download.observed and payload.profile = main'
     def one_visit(i):
@@ -191,6 +198,7 @@ snapshot_interval_ms = {snapshot}
             assert query(download_query)['total']==expected['downloads']
             a=one_visit(1);assert a['payload']['duration_us']==0 and a['when']=='2026-10-01T00:00:01.000001000Z'
             assert a['payload']['duration_basis'].endswith('attention is unknown')
+            assert a['payload']['referrer_url']=='https://referrer.invalid/' and a['payload']['referrer_basis']=='provider external_referrer_url'
             d=one_download(1);assert d['payload']['state_label']=='in_progress' and d['payload']['end_unix_us'] is None and d['when'] is None and d['time_quality']=='unknown'
             assert d['payload']['url_chain']==['https://example.invalid/start/1','https://cdn.invalid/file/1.pdf']
             equivalent_public('visit-public-clients',visit_query+' and payload.url = "https://example.invalid/page/1"')
@@ -217,11 +225,30 @@ snapshot_interval_ms = {snapshot}
             nonlocal daemon
             before=one_visit(1);old=one_download(1);s=wait('reduced before update',lambda:settled(kind='new_keys_and_prior_unfinished'))
             mutate('UPDATE visits SET visit_duration=98000001 WHERE id=1')
-            mutate('UPDATE downloads SET state=4,interrupt_reason=40,end_time=? WHERE id=1',(OFFSET+BASE+90000000,))
+            # Numeric coordinates may change; the same GUID remains one item.
+            with sqlite3.connect(source) as c:
+                c.execute('UPDATE downloads SET id=1001,state=4,interrupt_reason=40,end_time=? WHERE id=1',(OFFSET+BASE+90000000,))
+                c.execute('UPDATE downloads_url_chains SET id=1001 WHERE id=1');c.commit()
             s=next_poll(s,'new_keys_and_prior_unfinished')
             assert one_visit(1)['id']!=before['id'] and one_visit(1)['payload']['duration_us']==98000001
-            assert one_download(1)['id']!=old['id'] and one_download(1)['payload']['state_label']=='interrupted'
-            empty=next_poll(s,'new_keys_and_prior_unfinished');assert empty['last_run']['rows_read']==0
+            interrupted=one_download(1)
+            assert interrupted['id']!=old['id'] and interrupted['payload']['state_label']=='interrupted'
+            assert interrupted['payload']['download_id']==1001
+            unchanged=next_poll(s,'new_keys_and_prior_unfinished');assert unchanged['last_run']['rows_read']==1
+            assert one_download(1)['id']==interrupted['id']
+            due_at=unchanged['last_run']['metadata']['browser_checkpoint_v1']['full_due_at']
+            mutate('UPDATE downloads SET state=0,received_bytes=2048,end_time=0 WHERE id=1001')
+            resumed=next_poll(unchanged,'new_keys_and_prior_unfinished');assert resumed['last_run']['rows_read']==1
+            running=one_download(1);assert running['id']!=interrupted['id'] and running['payload']['state_label']=='in_progress' and running['payload']['received_bytes']==2048
+            equivalent_public('resumed-download-public-clients',download_query+' and payload.guid = "'+str(uuid.UUID(int=1))+'"')
+            mutate('UPDATE downloads SET state=1,received_bytes=4096,end_time=? WHERE id=1001',(OFFSET+BASE+120000000,))
+            completed=next_poll(resumed,'new_keys_and_prior_unfinished');assert completed['last_run']['rows_read']==1
+            done=one_download(1);assert done['id']!=running['id'] and done['payload']['state_label']=='complete' and done['payload']['received_bytes']==4096
+            assert query(download_query)['total']==expected['downloads']
+            assert all(v['last_run']['metadata']['browser_checkpoint_v1']['full_due_at']==due_at for v in (resumed,completed))
+            equivalent_public('completed-download-public-clients',download_query+' and payload.guid = "'+str(uuid.UUID(int=1))+'"')
+            save('same-GUID-interrupted-resumed-completed',{'interrupted':interrupted,'resumed':running,'completed':done,'ordinary_polls':[unchanged,resumed,completed],'identity':'one persisted GUID; versions differ; numeric coordinate is acquisition-only'})
+            empty=next_poll(completed,'new_keys_and_prior_unfinished');assert empty['last_run']['rows_read']==0
             # A new persisted GUID may reuse a numeric download coordinate.
             replacement=str(uuid.UUID(int=10001));mutate('UPDATE downloads SET guid=?,state=1 WHERE id=2',(replacement,))
             fresh=next_poll(empty,'new_keys_and_prior_unfinished');assert fresh['last_run']['rows_read']==1
@@ -230,7 +257,7 @@ snapshot_interval_ms = {snapshot}
             original=one_visit(3);mutate('UPDATE visits SET visit_duration=5555555 WHERE id=3')
             s=next_poll(fresh,'new_keys_and_prior_unfinished');assert one_visit(3)['id']==original['id']
             # Restart forces a real full. Then a due full finds a second completed-row edit.
-            stop(mcp);stop(daemon);configure(full=12000);daemon=start(config,'chromium-full');wait('reopened full',lambda:settled(kind='full_value_comparison'));connect()
+            close_mcp();stop(daemon);configure(full=12000);daemon=start(config,'chromium-full');wait('reopened full',lambda:settled(kind='full_value_comparison'));connect()
             wait('completed edit after real full',lambda:one_visit(3)['payload']['duration_us']==5555555)
             original=one_visit(4);mutate('UPDATE visits SET visit_duration=7777777 WHERE id=4')
             wait('periodic full value comparison',lambda:one_visit(4)['payload']['duration_us']==7777777)
@@ -249,14 +276,14 @@ snapshot_interval_ms = {snapshot}
                 assert c.execute('PRAGMA quick_check').fetchall()==[('ok',)]
                 assert c.execute('SELECT count(*) FROM visits').fetchone()[0]==50000
                 assert c.execute('SELECT state FROM downloads WHERE id=1').fetchone()[0]==0 # exact old base, not present provider state
-            owned.unlink();stop(mcp);stop(daemon)
+            owned.unlink();close_mcp();stop(daemon)
             source.rename(work/'provider-held');second.rename(work/'other-held')
             daemon=start(config,'chromium-provider-loss');wait('provider loss outcome',lambda:settled(state='unavailable'));connect()
             failed,retained_trace=equivalent_public('after-provider-loss',download_query+' and payload.guid = "'+str(uuid.UUID(int=1))+'"')
             assert failed['rows']==baseline['rows'] and failed['complete'] is False and retained_trace['record']==trace['record']
             save('retained-costs',sql("SELECT jsonb_build_object('observations',(SELECT count(*) FROM raw.observations),'retained_logical_bytes',(SELECT sum(durable_bytes) FROM raw.source_material_registry),'event_versions',(SELECT count(*) FROM core.events),'snapshot_bases',(SELECT count(*) FROM raw.source_material_registry WHERE material_kind='file'),'scope','generated fixture logical custody dimensions; compressed file sizes below, no throughput or inclusive CPU/IO claim')"))
             save('physical-blob-files',{'files':len(list((store/'blobs').rglob('*.zst'))),'compressed_bytes':sum(p.stat().st_size for p in (store/'blobs').rglob('*.zst')),'snapshot_material':material})
-            stop(mcp);stop(daemon);(work/'provider-held').rename(source);(work/'other-held').rename(second)
+            close_mcp();stop(daemon);(work/'provider-held').rename(source);(work/'other-held').rename(second)
         scenario(PLANNED[2],retained)
         # Smaller private-safe generated database exercises locked custody without rereading the large baseline.
         def locked():
@@ -309,7 +336,7 @@ snapshot_interval_ms = {snapshot}
             with sqlite3.connect(path) as c:c.execute('UPDATE urls SET title=? WHERE id=130',('x'*1100000,));c.commit()
             configure(path=path,gen=gen,profiles=False);daemon=start(config,'chromium-partial')
             failed=wait('retained prefix unavailable',lambda:settled(state='unavailable'))
-            assert failed['last_run']['rows_read']==128 and 'exceeds retention budget' in failed['last_run']['reason'],failed
+            assert failed['last_run']['rows_read']==128 and 'before provider transfer' in failed['last_run']['reason'],failed
             assert 'browser_checkpoint_v1' not in failed['last_run']['metadata']
             carry=sql("SELECT carry FROM raw.source_cursors WHERE input='"+failed['input']+"' AND binding='browser.history.chromium'");assert carry=={}
             old_observation=failed['last_run']['id']
@@ -365,5 +392,5 @@ snapshot_interval_ms = {snapshot}
             save('generation-and-schema-refusals',{'replacement':failed,'restart':failed2,'reset':reset,'unsupported':unsupported,'limits':'explicit generation continuity premise; no census/deletion, arbitrary overwrite detection, page patches, independent backup or live import qualification'})
         scenario(PLANNED[5],refusals)
     finally:
-        if mcp and mcp.poll() is None:stop(mcp)
+        if mcp and mcp.poll() is None:close_mcp()
         if daemon and daemon.poll() is None:stop(daemon)

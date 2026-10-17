@@ -2,7 +2,7 @@ use super::*;
 #[test]
 fn backward_wall_target_never_postpones_elapsed_monotonic_full() {
     let epoch = Uuid::now_v7();
-    let checkpoint = Checkpoint {
+    let mut checkpoint = Checkpoint {
         version: 1,
         epoch,
         generation: Uuid::now_v7(),
@@ -39,4 +39,29 @@ fn backward_wall_target_never_postpones_elapsed_monotonic_full() {
         1,
         Some(tokio::time::Instant::now() + std::time::Duration::from_secs(60))
     ));
+    let mono = tokio::time::Instant::now();
+    assert_eq!(
+        physical_deadline(None, OffsetDateTime::UNIX_EPOCH, mono, 1000).unwrap(),
+        mono
+    );
+    checkpoint.snapshot_at = Some("2026-10-01T00:00:00Z".into());
+    let initial = clock("2026-10-01T00:00:00Z").unwrap();
+    let target = physical_deadline(Some(&checkpoint), initial, mono, 1000).unwrap();
+    assert_eq!(target, mono + std::time::Duration::from_secs(1));
+    // Even a very old current wall clock cannot grant more than one interval
+    // at reopen. A live reader reuses target rather than recalculating it.
+    assert_eq!(
+        physical_deadline(Some(&checkpoint), OffsetDateTime::UNIX_EPOCH, mono, 1000).unwrap(),
+        target
+    );
+    assert_eq!(
+        physical_deadline(
+            Some(&checkpoint),
+            initial + time::Duration::seconds(2),
+            mono,
+            1000
+        )
+        .unwrap(),
+        mono
+    );
 }
