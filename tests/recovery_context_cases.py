@@ -219,6 +219,7 @@ poll_interval_ms = 3000
                     if identities is None:identities=current
                     else:assert current==identities, 'unchanged poll changed event/session evidence'
                     poll_dir=directory/str(index);poll_dir.mkdir()
+                    save('retention-basis-'+str(index)+'.json',{'source':status,'database':database,'files':manifest(work/'recovery-blobs')})
                     measured=account(work/'recovery-blobs',poll_dir,database['materials'],observation['id'],facts,run,decoder)
                     new=[m for m in measured['materials'] if m['new_this_observation']];assert len(new)==1
                     if snapshots:
@@ -237,7 +238,9 @@ poll_interval_ms = 3000
                     previous=observation['id']
                     if index==0:held.sendall(b'c');held.close();held=None;controller.close()
             finally:
-                if held is not None:held.close()
+                if held is not None:
+                    if daemon.poll() is None:stop(daemon)
+                    held.close()
                 controller.close()
             lines=['# Fixed-provider retained byte accounting','',
                 'Three completed polls use one continuous collector, the same synthetic provider, configuration and store. The first baseline uses the existing one-shot collector rendezvous. Two later autonomous polls are sampled after EOF closure and scheduling, with equal observation/cursor/material basis before and after capture; raced accounting refuses. Directory manifests are stable observations, not atomic filesystem snapshots.','',

@@ -33,6 +33,7 @@ with tempfile.TemporaryDirectory(prefix='sinex-accounting-check-',dir='/realm/tm
     def measure(name):
         destination=root/name;destination.mkdir()
         return account(store,destination,[material],'synthetic-observation',[row],run,decoder)
+    (store/'writer.lock').write_bytes(b'')
     proof=measure('positive');m=proof['materials'][0]
     assert m['logical_source_rows_jsonl_bytes']==len(canonical(row))+1
     assert m['acquisition_envelope_extra_bytes']==len(decoded)-len(canonical(row))-1

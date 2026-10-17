@@ -11,7 +11,7 @@ def canonical(value):
 def manifest(root):
     return [{'path': str(p.relative_to(root)), 'bytes': p.stat().st_size,
         'sha256': hashlib.sha256(p.read_bytes()).hexdigest(),
-        'category': 'open' if p.relative_to(root).parts[0] == 'open' else
+        'category': 'lock_metadata' if p.relative_to(root).as_posix() == 'writer.lock' else 'open' if p.relative_to(root).parts[0] == 'open' else
             ('temporary' if p.relative_to(root).parts[:2] == ('blobs', 'tmp') else 'closed')}
         for p in sorted(root.rglob('*')) if p.is_file()]
 
@@ -19,10 +19,11 @@ def manifest(root):
 def account(root, destination, materials, observation, facts, run, decoder):
     """Read a held collector's closed material, preserving exact file and row evidence."""
     before = manifest(root)
-    assert all(f['category'] == 'closed' for f in before), 'held EOF left open or temporary custody'
+    assert all(f['category'] in ('closed', 'lock_metadata') for f in before), 'held EOF left open or temporary custody'
     assert all(m['status'] == 'completed' and m['durable_bytes'] == m['total_bytes'] == m['size_bytes']
         and m['blob_status'] == 'present' for m in materials), 'material custody not closed'
-    by_path = {f['path']: f for f in before}
+    assert all(f['bytes'] == 0 for f in before if f['category'] == 'lock_metadata'), 'writer lock unexpectedly contains data'
+    by_path = {f['path']: f for f in before if f['category'] == 'closed'}
     accounted = []
     expected_rows = sorted(facts, key=lambda r: r['id'])
     for material in materials:
@@ -55,4 +56,4 @@ def account(root, destination, materials, observation, facts, run, decoder):
     assert manifest(root) == before, 'store changed while collector held'
     return {'files': before, 'file_bytes': sum(f['bytes'] for f in before),
         'closed_bytes': sum(f['bytes'] for f in before if f['category'] == 'closed'),
-        'open_bytes': 0, 'temporary_bytes': 0, 'materials': accounted}
+        'open_bytes': 0, 'temporary_bytes': 0, 'lock_metadata_bytes': sum(f['bytes'] for f in before if f['category'] == 'lock_metadata'), 'materials': accounted}
