@@ -164,3 +164,29 @@ fn historical_plan_cannot_become_current_overdue_after_configuration_or_run_chan
         None
     ));
 }
+
+#[test]
+fn atuin_checkpoint_needs_the_same_reader_schema_and_unexpired_real_full() {
+    let epoch = Uuid::now_v7();
+    let now = OffsetDateTime::parse("2026-10-17T10:00:00Z", &Rfc3339).unwrap();
+    let mut checkpoint = AtuinCheckpoint {
+        version: 1,
+        epoch,
+        schema_version: 3,
+        user_version: 7,
+        through_rowid: 999,
+        full_completed_at: "2026-10-17T09:00:00Z".into(),
+        full_due_at: "2026-10-18T09:00:00Z".into(),
+        needs_full: false,
+    };
+    assert!(checkpoint.reusable(epoch, 3, 7, now));
+    assert!(!checkpoint.reusable(Uuid::now_v7(), 3, 7, now));
+    assert!(!checkpoint.reusable(epoch, 4, 7, now));
+    assert!(!checkpoint.reusable(epoch, 3, 8, now));
+    assert!(!checkpoint.reusable(epoch, 3, 7, now + time::Duration::days(1)));
+    checkpoint.needs_full = true;
+    assert!(!checkpoint.reusable(epoch, 3, 7, now));
+    checkpoint.needs_full = false;
+    checkpoint.full_due_at = "unknown".into();
+    assert!(!checkpoint.reusable(epoch, 3, 7, now));
+}

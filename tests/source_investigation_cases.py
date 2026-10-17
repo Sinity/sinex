@@ -69,6 +69,7 @@ automata = []
 [atuin]
 path = "{path}"
 poll_interval_ms = {interval}
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''')
     def api(method, params=None):
         req={'jsonrpc':'2.0','id':1,'method':method,'params':params or {}}

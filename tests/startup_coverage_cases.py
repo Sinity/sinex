@@ -30,7 +30,7 @@ sources = {json.dumps(['terminal.atuin-history'] if source else [])}
 automata = []
 '''
         if source:
-            text += f'[atuin]\npath = "{source}"\npoll_interval_ms = 1000\n'
+            text += f'[atuin]\npath = "{source}"\npoll_interval_ms = 1000\nfull_interval_ms = 100\n'
         config.write_text(text)
 
     def ready(proc):

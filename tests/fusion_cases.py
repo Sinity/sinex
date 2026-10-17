@@ -113,6 +113,7 @@ roots=["/work/harbor"]
 '''+(f'''[atuin]
 path="{source}"
 poll_interval_ms={poll}
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 [zsh]
 path="{zpath or zsh}"
 execution_host="{host}"

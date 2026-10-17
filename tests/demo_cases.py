@@ -108,6 +108,7 @@ automata = []
 [atuin]
 path = "{source}"
 poll_interval_ms = 1000
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 [[privacy_rules]]
 pattern = "tok_[a-z0-9_]+"
 replacement = "[withheld]"

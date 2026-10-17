@@ -356,6 +356,44 @@ impl WriterPool {
         Ok((material, start))
     }
 
+    pub(crate) async fn atuin_read_basis(
+        &mut self,
+        locator: &str,
+    ) -> Result<sinex_model::acquisition::AtuinReadBasis> {
+        let (input, carry): (Uuid, Option<Value>) = sqlx::query_as("SELECT i.id,c.carry FROM raw.inputs i LEFT JOIN raw.source_cursors c ON c.binding=i.binding AND c.input=i.id::text WHERE i.binding=$1 AND i.locator=$2")
+            .bind(SOURCE).bind(locator).fetch_one(&mut self.connection).await?;
+        let basis = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
+            .fetch_one(&mut self.connection)
+            .await?;
+        let checkpoint = carry
+            .and_then(|v| {
+                serde_json::from_value::<sinex_model::acquisition::AtuinCheckpoint>(v).ok()
+            })
+            .filter(|v| v.valid());
+        Ok(sinex_model::acquisition::AtuinReadBasis {
+            input,
+            basis,
+            checkpoint,
+        })
+    }
+    pub(crate) async fn atuin_unfinished_page(
+        &mut self,
+        input: Uuid,
+        basis: i64,
+        after: Option<Uuid>,
+    ) -> Result<Vec<(Uuid, String)>> {
+        // Historical eligibility is fixed before admission. Updating an old unfinished
+        // row to completed cannot remove its later peers from this keyset traversal.
+        // LIMIT bounds materialization, not underlying history scan work.
+        let mut tx = self.connection.begin().await?;
+        sqlx::query("SET LOCAL statement_timeout='2s'")
+            .execute(&mut *tx)
+            .await?;
+        let rows = sqlx::query_as("SELECT e.id,e.equivalence_key::jsonb->>1 FROM core.events e WHERE e.source=$1 AND e.event_type='command.executed' AND e.record_state='present' AND e.payload->>'completion'='end_not_recorded' AND (e.equivalence_key::jsonb->>0)=$2 AND e.commit_seq<=$3 AND ($4::uuid IS NULL OR e.id>$4) AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$3) ORDER BY e.id LIMIT 64")
+            .bind(SOURCE).bind(input.to_string()).bind(basis).bind(after).fetch_all(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(rows)
+    }
     pub(crate) async fn admit_atuin(&mut self, step: AtuinStep) -> Result<Value> {
         if step.rows.len() > MAX_STEP_ROWS
             || step.locator.is_empty()
@@ -572,6 +610,30 @@ impl WriterPool {
             .bind(step.observation).bind(admitted).bind(repeated).bind(failures).bind(removed).bind(status).bind(&step.unavailable).bind(last_seq).bind(excluded).fetch_one(&mut *tx).await?;
         sqlx::query("INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,$2,$3,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,updated_at=now()")
             .bind(SOURCE).bind(input.to_string()).bind(&summary).execute(&mut *tx).await?;
+        if step.complete && step.unavailable.is_none() {
+            if let Some(value) = step.metadata.get("_sinex_read_plan_v1") {
+                let mut plan: sinex_model::acquisition::AtuinReadPlan =
+                    serde_json::from_value(value.clone())
+                        .map_err(|_| Error::Invalid("invalid Atuin read plan"))?;
+                if plan.version != 1 || !plan.checkpoint.valid() {
+                    return Err(Error::Invalid("invalid Atuin checkpoint"));
+                }
+                // Parser omissions remain a reason to compare the full provider again.
+                // An empty reduced poll must never silently clear an old malformed row.
+                plan.checkpoint.needs_full |= summary["record_errors"].as_i64().unwrap_or(1) != 0;
+                let checkpoint = serde_json::to_value(&plan.checkpoint)
+                    .map_err(|_| Error::Invalid("Atuin checkpoint encoding"))?;
+                let plan = serde_json::to_value(&plan)
+                    .map_err(|_| Error::Invalid("Atuin read plan encoding"))?;
+                sqlx::query("UPDATE raw.source_cursors SET carry=$3 WHERE binding=$1 AND input=$2")
+                    .bind(SOURCE)
+                    .bind(input.to_string())
+                    .bind(checkpoint)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query("UPDATE raw.observations SET metadata=jsonb_set(metadata,'{_sinex_read_plan_v1}',$2) WHERE id=$1").bind(step.observation).bind(plan).execute(&mut *tx).await?;
+            }
+        }
         let committed_evidence = json!({"custody":boundary_evidence,"progress":summary});
         // Empty reading registration and EOF/unavailable accounting are not
         // retained data boundaries. Keep qualification on data-bearing steps.

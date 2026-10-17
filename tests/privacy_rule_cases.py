@@ -49,7 +49,7 @@ automata = []
 name = "privacy"
 roots = ["/synthetic/privacy"]
 '''
-        if acquire: text+=f'[atuin]\npath = "{source}"\npoll_interval_ms = 3600000\n'
+        if acquire: text+=f'[atuin]\npath = "{source}"\npoll_interval_ms = 3600000\nfull_interval_ms = 100\n'
         for pattern,replacement in current_rules:
             text+='[[privacy_rules]]\npattern = '+json.dumps(pattern)+'\nreplacement = '+json.dumps(replacement)+'\ncreated_by = "operator"\n'
         config.write_text(text)

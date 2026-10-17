@@ -53,6 +53,7 @@ roots = ["/synthetic/tide/nested"]
 '''+(f'''[atuin]
 path = "{db}"
 poll_interval_ms = {poll}
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''' if source else '')
     config.write_text(configuration(poll=30000))
     def profile():
