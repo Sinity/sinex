@@ -259,13 +259,16 @@ try:
                 observed_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
                 observed_tree=subprocess.check_output(['git','write-tree'],cwd=ROOT,text=True).strip()
                 assert pin['candidate']==observed_head and pin['tree']==observed_tree and not subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True), "prebuilt package pin differs from the clean current candidate"
-                if OPTIONS.configured_continuation or OPTIONS.privacy_rules:
+                if OPTIONS.configured_continuation or OPTIONS.privacy_rules or (OPTIONS.recovery_context and "package_candidate" in pin):
                     package_candidate=pin['package_candidate']
                     package_tree=subprocess.check_output(['git','rev-parse',package_candidate+'^{tree}'],cwd=ROOT,text=True).strip()
                     assert package_tree==pin['package_tree'], "recorded package source tree differs"
                     changed=subprocess.check_output(['git','diff','--name-only',package_candidate,observed_head],cwd=ROOT,text=True).splitlines()
-                    assert all(p.startswith(('tests/','docs/')) or p in ('README.md','.agentctl/project.toml') for p in changed), "configured continuation requires a package with unchanged runtime/build source"
-                    (REPORT/'runtime-identity.json').write_text(json.dumps({'package_candidate':package_candidate,'package_tree':package_tree,'qualification_candidate':observed_head,'qualification_tree':observed_tree,'harness_and_docs_only_difference':changed},indent=2)+'\n')
+                    from package_binding import require_harness_only
+                    require_harness_only(changed)
+                    source_diff=subprocess.check_output(['git','diff','--binary',package_candidate,observed_head],cwd=ROOT)
+                    (REPORT/'runtime-harness.diff').write_bytes(source_diff)
+                    (REPORT/'runtime-identity.json').write_text(json.dumps({'package_candidate':package_candidate,'package_tree':package_tree,'qualification_candidate':observed_head,'qualification_tree':observed_tree,'harness_and_docs_only_difference':changed,'source_diff':'runtime-harness.diff','source_diff_sha256':hashlib.sha256(source_diff).hexdigest()},indent=2)+'\n')
                 BIN_DIR=package/'bin'
                 for name in ['sinexd','sinexctl']:
                     binary=BIN_DIR/name

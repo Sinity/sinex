@@ -175,3 +175,27 @@ with all eligible co-occurring context, own-cwd attribution, direct-member summa
 and newer unresolved session candidates under one bounded generation.
 `recovery_context_package_acceptance -- --package-pin FILE` uses the explicitly
 pinned package without rebuilding or choosing a fallback.
+
+The recovery-context route also accounts for three completed fixed-provider
+Atuin acquisitions at the existing `collector-scheduled` boundary. That
+rendezvous holds the first baseline; two later autonomous polls use the same
+continuous collector and a three-second interval. Each completed sample binds
+source counters, event/session identities, material/blob custody and a full
+store-file manifest. Equal observation/cursor/material basis before and after
+reads refuses a raced sample; directory reads do not claim filesystem atomicity. The private report retains the exact plain
+blobs, stock `zstd` decoding, source JSONL, `_from` serialization overhead and
+encoded file lengths. The owner decoder does not separately expose verified
+seek-metadata lengths; that finer split stays unknown. Open and temporary copies
+must be absent at these closed boundaries. `tests/retention_accounting_checks.py` checks the byte-layout
+and forbidden runtime/build-delta controls without a database.
+
+For a clean harness-only recovery candidate, the package pin may additionally
+record `package_candidate` and `package_tree` for the original qualified runtime.
+The ordinary clean `candidate`/`tree` and immutable binary hash checks still
+apply to the current qualification candidate. Reuse refuses changes outside
+`tests/`, `docs/`, `README.md` and `.agentctl/project.toml`; the report preserves
+both source identities and their exact diff. This route requires an existing
+`zstd` command and never builds a replacement runtime. It measures finite file
+lengths across completed polls, not physical IO,
+allocated storage, RSS, sustained capacity or everyday benefit. It cannot
+retrospectively decompose older aggregate byte samples without their manifests.
