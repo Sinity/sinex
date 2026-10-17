@@ -25,9 +25,38 @@ sinexctl --endpoint URL --token-file FILE query 'recall last where project = tid
 
 `sinex_recall` over the existing rmcp stdio entrypoint accepts optional `project`
 and `timeout_ms` fields. `sinex_query` accepts the same fixed query text. The
-server selects the latest session containing that configured project's commands,
-returns its complete header and parents, and assembles only that project's
-commands. Without project scope it returns the latest complete grouping. A
+server selects the latest session with positive direct-member evidence for that
+configured project, then returns every eligible canonical member as co-occurring
+context. Each row carries typed `project_evidence`: `known` with its project,
+`unconfigured` with `no_configured_root`, or `unknown` with `missing_cwd`,
+`invalid_cwd` or `ambiguous_roots`. Empty cwd is missing evidence; relative paths,
+NUL and dot/dot-dot components are invalid. No filesystem lookup or inherited
+project supplies an absent field. The same pure root matcher supplies the indexed
+positive projection and these labels.
+
+`attribution` summarizes only direct members: known-project counts, the observed
+unconfigured count and exact unknown-member event references with reasons.
+`newer_unresolved_candidates` contains newer session headers and their direct-member
+summaries when any member has unknown project evidence. Known other projects and
+determinately unconfigured paths alone create no unresolved candidate. A registered
+project with no positive match returns `session: null`, empty `rows`, and any
+unresolved candidates; an unregistered selector refuses as `bad_query`. Without
+project scope recall returns the latest complete grouping.
+
+The repeatable-read assembly binds commit/projection position, generation and the
+exact current configuration fingerprint in `resolved`. A changed project list
+reconstructs the existing projection; configuration mismatch refuses a settled
+answer. It preserves event and provenance identities. Candidate inspection is
+bounded to 128 sessions and 8192 direct members total across inspected sessions.
+It first reads bounded session IDs and checks member cardinality before loading
+cwd evidence. An inconclusive boundary returns explicit `partial` unavailable,
+including for a project with no positive match; no prefix becomes qualified empty.
+Selected-session command assembly retains the requested page bound, at most 100
+rows, and the writer's separate 8192-parent session bound. Exact counts do not
+qualify whole-process memory, physical IO or encoding preemption.
+
+The previous published subset at `e30fe598` returned project-only command rows;
+its original qualification remains scoped to that behavior. A
 neighbor root such as `/work/tide-neighbor` does not match `/work/tide`.
 Time-window, mark, general session-query and other-source recall remain unavailable.
 
@@ -140,3 +169,14 @@ recall remains a partial refusal. Session timeout retry is classified by the
 typed deadline or SQLSTATE; validation failures never acquire retry authority
 from their diagnostic text. This reuses the separate session lifecycle evidence; it does not rerun that
 journey or claim continuous coverage.
+
+
+`recovery_context_acceptance` exercises the mixed-context extension through one
+configured synthetic Atuin collector and ordinary CLI/MCP, with independent spans,
+labels, exact retained citations, late cross-day replacement, unchanged and later
+polls, configuration reconstruction, restart/provider loss and whole-session and
+candidate overflow. `recovery_context_package_acceptance -- --package-pin FILE`
+requires the exact immutable clean package binding and never builds or falls back.
+The same-phase SQLite comparison retains equal answers and client processing,
+while provider-loss retention remains separate. This finite route does not qualify
+full M1/M2a, live deployment, continuous capture or everyday retrieval superiority.

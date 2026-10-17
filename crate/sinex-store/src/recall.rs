@@ -2,6 +2,9 @@
 //! role-bound reader, statement deadline, credential floor and RPC query route.
 use crate::{Error, ReadPool, Result};
 use serde_json::{Value, json};
+use sinex_model::retrieval::{
+    Project, ProjectEvidence, SessionProjectAttribution, UnknownProjectMember, project_evidence,
+};
 use sqlx::{Connection, Row};
 use uuid::Uuid;
 // Only projection catch-up is eligible for the short settling window. Missing
@@ -39,11 +42,18 @@ impl ReadPool {
     pub async fn recall_with_timeout(
         &self,
         text: &str,
+        projects: &[Project],
         cursor: Option<&str>,
         page: u32,
         budget: std::time::Duration,
     ) -> Result<Value> {
         let project = validate_recall(text).map_err(Error::Invalid)?;
+        if project
+            .as_ref()
+            .is_some_and(|name| !projects.iter().any(|p| &p.name == name))
+        {
+            return Err(Error::Invalid("recall project is not configured"));
+        }
         if cursor.is_some() || !(1..=100).contains(&page) {
             return Err(Error::Invalid(
                 "recall last supports a single bounded assembly; no cursor; page must be 1..=100",
@@ -58,7 +68,7 @@ impl ReadPool {
             loop {
                 let remaining=deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero(){return Err(Error::Deadline);}
-                match self.recall_last(text,project.clone(),page,remaining).await? {
+                match self.recall_last(text,project.clone(),projects,page,remaining).await? {
                     RecallAttempt::Ready(value) => break Ok(value),
                     RecallAttempt::ProjectionPending if tokio::time::Instant::now()<settle => {
                         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
@@ -82,6 +92,7 @@ impl ReadPool {
         &self,
         text: &str,
         project: Option<String>,
+        projects: &[Project],
         page: u32,
         budget: std::time::Duration,
     ) -> Result<RecallAttempt> {
@@ -100,7 +111,7 @@ impl ReadPool {
                 "shell session reconciliation is not configured",
             ));
         }
-        let state=sqlx::query("SELECT generation,position,serving,failure FROM derivation.read_model_position WHERE name='shell-search'").fetch_optional(&mut *tx).await?.ok_or(Error::ProjectionUnavailable("indexed retrieval is not configured"))?;
+        let state=sqlx::query("SELECT generation,configuration,position,serving,failure FROM derivation.read_model_position WHERE name='shell-search'").fetch_optional(&mut *tx).await?.ok_or(Error::ProjectionUnavailable("indexed retrieval is not configured"))?;
         let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM derivation.session_dirty) OR EXISTS(SELECT 1 FROM derivation.shell_dirty) OR EXISTS(SELECT 1 FROM derivation.session_progress WHERE failure IS NOT NULL)").fetch_one(&mut *tx).await?;
         if pending {
             return Err(Error::ProjectionUnavailable(
@@ -116,33 +127,119 @@ impl ReadPool {
             return Ok(RecallAttempt::ProjectionPending);
         }
         let generation: Uuid = state.try_get("generation")?;
-        let session:Option<Value>=sqlx::query_scalar(&format!("SELECT {} FROM core.live_events e WHERE e.event_type='activity.session.boundary' AND ($1::text IS NULL OR EXISTS(SELECT 1 FROM core.event_project p WHERE p.generation=$2 AND p.project=$1 AND p.event_id=ANY(e.source_event_ids))) ORDER BY e.ts_orig DESC,e.ts_orig_tiebreak DESC,e.id LIMIT 1",crate::query::EVENT_VIEW)).bind(&project).bind(generation).fetch_optional(&mut *tx).await?;
+        let configuration = crate::projection::configuration(projects);
+        if state.try_get::<String, _>("configuration")? != configuration {
+            return Err(Error::ProjectionUnavailable(
+                "project configuration generation is unavailable",
+            ));
+        }
+        // Inspect at most 128 groupings and 8192 direct members in this snapshot.
+        // Reaching either boundary without a conclusive answer refuses the entire
+        // assembly; no inspected prefix is presented as settled empty.
+        let sessions: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT e.id FROM core.live_events e WHERE e.event_type='activity.session.boundary' ORDER BY e.ts_orig DESC,e.ts_orig_tiebreak DESC,e.id LIMIT 129")
+            .fetch_all(&mut *tx).await?;
+        let mut selected: Option<Value> = None;
         let mut rows: Vec<Value> = vec![];
-        let mut total = 0i64;
-        if let Some(session) = &session {
-            let id = Uuid::parse_str(
-                session["id"]
-                    .as_str()
-                    .ok_or(Error::Invalid("session identity unavailable"))?,
-            )
-            .map_err(|_| Error::Invalid("session identity unavailable"))?;
-            total=sqlx::query_scalar("SELECT count(*) FROM core.live_events s CROSS JOIN unnest(s.source_event_ids) parent(id) JOIN core.live_events e ON e.id=parent.id WHERE s.id=$1 AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM core.event_project p WHERE p.generation=$3 AND p.event_id=e.id AND p.project=$2))").bind(id).bind(&project).bind(generation).fetch_one(&mut *tx).await?;
-            // Refuse an assembly larger than its explicit user-requested page.
-            // A selected prefix never passes for a complete work session.
-            if total > i64::from(page) {
+        let mut attribution = None;
+        let mut unresolved = vec![];
+        let mut inspected_members = 0usize;
+        let mut inspected_sessions = 0usize;
+        for id in sessions {
+            inspected_sessions += 1;
+            if inspected_sessions > 128 {
                 return Err(Error::ProjectionUnavailable(
-                    "session command assembly exceeds requested page (maximum 100); whole-session recall unavailable; use retained query/show/trace",
+                    "recall candidate inspection exceeds 128 sessions; bounded answer unavailable",
                 ));
             }
-            rows=sqlx::query_scalar(&format!("SELECT {} FROM core.live_events s CROSS JOIN unnest(s.source_event_ids) parent(id) JOIN core.live_events e ON e.id=parent.id WHERE s.id=$1 AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM core.event_project p WHERE p.generation=$3 AND p.event_id=e.id AND p.project=$2)) ORDER BY e.ts_orig,e.ts_orig_tiebreak,e.id LIMIT 100",crate::query::EVENT_VIEW)).bind(id).bind(&project).bind(generation).fetch_all(&mut *tx).await?;
+            let count: i32 = sqlx::query_scalar(
+                "SELECT cardinality(source_event_ids) FROM core.live_events WHERE id=$1",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            inspected_members += count as usize;
+            if inspected_members > 8192 {
+                return Err(Error::ProjectionUnavailable(
+                    "recall candidate inspection exceeds 8192 direct members; bounded answer unavailable",
+                ));
+            }
+            let member_evidence = sqlx::query("SELECT e.id,e.payload->>'cwd' AS cwd FROM core.live_events s CROSS JOIN unnest(s.source_event_ids) parent(id) JOIN core.live_events e ON e.id=parent.id WHERE s.id=$1 ORDER BY e.ts_orig,e.ts_orig_tiebreak,e.id")
+                .bind(id).fetch_all(&mut *tx).await?;
+            let mut known = std::collections::BTreeMap::<String, usize>::new();
+            let mut unknown = vec![];
+            let mut unconfigured = 0usize;
+            let mut evidence_by_id = std::collections::BTreeMap::new();
+            for member in &member_evidence {
+                let event: Uuid = member.try_get("id")?;
+                let cwd: Option<String> = member.try_get("cwd")?;
+                let evidence = project_evidence(cwd.as_deref(), projects);
+                match &evidence {
+                    ProjectEvidence::Known { project } => {
+                        *known.entry(project.clone()).or_default() += 1
+                    }
+                    ProjectEvidence::Unconfigured { .. } => unconfigured += 1,
+                    ProjectEvidence::Unknown { .. } => unknown.push(UnknownProjectMember {
+                        event: event.to_string(),
+                        evidence: evidence.clone(),
+                    }),
+                }
+                evidence_by_id.insert(event.to_string(), evidence);
+            }
+            let positive = project.as_ref().is_none_or(|name| known.contains_key(name));
+            let has_unknown = !unknown.is_empty();
+            let summary = SessionProjectAttribution {
+                basis: "direct_member_own_cwd".into(),
+                known_projects: known,
+                unconfigured_members: unconfigured,
+                complete: !has_unknown,
+                unknown_members: unknown,
+                total_members: member_evidence.len(),
+            };
+            if positive {
+                if member_evidence.len() > page as usize {
+                    return Err(Error::ProjectionUnavailable(
+                        "session command assembly exceeds requested page (maximum 100); whole-session recall unavailable; use retained query/show/trace",
+                    ));
+                }
+                selected = sqlx::query_scalar(&format!(
+                    "SELECT {} FROM core.live_events e WHERE e.id=$1",
+                    crate::query::EVENT_VIEW
+                ))
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                rows = sqlx::query_scalar(&format!("SELECT {} FROM core.live_events s CROSS JOIN unnest(s.source_event_ids) parent(id) JOIN core.live_events e ON e.id=parent.id WHERE s.id=$1 ORDER BY e.ts_orig,e.ts_orig_tiebreak,e.id", crate::query::EVENT_VIEW)).bind(id).fetch_all(&mut *tx).await?;
+                for row in &mut rows {
+                    row["project_evidence"] = serde_json::to_value(
+                        &evidence_by_id[row["id"]
+                            .as_str()
+                            .ok_or(Error::Invalid("member identity unavailable"))?],
+                    )
+                    .expect("project evidence serialization");
+                }
+                attribution = Some(summary);
+                break;
+            }
+            if has_unknown {
+                let header: Value = sqlx::query_scalar(&format!(
+                    "SELECT {} FROM core.live_events e WHERE e.id=$1",
+                    crate::query::EVENT_VIEW
+                ))
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+                unresolved.push(json!({"session":header,"attribution":summary,"reason":"unknown_direct_member_project_evidence"}));
+            }
         }
+        let total = rows.len();
         let source_status = crate::source_coverage::read(&mut tx, seq).await?;
         let complete = !source_status.is_empty()
             && crate::source_coverage::interpreted_complete(&source_status);
         tx.commit().await?;
         lease.finish();
         Ok(RecallAttempt::Ready(
-            json!({"notice":sinex_model::DATA_NOTICE,"unit":"recall","query":text,"session":session,"rows":rows,"total":total,"project":project,"complete":complete,"truncated":false,"source_status":source_status,"coverage":"unknown; retained shell policy grouping; focus, AFK, attention and underlying command outcomes are not inferred","resolved":{"commit_seq":seq,"projection_seq":seq,"zone":"Europe/Warsaw","logical_start":"04:00"},"read_as":"Latest retained shell session containing the selected project; command rows are project-scoped; the header and exact session parents describe the entire policy grouping."}),
+            json!({"notice":sinex_model::DATA_NOTICE,"unit":"recall","query":text,"session":selected,"rows":rows,"attribution":attribution,"newer_unresolved_candidates":unresolved,"total":total,"project":project,"complete":complete,"truncated":false,"source_status":source_status,"coverage":"unknown; retained shell policy grouping; focus, AFK, attention and underlying command outcomes are not inferred","resolved":{"commit_seq":seq,"projection_seq":seq,"generation":generation,"configuration":configuration,"candidate_sessions_inspected":inspected_sessions,"candidate_members_inspected":inspected_members,"zone":"Europe/Warsaw","logical_start":"04:00"},"read_as":if project.is_some(){"Latest retained shell session with positive direct-member evidence for the selected project; every eligible member is context with its own cwd evidence. Newer unresolved candidates have unknown direct-member evidence, without inferred inheritance or task purpose."}else{"Latest retained shell session with every eligible member as context and its own cwd evidence; no project selection or inferred task purpose."}}),
         ))
     }
 }

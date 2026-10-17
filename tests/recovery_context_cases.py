@@ -1,0 +1,250 @@
+"""Independent finite shell facts exercised through configured public clients."""
+import datetime as dt
+import json
+import select
+import sqlite3
+import subprocess
+import time
+import urllib.request
+from session_cases import COLUMNS, independent
+
+PLANNED = ['mixed context, positive selection and unresolved evidence through CLI MCP',
+    'late cross-day bridge and unchanged polls preserve independent spans and citations',
+    'later arrival, current configuration transition and restart provider loss',
+    'whole-session and candidate overflow refuse through CLI MCP']
+
+
+def fixture_row(identity, clock, cwd, duration=0):
+    timestamp = int(dt.datetime.fromisoformat('2026-10-13T'+clock+'+02:00').timestamp())*1_000_000_000+123
+    return dict(zip(COLUMNS, [identity,timestamp,duration,0,'echo recovery '+identity,cwd,'fixture-shell','fixture-host',None]))
+
+
+def fixture():
+    return [fixture_row('old','03:50:00','/work/tide'),
+        fixture_row('positive','04:10:00','/work/tide/src'),
+        fixture_row('other-context','04:11:00','/work/other'),
+        fixture_row('unconfigured-context','04:12:00','/work/tide-neighbor'),
+        fixture_row('missing-context','04:13:00',''),
+        fixture_row('invalid-context','04:14:00','/work/tide/../other'),
+        fixture_row('ambiguous-context','04:15:00','/work/ambiguous'),
+        fixture_row('known-distractor','05:00:00','/work/other'),
+        fixture_row('newer-unknown','06:00:00',''),
+        fixture_row('newer-unconfigured','06:30:00','/unconfigured'),
+        fixture_row('newer-ambiguous','07:00:00','/work/ambiguous')]
+
+
+def exercise(h):
+    work,report,env,bins=(h[k] for k in ['WORK','REPORT','ENV','BIN_DIR'])
+    run,scenario,start,stop=(h[k] for k in ['run','scenario','start_daemon','stop'])
+    endpoint=f'http://127.0.0.1:{h["free_port"]()}/rpc'
+    source,config=work/'recovery.db',work/'recovery.toml'
+    facts=fixture();daemon=mcp=None;identifier=0;metrics=[];calls=[];transport=[]
+    token=(work/'token').read_text()
+    baseline_samples=[]
+    read_model=work/'recovery-read-model'
+    read_model.write_text(h['reader'].replace('sinex_reader','sinex_read_model'));read_model.chmod(0o600)
+    with sqlite3.connect(source) as con:
+        con.execute('CREATE TABLE history(id TEXT PRIMARY KEY,timestamp INTEGER,duration INTEGER,exit INTEGER,command TEXT,cwd TEXT,session TEXT,hostname TEXT,deleted_at INTEGER)')
+
+    def save(name,value): (report/name).write_text(json.dumps(value,indent=2)+'\n')
+    def fill(rows):
+        with sqlite3.connect(source) as con:con.executemany('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',[[r[c] for c in COLUMNS] for r in rows])
+        save('independent-inputs.json',facts)
+    def configure(extra=''):
+        config.write_text(f'''listen = "{endpoint.removeprefix('http://').removesuffix('/rpc')}"
+state_dir = "{work/'recovery-state'}"
+store_dir = "{work/'recovery-blobs'}"
+writer_connection_file = "{work/'writer'}"
+reader_connection_file = "{work/'reader'}"
+read_model_connection_file = "{read_model}"
+token_file = "{work/'token'}"
+sources = ["terminal.atuin-history"]
+automata = ["session"]
+[[projects]]
+name = "tide"
+roots = ["/work/tide"]
+[[projects]]
+name = "other"
+roots = ["/work/other"]
+[[projects]]
+name = "ambiguous-a"
+roots = ["/work/ambiguous"]
+[[projects]]
+name = "ambiguous-b"
+roots = ["/work/ambiguous"]
+[[projects]]
+name = "empty"
+roots = ["/work/empty"]
+{extra}
+[atuin]
+path = "{source}"
+poll_interval_ms = 1000
+''')
+    def api(method='status',params=None):
+        req=urllib.request.Request(endpoint,data=json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params or {}}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+        with urllib.request.urlopen(req,timeout=12) as response:body=response.read();answer=json.loads(body)
+        transport.append({'channel':'API','role':'qualification polling or validation','method':method,'response_body_bytes':len(body)})
+        with (report/'api.jsonl').open('a') as log:log.write(json.dumps({'method':method,'params':params,'response':answer})+'\n')
+        return answer
+    def cli(command,*args,expected=(0,5)):
+        result=run([bins/'sinexctl','--endpoint',endpoint,'--token-file',work/'token',command,*args,'--json'],expected=expected,label='recovery '+command)
+        answer=json.loads(result.stdout or result.stderr);calls.append({'command':command,'args':list(args),'bytes':len(result.stdout.encode()),'expected_exit':expected})
+        return answer
+    def invoke(method,params):
+        nonlocal identifier
+        identifier+=1;request={'jsonrpc':'2.0','id':identifier,'method':method,'params':params}
+        mcp.stdin.write(json.dumps(request)+'\n');mcp.stdin.flush()
+        until=time.monotonic()+20
+        while True:
+            ready,_,_=select.select([mcp.stdout],[],[],max(0,until-time.monotonic()));assert ready,'MCP deadline'
+            body=mcp.stdout.readline();response=json.loads(body)
+            transport.append({'channel':'MCP','method':method,'response_line_bytes':len(body.encode())})
+            with (report/'mcp.jsonl').open('a') as log:log.write(json.dumps({'request':request,'response':response})+'\n')
+            if response.get('id')==identifier:return response
+    def tool(project='tide',error=False):
+        response=invoke('tools/call',{'name':'sinex_recall','arguments':{'project':project}})['result']
+        assert bool(response.get('isError'))==error,response
+        return response.get('structuredContent') or json.loads(response['content'][0]['text'])
+    def discover():
+        nonlocal mcp
+        err=(report/'mcp.stderr').open('a')
+        argv=[str(bins/'sinexctl'),'--endpoint',endpoint,'--token-file',str(work/'token'),'mcp']
+        mcp=subprocess.Popen(argv,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=err,text=True,bufsize=1)
+        h['CHILDREN'].append((mcp,mcp.stdout,err));h['PROCESSES'].append({'pid':mcp.pid,'argv':argv,'stderr':'mcp.stderr'})
+        assert 'result' in invoke('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'recovery-context','version':'1'}})
+        mcp.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');mcp.stdin.flush()
+        tools=invoke('tools/list',{})['result']['tools'];assert 'sinex_recall' in {t['name'] for t in tools};save('tools.json',tools)
+    def wait(label,predicate,seconds=120):
+        until=time.monotonic()+seconds
+        while time.monotonic()<until:
+            assert daemon.poll() is None,'owned daemon stopped'
+            try: value=predicate()
+            except (OSError, KeyError): value=None
+            if value:return value
+            time.sleep(.05)
+        raise AssertionError(label)
+    def settled():
+        response=api('query.run',{'query':'recall last where project = tide'})
+        if 'error' in response:return None
+        canonical=api('query.run',{'query':'commands sort when limit 10000'})
+        if 'error' in canonical or canonical['result']['total']!=len(facts):return None
+        return response['result']
+    def expected_group():
+        return next(g for g in reversed(independent(facts)) if any(r['id'] in g['parents'] and r['cwd'].startswith('/work/tide/') or r['id'] in g['parents'] and r['cwd']=='/work/tide' for r in facts))
+    def qualify(label):
+        began=time.monotonic();answer=cli('recall','last','--project','tide');agent=tool();elapsed=time.monotonic()-began
+        assert answer['session']==agent['session'] and answer['rows']==agent['rows'] and answer['attribution']==agent['attribution'] and answer['newer_unresolved_candidates']==agent['newer_unresolved_candidates']
+        expected=expected_group();rows=answer['rows'];names=sorted(r['payload']['native_id'] for r in rows)
+        assert names==expected['parents'],(names,expected)
+        header=answer['session'];assert int(header['payload']['start_ns'])==expected['start_ns'] and int(header['payload']['end_ns'])==expected['end_ns']
+        assert set(header['parents'])=={r['id'] for r in rows}
+        byname={r['payload']['native_id']:r for r in rows}
+        labels={'positive':('known',None),'other-context':('known',None),'unconfigured-context':('unconfigured','no_configured_root'),'missing-context':('unknown','missing_cwd'),'invalid-context':('unknown','invalid_cwd'),'ambiguous-context':('unknown','ambiguous_roots')}
+        for name,(state,reason) in labels.items():
+            if name in byname:
+                evidence=byname[name]['project_evidence'];assert evidence['state']==state and evidence.get('reason')==reason,(name,evidence)
+        indexed=api('query.run',{'query':'commands where project = tide sort when limit 10000'})['result']['rows']
+        assert sorted(r['payload']['native_id'] for r in indexed)==sorted(r['id'] for r in facts if r['cwd']=='/work/tide' or r['cwd'].startswith('/work/tide/') and '/..' not in r['cwd'])
+        summary=answer['attribution'];assert summary['total_members']==len(rows) and summary['complete']==(not summary['unknown_members'])
+        if 'positive' in byname:assert summary['known_projects']['tide']>=1 and summary['known_projects']['other']==1 and summary['unconfigured_members']==1 and len(summary['unknown_members'])==3
+        canonical=api('query.run',{'query':'commands sort when limit 10000'})['result']['rows'];mapping={r['id']:r['payload']['native_id'] for r in canonical}
+        expected_unresolved=[g for g in reversed(independent(facts)) if g['start_ns']>expected['start_ns'] and any(r['id'] in g['parents'] and (not r['cwd'] or r['cwd']=='/work/ambiguous' or not r['cwd'].startswith('/') or '/..' in r['cwd']) for r in facts)]
+        actual=[sorted(mapping[p] for p in candidate['session']['parents']) for candidate in answer['newer_unresolved_candidates']]
+        assert actual==[g['parents'] for g in expected_unresolved],(actual,expected_unresolved)
+        trace=cli('trace','sinex:ev/'+header['id'],'--bytes')['row'];assert sorted(p['event'] for p in trace['parents'])==sorted(header['parents'])
+        for parent in trace['parents']:
+            retained=parent['parents'];assert len(retained)==1
+            raw=retained[0];fact=next(r for r in facts if r['id']==raw['record']['id'])
+            assert raw['material'] and raw['end']>raw['anchor'] and all(raw['record'][c]==fact[c] for c in COLUMNS)
+        shown=cli('show','sinex:ev/'+header['id']);assert header['id'] in json.dumps(shown)
+        current=api('query.run',{'query':'events where kind = activity.session.boundary'})['result']['rows']
+        actual_groups=[{'start_ns':int(g['payload']['start_ns']),'end_ns':int(g['payload']['end_ns']),'parents':sorted(mapping[p] for p in g['parents'])} for g in current]
+        assert sorted(actual_groups,key=lambda g:g['start_ns'])==independent(facts)
+        if source.exists():
+            baseline_started=time.monotonic()
+            with sqlite3.connect(source.as_uri()+'?mode=ro',uri=True) as con:
+                provider_rows=[dict(zip(COLUMNS,row)) for row in con.execute('SELECT '+','.join(COLUMNS)+' FROM history ORDER BY timestamp,id')]
+            assert provider_rows==sorted(facts,key=lambda r:(r['timestamp'],r['id']))
+            baseline_groups=independent(provider_rows)
+            baseline_selected=next(g for g in reversed(baseline_groups) if any(r['id'] in g['parents'] and (r['cwd']=='/work/tide' or r['cwd'].startswith('/work/tide/')) for r in provider_rows))
+            assert baseline_selected==expected
+            baseline_samples.append({'phase':label,'SQLite_calls':1,'rows':len(provider_rows),'returned_bytes':len(json.dumps(provider_rows).encode()),'read_and_independent_assembly_seconds':time.monotonic()-baseline_started,'selected_native_ids':baseline_selected['parents'],'same_selected_answer':True,'limits':'scripted finite assembly, no model effort or historical completeness claim'})
+            save('provider-comparison-phases.json',baseline_samples)
+        save(label+'.json',{'CLI':answer,'MCP':agent,'trace':trace,'independent_groups':independent(facts)})
+        metrics.append({'phase':label,'CLI_plus_MCP_plus_trace_seconds':time.monotonic()-began,'CLI_MCP_recall_seconds':elapsed,'retained_bytes':sum(p.stat().st_size for p in (work/'recovery-blobs').rglob('*') if p.is_file()),'rows':len(facts)})
+        return answer
+    try:
+        fill(facts);configure();daemon=start(config,'recovery');wait('startup',lambda:api() if daemon.poll() is None else None);wait('initial settled',settled);discover()
+        def initial():
+            answer=qualify('initial')
+            atuin_config=work/'atuin-baseline-config';atuin_config.mkdir()
+            atuin_copy=work/'atuin-baseline.db'
+            with sqlite3.connect(source.as_uri()+'?mode=ro',uri=True) as original, sqlite3.connect(atuin_copy) as copy:original.backup(copy)
+            (atuin_config/'config.toml').write_text(f'db_path = "{atuin_copy}"\nauto_sync = false\nkey_path = "{work/"atuin-key"}"\n')
+            isolated=env.copy();isolated.update(ATUIN_CONFIG_DIR=str(atuin_config),XDG_DATA_HOME=str(work/'atuin-data'),XDG_CACHE_HOME=str(work/'atuin-cache'))
+            atuin=run(['atuin','search','--include-duplicates','--reverse','--limit','10000','--format','{time}\t{directory}\t{command}'],env=isolated,expected=(0,1,2),label='existing Atuin on owned same-input copy')
+            save('atuin-baseline.json',{'exit':atuin.returncode,'stdout':atuin.stdout,'stderr':atuin.stderr,'input':'owned same-input SQLite backup; no live Atuin state','limitation':'Atuin formatting omits exact native IDs/retained citations; SQLite remains the exact-field fallback; provider schema refusal is preserved if present'})
+            # Initialize Atuin's own migration history, then supply exactly the
+            # same logical fields. A fixture-copy migration refusal is not an
+            # Atuin capability result.
+            native_copy=work/'atuin-native-baseline.db'
+            (atuin_config/'config.toml').write_text(f'db_path = "{native_copy}"\nauto_sync = false\nkey_path = "{work/"atuin-key"}"\n')
+            version=run(['atuin','--version'],env=isolated,label='existing Atuin baseline version').stdout.strip()
+            run(['atuin','search','--limit','10000','--include-duplicates'],env=isolated,expected=(0,1),label='initialize owned native Atuin empty schema')
+            with sqlite3.connect(native_copy) as con:
+                con.executemany('INSERT INTO history('+','.join(COLUMNS)+') VALUES(?,?,?,?,?,?,?,?,?)',[[r[c] for c in COLUMNS] for r in facts])
+            native=run(['atuin','search','--include-duplicates','--reverse','--limit','10000','--format','{time} | {duration} | {directory} | {command}'],env=isolated,label='existing Atuin same-input native schema')
+            lines=native.stdout.splitlines();assert len(lines)==len(facts)
+            assert all(any(line.endswith(r['cwd']+' | '+r['command']) for line in lines) for r in facts)
+            save('atuin-native-baseline.json',{'version':version,'exit':native.returncode,'stdout':native.stdout,'stderr':native.stderr,'input_fields':COLUMNS,'input_count':len(facts),'same_commands_and_own_cwd':True,'limits':'native own-schema copy with the same logical fields; formatted time/duration do not preserve every exact nanosecond/ID; no retained Sinex citations; SQLite is the stronger exact-field fallback; grouping/attribution still require client processing'})
+            empty=cli('recall','last','--project','empty');agent=tool('empty')
+            assert empty['session'] is None and empty['rows']==[] and len(empty['newer_unresolved_candidates'])==3 and agent['session'] is None and agent['newer_unresolved_candidates']==empty['newer_unresolved_candidates']
+            invalid=cli('recall','last','--project','not-registered',expected=2);assert 'not configured' in json.dumps(invalid)
+            save('qualified-empty.json',empty)
+        scenario(PLANNED[0],initial)
+        def bridge():
+            began=time.monotonic();row=fixture_row('late-bridge','03:54:00','/work/tide',12*60*1_000_000_000);facts.append(row);fill([row]);wait('bridge settled',settled)
+            answer=qualify('bridged');assert answer['session']['payload']['owner_day']=='2026-10-12'
+            generation=answer['resolved']['generation'];identity=answer['session']['id'];time.sleep(2.1);wait('unchanged poll',settled)
+            repeated=qualify('unchanged');assert repeated['session']['id']==identity and repeated['resolved']['generation']==generation
+            metrics.append({'phase':'bridge-whole-loop','source_append_through_CLI_MCP_trace_seconds':time.monotonic()-began,'includes_unchanged_poll_wait':True})
+        scenario(PLANNED[1],bridge)
+        def continuation():
+            row=fixture_row('later-positive','08:00:00','/work/tide');facts.append(row);began=time.monotonic();fill([row]);wait('later settled',settled);answer=qualify('later')
+            metrics.append({'phase':'later-whole-loop','source_append_through_CLI_MCP_trace_seconds':time.monotonic()-began})
+            oldgeneration=answer['resolved']['generation'];oldid=answer['session']['id'];stop(daemon)
+            configure('[[projects]]\nname = "new-registration"\nroots = ["/new-registration"]\n')
+            restart();changed=qualify('configuration-rebuilt');assert changed['resolved']['generation']!=oldgeneration and changed['session']['id']==oldid
+            stop(daemon);source.rename(work/'provider-removed.db');restart(retained=True)
+            absent=qualify('provider-loss-retained');assert absent['session']['id']==oldid and absent['complete'] is False;save('provider-loss.json',absent)
+            stop(daemon);(work/'provider-removed.db').rename(source);restart()
+        def restart(retained=False):
+            nonlocal daemon
+            daemon=start(config,'recovery-restarted')
+            wait('restart ready',lambda:api() if daemon.poll() is None else None)
+            wait('restart settled',settled)
+        scenario(PLANNED[2],continuation)
+        def overflow():
+            # 101 direct members remain a supported session but cannot be assembled.
+            rows=[fixture_row('large-'+str(n),'09:00:00','/work/tide') for n in range(101)];facts.extend(rows);fill(rows)
+            wait('large canonical',lambda:api('query.run',{'query':'commands sort when limit 10000'}).get('result',{}).get('total')==len(facts))
+            wait('large refusal',lambda:'assembly exceeds' in json.dumps(api('query.run',{'query':'recall last where project = tide'})))
+            refused=cli('recall','last','--project','tide',expected=5);assert 'assembly exceeds' in json.dumps(refused);tool(error=True);save('whole-session-refusal.json',refused)
+            # Newer separated unknown sessions force overflow even for empty-positive.
+            rows=[]
+            base=fixture_row('candidate-base','10:00:00','')['timestamp']
+            for n in range(129):
+                row=fixture_row('candidate-'+str(n),'10:00:00','');row['timestamp']=base+n*600_000_000_000;rows.append(row)
+            facts.extend(rows);fill(rows)
+            wait('candidate canonical',lambda:api('query.run',{'query':'commands sort when limit 10000'}).get('result',{}).get('total')==len(facts))
+            wait('candidate refusal',lambda:'128 sessions' in json.dumps(api('query.run',{'query':'recall last where project = empty'})))
+            refused=cli('recall','last','--project','empty',expected=5);assert '128 sessions' in json.dumps(refused);tool('empty',error=True);save('candidate-overflow.json',refused)
+        scenario(PLANNED[3],overflow)
+        # Existing SQLite access is the strongest exact provider fallback for this
+        # synthetic Atuin schema. It receives the same rows and project settings.
+        began=time.monotonic()
+        with sqlite3.connect(source) as con:baseline=[dict(zip(COLUMNS,row)) for row in con.execute('SELECT '+','.join(COLUMNS)+' FROM history ORDER BY timestamp,id')]
+        assert baseline==sorted(facts,key=lambda r:(r['timestamp'],r['id']))
+        save('comparison.json',{'route':'one read-only SQLite SELECT over the same configured synthetic Atuin provider; independent interval assembly and own-cwd rules require client processing','provider_rows':len(baseline),'provider_bytes':len(json.dumps(baseline).encode()),'provider_read_seconds':time.monotonic()-began,'fidelity':'all exact source fields available before removal; finite grouping and labels equal independent expected facts','ties_and_limits':['same available source facts can answer equally after client processing','native source-loss retention qualified separately','no model trial, everyday superiority or sustained memory/IO claim','native candidate overflow refuses while SQLite full read remains available'],'native_CLI_calls':calls,'public_transport_calls':transport,'measurement_basis':'CLI stdout UTF-8 bytes and actual API response bodies/MCP response lines; excludes request bodies, headers and transport overhead; polling and validation are recorded separately','same_phase_SQLite_comparison':baseline_samples,'measurements':metrics,'whole_loop_boundary':'append through observed settled recall, CLI/MCP and retained trace; selected process/database/retained bytes do not measure peak RSS, CPU or physical IO'})
+    finally:
+        if daemon is not None and daemon.poll() is None:stop(daemon)

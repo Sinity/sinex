@@ -482,6 +482,12 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
                     .reader
                     .recall_with_timeout(
                         &params.query,
+                        &state
+                            .config
+                            .projects
+                            .iter()
+                            .map(|p| p.model())
+                            .collect::<Vec<_>>(),
                         params.cursor.as_deref(),
                         params.page.unwrap_or(100),
                         std::time::Duration::from_millis(timeout_ms),

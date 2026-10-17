@@ -15,7 +15,7 @@ pub fn normalization_basis() -> String {
 
 // Bump for changed token/text/project/filter/ranking/order meaning; this binds
 // reconstruction and cursor generation compatibility, independently of build time.
-pub const CONTRACT: &str = "sinex.shell-search.v2";
+pub const CONTRACT: &str = "sinex.shell-search.v3";
 pub fn normalize(text: &str) -> String {
     caseless::default_case_fold_str(text).nfc().collect()
 }
@@ -58,7 +58,52 @@ impl Project {
         Ok(())
     }
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ProjectEvidence {
+    Known { project: String },
+    Unconfigured { reason: String },
+    Unknown { reason: String },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UnknownProjectMember {
+    pub event: String,
+    pub evidence: ProjectEvidence,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionProjectAttribution {
+    pub basis: String,
+    pub known_projects: std::collections::BTreeMap<String, usize>,
+    pub unconfigured_members: usize,
+    pub unknown_members: Vec<UnknownProjectMember>,
+    pub total_members: usize,
+    pub complete: bool,
+}
 pub fn project(cwd: &str, projects: &[Project]) -> Option<String> {
+    match project_evidence(Some(cwd), projects) {
+        ProjectEvidence::Known { project } => Some(project),
+        _ => None,
+    }
+}
+pub fn project_evidence(cwd: Option<&str>, projects: &[Project]) -> ProjectEvidence {
+    let Some(cwd) = cwd else {
+        return ProjectEvidence::Unknown {
+            reason: "missing_cwd".into(),
+        };
+    };
+    if cwd.is_empty() {
+        return ProjectEvidence::Unknown {
+            reason: "missing_cwd".into(),
+        };
+    }
+    if !cwd.starts_with('/')
+        || cwd.contains('\0')
+        || cwd.split('/').any(|c| matches!(c, "." | ".."))
+    {
+        return ProjectEvidence::Unknown {
+            reason: "invalid_cwd".into(),
+        };
+    }
     let mut matches = Vec::new();
     for p in projects {
         for root in &p.roots {
@@ -83,11 +128,17 @@ pub fn project(cwd: &str, projects: &[Project]) -> Option<String> {
         }
     }
     matches.sort();
-    let (depth, name) = matches.pop()?;
+    let Some((depth, name)) = matches.pop() else {
+        return ProjectEvidence::Unconfigured {
+            reason: "no_configured_root".into(),
+        };
+    };
     if matches.iter().any(|(d, n)| *d == depth && n != &name) {
-        None
+        ProjectEvidence::Unknown {
+            reason: "ambiguous_roots".into(),
+        }
     } else {
-        Some(name)
+        ProjectEvidence::Known { project: name }
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -859,3 +910,7 @@ mod tests {
         assert!(bind("commands where exit_code = nope").is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "project_evidence_tests.rs"]
+mod project_evidence_tests;
