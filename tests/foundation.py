@@ -290,13 +290,15 @@ try:
                 observed_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
                 observed_tree=subprocess.check_output(['git','write-tree'],cwd=ROOT,text=True).strip()
                 assert pin['candidate']==observed_head and pin['tree']==observed_tree and not subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True), "prebuilt package pin differs from the clean current candidate"
-                if OPTIONS.configured_continuation or OPTIONS.privacy_rules or (OPTIONS.recovery_context and "package_candidate" in pin):
+                if OPTIONS.configured_continuation or OPTIONS.privacy_rules or ((OPTIONS.recovery_context or OPTIONS.chromium) and "package_candidate" in pin):
                     package_candidate=pin['package_candidate']
                     package_tree=subprocess.check_output(['git','rev-parse',package_candidate+'^{tree}'],cwd=ROOT,text=True).strip()
                     assert package_tree==pin['package_tree'], "recorded package source tree differs"
                     changed=subprocess.check_output(['git','diff','--name-only',package_candidate,observed_head],cwd=ROOT,text=True).splitlines()
                     from package_binding import require_harness_only
                     require_harness_only(changed)
+                    if OPTIONS.chromium:
+                        assert set(changed)<= {'tests/foundation.py','tests/chromium_cases.py'}, "Chromium package reuse permits only its reviewed driver timing/binding repair"
                     source_diff=subprocess.check_output(['git','diff','--binary',package_candidate,observed_head],cwd=ROOT)
                     (REPORT/'runtime-harness.diff').write_bytes(source_diff)
                     (REPORT/'runtime-identity.json').write_text(json.dumps({'package_candidate':package_candidate,'package_tree':package_tree,'qualification_candidate':observed_head,'qualification_tree':observed_tree,'harness_and_docs_only_difference':changed,'source_diff':'runtime-harness.diff','source_diff_sha256':hashlib.sha256(source_diff).hexdigest()},indent=2)+'\n')
@@ -305,6 +307,10 @@ try:
                     binary=BIN_DIR/name
                     assert pin['binaries'][name]['path']==str(binary) and binary.is_file() and binary.resolve().is_relative_to(package), "prebuilt entrypoint is outside its specified immutable package"
                     assert hashlib.sha256(binary.read_bytes()).hexdigest()==pin['binaries'][name]['sha256'], "prebuilt entrypoint hash differs from package pin"
+                if OPTIONS.chromium:
+                    sdk=pin['official_sdk'];sdk_python=OPTIONS.chromium_sdk_python
+                    assert str(sdk_python)==sdk['python'] and hashlib.sha256(sdk_python.read_bytes()).hexdigest()==sdk['python_sha256'], "Chromium SDK interpreter differs from the package qualification pin"
+                    assert hashlib.sha256((ROOT/'tests/chromium_sdk_client.py').read_bytes()).hexdigest()==sdk['client_sha256'], "Chromium SDK client differs from the package qualification pin"
                 (REPORT/'prebuilt-package-pin.json').write_bytes(pin_bytes)
                 PREBUILT_PIN={'selection':'explicit_immutable_prebuilt','pin_sha256':hashlib.sha256(pin_bytes).hexdigest(),'pin':pin,'builds_invoked':False}
                 run([BIN_DIR/'sinexctl','--version'],label='actual explicitly pinned CLI entrypoint')

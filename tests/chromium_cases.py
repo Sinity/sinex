@@ -90,7 +90,7 @@ snapshot_interval_ms = {snapshot}
     def cli(command,*args,expected=(0,5)):
         p=run([bins/'sinexctl','--endpoint',endpoint,'--token-file',work/'token',command,*args,'--json'],expected=expected,label='Chromium '+command)
         return json.loads(p.stdout or p.stderr)
-    def wait(label,fn,seconds=600):
+    def wait(label,fn,seconds=600,context=None):
         deadline=time.monotonic()+seconds
         while time.monotonic()<deadline:
             assert daemon.poll() is None,'Chromium daemon exited'
@@ -98,7 +98,7 @@ snapshot_interval_ms = {snapshot}
             except (OSError,KeyError):value=None
             if value:return value
             time.sleep(.1)
-        raise AssertionError(label)
+        raise AssertionError({"waiting_for":label,"last_context":context} if context is not None else label)
     def status(profile='main'):
         return next((s for s in api('sources.list')['result']['sources'] if json.loads(s['locator'])==[profile,current_generation if profile=='main' else other_generation]),None)
     def settled(after=None,kind=None,profile='main',state='completed'):
@@ -251,27 +251,60 @@ snapshot_interval_ms = {snapshot}
         if not focus:scenario(PLANNED[0],population)
         def updates():
             nonlocal daemon
+            def ordinary_values(after,label,visit_duration=None,download_fields=None,download_key=1):
+                # The next completed poll may have pinned its SQLite view before
+                # mutation. Wait for facts and inspect their actual capture, not
+                # an assumed mutation-to-poll ordering.
+                target=after['last_run']['metadata']['browser_checkpoint_v1']['full_due_at']
+                context={'after_observation':after['last_run']['id'],'expected_visit_duration':visit_duration,'expected_download':download_fields,'expected_full_due_at':target}
+                def observed():
+                    current=settled(after['last_run']['id'],'new_keys_and_prior_unfinished')
+                    if not current:return None
+                    context['latest_observation']=current['last_run']
+                    assert current['read_checkpoint']['full_due_at']==target,context
+                    visit=one_visit(1) if visit_duration is not None else None
+                    answer=query(download_query+' and payload.guid = "'+str(uuid.UUID(int=download_key))+'"') if download_fields else None
+                    candidates=answer['rows'] if answer else []
+                    assert len(candidates)<=1,context|{'actual_downloads':candidates}
+                    download=candidates[0] if candidates else None
+                    context.update(actual_visit=visit,actual_download=download)
+                    if visit_duration is not None and visit['payload']['duration_us']!=visit_duration:return None
+                    if download_fields and (download is None or any(download['payload'].get(k)!=v for k,v in download_fields.items())):return None
+                    captures=[];context['captures']=captures
+                    for row in (visit,download):
+                        if row is None:continue
+                        trace=cli('trace','sinex:ev/'+row['id'],'--bytes')['row']
+                        detail=api('sources.list',{'input':current['input'],'observation':trace['material_observation']})['result']['sources'][0]
+                        capture=detail['receipts']['observation'];captures.append(capture)
+                        assert capture['id']==trace['material_observation'] and capture['status']=='completed',context
+                        assert capture['metadata']['browser_read_plan_v1']['kind']=='new_keys_and_prior_unfinished',context
+                        assert capture['metadata']['browser_checkpoint_v1']['full_due_at']==target,context
+                    chosen=captures[-1]
+                    save(label+'-ordinary-poll-evidence',context)
+                    return dict(current,last_run=chosen,selected_historical_observation=chosen['id']!=current['last_run']['id']),visit,download
+                return wait(label,observed,context=context)
             before=one_visit(1);old=one_download(1);s=wait('reduced before update',lambda:settled(kind='new_keys_and_prior_unfinished'))
             mutate('UPDATE visits SET visit_duration=98000001 WHERE id=1')
             # Numeric coordinates may change; the same GUID remains one item.
             with sqlite3.connect(source) as c:
                 c.execute('UPDATE downloads SET id=1001,state=4,interrupt_reason=40,end_time=? WHERE id=1',(OFFSET+BASE+90000000,))
                 c.execute('UPDATE downloads_url_chains SET id=1001 WHERE id=1');c.commit()
-            s=next_poll(s,'new_keys_and_prior_unfinished')
-            assert one_visit(1)['id']!=before['id'] and one_visit(1)['payload']['duration_us']==98000001
-            interrupted=one_download(1)
-            assert interrupted['id']!=old['id'] and interrupted['payload']['state_label']=='interrupted'
-            assert interrupted['payload']['download_id']==1001
+            s,late_visit,interrupted=ordinary_values(s,'late-visit-and-interruption',98000001,{'state':4,'download_id':1001})
+            assert late_visit['id']!=before['id'] and late_visit['payload']['duration_us']==98000001,{'before':before,'actual':late_visit,'observation':s['last_run']}
+            assert interrupted['id']!=old['id'] and interrupted['payload']['state_label']=='interrupted',{'before':old,'actual':interrupted,'observation':s['last_run']}
+            assert interrupted['payload']['download_id']==1001,interrupted
             unchanged=next_poll(s,'new_keys_and_prior_unfinished');assert unchanged['last_run']['rows_read']==1
             assert one_download(1)['id']==interrupted['id']
             due_at=unchanged['last_run']['metadata']['browser_checkpoint_v1']['full_due_at']
             mutate('UPDATE downloads SET state=0,received_bytes=2048,end_time=0 WHERE id=1001')
-            resumed=next_poll(unchanged,'new_keys_and_prior_unfinished');assert resumed['last_run']['rows_read']==1
-            running=one_download(1);assert running['id']!=interrupted['id'] and running['payload']['state_label']=='in_progress' and running['payload']['received_bytes']==2048
+            resumed,_,running=ordinary_values(unchanged,'resumed-download',download_fields={'state':0,'received_bytes':2048,'download_id':1001})
+            assert resumed['last_run']['rows_read']==1,resumed
+            assert running['id']!=interrupted['id'] and running['payload']['state_label']=='in_progress' and running['payload']['received_bytes']==2048,{'before':interrupted,'actual':running,'observation':resumed['last_run']}
             equivalent_public('resumed-download-public-clients',download_query+' and payload.guid = "'+str(uuid.UUID(int=1))+'"')
             mutate('UPDATE downloads SET state=1,received_bytes=4096,end_time=? WHERE id=1001',(OFFSET+BASE+120000000,))
-            completed=next_poll(resumed,'new_keys_and_prior_unfinished');assert completed['last_run']['rows_read']==1
-            done=one_download(1);assert done['id']!=running['id'] and done['payload']['state_label']=='complete' and done['payload']['received_bytes']==4096
+            completed,_,done=ordinary_values(resumed,'completed-download',download_fields={'state':1,'received_bytes':4096,'download_id':1001})
+            assert completed['last_run']['rows_read']==1,completed
+            assert done['id']!=running['id'] and done['payload']['state_label']=='complete' and done['payload']['received_bytes']==4096,{'before':running,'actual':done,'observation':completed['last_run']}
             assert query(download_query)['total']==expected['downloads']
             assert all(v['last_run']['metadata']['browser_checkpoint_v1']['full_due_at']==due_at for v in (resumed,completed))
             equivalent_public('completed-download-public-clients',download_query+' and payload.guid = "'+str(uuid.UUID(int=1))+'"')
@@ -279,7 +312,8 @@ snapshot_interval_ms = {snapshot}
             empty=next_poll(completed,'new_keys_and_prior_unfinished');assert empty['last_run']['rows_read']==0
             # A new persisted GUID may reuse a numeric download coordinate.
             replacement=str(uuid.UUID(int=10001));mutate('UPDATE downloads SET guid=?,state=1 WHERE id=2',(replacement,))
-            fresh=next_poll(empty,'new_keys_and_prior_unfinished');assert fresh['last_run']['rows_read']==1
+            fresh,_,replacement_row=ordinary_values(empty,'reused-coordinate-new-GUID',download_fields={'guid':replacement,'state':1,'download_id':2},download_key=10001)
+            assert fresh['last_run']['rows_read']==1,{'actual':replacement_row,'observation':fresh['last_run']}
             assert query(download_query+' and payload.guid = "'+replacement+'"')['total']==1
             assert query(download_query+' and payload.guid = "'+str(uuid.UUID(int=2))+'"')['total']==1 # no fabricated deletion
             original=one_visit(3);mutate('UPDATE visits SET visit_duration=5555555 WHERE id=3')
