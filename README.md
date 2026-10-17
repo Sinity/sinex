@@ -186,7 +186,7 @@ reads refuses a raced sample; directory reads do not claim filesystem atomicity.
 blobs, stock `zstd` decoding, source JSONL, `_from` serialization overhead and
 encoded file lengths. The owner decoder does not separately expose verified
 seek-metadata lengths; that finer split stays unknown. Open and temporary copies
-must be absent at these closed boundaries. `tests/retention_accounting_checks.py` checks the byte-layout
+must be absent at these closed boundaries. `tests/retention_accounting_checks.py` checks exact byte attribution
 and forbidden runtime/build-delta controls without a database.
 
 For a clean harness-only recovery candidate, the package pin may additionally

@@ -283,7 +283,10 @@ poll_interval_ms = 3000
         def bridge():
             began=time.monotonic();row=fixture_row('late-bridge','03:54:00','/work/tide',12*60*1_000_000_000);facts.append(row);fill([row]);wait('bridge settled',settled)
             answer=qualify('bridged');assert answer['session']['payload']['owner_day']=='2026-10-12'
-            generation=answer['resolved']['generation'];identity=answer['session']['id'];time.sleep(2.1);wait('unchanged poll',settled)
+            generation=answer['resolved']['generation'];identity=answer['session']['id']
+            prior=api('sources.list')['result']['sources'][0]['last_run']['id']
+            wait('completed unchanged poll',lambda:(s if (s:=api('sources.list')['result']['sources'][0])['last_run']['id']!=prior and s['last_run']['status']=='completed' and s['last_run']['admitted']==0 and s['last_run']['repeated']==len(facts) else None))
+            wait('unchanged poll derived state',settled)
             repeated=qualify('unchanged');assert repeated['session']['id']==identity and repeated['resolved']['generation']==generation
             metrics.append({'phase':'bridge-whole-loop','source_append_through_CLI_MCP_trace_seconds':time.monotonic()-began,'includes_unchanged_poll_wait':True})
         scenario(PLANNED[1],bridge)
