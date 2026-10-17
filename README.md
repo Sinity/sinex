@@ -199,3 +199,35 @@ both source identities and their exact diff. This route requires an existing
 lengths across completed polls, not physical IO,
 allocated storage, RSS, sustained capacity or everyday benefit. It cannot
 retrospectively decompose older aggregate byte samples without their manifests.
+
+For one finite repeated recovery journey, pass
+`recovery_context_package_acceptance -- --package-pin FILE --recovery-prior-accounting /absolute/prior/result.json`.
+The prior successful report must bind the same immutable runtime binaries and
+retain its three-poll accounting. The journey reuses that evidence and does not
+repeat the accounting, overflow or current-parent boundary controls. It asks
+the same CLI/MCP project-recovery question after baseline, completed unchanged
+polling, a late bridge, a later arrival, a compatible restart and provider-path
+loss. While provider access exists, independently assembled read-only SQLite
+facts check the returned membership, own-context qualifications and citations.
+A controlled synthetic SQLite lock additionally brackets a question with an
+actual `reading` observation; a scheduled future poll is never called active
+reading. During that control SQLite access is also explicitly blocked. Held-out newer
+invalid-path and prefix-neighbor sessions distinguish positive project selection
+from unresolved or unconfigured context.
+
+Private reports separate public question traffic from polling/validation,
+record producer-to-validated-answer waits and explicit interventions, and retain
+DB sizes, file lengths and named process CPU/RSS observations. `workspace_total`
+includes PostgreSQL, retained blobs and provider/runtime fixtures; it overlaps
+component figures and must not be added to them. Scratch-only growth is unknown
+because the fixture has no separate scratch directory. The final
+`whole-loop-rusage.json` covers the harness and children Linux accounts through
+wait/reaping, through child/PostgreSQL shutdown. Managed-environment setup, final
+report serialization and successful workspace deletion are excluded. It does not give inclusive descendant CPU,
+physical IO or simultaneous aggregate peak RSS. Per-process `VmHWM` and Linux
+`ru_maxrss` are process-lifetime individual high-water statistics and may predate
+the measurement interval; named samples are not a
+continuous workload peak. `tests/recovery_whole_loop_checks.py` checks these
+measurement boundaries, prior-receipt refusals and front-door controls. This
+finite scripted journey establishes no everyday productivity or resource
+advantage, sustained capacity, complete history or full milestone.
