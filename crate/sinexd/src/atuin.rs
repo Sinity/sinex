@@ -40,7 +40,7 @@ pub async fn run(
             .checked_add(std::time::Duration::from_millis(config.poll_interval_ms))
             .ok_or("poll monotonic clock overflow")?;
         admission
-            .schedule_atuin(observation_id, schedule.clone())
+            .schedule_source(observation_id, schedule.clone())
             .await
             .map_err(|_| "acquisition schedule could not commit")?;
         tokio::select! {

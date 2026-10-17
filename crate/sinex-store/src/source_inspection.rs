@@ -11,7 +11,7 @@ const HISTORY: usize = 8;
 const RECEIPTS: usize = 16;
 
 impl WriterPool {
-    pub(crate) async fn schedule_atuin(
+    pub(crate) async fn schedule_source(
         &mut self,
         observation: Uuid,
         schedule: PollSchedule,
@@ -35,7 +35,7 @@ impl ReadPool {
     pub async fn inspect_sources(
         &self,
         request: SourcesRequest,
-        active: Option<CollectorScope>,
+        active: Vec<CollectorScope>,
     ) -> Result<Value> {
         request
             .validate()
@@ -52,7 +52,7 @@ impl ReadPool {
         let seq: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
             .fetch_one(&mut *tx)
             .await?;
-        let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation',CASE WHEN i.binding='terminal.atuin-history' THEN 'canonical_sqlite_rows' ELSE 'original_zsh_history' END,'sqlite_snapshots',CASE WHEN i.binding='terminal.atuin-history' THEN 'unavailable_until_1c' ELSE NULL END,'last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'first_record_error',(SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true WHERE ($1::uuid IS NULL OR i.id=$1) AND ($2::uuid IS NULL OR i.id>$2) ORDER BY i.id LIMIT $3")
+        let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN 'canonical_sqlite_rows' ELSE 'original_zsh_history' END,'sqlite_snapshots',CASE WHEN i.binding='terminal.atuin-history' THEN 'unavailable_until_1c' WHEN i.binding='browser.history.chromium' THEN 'periodic_full_bases; page_patches_unavailable' ELSE NULL END,'last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'read_checkpoint',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN (SELECT carry FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text) ELSE NULL END,'first_record_error',(SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true WHERE ($1::uuid IS NULL OR i.id=$1) AND ($2::uuid IS NULL OR i.id>$2) ORDER BY i.id LIMIT $3")
             .bind(request.input).bind(request.after_input).bind((INPUTS+1) as i64).fetch_all(&mut *tx).await?;
         let inputs_more = rows.len() > INPUTS;
         rows.truncate(INPUTS);
@@ -69,7 +69,7 @@ impl ReadPool {
                 .as_str()
                 .and_then(|s| Uuid::parse_str(s).ok());
             let applies = sinex_model::acquisition::current_scope(
-                active.as_ref(),
+                &active,
                 row["source"].as_str().unwrap_or(""),
                 row["locator"].as_str().unwrap_or(""),
                 owner_run,
@@ -220,7 +220,7 @@ async fn inspect_detail(
     let mut receipts: Vec<Value> = if known {
         // Replay reparses the same material but sets created_by_operation. It
         // must never become an original acquisition's recovery receipt.
-        sqlx::query_scalar("SELECT jsonb_build_object('event',e.id,'material',e.source_material_id,'start',e.offset_start,'end',e.offset_end,'record_state',e.record_state) FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id WHERE m.input_id=$1 AND m.observation_id=$2 AND e.source='terminal.atuin-history' AND e.event_type='command.executed' AND e.created_by_operation IS NULL AND ($3::uuid IS NULL OR e.id>$3) ORDER BY e.id LIMIT $4")
+        sqlx::query_scalar("SELECT jsonb_build_object('event',e.id,'material',e.source_material_id,'start',e.offset_start,'end',e.offset_end,'record_state',e.record_state) FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id WHERE m.input_id=$1 AND m.observation_id=$2 AND e.source IN ('terminal.atuin-history','browser.history.chromium') AND e.event_type IN ('command.executed','page.visited','download.observed') AND e.created_by_operation IS NULL AND ($3::uuid IS NULL OR e.id>$3) ORDER BY e.id LIMIT $4")
                     .bind(input).bind(selected).bind(request.after_receipt).bind((RECEIPTS+1) as i64).fetch_all(&mut **tx).await?
     } else {
         vec![]

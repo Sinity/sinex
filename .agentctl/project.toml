@@ -350,3 +350,29 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
 cache = "none"
+
+[operations.chromium_custody_contracts]
+description = "Real SQLite WAL/rollback custody, cancellation and file/journal validation without PostgreSQL"
+exec = ["cargo", "test", "--locked", "-p", "sinexd", "--no-default-features", "sqlite_custody::"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 1200
+cache = "none"
+
+[operations.chromium_acceptance]
+description = "Generated Chromium visits/downloads through owned custody, writer and actual development CLI/MCP"
+exec = ["python3", "tests/foundation.py", "--chromium"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
+
+[operations.chromium_package_acceptance]
+description = "Generated Chromium visits/downloads through an explicitly pinned package, CLI and explicit official MCP SDK client; never rebuilds"
+exec = ["python3", "tests/foundation.py", "--chromium", "--packaged", "--package-pin"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"

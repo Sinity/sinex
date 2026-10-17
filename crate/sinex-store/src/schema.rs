@@ -133,6 +133,10 @@ const EVENT_CONSTRAINTS: &[(&str, &str)] = &[
         "CHECK (event_type<>'command.executed' OR (payload_schema_id IS NOT DISTINCT FROM 2 AND source='terminal.atuin-history' AND equivalence_key IS NOT NULL AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'native_id') IS NOT DISTINCT FROM 'string' AND payload ? 'exit_code' AND payload ? 'duration_ns'))",
     ),
     (
+        "registered_browser_payload",
+        "CHECK (event_type NOT IN ('page.visited','download.observed') OR (source='browser.history.chromium' AND equivalence_key IS NOT NULL AND jsonb_typeof(payload->'profile') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'url') IS NOT DISTINCT FROM 'string' AND ((event_type='page.visited' AND payload_schema_id IS NOT DISTINCT FROM 7 AND payload ? 'visit_id' AND payload ? 'duration_us' AND payload ? 'redirect') OR (event_type='download.observed' AND payload_schema_id IS NOT DISTINCT FROM 8 AND payload ? 'guid' AND payload ? 'state'))))",
+    ),
+    (
         "event_material",
         "FOREIGN KEY (source_material_id) REFERENCES raw.source_material_registry(id)",
     ),
@@ -778,7 +782,7 @@ fn installed_tables(stage: usize) -> Vec<Definition> {
         .collect()
 }
 fn declarations() -> Result<Vec<String>> {
-    declarations_at(3)
+    declarations_at(4)
 }
 fn declarations_at(stage: usize) -> Result<Vec<String>> {
     installed_tables(stage)
@@ -804,7 +808,7 @@ fn declarations_at(stage: usize) -> Result<Vec<String>> {
             // Only constants from this module enter DDL, never operator input.
             sql.pop();
             for (name, body) in d.constraints {
-                if stage==0 && *name=="registered_zsh_payload" { continue; }
+                if stage==0 && *name=="registered_zsh_payload" || stage<4 && *name=="registered_browser_payload" { continue; }
                 sql.push_str(", CONSTRAINT \"");
                 sql.push_str(name);
                 sql.push_str("\" ");
@@ -834,7 +838,7 @@ async fn configure_events(conn: &mut PgConnection) -> Result<()> {
 }
 
 fn fingerprint() -> Result<String> {
-    fingerprint_at(3)
+    fingerprint_at(4)
 }
 fn fingerprint_at(stage: usize) -> Result<String> {
     Ok(blake3::hash(
@@ -883,6 +887,10 @@ pub fn schema_changes() -> Vec<SchemaChange> {
         SchemaChange {
             number: 3,
             description: "register shell sessions and durable logical-day reconciliation",
+        },
+        SchemaChange {
+            number: 4,
+            description: "register retained Chromium visits and persisted download states",
         },
     ]
 }
@@ -933,7 +941,10 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(5,'command.canonical','shell-command-v1-atuin-zsh',$1)").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(4,'command.imported','zsh-extended-v1',$1)").bind(crate::zsh::payload_schema()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(6,'activity.session.boundary','shell-session-v1',$1)").bind(crate::session::payload_schema()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed'),(3,'command.canonical'),(4,'command.imported'),(5,'activity.session.boundary')")
+        for (id, kind, download) in [(7, "page.visited", false), (8, "download.observed", true)] {
+            sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES($1,$2,'chromium-history-v1',$3)").bind(id).bind(kind).bind(sinex_model::browser::payload_schema(download)).execute(&mut *tx).await?;
+        }
+        sqlx::query("INSERT INTO core.event_types (id,name) VALUES (1,'synthetic.observed'),(2,'command.executed'),(3,'command.canonical'),(4,'command.imported'),(5,'activity.session.boundary'),(6,'page.visited'),(7,'download.observed')")
             .execute(&mut *tx)
             .await?;
         sqlx::query("INSERT INTO core.commit_counter (one,seq) VALUES (true,0)")
@@ -1079,7 +1090,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             .fetch_one(&mut *conn)
             .await?;
     let mut stage = None;
-    for candidate in 0..=3 {
+    for candidate in 0..=4 {
         if stored == fingerprint_at(candidate)? {
             stage = Some(candidate);
         }
@@ -1170,7 +1181,9 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
         }
         let constraints = sqlx::query("SELECT con.conname,pg_get_constraintdef(con.oid) AS definition FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2 AND con.contype <> 'n'").bind(d.schema).bind(d.name).fetch_all(&mut *conn).await?;
         if constraints.len()
-            != d.constraints.len() - usize::from(stage == 0 && matches!(d.name, "events"))
+            != d.constraints.len()
+                - usize::from(stage == 0 && matches!(d.name, "events"))
+                - usize::from(stage < 4 && matches!(d.name, "events"))
         {
             return Err(Error::Schema(format!(
                 "{}.{} constraints differ",
@@ -1178,7 +1191,9 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             )));
         }
         for (name, _body) in d.constraints {
-            if stage == 0 && *name == "registered_zsh_payload" {
+            if stage == 0 && *name == "registered_zsh_payload"
+                || stage < 4 && *name == "registered_browser_payload"
+            {
                 continue;
             }
             if !constraints.iter().any(|r| {
@@ -1243,8 +1258,10 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             2
         } else if stage < 3 {
             4
-        } else {
+        } else if stage < 4 {
             5
+        } else {
+            7
         }
     {
         return Err(Error::Schema(
@@ -1275,6 +1292,20 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                 .await?;
         if count != 1 {
             return Err(Error::Schema("session progress absent".into()));
+        }
+    }
+    if stage >= 4 {
+        expected_types.extend([
+            (6, "page.visited".to_owned()),
+            (7, "download.observed".to_owned()),
+        ]);
+        for (id, kind, download) in [(7, "page.visited", false), (8, "download.observed", true)] {
+            let schema:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=$1 AND event_type=$2 AND version='chromium-history-v1'").bind(id).bind(kind).fetch_optional(&mut *conn).await?;
+            if schema.as_ref() != Some(&sinex_model::browser::payload_schema(download)) {
+                return Err(Error::Schema(
+                    "Chromium payload registration differs".into(),
+                ));
+            }
         }
     }
     if event_types != expected_types {
@@ -1601,6 +1632,34 @@ async fn apply_change_entry(
                 .bind(Option::<uuid::Uuid>::None)
                 .execute(&mut *conn)
                 .await?;
+        }
+        4 => {
+            let exists: bool = sqlx::query_scalar("SELECT to_regclass('core.events') IS NOT NULL")
+                .fetch_one(&mut *conn)
+                .await?;
+            if !exists {
+                return Ok(SchemaChangeCheck {
+                    number: entry.number,
+                    outcome: "old_objects_absent",
+                });
+            }
+            for table in ["core.events", "reflection.events"] {
+                let body = EVENT_CONSTRAINTS
+                    .iter()
+                    .find(|(n, _)| *n == "registered_browser_payload")
+                    .expect("declared browser constraint")
+                    .1;
+                conn.execute(
+                    format!("ALTER TABLE {table} ADD CONSTRAINT registered_browser_payload {body}")
+                        .as_str(),
+                )
+                .await?;
+            }
+            sqlx::raw_sql("INSERT INTO core.event_types(id,name) VALUES(6,'page.visited'),(7,'download.observed')").execute(&mut *conn).await?;
+            for (id, kind, download) in [(7, "page.visited", false), (8, "download.observed", true)]
+            {
+                sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES($1,$2,'chromium-history-v1',$3)").bind(id).bind(kind).bind(sinex_model::browser::payload_schema(download)).execute(&mut *conn).await?;
+            }
         }
         _ => return Err(Error::Schema("unknown schema change".into())),
     }

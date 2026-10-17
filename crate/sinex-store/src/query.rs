@@ -50,19 +50,32 @@ fn parse(text: &str) -> std::result::Result<Vec<Filter>, QueryError> {
             "kind" => "kind",
             "payload.command" => "payload.command",
             "payload.exit_code" => "payload.exit_code",
+            "payload.url" => "payload.url",
+            "payload.title" => "payload.title",
+            "payload.profile" => "payload.profile",
+            "payload.database_generation" => "payload.database_generation",
+            "payload.guid" => "payload.guid",
+            "payload.target_path" => "payload.target_path",
+            "payload.redirect" => "payload.redirect",
             "when" | "ts_orig" => "when",
             "id" => "id",
             _ => {
                 return Err(QueryError(
-                    "supported fields: source, kind, payload.command, payload.exit_code, when, id",
+                    "supported fields: source, kind, payload.command, payload.exit_code, payload.url, payload.title, payload.profile, payload.guid, payload.target_path, payload.redirect, when, id",
                 ));
             }
         };
         rest = rest[end..].trim_start();
         let op = rest.chars().next().ok_or(QueryError("missing operator"))?;
-        if op != '=' && !(op == '~' && field == "payload.command") {
+        if op != '='
+            && !(op == '~'
+                && matches!(
+                    field,
+                    "payload.command" | "payload.url" | "payload.title" | "payload.target_path"
+                ))
+        {
             return Err(QueryError(
-                "supported operators: =; payload.command also supports ~",
+                "supported operators: =; command, url, title and target_path also support ~",
             ));
         }
         rest = rest[op.len_utf8()..].trim_start();
@@ -79,7 +92,13 @@ fn parse(text: &str) -> std::result::Result<Vec<Filter>, QueryError> {
                 return Err(QueryError("missing filter value"));
             }
             (
-                if field == "payload.exit_code" {
+                if field == "payload.redirect" {
+                    json!(
+                        rest[..n]
+                            .parse::<bool>()
+                            .map_err(|_| QueryError("redirect must be true or false"))?
+                    )
+                } else if field == "payload.exit_code" {
                     json!(
                         rest[..n]
                             .parse::<i64>()
@@ -93,6 +112,9 @@ fn parse(text: &str) -> std::result::Result<Vec<Filter>, QueryError> {
         };
         if field == "payload.exit_code" && !value.is_i64() {
             return Err(QueryError("exit_code must be an integer"));
+        }
+        if field == "payload.redirect" && !value.is_boolean() {
+            return Err(QueryError("redirect must be true or false"));
         }
         if field == "when" {
             OffsetDateTime::parse(
@@ -139,8 +161,8 @@ pub fn validate_query(text: &str) -> std::result::Result<(), QueryError> {
     parse(text).map(|_| ())
 }
 // Bump this descriptor when query meaning, schema reads, defaults or key ordering change.
-const CURSOR_VERSION: u32 = 1;
-const CURSOR_ORDER: &str = "raw-present-activity-v1:when-ns-asc-null-last,id-asc";
+const CURSOR_VERSION: u32 = 2;
+const CURSOR_ORDER: &str = "raw-present-activity-v2:when-ns-asc-null-last,id-asc";
 const CURSOR_LIFETIME: Duration = Duration::hours(24);
 const CHANGE_NOTICE: &str = "The commit position changed since the first page. Each page reads current state: removals apply; additions before the last key can be absent and additions after it can appear. A row whose ordering key moves can be absent or repeated. This traversal is not one fixed snapshot. A commit change does not establish that matching rows changed.";
 
@@ -345,12 +367,15 @@ impl ReadPool {
                 || (f.field == "source" && f.value.as_str() != Some("fusion.shell-command"))
         });
         let mut q: QueryBuilder<Postgres> = QueryBuilder::new(format!(
-            "WITH matching AS (SELECT {EVENT_VIEW} AS event FROM core.events e WHERE e.record_state='present' AND e.commit_seq<="
+            "WITH matching AS (SELECT e.id,to_char(e.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(e.ts_orig_tiebreak,0)::text,3,'0') || 'Z' AS at FROM core.events e WHERE e.record_state='present' AND e.commit_seq<="
         ));
         q.push_bind(seq).push(" AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=").push_bind(seq).push(")");
         q.push(" AND (e.event_type NOT IN ('command.canonical','activity.session.boundary') OR ")
             .push(CURRENT_PARENTS)
             .push(")");
+        if !filters.iter().any(|f| f.field == "payload.redirect") {
+            q.push(" AND (e.source <> 'browser.history.chromium' OR e.event_type <> 'page.visited' OR e.payload->'redirect' IS DISTINCT FROM 'true'::jsonb)");
+        }
         for f in filters {
             q.push(" AND ");
             match f.field {
@@ -362,18 +387,31 @@ impl ReadPool {
                     q.push("e.event_type=")
                         .push_bind(f.value.as_str().unwrap().to_string());
                 }
-                "payload.command" => {
+                "payload.command"
+                | "payload.url"
+                | "payload.title"
+                | "payload.profile"
+                | "payload.database_generation"
+                | "payload.guid"
+                | "payload.target_path" => {
                     if f.op == '~' {
-                        q.push("strpos(e.payload->>'command',")
+                        q.push("strpos(e.payload->>")
+                            .push_bind(f.field[8..].to_string())
+                            .push(",")
                             .push_bind(f.value.as_str().unwrap().to_string())
                             .push(")>0");
                     } else {
-                        q.push("e.payload->>'command'=")
+                        q.push("e.payload->>")
+                            .push_bind(f.field[8..].to_string())
+                            .push("=")
                             .push_bind(f.value.as_str().unwrap().to_string());
                     }
                 }
-                "payload.exit_code" => {
-                    q.push("e.payload->'exit_code'=").push_bind(f.value);
+                "payload.exit_code" | "payload.redirect" => {
+                    q.push("e.payload->")
+                        .push_bind(f.field[8..].to_string())
+                        .push("=")
+                        .push_bind(f.value);
                 }
                 "when" => {
                     let time = OffsetDateTime::parse(f.value.as_str().unwrap(), &Rfc3339)
@@ -400,24 +438,23 @@ impl ReadPool {
         }
         // Each page is a fresh read. The keyset binds query, time order and UUID tie-breaks;
         // current removals and new committed readings apply on the next request.
-        q.push("), page AS (SELECT event FROM matching");
+        q.push("), page AS (SELECT id,at FROM matching");
         if let Some(c) = page_after {
             q.push(" WHERE ");
             match c.last_when {
                 Some(at) => {
-                    q.push("((event->>'when') IS NULL OR (event->>'when',event->>'id')>(")
+                    q.push("(at IS NULL OR (at,id::text)>(")
                         .push_bind(at)
                         .push(",")
                         .push_bind(c.last_id)
                         .push("))");
                 }
                 None => {
-                    q.push("(event->>'when') IS NULL AND (event->>'id')>")
-                        .push_bind(c.last_id);
+                    q.push("at IS NULL AND id::text>").push_bind(c.last_id);
                 }
             }
         }
-        q.push(" ORDER BY event->>'when' NULLS LAST,event->>'id' LIMIT 101) SELECT (SELECT count(*) FROM matching) AS total,COALESCE((SELECT jsonb_agg(event ORDER BY event->>'when' NULLS LAST,event->>'id') FROM page),'[]'::jsonb) AS rows");
+        q.push(format!(" ORDER BY at NULLS LAST,id LIMIT 101), rendered AS (SELECT {EVENT_VIEW} AS event FROM page p JOIN core.events e ON e.id=p.id) SELECT (SELECT count(*) FROM matching) AS total,COALESCE((SELECT jsonb_agg(event ORDER BY event->>'when' NULLS LAST,event->>'id') FROM rendered),'[]'::jsonb) AS rows"));
         let row = q.build().fetch_one(&mut *tx).await?;
         let total: i64 = row.try_get("total")?;
         let mut rows: Value = row.try_get("rows")?;
@@ -499,7 +536,7 @@ impl ReadPool {
         // Only a fully committed read may return its connection to the pool.
         drop(lease.0.take());
         Ok(
-            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"sessions":sessions,"fusion":fusion,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Admitted live activity interpretations matching {text}, ordered by original time then interpretation ID; complete also requires included configured derived families to be settled. Explicit session-family reads require the reconciler; retained show/trace is separate. Continuous source coverage is unknown; canonical and session rows retain their policy and current parent evidence."),"excluded":{}}),
+            json!({"notice":sinex_model::DATA_NOTICE,"query":text,"unit":"events","total":total,"rows":rows,"page":{"size":100,"cursor":cursor,"cursor_version":CURSOR_VERSION,"first_commit_seq":first_commit_seq,"expires_at":expires_at,"changed_since_first_page":seq != first_commit_seq,"change_notice":if seq != first_commit_seq {Some(CHANGE_NOTICE)} else {None}},"truncated":false,"complete":complete,"sessions":sessions,"fusion":fusion,"source_status":source_status,"resolved":{"commit_seq":seq,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Admitted live activity interpretations matching {text}, ordered by original time then interpretation ID; complete also requires included configured derived families to be settled. Explicit session-family reads require the reconciler; retained show/trace is separate. Continuous source coverage is unknown; canonical and session rows retain their policy and current parent evidence."),"excluded":{"browser_redirect_hops":"excluded by default; payload.redirect = true includes matching hop records"}}),
         )
     }
     pub async fn show(&self, id: &str) -> Result<Option<Value>> {
@@ -551,7 +588,7 @@ impl ReadPool {
         current_rules: &[crate::PrivacyRule],
     ) -> Result<Option<Value>> {
         let mut lease = self.read_lease().await?;
-        let row=sqlx::query("SELECT e.source_material_id,e.anchor_byte,e.offset_end,e.record_state,(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id) AS archive,m.status,m.durable_bytes,b.blake3,m.parser_provenance FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE e.id=$1").bind(id).fetch_optional(lease.connection()).await?;
+        let row=sqlx::query("SELECT e.source_material_id,e.anchor_byte,e.offset_end,e.record_state,(SELECT to_jsonb(a) FROM audit.archived a WHERE a.id=e.id) AS archive,m.status,m.durable_bytes,b.blake3,m.parser_provenance,m.input_id,m.observation_id FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE e.id=$1").bind(id).fetch_optional(lease.connection()).await?;
         lease.finish();
         let Some(row) = row else { return Ok(None) };
         let material: Uuid = row.try_get("source_material_id")?;
@@ -570,14 +607,14 @@ impl ReadPool {
         let archive: Option<Value> = row.try_get("archive")?;
         if !bytes_requested {
             return Ok(Some(
-                json!({"event":id,"material":material,"anchor":anchor,"end":end,"record_state":state,"archive":archive,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"}}),
+                json!({"event":id,"material":material,"input":row.try_get::<Option<Uuid>,_>("input_id")?,"material_observation":row.try_get::<Option<Uuid>,_>("observation_id")?,"anchor":anchor,"end":end,"record_state":state,"archive":archive,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"}}),
             ));
         }
         let (record, _) = self
             .retained_record(material, anchor, Some(end), current_rules)
             .await?;
         Ok(Some(
-            json!({"event":id,"material":material,"anchor":anchor,"end":end,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"},"record_state":state,"archive":archive,"record":record,"privacy":"raw projection: attributed rule sequence, then current rules absent from attributed tuples; original raw rows retained as plain evidence"}),
+            json!({"event":id,"material":material,"input":row.try_get::<Option<Uuid>,_>("input_id")?,"material_observation":row.try_get::<Option<Uuid>,_>("observation_id")?,"anchor":anchor,"end":end,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"},"record_state":state,"archive":archive,"record":record,"privacy":"raw projection: attributed rule sequence, then current rules absent from attributed tuples; original raw rows retained as plain evidence"}),
         ))
     }
     pub(crate) async fn retained_record(
@@ -697,6 +734,43 @@ fn protect_retained(
         .cloned()
         .collect();
     crate::atuin::mask(record, &rules)?;
+    if matches!(before["table"].as_str(), Some("visits" | "downloads")) {
+        // Provider content may be protected recursively; acquisition selectors,
+        // native keys and typed BLOB envelopes must remain exact or refuse.
+        fn selectors(original: &Value, masked: &Value, parent: &str) -> bool {
+            match original {
+                Value::Object(fields) => fields.iter().all(|(key, value)| {
+                    if matches!(
+                        key.as_str(),
+                        "_from"
+                            | "table"
+                            | "coordinate"
+                            | "id"
+                            | "guid"
+                            | "chain_index"
+                            | "$blob"
+                            | "sqlite_real_bits"
+                    ) {
+                        masked.get(key) == Some(value)
+                    } else {
+                        selectors(value, &masked[key], key)
+                    }
+                }),
+                Value::Array(items) => masked.as_array().is_some_and(|m| {
+                    items.len() == m.len()
+                        && items.iter().zip(m).all(|(a, b)| selectors(a, b, parent))
+                }),
+                Value::String(_) => true,
+                _ => original == masked,
+            }
+        }
+        if !selectors(&before, record, "") {
+            return Err(Error::ReplayRefused(
+                "raw privacy projection changes an opaque selector",
+            ));
+        }
+        return Ok(());
+    }
     let original = before
         .as_object()
         .ok_or(Error::Invalid("retained record is not an object"))?;
@@ -785,7 +859,7 @@ mod tests {
         assert!(Cursor::decode(&raw, "question", 6, clock - Duration::seconds(1)).is_err());
         let valid = serde_json::to_value(&cursor).unwrap();
         for (field, value) in [
-            ("version", json!(2)),
+            ("version", json!(CURSOR_VERSION + 1)),
             ("zone", json!("Europe/Warsaw")),
             ("logical_start", json!("00:00")),
             ("first_commit_seq", json!(-1)),

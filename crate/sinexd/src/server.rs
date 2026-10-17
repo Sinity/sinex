@@ -166,6 +166,7 @@ pub async fn serve(
         )
         .await?;
         let ended = source_ended.clone();
+        let qualification = qualification.clone();
         Some(tokio::spawn(async move {
             let result = crate::atuin::run(
                 atuin,
@@ -195,6 +196,30 @@ pub async fn serve(
     } else {
         None
     };
+    let mut browser_sources = Vec::new();
+    for browser in config.chromium.clone() {
+        let rules: Vec<_> = config.privacy_rules.iter().map(|r| r.rule()).collect();
+        let admission = store.admission.clone();
+        let attempt = crate::browser::begin(&browser, &rules, &admission).await?;
+        let stop = source_stop.subscribe();
+        let ended = source_ended.clone();
+        let root = config.store_dir.join("acquisition");
+        let qualification = qualification.clone();
+        browser_sources.push(tokio::spawn(async move {
+            let result = crate::browser::run(
+                browser,
+                root,
+                rules,
+                admission,
+                stop,
+                attempt,
+                qualification,
+            )
+            .await;
+            let _ = ended.send(true);
+            result
+        }));
+    }
     let state = Arc::new(App {
         run_id: store.run_id(),
         indexed: config.read_model_connection_file.is_some(),
@@ -224,6 +249,18 @@ pub async fn serve(
     } else {
         Ok(())
     };
+    let mut browser_error = None;
+    for source in browser_sources {
+        match source.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                browser_error = Some(error);
+            }
+            Err(_) => {
+                browser_error = Some("browser source task failed".to_owned());
+            }
+        }
+    }
     if let Some(projection) = projection {
         projection
             .shutdown()
@@ -233,6 +270,9 @@ pub async fn serve(
     let stopped = store.shutdown().await;
     source_result?;
     zsh_result?;
+    if let Some(error) = browser_error {
+        return Err(error);
+    }
     drop(lock);
     result.map_err(|_| "HTTP server failed".to_string())?;
     stopped.map_err(|_| "writer shutdown failed".to_string())?;
@@ -463,12 +503,28 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
             .reader
             .inspect_sources(
                 serde_json::from_value(request.params.clone()).expect("validated source params"),
-                state.config.atuin.as_ref().map(|config| {
-                    sinex_model::acquisition::CollectorScope {
-                        locator: config.path.to_string_lossy().into_owned(),
-                        run: state.run_id,
+                {
+                    let mut scopes = Vec::new();
+                    if let Some(config) = &state.config.atuin {
+                        scopes.push(sinex_model::acquisition::CollectorScope {
+                            source: sinex_store::ATUIN_SOURCE.into(),
+                            locator: config.path.to_string_lossy().into_owned(),
+                            run: state.run_id,
+                        });
                     }
-                }),
+                    for browser in &state.config.chromium {
+                        scopes.push(sinex_model::acquisition::CollectorScope {
+                            source: sinex_model::browser::SOURCE.into(),
+                            locator: serde_json::json!([
+                                browser.profile,
+                                browser.database_generation
+                            ])
+                            .to_string(),
+                            run: state.run_id,
+                        });
+                    }
+                    scopes
+                },
             )
             .await
             .map_err(read_error),

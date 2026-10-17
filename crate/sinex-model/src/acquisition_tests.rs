@@ -130,35 +130,36 @@ fn outcome_refs_preserve_known_failure_across_arbitrarily_many_successes() {
 fn historical_plan_cannot_become_current_overdue_after_configuration_or_run_changes() {
     let run = Uuid::now_v7();
     let active = CollectorScope {
+        source: "terminal.atuin-history".into(),
         locator: "/synthetic/history.db".into(),
         run,
     };
     assert!(current_scope(
-        Some(&active),
+        std::slice::from_ref(&active),
         "terminal.atuin-history",
         &active.locator,
         Some(run)
     ));
     assert!(!current_scope(
-        None,
+        &[],
         "terminal.atuin-history",
         &active.locator,
         Some(run)
     ));
     assert!(!current_scope(
-        Some(&active),
+        std::slice::from_ref(&active),
         "terminal.atuin-history",
         "/synthetic/old.db",
         Some(run)
     ));
     assert!(!current_scope(
-        Some(&active),
+        std::slice::from_ref(&active),
         "terminal.atuin-history",
         &active.locator,
         Some(Uuid::now_v7())
     ));
     assert!(!current_scope(
-        Some(&active),
+        std::slice::from_ref(&active),
         "terminal.atuin-history",
         &active.locator,
         None

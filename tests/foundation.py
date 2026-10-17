@@ -21,11 +21,15 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--recovery-prior-accounting",type=Path,help="reuse an exact successful recovery accounting report and qualify the repeated recovery whole loop with observed costs")
 parser.add_argument("--recovery-context", action="store_true", help="qualify bounded mixed-context project recall through configured Atuin and public clients")
+parser.add_argument("--chromium-predecessor-pin",type=Path,help="exact published stage-3 package pin used only to qualify guarded populated Chromium registration upgrade")
+parser.add_argument("--chromium-sdk-python",type=Path,help="explicit immutable official MCP SDK Python interpreter; required for packaged Chromium public acceptance")
+parser.add_argument("--chromium-focus",choices=["custody"],help="development-only custody/partial/refusal continuation; does not qualify the large public journey")
+parser.add_argument("--chromium", action="store_true", help="qualify configured Chromium visits and persisted downloads with guarded custody")
 parser.add_argument("--atuin-read-plan", action="store_true", help="qualify connection-scoped new/unfinished/full Atuin value reads and retained recovery")
 parser.add_argument("--source-investigation", action="store_true", help="qualify bounded Atuin acquisition timing and exact capture receipts")
 parser.add_argument("--privacy-rules", action="store_true", help="qualify admission-once optional rules and retained evidence through actual clients")
 parser.add_argument("--reversible-exclusion",action="store_true",help="qualify packaged exact occurrence exclusion with an explicit immutable package pin")
-parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion, fusion, privacy rules, source investigation, Atuin read plan or configured continuation; never build or fall back")
+parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion, fusion, privacy rules, source investigation, Atuin read plan, Chromium or configured continuation; never build or fall back")
 parser.add_argument("--recall-coverage",action="store_true",help="qualify narrow recall polling/error coverage through packaged CLI and MCP")
 parser.add_argument("--recall-coverage-before-pin",type=Path,help="exact immutable pre-fix package for recall coverage contrast")
 parser.add_argument("--sessions",action="store_true",help="qualify selected logical-day shell reconciliation and project recall")
@@ -49,6 +53,15 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.chromium:
+    incompatible=[v for k,v in vars(OPTIONS).items() if k not in ('chromium','packaged','package_pin','chromium_predecessor_pin','chromium_sdk_python','chromium_focus') and v]
+    if incompatible: parser.error("Chromium owns its scenario selector")
+    if not OPTIONS.chromium_predecessor_pin: parser.error("Chromium requires an explicit published stage-3 predecessor package pin")
+    if OPTIONS.packaged != bool(OPTIONS.package_pin): parser.error("packaged Chromium requires an explicit immutable package pin")
+    if OPTIONS.packaged and OPTIONS.chromium_focus: parser.error("packaged Chromium requires the complete journey; focus is development-only")
+    if OPTIONS.packaged and not OPTIONS.chromium_sdk_python: parser.error("packaged Chromium requires an explicit official MCP SDK Python interpreter")
+if (OPTIONS.chromium_sdk_python or OPTIONS.chromium_focus) and not OPTIONS.chromium: parser.error("Chromium SDK/focus inputs require --chromium")
+if OPTIONS.chromium_predecessor_pin and not OPTIONS.chromium: parser.error("Chromium predecessor pin requires --chromium")
 if OPTIONS.atuin_read_plan:
     incompatible = [value for key,value in vars(OPTIONS).items() if key not in ('atuin_read_plan','packaged','package_pin') and value]
     if incompatible: parser.error("Atuin read plan owns its scenario selector")
@@ -68,8 +81,8 @@ if OPTIONS.fusion_focus and not OPTIONS.fusion: parser.error("fusion focus requi
 if OPTIONS.packaged and OPTIONS.fusion_focus in ("changed-seams","source-codec"): parser.error("this fusion focus is development-only; packaged focus supports maintenance or source-privacy")
 if OPTIONS.fusion != bool(OPTIONS.fusion_spec): parser.error("fusion requires --fusion --fusion-spec GIT_REPOSITORY")
 if OPTIONS.fusion and any([OPTIONS.reversible_exclusion,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output]): parser.error("fusion owns its own scenario selector")
-if OPTIONS.package_pin and not (OPTIONS.reversible_exclusion or OPTIONS.fusion or OPTIONS.configured_continuation or OPTIONS.privacy_rules or OPTIONS.source_investigation or OPTIONS.recovery_context or OPTIONS.atuin_read_plan):
-    parser.error("prebuilt package pins are supported only by exclusion, fusion, privacy rules, source investigation, configured continuation, recovery context or Atuin read plan qualification")
+if OPTIONS.package_pin and not (OPTIONS.reversible_exclusion or OPTIONS.fusion or OPTIONS.configured_continuation or OPTIONS.privacy_rules or OPTIONS.source_investigation or OPTIONS.recovery_context or OPTIONS.atuin_read_plan or OPTIONS.chromium):
+    parser.error("prebuilt package pins are supported only by exclusion, fusion, privacy rules, source investigation, configured continuation, recovery context or Atuin read plan or Chromium qualification")
 if OPTIONS.fusion and OPTIONS.package_pin and not OPTIONS.packaged:
     parser.error("fusion prebuilt package pins require --packaged")
 if OPTIONS.reversible_exclusion and (not OPTIONS.packaged or not OPTIONS.package_pin or OPTIONS.exclusion_contracts or OPTIONS.indexed or OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.credential_output):
@@ -159,6 +172,10 @@ if OPTIONS.recovery_context:
     import recovery_context_cases
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+recovery_context_cases.planned(bool(OPTIONS.recovery_prior_accounting))
     if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
+if OPTIONS.chromium:
+    import chromium_cases,chromium_upgrade
+    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+[chromium_upgrade.NAME]+(chromium_cases.PLANNED[3:] if OPTIONS.chromium_focus else chromium_cases.PLANNED)
+    if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
 if OPTIONS.atuin_read_plan:
     import atuin_read_plan_cases
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+atuin_read_plan_cases.PLANNED
@@ -192,7 +209,7 @@ for key in ("DATABASE_URL", "SQLX_OFFLINE", "PGHOST", "PGPORT", "PGUSER", "PGDAT
 PG_STARTED = False
 POSTGRES_STOP_EXIT = None
 PREBUILT_PIN = None
-if OPTIONS.recovery_prior_accounting:
+if OPTIONS.recovery_prior_accounting or OPTIONS.chromium:
     from recovery_costs import usage
     WHOLE_LOOP_USAGE = usage()
 
@@ -273,13 +290,15 @@ try:
                 observed_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
                 observed_tree=subprocess.check_output(['git','write-tree'],cwd=ROOT,text=True).strip()
                 assert pin['candidate']==observed_head and pin['tree']==observed_tree and not subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True), "prebuilt package pin differs from the clean current candidate"
-                if OPTIONS.configured_continuation or OPTIONS.privacy_rules or (OPTIONS.recovery_context and "package_candidate" in pin):
+                if OPTIONS.configured_continuation or OPTIONS.privacy_rules or ((OPTIONS.recovery_context or OPTIONS.chromium) and "package_candidate" in pin):
                     package_candidate=pin['package_candidate']
                     package_tree=subprocess.check_output(['git','rev-parse',package_candidate+'^{tree}'],cwd=ROOT,text=True).strip()
                     assert package_tree==pin['package_tree'], "recorded package source tree differs"
                     changed=subprocess.check_output(['git','diff','--name-only',package_candidate,observed_head],cwd=ROOT,text=True).splitlines()
                     from package_binding import require_harness_only
                     require_harness_only(changed)
+                    if OPTIONS.chromium:
+                        assert set(changed)<= {'tests/foundation.py','tests/chromium_cases.py'}, "Chromium package reuse permits only its reviewed driver timing/binding repair"
                     source_diff=subprocess.check_output(['git','diff','--binary',package_candidate,observed_head],cwd=ROOT)
                     (REPORT/'runtime-harness.diff').write_bytes(source_diff)
                     (REPORT/'runtime-identity.json').write_text(json.dumps({'package_candidate':package_candidate,'package_tree':package_tree,'qualification_candidate':observed_head,'qualification_tree':observed_tree,'harness_and_docs_only_difference':changed,'source_diff':'runtime-harness.diff','source_diff_sha256':hashlib.sha256(source_diff).hexdigest()},indent=2)+'\n')
@@ -288,6 +307,10 @@ try:
                     binary=BIN_DIR/name
                     assert pin['binaries'][name]['path']==str(binary) and binary.is_file() and binary.resolve().is_relative_to(package), "prebuilt entrypoint is outside its specified immutable package"
                     assert hashlib.sha256(binary.read_bytes()).hexdigest()==pin['binaries'][name]['sha256'], "prebuilt entrypoint hash differs from package pin"
+                if OPTIONS.chromium:
+                    sdk=pin['official_sdk'];sdk_python=OPTIONS.chromium_sdk_python
+                    assert str(sdk_python)==sdk['python'] and hashlib.sha256(sdk_python.read_bytes()).hexdigest()==sdk['python_sha256'], "Chromium SDK interpreter differs from the package qualification pin"
+                    assert hashlib.sha256((ROOT/'tests/chromium_sdk_client.py').read_bytes()).hexdigest()==sdk['client_sha256'], "Chromium SDK client differs from the package qualification pin"
                 (REPORT/'prebuilt-package-pin.json').write_bytes(pin_bytes)
                 PREBUILT_PIN={'selection':'explicit_immutable_prebuilt','pin_sha256':hashlib.sha256(pin_bytes).hexdigest(),'pin':pin,'builds_invoked':False}
                 run([BIN_DIR/'sinexctl','--version'],label='actual explicitly pinned CLI entrypoint')
@@ -305,7 +328,7 @@ try:
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    if not (SESSION_RESUME or ((OPTIONS.privacy_rules or OPTIONS.source_investigation or OPTIONS.recovery_context or OPTIONS.atuin_read_plan) and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not (SESSION_RESUME or ((OPTIONS.privacy_rules or OPTIONS.source_investigation or OPTIONS.recovery_context or OPTIONS.atuin_read_plan or OPTIONS.chromium) and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
     if not SESSION_RESUME:
         (WORK/"pg").mkdir()
         (WORK/"socket").mkdir()
@@ -323,7 +346,7 @@ try:
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=BIN_DIR/"sinexd" if SESSION_RESUME or ((OPTIONS.privacy_rules or OPTIONS.source_investigation or OPTIONS.recovery_context or OPTIONS.atuin_read_plan) and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if SESSION_RESUME or ((OPTIONS.privacy_rules or OPTIONS.source_investigation or OPTIONS.recovery_context or OPTIONS.atuin_read_plan or OPTIONS.chromium) and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
     if SESSION_RESUME:
         for database in ['foundation','session_predecessor']:
@@ -349,7 +372,7 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    if not (SESSION_RESUME or ((OPTIONS.privacy_rules or OPTIONS.source_investigation or OPTIONS.recovery_context or OPTIONS.atuin_read_plan) and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
+    if not (SESSION_RESUME or ((OPTIONS.privacy_rules or OPTIONS.source_investigation or OPTIONS.recovery_context or OPTIONS.atuin_read_plan or OPTIONS.chromium) and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
     if not OPTIONS.packaged and not SESSION_RESUME:
@@ -359,7 +382,10 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.atuin_read_plan:
+    if OPTIONS.chromium:
+        scenario(chromium_upgrade.NAME,lambda:chromium_upgrade.exercise(globals(),chromium_cases.create))
+        chromium_cases.exercise(globals())
+    elif OPTIONS.atuin_read_plan:
         atuin_read_plan_cases.exercise(globals())
     elif OPTIONS.recovery_context:
         recovery_context_cases.exercise(globals())
@@ -526,7 +552,7 @@ finally:
             SCENARIOS.append({"name":name,"outcome":"unrun","reason":failure if not success else "not exercised"})
     for record,(proc,_,_) in zip(PROCESSES,CHILDREN): record["exit"]=proc.returncode
     whole_loop_usage=None
-    if OPTIONS.recovery_prior_accounting:
+    if OPTIONS.recovery_prior_accounting or OPTIONS.chromium:
         from recovery_costs import usage_delta
         whole_loop_usage=usage_delta(WHOLE_LOOP_USAGE, usage())
         (REPORT/"whole-loop-rusage.json").write_text(json.dumps(whole_loop_usage,indent=2)+"\n")
@@ -536,6 +562,8 @@ finally:
                 prose.write(f"\nObserved harness interval: {whole_loop_usage['elapsed_seconds']:.6f} seconds. Harness CPU: {cpu['self']['user_seconds']:.6f} user + {cpu['self']['system_seconds']:.6f} system seconds. Linux-accounted reaped-child CPU: {cpu['reaped_children']['user_seconds']:.6f} user + {cpu['reaped_children']['system_seconds']:.6f} system seconds. These are the stated OS accounting boundaries, not an inclusive process-tree CPU total.\n\n")
                 prose.write(f"Final individual high-water RSS statistics: harness {raw['self']['max_rss_kib']} KiB; largest Linux-accounted child {raw['reaped_children']['max_rss_kib']} KiB. These lifetime statistics may predate this measurement interval. The raw pre/post values are retained; maxima are not subtracted or summed. These do not measure simultaneous aggregate peak RSS.\n")
     report={"whole_loop_rusage":whole_loop_usage,"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else ("retained_development_build" if SESSION_RESUME else "development_build"),"prebuilt_package":PREBUILT_PIN,"retained_runtime":SESSION_RESUME,"binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"postgres_stop_exit":POSTGRES_STOP_EXIT,"runtime_state":"owned disposable state removed after captured evidence" if success and not SESSION_RESUME else str(WORK),"unimplemented":["formal M1 acceptance", "full query/surface/fusion scope", "snapshot bootstrap after pruning and purge/cutover", "remaining MCP tools","confirmed delivery","full target schema and Timescale","sealed lifecycle"]}
+    if OPTIONS.chromium:
+        report['chromium_scope']={'focus':OPTIONS.chromium_focus,'official_sdk_python':str(OPTIONS.chromium_sdk_python) if OPTIONS.chromium_sdk_python else None,'read_as':'small custody/partial/refusal continuation only' if OPTIONS.chromium_focus else 'complete generated visit/download journey; not full slice1c or installed acceptance'}
     if OPTIONS.demo_spec:
         report["demo"]={"oracle_revision":__import__("demo_cases").ORACLE_REVISION,"control":OPTIONS.demo_control,"provider_loss":OPTIONS.demo_provider_loss,"scope":"packaged Atuin raw-event driver; canonical row material, no SQLite snapshot retention or read-model index"}
     (REPORT/"result.json").write_text(json.dumps(report,indent=2)+"\n")

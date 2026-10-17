@@ -21,6 +21,7 @@ impl QualificationBoundary {
             && !matches!(
                 point.as_str(),
                 "collector-scheduled"
+                    | "browser-copy-before-check"
                     | "retained-fsynced"
                     | "transaction-staged"
                     | "transaction-committed"
@@ -58,6 +59,13 @@ impl QualificationBoundary {
             if release != [b'c'] { return Err(Error::Invalid("collector release refused")); }
             Ok(())
         }).await.map_err(|_| Error::Invalid("collector control timed out"))?
+    }
+    /// Synthetic copy-race control, before original file/journal validation.
+    pub async fn browser_copy_before_check(
+        control: &mut Option<Self>,
+        evidence: Value,
+    ) -> Result<()> {
+        Self::reach(control, "browser-copy-before-check", evidence).await
     }
     pub(crate) fn observes_atuin_queue(&self) -> bool {
         self.point == "fusion-replacement-committed"
