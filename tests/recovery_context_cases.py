@@ -1,6 +1,9 @@
 """Independent finite shell facts exercised through configured public clients."""
 import datetime as dt
+import hashlib
+import shutil
 import json
+from pathlib import Path
 import select
 import socket
 import sqlite3
@@ -9,11 +12,12 @@ import time
 import urllib.request
 from session_cases import COLUMNS, independent
 
+ACCOUNTING = 'three held completed fixed-provider polls account for exact retained bytes'
 PLANNED = ['mixed context, positive selection and unresolved evidence through CLI MCP',
     'late cross-day bridge and unchanged polls preserve independent spans and citations',
     'later arrival, current configuration transition and restart provider loss',
     'whole-session and candidate overflow refuse through CLI MCP',
-    'current canonical and raw parent fences refuse without older fallback']
+    'current canonical and raw parent fences refuse without older fallback', ACCOUNTING]
 
 
 def fixture_row(identity, clock, cwd, duration=0):
@@ -80,7 +84,7 @@ roots = ["/work/empty"]
 {extra}
 [atuin]
 path = "{source}"
-poll_interval_ms = 1000
+poll_interval_ms = 3000
 ''')
     def api(method='status',params=None):
         req=urllib.request.Request(endpoint,data=json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params or {}}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
@@ -176,7 +180,79 @@ poll_interval_ms = 1000
         metrics.append({'phase':label,'CLI_plus_MCP_plus_trace_seconds':time.monotonic()-began,'CLI_MCP_recall_seconds':elapsed,'retained_bytes':sum(p.stat().st_size for p in (work/'recovery-blobs').rglob('*') if p.is_file()),'rows':len(facts)})
         return answer
     try:
-        fill(facts);configure();daemon=start(config,'recovery');wait('startup',lambda:api() if daemon.poll() is None else None);wait('initial settled',settled);discover()
+        fill(facts);configure()
+        def accounting():
+            nonlocal daemon
+            from retention_accounting import account, manifest
+            decoder=shutil.which('zstd');assert decoder, 'owner-prescribed zstd decoder unavailable'
+            decoder_identity={'path':decoder,'sha256':hashlib.sha256(Path(decoder).resolve().read_bytes()).hexdigest(),
+                'version':run([decoder,'--version'],label='existing owner-format decoder version').stdout.strip()}
+            snapshots=[];identities=None;provider_before=hashlib.sha256(source.read_bytes()).hexdigest()
+            directory=report/'retention-accounting';directory.mkdir()
+            socket_path=work/'retention.sock'
+            controller=socket.socket(socket.AF_UNIX);controller.bind(str(socket_path));controller.listen(1);controller.settimeout(30)
+            daemon=start(config,'recovery','--qualification-boundary','collector-scheduled','--qualification-socket',socket_path)
+            held,_=controller.accept();held.settimeout(5)
+            frame=json.loads(held.makefile('rb').readline())
+            assert frame['pid']==daemon.pid and frame['qualification_boundary']=='collector-scheduled'
+            previous=None
+            try:
+                for index in range(3):
+                    if index:
+                        wait('next autonomous completed poll',lambda:(s if (s:=api('sources.list')['result']['sources'][0])['last_run']['id']!=previous and s['last_run']['status']=='completed' and s['acquisition']['schedule'] else None))
+                    wait('poll derived state settled',settled)
+                    if index==0:discover()
+                    answer=qualify('retention-poll-'+str(index))
+                    status=cli('sources')['sources'][0];observation=status['last_run']
+                    if index==0:assert observation['id']==frame['evidence']['observation']
+                    assert observation['status']=='completed' and status['acquisition']['schedule']
+                    assert observation['rows_read']==len(facts) and observation['admitted']==(len(facts) if index==0 else 0)
+                    assert observation['repeated']==(0 if index==0 else len(facts)) and observation['record_errors']==0
+                    sql="SELECT jsonb_build_object('observations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY seq) FROM raw.observations o),'cursor',(SELECT jsonb_agg(to_jsonb(c)) FROM raw.source_cursors c),'materials',(SELECT jsonb_agg(to_jsonb(m)||jsonb_build_object('blake3',b.blake3,'size_bytes',b.size_bytes,'blob_status',b.status) ORDER BY m.staged_at,m.id) FROM raw.source_material_registry m JOIN core.blobs b ON b.id=m.blob_id),'events',(SELECT jsonb_agg(jsonb_build_object('id',id,'type',event_type,'material',source_material_id,'anchor',anchor_byte,'end',offset_end) ORDER BY id) FROM core.events))"
+                    def basis():
+                        return json.loads(run(['psql',h['admin'],'-XqAt','-v','ON_ERROR_STOP=1','-c',sql],label='consistent retained custody and event audit').stdout)
+                    database=basis()
+                    assert len(database['observations'])==index+1 and len(database['materials'])==index+1
+                    assert database['observations'][-1]['id']==observation['id'] and database['observations'][-1]['status']=='completed'
+                    assert [o['seq'] for o in database['observations']]==list(range(1,index+2))
+                    current={'events':database['events'],'session':answer['session'],'rows':answer['rows'],'generation':answer['resolved']['generation']}
+                    if identities is None:identities=current
+                    else:assert current==identities, 'unchanged poll changed event/session evidence'
+                    poll_dir=directory/str(index);poll_dir.mkdir()
+                    save('retention-basis-'+str(index)+'.json',{'source':status,'database':database,'files':manifest(work/'recovery-blobs')})
+                    measured=account(work/'recovery-blobs',poll_dir,database['materials'],observation['id'],facts,run,decoder)
+                    new=[m for m in measured['materials'] if m['new_this_observation']];assert len(new)==1
+                    if snapshots:
+                        assert new[0]['source_rows_sha256']==snapshots[0]['account']['materials'][0]['source_rows_sha256']
+                        assert new[0]['envelopes_sha256']!=snapshots[-1]['account']['materials'][-1]['envelopes_sha256']
+                        assert measured['file_bytes']-snapshots[-1]['account']['file_bytes']==new[0]['file']['bytes']
+                    assert hashlib.sha256(source.read_bytes()).hexdigest()==provider_before
+                    assert manifest(work/'recovery-blobs')==measured['files']
+                    assert basis()==database, 'source/material basis changed across file capture; refuse raced accounting'
+                    after=cli('sources')['sources'][0]
+                    assert after['last_run']==status['last_run'] and after['cursor']==status['cursor'], 'collector advanced across accounting'
+                    snapshots.append({'index':index,'boundary':frame if index==0 else None,'source':status,'database':database,'identity':current,'account':measured,
+                        'coherence':'same observation/cursor/material basis before and after file reads; file manifests stable; no whole-filesystem atomicity claim'})
+                    save('retention-accounting.json',{'decoder':decoder_identity,'provider_sha256':provider_before,'snapshots':snapshots,
+                        'same_state_restarts':0,'poll_interval_ms':3000,'limit':'first baseline held by one-shot rendezvous, two later autonomous polls captured before next observation; finite file lengths, not physical IO, RSS, sustained capacity or everyday advantage; historical aggregate decomposition remains unavailable'})
+                    previous=observation['id']
+                    if index==0:held.sendall(b'c');held.close();held=None;controller.close()
+            finally:
+                if held is not None:
+                    if daemon.poll() is None:stop(daemon)
+                    held.close()
+                controller.close()
+            lines=['# Fixed-provider retained byte accounting','',
+                'Three completed polls use one continuous collector, the same synthetic provider, configuration and store. The first baseline uses the existing one-shot collector rendezvous. Two later autonomous polls are sampled after EOF closure and scheduling, with equal observation/cursor/material basis before and after capture; raced accounting refuses. Directory manifests are stable observations, not atomic filesystem snapshots.','',
+                '| Poll | Rows | Admitted | Repeated | Closed file bytes | New compressed blob | Logical source JSONL | Acquisition envelope extra | Encoding metadata | Open/tmp |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+            for snapshot in snapshots:
+                new=next(m for m in snapshot['account']['materials'] if m['new_this_observation']);o=snapshot['source']['last_run']
+                lines.append(f"| {snapshot['index']} | {o['rows_read']} | {o['admitted']} | {o['repeated']} | {snapshot['account']['file_bytes']} | {new['file']['bytes']} | {new['logical_source_rows_jsonl_bytes']} | {new['acquisition_envelope_extra_bytes']} | unknown | 0/0 |")
+            lines+=['','Logical source JSONL includes row serialization and newline bytes. Acquisition envelope extra is the exact incremental serialization of `_from`; encoding frame bytes include compressed content and zstd framing/checksum. The owner decoder does not separately expose verified seek-metadata bytes, so that finer split remains unknown. There is no additive attribution of compressed bytes to individual JSON fields.','',
+                'Event IDs, retained event coordinates, canonical rows, session and projection generation remain stable. Observation IDs, acquisition envelopes, material/blob identities and source counters change. Exact blobs and decoded JSONL are preserved privately. The historical 1048/2687/3802 aggregate has no retained per-file manifest and is not retrospectively decomposed. This finite run measures file lengths, not physical IO, allocated blocks, RSS, sustained capacity or everyday benefit.']
+            (report/'retention-accounting.md').write_text('\n'.join(lines)+'\n')
+        scenario(ACCOUNTING,accounting)
         def initial():
             answer=qualify('initial')
             atuin_config=work/'atuin-baseline-config';atuin_config.mkdir()
@@ -207,7 +283,10 @@ poll_interval_ms = 1000
         def bridge():
             began=time.monotonic();row=fixture_row('late-bridge','03:54:00','/work/tide',12*60*1_000_000_000);facts.append(row);fill([row]);wait('bridge settled',settled)
             answer=qualify('bridged');assert answer['session']['payload']['owner_day']=='2026-10-12'
-            generation=answer['resolved']['generation'];identity=answer['session']['id'];time.sleep(2.1);wait('unchanged poll',settled)
+            generation=answer['resolved']['generation'];identity=answer['session']['id']
+            prior=api('sources.list')['result']['sources'][0]['last_run']['id']
+            wait('completed unchanged poll',lambda:(s if (s:=api('sources.list')['result']['sources'][0])['last_run']['id']!=prior and s['last_run']['status']=='completed' and s['last_run']['admitted']==0 and s['last_run']['repeated']==len(facts) else None))
+            wait('unchanged poll derived state',settled)
             repeated=qualify('unchanged');assert repeated['session']['id']==identity and repeated['resolved']['generation']==generation
             metrics.append({'phase':'bridge-whole-loop','source_append_through_CLI_MCP_trace_seconds':time.monotonic()-began,'includes_unchanged_poll_wait':True})
         scenario(PLANNED[1],bridge)
