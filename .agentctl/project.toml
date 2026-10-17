@@ -10,7 +10,7 @@ inherit = ["HOME", "USER", "LANG", "PATH", "XDG_RUNTIME_DIR"]
 unset = ["DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
 [operations.foundation_exec]
 description = "Run an explicit command in the pinned Sinex development shell"
-exec = ["nix", "develop", "--command"]
+exec = ["env"]
 arguments = "required"
 pool = "bulk"
 result = "exit"
