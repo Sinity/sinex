@@ -69,7 +69,7 @@ full_interval_ms = 86400000
         daemon=start(config,'published-browser-upgrade',binary=old);before=wait(old_answer,'published retained command')
         event=before['rows'][0];reference='sinex:ev/'+event['id']
         original=api('object.trace',{'ref':reference,'bytes':True})['result'];stop(daemon)
-        waiting=schema(new,'--check');assert [c['number'] for c in waiting['pending_changes']]==[4]
+        waiting=schema(new,'--check');assert [c['number'] for c in waiting['pending_changes']]==[4,5]
         schema(new,'--apply',expected=2)
         dump=work/'before-browser-change.sql';upgraded=schema(new,'--apply','--dump-file',dump);assert upgraded['pending_changes']==[] and dump.stat().st_size>0
         schema(new,'--check')

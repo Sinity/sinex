@@ -89,3 +89,7 @@ writer and refusal qualification stays separate; this mode does not claim to
 repeat it.
 
 Entry 3 registers the [selected shell session](shell-sessions.md) contract and seeds durable logical-day dirty work from existing canonical recorded spans, using the same range rule as admission and archival. Its qualification uses the unchanged runtime of published `88a7a641de4517307a0e723e40ecac8ff50aa7d7`, with the original immutable package and the retained publication binding, rather than synthesizing a predecessor schema.
+
+## Metadata and full-text availability
+
+Ordered change 5 recognizes the exact published stage-4 catalog, makes `core.search_text.tsv` nullable and adds the declared partial unavailable-vector index. Existing vectors and all canonical/raw events, source observations, retained materials and operation evidence remain unchanged. The ordinary guarded `--apply --dump-file` route is required; an ordinary schema check reports the pending entry without applying it. Fresh and upgraded catalogs must agree. The previous writer refuses the new fingerprint. The separate retrieval-basis change rebuilds derived metadata/text readiness and invalidates old indexed cursor generations; it never remints source events or rewrites raw evidence. See [indexed retrieval](indexed-retrieval.md) for independent metadata readiness, exact text refusal and bounded diagnostics.

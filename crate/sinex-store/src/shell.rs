@@ -5,6 +5,16 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::{Connection, Row};
 use uuid::Uuid;
+
+const WORK_TABLES: &[&str] = &[
+    "DROP TABLE IF EXISTS pg_temp.sinex_shell_nodes,pg_temp.sinex_shell_groups",
+    "CREATE TEMP TABLE sinex_shell_nodes(id uuid PRIMARY KEY,source smallint NOT NULL,host text,command text NOT NULL,command_hash text NOT NULL,at_ns numeric,digest text NOT NULL,anchor bigint NOT NULL,ekey text NOT NULL,paired boolean NOT NULL DEFAULT false,count2 bigint NOT NULL DEFAULT 0,count60 bigint NOT NULL DEFAULT 0)",
+    "CREATE INDEX ON sinex_shell_nodes(source,command_hash,at_ns)",
+    "CREATE INDEX sinex_shell_nodes_pending ON sinex_shell_nodes(id) WHERE NOT paired",
+    "CREATE TEMP TABLE sinex_shell_groups(token uuid PRIMARY KEY,parents uuid[] NOT NULL,strategy smallint NOT NULL,done boolean NOT NULL DEFAULT false,retained_id uuid)",
+    "CREATE INDEX sinex_shell_groups_retained ON sinex_shell_groups(retained_id)",
+    "CREATE INDEX sinex_shell_groups_pending ON sinex_shell_groups(token) WHERE NOT done",
+];
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Rule {
@@ -25,7 +35,8 @@ fn rule() -> Rule {
     let r: Rule =
         serde_json::from_str(include_str!("shell-rule.json")).expect("registered shell rule");
     assert!(
-        r.normalization == "trim"
+        r.sources == [crate::ATUIN_SOURCE, crate::ZSH_SOURCE]
+            && r.normalization == "trim"
             && r.partition == ["hostname"]
             && r.time == "best_quality"
             && r.unique == "mutual_single_at_strategy_entry"
@@ -157,12 +168,7 @@ impl WriterPool {
         if open {
             return Ok(None);
         }
-        for sql in [
-            "DROP TABLE IF EXISTS pg_temp.sinex_shell_nodes,pg_temp.sinex_shell_groups",
-            "CREATE TEMP TABLE sinex_shell_nodes(id uuid PRIMARY KEY,source smallint NOT NULL,host text,command text NOT NULL,command_hash text NOT NULL,at_ns numeric,digest text NOT NULL,anchor bigint NOT NULL,ekey text NOT NULL,paired boolean NOT NULL DEFAULT false,count2 bigint NOT NULL DEFAULT 0,count60 bigint NOT NULL DEFAULT 0)",
-            "CREATE INDEX ON sinex_shell_nodes(source,command_hash,at_ns)",
-            "CREATE TEMP TABLE sinex_shell_groups(token uuid PRIMARY KEY,parents uuid[] NOT NULL,strategy smallint NOT NULL,done boolean NOT NULL DEFAULT false,retained_id uuid)",
-        ] {
+        for sql in WORK_TABLES {
             sqlx::query(sql).execute(&mut self.connection).await?;
         }
         sqlx::query("UPDATE derivation.shell_progress SET basis=$1,phase='scan',failure=NULL,scanned=0,replaced=0 WHERE one").bind(basis).execute(&mut self.connection).await?;
@@ -229,9 +235,10 @@ impl WriterPool {
                     let field = if fallback { "count60" } else { "count2" };
                     // The candidate graph is frozen before any match at this strategy. With
                     // two sources every candidate group is a singleton endpoint.
-                    let sql = format!(
-                        "UPDATE sinex_shell_nodes n SET {field}=(SELECT count(*) FROM sinex_shell_nodes x WHERE x.source<>n.source AND x.host=n.host AND x.command_hash=n.command_hash AND x.command=n.command AND abs(x.at_ns-n.at_ns)<=$2::bigint AND (NOT $3 OR (NOT x.paired AND NOT n.paired))) WHERE n.id=ANY($1)"
-                    );
+                    // The registered rule and scan admit only source coordinates 0/1.
+                    // Equality on the opposite source plus numeric time bounds uses the
+                    // existing index without narrowing timestamps or weakening collisions.
+                    let sql = include_str!("shell-count.sql").replace("{field}", field);
                     sqlx::query(&sql)
                         .bind(&ids)
                         .bind(bound)
@@ -546,6 +553,10 @@ impl WriterPool {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "shell_work_tests.rs"]
+mod work_tests;
 
 fn temporal_key(
     known: bool,

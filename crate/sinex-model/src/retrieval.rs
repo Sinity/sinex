@@ -15,7 +15,7 @@ pub fn normalization_basis() -> String {
 
 // Bump for changed token/text/project/filter/ranking/order meaning; this binds
 // reconstruction and cursor generation compatibility, independently of build time.
-pub const CONTRACT: &str = "sinex.shell-search.v3";
+pub const CONTRACT: &str = "sinex.shell-search.v4";
 pub fn normalize(text: &str) -> String {
     caseless::default_case_fold_str(text).nfc().collect()
 }

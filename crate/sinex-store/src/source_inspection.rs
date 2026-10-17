@@ -86,12 +86,12 @@ impl ReadPool {
             sqlx::query("SET LOCAL statement_timeout='100ms'")
                 .execute(&mut *tx)
                 .await?;
-            let inspected = tokio::time::timeout(
-                std::time::Duration::from_millis(200),
-                inspect_detail(&mut tx, row, &request, input),
-            )
-            .await;
-            if !matches!(inspected, Ok(Ok(()))) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+            // Await PostgreSQL's cancellation response before reusing this
+            // transaction. Dropping an in-flight fetch cannot safely recover a
+            // savepoint on the same transport.
+            let inspected = inspect_detail(&mut tx, row, &request, input, deadline).await;
+            if inspected.is_err() {
                 // Roll back a failed optional statement while keeping the primary
                 // source snapshot and latest outcome available.
                 if sqlx::query("ROLLBACK TO SAVEPOINT source_detail")
@@ -159,6 +159,7 @@ async fn inspect_detail(
     row: &mut Value,
     request: &SourcesRequest,
     input: Uuid,
+    deadline: std::time::Instant,
 ) -> Result<()> {
     let last = row["last_run"].clone();
     let refs = serde_json::from_value::<OutcomeRefs>(
@@ -178,18 +179,22 @@ async fn inspect_detail(
     };
     for (key, reference) in [("last_success", success), ("last_failure", failure)] {
         row[key] = match reference {
-            Some(id) => sqlx::query_scalar::<_, Value>(
-                "SELECT to_jsonb(o) FROM raw.observations o WHERE id=$1 AND input_id=$2",
-            )
-            .bind(id)
-            .bind(input)
-            .fetch_optional(&mut **tx)
-            .await?
-            .unwrap_or(Value::Null),
+            Some(id) => {
+                optional_statement_budget(tx, deadline).await?;
+                sqlx::query_scalar::<_, Value>(
+                    "SELECT to_jsonb(o) FROM raw.observations o WHERE id=$1 AND input_id=$2",
+                )
+                .bind(id)
+                .bind(input)
+                .fetch_optional(&mut **tx)
+                .await?
+                .unwrap_or(Value::Null)
+            }
             None => Value::Null,
         };
     }
     row["outcome_reference_evidence"] = json!({"success_known":success.is_some() || refs.as_ref().is_some_and(|r| r.success_known),"failure_known":failure.is_some() || refs.as_ref().is_some_and(|r| r.failure_known),"read_as":"Indexed last-outcome references for this observation; missing predecessor summaries remain unknown."});
+    optional_statement_budget(tx, deadline).await?;
     let mut history: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(o) FROM raw.observations o WHERE input_id=$1 AND ($2::bigint IS NULL OR seq<$2) ORDER BY seq DESC LIMIT $3")
                 .bind(input).bind(request.before_seq).bind((HISTORY+1) as i64).fetch_all(&mut **tx).await?;
     let history_more = history.len() > HISTORY;
@@ -201,6 +206,7 @@ async fn inspect_detail(
     });
     let observed: Option<Value> = match selected {
         Some(id) => {
+            optional_statement_budget(tx, deadline).await?;
             sqlx::query_scalar(
                 "SELECT to_jsonb(o) FROM raw.observations o WHERE input_id=$1 AND id=$2",
             )
@@ -218,6 +224,7 @@ async fn inspect_detail(
         .as_ref()
         .is_some_and(|o| o["metadata"]["_sinex_acquisition_v1"]["receipts"] == "capture_insert_v1");
     let mut receipts: Vec<Value> = if known {
+        optional_statement_budget(tx, deadline).await?;
         // Replay reparses the same material but sets created_by_operation. It
         // must never become an original acquisition's recovery receipt.
         sqlx::query_scalar("SELECT jsonb_build_object('event',e.id,'material',e.source_material_id,'start',e.offset_start,'end',e.offset_end,'record_state',e.record_state) FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id WHERE m.input_id=$1 AND m.observation_id=$2 AND e.source IN ('terminal.atuin-history','browser.history.chromium') AND e.event_type IN ('command.executed','page.visited','download.observed') AND e.created_by_operation IS NULL AND ($3::uuid IS NULL OR e.id>$3) ORDER BY e.id LIMIT $4")
@@ -237,3 +244,27 @@ async fn inspect_detail(
     row["receipts"] = json!({"observation":observed,"rows":receipts,"evidence":if known{"capture_insert_v1"}else{"unknown_legacy_or_no_observation"},"complete":known && !receipts_more,"next_after_receipt":next_receipt,"page_size":RECEIPTS,"continuation":"sources --input INPUT --observation OBSERVATION --after-receipt NEXT","read_as":"New acquisition interpretations including removed records; current show/trace governs eligibility and protected content. No historical coverage claim."});
     Ok(())
 }
+
+fn statement_millis(deadline: std::time::Instant, now: std::time::Instant) -> Option<u64> {
+    let remaining = deadline.checked_duration_since(now)?.as_millis().min(100) as u64;
+    (remaining > 0).then_some(remaining)
+}
+
+async fn optional_statement_budget(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    deadline: std::time::Instant,
+) -> Result<()> {
+    let millis = statement_millis(deadline, std::time::Instant::now())
+        .ok_or(Error::Invalid("optional source inspection deadline"))?;
+    sqlx::query("SELECT set_config('statement_timeout',$1,true)")
+        .bind(format!("{millis}ms"))
+        .execute(&mut **tx)
+        .await?;
+    statement_millis(deadline, std::time::Instant::now())
+        .ok_or(Error::Invalid("optional source inspection deadline"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "source_inspection_tests.rs"]
+mod tests;

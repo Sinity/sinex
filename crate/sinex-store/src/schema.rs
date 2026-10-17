@@ -706,7 +706,7 @@ const TABLES: &[Definition] = &[
             col!("ts_orig_tiebreak", "integer", null),
             col!("source", "text"),
             col!("event_type", "text"),
-            col!("tsv", "tsvector"),
+            col!("tsv", "tsvector", null),
             col!("text", "text"),
             col!("command", "text"),
             col!("command_normalized", "text"),
@@ -781,8 +781,17 @@ fn installed_tables(stage: usize) -> Vec<Definition> {
         })
         .collect()
 }
+fn nullable_at(stage: usize, table: &Definition, column: &Column) -> bool {
+    column.nullable && !(stage < 5 && table.name == "search_text" && column.name == "tsv")
+}
+fn storage_at(stage: usize) -> Vec<String> {
+    crate::event_storage::declarations()
+        .into_iter()
+        .filter(|sql| stage >= 5 || sql != crate::event_storage::FULL_TEXT_UNAVAILABLE_INDEX)
+        .collect()
+}
 fn declarations() -> Result<Vec<String>> {
-    declarations_at(4)
+    declarations_at(5)
 }
 fn declarations_at(stage: usize) -> Result<Vec<String>> {
     installed_tables(stage)
@@ -793,7 +802,7 @@ fn declarations_at(stage: usize) -> Result<Vec<String>> {
             for c in d.columns {
                 let mut column = ColumnDef::new(Alias::new(c.name));
                 column.custom(Alias::new(c.ty));
-                if !c.nullable {
+                if !nullable_at(stage, d, c) {
                     column.not_null();
                 }
                 if let Some(expr) = c.default {
@@ -838,13 +847,13 @@ async fn configure_events(conn: &mut PgConnection) -> Result<()> {
 }
 
 fn fingerprint() -> Result<String> {
-    fingerprint_at(4)
+    fingerprint_at(5)
 }
 fn fingerprint_at(stage: usize) -> Result<String> {
     Ok(blake3::hash(
         [
             declarations_at(stage)?,
-            crate::event_storage::declarations(),
+            storage_at(stage),
             vec![TIMESCALEDB_VERSION.to_owned()],
         ]
         .concat()
@@ -891,6 +900,10 @@ pub fn schema_changes() -> Vec<SchemaChange> {
         SchemaChange {
             number: 4,
             description: "register retained Chromium visits and persisted download states",
+        },
+        SchemaChange {
+            number: 5,
+            description: "retain exact metadata when full-text representation is unavailable",
         },
     ]
 }
@@ -1090,7 +1103,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             .fetch_one(&mut *conn)
             .await?;
     let mut stage = None;
-    for candidate in 0..=4 {
+    for candidate in 0..=5 {
         if stored == fingerprint_at(candidate)? {
             stage = Some(candidate);
         }
@@ -1164,7 +1177,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             let default: Option<String> = actual.try_get("default_expr")?;
             if actual.try_get::<String, _>("attname")? != c.name
                 || actual.try_get::<String, _>("ty")? != c.ty
-                || actual.try_get::<bool, _>("attnotnull")? == c.nullable
+                || actual.try_get::<bool, _>("attnotnull")? == nullable_at(stage, d, c)
                 || catalog
                     .expressions
                     .get(&[d.schema, ".", d.name, ".", c.name].concat())
@@ -1661,6 +1674,22 @@ async fn apply_change_entry(
                 sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES($1,$2,'chromium-history-v1',$3)").bind(id).bind(kind).bind(sinex_model::browser::payload_schema(download)).execute(&mut *conn).await?;
             }
         }
+        5 => {
+            let exists: bool =
+                sqlx::query_scalar("SELECT to_regclass('core.search_text') IS NOT NULL")
+                    .fetch_one(&mut *conn)
+                    .await?;
+            if !exists {
+                return Ok(SchemaChangeCheck {
+                    number: entry.number,
+                    outcome: "old_objects_absent",
+                });
+            }
+            conn.execute("ALTER TABLE core.search_text ALTER COLUMN tsv DROP NOT NULL")
+                .await?;
+            conn.execute(crate::event_storage::FULL_TEXT_UNAVAILABLE_INDEX)
+                .await?;
+        }
         _ => return Err(Error::Schema("unknown schema change".into())),
     }
     Ok(SchemaChangeCheck {
@@ -1772,6 +1801,13 @@ mod upgrade_tests {
         assert_eq!(fields["PGPASSWORD"], "p@ss+word");
         assert_eq!(fields["PGSSLMODE"], "verify-full");
         assert_eq!(fields["PGSSLROOTCERT"], "/synthetic/ca");
+    }
+    #[test]
+    fn published_stage_four_declarations_keep_their_binding() {
+        assert_eq!(
+            super::fingerprint_at(4).unwrap(),
+            "5e611ef17edcc8ced01df352bf993ad3c79f2fb0c3560f2a0bfe5a1a6e277c45"
+        );
     }
     #[test]
     fn published_predecessor_declarations_retain_the_released_binding() {
