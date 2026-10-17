@@ -45,7 +45,9 @@ def exercise(h):
     work,report,env,bins=(h[k] for k in ['WORK','REPORT','ENV','BIN_DIR'])
     run,scenario,start,stop=(h[k] for k in ['run','scenario','start_daemon','stop'])
     source=work/'History';second=work/'OtherHistory';config=work/'chromium.toml';store=work/'chromium-blobs'
-    expected=create(source);other=create(second,7,3)
+    focus=h['OPTIONS'].chromium_focus
+    sdk_python=h['OPTIONS'].chromium_sdk_python
+    expected=create(source,120,4) if focus else create(source);other=create(second,7,3)
     endpoint=f'http://127.0.0.1:{h["free_port"]()}/rpc';token=(work/'token').read_text()
     generation='95d3d942-c8a4-444e-8016-29d2e312664c';other_generation='86d3d942-c8a4-444e-8016-29d2e312664c'
     daemon=mcp=None;sequence=0;first=None;selected={};controls=[]
@@ -162,6 +164,28 @@ snapshot_interval_ms = {snapshot}
         answer=query(download_query+' and payload.guid = "'+str(uuid.UUID(int=i))+'"')
         assert len(answer['rows'])==1,answer
         return answer['rows'][0]
+    def sdk_public(label,text,baseline=None):
+        if not sdk_python:return
+        script=h['ROOT']/'tests/chromium_sdk_client.py';output=report/(label+'-official-sdk')
+        run([sdk_python,script,'--binary',bins/'sinexctl','--endpoint',endpoint,'--token-file',work/'token','--query',text,'--output',output],label='official MCP SDK Chromium '+label)
+        recorded=json.loads((output/'result.json').read_text())
+        assert recorded['success'] and recorded['sdk_context_closed'] and recorded['sdk']['version']=='1.26.0',recorded
+        cli_answer,shown,traced=baseline if baseline else (cli('query',text),None,None)
+        assert recorded['query']['rows']==cli_answer['rows'] and recorded['query']['total']==cli_answer['total']
+        reference='sinex:ev/'+cli_answer['rows'][0]['id']
+        assert recorded['reference']==reference
+        shown=shown or cli('show',reference)['row'];traced=traced or cli('trace',reference,'--bytes')['row']
+        assert recorded['show']['row']==shown and 'record' not in recorded['trace']['row']
+        assert all(recorded['trace']['row'][key]==traced[key] for key in ('material','anchor','end'))
+    def independent_digest(path):
+        # Closing a main-file FD in the SQLite writer process releases its POSIX
+        # record locks. Inspect bytes only from another process while it is locked.
+        program='import hashlib,json,sys;from pathlib import Path;p=Path(sys.argv[1]);print(json.dumps([hashlib.sha256(p.read_bytes()).hexdigest(),hashlib.sha256(Path(str(p)+"-journal").read_bytes()).hexdigest()]))'
+        return json.loads(run([h['sys'].executable,'-c',program,path],label='independent locked provider digest').stdout)
+    def assert_provider_locked(path):
+        program='import sqlite3,sys;c=sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True,timeout=0);print(c.execute("SELECT count(*) FROM visits").fetchone())'
+        result=run([h['sys'].executable,'-c',program,path],expected=1,label='external SQLite exclusive-lock control')
+        assert 'database is locked' in result.stderr,result.stderr
     def equivalent_public(label,text):
         cli_answer=cli('query',text)
         agent=tool('sinex_query',{'query':text})
@@ -171,12 +195,16 @@ snapshot_interval_ms = {snapshot}
         traced=cli('trace',reference,'--bytes')['row'];agent_trace=tool('sinex_trace',{'ref':reference})['row'];assert 'record' not in agent_trace
         assert traced['material']==agent_trace['material'] and traced['anchor']==agent_trace['anchor'] and traced['end']==agent_trace['end']
         assert traced['record']['_from']['table'] in ('visits','downloads')
+        sdk_public(label,text,(cli_answer,shown,traced))
         save(label,{'CLI':cli_answer,'MCP':agent,'show':shown,'trace':traced,'MCP_trace':agent_trace})
         return cli_answer,traced
     def mutate(statement,parameters=()):
         with sqlite3.connect(source) as c:c.execute(statement,parameters);c.commit()
     try:
-        configure();daemon=start(config,'chromium');wait('startup',lambda:api().get('result'));connect()
+        if sdk_python:
+            save('official-sdk-runtime',{'interpreter':str(sdk_python),'interpreter_resolved':str(sdk_python.resolve()),'interpreter_sha256':hashlib.sha256(sdk_python.read_bytes()).hexdigest(),'client_sha256':hashlib.sha256((h['ROOT']/'tests/chromium_sdk_client.py').read_bytes()).hexdigest(),'recording_seam_sha256':'c960ce13a42c3daa5f0d17d6dabeb35971cfb0b1217b19bced77a8158365a9c6'})
+        if not focus:
+            configure();daemon=start(config,'chromium');wait('startup',lambda:api().get('result'));connect()
         def population():
             nonlocal first
             other_first=wait('full other history',lambda:initial_full('other'))
@@ -220,7 +248,7 @@ snapshot_interval_ms = {snapshot}
             damaged=dict(a['payload'],duration_us=1)
             assert damaged['duration_us']!=baseline['visit_duration'];controls.append('false positive duration/finished interpretation distinguished from zero-duration provider fact')
             save('equal-evidence-direct-provider-baseline',{'independently_selected_fact':baseline,'native_interpretation':a,'scope':'the fixed fact ties while the synthetic provider is accessible; retained citation and loss behavior are separate, no general superiority claim','negative_control':damaged})
-        scenario(PLANNED[0],population)
+        if not focus:scenario(PLANNED[0],population)
         def updates():
             nonlocal daemon
             before=one_visit(1);old=one_download(1);s=wait('reduced before update',lambda:settled(kind='new_keys_and_prior_unfinished'))
@@ -263,7 +291,7 @@ snapshot_interval_ms = {snapshot}
             wait('periodic full value comparison',lambda:one_visit(4)['payload']['duration_us']==7777777)
             assert one_visit(4)['id']!=original['id']
             save('late-update-control',{'old_unfinished':before,'completed':one_visit(1),'download':one_download(1),'replacement_GUID':replacement,'periodic':one_visit(4),'missing_GUID_deletion_inference':'not admitted'})
-        scenario(PLANNED[1],updates)
+        if not focus:scenario(PLANNED[1],updates)
         def retained():
             nonlocal daemon
             baseline,trace=equivalent_public('before-provider-loss',download_query+' and payload.guid = "'+str(uuid.UUID(int=1))+'"')
@@ -284,21 +312,22 @@ snapshot_interval_ms = {snapshot}
             save('retained-costs',sql("SELECT jsonb_build_object('observations',(SELECT count(*) FROM raw.observations),'retained_logical_bytes',(SELECT sum(durable_bytes) FROM raw.source_material_registry),'event_versions',(SELECT count(*) FROM core.events),'snapshot_bases',(SELECT count(*) FROM raw.source_material_registry WHERE material_kind='file'),'scope','generated fixture logical custody dimensions; compressed file sizes below, no throughput or inclusive CPU/IO claim')"))
             save('physical-blob-files',{'files':len(list((store/'blobs').rglob('*.zst'))),'compressed_bytes':sum(p.stat().st_size for p in (store/'blobs').rglob('*.zst')),'snapshot_material':material})
             close_mcp();stop(daemon);(work/'provider-held').rename(source);(work/'other-held').rename(second)
-        scenario(PLANNED[2],retained)
+        if not focus:scenario(PLANNED[2],retained)
         # Smaller private-safe generated database exercises locked custody without rereading the large baseline.
         def locked():
             nonlocal daemon
             locked_path=work/'LockedHistory';create(locked_path,120,4)
             generation_locked='77d3d942-c8a4-444e-8016-29d2e312664c'
             con=sqlite3.connect(locked_path);con.execute('PRAGMA locking_mode=EXCLUSIVE');con.execute('PRAGMA cache_size=1');con.execute('BEGIN EXCLUSIVE');con.execute('UPDATE visits SET visit_duration=999999999')
-            before=(hashlib.sha256(locked_path.read_bytes()).hexdigest(),hashlib.sha256((work/'LockedHistory-journal').read_bytes()).hexdigest())
+            assert_provider_locked(locked_path);before=independent_digest(locked_path);assert_provider_locked(locked_path)
             configure(path=locked_path,gen=generation_locked,profiles=False);daemon=start(config,'chromium-locked')
             try:
                 s=wait('locked owned recovery',lambda:settled(kind='full_value_comparison'))
                 assert plan(s)['custody']['kind']=='verified_locked_rollback_copy',s
                 assert query(visit_query)['rows'][0]['payload']['duration_us']==0
                 quiet=next_poll(s,'new_keys_and_prior_unfinished');assert plan(quiet)['custody']['kind']=='verified_locked_copy_reused'
-                after=(hashlib.sha256(locked_path.read_bytes()).hexdigest(),hashlib.sha256((work/'LockedHistory-journal').read_bytes()).hexdigest());assert before==after
+                after=independent_digest(locked_path);assert_provider_locked(locked_path);assert before==after
+                sdk_public('locked-custody-public',visit_query+' and payload.url = "https://example.invalid/page/1"')
                 save('locked-custody',{'first':s,'quiet':quiet,'provider_bytes_unchanged':True})
             finally:stop(daemon);con.rollback();con.close()
             # Actual copy-boundary mutation must invalidate copied data, retry, and never settle that copy.

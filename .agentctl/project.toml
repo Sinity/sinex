@@ -369,7 +369,7 @@ timeout_seconds = 3600
 cache = "none"
 
 [operations.chromium_package_acceptance]
-description = "Generated Chromium visits/downloads through an explicitly pinned package and actual public CLI/MCP; never rebuilds"
+description = "Generated Chromium visits/downloads through an explicitly pinned package, CLI and explicit official MCP SDK client; never rebuilds"
 exec = ["python3", "tests/foundation.py", "--chromium", "--packaged", "--package-pin"]
 arguments = "required"
 pool = "bulk"

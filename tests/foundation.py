@@ -22,6 +22,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--recovery-prior-accounting",type=Path,help="reuse an exact successful recovery accounting report and qualify the repeated recovery whole loop with observed costs")
 parser.add_argument("--recovery-context", action="store_true", help="qualify bounded mixed-context project recall through configured Atuin and public clients")
 parser.add_argument("--chromium-predecessor-pin",type=Path,help="exact published stage-3 package pin used only to qualify guarded populated Chromium registration upgrade")
+parser.add_argument("--chromium-sdk-python",type=Path,help="explicit immutable official MCP SDK Python interpreter; required for packaged Chromium public acceptance")
+parser.add_argument("--chromium-focus",choices=["custody"],help="development-only custody/partial/refusal continuation; does not qualify the large public journey")
 parser.add_argument("--chromium", action="store_true", help="qualify configured Chromium visits and persisted downloads with guarded custody")
 parser.add_argument("--atuin-read-plan", action="store_true", help="qualify connection-scoped new/unfinished/full Atuin value reads and retained recovery")
 parser.add_argument("--source-investigation", action="store_true", help="qualify bounded Atuin acquisition timing and exact capture receipts")
@@ -52,10 +54,13 @@ parser.add_argument("--demo-provider-loss", action="store_true", help="qualify c
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
 if OPTIONS.chromium:
-    incompatible=[v for k,v in vars(OPTIONS).items() if k not in ('chromium','packaged','package_pin','chromium_predecessor_pin') and v]
+    incompatible=[v for k,v in vars(OPTIONS).items() if k not in ('chromium','packaged','package_pin','chromium_predecessor_pin','chromium_sdk_python','chromium_focus') and v]
     if incompatible: parser.error("Chromium owns its scenario selector")
     if not OPTIONS.chromium_predecessor_pin: parser.error("Chromium requires an explicit published stage-3 predecessor package pin")
     if OPTIONS.packaged != bool(OPTIONS.package_pin): parser.error("packaged Chromium requires an explicit immutable package pin")
+    if OPTIONS.packaged and OPTIONS.chromium_focus: parser.error("packaged Chromium requires the complete journey; focus is development-only")
+    if OPTIONS.packaged and not OPTIONS.chromium_sdk_python: parser.error("packaged Chromium requires an explicit official MCP SDK Python interpreter")
+if (OPTIONS.chromium_sdk_python or OPTIONS.chromium_focus) and not OPTIONS.chromium: parser.error("Chromium SDK/focus inputs require --chromium")
 if OPTIONS.chromium_predecessor_pin and not OPTIONS.chromium: parser.error("Chromium predecessor pin requires --chromium")
 if OPTIONS.atuin_read_plan:
     incompatible = [value for key,value in vars(OPTIONS).items() if key not in ('atuin_read_plan','packaged','package_pin') and value]
@@ -169,7 +174,7 @@ if OPTIONS.recovery_context:
     if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
 if OPTIONS.chromium:
     import chromium_cases,chromium_upgrade
-    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+[chromium_upgrade.NAME]+chromium_cases.PLANNED
+    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+[chromium_upgrade.NAME]+(chromium_cases.PLANNED[3:] if OPTIONS.chromium_focus else chromium_cases.PLANNED)
     if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
 if OPTIONS.atuin_read_plan:
     import atuin_read_plan_cases
@@ -551,6 +556,8 @@ finally:
                 prose.write(f"\nObserved harness interval: {whole_loop_usage['elapsed_seconds']:.6f} seconds. Harness CPU: {cpu['self']['user_seconds']:.6f} user + {cpu['self']['system_seconds']:.6f} system seconds. Linux-accounted reaped-child CPU: {cpu['reaped_children']['user_seconds']:.6f} user + {cpu['reaped_children']['system_seconds']:.6f} system seconds. These are the stated OS accounting boundaries, not an inclusive process-tree CPU total.\n\n")
                 prose.write(f"Final individual high-water RSS statistics: harness {raw['self']['max_rss_kib']} KiB; largest Linux-accounted child {raw['reaped_children']['max_rss_kib']} KiB. These lifetime statistics may predate this measurement interval. The raw pre/post values are retained; maxima are not subtracted or summed. These do not measure simultaneous aggregate peak RSS.\n")
     report={"whole_loop_rusage":whole_loop_usage,"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else ("retained_development_build" if SESSION_RESUME else "development_build"),"prebuilt_package":PREBUILT_PIN,"retained_runtime":SESSION_RESUME,"binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"postgres_stop_exit":POSTGRES_STOP_EXIT,"runtime_state":"owned disposable state removed after captured evidence" if success and not SESSION_RESUME else str(WORK),"unimplemented":["formal M1 acceptance", "full query/surface/fusion scope", "snapshot bootstrap after pruning and purge/cutover", "remaining MCP tools","confirmed delivery","full target schema and Timescale","sealed lifecycle"]}
+    if OPTIONS.chromium:
+        report['chromium_scope']={'focus':OPTIONS.chromium_focus,'official_sdk_python':str(OPTIONS.chromium_sdk_python) if OPTIONS.chromium_sdk_python else None,'read_as':'small custody/partial/refusal continuation only' if OPTIONS.chromium_focus else 'complete generated visit/download journey; not full slice1c or installed acceptance'}
     if OPTIONS.demo_spec:
         report["demo"]={"oracle_revision":__import__("demo_cases").ORACLE_REVISION,"control":OPTIONS.demo_control,"provider_loss":OPTIONS.demo_provider_loss,"scope":"packaged Atuin raw-event driver; canonical row material, no SQLite snapshot retention or read-model index"}
     (REPORT/"result.json").write_text(json.dumps(report,indent=2)+"\n")
