@@ -291,3 +291,20 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
 cache = "none"
+
+[operations.source_investigation_acceptance]
+description = "Bounded synthetic Atuin acquisition timing, stopped collector and exact capture receipts through actual development clients"
+exec = ["python3", "tests/foundation.py", "--source-investigation"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"
+
+[operations.source_investigation_package_acceptance]
+description = "Public CLI/MCP Atuin outage investigation using only an explicitly pinned candidate package; no rebuild or fallback"
+exec = ["python3", "tests/foundation.py", "--source-investigation", "--packaged"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"

@@ -14,6 +14,7 @@ use sinex_protocol::rpc::{
 };
 use std::sync::Arc;
 struct App {
+    run_id: uuid::Uuid,
     config: Config,
     token: String,
     operator_token: Option<String>,
@@ -140,7 +141,7 @@ pub async fn serve(
                 &secret(path)?,
                 store.run_id(),
                 config.projects.iter().map(|p| p.model()).collect(),
-                qualification,
+                qualification.clone(),
             )
             .await
             .map_err(|_| "read-model role or projection unavailable")?,
@@ -166,8 +167,15 @@ pub async fn serve(
         .await?;
         let ended = source_ended.clone();
         Some(tokio::spawn(async move {
-            let result =
-                crate::atuin::run(atuin, rules, admission, source_shutdown, observation).await;
+            let result = crate::atuin::run(
+                atuin,
+                rules,
+                admission,
+                source_shutdown,
+                observation,
+                qualification,
+            )
+            .await;
             let _ = ended.send(true);
             result
         }))
@@ -188,6 +196,7 @@ pub async fn serve(
         None
     };
     let state = Arc::new(App {
+        run_id: store.run_id(),
         indexed: config.read_model_connection_file.is_some(),
         config,
         token,
@@ -450,7 +459,19 @@ async fn execute_read(state: Arc<App>, request: RpcRequest, method: Method) -> R
             )
         }),
         Method::Catalog => Ok(serde_json::json!(sinex_protocol::rpc::catalog())),
-        Method::Sources => state.reader.sources().await.map_err(read_error),
+        Method::Sources => state
+            .reader
+            .inspect_sources(
+                serde_json::from_value(request.params.clone()).expect("validated source params"),
+                state.config.atuin.as_ref().map(|config| {
+                    sinex_model::acquisition::CollectorScope {
+                        locator: config.path.to_string_lossy().into_owned(),
+                        run: state.run_id,
+                    }
+                }),
+            )
+            .await
+            .map_err(read_error),
         Method::Query | Method::Search => {
             let params: sinex_protocol::QueryParams =
                 serde_json::from_value(request.params.clone()).expect("validated query params");

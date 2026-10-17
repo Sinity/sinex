@@ -1,7 +1,6 @@
 //! The registered Atuin admission variant. The writer owns custody, classification and progress.
 use crate::{
-    BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, COUNTER, Error, ReadPool, Result, WriterPool,
-    coordinate_hash,
+    BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, COUNTER, Error, Result, WriterPool, coordinate_hash,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -303,10 +302,17 @@ impl WriterPool {
         let mut material = None;
         let mut start = 0i64;
         if !bytes.is_empty() {
-            let open = sqlx::query("SELECT id,durable_bytes FROM raw.source_material_registry WHERE input_id=$1 AND status='capturing' ORDER BY staged_at DESC LIMIT 1").bind(input).fetch_optional(&mut self.connection).await?;
+            let open = sqlx::query("SELECT id,durable_bytes,observation_id FROM raw.source_material_registry WHERE input_id=$1 AND status='capturing' ORDER BY staged_at DESC LIMIT 1").bind(input).fetch_optional(&mut self.connection).await?;
             if let Some(row) = open {
-                material = Some(row.try_get::<Uuid, _>("id")?);
-                start = row.try_get("durable_bytes")?;
+                let id = row.try_get::<Uuid, _>("id")?;
+                if row.try_get::<Option<Uuid>, _>("observation_id")? == Some(observation) {
+                    material = Some(id);
+                    start = row.try_get("durable_bytes")?;
+                } else {
+                    // A partial failed predecessor pass may have left a capturing part.
+                    // Never attribute a new acquisition's spans to that older pass.
+                    self.close_part(id, "completed").await?;
+                }
             }
             if start as u64 + bytes.len() as u64 > PART_BYTES {
                 self.close_part(
@@ -385,8 +391,27 @@ impl WriterPool {
             parser
         };
         let provenance = json!({"source":SOURCE,"event_type":"command.executed","equivalence":"registered_database + native_id","parser":parser,"representation":"canonical_sqlite_rows","privacy_class":"plain","privacy_rules":step.privacy_rules,"sqlite_snapshot":"unavailable_until_1c"});
+        let mut metadata = step.metadata.clone();
+        if metadata["_sinex_acquisition_v1"]["version"] == 1 {
+            metadata["_sinex_acquisition_v1"]["owner_run"] = json!(self.run_id);
+            let prior: Option<(Uuid, String, Option<Value>)> = sqlx::query_as("SELECT id,status,metadata->'_sinex_acquisition_v1'->'outcomes' FROM raw.observations WHERE input_id=$1 ORDER BY seq DESC LIMIT 1")
+                .bind(input).fetch_optional(&mut self.connection).await?;
+            let refs = sinex_model::acquisition::OutcomeRefs::following(prior.as_ref().map(
+                |(id, status, value)| {
+                    (
+                        *id,
+                        status.as_str(),
+                        value
+                            .as_ref()
+                            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                    )
+                },
+            ));
+            metadata["_sinex_acquisition_v1"]["outcomes"] = serde_json::to_value(refs)
+                .map_err(|_| Error::Invalid("source outcome references unavailable"))?;
+        }
         sqlx::query("INSERT INTO raw.observations (id,input_id,seq,observed_at,source_provenance,metadata,status) SELECT $1,$2,COALESCE(MAX(seq),0)+1,$3::text::timestamptz,$4,$5,'reading' FROM raw.observations WHERE input_id=$2 ON CONFLICT (id) DO NOTHING")
-            .bind(step.observation).bind(input).bind(&step.observed_at).bind(&provenance).bind(&step.metadata).execute(&mut self.connection).await?;
+            .bind(step.observation).bind(input).bind(&step.observed_at).bind(&provenance).bind(&metadata).execute(&mut self.connection).await?;
         let mut bytes = Vec::new();
         let mut prepared = Vec::new();
         for row in step.rows {
@@ -544,7 +569,7 @@ impl WriterPool {
             "reading"
         };
         let summary: Value = sqlx::query_scalar("UPDATE raw.observations SET rows_read=rows_read+$2+$3+$4+$9,excluded=excluded+$9,admitted=admitted+$2,repeated=repeated+$3,record_errors=record_errors+$4,removed=removed+$5,status=$6,reason=$7,commit_seq=$8 WHERE id=$1 RETURNING jsonb_build_object('observation',id,'status',status,'rows_read',rows_read,'admitted',admitted,'repeated',repeated,'excluded',excluded,'removed',removed,'record_errors',record_errors,'commit_seq',commit_seq)")
-            .bind(step.observation).bind(admitted).bind(repeated).bind(failures).bind(removed).bind(status).bind(step.unavailable).bind(last_seq).bind(excluded).fetch_one(&mut *tx).await?;
+            .bind(step.observation).bind(admitted).bind(repeated).bind(failures).bind(removed).bind(status).bind(&step.unavailable).bind(last_seq).bind(excluded).fetch_one(&mut *tx).await?;
         sqlx::query("INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,$2,$3,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,updated_at=now()")
             .bind(SOURCE).bind(input.to_string()).bind(&summary).execute(&mut *tx).await?;
         let committed_evidence = json!({"custody":boundary_evidence,"progress":summary});
@@ -567,45 +592,13 @@ impl WriterPool {
             )
             .await?;
         }
-        if step.complete {
+        if step.complete || step.unavailable.is_some() {
             let open: Option<Uuid> = sqlx::query_scalar("SELECT id FROM raw.source_material_registry WHERE input_id=$1 AND status='capturing' LIMIT 1").bind(input).fetch_optional(&mut self.connection).await?;
             if let Some(id) = open {
                 self.close_part(id, "completed").await?;
             }
         }
         Ok(summary)
-    }
-}
-
-impl ReadPool {
-    pub async fn sources(&self) -> Result<Value> {
-        let mut lease = self.read_lease().await?;
-        let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation',CASE WHEN i.binding='terminal.atuin-history' THEN 'canonical_sqlite_rows' ELSE 'original_zsh_history' END,'sqlite_snapshots',CASE WHEN i.binding='terminal.atuin-history' THEN 'unavailable_until_1c' ELSE NULL END,'last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'first_record_error',(SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true ORDER BY i.binding,i.locator").fetch_all(lease.connection()).await?;
-        lease.finish();
-        for source in &mut rows {
-            if !source["first_record_error"].is_null() {
-                let failure = &mut source["first_record_error"];
-                let material: Uuid = serde_json::from_value(failure["material_id"].clone())
-                    .map_err(|_| Error::Invalid("record failure material unavailable"))?;
-                let anchor = failure["anchor_byte"]
-                    .as_i64()
-                    .ok_or(Error::Invalid("record failure anchor unavailable"))?;
-                match self.retained_record(material, anchor, None, &[]).await {
-                    Ok((record, end)) => {
-                        failure["record"] = record;
-                        failure["end"] = json!(end);
-                        failure["evidence_status"] = json!("available");
-                    }
-                    Err(_) => {
-                        failure["record"] = Value::Null;
-                        failure["end"] = Value::Null;
-                        failure["evidence_status"] = json!("unavailable");
-                    }
-                }
-                failure["representation"] = json!("canonical_sqlite_row");
-            }
-        }
-        Ok(json!({"notice":sinex_model::DATA_NOTICE,"sources":rows}))
     }
 }
 

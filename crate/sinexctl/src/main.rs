@@ -28,7 +28,18 @@ enum Command {
     Version,
     ConfigShow,
     Catalog,
-    Sources,
+    Sources {
+        #[arg(long)]
+        input: Option<String>,
+        #[arg(long)]
+        after_input: Option<String>,
+        #[arg(long)]
+        before_seq: Option<i64>,
+        #[arg(long)]
+        observation: Option<String>,
+        #[arg(long)]
+        after_receipt: Option<String>,
+    },
     /// Recover the latest retained shell policy session, optionally scoped to a configured project.
     Recall {
         #[arg(value_parser=["last"])]
@@ -195,7 +206,16 @@ fn main() -> std::process::ExitCode {
         Command::Version => (Method::Version, serde_json::json!({})),
         Command::ConfigShow => (Method::ConfigShow, serde_json::json!({})),
         Command::Catalog => (Method::Catalog, serde_json::json!({})),
-        Command::Sources => (Method::Sources, serde_json::json!({})),
+        Command::Sources {
+            input,
+            after_input,
+            before_seq,
+            observation,
+            after_receipt,
+        } => (
+            Method::Sources,
+            serde_json::json!({"input":input,"after_input":after_input,"before_seq":before_seq,"observation":observation,"after_receipt":after_receipt}),
+        ),
         Command::Query {
             query,
             cursor,

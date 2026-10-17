@@ -13,6 +13,7 @@ mod search;
 mod session;
 mod shell;
 mod source_coverage;
+mod source_inspection;
 pub use atuin::mask as present;
 pub use atuin::{
     AtuinInterpretation, AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule,
@@ -188,6 +189,21 @@ impl Admission {
         }
         rx.await.map_err(|_| Error::Stopped)?
     }
+    pub async fn schedule_atuin(
+        &self,
+        observation: Uuid,
+        schedule: sinex_model::acquisition::PollSchedule,
+    ) -> Result<()> {
+        schedule
+            .validate()
+            .map_err(|_| Error::Invalid("invalid acquisition schedule"))?;
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::AtuinSchedule(observation, schedule, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
     pub async fn submit_zsh(&self, step: ZshStep) -> Result<serde_json::Value> {
         let (tx, rx) = oneshot::channel();
         self.sender
@@ -280,6 +296,11 @@ enum Command {
     ReplayProfile(Option<Vec<PrivacyRule>>, oneshot::Sender<()>),
     Replay(ReplayCommand, oneshot::Sender<Result<serde_json::Value>>),
     Admit(MaterialEvent, oneshot::Sender<Result<Receipt>>),
+    AtuinSchedule(
+        Uuid,
+        sinex_model::acquisition::PollSchedule,
+        oneshot::Sender<Result<()>>,
+    ),
     Atuin(AtuinStep, oneshot::Sender<Result<serde_json::Value>>),
     Zsh(ZshStep, oneshot::Sender<Result<serde_json::Value>>),
     Shutdown(oneshot::Sender<()>),
@@ -625,6 +646,10 @@ impl WriterPool {
                         self.session_failed = false;
                         self.session_retry_at = None;
                     }
+                    let _ = reply.send(result);
+                }
+                Command::AtuinSchedule(observation, schedule, reply) => {
+                    let result = self.schedule_atuin(observation, schedule).await;
                     let _ = reply.send(result);
                 }
                 Command::Atuin(step, reply) => {

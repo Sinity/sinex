@@ -17,16 +17,37 @@ pub async fn run(
     admission: Admission,
     mut stop: tokio::sync::watch::Receiver<bool>,
     mut observation: AtuinStep,
+    mut qualification: Option<sinex_store::QualificationBoundary>,
 ) -> Result<(), String> {
     let interpretation = observation.interpretation;
     loop {
         if *stop.borrow() {
             return Ok(());
         }
+        let observation_id = observation.observation;
         poll(&config.path, observation, &admission, &stop).await?;
+        // Sample both clocks at the scheduling decision. Persist that wall-clock target
+        // and wait to this monotonic target, including time spent committing metadata.
+        let monotonic = tokio::time::Instant::now();
+        let schedule = sinex_model::acquisition::PollSchedule::after(
+            OffsetDateTime::now_utc(),
+            config.poll_interval_ms,
+        )
+        .map_err(|e| e.to_string())?;
+        let target = monotonic
+            .checked_add(std::time::Duration::from_millis(config.poll_interval_ms))
+            .ok_or("poll monotonic clock overflow")?;
+        admission
+            .schedule_atuin(observation_id, schedule.clone())
+            .await
+            .map_err(|_| "acquisition schedule could not commit")?;
+        tokio::select! {
+            _ = stop.changed() => return Ok(()),
+            result = sinex_store::QualificationBoundary::collector_scheduled(&mut qualification, serde_json::json!({"observation":observation_id,"schedule":schedule})) => result.map_err(|_| "collector qualification refused")?,
+        }
         tokio::select! {
             changed = stop.changed() => { let _ = changed; return Ok(()); }
-            _ = tokio::time::sleep(std::time::Duration::from_millis(config.poll_interval_ms)) => {}
+            _ = tokio::time::sleep_until(target) => {}
         }
         observation = begin_poll(&config.path, &rules, &admission, interpretation).await?;
     }
@@ -45,12 +66,13 @@ pub async fn begin_poll(
         .format(&Rfc3339)
         .map_err(|_| "cannot format observation clock")?;
     let locator = path.to_string_lossy().into_owned();
-    let metadata = match std::fs::metadata(path) {
+    let mut metadata = match std::fs::metadata(path) {
         Ok(m) => {
             json!({"device":m.dev(),"inode":m.ino(),"size":m.len(),"mtime_ns":i128::from(m.mtime())*1_000_000_000+i128::from(m.mtime_nsec()),"ctime_ns":i128::from(m.ctime())*1_000_000_000+i128::from(m.ctime_nsec()),"mode":m.mode(),"uid":m.uid(),"gid":m.gid(),"path":path,"resolved_path":std::fs::canonicalize(path).ok(),"host":std::fs::read_to_string("/proc/sys/kernel/hostname").ok().map(|s|s.trim().to_string()),"machine_id":std::fs::read_to_string("/etc/machine-id").ok().map(|s|s.trim().to_string())})
         }
         Err(_) => json!({"path":path,"stat":"unavailable"}),
     };
+    metadata["_sinex_acquisition_v1"] = json!({"version":1,"receipts":"capture_insert_v1"});
     let step = AtuinStep {
         interpretation,
         observation,
