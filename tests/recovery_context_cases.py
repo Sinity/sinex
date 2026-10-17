@@ -231,11 +231,14 @@ poll_interval_ms = 1000
             for label,event in [('raw',canonical['parents'][0]),('canonical',canonical['id'])]:
                 # A deliberate read-boundary control, not a supported mutation
                 # route: keep seq/config/dirty unchanged while invalidating one
-                # exact synthetic parent. This distinguishes the parent guard
+                # exact synthetic parent through reversible archive state. Event
+                # rows and their immutability guard remain untouched.
+                # This distinguishes the parent guard
                 # from an incidental pending-ledger refusal.
                 def state(value):
-                    run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',f"UPDATE core.events SET record_state='{value}' WHERE id='{event}'::uuid"],label='owned '+label+' current-parent control '+value)
-                state('removed')
+                    sql=(f"INSERT INTO audit.archived(id,archived_seq,reason) SELECT '{event}'::uuid,seq,'supersede' FROM core.commit_counter WHERE one" if value=='archived' else f"DELETE FROM audit.archived WHERE id='{event}'::uuid")
+                    run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',sql],label='owned '+label+' current-parent control '+value)
+                state('archived')
                 try:
                     status=api()['result'];index=status['indexed_retrieval']
                     assert index['pending_canonical']==0 and index['pending_sessions']==0 and index['position']==status['commit_seq'] and index['serving']
@@ -243,7 +246,7 @@ poll_interval_ms = 1000
                     refused=cli('recall','last','--project','tide',expected=5);assert 'ineligible current parents' in json.dumps(refused)
                     agent=tool(error=True);assert 'ineligible current parents' in json.dumps(agent)
                     save('current-'+label+'-fence.json',{'control':'owned direct read-boundary invalidation; no writer-recovery claim','status':status,'old_header':header,'current_show':shown,'CLI':refused,'MCP':agent})
-                finally:state('present')
+                finally:state('restored')
                 restored=cli('recall','last','--project','tide');assert restored['session']['id']==header['id'] and restored['rows']==original['rows']
         scenario(PLANNED[4],current_fence)
         def overflow():
