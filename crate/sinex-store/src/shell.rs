@@ -25,7 +25,8 @@ fn rule() -> Rule {
     let r: Rule =
         serde_json::from_str(include_str!("shell-rule.json")).expect("registered shell rule");
     assert!(
-        r.normalization == "trim"
+        r.sources == [crate::ATUIN_SOURCE, crate::ZSH_SOURCE]
+            && r.normalization == "trim"
             && r.partition == ["hostname"]
             && r.time == "best_quality"
             && r.unique == "mutual_single_at_strategy_entry"
@@ -229,9 +230,10 @@ impl WriterPool {
                     let field = if fallback { "count60" } else { "count2" };
                     // The candidate graph is frozen before any match at this strategy. With
                     // two sources every candidate group is a singleton endpoint.
-                    let sql = format!(
-                        "UPDATE sinex_shell_nodes n SET {field}=(SELECT count(*) FROM sinex_shell_nodes x WHERE x.source<>n.source AND x.host=n.host AND x.command_hash=n.command_hash AND x.command=n.command AND abs(x.at_ns-n.at_ns)<=$2::bigint AND (NOT $3 OR (NOT x.paired AND NOT n.paired))) WHERE n.id=ANY($1)"
-                    );
+                    // The registered rule and scan admit only source coordinates 0/1.
+                    // Equality on the opposite source plus numeric time bounds uses the
+                    // existing index without narrowing timestamps or weakening collisions.
+                    let sql = include_str!("shell-count.sql").replace("{field}", field);
                     sqlx::query(&sql)
                         .bind(&ids)
                         .bind(bound)
