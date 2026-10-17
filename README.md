@@ -211,7 +211,9 @@ loss. While provider access exists, independently assembled read-only SQLite
 facts check the returned membership, own-context qualifications and citations.
 A controlled synthetic SQLite lock additionally brackets a question with an
 actual `reading` observation; a scheduled future poll is never called active
-reading. During that control SQLite access is also explicitly blocked.
+reading. During that control SQLite access is also explicitly blocked. Held-out newer
+invalid-path and prefix-neighbor sessions distinguish positive project selection
+from unresolved or unconfigured context.
 
 Private reports separate public question traffic from polling/validation,
 record producer-to-validated-answer waits and explicit interventions, and retain
@@ -223,7 +225,8 @@ because the fixture has no separate scratch directory. The final
 wait/reaping, through child/PostgreSQL shutdown. Managed-environment setup, final
 report serialization and successful workspace deletion are excluded. It does not give inclusive descendant CPU,
 physical IO or simultaneous aggregate peak RSS. Per-process `VmHWM` and Linux
-`ru_maxrss` are individual high-water statistics; named samples are not a
+`ru_maxrss` are process-lifetime individual high-water statistics and may predate
+the measurement interval; named samples are not a
 continuous workload peak. `tests/recovery_whole_loop_checks.py` checks these
 measurement boundaries, prior-receipt refusals and front-door controls. This
 finite scripted journey establishes no everyday productivity or resource

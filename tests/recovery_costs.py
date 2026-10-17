@@ -22,7 +22,7 @@ def usage_delta(before, after):
             for kind in ('self','reaped_children')},
         'raw_before':before,'raw_after':after,
         'scope':'harness interval from before package selection through owned child reaping/PostgreSQL stop; excludes managed-environment setup, final report serialization and successful workspace deletion; child CPU includes only descendants accounted by Linux wait/rusage, not an inclusive process-tree CPU total',
-        'rss_scope':'Linux ru_maxrss is an individual high-water statistic, not simultaneous aggregate; child value is the largest accounted child high-water, not a sum; do not subtract maxima',
+        'rss_scope':'Linux ru_maxrss is a process-lifetime individual high-water statistic, potentially including pre-window exec history, not an interval peak or simultaneous aggregate; child value is the largest accounted child high-water, not a sum; do not subtract maxima',
         'physical_io':{'value':None,'reason':'no device-level attribution; file lengths and ru_maxrss do not measure physical IO'},
         'simultaneous_aggregate_peak_rss':{'value':None,'reason':'no continuous simultaneous process-tree RSS sampler; named phase samples and individual VmHWM cannot recover this peak'}}
 

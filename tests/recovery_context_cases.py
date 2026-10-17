@@ -33,6 +33,16 @@ def fixture_row(identity, clock, cwd, duration=0):
     return dict(zip(COLUMNS, [identity,timestamp,duration,0,'echo recovery '+identity,cwd,'fixture-shell','fixture-host',None]))
 
 
+def valid_tide_cwd(cwd):
+    """Independent own-context rule for this fixed synthetic project root."""
+    return '/..' not in cwd and (cwd=='/work/tide' or cwd.startswith('/work/tide/'))
+
+
+def independent_tide_group(rows):
+    return next(g for g in reversed(independent(rows))
+        if any(r['id'] in g['parents'] and valid_tide_cwd(r['cwd']) for r in rows))
+
+
 def fixture():
     return [fixture_row('old','03:50:00','/work/tide'),
         fixture_row('positive','04:10:00','/work/tide/src'),
@@ -54,6 +64,9 @@ def exercise(h):
     source,config=work/'recovery.db',work/'recovery.toml'
     facts=fixture();daemon=mcp=None;identifier=0;metrics=[];calls=[];transport=[];restarts=0
     whole=bool(h['OPTIONS'].recovery_prior_accounting)
+    if whole:
+        facts.extend([fixture_row('held-out-newer-invalid','07:30:00','/work/tide/../other'),
+            fixture_row('held-out-prefix-neighbor','07:45:00','/work/tide-neighbor')])
     journey_started=time.monotonic();interventions=[];costs=[];reuse=None
     def intervention(kind, **details):
         interventions.append(dict(kind=kind,elapsed_seconds=time.monotonic()-journey_started,**details))
@@ -155,7 +168,7 @@ poll_interval_ms = 3000
         if 'error' in canonical or canonical['result']['total']!=len(facts):return None
         return response['result']
     def expected_group():
-        return next(g for g in reversed(independent(facts)) if any(r['id'] in g['parents'] and r['cwd'].startswith('/work/tide/') or r['id'] in g['parents'] and r['cwd']=='/work/tide' for r in facts))
+        return independent_tide_group(facts)
     def qualify(label):
         call_start=len(calls);transport_start=len(transport)
         began=time.monotonic();answer=cli('recall','last','--project','tide');agent=tool();elapsed=time.monotonic()-began
@@ -170,12 +183,15 @@ poll_interval_ms = 3000
             if name in byname:
                 evidence=byname[name]['project_evidence'];assert evidence['state']==state and evidence.get('reason')==reason,(name,evidence)
         indexed=api('query.run',{'query':'commands where project = tide sort when limit 10000'})['result']['rows']
-        assert sorted(r['payload']['native_id'] for r in indexed)==sorted(r['id'] for r in facts if r['cwd']=='/work/tide' or r['cwd'].startswith('/work/tide/') and '/..' not in r['cwd'])
+        assert sorted(r['payload']['native_id'] for r in indexed)==sorted(r['id'] for r in facts if valid_tide_cwd(r['cwd']))
         summary=answer['attribution'];assert summary['total_members']==len(rows) and summary['complete']==(not summary['unknown_members'])
         if 'positive' in byname:assert summary['known_projects']['tide']>=1 and summary['known_projects']['other']==1 and summary['unconfigured_members']==1 and len(summary['unknown_members'])==3
         canonical=api('query.run',{'query':'commands sort when limit 10000'})['result']['rows'];mapping={r['id']:r['payload']['native_id'] for r in canonical}
         expected_unresolved=[g for g in reversed(independent(facts)) if g['start_ns']>expected['start_ns'] and any(r['id'] in g['parents'] and (not r['cwd'] or r['cwd']=='/work/ambiguous' or not r['cwd'].startswith('/') or '/..' in r['cwd']) for r in facts)]
         actual=[sorted(mapping[p] for p in candidate['session']['parents']) for candidate in answer['newer_unresolved_candidates']]
+        if whole and label not in ('later','compatible-restart','provider-loss-retained'):
+            assert ['held-out-newer-invalid'] in actual and not any('held-out-prefix-neighbor' in g for g in actual)
+            assert 'held-out-newer-invalid' not in names and 'held-out-prefix-neighbor' not in names
         assert actual==[g['parents'] for g in expected_unresolved],(actual,expected_unresolved)
         trace=cli('trace','sinex:ev/'+header['id'],'--bytes')['row'];assert sorted(p['event'] for p in trace['parents'])==sorted(header['parents'])
         for parent in trace['parents']:
@@ -192,7 +208,7 @@ poll_interval_ms = 3000
                 provider_rows=[dict(zip(COLUMNS,row)) for row in con.execute('SELECT '+','.join(COLUMNS)+' FROM history ORDER BY timestamp,id')]
             assert provider_rows==sorted(facts,key=lambda r:(r['timestamp'],r['id']))
             baseline_groups=independent(provider_rows)
-            baseline_selected=next(g for g in reversed(baseline_groups) if any(r['id'] in g['parents'] and (r['cwd']=='/work/tide' or r['cwd'].startswith('/work/tide/')) for r in provider_rows))
+            baseline_selected=independent_tide_group(provider_rows)
             assert baseline_selected==expected
             baseline_samples.append({'phase':label,'SQLite_calls':1,'rows':len(provider_rows),'returned_bytes':len(json.dumps(provider_rows).encode()),'read_and_independent_assembly_seconds':time.monotonic()-baseline_started,'selected_native_ids':baseline_selected['parents'],'same_selected_answer':True,'independent_groups':baseline_groups,'own_cwd_labels':{r['id']:('unknown' if not r['cwd'] or '/..' in r['cwd'] or r['cwd']=='/work/ambiguous' else 'known:tide' if r['cwd']=='/work/tide' or r['cwd'].startswith('/work/tide/') else 'known:other' if r['cwd']=='/work/other' or r['cwd'].startswith('/work/other/') else 'unconfigured') for r in provider_rows},'limits':'scripted finite assembly, no model effort or historical completeness claim'})
             save('provider-comparison-phases.json',baseline_samples)

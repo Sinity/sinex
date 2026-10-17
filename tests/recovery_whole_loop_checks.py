@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 from recovery_costs import proc_fields, reuse_accounting, usage_delta
-from recovery_context_cases import fixture, fixture_row
+from recovery_context_cases import fixture, fixture_row, independent_tide_group, valid_tide_cwd
 from session_cases import independent
 
 
@@ -36,6 +36,17 @@ assert d['raw_after']['reaped_children']['max_rss_kib']==200 and d['simultaneous
 facts=fixture();before_groups=independent(facts);facts.append(fixture_row('late-bridge','03:54:00','/work/tide',12*60*1_000_000_000));after_groups=independent(facts)
 assert any(g['parents']==['old'] for g in before_groups)
 assert any('old' in g['parents'] and 'positive' in g['parents'] and 'late-bridge' in g['parents'] for g in after_groups)
+# Held-out newer sessions distinguish invalid lexical paths and prefix neighbors
+# from a real positive own-context session. Shared agreement alone is insufficient.
+held_out=[fixture_row('held-out-newer-invalid','07:30:00','/work/tide/../other'),
+    fixture_row('held-out-prefix-neighbor','07:45:00','/work/tide-neighbor')]
+assert not valid_tide_cwd(held_out[0]['cwd']) and not valid_tide_cwd(held_out[1]['cwd'])
+assert valid_tide_cwd('/work/tide') and valid_tide_cwd('/work/tide/src')
+original=fixture()
+for additions in [[],[fixture_row('late-bridge','03:54:00','/work/tide',12*60*1_000_000_000)],
+        [fixture_row('late-bridge','03:54:00','/work/tide',12*60*1_000_000_000),fixture_row('later-positive','08:00:00','/work/tide')]]:
+    assert independent_tide_group(original+additions+held_out)==independent_tide_group(original+additions)
+assert independent_tide_group(original+held_out)['parents']==['ambiguous-context','invalid-context','missing-context','other-context','positive','unconfigured-context']
 with tempfile.TemporaryDirectory(prefix='sinex-whole-loop-check-',dir='/realm/tmp/work') as temporary:
     path=Path(temporary)/'result.json';pin={'package':'/synthetic/immutable','binaries':{'sinexd':{'sha256':'daemon'},'sinexctl':{'sha256':'client'}}}
     report={'success':True,'postgres_stop_exit':0,'candidate_tracked_diff_sha256':hashlib.sha256(b'').hexdigest(),
