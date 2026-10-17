@@ -33,9 +33,13 @@ def fixture_row(identity, clock, cwd, duration=0):
     return dict(zip(COLUMNS, [identity,timestamp,duration,0,'echo recovery '+identity,cwd,'fixture-shell','fixture-host',None]))
 
 
+def valid_recorded_cwd(cwd):
+    return cwd.startswith('/') and '\0' not in cwd and not any(part in ('.','..') for part in cwd.split('/'))
+
+
 def valid_tide_cwd(cwd):
-    """Independent own-context rule for this fixed synthetic project root."""
-    return '/..' not in cwd and (cwd=='/work/tide' or cwd.startswith('/work/tide/'))
+    """Independent lexical components for this fixed synthetic project root."""
+    return valid_recorded_cwd(cwd) and (cwd=='/work/tide' or cwd.startswith('/work/tide/'))
 
 
 def independent_tide_group(rows):
@@ -187,7 +191,7 @@ poll_interval_ms = 3000
         summary=answer['attribution'];assert summary['total_members']==len(rows) and summary['complete']==(not summary['unknown_members'])
         if 'positive' in byname:assert summary['known_projects']['tide']>=1 and summary['known_projects']['other']==1 and summary['unconfigured_members']==1 and len(summary['unknown_members'])==3
         canonical=api('query.run',{'query':'commands sort when limit 10000'})['result']['rows'];mapping={r['id']:r['payload']['native_id'] for r in canonical}
-        expected_unresolved=[g for g in reversed(independent(facts)) if g['start_ns']>expected['start_ns'] and any(r['id'] in g['parents'] and (not r['cwd'] or r['cwd']=='/work/ambiguous' or not r['cwd'].startswith('/') or '/..' in r['cwd']) for r in facts)]
+        expected_unresolved=[g for g in reversed(independent(facts)) if g['start_ns']>expected['start_ns'] and any(r['id'] in g['parents'] and (not valid_recorded_cwd(r['cwd']) or r['cwd']=='/work/ambiguous') for r in facts)]
         actual=[sorted(mapping[p] for p in candidate['session']['parents']) for candidate in answer['newer_unresolved_candidates']]
         if whole and label not in ('later','compatible-restart','provider-loss-retained'):
             assert ['held-out-newer-invalid'] in actual and not any('held-out-prefix-neighbor' in g for g in actual)
@@ -210,7 +214,7 @@ poll_interval_ms = 3000
             baseline_groups=independent(provider_rows)
             baseline_selected=independent_tide_group(provider_rows)
             assert baseline_selected==expected
-            baseline_samples.append({'phase':label,'SQLite_calls':1,'rows':len(provider_rows),'returned_bytes':len(json.dumps(provider_rows).encode()),'read_and_independent_assembly_seconds':time.monotonic()-baseline_started,'selected_native_ids':baseline_selected['parents'],'same_selected_answer':True,'independent_groups':baseline_groups,'own_cwd_labels':{r['id']:('unknown' if not r['cwd'] or '/..' in r['cwd'] or r['cwd']=='/work/ambiguous' else 'known:tide' if r['cwd']=='/work/tide' or r['cwd'].startswith('/work/tide/') else 'known:other' if r['cwd']=='/work/other' or r['cwd'].startswith('/work/other/') else 'unconfigured') for r in provider_rows},'limits':'scripted finite assembly, no model effort or historical completeness claim'})
+            baseline_samples.append({'phase':label,'SQLite_calls':1,'rows':len(provider_rows),'returned_bytes':len(json.dumps(provider_rows).encode()),'read_and_independent_assembly_seconds':time.monotonic()-baseline_started,'selected_native_ids':baseline_selected['parents'],'same_selected_answer':True,'independent_groups':baseline_groups,'own_cwd_labels':{r['id']:('unknown' if not valid_recorded_cwd(r['cwd']) or r['cwd']=='/work/ambiguous' else 'known:tide' if r['cwd']=='/work/tide' or r['cwd'].startswith('/work/tide/') else 'known:other' if r['cwd']=='/work/other' or r['cwd'].startswith('/work/other/') else 'unconfigured') for r in provider_rows},'limits':'scripted finite assembly, no model effort or historical completeness claim'})
             save('provider-comparison-phases.json',baseline_samples)
         save(label+'.json',{'CLI':answer,'MCP':agent,'trace':trace,'independent_groups':independent(facts)})
         metrics.append({'phase':label,'CLI_plus_MCP_plus_trace_seconds':time.monotonic()-began,'CLI_MCP_recall_seconds':elapsed,'retained_bytes':sum(p.stat().st_size for p in (work/'recovery-blobs').rglob('*') if p.is_file()),'rows':len(facts)})

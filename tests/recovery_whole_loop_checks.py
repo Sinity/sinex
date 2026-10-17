@@ -41,7 +41,8 @@ assert any('old' in g['parents'] and 'positive' in g['parents'] and 'late-bridge
 held_out=[fixture_row('held-out-newer-invalid','07:30:00','/work/tide/../other'),
     fixture_row('held-out-prefix-neighbor','07:45:00','/work/tide-neighbor')]
 assert not valid_tide_cwd(held_out[0]['cwd']) and not valid_tide_cwd(held_out[1]['cwd'])
-assert valid_tide_cwd('/work/tide') and valid_tide_cwd('/work/tide/src')
+assert all(valid_tide_cwd(p) for p in ['/work/tide','/work/tide/src','/work/tide/..notes','/work/tide/.notes'])
+assert all(not valid_tide_cwd(p) for p in ['/work/tide/../other','/work/tide/./src','work/tide/src','/work/tide/\0src'])
 original=fixture()
 for additions in [[],[fixture_row('late-bridge','03:54:00','/work/tide',12*60*1_000_000_000)],
         [fixture_row('late-bridge','03:54:00','/work/tide',12*60*1_000_000_000),fixture_row('later-positive','08:00:00','/work/tide')]]:
