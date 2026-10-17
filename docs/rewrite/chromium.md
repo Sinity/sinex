@@ -1,0 +1,65 @@
+# Chromium History visits and persisted downloads
+
+This source connects explicitly configured Chromium `History` databases to the existing retained-stream writer, activity events, and public CLI/MCP query/show/trace routes. It reads generated or operator-configured inputs only when enabled. Source publication does not configure a browser, activate a service, or import any profile.
+
+```toml
+sources = ["browser.history.chromium"]
+[[chromium]]
+profile = "personal"
+database_generation = "95d3d942-c8a4-444e-8016-29d2e312664c"
+path = "/absolute/profile/History"
+poll_interval_ms = 30000
+full_interval_ms = 86400000
+snapshot_interval_ms = 3600000
+```
+
+The configured profile and generation UUID declare continuity of native keys. They are an operator premise, not independently proved physical database identity. Visits use `(profile, generation, page.visited, visits.id)`; persisted downloads use `(profile, generation, download.observed, guid)`. Numeric download IDs and SQLite row coordinates identify acquisition locations only. Repeated URLs, equal visit times, different profiles, and different download GUIDs remain distinct occurrences. Missing/invalid visit IDs or download GUIDs are diagnosed in retained record failures, never assigned zero or an anonymous content key.
+
+A new or reopened reader performs a real consistent full value read before reduced progress can resume. Its epoch controls the read plan, never occurrence identity. The collector verifies the actual open SQLite reader, configured-path correspondence, and retained file identity. A replaced file or observed visit sequence reset fences that declared generation across restart. Previous reads stay available; reconcile the source declaration explicitly before admitting a replacement. A decreasing maximum row ID does not invent a new generation. The guard does not prove arbitrary byte overwrites, unobserved reset-and-repopulation, inode reuse, or physical incarnation continuity across every restart.
+
+## Values and late updates
+
+`page.visited` preserves exact Windows-epoch microseconds, duration microseconds, transition bits, from-visit ID, and URL/title fields. Referrer lookup is a reading of the referenced visit's URL in the same transaction. The full original visit and URL records remain in the retained envelope, including extra provider columns. A zero duration means the provider has no positive duration as of this reading; it proves neither an open tab nor current activity. Zero-duration keys remain eligible regardless of age. Duration is browser-recorded elapsed time, never attention or foreground time. Redirect hop records remain retained and individually inspectable; ordinary queries exclude them unless `payload.redirect` is explicit.
+
+`download.observed` is a persisted state observation. Its original download row and ordered `downloads_url_chains` records are retained. The interpreted payload includes the GUID, acquisition ID, complete ordered URL chain and final URL, paths, start/end clocks, byte counts, provider state, and a qualified state label. Persisted states map 0 to in-progress, 1 to complete, 2 to cancelled, 3 to Chromium's historical bug state, and 4 to interrupted. Other states are unknown and remain eligible. A zero start/end clock is unknown; it is never converted to an invented 1601 event time. A terminal download state does not prove that the destination file still exists or was opened. Files are not read.
+
+The first full pass and periodic full value comparisons read every supported row value from one SQLite read transaction. Reduced passes select new AUTOINCREMENT visit keys, previously admitted zero-duration visits, and unfinished downloads. The selected SQLite key declarations and GUID uniqueness are checked in the same snapshot. Download discovery enumerates numeric coordinates and GUIDs, checks the existing admitted-key index, and reads complete values for unknown GUIDs. This key-only traversal also finds a new GUID reusing an old numeric coordinate. It is not a row-value confirmation, a completed deletion census, or an advance of unread keys. Missing provider keys never fabricate removal or expiry events.
+
+Periodic full comparisons find unexpected edits to completed rows. Their monotonic deadline is fixed after successful admission in the current connection epoch; ordinary polls and backward realtime adjustments do not postpone it. The descriptive wall target and checkpoint persist only after a complete successful pass. Failed/partial acquisition retains acknowledged rows and the previous checkpoint, rather than settling a prefix. Reopening actually performs a full read, which may then reset the target.
+
+The selected-record reduction does not establish reduced whole-loop CPU or IO. Visit key/reread lookups use the provider's existing integer primary key. Download GUID discovery still examines every download key each pass, including an aggregate duplicate check, and unfinished-key eligibility consults the native retained event history. No provider indexes or whole-history memory cache are created. Batches are bounded to 64 rows and 1 MiB, including original envelopes. An oversized individual record refuses the incomplete poll; it is not truncated.
+
+## Custody and evidence
+
+Accessible databases are opened read-only, validated through the actual SQLite handle, and read in one transaction per poll. A periodic physical base uses SQLite's backup API on that same transaction, including committed WAL data and excluding another writer's uncommitted transaction. Only Sinex's owned destination is writable. Backup steps have a cancellation/execution budget and the owned result must pass SQLite integrity before retention.
+
+When a real SQLite lock prevents a direct read, the supported fallback is rollback-journal custody. The collector copies the configured database and its optional rollback journal back to back into an owned directory, using reflink where available and a bounded streaming copy otherwise. It verifies actual opened file identities, sizes, nanosecond modification/change metadata, sidecar presence, and configured resolution before and after copying, then performs a quiet/racy metadata check. A recent timestamp is not sufficient for cached-copy reuse. SQLite recovers only the owned copy and checks integrity. A super-journal or locked WAL basis is unsupported and remains unavailable; SHM is never copied.
+
+This fallback assumes a coherent local filesystem whose verified identity/size/nanosecond metadata faithfully changes with relevant writes. It does not certify unconditional atomicity: quick_check alone is not concurrency proof, and unobserved ABA or arbitrary metadata-defeating writes are outside the declared premise. A changed journal/main pair is discarded and retried at most five times with bounded backoff; cancellation and repeated instability leave prior retained answers available. A quiet verified owned view can be reused without writing another full database every poll.
+
+Physical snapshots are full bases retained through the shared `hashed-blobs` owner. They are independent evidence, never parsed into duplicate events and never byte anchors for row citations. An actual snapshot poll adds `_from.snapshot` to its row envelopes; a later row does not falsely claim to have come from an older base. Every actually read row, including unchanged confirmations, retains its complete sorted-key JSON envelope with `_from.observation`, table, and coordinate. Fingerprints exclude that acquisition envelope; duplicate event suppression still advances only that actually read key's reading order. Observation time remains poll start.
+
+`sources` exposes bounded observations, acquisition receipts, custody/read-plan metadata, checkpoints, and actual physical-base references. `trace --bytes` returns a protected row projection at its exact retained range. MCP trace returns coordinates, never raw bytes. Snapshot retrieval/reconstruction is an owned storage inspection operation, not a new public download RPC. Plain snapshots and raw envelopes retain original source bytes; no sealed-storage claim is made. Admission rules apply once to interpreted payloads. Retained projections apply attributed and additional current rules, refusing any changed opaque selector. Existing Atuin replay/exclusion and shell projections keep their original scopes; this batch does not extend operator replay/delete to browser snapshots or introduce a generic privacy administration API.
+
+## Public queries
+
+```sh
+sinexctl … query 'events where source = browser.history.chromium and kind = page.visited and payload.profile = personal' --json
+sinexctl … query 'events where source = browser.history.chromium and kind = page.visited and payload.url ~ "example.invalid"' --json
+sinexctl … query 'events where source = browser.history.chromium and kind = page.visited and payload.redirect = true' --json
+sinexctl … query 'events where source = browser.history.chromium and kind = download.observed and payload.target_path ~ ".pdf"' --json
+sinexctl … show sinex:ev/INTERPRETATION_ID --json
+sinexctl … trace sinex:ev/INTERPRETATION_ID --bytes --json
+```
+
+The fixed raw subset adds equality on URL, title, profile, database_generation, GUID, target_path and redirect; URL/title/target_path also support literal substring `~`. It retains source/kind/id/when/command/exit-code filters and conjunctions. Arbitrary paths, SQL, sorting, and a general query language remain unavailable. Exact totals and 100-row current-state keyset pages retain the existing deadline, cancellation, change-disclosure and expiry semantics. Payload rendering occurs after the page limit; matching/count work still examines the database's matching population. Cursor version 2 deliberately refuses older raw cursor descriptors because browser redirect defaults change raw-query meaning. Existing cursors are not silently reinterpreted.
+
+`complete` qualifies the admitted retained population and configured source outcomes, not historical capture or continuous browser coverage. Provider loss returns the same retained facts and citations with unavailable source qualification and CLI exit 5. Neither an empty poll nor a present provider database proves what happened during an unobserved interval.
+
+## Restoration basis and remaining scope
+
+Visit mapping reuses the semantics and occurrence-key/production-path controls preserved at predecessor commit `c997df89764aa47d624355ae04fbe65e6f9a2bfa`: Windows epoch conversion, per-visit identity, profile separation, transitions and original source context. It intentionally removes the donor's trailing-64-row rule, missing-ID fallback, millisecond truncation and unsafe main-only/separate-SHM copy paths. None of the old runtime/framework is restored.
+
+Persisted downloads are a new mapping verified against Chromium commit `3260a51c368eafe63bd55f037afd28d784ed03d4`, [visit schema](https://chromium.googlesource.com/chromium/src/+/3260a51c368eafe63bd55f037afd28d784ed03d4/components/history/core/browser/visit_database.cc), [download schema](https://chromium.googlesource.com/chromium/src/+/3260a51c368eafe63bd55f037afd28d784ed03d4/components/history/core/browser/download_database.cc), and [persisted states](https://chromium.googlesource.com/chromium/src/+/3260a51c368eafe63bd55f037afd28d784ed03d4/components/history/core/browser/download_constants.h). The predecessor's extension `download.observed` is not claimed as restored parity.
+
+Schema change 4 registers browser event types, payload schemas and source-specific event checks through the existing guarded upgrade owner. It adds no ledger or service. Page maps/patches, completed population-census evidence, deletion/expiry admission, browser snapshot replay, independent backup, live profile import, installed host operation, and full slice 1c remain open. Full bases cost an entire database per snapshot before compression; configured cadence is not a page-patch efficiency claim.

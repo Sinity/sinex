@@ -31,18 +31,20 @@ impl SourcesRequest {
 /// Supplied by the daemon owner, never by a sources request.
 #[derive(Clone, Debug)]
 pub struct CollectorScope {
+    pub source: String,
     pub locator: String,
     pub run: Uuid,
 }
 
 pub fn current_scope(
-    active: Option<&CollectorScope>,
+    active: &[CollectorScope],
     source: &str,
     locator: &str,
     run: Option<Uuid>,
 ) -> bool {
-    source == "terminal.atuin-history"
-        && active.is_some_and(|a| a.locator == locator && Some(a.run) == run)
+    active
+        .iter()
+        .any(|a| a.source == source && a.locator == locator && Some(a.run) == run)
 }
 
 /// Constant-size inherited references, not a second history store. A missing legacy

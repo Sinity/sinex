@@ -18,6 +18,23 @@ fn full_interval() -> u64 {
 }
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ChromiumConfig {
+    pub profile: String,
+    #[schemars(with = "String")]
+    pub database_generation: uuid::Uuid,
+    pub path: PathBuf,
+    #[serde(default = "poll_interval")]
+    pub poll_interval_ms: u64,
+    #[serde(default = "full_interval")]
+    pub full_interval_ms: u64,
+    #[serde(default = "snapshot_interval")]
+    pub snapshot_interval_ms: u64,
+}
+fn snapshot_interval() -> u64 {
+    3_600_000
+}
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ZshConfig {
     pub path: PathBuf,
     pub execution_host: String,
@@ -78,6 +95,8 @@ pub struct Config {
     #[serde(default)]
     pub automata: Vec<String>,
     pub atuin: Option<AtuinConfig>,
+    #[serde(default)]
+    pub chromium: Vec<ChromiumConfig>,
     pub zsh: Option<ZshConfig>,
     #[serde(default)]
     pub privacy_rules: Vec<PrivacyConfig>,
@@ -127,19 +146,19 @@ impl Config {
         if !address.ip().is_loopback() {
             return Err("foundation listens only on loopback".into());
         }
-        if self
+        if self.sources.iter().any(|s| {
+            s != sinex_store::ATUIN_SOURCE
+                && s != sinex_store::ZSH_SOURCE
+                && s != sinex_model::browser::SOURCE
+        }) || self
             .sources
             .iter()
-            .any(|s| s != sinex_store::ATUIN_SOURCE && s != sinex_store::ZSH_SOURCE)
-            || self
-                .sources
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                != self.sources.len()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != self.sources.len()
             || !(self.automata.is_empty() || self.automata == ["session"])
         {
-            return Err("only Atuin, append-only extended zsh and the shell fusion interpretation are implemented; only the session automaton is additionally supported".into());
+            return Err("only Atuin, configured Chromium, append-only extended zsh and the shell fusion interpretation are implemented; only the session automaton is additionally supported".into());
         }
         if self.sources.iter().any(|s| s == sinex_store::ATUIN_SOURCE) != self.atuin.is_some() {
             return Err("Atuin source enablement and [atuin] configuration must agree".into());
@@ -165,6 +184,34 @@ impl Config {
                 return Err(
                     "Atuin requires an absolute path, poll interval 100..=3600000 ms and full interval 100..=604800000 ms".into(),
                 );
+            }
+        }
+        if self
+            .sources
+            .iter()
+            .any(|s| s == sinex_model::browser::SOURCE)
+            != !self.chromium.is_empty()
+        {
+            return Err("Chromium source enablement and configured profiles must agree".into());
+        }
+        let mut profiles = std::collections::HashSet::new();
+        let mut paths = std::collections::HashSet::new();
+        if self.chromium.len() > 16 {
+            return Err("at most sixteen Chromium profiles are supported".into());
+        }
+        for c in &self.chromium {
+            if c.profile.is_empty()
+                || c.profile.len() > 255
+                || c.profile.contains('\0')
+                || c.database_generation.is_nil()
+                || !c.path.is_absolute()
+                || !(100..=3_600_000).contains(&c.poll_interval_ms)
+                || !(100..=604_800_000).contains(&c.full_interval_ms)
+                || !(100..=604_800_000).contains(&c.snapshot_interval_ms)
+                || !profiles.insert(&c.profile)
+                || !paths.insert(&c.path)
+            {
+                return Err("Chromium requires distinct profile/path declarations, nonnil generation UUID, absolute History path and bounded polling/full/snapshot intervals".into());
             }
         }
         if self.zsh.is_some() && !self.privacy_rules.is_empty() {
@@ -232,3 +279,7 @@ token_file="/synthetic/read-token"
         assert!(toml::from_str::<Config>("unknown = true").is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "browser/config_tests.rs"]
+mod browser_config_tests;

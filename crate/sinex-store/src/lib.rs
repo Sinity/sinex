@@ -1,4 +1,6 @@
 //! Foundation storage authority. No connection or transaction escapes the writer owner.
+mod browser;
+pub use browser::{BrowserBegin, BrowserPending, BrowserStep};
 mod atuin;
 mod zsh;
 pub use zsh::{PROTOCOL as ZSH_PROTOCOL, SOURCE as ZSH_SOURCE, ZshStep};
@@ -164,6 +166,64 @@ pub struct Admission {
     observe_atuin_queue: bool,
 }
 impl Admission {
+    pub async fn browser_begin(
+        &self,
+        begin: BrowserBegin,
+    ) -> Result<sinex_model::browser::ReadBasis> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::BrowserBegin(begin, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
+    pub async fn browser_step(&self, step: BrowserStep) -> Result<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::BrowserStep(step, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
+    pub async fn browser_pending(
+        &self,
+        input: Uuid,
+        basis: i64,
+        after: Option<Uuid>,
+    ) -> Result<Vec<BrowserPending>> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::BrowserPending(input, basis, after, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
+    pub async fn browser_known_downloads(
+        &self,
+        profile: String,
+        generation: Uuid,
+        keys: Vec<String>,
+    ) -> Result<Vec<bool>> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::BrowserKnown(profile, generation, keys, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
+    pub async fn browser_snapshot(
+        &self,
+        input: Uuid,
+        observation: Uuid,
+        path: PathBuf,
+    ) -> Result<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::BrowserSnapshot(input, observation, path, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
     pub async fn atuin_read_basis(
         &self,
         locator: String,
@@ -213,7 +273,7 @@ impl Admission {
         }
         rx.await.map_err(|_| Error::Stopped)?
     }
-    pub async fn schedule_atuin(
+    pub async fn schedule_source(
         &self,
         observation: Uuid,
         schedule: sinex_model::acquisition::PollSchedule,
@@ -223,7 +283,7 @@ impl Admission {
             .map_err(|_| Error::Invalid("invalid acquisition schedule"))?;
         let (tx, rx) = oneshot::channel();
         self.sender
-            .send(Command::AtuinSchedule(observation, schedule, tx))
+            .send(Command::SourceSchedule(observation, schedule, tx))
             .await
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
@@ -310,6 +370,29 @@ pub enum ReplayCommand {
     Cancel(sinex_model::replay::Operation),
 }
 enum Command {
+    BrowserBegin(
+        BrowserBegin,
+        oneshot::Sender<Result<sinex_model::browser::ReadBasis>>,
+    ),
+    BrowserStep(BrowserStep, oneshot::Sender<Result<serde_json::Value>>),
+    BrowserPending(
+        Uuid,
+        i64,
+        Option<Uuid>,
+        oneshot::Sender<Result<Vec<BrowserPending>>>,
+    ),
+    BrowserKnown(
+        String,
+        Uuid,
+        Vec<String>,
+        oneshot::Sender<Result<Vec<bool>>>,
+    ),
+    BrowserSnapshot(
+        Uuid,
+        Uuid,
+        PathBuf,
+        oneshot::Sender<Result<serde_json::Value>>,
+    ),
     Exclude(
         sinex_model::exclusion::Action,
         sinex_model::exclusion::Request,
@@ -320,7 +403,7 @@ enum Command {
     ReplayProfile(Option<Vec<PrivacyRule>>, oneshot::Sender<()>),
     Replay(ReplayCommand, oneshot::Sender<Result<serde_json::Value>>),
     Admit(MaterialEvent, oneshot::Sender<Result<Receipt>>),
-    AtuinSchedule(
+    SourceSchedule(
         Uuid,
         sinex_model::acquisition::PollSchedule,
         oneshot::Sender<Result<()>>,
@@ -682,8 +765,30 @@ impl WriterPool {
                     }
                     let _ = reply.send(result);
                 }
-                Command::AtuinSchedule(observation, schedule, reply) => {
-                    let result = self.schedule_atuin(observation, schedule).await;
+                Command::SourceSchedule(observation, schedule, reply) => {
+                    let result = self.schedule_source(observation, schedule).await;
+                    let _ = reply.send(result);
+                }
+                Command::BrowserBegin(begin, reply) => {
+                    let result = self.browser_begin(begin).await;
+                    let _ = reply.send(result);
+                }
+                Command::BrowserStep(step, reply) => {
+                    let result = self.browser_step(step).await;
+                    let _ = reply.send(result);
+                }
+                Command::BrowserPending(input, basis, after, reply) => {
+                    let result = self.browser_pending(input, basis, after).await;
+                    let _ = reply.send(result);
+                }
+                Command::BrowserKnown(profile, generation, keys, reply) => {
+                    let result = self
+                        .browser_known_downloads(profile, generation, keys)
+                        .await;
+                    let _ = reply.send(result);
+                }
+                Command::BrowserSnapshot(input, observation, path, reply) => {
+                    let result = self.browser_snapshot(input, observation, path).await;
                     let _ = reply.send(result);
                 }
                 Command::AtuinReadBasis(locator, reply) => {
