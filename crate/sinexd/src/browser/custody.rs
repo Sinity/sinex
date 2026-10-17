@@ -330,6 +330,22 @@ pub(super) async fn backup(
         .map_err(|_| "owned snapshot length unavailable".into())
 }
 
+// A destination is private scratch until validated recovery gives the cache
+// ownership. Every error, cancellation and failed retry discards its sidecars.
+struct CopyScratch {
+    path: PathBuf,
+    retained: bool,
+}
+impl Drop for CopyScratch {
+    fn drop(&mut self) {
+        if !self.retained {
+            for suffix in ["", "-journal", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(sidecar(&self.path, suffix));
+            }
+        }
+    }
+}
+
 pub(super) struct Custodian {
     pub identity: FileIdentity,
     pub epoch: Uuid,
@@ -414,7 +430,9 @@ impl Custodian {
             if let Some((prior, path)) = &self.cached {
                 if &before == prior {
                     tokio::select! {_ = tokio::time::sleep(Duration::from_millis(50))=>{},_ = async {let mut stop=stop.clone();let _=stop.changed().await;}=>return Err("browser acquisition cancelled".into())}
-                    if pair(&source)? == before && quiet(&before) && self.verify().is_ok() {
+                    let after = pair(&source)?;
+                    self.verify()?;
+                    if after == before && quiet(&before) {
                         return Ok((
                             path.clone(),
                             json!({"kind":"verified_locked_copy_reused","source_pair":before,"copied_bytes":0,"premise":"unchanged coherent local-FS identities/size/nanosecond metadata imply unchanged bytes; unobserved ABA and arbitrary byte overwrites are not proved"}),
@@ -423,6 +441,10 @@ impl Custodian {
                 }
             }
             let destination = self.next_path("view");
+            let mut scratch = CopyScratch {
+                path: destination.clone(),
+                retained: false,
+            };
             let source_copy = source.clone();
             let dest_copy = destination.clone();
             let stop_copy = stop.clone();
@@ -452,9 +474,12 @@ impl Custodian {
             .map_err(|_| "copy qualification refused")?;
             let after = pair(&source);
             if let (Ok((bytes, cloned)), Ok(after)) = (result, after) {
-                if after == before && self.verify().is_ok() {
+                self.verify()?;
+                if after == before {
                     tokio::select! {_ = tokio::time::sleep(Duration::from_millis(50))=>{},_ = async {let mut stop=stop.clone();let _=stop.changed().await;}=>return Err("browser acquisition cancelled".into())}
-                    if pair(&source)? == before && quiet(&before) {
+                    let settled = pair(&source)?;
+                    self.verify()?;
+                    if settled == before && quiet(&before) {
                         // Recovery may write only the owned copy and its copied journal. A
                         // super-journal was refused before opening it; SHM is never copied.
                         let mut connection = open(&destination, false)
@@ -474,6 +499,7 @@ impl Custodian {
                                 let _ = std::fs::remove_file(sidecar(&old, "-journal"));
                             }
                             self.cached = Some((before.clone(), destination.clone()));
+                            scratch.retained = true;
                             return Ok((
                                 destination,
                                 json!({"kind":"verified_locked_rollback_copy","attempts":attempt+1,"source_pair":before,"copied_bytes":bytes,"main_reflink":cloned,"integrity":"quick_check_ok","premise":"paired files stable before/after copying and quiet recheck under coherent local-FS metadata; integrity alone is not concurrency proof; no unconditional atomic snapshot claim"}),
@@ -489,8 +515,7 @@ impl Custodian {
             } else {
                 last = "source or journal appearance/disappearance/copy unavailable".into();
             }
-            let _ = std::fs::remove_file(&destination);
-            let _ = std::fs::remove_file(sidecar(&destination, "-journal"));
+            drop(scratch);
             if attempt < 4 {
                 tokio::select! {_ = tokio::time::sleep(Duration::from_secs(1<<attempt))=>{},_ = async {let mut stop=stop.clone();let _=stop.changed().await;}=>return Err("browser acquisition cancelled".into())}
             }
