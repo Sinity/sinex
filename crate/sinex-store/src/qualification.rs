@@ -20,7 +20,8 @@ impl QualificationBoundary {
         if (!replay
             && !matches!(
                 point.as_str(),
-                "retained-fsynced"
+                "collector-scheduled"
+                    | "retained-fsynced"
                     | "transaction-staged"
                     | "transaction-committed"
                     | "delete-staged"
@@ -35,6 +36,28 @@ impl QualificationBoundary {
             ));
         }
         Ok(Self { point, socket })
+    }
+    /// Synthetic control holds only the collector, leaving writer and API responsive.
+    pub async fn collector_scheduled(control: &mut Option<Self>, evidence: Value) -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        if control
+            .as_ref()
+            .is_none_or(|c| c.point != "collector-scheduled")
+        {
+            return Ok(());
+        }
+        let c = control
+            .take()
+            .ok_or(Error::Invalid("collector control unavailable"))?;
+        tokio::time::timeout(std::time::Duration::from_secs(120), async move {
+            let mut socket = tokio::net::UnixStream::connect(c.socket).await?;
+            let notice = json!({"component":"sinex-collector","qualification_boundary":"collector-scheduled","pid":std::process::id(),"evidence":evidence});
+            let mut bytes = serde_json::to_vec(&notice).map_err(|_| Error::Invalid("collector control encoding"))?;
+            bytes.push(b'\n'); socket.write_all(&bytes).await?;
+            let mut release = [0]; socket.read_exact(&mut release).await?;
+            if release != [b'c'] { return Err(Error::Invalid("collector release refused")); }
+            Ok(())
+        }).await.map_err(|_| Error::Invalid("collector control timed out"))?
     }
     pub(crate) fn observes_atuin_queue(&self) -> bool {
         self.point == "fusion-replacement-committed"

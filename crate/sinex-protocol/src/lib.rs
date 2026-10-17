@@ -127,6 +127,23 @@ pub mod rpc {
             let method = Method::parse(&self.method)
                 .ok_or_else(|| RpcError::method_not_found(&self.method))?;
             match method {
+                Method::Sources => {
+                    let params =
+                        serde_json::from_value::<sinex_model::acquisition::SourcesRequest>(
+                            self.params.clone(),
+                        )
+                        .map_err(|_| {
+                            RpcError::new(
+                                ErrorKind::BadQuery,
+                                "invalid source inspection parameters",
+                                Value::Null,
+                            )
+                        })?;
+                    params.validate().map_err(|e| {
+                        RpcError::new(ErrorKind::BadQuery, e.to_string(), Value::Null)
+                    })?;
+                    return Ok(method);
+                }
                 Method::Delete | Method::DeleteUndo => {
                     let params = serde_json::from_value::<sinex_model::exclusion::Request>(
                         self.params.clone(),

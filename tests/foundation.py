@@ -19,9 +19,10 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--source-investigation", action="store_true", help="qualify bounded Atuin acquisition timing and exact capture receipts")
 parser.add_argument("--privacy-rules", action="store_true", help="qualify admission-once optional rules and retained evidence through actual clients")
 parser.add_argument("--reversible-exclusion",action="store_true",help="qualify packaged exact occurrence exclusion with an explicit immutable package pin")
-parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion, fusion, privacy rules or configured continuation; never build or fall back")
+parser.add_argument("--package-pin",type=Path,help="reuse the exact clean qualification/package/binary SHA256 pin for packaged exclusion, fusion, privacy rules, source investigation or configured continuation; never build or fall back")
 parser.add_argument("--recall-coverage",action="store_true",help="qualify narrow recall polling/error coverage through packaged CLI and MCP")
 parser.add_argument("--recall-coverage-before-pin",type=Path,help="exact immutable pre-fix package for recall coverage contrast")
 parser.add_argument("--sessions",action="store_true",help="qualify selected logical-day shell reconciliation and project recall")
@@ -55,8 +56,8 @@ if OPTIONS.fusion_focus and not OPTIONS.fusion: parser.error("fusion focus requi
 if OPTIONS.packaged and OPTIONS.fusion_focus in ("changed-seams","source-codec"): parser.error("this fusion focus is development-only; packaged focus supports maintenance or source-privacy")
 if OPTIONS.fusion != bool(OPTIONS.fusion_spec): parser.error("fusion requires --fusion --fusion-spec GIT_REPOSITORY")
 if OPTIONS.fusion and any([OPTIONS.reversible_exclusion,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output]): parser.error("fusion owns its own scenario selector")
-if OPTIONS.package_pin and not (OPTIONS.reversible_exclusion or OPTIONS.fusion or OPTIONS.configured_continuation or OPTIONS.privacy_rules):
-    parser.error("prebuilt package pins are supported only by exclusion, fusion, privacy rules or configured continuation qualification")
+if OPTIONS.package_pin and not (OPTIONS.reversible_exclusion or OPTIONS.fusion or OPTIONS.configured_continuation or OPTIONS.privacy_rules or OPTIONS.source_investigation):
+    parser.error("prebuilt package pins are supported only by exclusion, fusion, privacy rules, source investigation or configured continuation qualification")
 if OPTIONS.fusion and OPTIONS.package_pin and not OPTIONS.packaged:
     parser.error("fusion prebuilt package pins require --packaged")
 if OPTIONS.reversible_exclusion and (not OPTIONS.packaged or not OPTIONS.package_pin or OPTIONS.exclusion_contracts or OPTIONS.indexed or OPTIONS.retained_replay or OPTIONS.atuin or OPTIONS.read_lifecycle or OPTIONS.live_cursor or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.credential_output):
@@ -82,6 +83,12 @@ if (OPTIONS.demo_control or OPTIONS.demo_boundaries or OPTIONS.demo_provider_los
     parser.error("demonstration controls require --demo-spec")
 if OPTIONS.demo_provider_loss and (OPTIONS.demo_boundaries or OPTIONS.demo_control):
     parser.error("provider-loss qualification cannot combine with other demonstration controls")
+if OPTIONS.source_investigation and any((OPTIONS.privacy_rules,OPTIONS.recall_coverage,OPTIONS.sessions,OPTIONS.session_resume,OPTIONS.indexed,OPTIONS.fusion,OPTIONS.configured_continuation,OPTIONS.atuin,OPTIONS.retained_replay,OPTIONS.reversible_exclusion,OPTIONS.exclusion_contracts,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output,OPTIONS.fusion_focus,OPTIONS.fusion_spec,OPTIONS.session_predecessor_pin,OPTIONS.recall_coverage_before_pin,OPTIONS.demo_control,OPTIONS.demo_boundaries,OPTIONS.demo_provider_loss)):
+    parser.error("source investigation owns its scenario selector")
+if OPTIONS.source_investigation and OPTIONS.packaged and not OPTIONS.package_pin:
+    parser.error("packaged source investigation requires an explicit immutable package pin")
+if OPTIONS.source_investigation and OPTIONS.package_pin and not OPTIONS.packaged:
+    parser.error("source investigation package pin requires --packaged")
 BIN_DIR = Path(os.environ.get("SINEX_FOUNDATION_BIN_DIR", str(ROOT/"target/debug")))
 SESSION_RESUME = None
 if OPTIONS.session_resume:
@@ -135,6 +142,10 @@ if OPTIONS.reversible_exclusion:
 if OPTIONS.fusion:
     import fusion_cases
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+fusion_cases.planned(OPTIONS.fusion_focus)
+    if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
+if OPTIONS.source_investigation:
+    import source_investigation_cases
+    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+source_investigation_cases.PLANNED
     if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
 if OPTIONS.configured_continuation:
     import configured_continuation_cases
@@ -268,7 +279,7 @@ try:
                 run([BIN_DIR/"xtask", "demo"], expected=2, label="packaged xtask missing explicit paths")
         scenario("Nix package entrypoint selection", select_package)
     # Build admin before the first cluster exists, with no ambient SQLx/PG routing.
-    if not (SESSION_RESUME or (OPTIONS.privacy_rules and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
+    if not (SESSION_RESUME or ((OPTIONS.privacy_rules or OPTIONS.source_investigation) and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("cold query-free admin build", lambda: run(["cargo","build","--locked","-p","sinexd","--no-default-features"], label="cold admin"))
     if not SESSION_RESUME:
         (WORK/"pg").mkdir()
         (WORK/"socket").mkdir()
@@ -286,7 +297,7 @@ try:
     for name,value in [("admin",admin),("writer",writer),("reader",reader),("token","synthetic-foundation-token")]:
         (WORK/name).write_text(value)
         (WORK/name).chmod(0o600)
-    admin_binary=BIN_DIR/"sinexd" if SESSION_RESUME or (OPTIONS.privacy_rules and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
+    admin_binary=BIN_DIR/"sinexd" if SESSION_RESUME or ((OPTIONS.privacy_rules or OPTIONS.source_investigation) and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged) else ROOT/"target/debug/sinexd"
     daemon=BIN_DIR/"sinexd"
     if SESSION_RESUME:
         for database in ['foundation','session_predecessor']:
@@ -312,7 +323,7 @@ try:
         assert observed["timescaledb_version"], "canonical extension absent"
     scenario("owned PostgreSQL extension and checksum contract", database_contract)
     ENV["DATABASE_URL"] = admin
-    if not (SESSION_RESUME or (OPTIONS.privacy_rules and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
+    if not (SESSION_RESUME or ((OPTIONS.privacy_rules or OPTIONS.source_investigation) and OPTIONS.packaged) or OPTIONS.recall_coverage or OPTIONS.configured_continuation or OPTIONS.reversible_exclusion or OPTIONS.demo_spec or OPTIONS.startup_coverage or OPTIONS.live_cursor or OPTIONS.read_lifecycle or OPTIONS.retained_replay or ((OPTIONS.indexed or OPTIONS.fusion) and OPTIONS.packaged)): scenario("checked runtime build and pure contracts", lambda: (
         run(["cargo","build","--locked","--workspace"],label="runtime against isolated schema"),
         run(["cargo","test","--locked","-p","sinex-model","-p","sinex-protocol","-p","sinexd","-p","sinex-store"],label="pure and configuration contracts")))
     if not OPTIONS.packaged and not SESSION_RESUME:
@@ -322,7 +333,9 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.privacy_rules:
+    if OPTIONS.source_investigation:
+        source_investigation_cases.exercise(globals())
+    elif OPTIONS.privacy_rules:
         import privacy_rule_cases
         privacy_rule_cases.exercise(globals())
     elif OPTIONS.recall_coverage:

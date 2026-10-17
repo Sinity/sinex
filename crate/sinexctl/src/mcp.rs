@@ -57,6 +57,15 @@ struct Recall {
     #[serde(default)]
     timeout_ms: Option<u64>,
 }
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Sources {
+    input: Option<String>,
+    after_input: Option<String>,
+    before_seq: Option<i64>,
+    observation: Option<String>,
+    after_receipt: Option<String>,
+}
 impl Reader {
     async fn call(
         &self,
@@ -193,8 +202,12 @@ impl Reader {
     #[tool(
         description = "Inspect recorded source availability and accounting; empty input does not prove continuous coverage."
     )]
-    async fn sinex_sources(&self, ctx: RequestContext<RoleServer>) -> CallToolResult {
-        self.call(Method::Sources, json!({}), ctx).await
+    async fn sinex_sources(
+        &self,
+        Parameters(p): Parameters<Sources>,
+        ctx: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        self.call(Method::Sources, json!({"input":p.input,"after_input":p.after_input,"before_seq":p.before_seq,"observation":p.observation,"after_receipt":p.after_receipt}), ctx).await
     }
     #[tool(
         description = "Inspect writer, replay and indexed retrieval progress and supported methods."
