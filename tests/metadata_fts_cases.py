@@ -133,6 +133,7 @@ full_interval_ms = 1000
                 assert 'rows' in q and q['total']==1 and not q['full_text']['available'],q
                 return q if q['complete'] else None
             q=wait('clean source metadata remains complete despite unavailable FTS',complete_selected)
+            selected_answer=q
             p=q['rows'][0]['payload'];assert p['native_id']=='later' and p['command']=='needle later exact' and p['timestamp_ns']==oversized[-1][1] and p['exit_code'] is None and p['duration_ns']==9
             for key in ['frequency','positions','token-bytes','empty-command']:
                 n=next(i for i,x in enumerate(oversized) if x[0]==key)
@@ -142,7 +143,7 @@ full_interval_ms = 1000
             assert values['null_vectors']==3 and values['real_empty_distinct']
             reference=answer['full_text']['first_affected_ref'];assert reference
             assert cli('show',reference)['row']['current_eligible']
-            save('metadata-later-and-capabilities',{'query':q,'counts':values,'first_reference_trace':cli('trace',reference,'--bytes')})
+            save('metadata-later-and-capabilities',{'query':selected_answer,'counts':values,'first_reference_trace':cli('trace',reference,'--bytes')})
         scenario(PLANNED[1],metadata)
         def authority():
             nonlocal daemon
