@@ -5,6 +5,16 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::{Connection, Row};
 use uuid::Uuid;
+
+const WORK_TABLES: &[&str] = &[
+    "DROP TABLE IF EXISTS pg_temp.sinex_shell_nodes,pg_temp.sinex_shell_groups",
+    "CREATE TEMP TABLE sinex_shell_nodes(id uuid PRIMARY KEY,source smallint NOT NULL,host text,command text NOT NULL,command_hash text NOT NULL,at_ns numeric,digest text NOT NULL,anchor bigint NOT NULL,ekey text NOT NULL,paired boolean NOT NULL DEFAULT false,count2 bigint NOT NULL DEFAULT 0,count60 bigint NOT NULL DEFAULT 0)",
+    "CREATE INDEX ON sinex_shell_nodes(source,command_hash,at_ns)",
+    "CREATE INDEX sinex_shell_nodes_pending ON sinex_shell_nodes(id) WHERE NOT paired",
+    "CREATE TEMP TABLE sinex_shell_groups(token uuid PRIMARY KEY,parents uuid[] NOT NULL,strategy smallint NOT NULL,done boolean NOT NULL DEFAULT false,retained_id uuid)",
+    "CREATE INDEX sinex_shell_groups_retained ON sinex_shell_groups(retained_id)",
+    "CREATE INDEX sinex_shell_groups_pending ON sinex_shell_groups(token) WHERE NOT done",
+];
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Rule {
@@ -158,12 +168,7 @@ impl WriterPool {
         if open {
             return Ok(None);
         }
-        for sql in [
-            "DROP TABLE IF EXISTS pg_temp.sinex_shell_nodes,pg_temp.sinex_shell_groups",
-            "CREATE TEMP TABLE sinex_shell_nodes(id uuid PRIMARY KEY,source smallint NOT NULL,host text,command text NOT NULL,command_hash text NOT NULL,at_ns numeric,digest text NOT NULL,anchor bigint NOT NULL,ekey text NOT NULL,paired boolean NOT NULL DEFAULT false,count2 bigint NOT NULL DEFAULT 0,count60 bigint NOT NULL DEFAULT 0)",
-            "CREATE INDEX ON sinex_shell_nodes(source,command_hash,at_ns)",
-            "CREATE TEMP TABLE sinex_shell_groups(token uuid PRIMARY KEY,parents uuid[] NOT NULL,strategy smallint NOT NULL,done boolean NOT NULL DEFAULT false,retained_id uuid)",
-        ] {
+        for sql in WORK_TABLES {
             sqlx::query(sql).execute(&mut self.connection).await?;
         }
         sqlx::query("UPDATE derivation.shell_progress SET basis=$1,phase='scan',failure=NULL,scanned=0,replaced=0 WHERE one").bind(basis).execute(&mut self.connection).await?;
@@ -548,6 +553,10 @@ impl WriterPool {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "shell_work_tests.rs"]
+mod work_tests;
 
 fn temporal_key(
     known: bool,

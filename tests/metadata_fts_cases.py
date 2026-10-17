@@ -17,6 +17,7 @@ PLANNED = [
     'retained metadata restart provider-loss exclusion and replay keep capability truth',
     'metadata maintenance failure remains globally unavailable',
     'unavailable-vector probes use their bounded partial-index path',
+    'native shell working-set indexes preserve pending sets and membership',
 ]
 
 
@@ -268,5 +269,11 @@ EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE gene
             assert actual[1]['Plan']['Actual Rows']==16
             save('unavailable-vector-query-plans',{'plans':actual,'scope':'ordinary PostgreSQL exact probe predicates; twenty-thousand real empty vectors and seventeen unavailable vectors; no forced planner settings or capacity claim'})
         scenario(PLANNED[6],plans)
+        def shell_work_tables():
+            isolated=env.copy();isolated['SINEX_TEST_WRITER_URL']=h['writer']
+            result=run(['cargo','test','--locked','-p','sinex-store','--features','product','--lib','shell::work_tests::native_work_tables_preserve_pending_sets_and_membership_with_indexed_plans','--','--ignored','--nocapture'],env=isolated,label='native temporary work-table constructor semantics and ordinary PostgreSQL plans')
+            proof=next(line.removeprefix('SHELL_WORK_PROOF ') for line in result.stdout.splitlines() if line.startswith('SHELL_WORK_PROOF '))
+            save('shell-work-table-plans',json.loads(proof))
+        scenario(PLANNED[7],shell_work_tables)
     finally:
         if daemon and daemon.poll() is None:stop(daemon)
