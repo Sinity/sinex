@@ -117,6 +117,53 @@ fn expression(q: &mut QueryBuilder<'_, Postgres>, e: &Expr) {
     }
     q.push(")");
 }
+#[derive(Serialize)]
+struct FullTextState {
+    available: bool,
+    reason: Option<&'static str>,
+    first_affected_ref: Option<String>,
+    inspection_limit: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inspection_scope: Option<&'static str>,
+}
+// Probe only the unavailable subset. Candidate inspection is bounded separately
+// and applies the same live-parent authority as show/query before exposing a ref.
+async fn full_text_state(
+    connection: &mut sqlx::PgConnection,
+    generation: Uuid,
+    metadata_ready: bool,
+) -> Result<FullTextState> {
+    if !metadata_ready {
+        return Ok(FullTextState {
+            available: false,
+            reason: Some("metadata_not_current"),
+            first_affected_ref: None,
+            inspection_limit: 16,
+            inspection_scope: None,
+        });
+    }
+    let unavailable: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM core.search_text WHERE generation=$1 AND tsv IS NULL LIMIT 1)",
+    )
+    .bind(generation)
+    .fetch_one(&mut *connection)
+    .await?;
+    let first: Option<Uuid> = if unavailable {
+        sqlx::query_scalar(&format!("WITH candidates AS MATERIALIZED (SELECT id FROM core.search_text WHERE generation=$1 AND tsv IS NULL ORDER BY id LIMIT 16) SELECT e.id FROM candidates c JOIN core.live_events e ON e.id=c.id WHERE e.event_type='command.canonical' AND {} ORDER BY e.id LIMIT 1", crate::query::CURRENT_PARENTS))
+            .bind(generation).fetch_optional(&mut *connection).await?
+    } else {
+        None
+    };
+    Ok(FullTextState {
+        available: !unavailable,
+        reason: unavailable.then_some("exact_full_text_representation_unavailable"),
+        first_affected_ref: first.map(|id| format!("sinex:ev/{id}")),
+        inspection_limit: 16,
+        inspection_scope: Some(
+            "first currently eligible reference among at most sixteen unavailable candidates; null may omit later eligible candidates",
+        ),
+    })
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Cursor {
@@ -252,6 +299,12 @@ impl ReadPool {
         {
             return Err(Error::ProjectionUnavailable(
                 "canonical interpretation or indexed projection has not caught up; retry or inspect status",
+            ));
+        }
+        let full_text = full_text_state(&mut tx, generation, true).await?;
+        if bound.filter.as_ref().is_some_and(Expr::has_text) && !full_text.available {
+            return Err(Error::ProjectionUnavailable(
+                "exact full-text representation unavailable; field-only metadata queries remain supported; inspect status",
             ));
         }
         let fusion:Value=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('current_now_settled',NOT EXISTS(SELECT 1 FROM derivation.shell_dirty),'scope','whole-input baseline; component-targeted efficiency unqualified') FROM derivation.shell_progress p WHERE one").fetch_one(&mut *tx).await?;
@@ -407,14 +460,30 @@ impl ReadPool {
         tx.commit().await?;
         drop(lease.0.take());
         Ok(
-            json!({"notice":sinex_model::DATA_NOTICE,"unit":bound.unit,"query":text,"rows":rows,"total":total,"complete":complete,"fusion":fusion,"coverage":"unknown; retained shell observations do not prove continuous capture","source_status":source_status,"truncated":more && next.is_none(),"page":{"size":page,"cursor":next,"first_commit_seq":first,"changed_since_first_page":first!=current,"change_notice":if first!=current{Some("Current-state continuation; additions or changed rank/order keys may be absent or repeated.")}else{None}},"resolved":{"commit_seq":current,"projection_seq":position,"generation":generation,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Eligible live policy-selected canonical commands matching {text}; {}. Continuous source coverage is unknown.",if ranked{"ranked over every selected match, then original time and ID"}else if desc{"ordered by original time descending, unknown last, then ID"}else{"ordered by original time ascending, unknown last, then ID"}),"excluded":{}}),
+            json!({"notice":sinex_model::DATA_NOTICE,"unit":bound.unit,"query":text,"rows":rows,"total":total,"complete":complete,"fusion":fusion,"coverage":"unknown; retained shell observations do not prove continuous capture","source_status":source_status,"full_text":full_text,"truncated":more && next.is_none(),"page":{"size":page,"cursor":next,"first_commit_seq":first,"changed_since_first_page":first!=current,"change_notice":if first!=current{Some("Current-state continuation; additions or changed rank/order keys may be absent or repeated.")}else{None}},"resolved":{"commit_seq":current,"projection_seq":position,"generation":generation,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Eligible live policy-selected canonical commands matching {text}; {}. Continuous source coverage is unknown.",if ranked{"ranked over every selected match, then original time and ID"}else if desc{"ordered by original time descending, unknown last, then ID"}else{"ordered by original time ascending, unknown last, then ID"}),"excluded":{}}),
         )
     }
     pub async fn projection_status(&self) -> Result<Value> {
         let mut lease = self.read_lease().await?;
-        let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p) || jsonb_build_object('current_commit_seq',(SELECT seq FROM core.commit_counter WHERE one),'pending_sessions',(SELECT count(*) FROM derivation.session_dirty),'sessions',(SELECT to_jsonb(s)||jsonb_build_object('pending_through_day',(SELECT max(coalesce(through_day,day)) FROM derivation.session_dirty)) FROM derivation.session_progress s WHERE one),'pending_canonical',(SELECT count(*) FROM derivation.shell_dirty),'fusion',(SELECT to_jsonb(f) FROM derivation.shell_progress f WHERE one)) FROM derivation.read_model_position p WHERE name='shell-search'").fetch_optional(lease.connection()).await?;
+        let mut tx = lease.0.as_mut().unwrap().begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p) || jsonb_build_object('current_commit_seq',(SELECT seq FROM core.commit_counter WHERE one),'pending_sessions',(SELECT count(*) FROM derivation.session_dirty),'sessions',(SELECT to_jsonb(s)||jsonb_build_object('pending_through_day',(SELECT max(coalesce(through_day,day)) FROM derivation.session_dirty)) FROM derivation.session_progress s WHERE one),'pending_canonical',(SELECT count(*) FROM derivation.shell_dirty),'fusion',(SELECT to_jsonb(f) FROM derivation.shell_progress f WHERE one)) FROM derivation.read_model_position p WHERE name='shell-search'").fetch_optional(&mut *tx).await?;
+        let mut value = row.unwrap_or(json!({"state":"not_configured"}));
+        if let Some(generation) = value["generation"].as_str() {
+            let generation = Uuid::parse_str(generation)
+                .map_err(|_| Error::Invalid("invalid projection generation"))?;
+            let current = value["serving"] == true
+                && value["failure"].is_null()
+                && value["position"] == value["current_commit_seq"];
+            value["full_text"] =
+                serde_json::to_value(full_text_state(&mut tx, generation, current).await?)
+                    .expect("typed full-text state serializes");
+        }
+        tx.commit().await?;
         lease.finish();
-        Ok(row.unwrap_or(json!({"state":"not_configured"})))
+        Ok(value)
     }
 }
 

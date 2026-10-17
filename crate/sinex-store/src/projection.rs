@@ -1,6 +1,7 @@
 //! One restricted read-model owner. Rows and log position commit together; the
 //! complete retained log is the only supported bootstrap basis in this slice.
 use crate::{Error, QualificationBoundary, Result};
+use serde_json::Value;
 use sinex_model::retrieval::{CONTRACT, Project, lexeme, normalize, project, words};
 use sqlx::{Connection, PgConnection, Row};
 use uuid::Uuid;
@@ -147,57 +148,10 @@ impl Owner {
             let row=sqlx::query("SELECT payload,source,event_type,ts_orig::text AS at,ts_orig_tiebreak FROM core.live_events WHERE id=$1 AND event_type='command.canonical'").bind(id).fetch_optional(&mut *tx).await?;
             let Some(row) = row else { continue };
             let payload: serde_json::Value = row.try_get("payload")?;
-            let mut strings = Vec::new();
-            fn texts(v: &serde_json::Value, out: &mut Vec<String>) {
-                match v {
-                    serde_json::Value::String(s) => out.push(s.clone()),
-                    serde_json::Value::Array(a) => {
-                        for v in a {
-                            texts(v, out);
-                        }
-                    }
-                    serde_json::Value::Object(o) => {
-                        let mut keys: Vec<_> = o.keys().collect();
-                        keys.sort();
-                        for key in keys {
-                            texts(&o[key], out);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            // Payload strings are fields; an extra empty word separates their positions,
-            // so a phrase can never bridge the end of one field and the next.
-            if let Some(command) = payload["command"].as_str() {
-                strings.push(command.to_string());
-            }
-            let mut remainder = payload.clone();
-            remainder.as_object_mut().unwrap().remove("command");
-            texts(&remainder, &mut strings);
-            let mut terms = Vec::new();
-            let mut index = 0usize;
-            let mut frequency = std::collections::HashMap::new();
-            for text in &strings {
-                for word in words(text) {
-                    index += 1;
-                    let count = frequency.entry(word.clone()).or_insert(0usize);
-                    *count += 1;
-                    if *count > 256 {
-                        return Err(Error::ProjectionUnavailable(
-                            "event exceeds exact full-text positional budget",
-                        ));
-                    }
-                    if index > 16000 || word.len() > 900 {
-                        return Err(Error::ProjectionUnavailable(
-                            "event exceeds exact full-text positional budget",
-                        ));
-                    }
-                    terms.push(format!("'{}':{index}", lexeme(&word)));
-                }
-                index += 1;
-            }
+            let strings = payload_strings(&payload);
+            let vector = exact_vector(&strings);
             let at: Option<String> = row.try_get("at")?;
-            sqlx::query("INSERT INTO core.search_text(generation,id,ts_orig,ts_orig_tiebreak,source,event_type,tsv,text,cwd,exit_code,command,command_normalized,cwd_normalized) VALUES($1,$2,$3::text::timestamptz,$4,$5,$6,$7::text::tsvector,$8,$9,$10,$11,$12,$13)").bind(generation).bind(id).bind(&at).bind(row.try_get::<Option<i32>,_>("ts_orig_tiebreak")?).bind(row.try_get::<String,_>("source")?).bind(row.try_get::<String,_>("event_type")?).bind(terms.join(" ")).bind(serde_json::to_string(&strings).unwrap()).bind(payload["cwd"].as_str()).bind(payload["exit_code"].as_i64()).bind(payload["command"].as_str().unwrap_or("")).bind(normalize(payload["command"].as_str().unwrap_or(""))).bind(payload["cwd"].as_str().map(normalize)).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO core.search_text(generation,id,ts_orig,ts_orig_tiebreak,source,event_type,tsv,text,cwd,exit_code,command,command_normalized,cwd_normalized) VALUES($1,$2,$3::text::timestamptz,$4,$5,$6,$7::text::tsvector,$8,$9,$10,$11,$12,$13)").bind(generation).bind(id).bind(&at).bind(row.try_get::<Option<i32>,_>("ts_orig_tiebreak")?).bind(row.try_get::<String,_>("source")?).bind(row.try_get::<String,_>("event_type")?).bind(vector).bind(serde_json::to_string(&strings).unwrap()).bind(payload["cwd"].as_str()).bind(payload["exit_code"].as_i64()).bind(payload["command"].as_str().unwrap_or("")).bind(normalize(payload["command"].as_str().unwrap_or(""))).bind(payload["cwd"].as_str().map(normalize)).execute(&mut *tx).await?;
             if let Some(project) = payload["cwd"]
                 .as_str()
                 .and_then(|cwd| project(cwd, &self.projects))
@@ -249,3 +203,59 @@ pub(crate) fn configuration(projects: &[Project]) -> String {
     .to_hex()
     .to_string()
 }
+
+// None is a typed unavailable representation, distinct from a real empty vector.
+// Metadata and original presentation strings remain complete in either case.
+fn payload_strings(payload: &Value) -> Vec<String> {
+    fn texts(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(s) => out.push(s.clone()),
+            Value::Array(a) => {
+                for v in a {
+                    texts(v, out);
+                }
+            }
+            Value::Object(o) => {
+                let mut keys: Vec<_> = o.keys().collect();
+                keys.sort();
+                for key in keys {
+                    texts(&o[key], out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut strings = Vec::new();
+    if let Some(command) = payload["command"].as_str() {
+        strings.push(command.to_owned());
+    }
+    let mut remainder = payload.clone();
+    remainder
+        .as_object_mut()
+        .expect("canonical payload object")
+        .remove("command");
+    texts(&remainder, &mut strings);
+    strings
+}
+fn exact_vector(strings: &[String]) -> Option<String> {
+    let mut terms = Vec::new();
+    let mut index = 0usize;
+    let mut frequency = std::collections::HashMap::new();
+    for text in strings {
+        for word in words(text) {
+            index += 1;
+            let count = frequency.entry(word.clone()).or_insert(0usize);
+            *count += 1;
+            if *count > 256 || index > 16000 || word.len() > 900 {
+                return None;
+            }
+            terms.push(format!("'{}':{index}", lexeme(&word)));
+        }
+        // Preserve the field gap so phrases cannot cross payload fields.
+        index += 1;
+    }
+    Some(terms.join(" "))
+}
+#[cfg(test)]
+#[path = "projection_text_tests.rs"]
+mod text_tests;
