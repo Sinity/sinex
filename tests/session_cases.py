@@ -112,6 +112,7 @@ roots = ["/synthetic/session/span"]
 [atuin]
 path = "{source}"
 poll_interval_ms = 500
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''');return p
     def api(method='status',params=None):
         req=urllib.request.Request(endpoint,data=json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params or {}}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})

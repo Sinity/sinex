@@ -121,6 +121,7 @@ roots = ["/work/empty"]
 [atuin]
 path = "{source}"
 poll_interval_ms = 3000
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''')
     def api(method='status',params=None):
         req=urllib.request.Request(endpoint,data=json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params or {}}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})

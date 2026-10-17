@@ -68,6 +68,7 @@ automata=[]
 '''+(f'''[atuin]
 path="{source}"
 poll_interval_ms=3600000
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''' if acquire else ''))
     api_lock=threading.Lock();api_path=report/'actual-exclusion-api.jsonl'
     def api(method,params=None,operator_profile=False,timeout=30):

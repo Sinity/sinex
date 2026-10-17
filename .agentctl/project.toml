@@ -325,3 +325,28 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
 cache = "none"
+
+[operations.atuin_read_plan_contracts]
+description = "Atuin actual Unix VFS correspondence, schema/VACUUM and typed read-plan controls without PostgreSQL"
+exec = ["cargo", "test", "--locked", "-p", "sinexd", "--no-default-features", "atuin_guard::"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 1200
+cache = "none"
+
+[operations.atuin_read_plan_acceptance]
+description = "Connection-scoped Atuin new/unfinished/full values and exact public recovery in owned PostgreSQL"
+exec = ["python3", "tests/foundation.py", "--atuin-read-plan"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"
+
+[operations.atuin_read_plan_package_acceptance]
+description = "Exact pinned packaged Atuin read-plan and public recovery; no rebuild or fallback"
+exec = ["python3", "tests/foundation.py", "--atuin-read-plan", "--packaged", "--package-pin"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"

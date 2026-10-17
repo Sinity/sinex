@@ -157,3 +157,60 @@ pub fn state(
 #[cfg(test)]
 #[path = "acquisition_tests.rs"]
 mod tests;
+
+/// Versioned collector checkpoint. The epoch belongs to one verified open reader,
+/// not to occurrence identity. A new reader always performs a real full read.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AtuinCheckpoint {
+    pub version: u8,
+    pub epoch: Uuid,
+    pub schema_version: i64,
+    pub user_version: i64,
+    pub through_rowid: i64,
+    pub full_completed_at: String,
+    pub full_due_at: String,
+    pub needs_full: bool,
+}
+impl AtuinCheckpoint {
+    pub fn valid(&self) -> bool {
+        self.version == 1
+            && !self.epoch.is_nil()
+            && OffsetDateTime::parse(&self.full_completed_at, &Rfc3339).is_ok()
+            && OffsetDateTime::parse(&self.full_due_at, &Rfc3339).is_ok_and(|due| {
+                OffsetDateTime::parse(&self.full_completed_at, &Rfc3339)
+                    .is_ok_and(|done| due > done)
+            })
+    }
+    pub fn reusable(&self, epoch: Uuid, schema: i64, user: i64, now: OffsetDateTime) -> bool {
+        self.valid()
+            && self.epoch == epoch
+            && self.schema_version == schema
+            && self.user_version == user
+            && !self.needs_full
+            && OffsetDateTime::parse(&self.full_due_at, &Rfc3339).is_ok_and(|due| now < due)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AtuinReadPlan {
+    pub version: u8,
+    pub kind: AtuinReadKind,
+    pub checkpoint: AtuinCheckpoint,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AtuinReadKind {
+    FullValueComparison,
+    NewCoordinatesAndPriorUnfinished,
+}
+
+/// One bounded page of prior unfinished native keys from the canonical owner.
+/// `basis` fixes eligibility while read admissions replace the corresponding heads.
+#[derive(Clone, Debug)]
+pub struct AtuinReadBasis {
+    pub input: Uuid,
+    pub basis: i64,
+    pub checkpoint: Option<AtuinCheckpoint>,
+}

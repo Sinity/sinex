@@ -9,6 +9,12 @@ pub struct AtuinConfig {
     pub path: PathBuf,
     #[serde(default = "poll_interval")]
     pub poll_interval_ms: u64,
+    /// Full value-comparison due interval. Failures can delay successful completion.
+    #[serde(default = "full_interval")]
+    pub full_interval_ms: u64,
+}
+fn full_interval() -> u64 {
+    86_400_000
 }
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -152,9 +158,12 @@ impl Config {
             }
         }
         if let Some(atuin) = &self.atuin {
-            if !atuin.path.is_absolute() || !(100..=3_600_000).contains(&atuin.poll_interval_ms) {
+            if !atuin.path.is_absolute()
+                || !(100..=3_600_000).contains(&atuin.poll_interval_ms)
+                || !(100..=604_800_000).contains(&atuin.full_interval_ms)
+            {
                 return Err(
-                    "Atuin requires an absolute path and poll interval 100..=3600000 ms".into(),
+                    "Atuin requires an absolute path, poll interval 100..=3600000 ms and full interval 100..=604800000 ms".into(),
                 );
             }
         }

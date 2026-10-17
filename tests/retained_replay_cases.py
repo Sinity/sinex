@@ -44,6 +44,7 @@ automata = []
 '''+(f'''[atuin]
 path = "{source}"
 poll_interval_ms = 3600000
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''' if acquire else ''))
         if not authority:config.write_text(config.read_text().replace(f'operator_token_file = "{work/"operator-token"}"\n',''))
     configure(True)

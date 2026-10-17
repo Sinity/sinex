@@ -51,6 +51,7 @@ automata = ["session"]
 [atuin]
 path = "{path}"
 poll_interval_ms = 3600000
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 [zsh]
 path = "{zsh}"
 execution_host = "fixture-host:user"

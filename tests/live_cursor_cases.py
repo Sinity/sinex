@@ -33,6 +33,7 @@ automata = []
 [atuin]
 path = "{db}"
 poll_interval_ms = 60000
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''')
     proc = start(config, 'cursor-base')
     samples = (report/'cursor-observations.jsonl').open('w')

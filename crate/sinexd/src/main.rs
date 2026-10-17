@@ -1,5 +1,8 @@
 #[cfg(feature = "runtime")]
 mod atuin;
+#[cfg(any(feature = "runtime", test))]
+#[path = "atuin/guard.rs"]
+mod atuin_guard;
 mod config;
 #[cfg(feature = "runtime")]
 mod output;

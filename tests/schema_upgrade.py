@@ -137,6 +137,7 @@ automata=[]
 '''+(f'''[atuin]
 path="{db}"
 poll_interval_ms=3600000
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''' if sources else ''))
     configure()
     proc=launch([old_binary,'serve','--config',config],'published-population')

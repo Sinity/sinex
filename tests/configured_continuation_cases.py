@@ -80,6 +80,7 @@ roots = ["{PROJECT}"]
 [atuin]
 path = "{source}"
 poll_interval_ms = 1000
+full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''')
     config_hash = hashlib.sha256(config.read_bytes()).hexdigest()
     domain = {'source': 'one configured synthetic Atuin SQLite database', 'schema_columns': COLUMNS,

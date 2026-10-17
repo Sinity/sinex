@@ -231,3 +231,19 @@ continuous workload peak. `tests/recovery_whole_loop_checks.py` checks these
 measurement boundaries, prior-receipt refusals and front-door controls. This
 finite scripted journey establishes no everyday productivity or resource
 advantage, sustained capacity, complete history or full milestone.
+
+
+The [Atuin read plan](docs/rewrite/atuin.md) keeps one verified read-only connection,
+reads new coordinates and prior unfinished native keys between full value
+comparisons, and forces a real full read on reopen or invalidated basis. The
+`atuin_read_plan_acceptance` development operation and
+`atuin_read_plan_package_acceptance PIN_JSON` public operation qualify this
+subset through the existing project-recovery consumer. The package operation
+requires a clean immutable candidate/package/binary pin and never rebuilds or
+falls back. The finite fixture checks exact original envelopes for read unchanged
+values, empty reduced polls, old late completion, due full comparison, failed and
+partial reads, VACUUM/version/path changes, restart and provider loss through CLI,
+MCP and retained citations. Existing full-comparison fixtures explicitly select
+a short full interval; their earlier published evidence remains bound to its
+original source and binaries. Physical snapshots, completed key censuses,
+physical deletion proof and sustained resource acceptance remain unavailable.

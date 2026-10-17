@@ -164,6 +164,30 @@ pub struct Admission {
     observe_atuin_queue: bool,
 }
 impl Admission {
+    pub async fn atuin_read_basis(
+        &self,
+        locator: String,
+    ) -> Result<sinex_model::acquisition::AtuinReadBasis> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::AtuinReadBasis(locator, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
+    pub async fn atuin_unfinished_page(
+        &self,
+        input: Uuid,
+        basis: i64,
+        after: Option<Uuid>,
+    ) -> Result<Vec<(Uuid, String)>> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Command::AtuinUnfinished(input, basis, after, tx))
+            .await
+            .map_err(|_| Error::Stopped)?;
+        rx.await.map_err(|_| Error::Stopped)?
+    }
     pub async fn submit_atuin(&self, step: AtuinStep) -> Result<serde_json::Value> {
         // Explicit synthetic qualification only. Opaque hashes and source record
         // addresses identify a prepared bounded step without logging captured keys.
@@ -300,6 +324,16 @@ enum Command {
         Uuid,
         sinex_model::acquisition::PollSchedule,
         oneshot::Sender<Result<()>>,
+    ),
+    AtuinReadBasis(
+        String,
+        oneshot::Sender<Result<sinex_model::acquisition::AtuinReadBasis>>,
+    ),
+    AtuinUnfinished(
+        Uuid,
+        i64,
+        Option<Uuid>,
+        oneshot::Sender<Result<Vec<(Uuid, String)>>>,
     ),
     Atuin(AtuinStep, oneshot::Sender<Result<serde_json::Value>>),
     Zsh(ZshStep, oneshot::Sender<Result<serde_json::Value>>),
@@ -651,6 +685,12 @@ impl WriterPool {
                 Command::AtuinSchedule(observation, schedule, reply) => {
                     let result = self.schedule_atuin(observation, schedule).await;
                     let _ = reply.send(result);
+                }
+                Command::AtuinReadBasis(locator, reply) => {
+                    let _ = reply.send(self.atuin_read_basis(&locator).await);
+                }
+                Command::AtuinUnfinished(input, basis, after, reply) => {
+                    let _ = reply.send(self.atuin_unfinished_page(input, basis, after).await);
                 }
                 Command::Atuin(step, reply) => {
                     let result = self.admit_atuin(step).await;
