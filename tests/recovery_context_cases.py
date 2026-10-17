@@ -240,8 +240,14 @@ poll_interval_ms = 1000
                     run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',sql],label='owned '+label+' current-parent control '+value)
                 state('archived')
                 try:
-                    status=api()['result'];index=status['indexed_retrieval']
-                    assert index['pending_canonical']==0 and index['pending_sessions']==0 and index['position']==status['commit_seq'] and index['serving']
+                    def caught_up():
+                        status=api()['result'];index=status['indexed_retrieval']
+                        # Poll observations may independently advance the commit
+                        # position. Compare the index's same-statement frontier,
+                        # rather than assuming a wall-clock quiescent collector.
+                        return status if index['pending_canonical']==0 and index['pending_sessions']==0 and index['position']==index['current_commit_seq'] and index['serving'] else None
+                    status=wait('current-parent control projection caught up',caught_up)
+                    assert status['indexed_retrieval']['generation']==original['resolved']['generation']
                     shown=cli('show','sinex:ev/'+header['id'])['row'];assert shown['current_eligible'] is False
                     refused=cli('recall','last','--project','tide',expected=5);assert 'ineligible current parents' in json.dumps(refused)
                     agent=tool(error=True);assert 'ineligible current parents' in json.dumps(agent)
