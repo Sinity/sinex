@@ -1,4 +1,7 @@
 //! JSON-RPC boundary for the implemented foundation. Future product routes are not registered here.
+pub use sinex_model::retrieval::{
+    ProjectEvidence, SessionProjectAttribution, UnknownProjectMember,
+};
 pub mod rpc {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;

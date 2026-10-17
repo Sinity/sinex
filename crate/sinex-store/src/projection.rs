@@ -43,13 +43,7 @@ impl Projection {
         if !owned {
             return Err(Error::Invalid("read model already owned"));
         }
-        let configuration = blake3::hash(
-            serde_json::to_string(&(CONTRACT, &projects, caseless_version()))
-                .unwrap()
-                .as_bytes(),
-        )
-        .to_hex()
-        .to_string();
+        let configuration = configuration(&projects);
         let mut tx = connection.begin().await?;
         let existing: Option<String> = sqlx::query_scalar(
             "SELECT configuration FROM derivation.read_model_position WHERE name='shell-search'",
@@ -243,4 +237,15 @@ impl Owner {
         self.step += 1;
         Ok(more || next != position)
     }
+}
+
+// The reader binds own-cwd attribution to the exact same configured projection.
+pub(crate) fn configuration(projects: &[Project]) -> String {
+    blake3::hash(
+        serde_json::to_string(&(CONTRACT, projects, caseless_version()))
+            .unwrap()
+            .as_bytes(),
+    )
+    .to_hex()
+    .to_string()
 }

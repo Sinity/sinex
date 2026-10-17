@@ -308,3 +308,20 @@ pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
 cache = "none"
+
+[operations.recovery_context_acceptance]
+description = "Bounded mixed-context project recall through configured Atuin, actual development CLI/MCP and isolated PostgreSQL"
+exec = ["python3", "tests/foundation.py", "--recovery-context"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"
+
+[operations.recovery_context_package_acceptance]
+description = "Mixed-context recall through an explicitly pinned package and actual CLI/MCP; no rebuild or fallback"
+exec = ["python3", "tests/foundation.py", "--recovery-context", "--packaged"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"
