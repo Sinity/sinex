@@ -8,6 +8,16 @@ kind = "nix-develop"
 command = ["nix", "develop", "--command"]
 inherit = ["HOME", "USER", "LANG", "PATH", "XDG_RUNTIME_DIR"]
 unset = ["DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
+[operations.foundation_exec]
+description = "Run an explicit command in the pinned Sinex development shell"
+exec = ["env"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 1800
+scratch = "nvme"
+cache = "none"
+
 [operations.foundation_build]
 description = "Build query-free schema/admin foundation"
 exec = ["cargo", "build", "-p", "sinexd", "--no-default-features"]
