@@ -152,12 +152,18 @@ impl ReadPool {
                     "recall candidate inspection exceeds 128 sessions; bounded answer unavailable",
                 ));
             }
-            let count: i32 = sqlx::query_scalar(
-                "SELECT cardinality(source_event_ids) FROM core.live_events WHERE id=$1",
-            )
-            .bind(id)
-            .fetch_one(&mut *tx)
-            .await?;
+            // A pending ledger or caught-up projection cannot replace the
+            // read owner's current-parent fence. Refuse instead of losing a
+            // missing member in a JOIN or falling through to an older session.
+            let candidate = sqlx::query(&format!(
+                "SELECT cardinality(e.source_event_ids) AS members,e.record_state='present' AND {} AS current_eligible FROM core.live_events e WHERE e.id=$1", crate::query::CURRENT_PARENTS))
+                .bind(id).fetch_one(&mut *tx).await?;
+            if !candidate.try_get::<bool, _>("current_eligible")? {
+                return Err(Error::ProjectionUnavailable(
+                    "recall candidate has ineligible current parents; whole-session answer unavailable; inspect retained show/trace",
+                ));
+            }
+            let count: i32 = candidate.try_get("members")?;
             inspected_members += count as usize;
             if inspected_members > 8192 {
                 return Err(Error::ProjectionUnavailable(

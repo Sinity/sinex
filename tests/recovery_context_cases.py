@@ -11,7 +11,8 @@ from session_cases import COLUMNS, independent
 PLANNED = ['mixed context, positive selection and unresolved evidence through CLI MCP',
     'late cross-day bridge and unchanged polls preserve independent spans and citations',
     'later arrival, current configuration transition and restart provider loss',
-    'whole-session and candidate overflow refuse through CLI MCP']
+    'whole-session and candidate overflow refuse through CLI MCP',
+    'current canonical and raw parent fences refuse without older fallback']
 
 
 def fixture_row(identity, clock, cwd, duration=0):
@@ -224,6 +225,27 @@ poll_interval_ms = 1000
             wait('restart ready',lambda:api() if daemon.poll() is None else None)
             wait('restart settled',settled)
         scenario(PLANNED[2],continuation)
+        def current_fence():
+            original=cli('recall','last','--project','tide');header=original['session'];canonical=original['rows'][0]
+            assert canonical['payload']['native_id']=='later-positive'
+            for label,event in [('raw',canonical['parents'][0]),('canonical',canonical['id'])]:
+                # A deliberate read-boundary control, not a supported mutation
+                # route: keep seq/config/dirty unchanged while invalidating one
+                # exact synthetic parent. This distinguishes the parent guard
+                # from an incidental pending-ledger refusal.
+                def state(value):
+                    run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',f"UPDATE core.events SET record_state='{value}' WHERE id='{event}'::uuid"],label='owned '+label+' current-parent control '+value)
+                state('removed')
+                try:
+                    status=api()['result'];index=status['indexed_retrieval']
+                    assert index['pending_canonical']==0 and index['pending_sessions']==0 and index['position']==status['commit_seq'] and index['serving']
+                    shown=cli('show','sinex:ev/'+header['id'])['row'];assert shown['current_eligible'] is False
+                    refused=cli('recall','last','--project','tide',expected=5);assert 'ineligible current parents' in json.dumps(refused)
+                    agent=tool(error=True);assert 'ineligible current parents' in json.dumps(agent)
+                    save('current-'+label+'-fence.json',{'control':'owned direct read-boundary invalidation; no writer-recovery claim','status':status,'old_header':header,'current_show':shown,'CLI':refused,'MCP':agent})
+                finally:state('present')
+                restored=cli('recall','last','--project','tide');assert restored['session']['id']==header['id'] and restored['rows']==original['rows']
+        scenario(PLANNED[4],current_fence)
         def overflow():
             # 101 direct members remain a supported session but cannot be assembled.
             rows=[fixture_row('large-'+str(n),'09:00:00','/work/tide') for n in range(101)];facts.extend(rows);fill(rows)

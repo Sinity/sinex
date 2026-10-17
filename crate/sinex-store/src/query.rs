@@ -10,7 +10,7 @@ pub(crate) const EVENT_VIEW: &str = "jsonb_build_object('id',e.id,'source',e.sou
 
 // The selected derived chain is session -> canonical -> retained observation.
 // Both levels are current eligibility fences during bounded replacement.
-const CURRENT_PARENTS: &str = "NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) parent(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events p WHERE p.id=parent.id AND p.record_state='present' AND NOT EXISTS(SELECT 1 FROM unnest(p.source_event_ids) grand(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=grand.id AND raw.record_state='present'))))";
+pub(crate) const CURRENT_PARENTS: &str = "NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) parent(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events p WHERE p.id=parent.id AND p.record_state='present' AND NOT EXISTS(SELECT 1 FROM unnest(p.source_event_ids) grand(id) WHERE NOT EXISTS(SELECT 1 FROM core.live_events raw WHERE raw.id=grand.id AND raw.record_state='present'))))";
 
 #[derive(Debug, Clone)]
 pub struct QueryError(pub &'static str);

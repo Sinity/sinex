@@ -129,7 +129,11 @@ never becomes a complete empty session answer. Broad raw `events` reads list
 admitted interpretation rows and disclose session enablement/pending metadata.
 Included configured derived families must be settled for `complete: true`;
 retained `show`/`trace` remains available independently of enablement. Current
-session eligibility checks both canonical parents and retained grandparents.
+session eligibility checks both canonical parents and retained grandparents. Recall
+shares that current-parent predicate with raw reads and show, and refuses an
+ineligible inspected candidate before assembling context or selecting an older
+positive session, even when projection position is caught up and no dirty work is
+recorded. Missing parents cannot turn into a smaller complete member summary.
 Ordinary recall briefly waits up to the indexed owner's existing 500ms settling
 window when the indexed projection has not reached the current commit position,
 within the request deadline. Pending session or fusion work refuses immediately.
@@ -175,7 +179,11 @@ journey or claim continuous coverage.
 configured synthetic Atuin collector and ordinary CLI/MCP, with independent spans,
 labels, exact retained citations, late cross-day replacement, unchanged and later
 polls, configuration reconstruction, restart/provider loss and whole-session and
-candidate overflow. `recovery_context_package_acceptance -- --package-pin FILE`
+candidate overflow. A separate owned read-boundary control invalidates exact raw
+and canonical parents without changing seq/config/dirty state, proves show-currentness
+and ordinary CLI/MCP refusal, and restores the original synthetic state. It isolates
+the read fence and does not claim writer recovery for an administrative mutation.
+`recovery_context_package_acceptance -- --package-pin FILE`
 requires the exact immutable clean package binding and never builds or falls back.
 The same-phase SQLite comparison retains equal answers and client processing,
 while provider-loss retention remains separate. This finite route does not qualify
