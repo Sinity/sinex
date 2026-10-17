@@ -17,6 +17,31 @@ use uuid::Uuid;
 mod rows;
 use rows::ProviderRows;
 
+// This distinction owns durable fencing; diagnostic text has no authority.
+#[derive(Debug)]
+enum PollFailure {
+    Unavailable(String),
+    ReconciliationRequired(&'static str),
+}
+impl From<String> for PollFailure {
+    fn from(reason: String) -> Self {
+        Self::Unavailable(reason)
+    }
+}
+impl From<&str> for PollFailure {
+    fn from(reason: &str) -> Self {
+        Self::Unavailable(reason.to_owned())
+    }
+}
+impl PollFailure {
+    fn into_outcome(self) -> (String, bool) {
+        match self {
+            Self::Unavailable(reason) => (reason, false),
+            Self::ReconciliationRequired(reason) => (reason.to_owned(), true),
+        }
+    }
+}
+
 pub struct Attempt {
     observation: Uuid,
     basis: ReadBasis,
@@ -72,8 +97,8 @@ pub async fn run(
             &mut qualification,
         )
         .await;
-        if let Err(reason) = result {
-            let fence = reason.contains("reconciliation required");
+        if let Err(failure) = result {
+            let (reason, fence) = failure.into_outcome();
             custodian = None;
             full_due = None;
             snapshot_due = None;
@@ -323,11 +348,11 @@ async fn poll(
     admission: &Admission,
     stop: &tokio::sync::watch::Receiver<bool>,
     qualification: &mut Option<sinex_store::QualificationBoundary>,
-) -> Result<(), String> {
+) -> Result<(), PollFailure> {
     if attempt.basis.reconciliation_required {
-        return Err(
-            "configured browser generation is fenced; explicit reconciliation required".into(),
-        );
+        return Err(PollFailure::ReconciliationRequired(
+            "configured browser generation is fenced; explicit reconciliation required",
+        ));
     }
     if custodian.is_none() {
         *custodian = Some(
@@ -345,10 +370,9 @@ async fn poll(
     if previous
         .is_some_and(|p| p.generation != config.database_generation || p.identity != owner.identity)
     {
-        return Err(
-            "History identity differs from declared generation; explicit reconciliation required"
-                .into(),
-        );
+        return Err(PollFailure::ReconciliationRequired(
+            "History identity differs from declared generation; explicit reconciliation required",
+        ));
     }
     let identity = owner.identity.clone();
     let epoch = owner.epoch;
@@ -462,7 +486,9 @@ async fn poll(
             .map_err(|_| "Chromium visit sequence unavailable")?;
     let sequence = sequence.unwrap_or(0);
     if previous.is_some_and(|p| sequence < p.visits_sequence) {
-        return Err("Chromium visit sequence reset under declared generation; explicit reconciliation required".into());
+        return Err(PollFailure::ReconciliationRequired(
+            "Chromium visit sequence reset under declared generation; explicit reconciliation required",
+        ));
     }
     let full = due(previous, epoch, schema, *full_due);
     // On a newly opened reader the persisted wall target supplies only a

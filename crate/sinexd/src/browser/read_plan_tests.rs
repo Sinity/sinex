@@ -65,3 +65,21 @@ fn backward_wall_target_never_postpones_elapsed_monotonic_full() {
         mono
     );
 }
+
+#[test]
+fn failure_kind_controls_fence_independently_of_diagnostic_prose() {
+    let ordinary =
+        PollFailure::from("provider says reconciliation required; retry later".to_owned());
+    assert_eq!(
+        ordinary.into_outcome(),
+        (
+            "provider says reconciliation required; retry later".to_owned(),
+            false
+        )
+    );
+    let fenced = PollFailure::ReconciliationRequired("declared basis changed");
+    assert_eq!(
+        fenced.into_outcome(),
+        ("declared basis changed".to_owned(), true)
+    );
+}
