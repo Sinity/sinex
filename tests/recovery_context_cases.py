@@ -2,6 +2,7 @@
 import datetime as dt
 import json
 import select
+import socket
 import sqlite3
 import subprocess
 import time
@@ -39,7 +40,7 @@ def exercise(h):
     run,scenario,start,stop=(h[k] for k in ['run','scenario','start_daemon','stop'])
     endpoint=f'http://127.0.0.1:{h["free_port"]()}/rpc'
     source,config=work/'recovery.db',work/'recovery.toml'
-    facts=fixture();daemon=mcp=None;identifier=0;metrics=[];calls=[];transport=[]
+    facts=fixture();daemon=mcp=None;identifier=0;metrics=[];calls=[];transport=[];restarts=0
     token=(work/'token').read_text()
     baseline_samples=[]
     read_model=work/'recovery-read-model'
@@ -220,40 +221,56 @@ poll_interval_ms = 1000
             absent=qualify('provider-loss-retained');assert absent['session']['id']==oldid and absent['complete'] is False;save('provider-loss.json',absent)
             stop(daemon);(work/'provider-removed.db').rename(source);restart()
         def restart(retained=False):
-            nonlocal daemon
-            daemon=start(config,'recovery-restarted')
+            nonlocal daemon,restarts
+            restarts+=1
+            daemon=start(config,'recovery-restarted-'+str(restarts))
             wait('restart ready',lambda:api() if daemon.poll() is None else None)
             wait('restart settled',settled)
         scenario(PLANNED[2],continuation)
         def current_fence():
-            original=cli('recall','last','--project','tide');header=original['session'];canonical=original['rows'][0]
-            assert canonical['payload']['native_id']=='later-positive'
-            for label,event in [('raw',canonical['parents'][0]),('canonical',canonical['id'])]:
-                # A deliberate read-boundary control, not a supported mutation
-                # route: keep seq/config/dirty unchanged while invalidating one
-                # exact synthetic parent through reversible archive state. Event
-                # rows and their immutability guard remain untouched.
-                # This distinguishes the parent guard
-                # from an incidental pending-ledger refusal.
-                def state(value):
-                    sql=(f"INSERT INTO audit.archived(id,archived_seq,reason) SELECT '{event}'::uuid,seq,'supersede' FROM core.commit_counter WHERE one" if value=='archived' else f"DELETE FROM audit.archived WHERE id='{event}'::uuid")
-                    run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',sql],label='owned '+label+' current-parent control '+value)
-                state('archived')
-                try:
-                    def caught_up():
-                        status=api()['result'];index=status['indexed_retrieval']
-                        # Poll observations may independently advance the commit
-                        # position. Compare the index's same-statement frontier,
-                        # rather than assuming a wall-clock quiescent collector.
-                        return status if index['pending_canonical']==0 and index['pending_sessions']==0 and index['position']==index['current_commit_seq'] and index['serving'] else None
-                    status=wait('current-parent control projection caught up',caught_up)
-                    assert status['indexed_retrieval']['generation']==original['resolved']['generation']
-                    shown=cli('show','sinex:ev/'+header['id'])['row'];assert shown['current_eligible'] is False
-                    refused=cli('recall','last','--project','tide',expected=5);assert 'ineligible current parents' in json.dumps(refused)
-                    agent=tool(error=True);assert 'ineligible current parents' in json.dumps(agent)
-                    save('current-'+label+'-fence.json',{'control':'owned direct read-boundary invalidation; no writer-recovery claim','status':status,'old_header':header,'current_show':shown,'CLI':refused,'MCP':agent})
-                finally:state('restored')
-                restored=cli('recall','last','--project','tide');assert restored['session']['id']==header['id'] and restored['rows']==original['rows']
+            nonlocal daemon
+            stop(daemon)
+            controller=socket.socket(socket.AF_UNIX);controller.bind(str(work/'current-parent.sock'));controller.listen(1);controller.settimeout(30)
+            daemon=start(config,'recovery-parent-fence','--qualification-boundary','collector-scheduled','--qualification-socket',work/'current-parent.sock')
+            held,_=controller.accept();held.settimeout(5)
+            frame=json.loads(held.makefile('rb').readline());assert frame['pid']==daemon.pid
+            save('current-parent-collector-frame.json',frame)
+            try:
+                # The existing rendezvous holds only the collector after its
+                # completed observation and schedule commit. Readers, writer and
+                # derived maintenance remain responsive on the same configuration.
+                wait('held collector settled',settled)
+                original=cli('recall','last','--project','tide');header=original['session'];canonical=original['rows'][0]
+                assert canonical['payload']['native_id']=='later-positive'
+                for label,event in [('raw',canonical['parents'][0]),('canonical',canonical['id'])]:
+                    # A deliberate read-boundary control, not a supported mutation
+                    # route: keep seq/config/dirty unchanged while invalidating one
+                    # exact synthetic parent through reversible archive state. Event
+                    # rows and their immutability guard remain untouched.
+                    # This distinguishes the parent guard
+                    # from an incidental pending-ledger refusal.
+                    def state(value):
+                        sql=(f"INSERT INTO audit.archived(id,archived_seq,reason) SELECT '{event}'::uuid,seq,'supersede' FROM core.commit_counter WHERE one" if value=='archived' else f"DELETE FROM audit.archived WHERE id='{event}'::uuid")
+                        run(['psql',h['admin'],'-XAt','-v','ON_ERROR_STOP=1','-c',sql],label='owned '+label+' current-parent control '+value)
+                    state('archived')
+                    try:
+                        def caught_up():
+                            status=api()['result'];index=status['indexed_retrieval']
+                            # Poll observations may independently advance the commit
+                            # position. Compare the index's same-statement frontier,
+                            # rather than assuming a wall-clock quiescent collector.
+                            return status if index['pending_canonical']==0 and index['pending_sessions']==0 and index['position']==index['current_commit_seq'] and index['serving'] else None
+                        status=wait('current-parent control projection caught up',caught_up)
+                        assert status['indexed_retrieval']['generation']==original['resolved']['generation']
+                        shown=cli('show','sinex:ev/'+header['id'])['row'];assert shown['current_eligible'] is False
+                        refused=cli('recall','last','--project','tide',expected=5);assert 'ineligible current parents' in json.dumps(refused)
+                        agent=tool(error=True);assert 'ineligible current parents' in json.dumps(agent)
+                        save('current-'+label+'-fence.json',{'control':'owned direct read-boundary invalidation; no writer-recovery claim','status':status,'old_header':header,'current_show':shown,'CLI':refused,'MCP':agent})
+                    finally:state('restored')
+                    restored=cli('recall','last','--project','tide');assert restored['session']['id']==header['id'] and restored['rows']==original['rows']
+            finally:
+                try:held.sendall(b'c')
+                finally:held.close();controller.close()
         scenario(PLANNED[4],current_fence)
         def overflow():
             # 101 direct members remain a supported session but cannot be assembled.

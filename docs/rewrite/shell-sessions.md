@@ -180,7 +180,10 @@ configured synthetic Atuin collector and ordinary CLI/MCP, with independent span
 labels, exact retained citations, late cross-day replacement, unchanged and later
 polls, configuration reconstruction, restart/provider loss and whole-session and
 candidate overflow. A separate owned read-boundary control invalidates exact raw
-and canonical parents without changing seq/config/dirty state, proves show-currentness
+and canonical parents without changing seq/config/dirty state. The existing
+`collector-scheduled` rendezvous holds only the collector after an observed completed
+poll, keeping that read fixture quiescent while the writer and readers remain active.
+The control proves show-currentness
 and ordinary CLI/MCP refusal, and restores the original synthetic state. It isolates
 the read fence and does not claim writer recovery for an administrative mutation.
 `recovery_context_package_acceptance -- --package-pin FILE`
