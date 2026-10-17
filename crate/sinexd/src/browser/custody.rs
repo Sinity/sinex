@@ -21,6 +21,31 @@ use std::{
 };
 use uuid::Uuid;
 
+// This distinction owns durable fencing; diagnostic text has no authority.
+#[derive(Debug)]
+pub(super) enum Failure {
+    Unavailable(String),
+    ReconciliationRequired(&'static str),
+}
+impl From<String> for Failure {
+    fn from(reason: String) -> Self {
+        Self::Unavailable(reason)
+    }
+}
+impl From<&str> for Failure {
+    fn from(reason: &str) -> Self {
+        Self::Unavailable(reason.to_owned())
+    }
+}
+impl Failure {
+    pub(super) fn into_outcome(self) -> (String, bool) {
+        match self {
+            Self::Unavailable(reason) => (reason, false),
+            Self::ReconciliationRequired(reason) => (reason.to_owned(), true),
+        }
+    }
+}
+
 unsafe extern "C" {
     fn sqlite3_backup_init(
         dest: *mut c_void,
@@ -98,13 +123,15 @@ fn pair(path: &Path) -> Result<Pair, String> {
         wal: optional_stamp(&sidecar(path, "-wal"))?,
     })
 }
-fn check_handle(file: &File, configured: &Path, identity: &FileIdentity) -> Result<(), String> {
+fn check_handle(file: &File, configured: &Path, identity: &FileIdentity) -> Result<(), Failure> {
     let m = file
         .metadata()
         .map_err(|_| "open source file unavailable")?;
     let current = stamp(configured)?;
     if m.dev() != identity.device || m.ino() != identity.inode || &current.identity != identity {
-        return Err("configured source no longer matches the opened file; explicit generation reconciliation required".into());
+        return Err(Failure::ReconciliationRequired(
+            "configured source no longer matches the opened file; explicit generation reconciliation required",
+        ));
     }
     Ok(())
 }
@@ -314,7 +341,7 @@ pub(super) struct Custodian {
     sequence: u64,
 }
 impl Custodian {
-    pub async fn new(configured: &Path, root: PathBuf) -> Result<Self, String> {
+    pub async fn new(configured: &Path, root: PathBuf) -> Result<Self, Failure> {
         let identity = stamp(configured)?.identity;
         let file = File::open(configured).map_err(|_| "History file unavailable")?;
         check_handle(&file, configured, &identity)?;
@@ -355,7 +382,7 @@ impl Custodian {
             sequence: 0,
         })
     }
-    pub fn verify(&self) -> Result<(), String> {
+    pub fn verify(&self) -> Result<(), Failure> {
         check_handle(&self.file, &self.configured, &self.identity)
     }
     pub fn next_path(&mut self, prefix: &str) -> PathBuf {
@@ -367,7 +394,7 @@ impl Custodian {
         &mut self,
         stop: &tokio::sync::watch::Receiver<bool>,
         qualification: &mut Option<sinex_store::QualificationBoundary>,
-    ) -> Result<(PathBuf, Value), String> {
+    ) -> Result<(PathBuf, Value), Failure> {
         let mut last = "locked History copy unavailable".to_string();
         for attempt in 0..5 {
             stopped(stop)?;
@@ -468,9 +495,7 @@ impl Custodian {
                 tokio::select! {_ = tokio::time::sleep(Duration::from_secs(1<<attempt))=>{},_ = async {let mut stop=stop.clone();let _=stop.changed().await;}=>return Err("browser acquisition cancelled".into())}
             }
         }
-        Err(format!(
-            "busy_skipped after five verified-copy attempts: {last}"
-        ))
+        Err(format!("busy_skipped after five verified-copy attempts: {last}").into())
     }
 }
 impl Drop for Custodian {

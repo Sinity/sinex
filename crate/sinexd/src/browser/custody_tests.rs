@@ -160,3 +160,28 @@ async fn cancellation_prevents_backup_completion() {
     );
     source.close().await.unwrap();
 }
+
+#[test]
+fn opened_file_replacement_requires_reconciliation_but_absence_is_unavailable() {
+    let f = Fixture::new();
+    let path = f.0.join("History");
+    std::fs::write(&path, b"original").unwrap();
+    let identity = stamp(&path).unwrap().identity;
+    let file = File::open(&path).unwrap();
+    std::fs::rename(&path, f.0.join("held")).unwrap();
+    std::fs::write(&path, b"replacement").unwrap();
+    let (reason, fence) = check_handle(&file, &path, &identity)
+        .unwrap_err()
+        .into_outcome();
+    assert!(fence);
+    assert_eq!(
+        reason,
+        "configured source no longer matches the opened file; explicit generation reconciliation required"
+    );
+    std::fs::remove_file(&path).unwrap();
+    let (reason, fence) = check_handle(&file, &path, &identity)
+        .unwrap_err()
+        .into_outcome();
+    assert!(!fence);
+    assert_eq!(reason, "source file metadata unavailable");
+}

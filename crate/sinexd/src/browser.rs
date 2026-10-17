@@ -1,5 +1,8 @@
 //! Configured Chromium History reading. Browser evidence never enters shell derivation.
-use crate::{config::ChromiumConfig, sqlite_custody::Custodian};
+use crate::{
+    config::ChromiumConfig,
+    sqlite_custody::{Custodian, Failure as PollFailure},
+};
 use serde_json::{Value, json};
 use sinex_model::browser::{Checkpoint, ReadBasis};
 use sinex_store::{
@@ -16,31 +19,6 @@ use uuid::Uuid;
 #[path = "browser/rows.rs"]
 mod rows;
 use rows::ProviderRows;
-
-// This distinction owns durable fencing; diagnostic text has no authority.
-#[derive(Debug)]
-enum PollFailure {
-    Unavailable(String),
-    ReconciliationRequired(&'static str),
-}
-impl From<String> for PollFailure {
-    fn from(reason: String) -> Self {
-        Self::Unavailable(reason)
-    }
-}
-impl From<&str> for PollFailure {
-    fn from(reason: &str) -> Self {
-        Self::Unavailable(reason.to_owned())
-    }
-}
-impl PollFailure {
-    fn into_outcome(self) -> (String, bool) {
-        match self {
-            Self::Unavailable(reason) => (reason, false),
-            Self::ReconciliationRequired(reason) => (reason.to_owned(), true),
-        }
-    }
-}
 
 pub struct Attempt {
     observation: Uuid,
