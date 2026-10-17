@@ -20,6 +20,14 @@ PLANNED = ['mixed context, positive selection and unresolved evidence through CL
     'current canonical and raw parent fences refuse without older fallback', ACCOUNTING]
 
 
+WHOLE_UNCHANGED = 'completed unchanged polling preserves the repeated recovery answer'
+WHOLE_CONTINUATION = 'later arrival, compatible restart and continuous provider loss'
+WHOLE_READING = 'observed active reading and retained recovery question'
+
+def planned(whole=False):
+    return PLANNED[:2]+[WHOLE_CONTINUATION,WHOLE_UNCHANGED,WHOLE_READING] if whole else PLANNED
+
+
 def fixture_row(identity, clock, cwd, duration=0):
     timestamp = int(dt.datetime.fromisoformat('2026-10-13T'+clock+'+02:00').timestamp())*1_000_000_000+123
     return dict(zip(COLUMNS, [identity,timestamp,duration,0,'echo recovery '+identity,cwd,'fixture-shell','fixture-host',None]))
@@ -45,6 +53,15 @@ def exercise(h):
     endpoint=f'http://127.0.0.1:{h["free_port"]()}/rpc'
     source,config=work/'recovery.db',work/'recovery.toml'
     facts=fixture();daemon=mcp=None;identifier=0;metrics=[];calls=[];transport=[];restarts=0
+    whole=bool(h['OPTIONS'].recovery_prior_accounting)
+    journey_started=time.monotonic();interventions=[];costs=[];reuse=None
+    def intervention(kind, **details):
+        interventions.append(dict(kind=kind,elapsed_seconds=time.monotonic()-journey_started,**details))
+    if whole:
+        from recovery_costs import phase_snapshot, reuse_accounting
+        reuse=reuse_accounting(h['OPTIONS'].recovery_prior_accounting,h['PREBUILT_PIN']['pin'])
+        (report/'reused-accounting.json').write_text(json.dumps(reuse,indent=2)+'\n')
+        intervention('owned fixture setup',scope='isolated PostgreSQL and synthetic provider/configuration; package selection/bootstrap receipts in result.json; no live state')
     token=(work/'token').read_text()
     baseline_samples=[]
     read_model=work/'recovery-read-model'
@@ -54,8 +71,10 @@ def exercise(h):
 
     def save(name,value): (report/name).write_text(json.dumps(value,indent=2)+'\n')
     def fill(rows):
+        began=time.monotonic()
         with sqlite3.connect(source) as con:con.executemany('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',[[r[c] for c in COLUMNS] for r in rows])
         save('independent-inputs.json',facts)
+        if whole:intervention('synthetic producer commit',rows=len(rows),commit_seconds=time.monotonic()-began)
     def configure(extra=''):
         config.write_text(f'''listen = "{endpoint.removeprefix('http://').removesuffix('/rpc')}"
 state_dir = "{work/'recovery-state'}"
@@ -89,12 +108,12 @@ poll_interval_ms = 3000
     def api(method='status',params=None):
         req=urllib.request.Request(endpoint,data=json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params or {}}).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
         with urllib.request.urlopen(req,timeout=12) as response:body=response.read();answer=json.loads(body)
-        transport.append({'channel':'API','role':'qualification polling or validation','method':method,'response_body_bytes':len(body)})
+        transport.append({'elapsed_seconds':time.monotonic()-journey_started,'channel':'API','role':'qualification polling or validation','method':method,'response_body_bytes':len(body)})
         with (report/'api.jsonl').open('a') as log:log.write(json.dumps({'method':method,'params':params,'response':answer})+'\n')
         return answer
     def cli(command,*args,expected=(0,5)):
         result=run([bins/'sinexctl','--endpoint',endpoint,'--token-file',work/'token',command,*args,'--json'],expected=expected,label='recovery '+command)
-        answer=json.loads(result.stdout or result.stderr);calls.append({'command':command,'args':list(args),'bytes':len(result.stdout.encode()),'expected_exit':expected})
+        answer=json.loads(result.stdout or result.stderr);calls.append({'command':command,'args':list(args),'bytes':len(result.stdout.encode()),'expected_exit':expected,'stderr_bytes':len(result.stderr.encode()),'role':'recovery question' if command=='recall' and list(args)==['last','--project','tide'] else 'qualification/citation','elapsed_seconds':time.monotonic()-journey_started})
         return answer
     def invoke(method,params):
         nonlocal identifier
@@ -104,7 +123,7 @@ poll_interval_ms = 3000
         while True:
             ready,_,_=select.select([mcp.stdout],[],[],max(0,until-time.monotonic()));assert ready,'MCP deadline'
             body=mcp.stdout.readline();response=json.loads(body)
-            transport.append({'channel':'MCP','method':method,'response_line_bytes':len(body.encode())})
+            transport.append({'elapsed_seconds':time.monotonic()-journey_started,'role':'recovery question' if method=='tools/call' and params.get('name')=='sinex_recall' and params.get('arguments')=={'project':'tide'} else 'qualification/discovery','channel':'MCP','method':method,'response_line_bytes':len(body.encode())})
             with (report/'mcp.jsonl').open('a') as log:log.write(json.dumps({'request':request,'response':response})+'\n')
             if response.get('id')==identifier:return response
     def tool(project='tide',error=False):
@@ -138,6 +157,7 @@ poll_interval_ms = 3000
     def expected_group():
         return next(g for g in reversed(independent(facts)) if any(r['id'] in g['parents'] and r['cwd'].startswith('/work/tide/') or r['id'] in g['parents'] and r['cwd']=='/work/tide' for r in facts))
     def qualify(label):
+        call_start=len(calls);transport_start=len(transport)
         began=time.monotonic();answer=cli('recall','last','--project','tide');agent=tool();elapsed=time.monotonic()-began
         assert answer['session']==agent['session'] and answer['rows']==agent['rows'] and answer['attribution']==agent['attribution'] and answer['newer_unresolved_candidates']==agent['newer_unresolved_candidates']
         expected=expected_group();rows=answer['rows'];names=sorted(r['payload']['native_id'] for r in rows)
@@ -174,10 +194,18 @@ poll_interval_ms = 3000
             baseline_groups=independent(provider_rows)
             baseline_selected=next(g for g in reversed(baseline_groups) if any(r['id'] in g['parents'] and (r['cwd']=='/work/tide' or r['cwd'].startswith('/work/tide/')) for r in provider_rows))
             assert baseline_selected==expected
-            baseline_samples.append({'phase':label,'SQLite_calls':1,'rows':len(provider_rows),'returned_bytes':len(json.dumps(provider_rows).encode()),'read_and_independent_assembly_seconds':time.monotonic()-baseline_started,'selected_native_ids':baseline_selected['parents'],'same_selected_answer':True,'limits':'scripted finite assembly, no model effort or historical completeness claim'})
+            baseline_samples.append({'phase':label,'SQLite_calls':1,'rows':len(provider_rows),'returned_bytes':len(json.dumps(provider_rows).encode()),'read_and_independent_assembly_seconds':time.monotonic()-baseline_started,'selected_native_ids':baseline_selected['parents'],'same_selected_answer':True,'independent_groups':baseline_groups,'own_cwd_labels':{r['id']:('unknown' if not r['cwd'] or '/..' in r['cwd'] or r['cwd']=='/work/ambiguous' else 'known:tide' if r['cwd']=='/work/tide' or r['cwd'].startswith('/work/tide/') else 'known:other' if r['cwd']=='/work/other' or r['cwd'].startswith('/work/other/') else 'unconfigured') for r in provider_rows},'limits':'scripted finite assembly, no model effort or historical completeness claim'})
             save('provider-comparison-phases.json',baseline_samples)
         save(label+'.json',{'CLI':answer,'MCP':agent,'trace':trace,'independent_groups':independent(facts)})
         metrics.append({'phase':label,'CLI_plus_MCP_plus_trace_seconds':time.monotonic()-began,'CLI_MCP_recall_seconds':elapsed,'retained_bytes':sum(p.stat().st_size for p in (work/'recovery-blobs').rglob('*') if p.is_file()),'rows':len(facts)})
+        if whole:
+            validated_duration=time.monotonic()-began
+            snapshot=phase_snapshot(h,label,daemon,journey_started,calls,transport,interventions)
+            snapshot.update(question_elapsed_seconds=elapsed,validated_answer_seconds=validated_duration,
+                phase_CLI_calls=calls[call_start:],phase_API_MCP_calls=transport[transport_start:],
+                provider_baseline=baseline_samples[-1] if source.exists() else {'available':False,'reason':'configured provider path absent; no empty answer substituted'})
+            snapshot['source']=api('sources.list')['result']['sources'][0]
+            costs.append(snapshot);save('whole-loop-phases.json',costs)
         return answer
     try:
         fill(facts);configure()
@@ -252,9 +280,13 @@ poll_interval_ms = 3000
             lines+=['','Logical source JSONL includes row serialization and newline bytes. Acquisition envelope extra is the exact incremental serialization of `_from`; encoding frame bytes include compressed content and zstd framing/checksum. The owner decoder does not separately expose verified seek-metadata bytes, so that finer split remains unknown. There is no additive attribution of compressed bytes to individual JSON fields.','',
                 'Event IDs, retained event coordinates, canonical rows, session and projection generation remain stable. Observation IDs, acquisition envelopes, material/blob identities and source counters change. Exact blobs and decoded JSONL are preserved privately. The historical 1048/2687/3802 aggregate has no retained per-file manifest and is not retrospectively decomposed. This finite run measures file lengths, not physical IO, allocated blocks, RSS, sustained capacity or everyday benefit.']
             (report/'retention-accounting.md').write_text('\n'.join(lines)+'\n')
-        scenario(ACCOUNTING,accounting)
+        if whole:
+            intervention('collector start',configuration_sha256=hashlib.sha256(config.read_bytes()).hexdigest())
+            daemon=start(config,'recovery');wait('startup',lambda:api() if daemon.poll() is None else None);wait('baseline settled',settled);discover()
+        else:scenario(ACCOUNTING,accounting)
         def initial():
             answer=qualify('initial')
+            if whole:return
             atuin_config=work/'atuin-baseline-config';atuin_config.mkdir()
             atuin_copy=work/'atuin-baseline.db'
             with sqlite3.connect(source.as_uri()+'?mode=ro',uri=True) as original, sqlite3.connect(atuin_copy) as copy:original.backup(copy)
@@ -280,6 +312,38 @@ poll_interval_ms = 3000
             invalid=cli('recall','last','--project','not-registered',expected=2);assert 'not configured' in json.dumps(invalid)
             save('qualified-empty.json',empty)
         scenario(PLANNED[0],initial)
+        if whole:
+            def repeated():
+                initial_answer=json.loads((report/'initial.json').read_text())['CLI']
+                prior=api('sources.list')['result']['sources'][0]['last_run']['id']
+                wait('completed unchanged source',lambda:(v if (v:=api('sources.list')['result']['sources'][0])['last_run']['id']!=prior and v['last_run']['status']=='completed' and v['last_run']['admitted']==0 and v['last_run']['repeated']==len(facts) else None))
+                answer=qualify('completed-unchanged')
+                assert answer['session']==initial_answer['session'] and answer['rows']==initial_answer['rows']
+            scenario(WHOLE_UNCHANGED,repeated)
+            def active_reading():
+                prior=api('sources.list')['result']['sources'][0]['last_run']['id']
+                baseline=json.loads((report/'completed-unchanged.json').read_text())['CLI']
+                lock=sqlite3.connect(source);lock.execute('BEGIN EXCLUSIVE')
+                intervention('controlled SQLite exclusive read block',scope='synthetic active-reading observation, not normal workload')
+                try:
+                    reading=wait('actual reading observation',lambda:(v if (v:=api('sources.list')['result']['sources'][0])['last_run']['id']!=prior and v['last_run']['status']=='reading' else None))
+                    began=time.monotonic();answer=cli('recall','last','--project','tide');agent=tool()
+                    after=api('sources.list')['result']['sources'][0]
+                    assert after['last_run']['id']==reading['last_run']['id'] and after['last_run']['status']=='reading', 'active-read question was not bracketed by the same reading observation'
+                    assert answer['session']==agent['session']==baseline['session'] and answer['rows']==agent['rows']==baseline['rows']
+                    assert answer['complete'] is False and agent['complete'] is False
+                    provider={'available':False,'reason':None}
+                    try:
+                        with sqlite3.connect(source.as_uri()+'?mode=ro',uri=True,timeout=.05) as con:con.execute('SELECT '+','.join(COLUMNS)+' FROM history').fetchall()
+                    except sqlite3.OperationalError as error:provider['reason']=str(error)
+                    assert provider['reason'] and 'locked' in provider['reason']
+                    save('active-reading.json',{'before':reading,'after':after,'CLI':answer,'MCP':agent,'question_seconds':time.monotonic()-began,
+                        'SQLite':provider,'scope':'controlled actual reading while provider access is blocked; previous retained facts answer with incomplete coverage; no fresh-acquisition or ordinary-load latency claim'})
+                finally:
+                    lock.rollback();lock.close();intervention('release controlled SQLite read block')
+                wait('reading control completed',lambda:(v if (v:=api('sources.list')['result']['sources'][0])['last_run']['status']=='completed' else None))
+                qualify('reading-control-recovered')
+            scenario(WHOLE_READING,active_reading)
         def bridge():
             began=time.monotonic();row=fixture_row('late-bridge','03:54:00','/work/tide',12*60*1_000_000_000);facts.append(row);fill([row]);wait('bridge settled',settled)
             answer=qualify('bridged');assert answer['session']['payload']['owner_day']=='2026-10-12'
@@ -294,18 +358,25 @@ poll_interval_ms = 3000
             row=fixture_row('later-positive','08:00:00','/work/tide');facts.append(row);began=time.monotonic();fill([row]);wait('later settled',settled);answer=qualify('later')
             metrics.append({'phase':'later-whole-loop','source_append_through_CLI_MCP_trace_seconds':time.monotonic()-began})
             oldgeneration=answer['resolved']['generation'];oldid=answer['session']['id'];stop(daemon)
-            configure('[[projects]]\nname = "new-registration"\nroots = ["/new-registration"]\n')
-            restart();changed=qualify('configuration-rebuilt');assert changed['resolved']['generation']!=oldgeneration and changed['session']['id']==oldid
-            stop(daemon);source.rename(work/'provider-removed.db');restart(retained=True)
-            absent=qualify('provider-loss-retained');assert absent['session']['id']==oldid and absent['complete'] is False;save('provider-loss.json',absent)
-            stop(daemon);(work/'provider-removed.db').rename(source);restart()
+            if whole:
+                intervention('prescribed compatible restart',configuration_sha256=hashlib.sha256(config.read_bytes()).hexdigest())
+                restart();changed=qualify('compatible-restart');assert changed['resolved']['generation']==oldgeneration and changed['session']['id']==oldid
+                source.rename(work/'provider-removed.db');intervention('prescribed synthetic provider path removal',collector_running=daemon.poll() is None)
+                wait('provider unavailable',lambda:(v if (v:=api('sources.list')['result']['sources'][0])['last_run']['status']=='unavailable' else None))
+                absent=qualify('provider-loss-retained');assert absent['session']['id']==oldid and absent['complete'] is False;save('provider-loss.json',absent)
+            else:
+                configure('[[projects]]\nname = "new-registration"\nroots = ["/new-registration"]\n')
+                restart();changed=qualify('configuration-rebuilt');assert changed['resolved']['generation']!=oldgeneration and changed['session']['id']==oldid
+                stop(daemon);source.rename(work/'provider-removed.db');restart(retained=True)
+                absent=qualify('provider-loss-retained');assert absent['session']['id']==oldid and absent['complete'] is False;save('provider-loss.json',absent)
+                stop(daemon);(work/'provider-removed.db').rename(source);restart()
         def restart(retained=False):
             nonlocal daemon,restarts
             restarts+=1
             daemon=start(config,'recovery-restarted-'+str(restarts))
             wait('restart ready',lambda:api() if daemon.poll() is None else None)
             wait('restart settled',settled)
-        scenario(PLANNED[2],continuation)
+        scenario(WHOLE_CONTINUATION if whole else PLANNED[2],continuation)
         def current_fence():
             nonlocal daemon
             stop(daemon)
@@ -350,7 +421,7 @@ poll_interval_ms = 3000
             finally:
                 try:held.sendall(b'c')
                 finally:held.close();controller.close()
-        scenario(PLANNED[4],current_fence)
+        if not whole:scenario(PLANNED[4],current_fence)
         def overflow():
             # 101 direct members remain a supported session but cannot be assembled.
             rows=[fixture_row('large-'+str(n),'09:00:00','/work/tide') for n in range(101)];facts.extend(rows);fill(rows)
@@ -366,7 +437,24 @@ poll_interval_ms = 3000
             wait('candidate canonical',lambda:api('query.run',{'query':'commands sort when limit 10000'}).get('result',{}).get('total')==len(facts))
             wait('candidate refusal',lambda:'128 sessions' in json.dumps(api('query.run',{'query':'recall last where project = empty'})))
             refused=cli('recall','last','--project','empty',expected=5);assert '128 sessions' in json.dumps(refused);tool('empty',error=True);save('candidate-overflow.json',refused)
-        scenario(PLANNED[3],overflow)
+        if not whole:scenario(PLANNED[3],overflow)
+        if whole:
+            save('whole-loop.json',{'reused_accounting':reuse,'phases':costs,'public_CLI_calls':calls,'public_API_MCP_calls':transport,'interventions':interventions,
+                'finite_source_change_to_answer':metrics,'source_facts':facts,'restart_count':restarts,'runtime_repairs':0,
+                'measurement_scope':'one synthetic scripted journey; phase work includes response validation/citation reads; raw API/MCP bodies and CLI streams exclude requests/headers/transport overhead; phase DB/file/process reads are not atomic',
+                'whole_loop_CPU':'whole-loop-rusage.json is emitted after final child reaping/PostgreSQL shutdown; reaped-child CPU is not an inclusive process-tree total',
+                'unknowns':{'physical_IO':'no device-level workload attribution','simultaneous_aggregate_peak_RSS':'no continuous simultaneous process-tree RSS sample; individual VmHWM and named samples cannot recover this peak','everyday_benefit':'no human/model productivity trial or cost threshold','source_history':'observed acquisitions do not prove complete capture'}})
+            lines=['# Repeated project recovery and observed costs','',
+                'One fixed configured synthetic collector answers the same project recovery question through CLI and MCP. The journey includes completed unchanged polling, a late bridge, a later arrival, compatible restart and provider-path loss. Exact source membership, own-context qualifications and retained citations are checked independently. Prior three-poll custody accounting is reused, not rerun.','',
+                '| Phase | Last poll rows read | CLI/MCP question seconds | Question plus validation seconds | DB bytes | Retained file bytes | Workspace total file bytes |',
+                '| --- | --- | --- | --- | --- | --- | --- |']
+            for c in costs:
+                lines.append(f"| {c['phase']} | {c['source']['last_run']['rows_read']} | {c['question_elapsed_seconds']:.6f} | {c['validated_answer_seconds']:.6f} | {c['database']['database_bytes']} | {c['files']['retained']['file_length_bytes']} | {c['files']['workspace_total']['file_length_bytes']} |")
+            lines+=['','Independent read-only SQLite plus finite grouping obtains the same selected facts while provider access exists. During the deliberately blocked read, independent SQLite access is also explicitly blocked; retained native answers remain qualified incomplete. Provider-path loss is unavailable, not empty. Public question calls, polling/validation traffic and baseline reads are retained separately.','',
+                'Setup, producer commits, the controlled read block/release, one compatible restart and provider-path removal are explicit interventions. Costs are observed finite timings, not performance targets or productivity estimates. Acquisition-to-validated-answer timings include polling waits, client work and independent validation.','',
+                'Named process samples retain CPU counters, VmRSS and individual VmHWM for the daemon and observed PostgreSQL processes. They are not simultaneous aggregate peaks. Whole-loop OS rusage is recorded after child/PostgreSQL shutdown and before final report serialization/workspace deletion; reaped-child CPU covers only what Linux accounts through wait, not every descendant. Workspace total includes PostgreSQL, retained blobs, provider fixtures and other owned files; it overlaps the component figures and must not be added to them. Scratch-only growth is unknown because no separate scratch directory exists. File lengths and allocated blocks are not physical IO. Physical IO and simultaneous aggregate peak RSS remain unknown for the concrete reasons in whole-loop.json. No everyday advantage, sustained capacity, full milestone or complete source-history claim follows.']
+            (report/'whole-loop-report.md').write_text('\n'.join(lines)+'\n')
+            return
         # Existing SQLite access is the strongest exact provider fallback for this
         # synthetic Atuin schema. It receives the same rows and project settings.
         began=time.monotonic()

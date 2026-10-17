@@ -19,6 +19,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--recovery-prior-accounting",type=Path,help="reuse an exact successful recovery accounting report and qualify the repeated recovery whole loop with observed costs")
 parser.add_argument("--recovery-context", action="store_true", help="qualify bounded mixed-context project recall through configured Atuin and public clients")
 parser.add_argument("--source-investigation", action="store_true", help="qualify bounded Atuin acquisition timing and exact capture receipts")
 parser.add_argument("--privacy-rules", action="store_true", help="qualify admission-once optional rules and retained evidence through actual clients")
@@ -48,9 +49,10 @@ parser.add_argument("--demo-provider-loss", action="store_true", help="qualify c
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
 if OPTIONS.recovery_context:
-    incompatible = [value for key,value in vars(OPTIONS).items() if key not in ('recovery_context','packaged','package_pin') and value]
+    incompatible = [value for key,value in vars(OPTIONS).items() if key not in ('recovery_context','packaged','package_pin','recovery_prior_accounting') and value]
     if incompatible: parser.error("recovery context owns its scenario selector")
     if OPTIONS.packaged != bool(OPTIONS.package_pin): parser.error("packaged recovery context requires an explicit immutable package pin")
+if OPTIONS.recovery_prior_accounting and not (OPTIONS.recovery_context and OPTIONS.packaged): parser.error("prior accounting requires packaged recovery context")
 if OPTIONS.recall_coverage_before_pin and not OPTIONS.recall_coverage: parser.error("recall coverage contrast requires --recall-coverage")
 if OPTIONS.recall_coverage and (not OPTIONS.packaged or not OPTIONS.recall_coverage_before_pin or any((OPTIONS.package_pin,OPTIONS.sessions,OPTIONS.session_resume,OPTIONS.indexed,OPTIONS.fusion,OPTIONS.configured_continuation,OPTIONS.atuin,OPTIONS.retained_replay,OPTIONS.reversible_exclusion,OPTIONS.exclusion_contracts,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output))):
     parser.error("recall coverage requires --packaged --recall-coverage-before-pin FILE and its own selector")
@@ -150,7 +152,7 @@ if OPTIONS.fusion:
     if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
 if OPTIONS.recovery_context:
     import recovery_context_cases
-    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+recovery_context_cases.PLANNED
+    PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+recovery_context_cases.planned(bool(OPTIONS.recovery_prior_accounting))
     if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
 if OPTIONS.source_investigation:
     import source_investigation_cases
@@ -181,6 +183,9 @@ for key in ("DATABASE_URL", "SQLX_OFFLINE", "PGHOST", "PGPORT", "PGUSER", "PGDAT
 PG_STARTED = False
 POSTGRES_STOP_EXIT = None
 PREBUILT_PIN = None
+if OPTIONS.recovery_prior_accounting:
+    from recovery_costs import usage
+    WHOLE_LOOP_USAGE = usage()
 
 
 def run(args, *, expected=0, env=None, label=None):
@@ -509,7 +514,17 @@ finally:
         if name not in {s["name"] for s in SCENARIOS}:
             SCENARIOS.append({"name":name,"outcome":"unrun","reason":failure if not success else "not exercised"})
     for record,(proc,_,_) in zip(PROCESSES,CHILDREN): record["exit"]=proc.returncode
-    report={"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else ("retained_development_build" if SESSION_RESUME else "development_build"),"prebuilt_package":PREBUILT_PIN,"retained_runtime":SESSION_RESUME,"binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"postgres_stop_exit":POSTGRES_STOP_EXIT,"runtime_state":"owned disposable state removed after captured evidence" if success and not SESSION_RESUME else str(WORK),"unimplemented":["formal M1 acceptance", "full query/surface/fusion scope", "snapshot bootstrap after pruning and purge/cutover", "remaining MCP tools","confirmed delivery","full target schema and Timescale","sealed lifecycle"]}
+    whole_loop_usage=None
+    if OPTIONS.recovery_prior_accounting:
+        from recovery_costs import usage_delta
+        whole_loop_usage=usage_delta(WHOLE_LOOP_USAGE, usage())
+        (REPORT/"whole-loop-rusage.json").write_text(json.dumps(whole_loop_usage,indent=2)+"\n")
+        if (REPORT/"whole-loop-report.md").exists():
+            with (REPORT/"whole-loop-report.md").open('a') as prose:
+                cpu=whole_loop_usage['cpu_seconds'];raw=whole_loop_usage['raw_after']
+                prose.write(f"\nObserved harness interval: {whole_loop_usage['elapsed_seconds']:.6f} seconds. Harness CPU: {cpu['self']['user_seconds']:.6f} user + {cpu['self']['system_seconds']:.6f} system seconds. Linux-accounted reaped-child CPU: {cpu['reaped_children']['user_seconds']:.6f} user + {cpu['reaped_children']['system_seconds']:.6f} system seconds. These are the stated OS accounting boundaries, not an inclusive process-tree CPU total.\n\n")
+                prose.write(f"Final individual high-water RSS statistics: harness {raw['self']['max_rss_kib']} KiB; largest Linux-accounted child {raw['reaped_children']['max_rss_kib']} KiB. The raw pre/post values are retained; maxima are not subtracted or summed. These do not measure simultaneous aggregate peak RSS.\n")
+    report={"whole_loop_rusage":whole_loop_usage,"candidate_head":revision,"candidate_index_tree":subprocess.run(["git","write-tree"],cwd=ROOT,capture_output=True,text=True).stdout.strip(),"candidate_tracked_diff_sha256":hashlib.sha256(subprocess.check_output(["git","diff","--binary","HEAD"],cwd=ROOT)).hexdigest(),"entrypoint_kind":"nix_package" if OPTIONS.packaged else ("retained_development_build" if SESSION_RESUME else "development_build"),"prebuilt_package":PREBUILT_PIN,"retained_runtime":SESSION_RESUME,"binary_sha256":binary_hashes,"success":success,"failure":None if success else failure,"scenarios":SCENARIOS,"commands":COMMANDS,"owned_processes":PROCESSES,"postgres_stop_exit":POSTGRES_STOP_EXIT,"runtime_state":"owned disposable state removed after captured evidence" if success and not SESSION_RESUME else str(WORK),"unimplemented":["formal M1 acceptance", "full query/surface/fusion scope", "snapshot bootstrap after pruning and purge/cutover", "remaining MCP tools","confirmed delivery","full target schema and Timescale","sealed lifecycle"]}
     if OPTIONS.demo_spec:
         report["demo"]={"oracle_revision":__import__("demo_cases").ORACLE_REVISION,"control":OPTIONS.demo_control,"provider_loss":OPTIONS.demo_provider_loss,"scope":"packaged Atuin raw-event driver; canonical row material, no SQLite snapshot retention or read-model index"}
     (REPORT/"result.json").write_text(json.dumps(report,indent=2)+"\n")
