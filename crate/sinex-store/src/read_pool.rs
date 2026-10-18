@@ -14,13 +14,13 @@ pub struct StoreStatus {
     pub progress_count: i64,
 }
 
-/// Fields: the reader pool, the blob reader and the canonical blob root.
 #[derive(Clone)]
-pub struct ReadPool(
-    pub(crate) PgPool,
-    pub(crate) Arc<hashed_blobs::Reader>,
-    pub(crate) String,
-);
+pub struct ReadPool {
+    pub(crate) pool: PgPool,
+    pub(crate) blobs: Arc<hashed_blobs::Reader>,
+    /// Canonical path of the blob root.
+    pub(crate) root: String,
+}
 impl ReadPool {
     /// Opens a reader on an installed, checked schema without starting a writer.
     pub async fn installed(reader_url: &str, root: PathBuf) -> Result<Self> {
@@ -34,11 +34,11 @@ impl ReadPool {
         Ok(Self::new(pool, root))
     }
     pub(crate) fn new(pool: PgPool, root: String) -> Self {
-        Self(
+        Self {
             pool,
-            Arc::new(hashed_blobs::Reader::new(root.clone(), vec![])),
+            blobs: Arc::new(hashed_blobs::Reader::new(root.clone(), vec![])),
             root,
-        )
+        }
     }
     pub async fn schema_status(&self) -> Result<SchemaStatus> {
         let mut lease = self.read_lease().await?;
@@ -70,7 +70,7 @@ impl ReadPool {
         Err(Error::ProductUnavailable)
     }
     pub async fn close(&self) {
-        self.0.close().await;
+        self.pool.close().await;
     }
 }
 

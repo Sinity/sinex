@@ -1,7 +1,7 @@
 //! Writer steps shared by the Atuin, zsh and Chromium admissions: input and
 //! producer registration, record failures, and stream parts (rows appended to a
 //! file under `<root>/open` that is closed into a blob).
-use crate::{BLOB_PRESENT, Error, Result, WriterPool};
+use crate::{BLOB_PRESENT, Error, Result, Writer};
 use serde_json::Value;
 use sqlx::{Connection, Row};
 use std::io::{Seek, SeekFrom, Write};
@@ -105,7 +105,7 @@ pub(crate) async fn set_part_length(tx: &mut Tx<'_>, material: Uuid, length: i64
     Ok(())
 }
 
-impl WriterPool {
+impl Writer {
     fn open_part_path(&self, material: Uuid) -> PathBuf {
         std::path::Path::new(&self.root)
             .join("open")

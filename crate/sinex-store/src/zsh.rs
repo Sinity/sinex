@@ -4,7 +4,7 @@
 use crate::source_admission::{
     key_hash, observation_status, producer_version, record_failure, set_part_length,
 };
-use crate::{Error, Result, WriterPool, coordinate_hash, next_commit_seq};
+use crate::{Error, Result, Writer, coordinate_hash, next_commit_seq};
 use serde_json::{Value, json};
 use sqlx::Connection;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -111,7 +111,7 @@ pub(crate) fn parse(bytes: &[u8]) -> std::result::Result<(i64, String), &'static
     };
     Ok((timestamp, command.replace("\\\n", "\n")))
 }
-impl WriterPool {
+impl Writer {
     pub(crate) async fn admit_zsh(&mut self, step: ZshStep) -> Result<Value> {
         if step.locator.is_empty()
             || step.host.is_empty()

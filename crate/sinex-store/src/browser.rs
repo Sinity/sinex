@@ -4,7 +4,7 @@
 use crate::source_admission::{
     key_hash, observation_status, producer_version, record_failure, row_hash, set_part_length,
 };
-use crate::{BLOB_PRESENT, Error, Result, WriterPool, coordinate_hash, next_commit_seq};
+use crate::{BLOB_PRESENT, Error, Result, Writer, coordinate_hash, next_commit_seq};
 use serde_json::{Value, json};
 use sinex_model::browser::{BrowserReadStart, Checkpoint, PARSER, SOURCE};
 use sqlx::{Connection, Row};
@@ -49,7 +49,7 @@ fn occurrence(profile: &str, generation: Uuid, kind: &str, key: &str) -> (String
     let hash = key_hash(SOURCE, kind, &key);
     (key, hash)
 }
-impl WriterPool {
+impl Writer {
     pub(crate) async fn browser_begin(&mut self, begin: BrowserBegin) -> Result<BrowserReadStart> {
         if begin.profile.is_empty() || begin.generation.is_nil() || begin.path.is_empty() {
             return Err(Error::Invalid("invalid browser source declaration"));
