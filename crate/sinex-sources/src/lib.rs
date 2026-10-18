@@ -19,7 +19,7 @@ pub use drivers::{Acquired, DriverError, MaterialSink};
 pub use registry::{Declared, Driver, Source, SourceSpec};
 
 use serde::{Serialize, de::DeserializeOwned};
-use sinex_model::EventPayload;
+use sinex_model::Payloads;
 
 /// Why one record could not be read. Becomes a failure row; the bytes stay in
 /// the material, so a retry is a replay of exactly those bytes.
@@ -81,7 +81,8 @@ pub trait Parser: Send + Sync + 'static {
     /// State carried from one record to the next (a multi-line command, an IRC
     /// nick). Saved with the cursor so a restart resumes exactly.
     type Carry: Default + Clone + Serialize + DeserializeOwned + Send + 'static;
-    type Payload: EventPayload;
+    /// One typed payload, or an enum over several (see `Payloads`).
+    type Payload: Payloads;
 
     /// Fields left out of the record hash because they change without the
     /// record changing (a last-seen time).

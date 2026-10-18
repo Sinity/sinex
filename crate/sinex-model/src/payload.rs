@@ -78,6 +78,68 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     fn payload_schema() -> Value;
 }
 
+/// What a parser's `parse` returns per event: one typed payload, or an enum
+/// over several when one source emits several event types (a compositor's
+/// stream: focus, open, close, move). Every `EventPayload` is one; an enum
+/// implements this by building its variant's event.
+pub trait Payloads: Send + Sync + 'static {
+    fn build(
+        &self,
+        source: &str,
+        origin: crate::Origin,
+        reading_order: crate::ReadingOrder,
+        record_hash: [u8; 32],
+        class: Class,
+    ) -> Result<crate::Event, crate::BuildError>;
+}
+
+impl<P: EventPayload> Payloads for P {
+    fn build(
+        &self,
+        source: &str,
+        origin: crate::Origin,
+        reading_order: crate::ReadingOrder,
+        record_hash: [u8; 32],
+        class: Class,
+    ) -> Result<crate::Event, crate::BuildError> {
+        crate::Event::build(self, source, origin, reading_order, record_hash, class)
+    }
+}
+
+/// An enum over several payload types, implementing [`Payloads`] by building
+/// the event of whichever variant it holds.
+///
+/// ```ignore
+/// sinex_model::payload_enum! {
+///     #[derive(Debug, Clone, PartialEq)]
+///     pub enum Desktop { Focused(WindowFocused), Closed(WindowClosed) }
+/// }
+/// ```
+#[macro_export]
+macro_rules! payload_enum {
+    ($(#[$meta:meta])* $vis:vis enum $name:ident { $($variant:ident($ty:ty)),+ $(,)? }) => {
+        $(#[$meta])*
+        $vis enum $name { $($variant($ty)),+ }
+
+        impl $crate::Payloads for $name {
+            fn build(
+                &self,
+                source: &str,
+                origin: $crate::Origin,
+                reading_order: $crate::ReadingOrder,
+                record_hash: [u8; 32],
+                class: $crate::Class,
+            ) -> ::std::result::Result<$crate::Event, $crate::BuildError> {
+                match self {
+                    $(Self::$variant(payload) => $crate::Event::build(
+                        payload, source, origin, reading_order, record_hash, class,
+                    ),)+
+                }
+            }
+        }
+    };
+}
+
 /// Enums stored as text: the column's CHECK list is generated from the variants,
 /// so the database and the Rust type cannot disagree.
 pub trait DbCheck {

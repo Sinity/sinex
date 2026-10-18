@@ -1709,6 +1709,7 @@ dependencies = [
 name = "sinex-session"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "sinex-model",
  "sinex-protocol",
  "sinex-sources",

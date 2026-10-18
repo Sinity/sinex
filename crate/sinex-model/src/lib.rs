@@ -20,7 +20,7 @@ pub use batch::{
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};
 pub use id::{EventId, InputId, MaterialId, ObservationId, OperationId, RevisionId, RunId};
-pub use payload::{DbCheck, EquivalenceKey, EventPayload, KeyKind, ReplaceRule};
+pub use payload::{DbCheck, EquivalenceKey, EventPayload, KeyKind, Payloads, ReplaceRule};
 pub use privacy::Class;
 pub use sinex_macros::{DbCheck, EventPayload};
 
