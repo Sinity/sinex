@@ -1,4 +1,11 @@
-use super::{Text, bind, token_text};
+use super::{Text, bind, normalize, token_text, words};
+
+#[test]
+fn normalize_folds_case_and_composes_accents() {
+    assert_eq!(normalize("Straße"), "strasse");
+    assert_eq!(normalize("CAFE\u{301}"), "café");
+    assert_ne!(words("offset"), words("offsets"));
+}
 
 #[test]
 fn like_patterns_escape_literal_wildcards_and_backslashes() {
@@ -22,7 +29,7 @@ fn like_patterns_escape_literal_wildcards_and_backslashes() {
 }
 
 #[test]
-fn query_delimiters_are_tokenized_and_negative_text_never_supplies_rank() {
+fn boundary_characters_in_input_are_data_and_negated_text_is_not_ranked() {
     let literal = "Straße\u{1}CAFE\u{301}\u{2}later";
     let query = format!(
         "commands where {} and not hidden and exit_code != 0",
@@ -61,7 +68,7 @@ fn query_delimiters_are_tokenized_and_negative_text_never_supplies_rank() {
 }
 
 #[test]
-fn long_words_bind_within_the_unchanged_whole_query_byte_budget() {
+fn long_words_parse_up_to_the_query_size_limit() {
     let value = "x".repeat(1100);
     let bound = bind(&value).unwrap();
     let super::Expr::Text(text) = bound.filter.unwrap() else {
