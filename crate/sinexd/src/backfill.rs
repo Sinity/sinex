@@ -18,6 +18,8 @@ pub struct Options {
     pub zsh: Option<PathBuf>,
     /// A Hyprland capture spool (`sinex-session capture hyprland`).
     pub hyprland_spool: Option<PathBuf>,
+    /// A journald capture spool (`sinexd capture journald`).
+    pub journald_spool: Option<PathBuf>,
     pub host: String,
 }
 
@@ -114,6 +116,7 @@ pub async fn run(o: Options) -> Result<(), String> {
             "workspace.switched",
             "monitor.focused",
             "desktop.other",
+            "journal.entry",
         ],
     };
     let run = runs::start(&mut aux, &manifest, &o.host)
@@ -165,6 +168,21 @@ pub async fn run(o: Options) -> Result<(), String> {
         )
         .await?;
         println!("hyprland {totals}");
+    }
+    if let Some(spool) = &o.journald_spool {
+        let source = sinex_sources::sources::journald::source();
+        let driver = sinex_sources::sources::journald::driver(spool.clone(), o.host.clone());
+        let totals = drive(
+            &mut aux,
+            &handle,
+            run,
+            &source,
+            &format!("journald@{}", o.host),
+            &sink,
+            |cursor| driver.poll(cursor),
+        )
+        .await?;
+        println!("journald {totals}");
     }
     runs::end(&mut aux, run).await.map_err(|e| e.to_string())?;
     drop(handle);

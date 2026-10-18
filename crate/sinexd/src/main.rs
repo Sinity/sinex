@@ -28,6 +28,12 @@ enum Command {
         #[arg(long)]
         store: PathBuf,
     },
+    /// Capture a live system source into its spool (the daemon runs the same
+    /// capture as a task).
+    Capture {
+        #[command(subcommand)]
+        source: Capture,
+    },
     /// Administration that needs the database but not the running daemon.
     Admin {
         #[command(subcommand)]
@@ -48,8 +54,28 @@ enum Command {
         /// A Hyprland capture spool directory.
         #[arg(long)]
         hyprland_spool: Option<PathBuf>,
+        /// A journald capture spool directory.
+        #[arg(long)]
+        journald_spool: Option<PathBuf>,
         #[arg(long, default_value = "localhost")]
         host: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum Capture {
+    /// The systemd journal through `journalctl -o json`, resuming after the
+    /// last spooled cursor.
+    Journald {
+        #[arg(long)]
+        spool: PathBuf,
+        /// On a first capture, start here (a `journalctl --since` value, such
+        /// as `-1d`); the whole journal otherwise.
+        #[arg(long)]
+        since: Option<String>,
+        /// Keep following new entries.
+        #[arg(long)]
+        follow: bool,
     },
 }
 
@@ -67,6 +93,22 @@ async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Run { database, store } => daemon::run(database, store).await,
+        Command::Capture {
+            source:
+                Capture::Journald {
+                    spool,
+                    since,
+                    follow,
+                },
+        } => {
+            let start = match &since {
+                Some(s) => sinex_sources::sources::journald::Start::Since(s),
+                None => sinex_sources::sources::journald::Start::Beginning,
+            };
+            sinex_sources::sources::journald::capture(&spool, follow, start)
+                .map(|n| println!("captured {n} journal entries"))
+                .map_err(|e| e.to_string())
+        }
         Command::Admin {
             command: Admin::Schema { database },
         } => sinex_schema::apply_url(&database)
@@ -79,6 +121,7 @@ async fn main() -> std::process::ExitCode {
             atuin,
             zsh,
             hyprland_spool,
+            journald_spool,
             host,
         } => {
             backfill::run(backfill::Options {
@@ -87,6 +130,7 @@ async fn main() -> std::process::ExitCode {
                 atuin,
                 zsh,
                 hyprland_spool,
+                journald_spool,
                 host,
             })
             .await
