@@ -99,7 +99,7 @@ poll_interval_ms=500
             for field,role in [('ADMIN','admin'),('WRITER','writer'),('READER','reader')]:
                 isolated['SINEX_TEST_'+field+'_URL']=h[role].replace('/foundation?','/signed_recipe?')
             isolated['SINEX_TEST_STORE_DIR']=str(work/'signed-recipe-store')
-            run(['cargo','test','--locked','-p','sinex-store','--features','product','--lib','atuin::tests::unchanged_source_new_recipe_readmits_and_preserves_old_evidence','--','--ignored','--nocapture'],env=isolated,label='typed prior recipe equality repeat and stale control')
+            run(['cargo','test','--locked','-p','sinex-store','--features','product','--lib','atuin::tests::new_parser_readmits_unchanged_row_and_keeps_old_event','--','--ignored','--nocapture'],env=isolated,label='typed prior recipe equality repeat and stale control')
         scenario(PLANNED[0],prior_recipe)
         def upgrade():
             nonlocal daemon,materials
