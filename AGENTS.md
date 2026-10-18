@@ -23,8 +23,11 @@ is in Git history and is still the deployed version.
 
 The admin-only daemon (`cargo build -p sinexd --no-default-features`) builds
 without a database and applies the schema. Everything else compiles its SQL
-against a real schema (SQLx checked queries; no offline cache), so set
-`DATABASE_URL` to a development database or use `xtask db`/`xtask test`.
+against a real schema (SQLx checked queries; no offline cache). `xtask db
+ensure` builds the database for the current schema version and prints its
+`DATABASE_URL`; xtask commands set it themselves. The database is named after
+a hash of `crate/sinex-store/src/schema`, so a schema change gives a new one
+and only the query-checking crates recompile.
 
 ## Development loop
 

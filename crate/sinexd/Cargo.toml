@@ -9,7 +9,7 @@ default = ["runtime"]
 runtime = ["sinex-store/product", "dep:axum", "dep:futures-util"]
 
 [dependencies]
-credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.1.0" }
+credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0" }
 sinex-model = { path = "../sinex-model" }
 sinex-protocol = { path = "../sinex-protocol" }
 sinex-store = { path = "../sinex-store", default-features = false }

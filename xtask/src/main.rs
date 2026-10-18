@@ -1,11 +1,10 @@
 //! Development commands: `check`, `test`, `scenario`, `db`, `boundaries`,
 //! plus devkit's `status`, `history` and `changed`.
 mod boundaries;
-mod postgres;
+mod database;
 
 use clap::Parser;
-use devkit::{Nextest, Run};
-use postgres::Cluster;
+use devkit::{Nextest, Run, pg::Schema};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -21,7 +20,7 @@ type Result<T = ()> = std::result::Result<T, String>;
 enum Cli {
     /// fmt, dependency boundaries and cargo check; no database.
     Check,
-    /// Rust tests; database tests each get a fresh database in an owned PostgreSQL.
+    /// Rust tests; each database test gets its own copy of the schema database.
     Test {
         /// Run only tests whose name contains this.
         filter: Option<String>,
@@ -34,11 +33,10 @@ enum Cli {
         #[arg(long)]
         package: Option<PathBuf>,
     },
-    /// Run a command with an owned PostgreSQL (`DATABASE_URL` set).
-    Db {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
-        command: Vec<String>,
-    },
+    /// The development database: `ensure` prints `DATABASE_URL`, `exec` runs a
+    /// command with it set.
+    #[command(subcommand)]
+    Db(devkit::cli::db::Db),
     /// Check the workspace dependency graph.
     Boundaries { dir: Option<PathBuf> },
     #[command(flatten)]
@@ -55,7 +53,23 @@ fn main() -> ExitCode {
         Cli::Scenario { names, package } => {
             recorded("scenario", &names, |run| scenario(run, &names, package))
         }
-        Cli::Db { command } => recorded("db", &command, |run| db(run, &command)),
+        Cli::Db(command) => {
+            let hash = match database::schema_hash(Path::new(".")) {
+                Ok(hash) => hash,
+                Err(error) => {
+                    eprintln!("{error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let apply =
+                |server: &devkit::pg::Server, name: &str| database::bootstrap(server, name, None);
+            let schema = Schema {
+                project: "sinex",
+                hash,
+                bootstrap: &apply,
+            };
+            devkit::cli::db::execute(command, &database::cluster_options(), &schema)
+        }
         Cli::Boundaries { dir } => {
             match boundaries::check(dir.as_deref().unwrap_or(Path::new("."))) {
                 Ok(()) => {
@@ -112,28 +126,70 @@ fn check(run: &mut Run) -> Result {
     Ok(())
 }
 
+/// A per-run directory for test stores and copied binaries, removed on drop.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Result<Self> {
+        let base = if Path::new("/dev/shm").is_dir() {
+            PathBuf::from("/dev/shm")
+        } else {
+            std::env::temp_dir()
+        };
+        let path = base.join(format!("sinex-xtask-{}", std::process::id()));
+        std::fs::create_dir_all(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn test(run: &mut Run, filter: Option<&str>) -> Result {
-    let cluster = Cluster::start_with_schema(&admin_binary(run)?)?;
+    let scratch = Scratch::new()?;
+    let mut prepared = None;
+    run.step("database", |run| {
+        prepared = Some(database::prepare(&run.root, None)?);
+        Ok(())
+    })?;
+    let (server, databases) = prepared.expect("prepared");
+
+    // Tests that do not need a database still read the test URLs, so they
+    // share one copy of the schema database.
+    let shared = format!("t_{}_shared", std::process::id());
+    server.clone_database(&databases.template, &shared)?;
+    let env = database::env(&server, &databases.schema, &shared, &scratch.0);
+    let mut names = Vec::new();
+    run.step("list database tests", |_| {
+        names = ignored_tests(&env, filter)?;
+        Ok(())
+    })?;
     let mut args = vec!["--locked".to_owned(), "--workspace".to_owned()];
     args.extend(filter.map(str::to_owned));
-    let names = ignored_tests(&cluster, filter)?;
-    run.nextest(
+    let result = run.nextest(
         "test",
         &Nextest {
             args,
-            env: cluster.env("sinex"),
+            env,
             // A name filter may match only database tests.
             allow_no_tests: filter.is_some(),
             ..Nextest::default()
         },
-    )?;
-    // Database tests are `#[ignore]`d; each runs alone in a fresh database.
-    for name in names {
+    );
+    server.drop_database(&shared)?;
+    result?;
+
+    // Database tests are `#[ignore]`d; each runs alone in its own copy.
+    for (index, name) in names.iter().enumerate() {
         if SCENARIO_ONLY_TESTS.contains(&name.as_str()) {
             continue;
         }
-        let database = cluster.fresh_database()?;
-        run.nextest(
+        let copy = format!("t_{}_db{index}", std::process::id());
+        server.clone_database(&databases.template, &copy)?;
+        let result = run.nextest(
             &format!("database test {name}"),
             &Nextest {
                 args: ["--locked", "--workspace", "--run-ignored", "only", "-E"]
@@ -141,15 +197,22 @@ fn test(run: &mut Run, filter: Option<&str>) -> Result {
                     .into_iter()
                     .chain([format!("test(={name})")])
                     .collect(),
-                env: cluster.env(&database),
+                env: database::env(&server, &databases.schema, &copy, &scratch.0),
                 ..Nextest::default()
             },
-        )?;
+        );
+        match result {
+            Ok(()) => server.drop_database(&copy)?,
+            Err(error) => {
+                eprintln!("kept database {copy} of the failed test {name}");
+                return Err(error.into());
+            }
+        }
     }
     Ok(())
 }
 
-fn ignored_tests(cluster: &Cluster, filter: Option<&str>) -> Result<Vec<String>> {
+fn ignored_tests(env: &[(String, String)], filter: Option<&str>) -> Result<Vec<String>> {
     let output = Command::new("cargo")
         .args([
             "test",
@@ -161,7 +224,7 @@ fn ignored_tests(cluster: &Cluster, filter: Option<&str>) -> Result<Vec<String>>
             "--list",
         ])
         .args(filter)
-        .envs(cluster.env("sinex"))
+        .envs(env.iter().cloned())
         .output()
         .map_err(|e| format!("could not run cargo: {e}"))?;
     if !output.status.success() {
@@ -178,56 +241,50 @@ fn ignored_tests(cluster: &Cluster, filter: Option<&str>) -> Result<Vec<String>>
 }
 
 fn scenario(run: &mut Run, names: &[String], package: Option<PathBuf>) -> Result {
-    let (cluster, bin, packaged) = match package {
-        Some(dir) => {
-            let bin = dir.join("bin");
-            (Cluster::start_with_schema(&bin.join("sinexd"))?, bin, true)
-        }
+    let scratch = Scratch::new()?;
+    let admin = package.as_ref().map(|dir| dir.join("bin/sinexd"));
+    let mut prepared = None;
+    run.step("database", |run| {
+        prepared = Some(database::prepare(&run.root, admin.as_deref())?);
+        Ok(())
+    })?;
+    let (server, databases) = prepared.expect("prepared");
+    let bin = match &package {
+        Some(dir) => dir.join("bin"),
         None => {
-            let cluster = Cluster::start_with_schema(&admin_binary(run)?)?;
             run.cargo_with(
                 "build",
                 &["build", "--locked", "-p", "sinexd", "-p", "sinexctl"],
-                &cluster.env("sinex"),
+                &[("DATABASE_URL".into(), server.url(&databases.schema, None))],
             )?;
             // Copy the binaries, so a concurrent build cannot replace them mid-scenario.
-            let bin = cluster.fast_dir().join("bin");
+            let bin = scratch.0.join("bin");
             std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
             for name in ["sinexd", "sinexctl"] {
                 copy_file(&target_dir().join("debug").join(name), &bin.join(name))?;
             }
-            (cluster, bin, false)
+            bin
         }
     };
+    let shared = format!("t_{}_scenario", std::process::id());
+    server.clone_database(&databases.template, &shared)?;
     let mut command = Command::new("python3");
     command
         .arg("tests/run.py")
         .args(names)
-        .envs(cluster.env("sinex"))
+        .envs(database::env(
+            &server,
+            &databases.schema,
+            &shared,
+            &scratch.0,
+        ))
         .env("SINEX_BIN_DIR", &bin);
-    if packaged {
+    if package.is_some() {
         command.env("SINEX_PACKAGED", "1");
     }
-    Ok(run.command("scenarios", &mut command)?)
-}
-
-fn db(run: &mut Run, command: &[String]) -> Result {
-    let (program, rest) = command.split_first().ok_or("db needs a command")?;
-    let cluster = Cluster::start_with_schema(&admin_binary(run)?)?;
-    Ok(run.command(
-        "command",
-        Command::new(program).args(rest).envs(cluster.env("sinex")),
-    )?)
-}
-
-/// Build the admin-only daemon: it applies the schema and compiles without a
-/// database. The cluster keeps its own copy.
-fn admin_binary(run: &mut Run) -> Result<PathBuf> {
-    run.cargo(
-        "build sinexd admin",
-        &["build", "--locked", "-p", "sinexd", "--no-default-features"],
-    )?;
-    Ok(target_dir().join("debug/sinexd"))
+    let result = run.command("scenarios", &mut command);
+    server.drop_database(&shared)?;
+    Ok(result?)
 }
 
 fn copy_file(from: &Path, to: &Path) -> Result {
