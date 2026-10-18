@@ -38,3 +38,7 @@ Recall waits up to 500 ms for the indexed projection to catch up, within the que
 The writer marks logical days dirty when canonical commands are admitted or archived; each dirty row has an inclusive `through_day` bound so changes spanning several days are followed. The background scheduler loads the day's commands in 16-row turns into temporary tables, publishes at most two sessions per turn and archives replaced sessions in 16-row turns. Statements have a two-second deadline and turns three seconds; deadline failures retry after 250 ms, and other failures leave the day unavailable. `status` shows dirty count, day, phase and failure.
 
 Schema change 3 adds the session tables and seeds dirty days from existing canonical commands ([schema.md](schema.md)).
+
+## Tests
+
+The `sessions`, `project_recall` and `recall_coverage` scenarios (`xtask scenario sessions project_recall recall_coverage`) cover grouping, recall and completeness end to end.
