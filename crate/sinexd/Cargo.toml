@@ -15,7 +15,7 @@ sinex-automata.workspace = true
 sinex-protocol.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
 clap.workspace = true
 time.workspace = true
 uuid.workspace = true
@@ -25,9 +25,15 @@ jsonschema.workspace = true
 futures.workspace = true
 blake3.workspace = true
 serde.workspace = true
+jiff.workspace = true
+axum.workspace = true
+tokio-stream.workspace = true
+credential-masking.workspace = true
 
 [dev-dependencies]
 devkit.workspace = true
+tower = { version = "0.5", features = ["util"] }
+http-body-util.workspace = true
 blake3.workspace = true
 
 [lints]

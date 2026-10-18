@@ -1,10 +1,12 @@
 //! The operator's actions on stored events, through the one writer: hide and
 //! unhide (reversible), and excision (permanent; architecture §3.4).
 use crate::context::Context;
-use crate::writer::{Excision, Priority};
+use crate::writer::{Excision, Priority, WriterHandle};
 use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, OperationId, RunId};
 use sinex_sources::sources;
+use sinex_store::Blobs;
 use sinex_store::excision::{self, Plan, Rewrite, Target};
+use sqlx::PgConnection;
 
 /// Hide (or with `undo`, unhide) the record `target` was read from.
 pub async fn hide(ctx: &Context, target: EventId, undo: bool, actor: &str) -> Result<(), String> {
@@ -55,10 +57,24 @@ pub fn describe(plan: &Plan) -> String {
 /// Excise `target`: blank its records' bytes in new blobs, then remove every
 /// reading in one transaction; the old blob files go after commit.
 pub async fn excise(ctx: &mut Context, target: Target, actor: &str) -> Result<String, String> {
-    let plan = plan(ctx, target).await?;
+    excise_with(&mut ctx.aux, &ctx.blobs, &ctx.writer, target, actor).await
+}
+
+/// [`excise`] with its parts: a read connection, the content store and the
+/// writer (the API holds these rather than a [`Context`]).
+pub async fn excise_with(
+    aux: &mut PgConnection,
+    blobs: &Blobs,
+    writer: &WriterHandle,
+    target: Target,
+    actor: &str,
+) -> Result<String, String> {
+    let plan = excision::plan(aux, target)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut rewrites = Vec::new();
     for m in plan.materials.iter().filter(|m| !m.sealed) {
-        let mut bytes = ctx.blobs.read(&m.blob).map_err(|e| e.to_string())?;
+        let mut bytes = blobs.read(&m.blob).map_err(|e| e.to_string())?;
         let spans: Vec<(usize, usize)> = if m.whole {
             vec![(0, bytes.len())]
         } else {
@@ -79,19 +95,18 @@ pub async fn excise(ctx: &mut Context, target: Target, actor: &str) -> Result<St
         excision::blank(&mut bytes, &spans);
         rewrites.push(Rewrite {
             material: m.id,
-            blob: ctx.blobs.put(&bytes).map_err(|e| e.to_string())?,
+            blob: blobs.put(&bytes).map_err(|e| e.to_string())?,
             length: bytes.len() as u64,
         });
     }
-    let done = ctx
-        .writer
+    let done = writer
         .excise(Excision {
             target,
             plan,
             rewrites,
             operation: OperationId::new(),
             actor: actor.to_owned(),
-            blobs: ctx.blobs.clone(),
+            blobs: blobs.clone(),
         })
         .await
         .map_err(|e| e.to_string())?;

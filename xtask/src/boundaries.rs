@@ -223,8 +223,24 @@ fn activated(dependent: &Package, node: &Node, name: &str) -> bool {
     })
 }
 
+/// The target triple `rustc` builds for by default.
+fn host_triple() -> Result<String, String> {
+    let output = Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .map_err(|e| format!("could not execute rustc: {e}"))?;
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("host: "))
+        .map(str::to_string)
+        .ok_or_else(|| "rustc -vV printed no host".to_string())
+}
+
 /// Check the declared and resolved dependency graph of the workspace at `root`.
 pub fn check(root: &Path) -> Result<(), String> {
+    // The graph for the platform the crates are built for: a dependency that
+    // only another platform uses (`log` under wasm32) is not built here.
+    let host = host_triple()?;
     let output = Command::new("cargo")
         .args([
             "metadata",
@@ -232,6 +248,8 @@ pub fn check(root: &Path) -> Result<(), String> {
             "1",
             "--all-features",
             "--locked",
+            "--filter-platform",
+            &host,
         ])
         .current_dir(root)
         .output()

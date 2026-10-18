@@ -164,9 +164,9 @@ pub async fn run(
             }
         }
         Source::Unit { .. } => {
-            let compiled = Compiler::new(ctx, seq).compile(query)?;
+            let rendered = render_page(Compiler::new(ctx, seq).compile(query)?, offset, size);
             page_of(
-                &mut tx, compiled, unit, text, query, resolved, seq, offset, size,
+                &mut tx, rendered, unit, text, query, resolved, seq, offset, size,
             )
             .await?
         }
@@ -189,9 +189,9 @@ pub async fn run(
                 stages: query.stages.clone(),
                 ranked: query.ranked,
             };
-            let compiled = Compiler::new(ctx, seq).compile(&as_events)?;
+            let rendered = render_page(Compiler::new(ctx, seq).compile(&as_events)?, offset, size);
             let mut a = page_of(
-                &mut tx, compiled, unit, text, query, resolved, seq, offset, size,
+                &mut tx, rendered, unit, text, query, resolved, seq, offset, size,
             )
             .await?;
             a.recall = Some(walk::recall_summary(&mut tx, *from, *to, seq).await?);
@@ -203,10 +203,35 @@ pub async fn run(
     Ok(answer)
 }
 
+/// The two statements of one page, rendered before anything is awaited:
+/// the answer's size and the page's rows.
+struct Rendered {
+    total: (String, Vec<sql::Param>),
+    rows: (String, Vec<sql::Param>),
+    columns: Vec<String>,
+}
+
+fn render_page(compiled: Compiled, offset: u64, size: u64) -> Rendered {
+    let mut total = Frag::text("SELECT count(*) FROM (");
+    total.append(compiled.answer.clone()).push(") q");
+    let object = json_object(&compiled.columns);
+    let mut rows = Frag::text(format!("SELECT {object} FROM ("));
+    rows.append(compiled.answer)
+        .push(") q WHERE q.\"_n\" > ")
+        .param(sea_query::Value::BigInt(Some(offset as i64)))
+        .push(" ORDER BY q.\"_n\" LIMIT ")
+        .param(sea_query::Value::BigInt(Some(size as i64)));
+    Rendered {
+        total: total.render(),
+        rows: rows.render(),
+        columns: compiled.columns,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn page_of(
     tx: &mut PgConnection,
-    compiled: Compiled,
+    rendered: Rendered,
     unit: String,
     text: &str,
     query: &Query,
@@ -215,22 +240,11 @@ async fn page_of(
     offset: u64,
     size: u64,
 ) -> Result<Answer> {
-    let mut total_sql = Frag::text("SELECT count(*) FROM (");
-    total_sql.append(compiled.answer.clone()).push(") q");
-    let (sql_text, values) = total_sql.render();
+    let (sql_text, values) = rendered.total;
     let total: i64 = sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
         .fetch_one(&mut *tx)
         .await?;
-
-    let object = json_object(&compiled.columns);
-    let mut rows_sql = Frag::text(format!("SELECT {object} FROM ("));
-    rows_sql
-        .append(compiled.answer)
-        .push(") q WHERE q.\"_n\" > ")
-        .param(sea_query::Value::BigInt(Some(offset as i64)))
-        .push(" ORDER BY q.\"_n\" LIMIT ")
-        .param(sea_query::Value::BigInt(Some(size as i64)));
-    let (sql_text, values) = rows_sql.render();
+    let (sql_text, values) = rendered.rows;
     let rows: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
         .fetch_all(&mut *tx)
         .await?;
@@ -240,7 +254,7 @@ async fn page_of(
         query: text.to_string(),
         read_as: read_as(query),
         resolved,
-        columns: compiled.columns,
+        columns: rendered.columns,
         rows,
         total,
         page: PageInfo {

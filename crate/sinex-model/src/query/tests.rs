@@ -244,6 +244,17 @@ fn joins_take_an_inner_query() {
     let query = q("pages during (intervals where state = focused)");
     assert!(matches!(query.stages.first(), Some(Stage::Join(j)) if j.kind == JoinKind::During));
     assert!(err("events near (commands) ").message.contains("within"));
+    // The columns a join adds can be shown and sorted on.
+    let query = q("events near (commands) within 5m fields when, near, offset sort offset");
+    assert!(matches!(&query.stages[1], Stage::Fields(f) if f[1] == FieldRef::Group("near".into())));
+    // The n-th join's columns carry `_n`.
+    let query = q("events near (commands) within 5m during (commands) fields near, during_2");
+    assert!(matches!(&query.stages[2], Stage::Fields(f) if f.len() == 2));
+    let query =
+        q("events near (commands) within 5m after (commands) within 1m fields near_2, offset_2");
+    assert!(
+        matches!(&query.stages[2], Stage::Fields(f) if f[0] == FieldRef::Group("near_2".into()))
+    );
 }
 
 #[test]

@@ -96,9 +96,21 @@ enum Scope {
     Rows {
         unit: Unit,
         alias: Option<&'static Alias>,
+        /// Columns time joins add: `near`, `offset`, `during`, `containing`.
+        columns: Vec<String>,
     },
     /// After a grouping: the group's key and aggregate columns.
     Grouped(Vec<String>),
+}
+
+impl Scope {
+    fn rows(unit: Unit, alias: Option<&'static Alias>) -> Scope {
+        Scope::Rows {
+            unit,
+            alias,
+            columns: Vec::new(),
+        }
+    }
 }
 
 struct Parser<'a> {
@@ -224,14 +236,11 @@ impl Parser<'_> {
                 ));
             } else if let Some(unit) = Unit::from_name(&word) {
                 self.at += 1;
-                let filter = self.unit_filter(&Scope::Rows { unit, alias: None })?;
+                let filter = self.unit_filter(&Scope::rows(unit, None))?;
                 (Source::Unit { unit, alias: None }, filter)
             } else if let Some(alias) = Alias::from_name(&word) {
                 self.at += 1;
-                let scope = Scope::Rows {
-                    unit: Unit::Events,
-                    alias: Some(alias),
-                };
+                let scope = Scope::rows(Unit::Events, Some(alias));
                 let filter = self.unit_filter(&scope)?;
                 (
                     Source::Unit {
@@ -250,10 +259,7 @@ impl Parser<'_> {
                     ));
                 }
                 // Bare words: a full-text search over events.
-                let scope = Scope::Rows {
-                    unit: Unit::Events,
-                    alias: None,
-                };
+                let scope = Scope::rows(Unit::Events, None);
                 let filter = self.filter(&scope)?;
                 (
                     Source::Unit {
@@ -264,10 +270,7 @@ impl Parser<'_> {
                 )
             }
         } else if first.kind == Kind::Quoted {
-            let scope = Scope::Rows {
-                unit: Unit::Events,
-                alias: None,
-            };
+            let scope = Scope::rows(Unit::Events, None);
             let filter = self.filter(&scope)?;
             (
                 Source::Unit {
@@ -285,10 +288,7 @@ impl Parser<'_> {
         if filter.as_ref().is_some_and(has_words) {
             ranked = true;
         }
-        let mut scope = Scope::Rows {
-            unit: source.unit(),
-            alias: source.alias(),
-        };
+        let mut scope = Scope::rows(source.unit(), source.alias());
         let mut stages = Vec::new();
         while !self.at_end_of_query(nested) {
             let stage = self.clause(&mut scope)?;
@@ -450,7 +450,14 @@ impl Parser<'_> {
                     ))
                 }
             }
-            Scope::Rows { unit, alias } => {
+            Scope::Rows {
+                unit,
+                alias,
+                columns,
+            } => {
+                if columns.iter().any(|c| c == name) {
+                    return Ok(FieldRef::Group(name.to_string()));
+                }
                 if let Some(path) = name.strip_prefix("payload.") {
                     if !unit.is_events() {
                         return Err(QueryError::at(
@@ -1049,6 +1056,29 @@ impl Parser<'_> {
                     } else {
                         None
                     };
+                if let Scope::Rows { columns, .. } = scope {
+                    // Mirrors the compiler: the first join's columns are
+                    // `near`, `offset`; later ones get `_2`, `_3`.
+                    let n = columns
+                        .iter()
+                        .filter(|c| {
+                            ["near", "during", "containing"].iter().any(|base| {
+                                c.as_str() == *base || c.starts_with(&format!("{base}_"))
+                            })
+                        })
+                        .count();
+                    let suffix = if n == 0 {
+                        String::new()
+                    } else {
+                        format!("_{}", n + 1)
+                    };
+                    let names: &[&str] = match kind {
+                        JoinKind::Near | JoinKind::Before | JoinKind::After => &["near", "offset"],
+                        JoinKind::During => &["during"],
+                        JoinKind::Containing => &["containing"],
+                    };
+                    columns.extend(names.iter().map(|b| format!("{b}{suffix}")));
+                }
                 Ok(Stage::Join(Join {
                     kind,
                     inner: Box::new(inner),

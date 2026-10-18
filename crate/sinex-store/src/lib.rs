@@ -9,6 +9,7 @@ pub mod admission;
 pub mod blobs;
 pub mod committed;
 pub mod derived;
+pub mod diagnostics;
 pub mod excision;
 pub mod positions;
 pub mod privacy;
@@ -20,6 +21,7 @@ mod stage;
 
 pub use admission::{DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, admit};
 pub use blobs::Blobs;
+pub use hashed_blobs::Verified;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -1,6 +1,7 @@
 //! `sinexd`: one context built in `main`; admission and the writer task; the
 //! commit-log reader; the confirmed-stream publisher; the NATS ingress
 //! consumer; the automaton driver; replay; the API (architecture §7.4).
+mod api;
 mod backfill;
 mod commits;
 mod context;
@@ -43,6 +44,22 @@ enum Command {
         subjects: String,
         #[arg(long, default_value = "localhost")]
         host: String,
+        /// The API's Unix socket; default `$XDG_RUNTIME_DIR/sinex/sinexd.sock`,
+        /// else `/run/sinex/sinexd.sock`.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+        /// Also serve the API on this loopback address, e.g. 127.0.0.1:7171.
+        #[arg(long)]
+        listen: Option<std::net::SocketAddr>,
+        /// Directory holding `read.token`, `agent.token` and `operator.token`.
+        #[arg(long)]
+        tokens: PathBuf,
+        /// The zone clock times and days are read in; default the system's.
+        #[arg(long)]
+        zone: Option<String>,
+        /// When a logical day starts.
+        #[arg(long, default_value = "04:00")]
+        day_start: String,
     },
     /// Publish every committed event not yet on the confirmed stream, then
     /// stop and report the rate. For first publication and measurement; the
@@ -412,6 +429,35 @@ async fn publish(database: &str, nats: &str, subjects: &str) -> Result<(), Strin
     Ok(())
 }
 
+/// The socket the daemon serves and `sinexctl` calls by default.
+fn default_socket() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(|d| PathBuf::from(d).join("sinex/sinexd.sock"))
+        .unwrap_or_else(|| PathBuf::from("/run/sinex/sinexd.sock"))
+}
+
+fn api_options(
+    socket: Option<PathBuf>,
+    listen: Option<std::net::SocketAddr>,
+    tokens: PathBuf,
+    zone: Option<String>,
+    day_start: &str,
+) -> Result<daemon::ApiOptions, String> {
+    let zone = match zone {
+        Some(name) => jiff::tz::TimeZone::get(&name).map_err(|e| format!("zone {name}: {e}"))?,
+        None => jiff::tz::TimeZone::system(),
+    };
+    let day_start = sinex_model::query::time::clock(day_start)
+        .ok_or_else(|| format!("day start `{day_start}` is not a clock time like 04:00"))?;
+    Ok(daemon::ApiOptions {
+        socket: socket.unwrap_or_else(default_socket),
+        listen,
+        tokens,
+        zone,
+        day_start,
+    })
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
@@ -422,16 +468,25 @@ async fn main() -> std::process::ExitCode {
             nats,
             subjects,
             host,
-        } => {
-            daemon::run(daemon::Options {
-                database,
-                store,
-                nats,
-                subjects,
-                host,
-            })
-            .await
-        }
+            socket,
+            listen,
+            tokens,
+            zone,
+            day_start,
+        } => match api_options(socket, listen, tokens, zone, &day_start) {
+            Ok(api) => {
+                daemon::run(daemon::Options {
+                    database,
+                    store,
+                    nats,
+                    subjects,
+                    host,
+                    api,
+                })
+                .await
+            }
+            Err(e) => Err(e),
+        },
         Command::Publish {
             database,
             nats,

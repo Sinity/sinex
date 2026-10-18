@@ -51,6 +51,11 @@ impl Blobs {
             Err(e) => Err(e.into()),
         }
     }
+
+    /// Read a blob back and check it against its name.
+    pub fn verify(&self, name: &str) -> Result<hashed_blobs::Verified> {
+        Ok(self.0.verify(&parse(name)?)?)
+    }
 }
 
 fn parse(name: &str) -> Result<hashed_blobs::Hash> {
