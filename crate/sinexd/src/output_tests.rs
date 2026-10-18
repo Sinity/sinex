@@ -48,20 +48,29 @@ fn malformed_response_rows_are_refused() {
 #[test]
 fn refusal_sends_no_part_of_the_response() {
     let token = format!("ghp_{}", "A".repeat(36));
-    for payload in [
-        json!({token.clone():"one", "other":"two"}),
-        json!({"ordinary":"before", "nested":[{"text":format!("before https://u:{}", "A".repeat(600))}]}),
-    ] {
-        let bytes = encode(RpcResponse::success(
-            RpcId::Number(7),
-            json!({"row":{"payload":payload}}),
-        ));
-        let wire: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(wire["id"], 7);
-        assert_eq!(wire["error"]["kind"], "refused");
-        assert!(wire.get("result").is_none());
-        assert!(!String::from_utf8(bytes).unwrap().contains(&token));
-    }
+    let payload = json!({token.clone():"one", "other":"two"});
+    let bytes = encode(RpcResponse::success(
+        RpcId::Number(7),
+        json!({"row":{"payload":payload}}),
+    ));
+    let wire: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(wire["id"], 7);
+    assert_eq!(wire["error"]["kind"], "refused");
+    assert!(wire.get("result").is_none());
+    assert!(!String::from_utf8(bytes).unwrap().contains(&token));
+    // A credential longer than the filter's window is masked, not refused.
+    let password = "p4ss".repeat(150);
+    let payload = json!({"nested":[{"text":format!("before https://u:{password}@host/path")}]});
+    let bytes = encode(RpcResponse::success(
+        RpcId::Number(7),
+        json!({"row":{"payload":payload}}),
+    ));
+    let wire: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        wire["result"]["row"]["payload"]["nested"][0]["text"],
+        "before https://[credential: URL credentials, masked]/path"
+    );
+    assert!(!String::from_utf8(bytes).unwrap().contains("p4ss"));
     let mut read = json!({"rows":[{"payload":{"nested":["--secret=x",{"text":"plain"}]}}]});
     mask(&mut read).unwrap();
     assert_eq!(read["rows"][0]["secret"], true);
