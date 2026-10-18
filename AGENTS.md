@@ -3,8 +3,7 @@
 This is the Rust rewrite of Sinex. The README describes what works today and
 how to run it; `docs/` has a note per implemented feature. The design
 lives in the spec repository (`/realm/inbox/spec/sinex-spec/`). The old Sinex
-is in Git history and is still the deployed version; nothing here touches
-production state.
+is in Git history and is still the deployed version.
 
 ## Structure
 
@@ -57,8 +56,8 @@ Optimize for fast integration.
   typed error, never an empty success. Unknown times stay unknown.
 - Do not change stored source material; keep what was captured.
 
-## Data and safety
+## Data
 
-Fixtures are synthetic. Keep credentials, real captures, private reports and
-real databases out of Git. Merging code is fine at any time; touching live
-stores, deploying, or changing task routing needs the operator's say-so.
+The repository is public: fixtures are synthetic, and credentials, real
+captures, private reports and real databases stay out of Git. Reading the
+operator's real files on this machine for development and measurement is fine.
