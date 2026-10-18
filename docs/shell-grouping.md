@@ -42,3 +42,5 @@ The writer records dirty work in the same transaction as admission, replay, remo
 The writer runs at most two queued source or control commands, then one background turn, even when more commands are waiting; replay and grouping alternate within background turns. Shutdown stops admission and drains accepted commands without starting new background work.
 
 While grouping work is pending or failed, reads that depend on it return the eligible rows with `complete: false` and the current phase or failure; `status` reports progress.
+
+The `shell_grouping` and `shell_publication` scenarios (`xtask scenario shell_grouping shell_publication`) cover this. `xtask test` compares the count query `shell-count.sql` with a plain count (`crate/sinex-store/tests/shell_count.rs`).
