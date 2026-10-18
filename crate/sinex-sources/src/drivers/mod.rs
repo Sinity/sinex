@@ -181,11 +181,15 @@ pub fn batches(
 }
 
 /// Which of two readings of a record is newer, as the material's manifest
-/// records it: the time a database snapshot was read (`read_at_ns`), or the
+/// records it: a database snapshot's base order plus the row's position in it
+/// (`order_base`), the time a snapshot was read (`read_at_ns`), or the
 /// record's byte offset in its file (`file_offset` plus the anchor). The
 /// driver and a replay both compute it here, so a replayed reading keeps the
 /// order of the reading it replaces.
 pub fn reading_order(manifest: &Value) -> Box<dyn Fn(usize) -> ReadingOrder + Send + Sync> {
+    if let Some(base) = manifest.get("order_base").and_then(Value::as_i64) {
+        return Box::new(move |anchor| ReadingOrder(base.saturating_add(anchor as i64)));
+    }
     if let Some(at) = manifest.get("read_at_ns").and_then(Value::as_i64) {
         return Box::new(move |_| ReadingOrder(at));
     }

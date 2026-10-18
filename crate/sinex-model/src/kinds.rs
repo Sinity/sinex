@@ -123,6 +123,7 @@ pub const ALL: &[KindInfo] = &[
     info::<desktop::WindowSpan>(),
     info::<desktop::PresenceSpan>(),
     info::<desktop::BrowserTabActive>(),
+    info::<desktop::ActivityWatchOther>(),
     // Machine
     info::<machine::JournalEntry>(),
     info::<machine::FileChanged>(),

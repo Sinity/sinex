@@ -27,6 +27,11 @@ pub struct SqliteRows {
     pub path: PathBuf,
     pub host: String,
     pub table: &'static str,
+    /// What to read rows from when the parser needs more than `table` (a join
+    /// that names a bucket, say), as a parenthesized subquery exposing a column
+    /// named `rowid` (the table's row ID). `required` is still checked against
+    /// `table`.
+    pub from: Option<&'static str>,
     /// Columns the parser needs; a missing one makes the input unavailable,
     /// named, rather than silently empty.
     pub required: &'static [&'static str],
@@ -42,6 +47,11 @@ pub struct SqliteRows {
 pub struct Cursor {
     pub max_rowid: i64,
     pub last_full_pass_ns: i64,
+    /// The highest reading order given out, so every later reading is newer:
+    /// a row read again in a later poll, or later in the same poll, replaces
+    /// an earlier reading of it.
+    #[serde(default)]
+    pub last_order: i64,
     pub material: Option<MaterialId>,
     pub part_index: u32,
     /// Rows that were still open (matched the mutable predicate) when last
@@ -165,7 +175,7 @@ impl SqliteRows {
         // statement at the same parameter count.
         let sql = format!(
             "SELECT {open_column} AS _open, rowid AS _rowid, * FROM {} WHERE ({filter}) AND ?1 IS NOT NULL AND ?2 IS NOT NULL ORDER BY rowid",
-            self.table
+            self.from.unwrap_or(self.table)
         );
         // One read transaction: a consistent snapshot even while the provider writes.
         connection
@@ -252,8 +262,12 @@ impl SqliteRows {
                 cursor_unchanged: serde_json::to_value(unchanged).expect("cursor serializes"),
             });
         }
-        let manifest = json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns});
         let id = MaterialId::new();
+        // Orders are the snapshot's time plus the row's position in it, and
+        // never below what earlier polls gave out, so a row read again later
+        // (in this poll or a later one) is always newer.
+        let base = now_ns.max(previous.last_order.saturating_add(1));
+        let manifest = json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base});
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {
@@ -270,6 +284,7 @@ impl SqliteRows {
             serde_json::to_value(Cursor {
                 max_rowid: upto.max(previous.max_rowid),
                 last_full_pass_ns: last_full,
+                last_order: base.saturating_add(end as i64),
                 material: Some(id),
                 part_index,
                 open: open.clone(),
@@ -286,7 +301,6 @@ impl SqliteRows {
                 records,
                 part_index,
                 previous_part: previous.material,
-                // Every row in this snapshot was read now; a later snapshot is newer.
                 reading_order: super::reading_order(&manifest),
                 manifest,
                 cursor_at: Box::new(cursor_at),
@@ -319,6 +333,7 @@ mod tests {
             path,
             host: "h".into(),
             table: "t",
+            from: None,
             required: &["id", "n"],
             mutable: Some("n = -1"),
             full_pass_secs: 3600,
@@ -388,6 +403,31 @@ mod tests {
         assert_eq!(lines(&settled)[0]["n"], json!(7));
         let s = settled.material.as_ref().unwrap();
         assert_eq!((s.cursor_at)(s.bytes.len())["open"], Value::Null);
+    }
+
+    #[test]
+    fn reading_orders_only_grow() {
+        let path = db();
+        let d = driver(path.clone());
+        let mut memory = RowMemory::default();
+        let first = d.poll(&Value::Null, &mut memory).unwrap();
+        let m = first.material.as_ref().unwrap();
+        let (a, b) = (
+            (m.reading_order)(m.records[0].0),
+            (m.reading_order)(m.records[1].0),
+        );
+        assert!(b > a, "later in one snapshot is newer");
+        let cursor = (m.cursor_at)(m.bytes.len());
+        let c = Connection::open(&path).unwrap();
+        c.execute_batch("UPDATE t SET n = 7 WHERE id = 'a';")
+            .unwrap();
+        // A full pass reads every row again; force one by forgetting.
+        let next = d.poll(&cursor, &mut RowMemory::default()).unwrap();
+        let n = next.material.as_ref().unwrap();
+        assert!(
+            (n.reading_order)(0) > b,
+            "a later poll is newer than anything before"
+        );
     }
 
     #[test]
