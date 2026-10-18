@@ -4,6 +4,7 @@
 mod backfill;
 mod context;
 mod daemon;
+mod derive;
 mod keys;
 mod operate;
 mod replay;
@@ -63,6 +64,14 @@ enum Command {
         /// ActivityWatch's `aw-server-rust/sqlite.db`.
         #[arg(long)]
         activitywatch: Option<PathBuf>,
+        #[arg(long, default_value = "localhost")]
+        host: String,
+    },
+    /// Run every derivation until nothing is dirty, through the writer, and
+    /// report counts and rates. The daemon's driver, run to completion.
+    Derive {
+        #[arg(long)]
+        database: String,
         #[arg(long, default_value = "localhost")]
         host: String,
     },
@@ -151,6 +160,26 @@ enum Admin {
         /// Report exactly what would be removed, and remove nothing.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Recompute a keyed derivation's outputs. With `--compare`, compute into
+    /// the comparison lane and show old against new without writing anything.
+    Recompute {
+        #[arg(long)]
+        database: String,
+        derivation: String,
+        #[arg(long)]
+        compare: bool,
+        /// Only keys touched by inputs at or after this time (RFC 3339).
+        #[arg(long, value_parser = timestamp)]
+        from: Option<sinex_model::Timestamp>,
+        /// Only keys touched by inputs before this time (RFC 3339).
+        #[arg(long, value_parser = timestamp)]
+        until: Option<sinex_model::Timestamp>,
+        /// Examples of each kind of difference to show.
+        #[arg(long, default_value_t = 5)]
+        examples: usize,
+        #[arg(long, default_value = "localhost")]
+        host: String,
     },
 }
 
@@ -251,7 +280,93 @@ async fn admin(command: Admin) -> Result<(), String> {
             println!("{}", result?);
             Ok(())
         }
+        Admin::Recompute {
+            database,
+            derivation,
+            compare,
+            from,
+            until,
+            examples,
+            host,
+        } => {
+            let range = (from.is_some() || until.is_some()).then(|| {
+                (
+                    from.unwrap_or(sinex_model::Timestamp(time::OffsetDateTime::UNIX_EPOCH)),
+                    until.unwrap_or_else(sinex_model::Timestamp::now),
+                )
+            });
+            let (mut driver, writer_task) = local_driver(&database, &host).await?;
+            let result = if compare {
+                driver
+                    .compare(&derivation, range, examples)
+                    .await
+                    .map(|cmp| cmp.to_string())
+            } else {
+                driver
+                    .recompute_all(&derivation, range)
+                    .await
+                    .map(|n| format!("{derivation}: {n} keys marked for recompute\n"))
+            };
+            driver.end_runs().await?;
+            drop(driver);
+            writer_task.await.map_err(|e| e.to_string())?;
+            print!("{}", result?);
+            Ok(())
+        }
     }
+}
+
+/// A writer and a derivation driver for a one-shot command.
+async fn local_driver(
+    database: &str,
+    host: &str,
+) -> Result<(derive::Driver, tokio::task::JoinHandle<()>), String> {
+    use sqlx::Connection;
+    sinex_schema::apply_url(database)
+        .await
+        .map_err(|e| e.to_string())?;
+    let writer_conn = sqlx::PgConnection::connect(database)
+        .await
+        .map_err(|e| e.to_string())?;
+    let (handle, queues) = writer::channels();
+    let task = tokio::spawn(writer::run(
+        database.to_owned(),
+        writer_conn,
+        queues,
+        std::sync::Arc::new(keys::Registered::new(sinex_automata::keyed())),
+    ));
+    let read = sqlx::PgConnection::connect(database)
+        .await
+        .map_err(|e| e.to_string())?;
+    let driver = derive::Driver::start(
+        read,
+        handle,
+        sinex_automata::keyed(),
+        sinex_automata::per_event(),
+        host,
+    )
+    .await?;
+    Ok((driver, task))
+}
+
+async fn run_derive(database: String, host: String) -> Result<(), String> {
+    let (mut driver, writer_task) = local_driver(&database, &host).await?;
+    let started = std::time::Instant::now();
+    driver.settle().await?;
+    let wall = started.elapsed();
+    for (name, counts) in &driver.counts {
+        println!("{name:18} {counts}");
+    }
+    let outputs: usize = driver.counts.values().map(|c| c.outputs).sum();
+    let inputs: usize = driver.counts.values().map(|c| c.inputs).sum();
+    println!(
+        "wall {:.2}s | inputs read {inputs} | outputs {outputs} | {:.0} outputs/s",
+        wall.as_secs_f64(),
+        outputs as f64 / wall.as_secs_f64().max(1e-9)
+    );
+    driver.end_runs().await?;
+    drop(driver);
+    writer_task.await.map_err(|e| e.to_string())
 }
 
 #[tokio::main]
@@ -298,6 +413,7 @@ async fn main() -> std::process::ExitCode {
             })
             .await
         }
+        Command::Derive { database, host } => run_derive(database, host).await,
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

@@ -23,6 +23,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 devkit.workspace = true
+blake3.workspace = true
 
 [lints]
 workspace = true

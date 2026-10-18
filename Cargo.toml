@@ -36,7 +36,9 @@ sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio
 rusqlite = { version = "0.32", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
 proptest = "1"
-jiff = "0.2"
+# Civil time in the operator's zone (sinex-model::civil); the tz database is
+# bundled so day boundaries do not depend on the build host.
+jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 caseless = "0.2"
 unicode-normalization = "0.1"
 unicode-segmentation = "1"

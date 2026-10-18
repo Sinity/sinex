@@ -90,6 +90,9 @@ pub async fn admit(
     keys: &dyn DirtyKeys,
 ) -> Result<Outcome> {
     let mut outcome = Outcome::default();
+    // Live readings a repeat or older reading left in place: for a derived
+    // batch they are still the key's outputs.
+    let mut kept: Vec<Uuid> = Vec::new();
 
     if let BatchKind::Source(progress) = &batch.kind {
         register_source(conn, progress).await?;
@@ -181,8 +184,14 @@ pub async fn admit(
                     admit_ords.push(row.ord);
                     replaced.push((row.ord, row.live_id.expect("newer has a live reading")));
                 }
-                State::Repeat => outcome.repeats += 1,
-                State::Older => outcome.older += 1,
+                State::Repeat => {
+                    outcome.repeats += 1;
+                    kept.extend(row.live_id);
+                }
+                State::Older => {
+                    outcome.older += 1;
+                    kept.extend(row.live_id);
+                }
                 State::Hidden => outcome.hidden += 1,
                 State::Superseded => outcome.superseded += 1,
             }
@@ -285,6 +294,11 @@ pub async fn admit(
             }
             outcome.dirty_keys += mark_dirty(conn, dirty, last).await?;
         }
+    }
+
+    if let BatchKind::Derived { derivation, scope } = &batch.kind {
+        outcome.dirty_keys +=
+            settle_derived(conn, derivation, scope, &outcome.admitted_ids, &kept, keys).await?;
     }
 
     let failures: Vec<(Uuid, i64, &str)> = batch
@@ -511,6 +525,150 @@ async fn register_source(conn: &mut PgConnection, p: &SourceProgress) -> Result<
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// What a derived batch covers (`BatchKind::Derived::scope`).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DerivedScope {
+    /// A keyed derivation's complete outputs for one key, computed after its
+    /// dirty mark reached `dirty_seq`. Outputs the key produced before and no
+    /// longer produces are archived; the dirty mark clears unless the key was
+    /// dirtied again since.
+    Key {
+        key: Value,
+        dirty_seq: i64,
+        /// Some output still waits for evidence outside the key's window.
+        waiting: bool,
+    },
+    /// A per-event derivation's outputs for committed events up to `position`.
+    Position { position: i64 },
+    /// Recompute these keys (a version change, `sinexctl recompute`). Carries
+    /// no events; the keys are marked dirty like admission marks them.
+    Recompute { keys: Vec<Value> },
+}
+
+impl DerivedScope {
+    pub fn to_value(&self) -> Value {
+        serde_json::to_value(self).expect("scopes serialize")
+    }
+}
+
+/// Settle a derived batch: replace the key's output set, clear its dirty
+/// mark, record whether it waits; or advance a per-event position.
+async fn settle_derived(
+    conn: &mut PgConnection,
+    derivation: &str,
+    scope: &Value,
+    admitted: &[EventId],
+    kept: &[Uuid],
+    keys: &dyn DirtyKeys,
+) -> Result<usize> {
+    let scope: DerivedScope = serde_json::from_value(scope.clone())
+        .map_err(|e| Error::Invalid(format!("derived batch scope: {e}")))?;
+    match scope {
+        DerivedScope::Recompute { keys: marked } => {
+            let seq =
+                sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
+                    .fetch_one(&mut *conn)
+                    .await?;
+            let name: &'static str = crate::derived::static_type(derivation);
+            mark_dirty(conn, marked.into_iter().map(|k| (name, k)).collect(), seq).await
+        }
+        DerivedScope::Position { position } => {
+            sqlx::query!(
+                r#"INSERT INTO derivation.positions (derivation, commit_seq) VALUES ($1, $2)
+                   ON CONFLICT (derivation) DO UPDATE SET commit_seq = greatest(derivation.positions.commit_seq, EXCLUDED.commit_seq)"#,
+                derivation,
+                position,
+            )
+            .execute(&mut *conn)
+            .await?;
+            Ok(0)
+        }
+        DerivedScope::Key {
+            key,
+            dirty_seq,
+            waiting,
+        } => {
+            let live: Vec<Uuid> = admitted
+                .iter()
+                .map(|e| e.0)
+                .chain(kept.iter().copied())
+                .collect();
+            // Previous outputs not produced again and still live go to the archive.
+            let gone = sqlx::query_scalar!(
+                r#"SELECT o.event_id AS "event_id!" FROM derivation.outputs o
+                   WHERE o.derivation = $1 AND o.key = $2 AND NOT (o.event_id = ANY($3))
+                   AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = o.event_id)"#,
+                derivation,
+                key,
+                &live,
+            )
+            .fetch_all(&mut *conn)
+            .await?;
+            let mut dirty = 0;
+            if !gone.is_empty() {
+                let seq = sqlx::query_scalar!(
+                    "SELECT value FROM core.counters WHERE name = 'commit_seq'"
+                )
+                .fetch_one(&mut *conn)
+                .await?;
+                dirty += mark_archived_dirty(conn, &gone, seq, keys).await?;
+                sqlx::query!(
+                    r#"INSERT INTO audit.archived (event_id, archived_seq, reason)
+                       SELECT id, $2, 'recomputed' FROM unnest($1::uuid[]) AS id ON CONFLICT (event_id) DO NOTHING"#,
+                    &gone,
+                    seq,
+                )
+                .execute(&mut *conn)
+                .await?;
+                remove_live(conn, &gone).await?;
+            }
+            sqlx::query!(
+                "DELETE FROM derivation.outputs WHERE derivation = $1 AND key = $2",
+                derivation,
+                key,
+            )
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query!(
+                r#"INSERT INTO derivation.outputs (derivation, key, event_id)
+                   SELECT $1, $2, id FROM unnest($3::uuid[]) AS id ON CONFLICT DO NOTHING"#,
+                derivation,
+                key,
+                &live,
+            )
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query!(
+                "DELETE FROM derivation.dirty WHERE derivation = $1 AND key = $2 AND last_dirty_seq <= $3",
+                derivation,
+                key,
+                dirty_seq,
+            )
+            .execute(&mut *conn)
+            .await?;
+            if waiting {
+                sqlx::query!(
+                    "INSERT INTO derivation.waiting (derivation, key) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                    derivation,
+                    key,
+                )
+                .execute(&mut *conn)
+                .await?;
+            } else {
+                sqlx::query!(
+                    "DELETE FROM derivation.waiting WHERE derivation = $1 AND key = $2",
+                    derivation,
+                    key,
+                )
+                .execute(&mut *conn)
+                .await?;
+            }
+            Ok(dirty)
+        }
+    }
 }
 
 async fn mark_dirty(

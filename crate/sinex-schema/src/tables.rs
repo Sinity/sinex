@@ -128,7 +128,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE audit.archived (
   event_id uuid PRIMARY KEY,
   archived_seq bigint NOT NULL,
-  reason text NOT NULL CHECK (reason IN ('replay', 'newer_reading', 'hide', 'excise', 'version_change')),
+  reason text NOT NULL CHECK (reason IN ('replay', 'newer_reading', 'hide', 'excise', 'version_change', 'recomputed')),
   replaced_by uuid,
   operation_id uuid,
   archived_at timestamptz NOT NULL DEFAULT now()
@@ -262,6 +262,23 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   PRIMARY KEY (derivation, key)
 )".into(),
         "CREATE TABLE derivation.positions (derivation text PRIMARY KEY, commit_seq bigint NOT NULL)".into(),
+        // Each key's current outputs, so a recompute replaces the key's
+        // outputs as a set: outputs no longer produced are archived.
+        "CREATE TABLE derivation.outputs (
+  derivation text NOT NULL,
+  key jsonb NOT NULL,
+  event_id uuid NOT NULL,
+  PRIMARY KEY (derivation, key, event_id)
+)".into(),
+        "CREATE INDEX outputs_event ON derivation.outputs (event_id)".into(),
+        // Keys whose outputs wait for evidence outside their window (an open
+        // interval); recomputed whenever the derivation runs.
+        "CREATE TABLE derivation.waiting (
+  derivation text NOT NULL,
+  key jsonb NOT NULL,
+  since timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (derivation, key)
+)".into(),
         format!("CREATE TABLE privacy.rules (
   id uuid PRIMARY KEY,
   source text NOT NULL,
