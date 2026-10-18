@@ -4,10 +4,7 @@
 use crate::source_admission::{
     key_hash, observation_status, producer_version, record_failure, row_hash, set_part_length,
 };
-use crate::{
-    BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, Error, Result, WriterPool, coordinate_hash,
-    next_commit_seq,
-};
+use crate::{BLOB_PRESENT, Error, Result, WriterPool, coordinate_hash, next_commit_seq};
 use serde_json::{Value, json};
 use sinex_model::browser::{BrowserReadStart, Checkpoint, PARSER, SOURCE};
 use sqlx::{Connection, Row};
@@ -216,23 +213,7 @@ impl WriterPool {
         })
         .await??;
         let name = hash.to_string();
-        sqlx::query(BLOB_REGISTER)
-            .bind(Uuid::now_v7())
-            .bind(&name)
-            .bind(length)
-            .bind(&self.root)
-            .execute(&mut self.connection)
-            .await?;
-        let blob = sqlx::query(BLOB_LOOKUP)
-            .bind(&name)
-            .fetch_one(&mut self.connection)
-            .await?;
-        if blob.try_get::<i64, _>("size_bytes")? != length
-            || blob.try_get::<String, _>("root")? != self.root
-        {
-            return Err(Error::Invalid("snapshot blob identity mismatch"));
-        }
-        let blob: Uuid = blob.try_get("id")?;
+        let blob = self.register_blob(&name, length).await?;
         let store = self.blobs.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
             let actual = store.put(std::fs::File::open(&path)?, 3)?;

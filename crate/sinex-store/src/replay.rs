@@ -5,8 +5,7 @@
 use crate::atuin::{NewEvent, archive_replaced, insert_event};
 use crate::source_admission::row_hash;
 use crate::{
-    BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, Error, MATERIAL, ReadPool, ReplayCommand, Result,
-    WriterPool, next_commit_seq,
+    BLOB_PRESENT, Error, MATERIAL, ReadPool, ReplayCommand, Result, WriterPool, next_commit_seq,
 };
 use serde_json::{Value, json};
 use sinex_model::replay::{Outcome, State};
@@ -257,25 +256,7 @@ impl WriterPool {
         }
         let hash = hashed_blobs::Hash::of(&bytes);
         let name = hash.to_string();
-        sqlx::query(BLOB_REGISTER)
-            .bind(Uuid::now_v7())
-            .bind(&name)
-            .bind(bytes.len() as i64)
-            .bind(&self.root)
-            .execute(&mut self.connection)
-            .await?;
-        let row = sqlx::query(BLOB_LOOKUP)
-            .bind(name)
-            .fetch_one(&mut self.connection)
-            .await?;
-        let blob: Uuid = row.try_get("id")?;
-        if row.try_get::<String, _>("root")? != self.root
-            || row.try_get::<i64, _>("size_bytes")? != bytes.len() as i64
-        {
-            return Err(Error::Invalid(
-                "blob registry entry differs from the operation record",
-            ));
-        }
+        let blob = self.register_blob(&name, bytes.len() as i64).await?;
         let length = bytes.len() as i64;
         let store = self.blobs.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {

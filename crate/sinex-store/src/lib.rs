@@ -43,7 +43,7 @@ pub use test_pause::TestPause;
 pub use writer::{RuntimeIdentity, Store, prepare_admission_statements};
 pub use zsh::{PROTOCOL as ZSH_PROTOCOL, SOURCE as ZSH_SOURCE, ZshStep};
 
-pub(crate) use blob::{BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, parse_hash};
+pub(crate) use blob::{BLOB_PRESENT, parse_hash};
 pub(crate) use commit::{current_commit_seq, next_commit_seq};
 pub(crate) use writer::{MATERIAL, WriterPool, coordinate_hash};
 
