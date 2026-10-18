@@ -1,6 +1,7 @@
 use super::*;
+use sqlx::Connection;
 #[tokio::test]
-async fn oversized_provider_body_refuses_before_decoding_and_small_blob_remains_exact() {
+async fn oversized_row_fails_before_transfer_and_small_blob_round_trips() {
     let mut c = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     for ddl in [
         "CREATE TABLE visits(id INTEGER PRIMARY KEY,original BLOB)",
@@ -39,7 +40,7 @@ async fn oversized_provider_body_refuses_before_decoding_and_small_blob_remains_
 }
 
 #[tokio::test]
-async fn nonfinite_sqlite_real_keeps_bits_instead_of_becoming_json_null() {
+async fn nonfinite_real_keeps_its_bits() {
     let mut c = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     let row = sqlx::query("SELECT 1e999 AS value")
         .fetch_one(&mut c)

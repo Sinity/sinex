@@ -1,7 +1,7 @@
 //! Read-only Atuin acquisition. A poll owns one SQLite read transaction and yields bounded
 //! steps to the canonical writer. A restart retries a full poll; it never resumes a lost snapshot.
-use crate::atuin_guard as guard;
 use crate::config::AtuinConfig;
+use crate::sqlite_file;
 use serde_json::{Value, json};
 use sinex_store::{Admission, AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule};
 use sqlx::{
@@ -102,7 +102,7 @@ struct Reader {
 impl Reader {
     async fn connected(&mut self, path: &Path) -> Result<(&mut SqliteConnection, Uuid), String> {
         if let Some(connection) = self.connection.as_mut()
-            && guard::verify(connection, path).await.is_err()
+            && sqlite_file::verify(connection, path).await.is_err()
         {
             self.connection.take();
             self.epoch = None;
@@ -117,7 +117,7 @@ impl Reader {
             let mut connection = SqliteConnection::connect_with(&options)
                 .await
                 .map_err(|_| "Atuin database unavailable (read-only open failed)")?;
-            guard::verify(&mut connection, path).await?;
+            sqlite_file::verify(&mut connection, path).await?;
             self.connection = Some(connection);
             self.epoch = Some(Uuid::now_v7());
         }
@@ -327,7 +327,7 @@ async fn read(
             }
         }
     }
-    guard::verify(&mut tx, &config.path).await?;
+    sqlite_file::verify(&mut tx, &config.path).await?;
     tx.commit()
         .await
         .map_err(|_| "Atuin source read finalization failed")?;
@@ -404,5 +404,5 @@ fn full_required(
     !checkpoint_reusable || deadline.is_none_or(|due| now >= due)
 }
 #[cfg(test)]
-#[path = "atuin/read_plan_tests.rs"]
+#[path = "atuin_tests.rs"]
 mod tests;

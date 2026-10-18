@@ -1,6 +1,8 @@
-//! A consistent source view, separate from periodic physical retention.
-//! Locked rollback-journal copying relies on the declared local-FS metadata
-//! stability premise. SQLite integrity alone is never a concurrency certificate.
+//! Consistent reads of a live History file, and periodic SQLite backups of it.
+//! When Chromium holds an exclusive lock, the reader copies the database and
+//! its rollback journal instead. That copy assumes a local filesystem where
+//! unchanged size and nanosecond times mean unchanged bytes; a passing
+//! integrity check alone does not show the copy is consistent.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::browser::FileIdentity;
@@ -21,7 +23,7 @@ use std::{
 };
 use uuid::Uuid;
 
-// This distinction owns durable fencing; diagnostic text has no authority.
+// The variant, not the message, decides whether the generation is fenced.
 #[derive(Debug)]
 pub(super) enum Failure {
     Unavailable(String),
@@ -83,16 +85,16 @@ fn stamp(path: &Path) -> Result<Stamp, String> {
         ctime_ns: i128::from(m.ctime()) * 1_000_000_000 + i128::from(m.ctime_nsec()),
     })
 }
-fn quiet(pair: &Pair) -> bool {
+fn quiet(stamps: &FileStamps) -> bool {
     let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
         return false;
     };
     let Ok(now) = i128::try_from(now.as_nanos()) else {
         return false;
     };
-    std::iter::once(&pair.main)
-        .chain(pair.journal.iter())
-        .chain(pair.wal.iter())
+    std::iter::once(&stamps.main)
+        .chain(stamps.journal.iter())
+        .chain(stamps.wal.iter())
         .all(|s| s.mtime_ns <= now - 50_000_000 && s.ctime_ns <= now - 50_000_000)
 }
 fn sidecar(path: &Path, suffix: &str) -> PathBuf {
@@ -111,13 +113,13 @@ fn optional_stamp(path: &Path) -> Result<Option<Stamp>, String> {
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(super) struct Pair {
+pub(super) struct FileStamps {
     pub main: Stamp,
     pub journal: Option<Stamp>,
     pub wal: Option<Stamp>,
 }
-fn pair(path: &Path) -> Result<Pair, String> {
-    Ok(Pair {
+fn file_stamps(path: &Path) -> Result<FileStamps, String> {
+    Ok(FileStamps {
         main: stamp(path)?,
         journal: optional_stamp(&sidecar(path, "-journal"))?,
         wal: optional_stamp(&sidecar(path, "-wal"))?,
@@ -130,14 +132,14 @@ fn check_handle(file: &File, configured: &Path, identity: &FileIdentity) -> Resu
     let current = stamp(configured)?;
     if m.dev() != identity.device || m.ino() != identity.inode || &current.identity != identity {
         return Err(Failure::ReconciliationRequired(
-            "configured source no longer matches the opened file; explicit generation reconciliation required",
+            "configured History path no longer names the opened file; generation reconciliation required",
         ));
     }
     Ok(())
 }
 fn stopped(stop: &tokio::sync::watch::Receiver<bool>) -> Result<(), String> {
     if *stop.borrow() {
-        Err("browser acquisition cancelled before completed custody".into())
+        Err("browser read cancelled".into())
     } else {
         Ok(())
     }
@@ -152,7 +154,7 @@ fn verify_stamp(file: &File, expected: &Stamp) -> Result<(), String> {
         || i128::from(m.mtime()) * 1_000_000_000 + i128::from(m.mtime_nsec()) != expected.mtime_ns
         || i128::from(m.ctime()) * 1_000_000_000 + i128::from(m.ctime_nsec()) != expected.ctime_ns
     {
-        return Err("actual copied source handle changed or differs from validated basis".into());
+        return Err("History changed while it was copied".into());
     }
     Ok(())
 }
@@ -171,8 +173,8 @@ fn copy_file(
         .open(dest)
         .map_err(|_| "owned copy creation failed")?;
     stopped(stop)?;
-    // SAFETY: both descriptors are live and owned here. Linux FICLONE changes only
-    // the destination. Unsupported filesystems fall back to bounded streaming.
+    // SAFETY: both descriptors are live and owned here; FICLONE changes only the
+    // destination. Filesystems without reflinks fall back to streaming.
     let cloned = unsafe { ioctl(output.as_raw_fd(), 0x4004_9409u64 as _, input.as_raw_fd()) } == 0;
     let mut bytes = 0u64;
     if !cloned {
@@ -201,7 +203,7 @@ fn copy_file(
         .len()
         != expected.size
     {
-        return Err("copied length differs from source basis".into());
+        return Err("copied length differs from the source".into());
     }
     output.sync_all().map_err(|_| "owned copy fsync failed")?;
     Ok((bytes, cloned))
@@ -245,8 +247,8 @@ fn busy(error: &sqlx::Error) -> bool {
         .is_some_and(|code| matches!(code.as_ref(), "5" | "6"))
 }
 
-/// Back up the caller's actual read transaction. Both SQLite workers are locked
-/// throughout the public C API calls. Only an owned destination is writable.
+/// Back up the caller's open read transaction into a new file at `dest`.
+/// Both SQLite handles stay locked for the duration of the C API calls.
 pub(super) async fn backup(
     source: &mut SqliteConnection,
     dest: &Path,
@@ -270,8 +272,8 @@ pub(super) async fn backup(
             .lock_handle()
             .await
             .map_err(|_| "owned SQLite handle unavailable")?;
-        // SAFETY: SQLx locks both live sqlite3 handles; static database names and
-        // backup lifetime do not escape this block. finish is called on every path.
+        // SAFETY: SQLx locks both live sqlite3 handles; the backup object does not
+        // escape this block and finish runs on every path.
         let result = tokio::task::block_in_place(|| unsafe {
             let b = sqlite3_backup_init(
                 target.as_raw_handle().as_ptr().cast(),
@@ -330,15 +332,15 @@ pub(super) async fn backup(
         .map_err(|_| "owned snapshot length unavailable".into())
 }
 
-// A destination is private scratch until validated recovery gives the cache
-// ownership. Every error, cancellation and failed retry discards its sidecars.
+// A copy is deleted with its sidecars on every error, cancellation and retry,
+// unless it passed verification and became the cached view.
 struct CopyScratch {
     path: PathBuf,
-    retained: bool,
+    keep: bool,
 }
 impl Drop for CopyScratch {
     fn drop(&mut self) {
-        if !self.retained {
+        if !self.keep {
             for suffix in ["", "-journal", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(sidecar(&self.path, suffix));
             }
@@ -353,7 +355,7 @@ pub(super) struct HistorySource {
     configured: PathBuf,
     pub direct: Option<SqliteConnection>,
     root: PathBuf,
-    cached: Option<(Pair, PathBuf)>,
+    cached: Option<(FileStamps, PathBuf)>,
     sequence: u64,
 }
 impl HistorySource {
@@ -361,27 +363,28 @@ impl HistorySource {
         let identity = stamp(configured)?.identity;
         let file = File::open(configured).map_err(|_| "History file unavailable")?;
         check_handle(&file, configured, &identity)?;
-        std::fs::create_dir_all(&root).map_err(|_| "owned acquisition directory unavailable")?;
+        std::fs::create_dir_all(&root).map_err(|_| "browser copy directory unavailable")?;
         if std::fs::symlink_metadata(&root)
-            .map_err(|_| "owned acquisition directory metadata unavailable")?
+            .map_err(|_| "browser copy directory metadata unavailable")?
             .file_type()
             .is_symlink()
         {
-            return Err("owned acquisition directory cannot be a symlink".into());
+            return Err("browser copy directory cannot be a symlink".into());
         }
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
-            .map_err(|_| "owned acquisition directory permissions unavailable")?;
+            .map_err(|_| "browser copy directory permissions unavailable")?;
         let direct = match open(configured, true).await {
             Ok(mut connection) => {
-                crate::atuin_guard::verify(&mut connection, configured).await?;
-                // Opening a handle alone need not acquire SQLite's read lock.
+                crate::sqlite_file::verify(&mut connection, configured).await?;
+                // Opening does not take SQLite's read lock; a query does, and
+                // reports whether Chromium holds an exclusive lock.
                 match sqlx::query_scalar::<_, i64>("PRAGMA schema_version")
                     .fetch_one(&mut connection)
                     .await
                 {
                     Ok(_) => Some(connection),
                     Err(e) if busy(&e) => None,
-                    Err(_) => return Err("History read basis unavailable".into()),
+                    Err(_) => return Err("History schema version unavailable".into()),
                 }
             }
             Err(e) if busy(&e) => None,
@@ -416,7 +419,7 @@ impl HistorySource {
             stopped(stop)?;
             self.verify()?;
             let source = PathBuf::from(&self.identity.resolved);
-            let before = pair(&source)?;
+            let before = file_stamps(&source)?;
             if before.wal.is_some() {
                 return Err("locked WAL History cannot use rollback-journal copying".into());
             }
@@ -431,7 +434,7 @@ impl HistorySource {
                 && &before == prior
             {
                 tokio::select! {_ = tokio::time::sleep(Duration::from_millis(50))=>{},_ = async {let mut stop=stop.clone();let _=stop.changed().await;}=>return Err("browser acquisition cancelled".into())}
-                let after = pair(&source)?;
+                let after = file_stamps(&source)?;
                 self.verify()?;
                 if after == before && quiet(&before) {
                     return Ok((
@@ -443,7 +446,7 @@ impl HistorySource {
             let destination = self.next_path("view");
             let mut scratch = CopyScratch {
                 path: destination.clone(),
-                retained: false,
+                keep: false,
             };
             let source_copy = source.clone();
             let dest_copy = destination.clone();
@@ -472,16 +475,16 @@ impl HistorySource {
             )
             .await
             .map_err(|_| "test pause refused")?;
-            let after = pair(&source);
+            let after = file_stamps(&source);
             if let (Ok((bytes, cloned)), Ok(after)) = (result, after) {
                 self.verify()?;
                 if after == before {
                     tokio::select! {_ = tokio::time::sleep(Duration::from_millis(50))=>{},_ = async {let mut stop=stop.clone();let _=stop.changed().await;}=>return Err("browser acquisition cancelled".into())}
-                    let settled = pair(&source)?;
+                    let rechecked = file_stamps(&source)?;
                     self.verify()?;
-                    if settled == before && quiet(&before) {
-                        // Recovery may write only the owned copy and its copied journal. A
-                        // super-journal was refused before opening it; SHM is never copied.
+                    if rechecked == before && quiet(&before) {
+                        // Opening read-write replays the copied journal into the copy
+                        // only. Super-journals were refused above; SHM is never copied.
                         let mut connection = open(&destination, false)
                             .await
                             .map_err(|_| "owned journal recovery failed")?;
@@ -499,7 +502,7 @@ impl HistorySource {
                                 let _ = std::fs::remove_file(sidecar(&old, "-journal"));
                             }
                             self.cached = Some((before.clone(), destination.clone()));
-                            scratch.retained = true;
+                            scratch.keep = true;
                             return Ok((
                                 destination,
                                 json!({"kind":"verified_locked_rollback_copy","attempts":attempt+1,"source_pair":before,"copied_bytes":bytes,"main_reflink":cloned,"integrity":"quick_check_ok","premise":"paired files stable before/after copying and quiet recheck under coherent local-FS metadata; integrity alone is not concurrency proof; no unconditional atomic snapshot claim"}),
