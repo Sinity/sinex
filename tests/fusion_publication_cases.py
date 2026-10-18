@@ -64,7 +64,7 @@ poll_interval_ms=3600000
         admitted = {row['id']:row for row in captured}
         stop(daemon); daemon = None
         isolated = env.copy(); isolated.update(SINEX_TEST_ADMIN_URL=urls['admin'], SINEX_TEST_WRITER_URL=urls['writer'])
-        result = run(['cargo', 'test', '--locked', '-p', 'sinex-store', '--features', 'product', '--lib', 'shell::publication_tests::bounded_turn_rolls_back_mixed_groups_after_middle_statement_cancellation_and_restarts', '--', '--ignored', '--nocapture'], env=isolated, label='native mixed turn mid-insert cancellation, rollback and reconnect')
+        result = run(['cargo', 'test', '--locked', '-p', 'sinex-store', '--features', 'product', '--lib', 'shell::publication_tests::cancelled_publish_batch_rolls_back_and_republishes_with_same_ids', '--', '--ignored', '--nocapture'], env=isolated, label='native mixed turn mid-insert cancellation, rollback and reconnect')
         lines = [x.removeprefix('PUBLICATION_TURN_PROOF ') for x in result.stdout.splitlines() if x.startswith('PUBLICATION_TURN_PROOF ')]
         assert len(lines)==1
         proof = json.loads(lines[0]); assert proof['whole_turn_rollback'] and proof['restart_stable'] and proof['mixed']=={'skip':1,'reuse':1,'new':4}
