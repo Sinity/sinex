@@ -1,6 +1,7 @@
 //! zsh extended-history admission. The configured file is treated as
 //! append-only: each step continues from the stored offset, and a detected
 //! rewrite fences the input. Bytes are stored as stream parts like Atuin rows.
+use crate::commit::{Change, event_type, log_commit};
 use crate::source_admission::{
     key_hash, observation_status, producer_version, record_failure, set_part_length,
 };
@@ -307,13 +308,13 @@ impl Writer {
             .bind(hash)
             .execute(&mut *tx)
             .await?;
-            sqlx::query(
-                "INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id)
-                 VALUES($1,$2,0,0,4)",
+            log_commit(
+                &mut tx,
+                seq,
+                id,
+                Change::Added,
+                event_type::COMMAND_IMPORTED,
             )
-            .bind(seq)
-            .bind(id)
-            .execute(&mut *tx)
             .await?;
             crate::shell::dirty(&mut tx, id).await?;
             seq = next_commit_seq(&mut tx).await?;

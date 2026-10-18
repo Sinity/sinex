@@ -1,6 +1,7 @@
 //! Chromium history admission: visits and downloads from a profile's History
 //! database are stored as stream parts and admitted as events. Full database
 //! snapshots are stored as blobs.
+use crate::commit::{Change, log_commit};
 use crate::source_admission::{
     key_hash, observation_status, producer_version, record_failure, row_hash, set_part_length,
 };
@@ -415,15 +416,7 @@ impl Writer {
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
-                sqlx::query(
-                    "INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id)
-                     VALUES($1,$2,1,0,$3)",
-                )
-                .bind(seq)
-                .bind(old)
-                .bind(event_type)
-                .execute(&mut *tx)
-                .await?;
+                log_commit(&mut tx, seq, old, Change::Removed, event_type).await?;
                 sqlx::query("DELETE FROM core.live_coordinates WHERE store=0 AND event_id=$1")
                     .bind(old)
                     .execute(&mut *tx)
@@ -516,15 +509,7 @@ impl Writer {
             .bind(hash)
             .execute(&mut *tx)
             .await?;
-            sqlx::query(
-                "INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id)
-                 VALUES($1,$2,0,0,$3)",
-            )
-            .bind(seq)
-            .bind(id)
-            .bind(event_type)
-            .execute(&mut *tx)
-            .await?;
+            log_commit(&mut tx, seq, id, Change::Added, event_type).await?;
             seq = next_commit_seq(&mut tx).await?;
             admitted += 1;
         }

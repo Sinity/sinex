@@ -1,6 +1,7 @@
 //! Atuin history admission: rows read from Atuin's SQLite database are stored
 //! as stream parts and admitted as `command.executed` events. Also holds the
 //! operator privacy rules that every source applies to payloads.
+use crate::commit::{Change, event_type, log_commit};
 use crate::source_admission::{
     Tx, key_hash, observation_status, producer_version, record_failure, row_hash, set_part_length,
 };
@@ -361,13 +362,13 @@ pub(crate) async fn insert_event(tx: &mut Tx<'_>, event: NewEvent<'_>) -> Result
     .bind(event.record_hash)
     .execute(&mut **tx)
     .await?;
-    sqlx::query(
-        "INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id)
-         VALUES ($1,$2,0,0,2)",
+    log_commit(
+        tx,
+        event.commit_seq,
+        event.id,
+        Change::Added,
+        event_type::COMMAND_EXECUTED,
     )
-    .bind(event.commit_seq)
-    .bind(event.id)
-    .execute(&mut **tx)
     .await?;
     crate::shell::dirty(tx, event.id).await
 }
@@ -393,14 +394,7 @@ pub(crate) async fn archive_replaced(
     .bind(operation)
     .execute(&mut **tx)
     .await?;
-    sqlx::query(
-        "INSERT INTO core.commit_log (commit_seq,event_id,change,store,event_type_id)
-         VALUES ($1,$2,1,0,2)",
-    )
-    .bind(seq)
-    .bind(old)
-    .execute(&mut **tx)
-    .await?;
+    log_commit(tx, seq, old, Change::Removed, event_type::COMMAND_EXECUTED).await?;
     Ok(
         sqlx::query("DELETE FROM core.live_coordinates WHERE store=0 AND event_id=$1")
             .bind(old)
