@@ -42,6 +42,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "monitor.focused",
         "desktop.other",
     ],
+    framer: crate::drivers::append_file::lines,
 };
 
 sinex_model::payload_enum! {

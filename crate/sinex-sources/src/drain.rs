@@ -71,6 +71,12 @@ pub fn drain<P: Parser>(
     let mut bytes_in_chunk = 0usize;
     for &(start, end) in input.records {
         let raw = &input.bytes[start..end];
+        // An excision blanks a record to spaces (its newline kept): no record
+        // is left there, so nothing is read and nothing fails.
+        if is_blanked(raw) {
+            current.end = end;
+            continue;
+        }
         let location = RecordLocation {
             material: input.material,
             anchor: start as u64,
@@ -181,6 +187,10 @@ fn parse_one<P: Parser>(
             Err(RecordError::new(format!("parser panicked: {message}")))
         }
     }
+}
+
+fn is_blanked(raw: &[u8]) -> bool {
+    !raw.is_empty() && raw.iter().all(|b| *b == b' ' || *b == b'\n')
 }
 
 fn has_nul(value: &Value) -> bool {
@@ -340,6 +350,14 @@ mod tests {
             out.iter().map(|c| c.outcomes.len()).collect::<Vec<_>>(),
             vec![1, 1, 1]
         );
+    }
+
+    #[test]
+    fn blanked_records_are_skipped_not_failed() {
+        let out = run(b"a\n     \nb\n", Value::Null, Limits::default());
+        assert_eq!(commands(&out), vec![(0, "a".into()), (8, "b".into())]);
+        assert_eq!(out[0].failures, 0);
+        assert_eq!(out[0].end, 10);
     }
 
     #[test]

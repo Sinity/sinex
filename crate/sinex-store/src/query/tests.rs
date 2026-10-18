@@ -477,21 +477,23 @@ async fn read_only_sql_reads_and_cannot_write() {
 
 #[tokio::test]
 async fn excision_removes_search_text() {
+    use crate::excision::{Target, apply, plan};
     let (_db, mut conn) = testdb::fresh().await;
     let ids = world(&mut conn).await;
-    let excise = Batch {
-        run: RunId::new(),
-        kind: BatchKind::Api {
-            actor: "operator".into(),
-        },
-        records: vec![],
-        archive: vec![ArchiveRequest::Excise {
-            target: EventId(ids[0].1),
-            operation: OperationId::new(),
-        }],
-    };
+    let target = Target::Event(EventId(ids[0].1));
+    let plan = plan(&mut conn, target).await.unwrap();
     let mut tx = conn.begin().await.unwrap();
-    admit(&mut tx, &excise, &NoDerivations).await.unwrap();
+    apply(
+        &mut tx,
+        target,
+        &plan,
+        &[],
+        OperationId::new(),
+        "operator",
+        &NoDerivations,
+    )
+    .await
+    .unwrap();
     tx.commit().await.unwrap();
     let left = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM core.search_text WHERE event_id = $1"#,

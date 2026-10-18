@@ -246,28 +246,6 @@ async fn hidden_stays_hidden_across_readmission_until_unhidden() {
 }
 
 #[tokio::test]
-async fn excision_deletes_every_reading_and_keeps_the_key_out() {
-    let (_db, mut conn) = testdb::fresh().await;
-    let a = keyed("s", 3, 1, 1);
-    admit_one(&mut conn, &batch(vec![a.clone()])).await;
-    admit_one(&mut conn, &batch(vec![keyed("s", 3, 2, 2)])).await;
-    let mut excise = batch(vec![]);
-    excise.archive.push(ArchiveRequest::Excise {
-        target: a.id,
-        operation: OperationId::new(),
-    });
-    admit_one(&mut conn, &excise).await;
-    let n: i64 =
-        sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM core.events WHERE source = 's'"#)
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(n, 0);
-    let out = admit_one(&mut conn, &batch(vec![keyed("s", 3, 9, 9)])).await;
-    assert_eq!(out.hidden, 1);
-}
-
-#[tokio::test]
 async fn events_and_progress_commit_together() {
     let (_db, mut conn) = testdb::fresh().await;
     let progress = |cursor: i64| SourceProgress {

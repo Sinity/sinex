@@ -2,8 +2,17 @@
 //! takes batches from three channels in priority order, live before derived
 //! before bulk, so a backfill never starves live capture, and runs admission
 //! for each batch in its own transaction.
-use sinex_model::Batch;
-use sinex_store::{DirtyKeys, Outcome};
+//!
+//! Besides single batches it runs two kinds of work that need one
+//! transaction around more than one admission: a replay chain (archive what
+//! is re-read, admit the new readings; in compare mode, read the difference
+//! and roll back), and an excision (rewrite bytes, remove readings; delete the
+//! freed blob files after commit).
+use serde_json::Value;
+use sinex_model::{Batch, OperationId};
+use sinex_store::excision::{self, Applied, Plan, Rewrite, Target};
+use sinex_store::replay::{self, Diff};
+use sinex_store::{Blobs, DirtyKeys, Outcome};
 use sqlx::{Connection, PgConnection};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -13,11 +22,7 @@ pub enum Priority {
     /// Live capture; the daemon's source tasks submit these.
     #[allow(dead_code, reason = "the daemon's source tasks submit live batches")]
     Live,
-    /// Outputs of derivations; the automaton driver (§6.2) submits these.
-    #[allow(
-        dead_code,
-        reason = "the automaton driver lane submits derived batches"
-    )]
+    /// Outputs of derivations (§6.2), and replays, which re-derive.
     Derived,
     Bulk,
 }
@@ -30,9 +35,52 @@ pub enum WriteError {
     Stopped,
 }
 
+/// One replay chain: its batches run in one transaction.
+pub struct ReplayChain {
+    pub operation: OperationId,
+    pub actor: String,
+    pub scope: Value,
+    /// The chain's first material, journaled when the chain commits.
+    pub root: uuid::Uuid,
+    /// Roll back after reading the difference: the comparison lane.
+    pub compare: bool,
+    pub batches: Vec<Batch>,
+}
+
+/// An excision, planned and with its replacement bytes already stored.
+pub struct Excision {
+    pub target: Target,
+    pub plan: Plan,
+    pub rewrites: Vec<Rewrite>,
+    pub operation: OperationId,
+    pub actor: String,
+    /// Where the freed blob files are deleted after commit.
+    pub blobs: Blobs,
+}
+
+/// What an excision did, and blob files it could not delete after commit
+/// (no row refers to them; a later excision of the same bytes retries).
+#[derive(Debug)]
+pub struct Excised {
+    pub applied: Applied,
+    pub files_left: Vec<String>,
+}
+
+enum Work {
+    Admit(Batch),
+    Replay(ReplayChain),
+    Excise(Box<Excision>),
+}
+
+enum Done {
+    Admitted(Outcome),
+    Replayed(Vec<Outcome>, Diff),
+    Excised(Excised),
+}
+
 struct Job {
-    batch: Batch,
-    reply: oneshot::Sender<Result<Outcome, WriteError>>,
+    work: Work,
+    reply: oneshot::Sender<Result<Done, WriteError>>,
 }
 
 /// Where producers hand batches to the writer.
@@ -46,6 +94,31 @@ pub struct WriterHandle {
 impl WriterHandle {
     /// Submit a batch and wait until it is committed (or refused).
     pub async fn submit(&self, priority: Priority, batch: Batch) -> Result<Outcome, WriteError> {
+        match self.send(priority, Work::Admit(batch)).await? {
+            Done::Admitted(outcome) => Ok(outcome),
+            _ => unreachable!("an admission answers with its outcome"),
+        }
+    }
+
+    /// Replay one chain in one transaction; in compare mode nothing is kept.
+    pub async fn replay(&self, chain: ReplayChain) -> Result<(Vec<Outcome>, Diff), WriteError> {
+        match self.send(Priority::Derived, Work::Replay(chain)).await? {
+            Done::Replayed(outcomes, diff) => Ok((outcomes, diff)),
+            _ => unreachable!("a replay answers with its outcomes"),
+        }
+    }
+
+    pub async fn excise(&self, excision: Excision) -> Result<Excised, WriteError> {
+        match self
+            .send(Priority::Live, Work::Excise(Box::new(excision)))
+            .await?
+        {
+            Done::Excised(done) => Ok(done),
+            _ => unreachable!("an excision answers with what it removed"),
+        }
+    }
+
+    async fn send(&self, priority: Priority, work: Work) -> Result<Done, WriteError> {
         let (reply, answer) = oneshot::channel();
         let channel = match priority {
             Priority::Live => &self.live,
@@ -53,7 +126,7 @@ impl WriterHandle {
             Priority::Bulk => &self.bulk,
         };
         channel
-            .send(Job { batch, reply })
+            .send(Job { work, reply })
             .await
             .map_err(|_| WriteError::Stopped)?;
         answer.await.map_err(|_| WriteError::Stopped)?
@@ -107,7 +180,17 @@ pub async fn run(
             Some(job) = queues.bulk.recv() => job,
             else => return,
         };
-        let result = admit(&mut connection, &job.batch, keys.as_ref()).await;
+        let result = match job.work {
+            Work::Admit(batch) => admit(&mut connection, &batch, keys.as_ref())
+                .await
+                .map(Done::Admitted),
+            Work::Replay(chain) => replay_chain(&mut connection, &chain, keys.as_ref())
+                .await
+                .map(|(o, d)| Done::Replayed(o, d)),
+            Work::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
+                .await
+                .map(Done::Excised),
+        };
         if let Err(WriteError::Refused(_)) = &result
             && connection.ping().await.is_err()
             && let Ok(fresh) = PgConnection::connect(&url).await
@@ -130,6 +213,73 @@ async fn admit(
         .map_err(|e| refuse(&e))?;
     tx.commit().await.map_err(|e| refuse(&e))?;
     Ok(outcome)
+}
+
+async fn replay_chain(
+    connection: &mut PgConnection,
+    chain: &ReplayChain,
+    keys: &dyn DirtyKeys,
+) -> Result<(Vec<Outcome>, Diff), WriteError> {
+    let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
+    let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
+    replay::begin(&mut tx, chain.operation, &chain.actor, &chain.scope)
+        .await
+        .map_err(|e| refuse(&e))?;
+    let mut outcomes = Vec::with_capacity(chain.batches.len());
+    for batch in &chain.batches {
+        outcomes.push(
+            sinex_store::admit(&mut tx, batch, keys)
+                .await
+                .map_err(|e| refuse(&e))?,
+        );
+    }
+    let admitted: Vec<uuid::Uuid> = outcomes
+        .iter()
+        .flat_map(|o| o.admitted_ids.iter().map(|id| id.0))
+        .collect();
+    let diff = replay::diff(&mut tx, chain.operation, &admitted)
+        .await
+        .map_err(|e| refuse(&e))?;
+    if chain.compare {
+        tx.rollback().await.map_err(|e| refuse(&e))?;
+    } else {
+        replay::chain_done(&mut tx, chain.operation, chain.root)
+            .await
+            .map_err(|e| refuse(&e))?;
+        tx.commit().await.map_err(|e| refuse(&e))?;
+    }
+    Ok((outcomes, diff))
+}
+
+async fn excise(
+    connection: &mut PgConnection,
+    e: &Excision,
+    keys: &dyn DirtyKeys,
+) -> Result<Excised, WriteError> {
+    let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
+    let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
+    let applied = excision::apply(
+        &mut tx,
+        e.target,
+        &e.plan,
+        &e.rewrites,
+        e.operation,
+        &e.actor,
+        keys,
+    )
+    .await
+    .map_err(|e| refuse(&e))?;
+    tx.commit().await.map_err(|e| refuse(&e))?;
+    let files_left = applied
+        .delete_after_commit
+        .iter()
+        .filter(|name| e.blobs.delete(name).is_err())
+        .cloned()
+        .collect();
+    Ok(Excised {
+        applied,
+        files_left,
+    })
 }
 
 #[cfg(test)]

@@ -28,6 +28,23 @@ impl Blobs {
     pub fn read_range(&self, name: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
         Ok(self.0.read_range(&parse(name)?, offset, len)?)
     }
+
+    /// The whole blob, verified against its name as it is read.
+    pub fn read(&self, name: &str) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut self.0.read(&parse(name)?)?, &mut out)
+            .map_err(|e| crate::Error::Invalid(format!("read {name}: {e}")))?;
+        Ok(out)
+    }
+
+    /// Delete a blob's file once no row refers to it (spec `storage.md` §5:
+    /// rows first, the file after commit). A file already gone is fine.
+    pub fn delete(&self, name: &str) -> Result<()> {
+        match self.0.delete(&parse(name)?) {
+            Ok(()) | Err(hashed_blobs::Error::Missing(_)) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
 }
 
 fn parse(name: &str) -> Result<hashed_blobs::Hash> {
