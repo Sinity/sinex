@@ -8,13 +8,12 @@ from datetime import datetime, timezone
 import http.client
 import json
 from pathlib import Path
-import socket
 import sqlite3
 import subprocess
 import time
 import uuid
 
-from _shell import HISTORY_COLUMNS, Daemon, add_history, create_history, sql, update_history
+from _shell import HISTORY_COLUMNS, Daemon, add_history, create_history, pause_listener, sql, update_history
 
 # Copied from the spec repository, sinex-spec/prototype/fusion/selected-journey.json
 # at b2373e95f054b327bb13fad357b74b9b06a207c4.
@@ -250,10 +249,7 @@ poll_interval_ms = {poll}
         daemon.stop()
         add_history(source, atuin_row(observations['a2']))
         address = work/'late.sock'
-        with socket.socket(socket.AF_UNIX) as listener:
-            listener.bind(str(address))
-            listener.listen()
-            listener.settimeout(40)
+        with pause_listener(address, 40) as listener:
             configure()
             proc = daemon.start('late-paused', '--test-pause-at', 'fusion-replacement-committed', '--test-pause-socket', address)
             conn, _ = listener.accept()
@@ -463,10 +459,7 @@ poll_interval_ms = {poll}
         add_history(source, *[(f'fair-{n}', 900_000_000_000_000 + n * 1_000_000_000, 1, 0, f'echo fair-{n}', '/work/harbor',
                                'fair-session', 'fixture-host', None) for n in range(150)])
         address = work/'fair.sock'
-        with socket.socket(socket.AF_UNIX) as listener:
-            listener.bind(str(address))
-            listener.listen()
-            listener.settimeout(60)
+        with pause_listener(address, 60) as listener:
             configure(poll=100)
             proc = daemon.start('fair', '--test-pause-at', 'fusion-replacement-committed', '--test-pause-socket', address)
             conn, _ = listener.accept()
@@ -540,10 +533,7 @@ poll_interval_ms = {poll}
             except (OSError, http.client.HTTPException) as error:
                 lost['error'] = repr(error)
                 return None
-        with socket.socket(socket.AF_UNIX) as listener:
-            listener.bind(str(address))
-            listener.listen()
-            listener.settimeout(45)
+        with pause_listener(address, 45) as listener:
             configure(False)
             proc = daemon.start('head-race', '--test-pause-at', 'replay-committed-0', '--test-pause-socket', address)
             daemon.wait()

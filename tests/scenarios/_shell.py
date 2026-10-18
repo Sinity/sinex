@@ -1,8 +1,10 @@
 """Helpers for the search, shell_grouping and shell_publication scenarios: one
 daemon at a time on one endpoint, its CLI, JSON-RPC and MCP clients, psql, and
 synthetic Atuin history files."""
+import contextlib
 import json
 import select
+import socket
 import sqlite3
 import subprocess
 import time
@@ -33,6 +35,20 @@ def add_history(path, *rows):
 def update_history(path, statement, *params):
     with sqlite3.connect(path) as con:
         con.execute(statement, params)
+
+
+@contextlib.contextmanager
+def pause_listener(path, timeout):
+    """A Unix socket for `sinexd --test-pause-socket`; removed afterwards, since a
+    socket file cannot be copied into a failed scenario's kept directory."""
+    with socket.socket(socket.AF_UNIX) as listener:
+        listener.bind(str(path))
+        listener.listen()
+        listener.settimeout(timeout)
+        try:
+            yield listener
+        finally:
+            path.unlink()
 
 
 def sql(h, statement, url=None):

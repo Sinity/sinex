@@ -4,11 +4,10 @@ cancellation and credential masking."""
 import concurrent.futures
 import contextlib
 import json
-import socket
 import subprocess
 import time
 
-from _shell import Daemon, create_history, sql, update_history
+from _shell import Daemon, create_history, pause_listener, sql, update_history
 
 
 def exercise(h):
@@ -211,10 +210,7 @@ full_interval_ms = 100
         config.write_text(configuration())
         reset_projection()
         boundary = work/'projection.sock'
-        with socket.socket(socket.AF_UNIX) as controller:
-            controller.bind(str(boundary))
-            controller.listen(1)
-            controller.settimeout(20)
+        with pause_listener(boundary, 20) as controller:
             proc = daemon.start('projection-paused', '--test-pause-at', 'projection-staged-1', '--test-pause-socket', boundary)
             conn, _ = controller.accept()
             with conn:
@@ -338,7 +334,7 @@ full_interval_ms = 100
         secret = query('needle and command ~ "ghp_"')['rows'][0]
         assert 'ghp_' not in secret['payload']['command'] and 'ghp_' not in secret['snippet']['text'] and secret['secret'] is True
         assert secret['snippet']['spans'] == [] and secret['snippet']['highlights_unavailable'] == 'masked'
-        search_running = "query LIKE 'WITH matching%'"
+        blocked = "wait_event_type='Lock'"
         with locked():
             response = rpc('search', {'query': 'needle', 'timeout_ms': 300})
             assert response['error']['kind'] == 'budget' and 'result' not in response
@@ -346,15 +342,15 @@ full_interval_ms = 100
             out, err = (report/'killed-search.stdout').open('w'), (report/'killed-search.stderr').open('w')
             client = subprocess.Popen(args, env=env, stdout=out, stderr=err)
             h['CHILDREN'].append((client, out, err))
-            pids = reader_backends(search_running)
+            pids = reader_backends(blocked)
             client.kill()
             client.wait(timeout=5)
             wait_gone(pids)
-        cancelled_tool('sinex_search', {'words': 'needle'}, 'core.search_text', search_running)
+        cancelled_tool('sinex_search', {'words': 'needle'}, 'core.search_text', blocked)
         reference = 'sinex:ev/' + query('"corrected current"')['rows'][0]['id']
         for name, relation, arguments in [('sinex_show', 'core.events', {'ref': reference}), ('sinex_trace', 'core.events', {'ref': reference}),
                                           ('sinex_sources', 'raw.inputs', {}), ('sinex_status', 'core.events', {})]:
-            cancelled_tool(name, arguments, relation, "wait_event_type='Lock'")
+            cancelled_tool(name, arguments, relation, blocked)
         with locked('core.events'):
             reply = rpc('object.show', {'ref': reference}, timeout=15)
             assert reply['error']['kind'] == 'budget' and 'result' not in reply
