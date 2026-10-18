@@ -11,3 +11,5 @@ Every JSON-RPC response, including errors, passes through a credential filter be
 Masking changes only what is presented. Stored rows, payloads, hashes and provenance keep their values. Optional [privacy rules](atuin.md#configuration) are applied once at admission. `trace --bytes` on a stored raw row applies the rules recorded with that row and then any current rules not already among them; it refuses if that would change an identifier. The credential filter then runs on the result.
 
 Masking and encoding run synchronously and are not interrupted by the query deadline.
+
+The `credential_output` and `privacy_rules` scenarios (`xtask scenario credential_output privacy_rules`) cover this.

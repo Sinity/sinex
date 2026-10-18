@@ -36,3 +36,5 @@ Progress (`processed`, `next_anchor`, `steps`) is separate from the `archived` a
 ## Outcomes
 
 States are `recorded`, `running`, `completed`, `refused` and `cancelled`; `complete` is true only for `completed`. CLI exit codes: 0 completed, 2 invalid syntax, 4 refused, 5 cancelled or still running. A transport error means no reply arrived, not that nothing was committed: retry with the same action ID or check the operation.
+
+The `replay` scenario (`xtask scenario replay`) covers this.

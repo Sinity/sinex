@@ -65,3 +65,5 @@ The read-model owner applies at most 64 commit-log entries per transaction and c
 The projection is rebuilt from the full commit log. Retrieval version `sinex.shell-search.v5` and [schema change 7](schema.md) introduced the token-text representation.
 
 `show` reads the canonical event and its parents; `trace` follows parents to their stored material ranges, and CLI `trace --bytes` also returns the masked stored row. Both keep working after a source disappears.
+
+The `search_text` scenario (`xtask scenario search_text`) covers text matching and unavailable token text.
