@@ -106,13 +106,22 @@ fn test(run: &mut Run, filter: Option<&str>) -> Result {
         Ok(())
     })?;
     let (server, databases) = prepared.expect("prepared");
+    // One NATS server for the run; each test takes its own subject prefix
+    // (`devkit::nats::test_nats`). It stops when the run ends.
+    let mut nats = None;
+    run.step("nats", |_| {
+        nats = Some(devkit::nats::Server::start()?);
+        Ok(())
+    })?;
+    let mut env = database::env(&server, &databases);
+    env.extend(nats.as_ref().expect("started").test_env());
     let mut args = vec!["--locked".to_owned(), "--workspace".to_owned()];
     args.extend(filter.map(str::to_owned));
     run.nextest(
         "test",
         &Nextest {
             args,
-            env: database::env(&server, &databases),
+            env,
             allow_no_tests: filter.is_some(),
             ..Nextest::default()
         },

@@ -94,8 +94,14 @@ pub async fn admit(
     // batch they are still the key's outputs.
     let mut kept: Vec<Uuid> = Vec::new();
 
-    if let BatchKind::Source(progress) = &batch.kind {
-        register_source(conn, progress).await?;
+    match &batch.kind {
+        BatchKind::Source(progress) => register_source(conn, progress).await?,
+        BatchKind::Ingress(frame) => {
+            if let Some(progress) = &frame.material {
+                register_source(conn, progress).await?;
+            }
+        }
+        BatchKind::Derived { .. } | BatchKind::Api { .. } | BatchKind::Replay { .. } => {}
     }
     for request in &batch.archive {
         if let ArchiveRequest::Replay { scope, operation } = request {
@@ -351,6 +357,11 @@ pub async fn admit(
     for request in &batch.archive {
         outcome.dirty_keys += archive_request(conn, request, keys).await?;
     }
+
+    match &batch.kind {
+        BatchKind::Ingress(frame) => record_frame(conn, frame, &outcome).await?,
+        _ => {}
+    }
     Ok(outcome)
 }
 
@@ -412,6 +423,42 @@ async fn archive_replay_scope(
         .await?;
     }
     Ok((live.len(), dirty))
+}
+
+/// The producer's persisted acknowledgment of one ingress frame, written with
+/// its events (architecture §4.3, `mn8u`).
+async fn record_frame(
+    conn: &mut PgConnection,
+    frame: &sinex_model::IngressFrame,
+    outcome: &Outcome,
+) -> Result<()> {
+    let admitted: Vec<Uuid> = outcome.admitted_ids.iter().map(|id| id.0).collect();
+    let counts = serde_json::json!({
+        "admitted": outcome.admitted,
+        "repeats": outcome.repeats,
+        "replaced": outcome.replaced,
+        "older": outcome.older,
+        "hidden": outcome.hidden,
+        "superseded": outcome.superseded,
+    });
+    sqlx::query!(
+        r#"INSERT INTO core.ingress_frames (producer, frame, material_id, admitted, outcome, refusal, commit_seq)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+        frame.producer,
+        frame.frame,
+        frame
+            .material
+            .as_ref()
+            .and_then(|m| m.material.as_ref())
+            .map(|m| m.id.0),
+        &admitted,
+        counts,
+        frame.refusal,
+        outcome.commit_seq.map(|(_, last)| last),
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// Upsert the input, record the observation, open a revision when the content

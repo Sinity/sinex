@@ -36,14 +36,28 @@ pub enum BatchKind {
     Api {
         actor: String,
     },
-    Ingress {
-        producer: String,
-    },
+    /// One frame from an outside producer over the NATS ingress
+    /// (architecture §4.3). Admission records the frame and its outcome in the
+    /// same transaction as its events, which is the producer's persisted
+    /// acknowledgment.
+    Ingress(Box<IngressFrame>),
     /// New readings of stored materials, from a replay; the material is
     /// already registered, so there is no source progress.
     Replay {
         operation: OperationId,
     },
+}
+
+#[derive(Clone, Debug)]
+pub struct IngressFrame {
+    pub producer: String,
+    /// The producer's own name for the frame, unique per producer.
+    pub frame: String,
+    /// A material frame registers its material like a source batch does.
+    pub material: Option<SourceProgress>,
+    /// Set when the frame was refused as a whole: it is recorded, with no
+    /// events, so asking again gets the same answer.
+    pub refusal: Option<String>,
 }
 
 /// One framed record's result: its events, or why the parser could not read it.

@@ -3,7 +3,7 @@
 //! Depends only on `sinex-model` and serde.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_model::{EventId, MaterialId};
+use sinex_model::EventId;
 
 /// One entry of the command table. The CLI, API and MCP surfaces are
 /// generated from this list, so they cannot drift apart.
@@ -97,31 +97,12 @@ pub enum Reply {
     },
 }
 
-/// Producer protocol over the NATS ingress (architecture §4.3). A producer
-/// sends a material frame and waits for the acknowledgment that it is
-/// registered before sending events that cite it.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Ingress {
-    Material {
-        id: MaterialId,
-        blob: String,
-        length: u64,
-        manifest: Value,
-    },
-    Events {
-        producer: String,
-        events: Vec<Value>,
-    },
-}
+pub mod nats;
 
-/// Persisted and queryable: a producer can ask what Sinex holds (`mn8u`).
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Acknowledgment {
-    pub material: Option<MaterialId>,
-    pub events: Vec<EventId>,
-    pub commit_seq: Option<i64>,
-}
+pub use nats::{
+    Acknowledgment, ArchiveNotice, Confirmed, ConfirmedEvent, Have, Ingress, MaterialFrame,
+    ProducerEvent, Subjects, Withheld,
+};
 
 #[cfg(test)]
 mod tests {

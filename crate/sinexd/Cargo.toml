@@ -20,6 +20,11 @@ clap.workspace = true
 time.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
+async-nats.workspace = true
+jsonschema.workspace = true
+futures.workspace = true
+blake3.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 devkit.workspace = true
