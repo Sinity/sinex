@@ -1,4 +1,5 @@
-//! One retained Atuin occurrence, separate from its interpretation IDs.
+//! Requests and results for excluding one Atuin occurrence from reads (`delete.run`)
+//! and removing that exclusion (`delete.undo`).
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -59,12 +60,14 @@ pub struct Outcome {
     pub state: State,
     pub target: Uuid,
     pub occurrence: Option<Occurrence>,
-    /// The exclusion binding immediately after this action, not a current-state claim on retry.
+    /// The exclusion in force right after this action. A retry returns the same value even
+    /// if the exclusion has changed since.
     pub exclusion_operation: Option<Uuid>,
     pub removed_exclusion_operation: Option<Uuid>,
     pub archived: Vec<Uuid>,
     pub reason: Option<String>,
-    /// A canonical refusal may identify its one raw parent, without applying to it.
+    /// When the target is a canonical command with one raw parent, that parent's reference.
+    /// The action is refused and is not applied to the parent.
     pub raw_ref: Option<String>,
 }
 
@@ -72,7 +75,7 @@ pub struct Outcome {
 mod tests {
     use super::*;
     #[test]
-    fn exact_reference_and_typed_action_boundary() {
+    fn request_accepts_event_refs_and_rejects_unknown_fields() {
         let id = Uuid::now_v7();
         let mut r = Request {
             reference: format!("sinex:ev/{id}"),

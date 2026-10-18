@@ -1,4 +1,5 @@
-//! Acquisition evidence is separate from event freshness and historical coverage.
+//! Collector run state: source inspection requests, poll schedules, last outcomes and
+//! Atuin checkpoints.
 use crate::ValidationError;
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -21,14 +22,14 @@ impl SourcesRequest {
             || (self.after_input.is_some() && self.input.is_some())
         {
             return Err(ValidationError(
-                "source detail requires input; receipt continuation requires observation; input and after_input conflict",
+                "before_seq and observation need input, after_receipt needs observation, and input cannot be combined with after_input",
             ));
         }
         Ok(())
     }
 }
 
-/// Supplied by the daemon owner, never by a sources request.
+/// A collector the daemon is running now. Comes from the daemon, never from a request.
 #[derive(Clone, Debug)]
 pub struct CollectorScope {
     pub source: String,
@@ -36,7 +37,8 @@ pub struct CollectorScope {
     pub run: Uuid,
 }
 
-pub fn current_scope(
+/// Whether a stored observation belongs to a collector run that is still active.
+pub fn is_active_collector(
     active: &[CollectorScope],
     source: &str,
     locator: &str,
@@ -47,8 +49,9 @@ pub fn current_scope(
         .any(|a| a.source == source && a.locator == locator && Some(a.run) == run)
 }
 
-/// Constant-size inherited references, not a second history store. A missing legacy
-/// baseline stays unknown until that kind of outcome is directly observed.
+/// The last successful and last failed run, carried from each run to the next.
+/// `*_known` is false while the chain starts at a run that did not record them; it
+/// becomes true when the next outcome of that kind is seen.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutcomeRefs {
@@ -82,8 +85,8 @@ impl OutcomeRefs {
     }
 }
 
-/// Collector-observed settlement after the writer reply, and its selected next start.
-/// This does not timestamp the first provider failure or bound a reading poll.
+/// When a poll finished (after the writer replied) and when the next one should start.
+/// `settled_at` is a stored key.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PollSchedule {
@@ -116,7 +119,7 @@ impl PollSchedule {
     }
     pub fn validate(&self) -> Result<(), ValidationError> {
         let start = OffsetDateTime::parse(&self.settled_at, &Rfc3339)
-            .map_err(|_| ValidationError("invalid settlement clock"))?;
+            .map_err(|_| ValidationError("invalid poll finish time"))?;
         if self.version != 1
             || Self::after(start, self.interval_ms)?.next_start_at != self.next_start_at
         {
@@ -156,12 +159,8 @@ pub fn state(
         _ => AcquisitionState::Unknown,
     }
 }
-#[cfg(test)]
-#[path = "acquisition_tests.rs"]
-mod tests;
-
-/// Versioned collector checkpoint. The epoch belongs to one verified open reader,
-/// not to occurrence identity. A new reader always performs a real full read.
+/// Atuin collector checkpoint. `epoch` names one open reader of the history database;
+/// a new reader always starts with a full read.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AtuinCheckpoint {
@@ -215,3 +214,7 @@ pub struct AtuinReadStart {
     pub snapshot_seq: i64,
     pub checkpoint: Option<AtuinCheckpoint>,
 }
+
+#[cfg(test)]
+#[path = "acquisition_tests.rs"]
+mod tests;

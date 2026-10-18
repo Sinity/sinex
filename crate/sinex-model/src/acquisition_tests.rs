@@ -5,7 +5,7 @@ fn clock(text: &str) -> OffsetDateTime {
 }
 
 #[test]
-fn elapsed_schedule_changes_completed_answer_without_new_events() {
+fn completed_source_becomes_overdue_after_next_start() {
     let start = clock("2026-09-14T09:00:00Z");
     let plan = PollSchedule::after(start, 1000).unwrap();
     assert_eq!(
@@ -46,7 +46,7 @@ fn elapsed_schedule_changes_completed_answer_without_new_events() {
     );
 }
 #[test]
-fn missing_legacy_schedule_cannot_invent_a_deadline() {
+fn completed_source_without_schedule_is_never_overdue() {
     let now = clock("2026-09-14T09:00:00Z");
     assert_eq!(state(None, None, now), AcquisitionState::Unknown);
     assert_eq!(
@@ -59,7 +59,7 @@ fn missing_legacy_schedule_cannot_invent_a_deadline() {
     );
 }
 #[test]
-fn interval_and_clock_arithmetic_refuse_invalid_evidence() {
+fn poll_schedule_rejects_bad_intervals_and_edited_times() {
     let now = clock("2026-09-14T09:00:00Z");
     assert!(PollSchedule::after(now, u64::MAX).is_err());
     assert!(PollSchedule::after(now, 0).is_err());
@@ -69,7 +69,7 @@ fn interval_and_clock_arithmetic_refuse_invalid_evidence() {
     assert!(plan.validate().is_err());
 }
 #[test]
-fn inspection_requires_scoped_continuations() {
+fn sources_request_continuations_need_their_parent() {
     let id = Uuid::now_v7();
     assert!(SourcesRequest::default().validate().is_ok());
     assert!(
@@ -111,7 +111,7 @@ fn inspection_requires_scoped_continuations() {
 }
 
 #[test]
-fn outcome_refs_preserve_known_failure_across_arbitrarily_many_successes() {
+fn outcome_refs_keep_last_failure_across_successes() {
     let failed = Uuid::now_v7();
     let mut refs = OutcomeRefs::following(Some((failed, "unavailable", None)));
     assert!(!refs.success_known && refs.failure_known);
@@ -127,38 +127,38 @@ fn outcome_refs_preserve_known_failure_across_arbitrarily_many_successes() {
 }
 
 #[test]
-fn historical_plan_cannot_become_current_overdue_after_configuration_or_run_changes() {
+fn only_the_running_collector_matches_its_observations() {
     let run = Uuid::now_v7();
     let active = CollectorScope {
         source: "terminal.atuin-history".into(),
         locator: "/synthetic/history.db".into(),
         run,
     };
-    assert!(current_scope(
+    assert!(is_active_collector(
         std::slice::from_ref(&active),
         "terminal.atuin-history",
         &active.locator,
         Some(run)
     ));
-    assert!(!current_scope(
+    assert!(!is_active_collector(
         &[],
         "terminal.atuin-history",
         &active.locator,
         Some(run)
     ));
-    assert!(!current_scope(
+    assert!(!is_active_collector(
         std::slice::from_ref(&active),
         "terminal.atuin-history",
         "/synthetic/old.db",
         Some(run)
     ));
-    assert!(!current_scope(
+    assert!(!is_active_collector(
         std::slice::from_ref(&active),
         "terminal.atuin-history",
         &active.locator,
         Some(Uuid::now_v7())
     ));
-    assert!(!current_scope(
+    assert!(!is_active_collector(
         std::slice::from_ref(&active),
         "terminal.atuin-history",
         &active.locator,
@@ -167,7 +167,7 @@ fn historical_plan_cannot_become_current_overdue_after_configuration_or_run_chan
 }
 
 #[test]
-fn atuin_checkpoint_needs_the_same_reader_schema_and_unexpired_real_full() {
+fn atuin_checkpoint_reused_only_for_same_reader_and_schema_before_due() {
     let epoch = Uuid::now_v7();
     let now = OffsetDateTime::parse("2026-10-17T10:00:00Z", &Rfc3339).unwrap();
     let mut checkpoint = AtuinCheckpoint {
