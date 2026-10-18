@@ -1,8 +1,15 @@
-//! Bound provider transfer before decoding full original SQLite values.
-use super::*;
+//! Reads one Chromium row as JSON, after checking inside SQLite that it fits
+//! the writer's step size limit.
+use serde_json::{Value, json};
+use sinex_store::MAX_STEP_BYTES;
+use sqlx::{
+    Column, Row, TypeInfo, ValueRef,
+    sqlite::{SqliteConnection, SqliteRow},
+};
 use std::collections::HashMap;
 
 pub(super) struct ProviderRows {
+    /// Per table, an SQL expression for the encoded size of one row.
     cost: HashMap<&'static str, String>,
 }
 fn sum(items: &[String]) -> String {
@@ -21,7 +28,7 @@ impl ProviderRows {
         for table in ["visits", "urls", "downloads", "downloads_url_chains"] {
             let name_bytes:i64=sqlx::query_scalar(&format!("SELECT coalesce(sum(length(CAST(name AS BLOB))+16),0) FROM pragma_table_xinfo('{table}') WHERE hidden!=1")).fetch_one(&mut *connection).await.map_err(|_|"Chromium column metadata unavailable")?;
             if name_bytes <= 0 || name_bytes > MAX_STEP_BYTES as i64 {
-                return Err("Chromium column names exceed retention budget".into());
+                return Err("Chromium column names exceed step size limit".into());
             }
             let names: Vec<String> = sqlx::query_scalar(&format!(
                 "SELECT name FROM pragma_table_xinfo('{table}') WHERE hidden!=1 ORDER BY cid"
@@ -29,8 +36,8 @@ impl ProviderRows {
             .fetch_all(&mut *connection)
             .await
             .map_err(|_| "Chromium column names unavailable")?;
-            // These scalar lengths stay inside SQLite; encoded expansion is
-            // checked again by the existing admission budget after transfer.
+            // An estimate computed inside SQLite; the encoded row is checked
+            // again against the step limit when it is admitted.
             let terms: Vec<String> = names.iter().map(|name| {
                 let quoted = format!("\"{}\"",name.replace('"', "\"\""));
                 let key_bytes = serde_json::to_vec(name).map_or(0, |n| n.len()+2);
@@ -67,7 +74,7 @@ impl ProviderRows {
         };
         if bytes < 0 || bytes > MAX_STEP_BYTES as i64 {
             return Err(
-                "Chromium row exceeds retention budget before provider transfer; poll incomplete"
+                "Chromium row exceeds step size limit before provider transfer; poll incomplete"
                     .into(),
             );
         }
@@ -84,6 +91,49 @@ impl ProviderRows {
             .transpose()
     }
 }
+/// Decode every column. Non-finite reals keep their bits and blobs stay byte
+/// arrays, so no value is lost in JSON.
+fn decode(row: SqliteRow) -> Result<Value, String> {
+    let mut value = serde_json::Map::new();
+    for c in row.columns() {
+        let name = c.name();
+        let raw = row
+            .try_get_raw(name)
+            .map_err(|_| "browser column unavailable")?;
+        let field = if raw.is_null() {
+            Value::Null
+        } else {
+            match raw.type_info().name() {
+                "INTEGER" => json!(
+                    row.try_get::<i64, _>(name)
+                        .map_err(|_| "browser integer decoding")?
+                ),
+                "REAL" => {
+                    let real = row
+                        .try_get::<f64, _>(name)
+                        .map_err(|_| "browser real decoding")?;
+                    if real.is_finite() {
+                        json!(real)
+                    } else {
+                        json!({"sqlite_real_bits": format!("{:016x}", real.to_bits())})
+                    }
+                }
+                "BLOB" => json!({
+                    "sqlite_blob": row
+                        .try_get::<Vec<u8>, _>(name)
+                        .map_err(|_| "browser blob decoding")?
+                }),
+                _ => json!(
+                    row.try_get::<String, _>(name)
+                        .map_err(|_| "browser text decoding")?
+                ),
+            }
+        };
+        value.insert(name.to_owned(), field);
+    }
+    Ok(Value::Object(value))
+}
+
 #[cfg(test)]
 #[path = "rows_tests.rs"]
 mod tests;

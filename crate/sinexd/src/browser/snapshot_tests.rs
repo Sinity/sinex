@@ -2,7 +2,7 @@ use super::*;
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let p = std::env::temp_dir().join(format!("sinex-browser-custody-{}", Uuid::now_v7()));
+        let p = std::env::temp_dir().join(format!("sinex-browser-snapshot-{}", Uuid::now_v7()));
         std::fs::create_dir(&p).unwrap();
         Self(p)
     }
@@ -76,7 +76,7 @@ async fn backup_includes_committed_wal_and_omits_uncommitted_writer_values() {
     producer.close().await.unwrap();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn locked_hot_journal_copy_recovers_only_owned_files_and_reuses_quiet_view() {
+async fn locked_history_copy_recovers_journal_without_touching_source_and_is_reused() {
     let f = Fixture::new();
     let path = f.0.join("History");
     let mut producer = database(&path).await;
@@ -127,28 +127,28 @@ async fn locked_hot_journal_copy_recovers_only_owned_files_and_reuses_quiet_view
     producer.close().await.unwrap();
 }
 #[test]
-fn journal_appearance_disappearance_and_change_are_part_of_validation() {
+fn journal_appearing_changing_or_vanishing_changes_the_stamps() {
     let f = Fixture::new();
     let path = f.0.join("History");
     std::fs::write(&path, b"synthetic").unwrap();
-    let before = pair(&path).unwrap();
+    let before = file_stamps(&path).unwrap();
     std::fs::write(sidecar(&path, "-journal"), b"a").unwrap();
-    let appeared = pair(&path).unwrap();
+    let appeared = file_stamps(&path).unwrap();
     assert_ne!(before, appeared);
     std::fs::write(sidecar(&path, "-journal"), b"different").unwrap();
-    assert_ne!(appeared, pair(&path).unwrap());
+    assert_ne!(appeared, file_stamps(&path).unwrap());
     std::fs::remove_file(sidecar(&path, "-journal")).unwrap();
-    assert_ne!(appeared, pair(&path).unwrap());
+    assert_ne!(appeared, file_stamps(&path).unwrap());
 }
 #[test]
-fn external_super_journal_is_refused_before_any_recovery() {
+fn super_journal_is_refused() {
     let f = Fixture::new();
     let p = f.0.join("journal");
     std::fs::write(&p, [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]).unwrap();
     assert!(reject_super_journal(&p).is_err());
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cancellation_prevents_backup_completion() {
+async fn cancelled_backup_fails() {
     let f = Fixture::new();
     let mut source = database(&f.0.join("History")).await;
     let (cancel, stop) = tokio::sync::watch::channel(false);
@@ -162,7 +162,7 @@ async fn cancellation_prevents_backup_completion() {
 }
 
 #[test]
-fn opened_file_replacement_requires_reconciliation_but_absence_is_unavailable() {
+fn replaced_file_is_fenced_but_missing_file_is_unavailable() {
     let f = Fixture::new();
     let path = f.0.join("History");
     std::fs::write(&path, b"original").unwrap();
@@ -176,7 +176,7 @@ fn opened_file_replacement_requires_reconciliation_but_absence_is_unavailable() 
     assert!(fence);
     assert_eq!(
         reason,
-        "configured source no longer matches the opened file; explicit generation reconciliation required"
+        "configured History path no longer names the opened file; generation reconciliation required"
     );
     std::fs::remove_file(&path).unwrap();
     let (reason, fence) = check_handle(&file, &path, &identity)

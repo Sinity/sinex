@@ -1,18 +1,16 @@
 #[cfg(feature = "runtime")]
 mod atuin;
+// `browser::snapshot` and `sqlite_file` need no database, so the admin build
+// (`--no-default-features`) still compiles and tests them.
 #[cfg(any(feature = "runtime", test))]
-#[path = "atuin/guard.rs"]
-mod atuin_guard;
-#[cfg(feature = "runtime")]
 mod browser;
-#[cfg(any(feature = "runtime", test))]
-#[path = "browser/snapshot.rs"]
-mod browser_snapshot;
 mod config;
 #[cfg(feature = "runtime")]
 mod output;
 #[cfg(feature = "runtime")]
 mod server;
+#[cfg(any(feature = "runtime", test))]
+mod sqlite_file;
 #[cfg(feature = "runtime")]
 mod zsh;
 use clap::{Parser, Subcommand};

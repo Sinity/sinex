@@ -3,7 +3,7 @@ use sqlx::{Connection, sqlite::SqliteConnectOptions};
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("sinex-atuin-vfs-{}", uuid::Uuid::now_v7()));
+        let root = std::env::temp_dir().join(format!("sinex-sqlite-file-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir(&root).unwrap();
         Self(root)
     }
@@ -42,7 +42,7 @@ async fn open(path: &Path) -> SqliteConnection {
     .unwrap()
 }
 #[tokio::test]
-async fn actual_unix_vfs_detects_rename_replacement_and_reopen() {
+async fn rename_and_replacement_fail_until_reopened() {
     let f = Fixture::new();
     let path = f.0.join("history.db");
     create(&path).await;
@@ -57,7 +57,7 @@ async fn actual_unix_vfs_detects_rename_replacement_and_reopen() {
     reopened.close().await.unwrap();
 }
 #[tokio::test]
-async fn actual_symlink_retarget_cannot_keep_old_connection_applicable() {
+async fn symlink_retarget_fails_until_reopened() {
     let f = Fixture::new();
     let a = f.0.join("a.db");
     let b = f.0.join("b.db");
@@ -76,7 +76,7 @@ async fn actual_symlink_retarget_cannot_keep_old_connection_applicable() {
     reopened.close().await.unwrap();
 }
 #[tokio::test]
-async fn actual_vacuum_changes_schema_cookie_and_acquisition_rowids() {
+async fn vacuum_renumbers_rowids_but_keeps_the_same_file() {
     let f = Fixture::new();
     let path = f.0.join("history.db");
     create(&path).await;
@@ -101,7 +101,7 @@ async fn actual_vacuum_changes_schema_cookie_and_acquisition_rowids() {
     assert_eq!(coordinates, vec![1, 2]);
     assert!(
         verify(&mut reader, &path).await.is_ok(),
-        "schema change is separate from file-path correspondence"
+        "a schema change is not a file change"
     );
     producer.close().await.unwrap();
     reader.close().await.unwrap();

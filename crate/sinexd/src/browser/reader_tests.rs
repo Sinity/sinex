@@ -1,6 +1,6 @@
 use super::*;
 #[test]
-fn backward_wall_target_never_postpones_elapsed_monotonic_full() {
+fn wall_clock_rollback_never_postpones_a_due_full_or_snapshot() {
     let epoch = Uuid::now_v7();
     let mut checkpoint = Checkpoint {
         version: 1,
@@ -41,21 +41,20 @@ fn backward_wall_target_never_postpones_elapsed_monotonic_full() {
     ));
     let mono = tokio::time::Instant::now();
     assert_eq!(
-        physical_deadline(None, OffsetDateTime::UNIX_EPOCH, mono, 1000).unwrap(),
+        first_snapshot_deadline(None, OffsetDateTime::UNIX_EPOCH, mono, 1000).unwrap(),
         mono
     );
     checkpoint.snapshot_at = Some("2026-10-01T00:00:00Z".into());
     let initial = clock("2026-10-01T00:00:00Z").unwrap();
-    let target = physical_deadline(Some(&checkpoint), initial, mono, 1000).unwrap();
+    let target = first_snapshot_deadline(Some(&checkpoint), initial, mono, 1000).unwrap();
     assert_eq!(target, mono + std::time::Duration::from_secs(1));
-    // Even a very old current wall clock cannot grant more than one interval
-    // at reopen. A live reader reuses target rather than recalculating it.
+    // A wall clock far in the past still grants at most one interval.
     assert_eq!(
-        physical_deadline(Some(&checkpoint), OffsetDateTime::UNIX_EPOCH, mono, 1000).unwrap(),
+        first_snapshot_deadline(Some(&checkpoint), OffsetDateTime::UNIX_EPOCH, mono, 1000).unwrap(),
         target
     );
     assert_eq!(
-        physical_deadline(
+        first_snapshot_deadline(
             Some(&checkpoint),
             initial + time::Duration::seconds(2),
             mono,
@@ -67,9 +66,8 @@ fn backward_wall_target_never_postpones_elapsed_monotonic_full() {
 }
 
 #[test]
-fn failure_kind_controls_fence_independently_of_diagnostic_prose() {
-    let ordinary =
-        PollFailure::from("provider says reconciliation required; retry later".to_owned());
+fn failure_variant_not_message_decides_the_fence() {
+    let ordinary = Failure::from("provider says reconciliation required; retry later".to_owned());
     assert_eq!(
         ordinary.into_outcome(),
         (
@@ -77,9 +75,9 @@ fn failure_kind_controls_fence_independently_of_diagnostic_prose() {
             false
         )
     );
-    let fenced = PollFailure::ReconciliationRequired("declared basis changed");
+    let fenced = Failure::ReconciliationRequired("declared generation changed");
     assert_eq!(
         fenced.into_outcome(),
-        ("declared basis changed".to_owned(), true)
+        ("declared generation changed".to_owned(), true)
     );
 }

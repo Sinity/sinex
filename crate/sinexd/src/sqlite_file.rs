@@ -1,12 +1,13 @@
-//! The default SQLite VFS verifies the actual open file; path stat is diagnostic only.
+//! Checks that an open SQLite connection still reads the configured file.
+//! The answer comes from SQLite's own file handle, not from a path stat.
 use sqlx::{Row, sqlite::SqliteConnection};
 use std::{
     ffi::{c_char, c_int, c_void},
     path::{Path, PathBuf},
 };
 
-// Public SQLite C ABI already linked by SQLx's SQLite driver. The opaque handle
-// remains locked against SQLx's worker for the entire call; no handle escapes.
+// Linked by SQLx's SQLite driver. The handle stays locked against SQLx's worker
+// for the whole call and never escapes.
 unsafe extern "C" {
     fn sqlite3_file_control(
         db: *mut c_void,
@@ -34,13 +35,13 @@ async fn moved(connection: &mut SqliteConnection) -> Result<(), String> {
     };
     if result != 0 || moved != 0 {
         return Err(format!(
-            "Atuin open-file correspondence unavailable (SQLite result {result}, moved {moved}); reopen and full read required"
+            "SQLite file was moved or replaced (SQLite result {result}, moved {moved}); reopen and full read required"
         ));
     }
     Ok(())
 }
 
-pub(super) async fn verify(
+pub(crate) async fn verify(
     connection: &mut SqliteConnection,
     configured: &Path,
 ) -> Result<PathBuf, String> {
@@ -56,14 +57,17 @@ pub(super) async fn verify(
         .filter(|s| !s.is_empty())
         .ok_or("SQLite main filename unavailable")?;
     let configured = std::fs::canonicalize(configured)
-        .map_err(|_| "configured Atuin path no longer resolves; reopen and full read required")?;
+        .map_err(|_| "configured SQLite path no longer resolves; reopen and full read required")?;
     if Path::new(&opened) != configured {
-        return Err("configured Atuin path differs from SQLite opened filename; reopen and full read required".into());
+        return Err(
+            "configured SQLite path differs from the opened file; reopen and full read required"
+                .into(),
+        );
     }
     moved(connection).await?;
     Ok(configured)
 }
 
 #[cfg(test)]
-#[path = "guard_tests.rs"]
+#[path = "sqlite_file_tests.rs"]
 mod tests;
