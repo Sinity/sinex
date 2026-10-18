@@ -190,7 +190,8 @@ impl<'c> Compiler<'c> {
             (Cols::Base { .. }, FieldRef::Group(name)) => Err(invalid(format!(
                 "`{name}` names a group column outside a grouping"
             ))),
-            (Cols::Named { r, grouped, .. }, FieldRef::Group(name)) if *grouped => {
+            // A group column, or a column a time join added.
+            (Cols::Named { r, .. }, FieldRef::Group(name)) => {
                 Ok((Frag::text(format!("{r}.{}", quote(name))), Kind::Untyped))
             }
             (Cols::Named { r, .. }, FieldRef::Field(field)) => Ok((
@@ -201,9 +202,6 @@ impl<'c> Compiler<'c> {
                 Frag::text(format!("{r}.{}", quote(&column_name(f)))),
                 Kind::Json,
             )),
-            (Cols::Named { .. }, FieldRef::Group(name)) => {
-                Err(invalid(format!("`{name}` is not a column here")))
-            }
         }
     }
 
@@ -872,7 +870,9 @@ impl<'c> Compiler<'c> {
         if ranked {
             columns.push("snippet".into());
         }
-        columns.extend(join_columns.iter().map(|(n, _)| n.clone()));
+        if explicit_fields.is_none() {
+            columns.extend(join_columns.iter().map(|(n, _)| n.clone()));
+        }
         let mut is_grouped = false;
         let mut sort: Option<Vec<sinex_model::query::SortKey>> = None;
         let mut limit: Option<u64> = None;

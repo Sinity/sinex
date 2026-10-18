@@ -1,0 +1,407 @@
+//! The HTTP API (architecture §7.2): JSON over a Unix socket and, when
+//! configured, localhost. One endpoint takes every request of the command
+//! table; `follow` streams new matching events as server-sent events. Three
+//! fixed tokens grant read, agent and operator access.
+mod mask;
+mod methods;
+
+pub use methods::Api;
+
+use axum::extract::{Query as UrlQuery, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use sinex_model::query::{self, Expr, FieldRef, Op, Operand, Source, Stage, Unit};
+use sinex_protocol::{Access, COMMANDS, DATA_NOTICE, Reply, Request};
+use sinex_store::query::Page;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::{mpsc, watch};
+use tokio_stream::wrappers::ReceiverStream;
+
+/// The three tokens, read from `read.token`, `agent.token` and
+/// `operator.token` in a directory. A missing file disables that level.
+#[derive(Clone, Default)]
+pub struct Tokens {
+    read: Option<String>,
+    agent: Option<String>,
+    operator: Option<String>,
+}
+
+impl Tokens {
+    pub fn load(dir: &Path) -> std::io::Result<Self> {
+        let read = |name: &str| -> std::io::Result<Option<String>> {
+            match std::fs::read_to_string(dir.join(name)) {
+                Ok(s) if !s.trim().is_empty() => Ok(Some(s.trim().to_string())),
+                Ok(_) => Ok(None),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e),
+            }
+        };
+        Ok(Self {
+            read: read("read.token")?,
+            agent: read("agent.token")?,
+            operator: read("operator.token")?,
+        })
+    }
+
+    pub fn new(read: Option<String>, agent: Option<String>, operator: Option<String>) -> Self {
+        Self {
+            read,
+            agent,
+            operator,
+        }
+    }
+
+    /// The access a presented token grants, the highest first.
+    fn grant(&self, presented: &str) -> Option<Access> {
+        let matches = |t: &Option<String>| {
+            t.as_deref()
+                .is_some_and(|t| same(t.as_bytes(), presented.as_bytes()))
+        };
+        if matches(&self.operator) {
+            Some(Access::Operator)
+        } else if matches(&self.agent) {
+            Some(Access::Agent)
+        } else if matches(&self.read) {
+            Some(Access::Read)
+        } else {
+            None
+        }
+    }
+}
+
+/// Compare without stopping at the first difference.
+fn same(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+pub struct Config {
+    pub socket: PathBuf,
+    pub listen: Option<SocketAddr>,
+    pub tokens: Tokens,
+}
+
+#[derive(Clone)]
+struct AppState {
+    api: Api,
+    tokens: Arc<Tokens>,
+    commits: watch::Receiver<u64>,
+}
+
+fn actor(access: Access) -> &'static str {
+    match access {
+        Access::Read => "reader",
+        Access::Agent => "agent",
+        Access::Operator => "operator",
+    }
+}
+
+fn authorize(state: &AppState, headers: &HeaderMap, needs: Access) -> Result<Access, Response> {
+    let presented = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim);
+    let refuse = |status: StatusCode, reason: String| {
+        (
+            status,
+            Json(Reply::Refused {
+                reason,
+                not_built: false,
+            }),
+        )
+            .into_response()
+    };
+    let Some(presented) = presented else {
+        return Err(refuse(
+            StatusCode::UNAUTHORIZED,
+            "no token: send `Authorization: Bearer <token>`".into(),
+        ));
+    };
+    let Some(granted) = state.tokens.grant(presented) else {
+        return Err(refuse(StatusCode::UNAUTHORIZED, "unknown token".into()));
+    };
+    if granted < needs {
+        return Err(refuse(
+            StatusCode::FORBIDDEN,
+            format!(
+                "this token grants {} access; the request needs {}",
+                actor(granted),
+                actor(needs)
+            ),
+        ));
+    }
+    Ok(granted)
+}
+
+pub fn router(api: Api, tokens: Tokens, commits: watch::Receiver<u64>) -> Router {
+    Router::new()
+        .route("/v1", post(call))
+        .route("/v1/commands", get(commands))
+        .route("/v1/follow", get(follow))
+        .with_state(AppState {
+            api,
+            tokens: Arc::new(tokens),
+            commits,
+        })
+}
+
+async fn call(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<Request>,
+) -> Response {
+    match authorize(&state, &headers, request.access()) {
+        Ok(granted) => Json(state.api.call(request, actor(granted)).await).into_response(),
+        Err(r) => r,
+    }
+}
+
+async fn commands() -> Json<Value> {
+    Json(Value::Array(
+        COMMANDS
+            .iter()
+            .map(|c| {
+                json!({
+                    "name": c.name,
+                    "summary": c.summary,
+                    "access": c.access,
+                    "mcp": c.mcp,
+                    "args": c.args.iter().map(|a| json!({
+                        "name": a.name,
+                        "kind": format!("{:?}", a.kind).to_lowercase(),
+                        "required": a.required,
+                        "positional": a.positional,
+                        "help": a.help,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Deserialize)]
+struct FollowParams {
+    query: String,
+}
+
+/// New events matching a query, as they are committed: each row once, in
+/// commit order, masked, as `data:` lines.
+async fn follow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    UrlQuery(params): UrlQuery<FollowParams>,
+) -> Response {
+    if let Err(r) = authorize(&state, &headers, Access::Read) {
+        return r;
+    }
+    let ctx = state.api.context();
+    let bound = match query::bind(&params.query, &ctx) {
+        Ok(q) => q,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(Reply::Refused {
+                    reason: e.render(&params.query),
+                    not_built: e.not_built,
+                }),
+            )
+                .into_response();
+        }
+    };
+    let follows_rows = matches!(
+        bound.source,
+        Source::Unit {
+            unit: Unit::Events,
+            ..
+        }
+    ) && !bound
+        .stages
+        .iter()
+        .any(|s| matches!(s, Stage::Group(_) | Stage::Limit(_) | Stage::AsOf(_)));
+    if !follows_rows {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(Reply::Refused {
+                reason: "follow takes a query over events, without grouping, limit or as of".into(),
+                not_built: false,
+            }),
+        )
+            .into_response();
+    }
+    let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(64);
+    let mut commits = state.commits.clone();
+    let api = state.api.clone();
+    let text = params.query.clone();
+    tokio::spawn(async move {
+        let _ = tx
+            .send(Ok(Event::default().event("notice").data(DATA_NOTICE)))
+            .await;
+        // `commits` counts committed batches; the commit position is read here.
+        let position = |api: Api| async move {
+            let mut conn = api.reads.acquire().await.ok()?;
+            sinex_store::query::current_seq(&mut conn).await.ok()
+        };
+        commits.borrow_and_update();
+        let Some(mut last) = position(api.clone()).await else {
+            return;
+        };
+        while commits.changed().await.is_ok() {
+            commits.borrow_and_update();
+            let Some(now) = position(api.clone()).await else {
+                return;
+            };
+            if now == last {
+                continue;
+            }
+            let mut q = bound.clone();
+            let after = Expr::Compare {
+                lhs: Operand::Field(FieldRef::Field(
+                    Unit::Events
+                        .field("commit_seq")
+                        .expect("events have commit_seq"),
+                )),
+                op: Op::Gt,
+                rhs: query::Value::Integer(last),
+            };
+            q.filter = Some(match q.filter.take() {
+                Some(f) => Expr::And(Box::new(f), Box::new(after)),
+                None => after,
+            });
+            q.stages.push(Stage::Sort(vec![query::SortKey {
+                key: query::SortBy::Operand(Operand::Field(FieldRef::Field(
+                    Unit::Events
+                        .field("commit_seq")
+                        .expect("events have commit_seq"),
+                ))),
+                descending: false,
+            }]));
+            let mut page = Page {
+                size: Some(1000),
+                cursor: None,
+            };
+            loop {
+                let Ok(mut conn) = api.reads.acquire().await else {
+                    return;
+                };
+                let answer = match sinex_store::query::run(
+                    &mut conn,
+                    &text,
+                    &q,
+                    &api.context(),
+                    &page,
+                )
+                .await
+                {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let _ = tx
+                            .send(Ok(Event::default().event("error").data(e.to_string())))
+                            .await;
+                        return;
+                    }
+                };
+                for row in answer.rows {
+                    let row = mask::mask_json(row);
+                    if tx
+                        .send(Ok(Event::default().data(row.to_string())))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                match answer.page.cursor {
+                    Some(c) => page.cursor = Some(c),
+                    None => break,
+                }
+            }
+            last = now;
+        }
+    });
+    Sse::new(ReceiverStream::new(rx))
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+/// Serve the API until `shutdown` resolves.
+pub async fn serve(
+    config: Config,
+    api: Api,
+    commits: watch::Receiver<u64>,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<(), String> {
+    let app = router(api, config.tokens, commits);
+    if let Some(parent) = config.socket.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    // A socket file left by a stopped daemon is replaced; a live one is not.
+    if config.socket.exists() {
+        if std::os::unix::net::UnixStream::connect(&config.socket).is_ok() {
+            return Err(format!(
+                "{} is in use by a running daemon",
+                config.socket.display()
+            ));
+        }
+        std::fs::remove_file(&config.socket)
+            .map_err(|e| format!("{}: {e}", config.socket.display()))?;
+    }
+    let unix = tokio::net::UnixListener::bind(&config.socket)
+        .map_err(|e| format!("{}: {e}", config.socket.display()))?;
+    // Only the daemon's user connects; tokens still decide what a call may do.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&config.socket, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("{}: {e}", config.socket.display()))?;
+    let (stop, stopped) = watch::channel(false);
+    let mut unix_stop = stopped.clone();
+    let unix_task = tokio::spawn(
+        axum::serve(unix, app.clone())
+            .with_graceful_shutdown(async move {
+                let _ = unix_stop.wait_for(|s| *s).await;
+            })
+            .into_future(),
+    );
+    let tcp_task = match config.listen {
+        Some(addr) => {
+            if !addr.ip().is_loopback() {
+                return Err(format!(
+                    "{addr} is not a loopback address; the API listens on localhost only"
+                ));
+            }
+            let tcp = tokio::net::TcpListener::bind(addr)
+                .await
+                .map_err(|e| format!("{addr}: {e}"))?;
+            let mut tcp_stop = stopped.clone();
+            Some(tokio::spawn(
+                axum::serve(tcp, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = tcp_stop.wait_for(|s| *s).await;
+                    })
+                    .into_future(),
+            ))
+        }
+        None => None,
+    };
+    shutdown.await;
+    let _ = stop.send(true);
+    unix_task
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    if let Some(t) = tcp_task {
+        t.await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+    }
+    let _ = std::fs::remove_file(&config.socket);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

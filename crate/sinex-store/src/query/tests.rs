@@ -1,7 +1,7 @@
 //! Queries against a real database: each test admits a few commands (an
 //! observation and the fused command derived from it) and reads them back.
 use super::*;
-use crate::read_models::maintain_search_text;
+use crate::read_models::catch_up_search_text;
 use crate::{NoDerivations, admit, testdb};
 use serde_json::json;
 use sinex_model::kinds::{CommandExecuted, CommandFused};
@@ -139,8 +139,7 @@ async fn world(conn: &mut PgConnection) -> Vec<(Uuid, Uuid)> {
         ],
     )
     .await;
-    let seq = current_seq(conn).await.unwrap();
-    maintain_search_text(conn, seq).await.unwrap();
+    catch_up_search_text(conn).await.unwrap();
     ids
 }
 
@@ -355,6 +354,20 @@ async fn near_joins_pick_the_nearest_match_once() {
     )
     .await;
     assert_eq!(a.total, 0, "an empty inner query never widens to a scan");
+    let a = ask(
+        &mut conn,
+        "events where source = terminal.atuin near (commands where exit_code = 1) within 90s fields when, offset sort offset desc",
+    )
+    .await;
+    assert_eq!(a.columns, ["when", "offset"]);
+    let offsets: Vec<f64> = a
+        .rows
+        .iter()
+        .map(|r| r["offset"].as_f64().unwrap())
+        .collect();
+    let mut sorted = offsets.clone();
+    sorted.sort_by(|x, y| y.partial_cmp(x).unwrap());
+    assert_eq!(offsets, sorted);
 }
 
 #[tokio::test]

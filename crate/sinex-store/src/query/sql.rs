@@ -64,7 +64,9 @@ impl Frag {
         out
     }
 
-    pub fn render(&self) -> (String, Vec<Value>) {
+    /// The SQL text with numbered placeholders, and the parameters in order,
+    /// as values that can cross an `.await`.
+    pub fn render(&self) -> (String, Vec<Param>) {
         let mut builder = RawSqlQueryBuilder::new(PostgresQueryBuilder);
         let mut values = Vec::new();
         for piece in &self.pieces {
@@ -74,7 +76,7 @@ impl Frag {
                 }
                 Piece::Param(v) => {
                     builder.push_parameters(1);
-                    values.push(v.clone());
+                    values.push(Param::from(v.clone()));
                 }
             }
         }
@@ -82,22 +84,48 @@ impl Frag {
     }
 }
 
-/// Bind sea-query values to a scalar sqlx query, in order.
+/// A parameter of a rendered statement. sea-query's values are not `Send`;
+/// these are, so a rendered statement can be awaited on any thread.
+#[derive(Clone, Debug)]
+pub(crate) enum Param {
+    Bool(Option<bool>),
+    Int(Option<i32>),
+    BigInt(Option<i64>),
+    Double(Option<f64>),
+    Text(Option<String>),
+    Uuid(Option<uuid::Uuid>),
+    Time(Option<time::OffsetDateTime>),
+}
+
+impl From<Value> for Param {
+    fn from(v: Value) -> Self {
+        match v {
+            Value::Bool(b) => Param::Bool(b),
+            Value::Int(i) => Param::Int(i),
+            Value::BigInt(i) => Param::BigInt(i),
+            Value::Double(d) => Param::Double(d),
+            Value::String(s) => Param::Text(s),
+            Value::Uuid(u) => Param::Uuid(u),
+            Value::TimeDateTimeWithTimeZone(t) => Param::Time(t),
+            other => unreachable!("the compiler emits no {other:?} parameters"),
+        }
+    }
+}
+
+/// Bind parameters to a scalar sqlx query, in order.
 pub(crate) fn bind_scalar<'q, O>(
     mut q: QueryScalar<'q, Postgres, O, PgArguments>,
-    values: Vec<Value>,
+    values: Vec<Param>,
 ) -> QueryScalar<'q, Postgres, O, PgArguments> {
     for v in values {
         q = match v {
-            Value::Bool(b) => q.bind(b),
-            Value::BigInt(i) => q.bind(i),
-            Value::Int(i) => q.bind(i),
-            Value::Double(d) => q.bind(d),
-            Value::String(s) => q.bind(s),
-            Value::Uuid(u) => q.bind(u),
-            Value::TimeDateTimeWithTimeZone(t) => q.bind(t),
-            Value::Json(j) => q.bind(j.map(|j| *j)),
-            other => unreachable!("the compiler emits no {other:?} parameters"),
+            Param::Bool(b) => q.bind(b),
+            Param::Int(i) => q.bind(i),
+            Param::BigInt(i) => q.bind(i),
+            Param::Double(d) => q.bind(d),
+            Param::Text(s) => q.bind(s),
+            Param::Uuid(u) => q.bind(u),
+            Param::Time(t) => q.bind(t),
         };
     }
     q

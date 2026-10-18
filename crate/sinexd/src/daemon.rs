@@ -8,8 +8,10 @@
 //! derivations (§6.2), the commit-log reader for read models (§4.3), the
 //! confirmed-stream publisher (§4.3) and the NATS ingress with its have
 //! responder (§4.3). Every commit wakes the driver, the reader and the
-//! publisher. The source tasks (§5), the API server and signals (§7.2) are
-//! added here by their lanes.
+//! publisher, and the API (§7.2) serves reads from its own pool and writes
+//! through the writer. The source tasks (§5) and signals (§7.2) are added
+//! here by their lanes.
+use crate::api::{self, Api};
 use crate::commits::{self, Consumer, ReadModelRunner};
 use crate::keys::Registered;
 use crate::{derive, ingress, publisher, writer};
@@ -35,6 +37,16 @@ pub struct Options {
     /// Subject root: `sinex` unless several deployments share a server.
     pub subjects: String,
     pub host: String,
+    pub api: ApiOptions,
+}
+
+pub struct ApiOptions {
+    pub socket: PathBuf,
+    pub listen: Option<std::net::SocketAddr>,
+    /// Directory holding `read.token`, `agent.token` and `operator.token`.
+    pub tokens: PathBuf,
+    pub zone: jiff::tz::TimeZone,
+    pub day_start: jiff::civil::Time,
 }
 
 async fn connect(url: &str) -> Result<PgConnection, String> {
@@ -46,6 +58,8 @@ async fn connect(url: &str) -> Result<PgConnection, String> {
 pub async fn run(o: Options) -> Result<(), String> {
     let subjects = Subjects::new(o.subjects.clone());
     let blobs = Blobs::open(&o.store).map_err(|e| e.to_string())?;
+    let tokens =
+        api::Tokens::load(&o.api.tokens).map_err(|e| format!("{}: {e}", o.api.tokens.display()))?;
     let client = async_nats::connect(&o.nats)
         .await
         .map_err(|e| format!("NATS at {}: {e}", o.nats))?;
@@ -111,6 +125,36 @@ pub async fn run(o: Options) -> Result<(), String> {
         (
             "publisher",
             publisher::run(publisher_conn, js, sj, c, s).await,
+        )
+    });
+
+    // Readers never use the writer's connection.
+    let reads = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(16)
+        .connect(&o.database)
+        .await
+        .map_err(|e| format!("read pool: {e}"))?;
+    let reader_api = Api {
+        reads,
+        writer: Some(handle.clone()),
+        blobs: blobs.clone(),
+        zone: o.api.zone.clone(),
+        day_start: o.api.day_start,
+    };
+    let config = api::Config {
+        socket: o.api.socket.clone(),
+        listen: o.api.listen,
+        tokens,
+    };
+    let (c, mut s) = (commits.clone(), stop.clone());
+    eprintln!("sinexd: API on {}", o.api.socket.display());
+    tasks.spawn(async move {
+        (
+            "API",
+            api::serve(config, reader_api, c, async move {
+                let _ = s.wait_for(|s| *s).await;
+            })
+            .await,
         )
     });
 

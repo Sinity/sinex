@@ -117,10 +117,35 @@ pub trait ReadModel: Send + Sync {
     ) -> BoxFuture<'a, Result<(), String>>;
 }
 
-/// Every read model, in one list. The query lane registers `read.search_text`
-/// here (architecture §3.6).
+/// Every read model, in one list (architecture §3.6).
 pub fn read_models() -> Vec<Box<dyn ReadModel>> {
-    Vec::new()
+    vec![Box::new(SearchText)]
+}
+
+/// The full-text read model `core.search_text`: every event's payload text,
+/// normalized, for the query language's words (spec `query.md` §5).
+pub struct SearchText;
+
+impl ReadModel for SearchText {
+    fn name(&self) -> &'static str {
+        sinex_store::read_models::SEARCH_TEXT
+    }
+
+    fn wants(&self, _event_type: &str) -> bool {
+        true
+    }
+
+    fn apply<'a>(
+        &'a self,
+        events: &'a [Committed],
+        tx: &'a mut PgConnection,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            sinex_store::read_models::apply_search_text(tx, events)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
 }
 
 /// A read model fed by the reader: its tables and its position change in one

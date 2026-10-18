@@ -11,6 +11,8 @@ sinex-model.workspace = true
 sinex-schema.workspace = true
 sinex-store.workspace = true
 serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
