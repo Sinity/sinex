@@ -149,7 +149,7 @@ full_interval_ms = {full}
         assert set(answer['session']['parents'])=={r['id'] for r in rows}
         assert answer['attribution']=={'rule':'direct_member_own_cwd','known_projects':{'tide':2},'unconfigured_members':0,'unknown_members':[],'total_members':2,'complete':True}
         assert answer['newer_unresolved_candidates']==[]
-        assert answer['coverage']=='unknown; retained shell policy grouping; focus, AFK, attention and underlying command outcomes are not inferred'
+        assert answer['coverage']=='unknown; grouped by shell session rules; focus and attention are not inferred'
         assert int(answer['session']['payload']['start_ns'])==stamp('2026-10-13T12:00:00')
         assert int(answer['session']['payload']['end_ns'])==stamp('2026-10-13T12:01:00')
     def recovery(label,prior=None,unavailable=False):

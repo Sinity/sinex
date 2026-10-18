@@ -434,8 +434,8 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
                         status=wait('current-parent control projection caught up',caught_up)
                         assert status['indexed_retrieval']['generation']==original['resolved']['generation']
                         shown=cli('show','sinex:ev/'+header['id'])['row'];assert shown['current_eligible'] is False
-                        refused=cli('recall','last','--project','tide',expected=5);assert 'ineligible current parents' in json.dumps(refused)
-                        agent=tool(error=True);assert 'ineligible current parents' in json.dumps(agent)
+                        refused=cli('recall','last','--project','tide',expected=5);assert 'removed parents' in json.dumps(refused)
+                        agent=tool(error=True);assert 'removed parents' in json.dumps(agent)
                         save('current-'+label+'-fence.json',{'control':'owned direct read-boundary invalidation; no writer-recovery claim','status':status,'old_header':header,'current_show':shown,'CLI':refused,'MCP':agent})
                     finally:state('restored')
                     restored=cli('recall','last','--project','tide');assert restored['session']['id']==header['id'] and restored['rows']==original['rows']
