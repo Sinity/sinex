@@ -195,7 +195,7 @@ impl ReadPool {
             let positive = project.as_ref().is_none_or(|name| known.contains_key(name));
             let has_unknown = !unknown.is_empty();
             let summary = SessionProjectAttribution {
-                basis: "direct_member_own_cwd".into(),
+                rule: "direct_member_own_cwd".into(),
                 known_projects: known,
                 unconfigured_members: unconfigured,
                 complete: !has_unknown,
