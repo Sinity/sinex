@@ -311,6 +311,10 @@ EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT EXISTS(SELECT 1 FROM core.search_te
 EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE generation='00000000-0000-0000-0000-000000000000' AND tokens IS NULL ORDER BY id LIMIT 16;
 """
             probe_sql += "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE tokens COLLATE \"C\" LIKE ('%'||chr(1)||'raretoken'||chr(1)||'%');\n"
+            # Record the freshly inserted index plan, then qualify the ordinary maintained index.
+            # A small fresh GIN pending list can make a sequential scan cheaper; do not force it.
+            probe_sql += 'VACUUM (ANALYZE) core.search_text;\n'
+            probe_sql += "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE tokens COLLATE \"C\" LIKE ('%'||chr(1)||'raretoken'||chr(1)||'%');\n"
             probe_sql += "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT count(*) FROM core.search_text WHERE tokens COLLATE \"C\" LIKE ('%'||chr(1)||'o%');\n"
             fixture=report/'unavailable-probe-plan.sql';fixture.write_text(probe_sql)
             text=run(['psql',uri,'-XAtq','-v','ON_ERROR_STOP=1','--file',fixture],label='ordinary PostgreSQL unavailable probe plans').stdout
@@ -320,14 +324,14 @@ EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE gene
             def nodes(plan):
                 yield plan
                 for child in plan.get('Plans',[]):yield from nodes(child)
-            assert len(actual)==4
+            assert len(actual)==5
             for plan in actual[:2]:
                 assert any(n.get('Index Name')=='search_text_unavailable' for n in nodes(plan['Plan'])),plan
             assert actual[1]['Plan']['Actual Rows']==16
-            assert actual[2]['Plan']['Actual Rows']==1
-            assert any(n.get('Index Name')=='search_text_tokens' for n in nodes(actual[2]['Plan'])),actual[2]
-            assert any(n.get('Node Type')=='Seq Scan' for n in nodes(actual[3]['Plan'])),actual[3]
-            save('unavailable-text-query-plans',{'plans':actual,'scope':'ordinary PostgreSQL exact probe predicates; twenty-thousand complete ordinary token strings, one rare-token row and seventeen unavailable states; exact rare GIN and short-pattern sequential plans, no forced planner settings or capacity/speed claim'})
+            assert all(plan['Plan']['Actual Rows']==1 for plan in actual[2:4]),actual[2:4]
+            assert any(n.get('Index Name')=='search_text_tokens' for n in nodes(actual[3]['Plan'])),actual[3]
+            assert any(n.get('Node Type')=='Seq Scan' for n in nodes(actual[4]['Plan'])),actual[4]
+            save('unavailable-text-query-plans',{'plans':actual,'scope':'ordinary PostgreSQL exact probe predicates; twenty-thousand complete ordinary token strings, one rare-token row and seventeen unavailable states; fresh rare-token plan retained without prescribing its access path; after ordinary VACUUM ANALYZE, exact rare GIN and broad short-pattern sequential plans; no forced planner settings or capacity/speed claim'})
         scenario(PLANNED[6],plans)
         def shell_work_tables():
             isolated=env.copy();isolated['SINEX_TEST_WRITER_URL']=h['writer']
