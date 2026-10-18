@@ -5,8 +5,8 @@
 use crate::atuin::{NewEvent, archive_replaced, insert_event};
 use crate::source_admission::row_hash;
 use crate::{
-    BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, COUNTER, Error, MATERIAL, ReadPool, ReplayCommand,
-    Result, WriterPool,
+    BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, Error, MATERIAL, ReadPool, ReplayCommand, Result,
+    WriterPool, next_commit_seq,
 };
 use serde_json::{Value, json};
 use sinex_model::replay::{Outcome, State};
@@ -749,14 +749,14 @@ impl WriterPool {
             }
             if let Some(old) = p.old {
                 crate::shell::dirty(&mut tx, old).await?;
-                let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+                let seq: i64 = next_commit_seq(&mut tx).await?;
                 if archive_replaced(&mut tx, old, p.id, seq, "replay", Some(id)).await? != 1 {
                     return Err(Error::ReplayRefused(
                         "occurrence admission precondition changed",
                     ));
                 }
             }
-            let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+            let seq: i64 = next_commit_seq(&mut tx).await?;
             insert_event(
                 &mut tx,
                 NewEvent {

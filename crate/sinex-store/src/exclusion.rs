@@ -3,7 +3,7 @@
 //! same row from being admitted. Each action is an operation whose request,
 //! outcome and effects are stored records, so a repeated action ID returns its
 //! first outcome.
-use crate::{COUNTER, Error, Result, WriterPool};
+use crate::{Error, Result, WriterPool, next_commit_seq};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::exclusion::{Action, Occurrence, Outcome, Request, State};
@@ -376,7 +376,7 @@ impl WriterPool {
             }
         }
         for event in &effects.archived {
-            let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+            let seq: i64 = next_commit_seq(&mut tx).await?;
             crate::session::dirty(&mut tx, *event).await?;
             sqlx::query(
                 "INSERT INTO audit.archived(id,archived_seq,reason,operation_id)

@@ -1,5 +1,5 @@
 use super::{WORK_TABLES, rule};
-use crate::{COUNTER, WriterPool};
+use crate::{WriterPool, current_commit_seq, next_commit_seq};
 use serde_json::{Value, json};
 use sqlx::{Connection, PgConnection, Row};
 use uuid::Uuid;
@@ -73,20 +73,16 @@ async fn cancelled_publish_batch_rolls_back_and_republishes_with_same_ids()
         .await?;
     let producer = Uuid::now_v7();
     sqlx::query("INSERT INTO core.producer_versions(id,name,version,run_id,configuration) VALUES($1,'fusion.shell-command',$2,$3,$4)").bind(producer).bind(rule().implementation).bind(run).bind(serde_json::from_str::<Value>(super::RULE_JSON)?).execute(&mut connection).await?;
-    let mut snapshot_seq: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
-        .fetch_one(&mut connection)
-        .await?;
+    let mut snapshot_seq: i64 = current_commit_seq(&mut connection).await?;
     setup(&mut connection, &ids[1..2], snapshot_seq).await?;
     publish(&mut connection, producer, run, snapshot_seq).await?;
     let reused: Uuid = sqlx::query_scalar("SELECT output_id FROM sinex_shell_groups")
         .fetch_one(&mut connection)
         .await?;
-    snapshot_seq = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
-        .fetch_one(&mut connection)
-        .await?;
+    snapshot_seq = current_commit_seq(&mut connection).await?;
     // A parent archived after the snapshot is skipped, as in a resumed pass.
     let mut tx = connection.begin().await?;
-    let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+    let seq: i64 = next_commit_seq(&mut tx).await?;
     sqlx::query("INSERT INTO audit.archived(id,archived_seq,reason) VALUES($1,$2,'supersede')")
         .bind(ids[0])
         .bind(seq)

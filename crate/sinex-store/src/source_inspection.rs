@@ -1,6 +1,6 @@
 //! `sources`: per-input status from stored observations, with optional history
 //! and receipt pages. Never reads the source itself.
-use crate::{COUNTER, Error, ReadPool, Result, WriterPool};
+use crate::{Error, ReadPool, Result, WriterPool, current_commit_seq, next_commit_seq};
 use serde_json::{Value, json};
 use sinex_model::acquisition::{
     AcquisitionState, CollectorScope, OutcomeRefs, PollSchedule, SourcesRequest,
@@ -54,7 +54,7 @@ impl WriterPool {
             .validate()
             .map_err(|_| Error::Invalid("invalid acquisition schedule"))?;
         let mut tx = self.connection.begin().await?;
-        let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+        let seq: i64 = next_commit_seq(&mut tx).await?;
         let count = sqlx::query(
             "UPDATE raw.observations SET commit_seq=$3,metadata=jsonb_set(metadata,'{_sinex_acquisition_v1,schedule}',$2) \
              WHERE id=$1 AND status IN ('completed','unavailable') \
@@ -161,9 +161,7 @@ impl ReadPool {
             .execute(&mut *tx)
             .await?;
         sqlx::query(STATEMENT_TIMEOUT).execute(&mut *tx).await?;
-        let seq: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
-            .fetch_one(&mut *tx)
-            .await?;
+        let seq: i64 = current_commit_seq(&mut tx).await?;
         let mut rows: Vec<Value> = sqlx::query_scalar(SOURCE_ROWS)
             .bind(request.input)
             .bind(request.after_input)

@@ -58,7 +58,6 @@ pub struct Store {
 }
 
 const WRITER_LOCK: &str = "SELECT pg_try_advisory_lock(73018924012)";
-pub(crate) const COUNTER: &str = "UPDATE core.commit_counter SET seq=seq+1 WHERE one RETURNING seq";
 pub(crate) const MATERIAL: &str = "INSERT INTO raw.source_material_registry (id,material_kind,source_identifier,status,ts_quality,blob_id,total_bytes,durable_bytes) VALUES ($1,'file',$2,'completed','unknown',$3,$4,$4)";
 const RUN_INTERRUPT: &str =
     "UPDATE core.runs SET status='interrupted',ended_at=now() WHERE status='running'";
@@ -271,8 +270,7 @@ pub(crate) fn coordinate_hash(
 /// check them against the installed schema. Checked `query!` macros need no such step.
 pub async fn prepare_admission_statements(admin_url: &str) -> Result<()> {
     let mut conn = PgConnection::connect(admin_url).await?;
-    for sql in [
-        COUNTER,
+    for sql in crate::commit::STATEMENTS.into_iter().chain([
         MATERIAL,
         BLOB_REGISTER,
         BLOB_LOOKUP,
@@ -284,7 +282,7 @@ pub async fn prepare_admission_statements(admin_url: &str) -> Result<()> {
         RUN_END,
         WRITER_LOCK,
         "SELECT current_user::text",
-    ] {
+    ]) {
         conn.prepare(sql).await?;
     }
     Ok(())

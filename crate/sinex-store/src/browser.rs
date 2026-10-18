@@ -5,7 +5,8 @@ use crate::source_admission::{
     key_hash, observation_status, producer_version, record_failure, row_hash, set_part_length,
 };
 use crate::{
-    BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, COUNTER, Error, Result, WriterPool, coordinate_hash,
+    BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, Error, Result, WriterPool, coordinate_hash,
+    next_commit_seq,
 };
 use serde_json::{Value, json};
 use sinex_model::browser::{BrowserReadStart, Checkpoint, PARSER, SOURCE};
@@ -88,7 +89,7 @@ impl WriterPool {
             },
         });
         let mut tx = self.connection.begin().await?;
-        let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+        let seq: i64 = next_commit_seq(&mut tx).await?;
         sqlx::query(
             "INSERT INTO raw.observations
                (id,input_id,seq,observed_at,source_provenance,metadata,status,commit_seq)
@@ -270,7 +271,7 @@ impl WriterPool {
         .bind(provenance)
         .execute(&mut *tx)
         .await?;
-        let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+        let seq: i64 = next_commit_seq(&mut tx).await?;
         let snapshot = json!({
             "material": material,
             "bytes": length,
@@ -369,7 +370,7 @@ impl WriterPool {
             crate::TestPause::reach(&mut self.pause, "retained-fsynced", stored.clone()).await?;
         }
         let mut tx = self.connection.begin().await?;
-        let mut seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+        let mut seq: i64 = next_commit_seq(&mut tx).await?;
         let producer =
             producer_version(&mut tx, PARSER_NAME, PARSER, self.run_id, &provenance).await?;
         if let Some(material) = material {
@@ -446,7 +447,7 @@ impl WriterPool {
                     .bind(old)
                     .execute(&mut *tx)
                     .await?;
-                seq = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+                seq = next_commit_seq(&mut tx).await?;
             }
             let at = parsed
                 .unix_us
@@ -543,7 +544,7 @@ impl WriterPool {
             .bind(event_type)
             .execute(&mut *tx)
             .await?;
-            seq = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+            seq = next_commit_seq(&mut tx).await?;
             admitted += 1;
         }
         let status = observation_status(step.unavailable.is_some(), step.complete);

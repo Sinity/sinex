@@ -4,7 +4,7 @@
 use crate::source_admission::{
     key_hash, observation_status, producer_version, record_failure, set_part_length,
 };
-use crate::{COUNTER, Error, Result, WriterPool, coordinate_hash};
+use crate::{Error, Result, WriterPool, coordinate_hash, next_commit_seq};
 use serde_json::{Value, json};
 use sqlx::Connection;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -202,7 +202,7 @@ impl WriterPool {
         let mut tx = self.connection.begin().await?;
         let producer =
             producer_version(&mut tx, PARSER_NAME, PARSER, self.run_id, &provenance).await?;
-        let mut seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+        let mut seq: i64 = next_commit_seq(&mut tx).await?;
         let mut admitted = 0i64;
         let mut failures = 0i64;
         if let Some(material) = material {
@@ -316,7 +316,7 @@ impl WriterPool {
             .execute(&mut *tx)
             .await?;
             crate::shell::dirty(&mut tx, id).await?;
-            seq = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+            seq = next_commit_seq(&mut tx).await?;
             admitted += 1;
         }
         let status = observation_status(step.unavailable.is_some(), step.complete);

@@ -2,7 +2,7 @@
 //! a `command.canonical` event. A pass works in turns over per-connection
 //! temp tables, 64 rows per turn; `derivation.shell_dirty` survives a restart
 //! and the pass reruns.
-use crate::{COUNTER, Error, Result, WriterPool};
+use crate::{Error, Result, WriterPool, current_commit_seq, next_commit_seq};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
@@ -312,9 +312,7 @@ impl WriterPool {
             .await?;
         let phase: String = progress.try_get("phase")?;
         let snapshot_seq: i64 = if phase == IDLE_PHASE {
-            sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
-                .fetch_one(&mut self.connection)
-                .await?
+            current_commit_seq(&mut self.connection).await?
         } else {
             progress.try_get("basis")?
         };
@@ -636,7 +634,7 @@ impl WriterPool {
             .await?;
             // Bump the counter even when nothing changed, so readers waiting
             // on the counter see that the pass finished.
-            let _: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+            let _: i64 = next_commit_seq(&mut tx).await?;
             tx.commit().await?;
             return Ok(true);
         }
@@ -648,7 +646,7 @@ impl WriterPool {
             .fetch_one(&mut *tx)
             .await?;
             if !reused {
-                let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+                let seq: i64 = next_commit_seq(&mut tx).await?;
                 sqlx::query(
                     "INSERT INTO audit.archived(id,archived_seq,reason) VALUES($1,$2,'supersede')",
                 )
@@ -759,7 +757,7 @@ impl WriterPool {
             Some(id) => id,
             None => {
                 let id = Uuid::now_v7();
-                let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut **tx).await?;
+                let seq: i64 = next_commit_seq(tx).await?;
                 let host = merged.payload["hostname"].as_str().map(str::to_string);
                 let hash = blake3::hash(&serde_json::to_vec(&merged.payload).unwrap())
                     .as_bytes()
