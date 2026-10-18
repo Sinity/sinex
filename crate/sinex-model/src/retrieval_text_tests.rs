@@ -59,3 +59,14 @@ fn query_delimiters_are_tokenized_and_negative_text_never_supplies_rank() {
             .is_none()
     );
 }
+
+#[test]
+fn long_words_bind_within_the_unchanged_whole_query_byte_budget() {
+    let value = "x".repeat(1100);
+    let bound = bind(&value).unwrap();
+    let super::Expr::Text(text) = bound.filter.unwrap() else {
+        panic!("bound text");
+    };
+    assert_eq!(text.like_patterns(), [format!("%\u{1}{value}\u{1}%")]);
+    assert!(bind(&"x".repeat(16_385)).is_err());
+}

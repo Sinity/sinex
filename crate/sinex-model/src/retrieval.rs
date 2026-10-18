@@ -652,10 +652,7 @@ impl Reader {
             return Err("only a trailing word prefix * is supported");
         }
         let words = words(raw);
-        if words.is_empty()
-            || (!t.quoted && words.len() != 1)
-            || words.iter().any(|w| w.len() > 900)
-        {
+        if words.is_empty() || (!t.quoted && words.len() != 1) {
             return Err("search requires words or a quoted phrase");
         }
         Ok(Expr::Text(Text {
