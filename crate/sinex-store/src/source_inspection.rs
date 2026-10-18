@@ -10,6 +10,21 @@ const INPUTS: usize = 16;
 const HISTORY: usize = 8;
 const RECEIPTS: usize = 16;
 
+// The three named collectors insert failures and increment record_errors in
+// one admission transaction. Their zero count needs no historical lookup;
+// preserve lookup for any other retained binding with no established invariant.
+const SOURCE_ROWS: &str = r#"SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN 'canonical_sqlite_rows' ELSE 'original_zsh_history' END,'sqlite_snapshots',CASE WHEN i.binding='terminal.atuin-history' THEN 'unavailable_until_1c' WHEN i.binding='browser.history.chromium' THEN 'periodic_full_bases; page_patches_unavailable' ELSE NULL END,'last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'read_checkpoint',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN (SELECT carry FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text) ELSE NULL END,'first_record_error',CASE WHEN o.record_errors>0 OR i.binding NOT IN ('terminal.atuin-history','browser.history.chromium','terminal.zsh-history') THEN (SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1) ELSE NULL END) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true WHERE ($1::uuid IS NULL OR i.id=$1) AND ($2::uuid IS NULL OR i.id>$2) ORDER BY i.id LIMIT $3"#;
+
+fn primary_statement_error(error: sqlx::Error) -> Error {
+    if matches!(&error, sqlx::Error::Database(e) if e.code().as_deref() == Some("57014")) {
+        Error::SourceStatementCancelled {
+            configured_statement_timeout_ms: 2000,
+        }
+    } else {
+        Error::Database(error)
+    }
+}
+
 impl WriterPool {
     pub(crate) async fn schedule_source(
         &mut self,
@@ -52,8 +67,13 @@ impl ReadPool {
         let seq: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
             .fetch_one(&mut *tx)
             .await?;
-        let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN 'canonical_sqlite_rows' ELSE 'original_zsh_history' END,'sqlite_snapshots',CASE WHEN i.binding='terminal.atuin-history' THEN 'unavailable_until_1c' WHEN i.binding='browser.history.chromium' THEN 'periodic_full_bases; page_patches_unavailable' ELSE NULL END,'last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'read_checkpoint',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN (SELECT carry FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text) ELSE NULL END,'first_record_error',(SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1)) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true WHERE ($1::uuid IS NULL OR i.id=$1) AND ($2::uuid IS NULL OR i.id>$2) ORDER BY i.id LIMIT $3")
-            .bind(request.input).bind(request.after_input).bind((INPUTS+1) as i64).fetch_all(&mut *tx).await?;
+        let mut rows: Vec<Value> = sqlx::query_scalar(SOURCE_ROWS)
+            .bind(request.input)
+            .bind(request.after_input)
+            .bind((INPUTS + 1) as i64)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(primary_statement_error)?;
         let inputs_more = rows.len() > INPUTS;
         rows.truncate(INPUTS);
         for row in &mut rows {

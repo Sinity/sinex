@@ -2,6 +2,7 @@
 import datetime as dt
 import hashlib
 import json
+import re
 import select
 import socket
 import sqlite3
@@ -16,6 +17,7 @@ PLANNED = ['initial failure and blocked first empty reading',
     'offline catch-up receipts survive provider loss and damaging retained replay',
     'partial unavailable material stays owned by its original acquisition',
     'bounded history receipts and legacy unknowns preserve inspection',
+    'primary diagnostic count guard and honest statement cancellation',
     'equal-evidence journal and provider comparison']
 COLUMNS = ['id', 'timestamp', 'duration', 'exit', 'command', 'cwd', 'session', 'hostname', 'deleted_at']
 
@@ -81,10 +83,16 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
         result=run([bins/'sinexctl','--endpoint',endpoint,'--token-file',work/('operator-token' if operator else 'token'),command,*args,'--json'],expected=expected,label='acquisition '+command)
         return json.loads(result.stdout)
     def src(path=source, **params):
-        response=api('sources.list',params)['result']
-        found=[r for r in response['sources'] if r['locator']==str(path)]
-        if found:found[0]['_snapshot_now']=response['resolved']['now']
-        return found[0] if found else None
+        request=dict(params)
+        while True:
+            response=api('sources.list',request)['result']
+            found=[r for r in response['sources'] if r['locator']==str(path)]
+            if found:
+                found[0]['_snapshot_now']=response['resolved']['now']
+                return found[0]
+            after=response['page']['next_after_input']
+            if not after or 'input' in request:return None
+            request['after_input']=after
     def record(phase, row, recovered=()):
         evidence=row['acquisition'];schedule=evidence['schedule'];state=evidence['state']
         since={'kind':'planned_next_start','value':schedule['next_start_at']} if state=='overdue' else ({'kind':'outcome_observed_at','value':schedule['settled_at']} if schedule else {'kind':'attempt_started_at','value':row['last_run']['observed_at']})
@@ -357,6 +365,56 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
             save('source-input-pages.json',pages)
         scenario(PLANNED[5],bounded)
 
+        def primary_diagnostics():
+            nonlocal daemon, held, controller
+            stop(daemon)
+            path=work/'diagnostic-counts.db'
+            rows=[fixture_row(f'diagnostic-{n:04}') for n in range(2048)]
+            for row in rows:row[2]=-2 # unsupported duration, independently malformed
+            create_provider(path,rows);configure(path)
+            controller=socket.socket(socket.AF_UNIX);controller.bind(str(work/'diagnostics.sock'));controller.listen(1);controller.settimeout(30)
+            daemon=start(config,'diagnostics-positive','--qualification-boundary','collector-scheduled','--qualification-socket',work/'diagnostics.sock')
+            held,_=controller.accept();frame=json.loads(held.makefile('rb').readline());save('diagnostics-positive-held.json',frame)
+            positive=src(path);input_id=positive['input']
+            assert positive['last_run']['record_errors']==2048
+            error=positive['first_record_error'];assert error['evidence_status']=='available' and error['record']['id']=='diagnostic-0000'
+            first_error=sql("SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry m ON m.id=f.material_id WHERE f.observation_id='"+positive['last_run']['id']+"' ORDER BY m.staged_at,m.id,f.anchor_byte LIMIT 1")
+            for field in ['observation_id','material_id','anchor_byte','reason']:assert error[field]==first_error[field]
+            stop(daemon);held.close();held=None
+            with sqlite3.connect(path) as c:c.execute('UPDATE history SET duration=0')
+            daemon=start(config,'diagnostics-zero','--qualification-boundary','collector-scheduled','--qualification-socket',work/'diagnostics.sock')
+            held,_=controller.accept();frame=json.loads(held.makefile('rb').readline());save('diagnostics-zero-held.json',frame)
+            zero=src(path);assert zero['input']==input_id and zero['last_run']['record_errors']==0 and zero['first_record_error'] is None
+            assert sql('SELECT count(*) FROM raw.record_failures')>=2048
+            # EXPLAIN the exact production statement; no copied approximation.
+            rust=(h['ROOT']/'crate/sinex-store/src/source_inspection.rs').read_text()
+            primary=re.search(r'const SOURCE_ROWS: &str = r#"(.*?)"#;',rust,re.S).group(1)
+            plan=sql("PREPARE diagnostic_primary(uuid,uuid,bigint) AS "+primary+"; EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) EXECUTE diagnostic_primary('"+input_id+"',NULL,17)")
+            def nodes(node):
+                yield node
+                for child in node.get('Plans',[]):yield from nodes(child)
+            scans=[n for n in nodes(plan[0]['Plan']) if n.get('Relation Name')=='record_failures']
+            assert scans and all(n['Actual Loops']==0 for n in scans),scans
+            save('primary-diagnostic-count-guard.json',{'positive':positive,'zero':zero,'plan':plan})
+            lock_err=(report/'primary-lock.stderr').open('w')
+            locker=subprocess.Popen(['psql',h['admin'],'--no-psqlrc','-qAt','-v','ON_ERROR_STOP=1'],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=lock_err,text=True,bufsize=1)
+            try:
+                locker.stdin.write("BEGIN; LOCK TABLE raw.inputs IN ACCESS EXCLUSIVE MODE; SELECT 'primary-lock-held';\n");locker.stdin.flush()
+                ready,_,_=select.select([locker.stdout],[],[],15);assert ready and locker.stdout.readline().strip()=='primary-lock-held'
+                began=time.monotonic()
+                result=run([bins/'sinexctl','--endpoint',endpoint,'--token-file',work/'token','sources','--input',input_id,'--json'],expected=6,label='blocked primary source statement')
+                error=json.loads(result.stderr);assert error['kind']=='budget'
+                assert error['details']=={'reason':'statement_cancelled','operation':'sources.list','phase':'primary_source_rows','configured_statement_timeout_ms':2000},error
+                save('primary-statement-cancelled.json',{'response':error,'seconds':time.monotonic()-began})
+            finally:
+                locker.stdin.write('ROLLBACK;\n\\q\n');locker.stdin.flush();locker.stdin.close();locker.wait(timeout=15);lock_err.close();assert locker.returncode==0
+            after=cli('sources','--input',input_id)['sources'][0]
+            assert after['last_run']['id']==zero['last_run']['id'] and after['first_record_error'] is None
+            assert cli('query','events where source = terminal.atuin-history',expected=5)['total']>=2048
+            save('primary-after-cancellation.json',after)
+            stop(daemon);held.close();held=None;controller.close();controller=None
+        scenario(PLANNED[6],primary_diagnostics)
+
         def compare():
             # The baseline receives the SAME retained synthetic journal observations and
             # actual direct provider availability/content. No model or private corpus.
@@ -377,11 +435,13 @@ The synthetic public-client journey distinguishes observed reading outcomes, col
 
 See baseline-comparison.json for the equal-evidence comparison and its tie. API/MCP captures and enclosing command receipts preserve exact calls. This does not establish historical capture completeness, execution counts, ordinary-use superiority, installed behavior or full milestone acceptance. Earlier configured-continuation10392 remains separately bound to its original immutable package and was not rerun or requalified.
 ''')
-        scenario(PLANNED[6],compare)
+        scenario(PLANNED[7],compare)
     finally:
         if lock:lock.close()
+        # Stop a held collector before closing its qualification socket; EOF
+        # otherwise turns fixture cleanup into a second refusal.
+        if daemon and daemon.poll() is None:stop(daemon)
         if held:held.close()
         if controller:controller.close()
         if mcp and mcp.poll() is None:
             mcp.stdin.close();mcp.wait(timeout=15);assert mcp.returncode==0
-        if daemon and daemon.poll() is None:stop(daemon)
