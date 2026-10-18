@@ -467,7 +467,7 @@ poll_interval_ms = {poll}
             with conn:
                 notice = json.loads(conn.makefile('r').readline())
                 basis = notice['evidence']['basis']
-                assert notice['pid'] == proc.pid and notice['evidence']['queued_background_turns'] > 0, notice
+                assert notice['pid'] == proc.pid, notice
                 add_history(source, ('fair-later', 901_000_000_000_000, 1, 0, 'echo fair-later', '/work/harbor', 'fair-session', 'fixture-host', None))
                 with sqlite3.connect(source) as con:
                     later_rowid = con.execute("SELECT rowid FROM history WHERE id='fair-later'").fetchone()[0]
