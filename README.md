@@ -98,7 +98,8 @@ nix develop --command cargo run -p xtask -- check     # fmt, dependency boundari
 nix develop --command cargo run -p xtask -- test      # all Rust tests in an owned PostgreSQL
 nix develop --command cargo run -p xtask -- scenario NAME|all [--package DIR]
                                                       # end-to-end scenarios, tests/scenarios/NAME.py
-nix develop --command cargo run -p xtask -- db -- CMD # run CMD with DATABASE_URL set to a fresh schema
+nix develop --command cargo run -p xtask -- db ensure # build the schema database; print DATABASE_URL
+nix develop --command cargo run -p xtask -- db exec -- CMD # run CMD with DATABASE_URL, PGHOST and PGPORT set
 nix develop --command cargo run -p xtask -- status    # failing tests and errors from this checkout's last run
 nix build .#default                                   # the package; runs the Rust tests in the builder
 ```
@@ -108,8 +109,10 @@ history store (`$XDG_STATE_HOME/devkit/history.db`); `xtask history failures`
 and `xtask history diagnostics` show a run's failing tests and compiler
 messages.
 
-`xtask test`, `scenario` and `db` start a throwaway PostgreSQL cluster in
-`$TMPDIR` with the canonical schema and remove it afterwards. Scenarios run the
+The database comes from devkit: the per-user PostgreSQL service when it runs,
+otherwise a throwaway cluster on tmpfs removed afterwards. Each schema version
+is built once into a template database; every database test gets its own copy
+of it, kept only if the test fails. Scenarios run the
 real daemon, CLI and MCP server against synthetic sources; a failed scenario
 leaves its logs in `target/scenario-failures/`. The same commands are AgentCTL
 operations (`check`, `test`, `scenario`, `package`). The pre-push hook runs
