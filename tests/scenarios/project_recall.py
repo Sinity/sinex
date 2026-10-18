@@ -271,6 +271,7 @@ full_interval_ms = 100
                 finally:
                     held.close()
                     controller.close()
+                    (work/'current-parent.sock').unlink()
         scenario('recall refuses a session whose raw or canonical parent is archived, and serves it again once restored', archived_parent)
 
         def overflow():

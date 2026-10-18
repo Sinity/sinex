@@ -147,6 +147,7 @@ poll_interval_ms = 3600000
                 assert fault['kind'] == 'partial' and fault['details']['reason'] == 'projection_unavailable', fault
                 assert elapsed >= .45, 'recall did not wait 500 ms for the projection'
                 conn.sendall(b'c')
+        boundary.unlink()
         wait(daemon, 'projection released', settled)
         answers(False, all_names)
         stop(daemon)

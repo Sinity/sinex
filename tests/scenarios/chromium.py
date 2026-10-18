@@ -424,6 +424,7 @@ automata = []
                 assert query(visit_query())['rows'][0]['payload']['title'] == 'Synthetic page 1'
             finally:
                 listener.close()
+                boundary.unlink()
                 stop(daemon)
                 con.rollback()
                 con.close()

@@ -111,8 +111,11 @@ full_interval_ms = 100
         return api('query.run', {'query': 'events where kind = command.executed'})['result']['total']
 
     def caught_up(seconds=90):
-        wait(proc, 'all commands admitted and sessions published',
-             lambda: raw_count() == len(facts) and settled(), seconds)
+        try:
+            wait(proc, 'all commands admitted and sessions published',
+                 lambda: raw_count() == len(facts) and settled(), seconds)
+        except AssertionError as error:
+            raise AssertionError(f'{error}; expected {len(facts)} commands, status {api()}') from None
 
     def raw():
         return query_all(cli, 'events where kind = command.executed')
@@ -166,6 +169,12 @@ full_interval_ms = 100
         listener.settimeout(seconds)
         return listener
 
+    def close_listener(listener):
+        # A socket file left behind cannot be copied when a failed run's directory is kept.
+        path = listener.getsockname()
+        listener.close()
+        Path(path).unlink(missing_ok=True)
+
     def paused(listener):
         """Accept the daemon's pause notice; returns the connection (send b'c' to continue) and the notice."""
         connection, _ = listener.accept()
@@ -214,7 +223,7 @@ full_interval_ms = 100
         pending = cli('query', 'events where kind = activity.session.boundary', expected=5)
         assert not pending['complete'] and pending['sessions']['pending_keys'] > 0
         connection.close()
-        listener.close()
+        close_listener(listener)
         proc.kill()
         proc.wait(timeout=10)
         proc = start(config('sessions-after-kill'), 'sessions-after-kill')
@@ -321,7 +330,7 @@ full_interval_ms = 100
         with ledger_lock('SHARE', 'session-retry-lock'):
             connection.sendall(b'c')
             connection.close()
-            listener.close()
+            close_listener(listener)
             wait(proc, 'session failure visible in status',
                  lambda: api()['result']['indexed_retrieval']['sessions']['failure'], 15)
             assert cli('recall', 'last', '--project', 'span', expected=5)['kind'] == 'partial'
@@ -370,7 +379,7 @@ full_interval_ms = 100
         assert cli('recall', 'last', '--project', 'tide', expected=5)['kind'] == 'partial'
         connection.sendall(b'c')
         connection.close()
-        listener.close()
+        close_listener(listener)
         wait(proc, 'new session published', settled)
         assert check_recall()['session']['id'] != old_session
     scenario('while a command is being replaced, sessions citing it are not served', replaced_parent)
