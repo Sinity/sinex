@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
+# Seconds-long checks only; `xtask check` and `xtask test` are run separately.
 set -euo pipefail
-# Publication is separate from preparation; use the declared candidate qualification.
-# This hook checks dependency ownership, deterministic formatting and whitespace.
-nix develop --command cargo fmt --package sinex-model --package sinex-protocol --package sinex-store --package sinexd --package sinexctl --package xtask -- --check
-nix develop --command cargo run --locked --offline -p xtask -- boundaries
+nix develop --command cargo fmt --all -- --check
+nix develop --command cargo run --locked --offline --quiet -p xtask -- boundaries
 git diff --check

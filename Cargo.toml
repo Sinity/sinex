@@ -12,3 +12,11 @@ license = "MIT"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["full"] }
+
+# Line tables keep backtraces useful at a fraction of the binary size; the
+# daemon hashes its own executable at startup.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package.blake3]
+opt-level = 3
