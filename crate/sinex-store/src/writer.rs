@@ -85,7 +85,7 @@ impl Store {
             || identity.version.is_empty()
         {
             return Err(Error::Invalid(
-                "actual executable/config hashes and runtime identity required",
+                "executable and config blake3 hashes and a runtime identity are required",
             ));
         }
         if !check_schema(writer_url).await?.pending_changes.is_empty() {
@@ -96,7 +96,7 @@ impl Store {
         let (lock, root, blobs) =
             tokio::task::spawn_blocking(move || lock_state_dir(state_dir)).await??;
         let mut connection = PgConnection::connect(writer_url).await?;
-        require_role(&mut connection, WRITER_ROLE).await?;
+        require_writer(&mut connection).await?;
         take_writer_lock(&mut connection).await?;
         let reader_pool = PgPoolOptions::new()
             .max_connections(2)
@@ -213,11 +213,11 @@ async fn take_writer_lock(connection: &mut PgConnection) -> Result<()> {
     }
 }
 
-async fn require_role(connection: &mut PgConnection, role: &str) -> Result<()> {
-    let actual: String = sqlx::query_scalar("SELECT current_user::text")
+async fn require_writer(connection: &mut PgConnection) -> Result<()> {
+    let role: String = sqlx::query_scalar("SELECT current_user::text")
         .fetch_one(connection)
         .await?;
-    if actual != role {
+    if role != WRITER_ROLE {
         return Err(Error::Invalid(
             "writer URL must authenticate as sinex_writer",
         ));
@@ -499,9 +499,11 @@ impl WriterPool {
         self.session_retry_at =
             Self::session_retryable(&error).then(|| Instant::now() + Duration::from_millis(250));
         let reason = match error {
-            Error::Deadline => "session computation turn exceeded 3 seconds; dirty key retained",
+            Error::Deadline => {
+                "session computation turn exceeded 3 seconds; dirty keys kept for retry"
+            }
             Error::Invalid(reason) => reason,
-            _ => "session recomputation unavailable; dirty keys retained",
+            _ => "session recomputation unavailable; dirty keys kept",
         };
         self.session_failed = true;
         self.session_work = None;
@@ -522,9 +524,9 @@ impl WriterPool {
         // Publish only static validation reasons; database errors may quote captured values.
         let reason = match error {
             Error::Invalid(reason) => {
-                format!("shell recomputation unavailable: {reason}; dirty work retained")
+                format!("shell recomputation unavailable: {reason}; dirty work kept")
             }
-            _ => "shell recomputation unavailable; dirty work retained".into(),
+            _ => "shell recomputation unavailable; dirty work kept".into(),
         };
         self.shell_failed = true;
         self.shell_work = None;

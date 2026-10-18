@@ -1953,7 +1953,6 @@ dependencies = [
  "time",
  "tokio",
  "unicode-segmentation",
- "url",
  "uuid",
 ]
 

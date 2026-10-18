@@ -1,4 +1,4 @@
-//! Run only on the runner-created disposable PostgreSQL 18 database.
+//! Runs only against the throwaway PostgreSQL 18 database that `xtask test` provides.
 #[path = "support/event_contract.rs"]
 mod event_contract;
 use sinex_store::{
@@ -8,8 +8,8 @@ use sinex_store::{
 use sqlx::{Connection, Executor, PgConnection, Row};
 
 #[tokio::test]
-#[ignore = "requires explicitly provisioned isolated PostgreSQL roles, DSNs and blob root"]
-async fn real_roles_owned_writer_and_atomic_material_admission()
+#[ignore = "needs the PostgreSQL roles, URLs and blob root that xtask test provides"]
+async fn roles_writer_lock_synthetic_admission_and_schema_checks()
 -> Result<(), Box<dyn std::error::Error>> {
     let admin = std::env::var("SINEX_TEST_ADMIN_URL")?;
     let writer = std::env::var("SINEX_TEST_WRITER_URL")?;
@@ -54,7 +54,7 @@ async fn real_roles_owned_writer_and_atomic_material_admission()
     let error = writer_conn
         .execute("UPDATE sinex_schemas.definition SET catalog='{}'::jsonb")
         .await
-        .expect_err("writer cannot rebaseline the canonical catalog receipt");
+        .expect_err("writer cannot rewrite the stored catalog");
     assert_eq!(
         error.as_database_error().and_then(|e| e.code()).as_deref(),
         Some("42501")
@@ -131,12 +131,11 @@ async fn real_roles_owned_writer_and_atomic_material_admission()
     helper_admin.execute("CREATE OR REPLACE FUNCTION sinex_schemas.timescale_preloaded() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS 'SELECT 1/0=0'").await?;
     let body_drift = check_schema(&reader).await;
     helper_admin.execute(original.as_str()).await?;
-    // A Database division-by-zero error would show the changed privileged body ran.
+    // A division-by-zero database error would mean the changed function body ran.
     assert!(matches!(body_drift, Err(Error::Schema(_))));
     check_schema(&reader).await?;
-    // PostgreSQL 18 represents NOT NULL in pg_constraint as well as attnotnull.
-    // Explicit constraints exclude those duplicate catalog rows, while nullability
-    // must still detect a real weakening of the canonical column declaration.
+    // PostgreSQL 18 records NOT NULL in pg_constraint as well as attnotnull. The
+    // constraint check skips those rows, so the column check must catch a dropped NOT NULL.
     let mut admin_conn = PgConnection::connect(&admin).await?;
     admin_conn
         .execute("ALTER TABLE core.events ALTER COLUMN payload DROP NOT NULL")
@@ -154,7 +153,7 @@ async fn real_roles_owned_writer_and_atomic_material_admission()
     admin_conn.execute("ALTER TABLE core.blobs DROP CONSTRAINT blob_status, ADD CONSTRAINT blob_status CHECK (status = 'writing'::text OR status = 'present'::text)").await?;
     assert!(matches!(literal_drift, Err(Error::Schema(_))));
     check_schema(&admin).await?;
-    // A validly named but incompatible table is detected, not silently converged.
+    // An extra column is reported, not silently accepted.
     admin_conn
         .execute("ALTER TABLE core.events ADD COLUMN undeclared_fixture text")
         .await?;

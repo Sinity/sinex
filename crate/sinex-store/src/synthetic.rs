@@ -38,7 +38,7 @@ impl WriterPool {
     #[cfg(feature = "product")]
     pub(crate) async fn admit(&mut self, event: MaterialEvent) -> Result<Receipt> {
         if event.bytes.len() > MAX_BYTES {
-            return Err(Error::Invalid("synthetic proof material exceeds 1 MiB"));
+            return Err(Error::Invalid("synthetic event bytes exceed 1 MiB"));
         }
         if event.bytes.is_empty()
             || event.anchor_byte < 0
