@@ -17,9 +17,8 @@ xtask boundaries [DIR]       check the workspace dependency graph";
 
 /// Ignored tests that `xtask test` does not run: they need rows admitted by a
 /// running daemon first, so a scenario runs them.
-const SCENARIO_ONLY_TESTS: &[&str] = &[
-    "shell::publication_tests::bounded_turn_rolls_back_mixed_groups_after_middle_statement_cancellation_and_restarts",
-];
+const SCENARIO_ONLY_TESTS: &[&str] =
+    &["shell::publication_tests::cancelled_publish_batch_rolls_back_and_republishes_with_same_ids"];
 
 type Result<T = ()> = std::result::Result<T, String>;
 

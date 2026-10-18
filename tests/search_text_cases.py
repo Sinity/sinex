@@ -335,7 +335,7 @@ EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE gene
         scenario(PLANNED[6],plans)
         def shell_work_tables():
             isolated=env.copy();isolated['SINEX_TEST_WRITER_URL']=h['writer']
-            result=run(['cargo','test','--locked','-p','sinex-store','--features','product','--lib','shell::work_tests::native_work_tables_preserve_pending_sets_and_membership_with_indexed_plans','--','--ignored','--nocapture'],env=isolated,label='native temporary work-table constructor semantics and ordinary PostgreSQL plans')
+            result=run(['cargo','test','--locked','-p','sinex-store','--features','product','--lib','shell::work_tests::work_table_indexes_serve_pending_and_output_lookups','--','--ignored','--nocapture'],env=isolated,label='native temporary work-table constructor semantics and ordinary PostgreSQL plans')
             proof=next(line.removeprefix('SHELL_WORK_PROOF ') for line in result.stdout.splitlines() if line.startswith('SHELL_WORK_PROOF '))
             save('shell-work-table-plans',json.loads(proof))
         scenario(PLANNED[7],shell_work_tables)
