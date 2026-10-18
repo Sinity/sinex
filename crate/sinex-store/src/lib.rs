@@ -4,7 +4,6 @@ mod admission;
 mod atuin;
 mod blob;
 mod browser;
-mod event_storage;
 mod exclusion;
 mod projection;
 mod query;

@@ -1,4 +1,5 @@
-//! SQL generated only from fixed Rust declarations, applied before sealing the catalog receipt.
+//! DDL beyond the table declarations: functions, event hypertables, triggers,
+//! indexes and views.
 pub(crate) const FULL_TEXT_UNAVAILABLE_INDEX: &str =
     "CREATE INDEX search_text_unavailable ON core.search_text(generation,id) WHERE tokens IS NULL";
 pub(crate) fn declarations() -> Vec<String> {
