@@ -42,7 +42,7 @@ parser.add_argument("--session-predecessor-pin",type=Path,help="exact immutable 
 parser.add_argument("--configured-continuation",action="store_true",help="measure finite ongoing Atuin acquisition and same-state recovery through pinned ordinary clients")
 parser.add_argument("--exclusion-contracts",action="store_true",help="qualify typed single-writer exclusion without public-client or package claims")
 parser.add_argument("--fusion",action="store_true",help="qualify selected Atuin/zsh fusion lifecycle using a pinned independent specification")
-parser.add_argument("--fusion-focus",choices=["changed-seams","source-codec","maintenance","source-privacy"],help="focused projection/head-race, source-codec, packaged maintenance or remaining source/privacy controls; reuse separately retained journey proof")
+parser.add_argument("--fusion-focus",choices=["changed-seams","source-codec","maintenance","source-privacy","publication-turn"],help="focused projection/head-race, source-codec, packaged maintenance, source/privacy or publication-turn rollback controls; reuse separately retained journey proof")
 parser.add_argument("--fusion-spec",type=Path,help="read-only specification Git repository for selected fusion fixture")
 parser.add_argument("--indexed",action="store_true",help="qualify indexed shell retrieval and actual MCP transport")
 parser.add_argument("--retained-replay", action="store_true", help="qualify retained Atuin replay through actual packaged clients")
@@ -92,6 +92,7 @@ if OPTIONS.configured_continuation and (not OPTIONS.packaged or not OPTIONS.pack
 if OPTIONS.fusion_focus and not OPTIONS.fusion: parser.error("fusion focus requires --fusion")
 if OPTIONS.packaged and OPTIONS.fusion_focus in ("changed-seams","source-codec"): parser.error("this fusion focus is development-only; packaged focus supports maintenance or source-privacy")
 if OPTIONS.fusion != bool(OPTIONS.fusion_spec): parser.error("fusion requires --fusion --fusion-spec GIT_REPOSITORY")
+if OPTIONS.fusion_focus=="publication-turn" and (not OPTIONS.fusion or OPTIONS.packaged): parser.error("publication-turn is a development-only fusion focus; use --fusion --fusion-spec GIT_REPOSITORY without --packaged")
 if OPTIONS.fusion and any([OPTIONS.reversible_exclusion,OPTIONS.indexed,OPTIONS.exclusion_contracts,OPTIONS.retained_replay,OPTIONS.atuin,OPTIONS.read_lifecycle,OPTIONS.live_cursor,OPTIONS.demo_spec,OPTIONS.startup_coverage,OPTIONS.credential_output]): parser.error("fusion owns its own scenario selector")
 if OPTIONS.package_pin and not (OPTIONS.reversible_exclusion or OPTIONS.fusion or OPTIONS.configured_continuation or OPTIONS.privacy_rules or OPTIONS.source_investigation or OPTIONS.recovery_context or OPTIONS.atuin_read_plan or OPTIONS.chromium):
     parser.error("prebuilt package pins are supported only by exclusion, fusion, privacy rules, source investigation, configured continuation, recovery context or Atuin read plan or Chromium qualification")

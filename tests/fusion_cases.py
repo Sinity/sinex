@@ -36,6 +36,9 @@ PLANNED=[
 
 
 def planned(focus):
+    if focus=='publication-turn':
+        import fusion_publication_cases
+        return fusion_publication_cases.PLANNED
     if focus=='source-codec':return [PLANNED[0],PLANNED[8]]
     if focus=='source-privacy':return [PLANNED[0],PLANNED[8],PLANNED[9]]
     if focus=='maintenance':return [PLANNED[0],'independent maintenance source setup',PLANNED[7],PLANNED[11],PLANNED[12],PLANNED[8],PLANNED[9]]
@@ -43,6 +46,9 @@ def planned(focus):
 
 
 def exercise(h):
+    if h['OPTIONS'].fusion_focus=='publication-turn':
+        import fusion_publication_cases
+        return fusion_publication_cases.exercise(h)
     work,report,bins=(h[k] for k in ['WORK','REPORT','BIN_DIR'])
     run,scenario,start,stop=(h[k] for k in ['run','scenario','start_daemon','stop'])
     token='synthetic-foundation-token';operator='synthetic-fusion-operator'

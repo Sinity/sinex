@@ -306,17 +306,14 @@ impl WriterPool {
                     work.phase = Phase::Archive;
                     work.cursor = None;
                 } else {
-                    // Each group has at most two parents. A bounded turn lets admission and
-                    // controls run between transactions; newly dirty positions stay queued.
-                    for group in groups {
-                        self.shell_publish(
-                            group.try_get("token")?,
-                            group.try_get("parents")?,
-                            group.try_get("strategy")?,
-                            work.basis,
-                        )
-                        .await?;
-                    }
+                    Self::shell_publish_turn(
+                        &mut self.connection,
+                        self.shell_producer,
+                        self.run_id,
+                        work.basis,
+                        groups,
+                    )
+                    .await?;
                     crate::QualificationBoundary::reach(
                         &mut self.qualification,
                         "fusion-replacement-committed",
@@ -377,15 +374,42 @@ impl WriterPool {
         self.shell_work = Some(work);
         Ok(true)
     }
+    async fn shell_publish_turn(
+        connection: &mut sqlx::PgConnection,
+        producer: Option<Uuid>,
+        run_id: Uuid,
+        basis: i64,
+        groups: Vec<sqlx::postgres::PgRow>,
+    ) -> Result<()> {
+        // The existing bounded turn is the visibility and rollback unit. Admission
+        // and controls still run between turns; no payload plan is buffered here.
+        let mut tx = connection.begin().await?;
+        for group in groups {
+            Self::shell_publish(
+                &mut tx,
+                producer,
+                run_id,
+                group.try_get("token")?,
+                group.try_get("parents")?,
+                group.try_get("strategy")?,
+                basis,
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
     async fn shell_publish(
-        &mut self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        producer: Option<Uuid>,
+        run_id: Uuid,
         token: Uuid,
         parents: Vec<Uuid>,
         strategy: i16,
         basis: i64,
     ) -> Result<()> {
         let r = rule();
-        let rows=sqlx::query("SELECT n.id,n.source,n.ekey,n.digest,n.anchor,trunc(n.at_ns)::text AS at_ns,n.count2,n.count60,e.payload,e.ts_quality FROM sinex_shell_nodes n JOIN core.events e ON e.id=n.id WHERE n.id=ANY($1) ORDER BY n.source,n.digest COLLATE \"C\",n.anchor").bind(&parents).fetch_all(&mut self.connection).await?;
+        let rows=sqlx::query("SELECT n.id,n.source,n.ekey,n.digest,n.anchor,trunc(n.at_ns)::text AS at_ns,n.count2,n.count60,e.payload,e.ts_quality FROM sinex_shell_nodes n JOIN core.events e ON e.id=n.id WHERE n.id=ANY($1) ORDER BY n.source,n.digest COLLATE \"C\",n.anchor").bind(&parents).fetch_all(&mut **tx).await?;
         if rows.len() != parents.len() || rows.len() > r.sources.len() {
             return Err(Error::Invalid("shell support unavailable"));
         }
@@ -487,7 +511,7 @@ impl WriterPool {
         }
         let temporal: Value = sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
             .bind(supplier)
-            .fetch_one(&mut self.connection)
+            .fetch_one(&mut **tx)
             .await?;
         payload["timestamp_ns"] = temporal["timestamp_ns"].clone();
         evidence["time"] = json!(supplier);
@@ -509,51 +533,51 @@ impl WriterPool {
         let hash = blake3::hash(&serde_json::to_vec(&payload).unwrap())
             .as_bytes()
             .to_vec();
-        let mut tx = self.connection.begin().await?;
         let active: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM core.live_events WHERE id=ANY($1) AND record_state='present'",
         )
         .bind(&parents)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
         if active != parents.len() as i64 {
             // A newer exclusion/removal is a current eligibility fence, even while
             // the older pinned frontier finishes. Its dirty seed is not consumed.
             sqlx::query("UPDATE sinex_shell_groups SET done=true WHERE token=$1")
                 .bind(token)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
-            tx.commit().await?;
             return Ok(());
         }
-        let prior:Option<Uuid>=sqlx::query_scalar("SELECT e.id FROM core.live_events e JOIN core.producer_versions p ON p.id=e.producer_version_id WHERE e.event_type='command.canonical' AND e.equivalence_key=$1 AND e.source_event_ids=$2 AND e.payload=$3 AND p.version=$4 ORDER BY e.commit_seq LIMIT 1").bind(&key).bind(&parents).bind(&payload).bind(&r.implementation).fetch_optional(&mut *tx).await?;
+        let prior:Option<Uuid>=sqlx::query_scalar("SELECT e.id FROM core.live_events e JOIN core.producer_versions p ON p.id=e.producer_version_id WHERE e.event_type='command.canonical' AND e.equivalence_key=$1 AND e.source_event_ids=$2 AND e.payload=$3 AND p.version=$4 ORDER BY e.commit_seq LIMIT 1").bind(&key).bind(&parents).bind(&payload).bind(&r.implementation).fetch_optional(&mut **tx).await?;
         let id = if let Some(id) = prior {
             id
         } else {
             let id = Uuid::now_v7();
-            let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+            let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut **tx).await?;
             let host = payload["hostname"].as_str().map(str::to_string);
-            sqlx::query("INSERT INTO core.events(id,source,event_type,host,payload,ts_orig,ts_orig_tiebreak,ts_quality,time_suspect,ts_precision,ts_orig_until,ts_clock,commit_seq,record_hash,source_event_ids,producer_version_id,run_id,equivalence_key,payload_schema_id) SELECT $1,'fusion.shell-command','command.canonical',$2,$3,ts_orig,ts_orig_tiebreak,ts_quality,time_suspect,ts_precision,ts_orig_until,ts_clock,$4,$5,$6,$7,$8,$9,5 FROM core.events WHERE id=$10").bind(id).bind(host).bind(payload).bind(seq).bind(hash).bind(&parents).bind(self.shell_producer).bind(self.run_id).bind(key).bind(supplier).execute(&mut *tx).await?;
-            crate::session::dirty(&mut tx, id).await?;
-            sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id) VALUES($1,$2,0,0,3)").bind(seq).bind(id).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO core.events(id,source,event_type,host,payload,ts_orig,ts_orig_tiebreak,ts_quality,time_suspect,ts_precision,ts_orig_until,ts_clock,commit_seq,record_hash,source_event_ids,producer_version_id,run_id,equivalence_key,payload_schema_id) SELECT $1,'fusion.shell-command','command.canonical',$2,$3,ts_orig,ts_orig_tiebreak,ts_quality,time_suspect,ts_precision,ts_orig_until,ts_clock,$4,$5,$6,$7,$8,$9,5 FROM core.events WHERE id=$10").bind(id).bind(host).bind(payload).bind(seq).bind(hash).bind(&parents).bind(producer).bind(run_id).bind(key).bind(supplier).execute(&mut **tx).await?;
+            crate::session::dirty(tx, id).await?;
+            sqlx::query("INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id) VALUES($1,$2,0,0,3)").bind(seq).bind(id).execute(&mut **tx).await?;
             id
         };
         sqlx::query("UPDATE sinex_shell_groups SET done=true,retained_id=$2 WHERE token=$1")
             .bind(token)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         sqlx::query(
             "UPDATE derivation.shell_progress SET replaced=replaced+1 WHERE one AND basis=$1",
         )
         .bind(basis)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-        tx.commit().await?;
         Ok(())
     }
 }
 
+#[cfg(test)]
+#[path = "shell_publication_tests.rs"]
+mod publication_tests;
 #[cfg(test)]
 #[path = "shell_work_tests.rs"]
 mod work_tests;
