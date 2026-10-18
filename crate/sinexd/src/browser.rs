@@ -53,7 +53,7 @@ pub async fn run(
     admission: Admission,
     mut stop: tokio::sync::watch::Receiver<bool>,
     mut attempt: Attempt,
-    mut qualification: Option<sinex_store::QualificationBoundary>,
+    mut pause: Option<sinex_store::TestPause>,
 ) -> Result<(), String> {
     let mut custodian: Option<Custodian> = None;
     let mut full_due = None;
@@ -72,7 +72,7 @@ pub async fn run(
             &attempt,
             &admission,
             &stop,
-            &mut qualification,
+            &mut pause,
         )
         .await;
         if let Err(failure) = result {
@@ -325,7 +325,7 @@ async fn poll(
     attempt: &Attempt,
     admission: &Admission,
     stop: &tokio::sync::watch::Receiver<bool>,
-    qualification: &mut Option<sinex_store::QualificationBoundary>,
+    pause: &mut Option<sinex_store::TestPause>,
 ) -> Result<(), PollFailure> {
     if attempt.basis.reconciliation_required {
         return Err(PollFailure::ReconciliationRequired(
@@ -358,7 +358,7 @@ async fn poll(
     let _snapshot_cleanup = SnapshotScratch(snapshot_path.clone());
     let mut owned = None;
     let custody = if owner.direct.is_none() {
-        let (path, evidence) = owner.copied_view(stop, qualification).await?;
+        let (path, evidence) = owner.copied_view(stop, pause).await?;
         owned = Some(
             SqliteConnection::connect_with(
                 &SqliteConnectOptions::new()

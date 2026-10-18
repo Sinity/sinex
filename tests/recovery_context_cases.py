@@ -240,10 +240,10 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
             directory=report/'retention-accounting';directory.mkdir()
             socket_path=work/'retention.sock'
             controller=socket.socket(socket.AF_UNIX);controller.bind(str(socket_path));controller.listen(1);controller.settimeout(30)
-            daemon=start(config,'recovery','--qualification-boundary','collector-scheduled','--qualification-socket',socket_path)
+            daemon=start(config,'recovery','--test-pause-at','collector-scheduled','--test-pause-socket',socket_path)
             held,_=controller.accept();held.settimeout(5)
             frame=json.loads(held.makefile('rb').readline())
-            assert frame['pid']==daemon.pid and frame['qualification_boundary']=='collector-scheduled'
+            assert frame['pid']==daemon.pid and frame['pause_point']=='collector-scheduled'
             previous=None
             try:
                 for index in range(3):
@@ -402,7 +402,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
             nonlocal daemon
             stop(daemon)
             controller=socket.socket(socket.AF_UNIX);controller.bind(str(work/'current-parent.sock'));controller.listen(1);controller.settimeout(30)
-            daemon=start(config,'recovery-parent-fence','--qualification-boundary','collector-scheduled','--qualification-socket',work/'current-parent.sock')
+            daemon=start(config,'recovery-parent-fence','--test-pause-at','collector-scheduled','--test-pause-socket',work/'current-parent.sock')
             held,_=controller.accept();held.settimeout(5)
             frame=json.loads(held.makefile('rb').readline());assert frame['pid']==daemon.pid
             save('current-parent-collector-frame.json',frame)

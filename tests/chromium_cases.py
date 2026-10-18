@@ -367,11 +367,11 @@ snapshot_interval_ms = {snapshot}
             # Actual copy-boundary mutation must invalidate copied data, retry, and never settle that copy.
             con=sqlite3.connect(locked_path);con.execute('PRAGMA locking_mode=EXCLUSIVE');con.execute('BEGIN EXCLUSIVE');con.execute('UPDATE visits SET visit_duration=888888888')
             boundary=work/'browser-copy.sock';listener=socket.socket(socket.AF_UNIX);listener.bind(str(boundary));listener.listen(1);listener.settimeout(30)
-            daemon=start(config,'chromium-copy-race','--qualification-boundary','browser-copy-before-check','--qualification-socket',boundary)
+            daemon=start(config,'chromium-copy-race','--test-pause-at','browser-copy-before-check','--test-pause-socket',boundary)
             try:
                 connection,_=listener.accept();message=b''
                 while not message.endswith(b'\n'):message+=connection.recv(65536)
-                notice=json.loads(message);assert notice['qualification_boundary']=='browser-copy-before-check'
+                notice=json.loads(message);assert notice['pause_point']=='browser-copy-before-check'
                 con.rollback();con.close() # journal disappears during the owned copy
                 connection.sendall(b'c');connection.close()
                 s=wait('retry after journal disappearance',lambda:settled(kind='full_value_comparison'))
@@ -381,7 +381,7 @@ snapshot_interval_ms = {snapshot}
             finally:listener.close();stop(daemon)
             con=sqlite3.connect(locked_path);con.execute('PRAGMA locking_mode=EXCLUSIVE');con.execute('BEGIN EXCLUSIVE')
             boundary.unlink();listener=socket.socket(socket.AF_UNIX);listener.bind(str(boundary));listener.listen(1);listener.settimeout(30)
-            daemon=start(config,'chromium-journal-appearance','--qualification-boundary','browser-copy-before-check','--qualification-socket',boundary)
+            daemon=start(config,'chromium-journal-appearance','--test-pause-at','browser-copy-before-check','--test-pause-socket',boundary)
             try:
                 connection,_=listener.accept();message=b''
                 while not message.endswith(b'\n'):message+=connection.recv(65536)

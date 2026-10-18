@@ -251,7 +251,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
         boundary=work/'projection.sock'
         with socket.socket(socket.AF_UNIX) as controller:
             controller.bind(str(boundary));controller.listen(1);controller.settimeout(20)
-            daemon=start(config,'projection-held','--qualification-boundary','projection-staged-1','--qualification-socket',boundary)
+            daemon=start(config,'projection-held','--test-pause-at','projection-staged-1','--test-pause-socket',boundary)
             conn,_=controller.accept()
             with conn:
                 frame=json.loads(conn.makefile('r').readline());assert frame['pid']==daemon.pid and frame['evidence']['through']>frame['evidence']['from']

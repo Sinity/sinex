@@ -269,12 +269,7 @@ impl WriterPool {
             .await?;
         let evidence = json!({"input":step.input,"observation":step.observation,"material":material,"start":start,"end":start+bytes.len() as i64,"canonical_bytes":bytes.len(),"step_rows":prepared.len(),"source_eof":step.complete});
         if !bytes.is_empty() {
-            crate::QualificationBoundary::reach(
-                &mut self.qualification,
-                "retained-fsynced",
-                evidence.clone(),
-            )
-            .await?;
+            crate::TestPause::reach(&mut self.pause, "retained-fsynced", evidence.clone()).await?;
         }
         let mut tx = self.connection.begin().await?;
         let mut seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
@@ -416,21 +411,12 @@ impl WriterPool {
         }
         let committed = json!({"custody":evidence,"progress":summary});
         if !bytes.is_empty() {
-            crate::QualificationBoundary::reach(
-                &mut self.qualification,
-                "transaction-staged",
-                committed.clone(),
-            )
-            .await?;
+            crate::TestPause::reach(&mut self.pause, "transaction-staged", committed.clone())
+                .await?;
         }
         tx.commit().await?;
         if !bytes.is_empty() {
-            crate::QualificationBoundary::reach(
-                &mut self.qualification,
-                "transaction-committed",
-                committed,
-            )
-            .await?;
+            crate::TestPause::reach(&mut self.pause, "transaction-committed", committed).await?;
         }
         if step.complete || status == "unavailable" {
             let open:Option<Uuid>=sqlx::query_scalar("SELECT id FROM raw.source_material_registry WHERE input_id=$1 AND status='capturing' LIMIT 1").bind(step.input).fetch_optional(&mut self.connection).await?;

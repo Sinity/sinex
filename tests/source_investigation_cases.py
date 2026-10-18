@@ -185,7 +185,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
         def scheduled():
             nonlocal daemon, held, controller, lock
             controller=socket.socket(socket.AF_UNIX);controller.bind(str(work/'collector.sock'));controller.listen(1);controller.settimeout(30)
-            daemon=start(config,'acquisition-held','--qualification-boundary','collector-scheduled','--qualification-socket',work/'collector.sock')
+            daemon=start(config,'acquisition-held','--test-pause-at','collector-scheduled','--test-pause-socket',work/'collector.sock')
             reading=wait('blocked reading',lambda:(r if (r:=src()) and r['last_run']['status']=='reading' else None))
             assert reading['acquisition']['state']=='reading' and reading['acquisition']['schedule'] is None
             assert reading['last_success'] is None and reading['last_failure']['id']
@@ -272,7 +272,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
             rows=[fixture_row(f'partial-{n:03}') for n in range(65)]+[fixture_row('oversize','x'*1_100_000)]
             create_provider(path,rows);retain_provider(path,'partial-unavailable.db');configure(path,1000)
             controller=socket.socket(socket.AF_UNIX);controller.bind(str(work/'partial.sock'));controller.listen(1);controller.settimeout(30)
-            daemon=start(config,'acquisition-partial','--qualification-boundary','collector-scheduled','--qualification-socket',work/'partial.sock')
+            daemon=start(config,'acquisition-partial','--test-pause-at','collector-scheduled','--test-pause-socket',work/'partial.sock')
             held,_=controller.accept();frame=json.loads(held.makefile('rb').readline());save('partial-held-frame.json',frame)
             r=wait('partial failed after committed prefix',lambda:(x if (x:=src(path)) and x['last_run']['status']=='unavailable' and x['last_run']['admitted']==64 else None))
             failed_observation=r['last_run']['id'];input_id=r['input']
@@ -296,7 +296,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
             wait('more than one history page',lambda:(x if (x:=src(path)) and not x['history']['complete'] else None))
             stop(daemon)
             controller=socket.socket(socket.AF_UNIX);controller.bind(str(work/'bounded.sock'));controller.listen(1);controller.settimeout(30)
-            daemon=start(config,'acquisition-bounded-held','--qualification-boundary','collector-scheduled','--qualification-socket',work/'bounded.sock')
+            daemon=start(config,'acquisition-bounded-held','--test-pause-at','collector-scheduled','--test-pause-socket',work/'bounded.sock')
             held,_=controller.accept();frame=json.loads(held.makefile('rb').readline());save('bounded-held-frame.json',frame)
             first=src(path);input_id=first['input'];seen=[];before=None
             while True:
@@ -373,7 +373,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
             for row in rows:row[2]=-2 # unsupported duration, independently malformed
             create_provider(path,rows);configure(path)
             controller=socket.socket(socket.AF_UNIX);controller.bind(str(work/'diagnostics.sock'));controller.listen(1);controller.settimeout(30)
-            daemon=start(config,'diagnostics-positive','--qualification-boundary','collector-scheduled','--qualification-socket',work/'diagnostics.sock')
+            daemon=start(config,'diagnostics-positive','--test-pause-at','collector-scheduled','--test-pause-socket',work/'diagnostics.sock')
             held,_=controller.accept();frame=json.loads(held.makefile('rb').readline());save('diagnostics-positive-held.json',frame)
             positive=src(path);input_id=positive['input']
             assert positive['last_run']['record_errors']==2048
@@ -382,7 +382,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
             for field in ['observation_id','material_id','anchor_byte','reason']:assert error[field]==first_error[field]
             stop(daemon);held.close();held=None
             with sqlite3.connect(path) as c:c.execute('UPDATE history SET duration=0')
-            daemon=start(config,'diagnostics-zero','--qualification-boundary','collector-scheduled','--qualification-socket',work/'diagnostics.sock')
+            daemon=start(config,'diagnostics-zero','--test-pause-at','collector-scheduled','--test-pause-socket',work/'diagnostics.sock')
             held,_=controller.accept();frame=json.loads(held.makefile('rb').readline());save('diagnostics-zero-held.json',frame)
             zero=src(path);assert zero['input']==input_id and zero['last_run']['record_errors']==0 and zero['first_record_error'] is None
             assert sql('SELECT count(*) FROM raw.record_failures')>=2048

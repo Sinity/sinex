@@ -18,7 +18,7 @@ pub async fn run(
     admission: Admission,
     mut stop: tokio::sync::watch::Receiver<bool>,
     mut observation: AtuinStep,
-    mut qualification: Option<sinex_store::QualificationBoundary>,
+    mut pause: Option<sinex_store::TestPause>,
 ) -> Result<(), String> {
     let interpretation = observation.interpretation;
     let mut reader = Reader::default();
@@ -45,7 +45,7 @@ pub async fn run(
             .map_err(|_| "acquisition schedule could not commit")?;
         tokio::select! {
             _ = stop.changed() => return Ok(()),
-            result = sinex_store::QualificationBoundary::collector_scheduled(&mut qualification, serde_json::json!({"observation":observation_id,"schedule":schedule})) => result.map_err(|_| "collector qualification refused")?,
+            result = sinex_store::TestPause::collector_scheduled(&mut pause, serde_json::json!({"observation":observation_id,"schedule":schedule})) => result.map_err(|_| "collector test pause refused")?,
         }
         tokio::select! {
             changed = stop.changed() => { let _ = changed; return Ok(()); }

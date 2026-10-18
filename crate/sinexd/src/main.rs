@@ -30,13 +30,15 @@ enum Command {
     Serve {
         #[arg(long)]
         config: PathBuf,
-        #[arg(long, requires = "qualification_socket")]
-        qualification_boundary: Option<String>,
-        #[arg(long, requires = "qualification_boundary")]
-        qualification_socket: Option<PathBuf>,
-        /// Controlled synthetic parser-error fixture, never enabled in ordinary acquisition.
+        /// Test only: pause the writer once at this point and wait for a controller.
+        #[arg(long, requires = "test_pause_socket")]
+        test_pause_at: Option<String>,
+        /// Test only: Unix socket of the controller for --test-pause-at.
+        #[arg(long, requires = "test_pause_at")]
+        test_pause_socket: Option<PathBuf>,
+        /// Test only: write a deliberately wrong Atuin interpretation for replay to fix.
         #[arg(long)]
-        qualification_historical_atuin: bool,
+        test_bad_atuin_parse: bool,
     },
     Config {
         #[command(subcommand)]
@@ -133,24 +135,18 @@ async fn run(args: Args) -> Result<(), String> {
         #[cfg(feature = "runtime")]
         Command::Serve {
             config: path,
-            qualification_boundary,
-            qualification_socket,
-            qualification_historical_atuin,
+            test_pause_at,
+            test_pause_socket,
+            test_bad_atuin_parse,
         } => {
             let conf = config::Config::load(&path)?;
-            let qualification = match (qualification_boundary, qualification_socket) {
-                (Some(point), Some(socket)) => Some(
-                    sinex_store::QualificationBoundary::new(point, socket)
-                        .map_err(public_store_error)?,
-                ),
-                (None, None) => None,
-                _ => {
-                    return Err(
-                        "qualification boundary and socket must be supplied together".into(),
-                    );
-                }
-            };
-            server::serve(conf, qualification, qualification_historical_atuin).await?;
+            // clap requires both flags together.
+            let pause = test_pause_at
+                .zip(test_pause_socket)
+                .map(|(point, socket)| sinex_store::TestPause::new(point, socket))
+                .transpose()
+                .map_err(public_store_error)?;
+            server::serve(conf, pause, test_bad_atuin_parse).await?;
         }
     }
     Ok(())

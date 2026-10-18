@@ -195,7 +195,7 @@ poll_interval_ms = 3600000
         boundary = work/'recall-projection.sock'
         with socket.socket(socket.AF_UNIX) as controller:
             controller.bind(str(boundary)); controller.listen(1); controller.settimeout(20)
-            daemon = start(config, 'corrected-typed-pending', '--qualification-boundary', 'projection-staged-0', '--qualification-socket', boundary)
+            daemon = start(config, 'corrected-typed-pending', '--test-pause-at', 'projection-staged-0', '--test-pause-socket', boundary)
             conn, _ = controller.accept()
             with conn:
                 frame = json.loads(conn.makefile('r').readline())

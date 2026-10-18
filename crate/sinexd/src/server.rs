@@ -24,7 +24,7 @@ struct App {
 }
 pub async fn serve(
     config: Config,
-    qualification: Option<sinex_store::QualificationBoundary>,
+    pause: Option<sinex_store::TestPause>,
     historical_fixture: bool,
 ) -> Result<(), String> {
     eprintln!(
@@ -104,7 +104,7 @@ pub async fn serve(
         config.store_dir.clone(),
         16,
         identity,
-        qualification.clone(),
+        pause.clone(),
     )
     .await
     .map_err(|_| {
@@ -141,7 +141,7 @@ pub async fn serve(
                 &secret(path)?,
                 store.run_id(),
                 config.projects.iter().map(|p| p.model()).collect(),
-                qualification.clone(),
+                pause.clone(),
             )
             .await
             .map_err(|_| "read-model role or projection unavailable")?,
@@ -159,24 +159,18 @@ pub async fn serve(
             &rules,
             &admission,
             if historical_fixture {
-                sinex_store::AtuinInterpretation::HistoricalFixture
+                sinex_store::AtuinInterpretation::TestBadParse
             } else {
                 sinex_store::AtuinInterpretation::Current
             },
         )
         .await?;
         let ended = source_ended.clone();
-        let qualification = qualification.clone();
+        let pause = pause.clone();
         Some(tokio::spawn(async move {
-            let result = crate::atuin::run(
-                atuin,
-                rules,
-                admission,
-                source_shutdown,
-                observation,
-                qualification,
-            )
-            .await;
+            let result =
+                crate::atuin::run(atuin, rules, admission, source_shutdown, observation, pause)
+                    .await;
             let _ = ended.send(true);
             result
         }))
@@ -204,18 +198,10 @@ pub async fn serve(
         let stop = source_stop.subscribe();
         let ended = source_ended.clone();
         let root = config.store_dir.join("acquisition");
-        let qualification = qualification.clone();
+        let pause = pause.clone();
         browser_sources.push(tokio::spawn(async move {
-            let result = crate::browser::run(
-                browser,
-                root,
-                rules,
-                admission,
-                stop,
-                attempt,
-                qualification,
-            )
-            .await;
+            let result =
+                crate::browser::run(browser, root, rules, admission, stop, attempt, pause).await;
             let _ = ended.send(true);
             result
         }));
