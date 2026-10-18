@@ -3,7 +3,7 @@ use crate::{
     BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, COUNTER, Error, Result, WriterPool, coordinate_hash,
 };
 use serde_json::{Value, json};
-use sinex_model::browser::{Checkpoint, PARSER, ReadBasis, SOURCE};
+use sinex_model::browser::{BrowserReadStart, Checkpoint, PARSER, SOURCE};
 use sqlx::{Connection, Row};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
@@ -42,7 +42,7 @@ fn occurrence(profile: &str, generation: Uuid, kind: &str, key: &str) -> (String
     (key, hash)
 }
 impl WriterPool {
-    pub(crate) async fn browser_begin(&mut self, begin: BrowserBegin) -> Result<ReadBasis> {
+    pub(crate) async fn browser_begin(&mut self, begin: BrowserBegin) -> Result<BrowserReadStart> {
         if begin.profile.is_empty() || begin.generation.is_nil() || begin.path.is_empty() {
             return Err(Error::Invalid("invalid browser source declaration"));
         }
@@ -95,9 +95,9 @@ impl WriterPool {
             .and_then(|(_, c)| serde_json::from_value::<Checkpoint>(c).ok())
             .filter(|c| c.version == 1);
         tx.commit().await?;
-        Ok(ReadBasis {
+        Ok(BrowserReadStart {
             input: Some(input),
-            basis: seq,
+            snapshot_seq: seq,
             checkpoint,
             reconciliation_required,
         })
@@ -105,14 +105,14 @@ impl WriterPool {
     pub(crate) async fn browser_pending(
         &mut self,
         input: Uuid,
-        basis: i64,
+        snapshot_seq: i64,
         after: Option<Uuid>,
     ) -> Result<Vec<BrowserPending>> {
         let mut tx = self.connection.begin().await?;
         sqlx::query("SET LOCAL statement_timeout='2s'")
             .execute(&mut *tx)
             .await?;
-        let rows:Vec<(Uuid,String,String,i64)>=sqlx::query_as("SELECT e.id,CASE WHEN e.event_type='page.visited' THEN 'visits' ELSE 'downloads' END,e.equivalence_key::jsonb->>3,CASE WHEN e.event_type='page.visited' THEN (e.payload->>'visit_id')::bigint ELSE (e.payload->>'download_id')::bigint END FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id WHERE m.input_id=$1 AND e.source=$2 AND e.commit_seq<=$3 AND e.record_state='present' AND ($4::uuid IS NULL OR e.id>$4) AND ((e.event_type='page.visited' AND (e.payload->>'duration_us')::bigint=0) OR (e.event_type='download.observed' AND (e.payload->>'state')::bigint NOT IN (1,2))) AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$3) ORDER BY e.id LIMIT 64").bind(input).bind(SOURCE).bind(basis).bind(after).fetch_all(&mut *tx).await?;
+        let rows:Vec<(Uuid,String,String,i64)>=sqlx::query_as("SELECT e.id,CASE WHEN e.event_type='page.visited' THEN 'visits' ELSE 'downloads' END,e.equivalence_key::jsonb->>3,CASE WHEN e.event_type='page.visited' THEN (e.payload->>'visit_id')::bigint ELSE (e.payload->>'download_id')::bigint END FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id WHERE m.input_id=$1 AND e.source=$2 AND e.commit_seq<=$3 AND e.record_state='present' AND ($4::uuid IS NULL OR e.id>$4) AND ((e.event_type='page.visited' AND (e.payload->>'duration_us')::bigint=0) OR (e.event_type='download.observed' AND (e.payload->>'state')::bigint NOT IN (1,2))) AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$3) ORDER BY e.id LIMIT 64").bind(input).bind(SOURCE).bind(snapshot_seq).bind(after).fetch_all(&mut *tx).await?;
         tx.commit().await?;
         Ok(rows
             .into_iter()

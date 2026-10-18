@@ -609,23 +609,23 @@ impl ReadPool {
             ));
         }
         let (record, _) = self
-            .retained_record(material, anchor, Some(end), current_rules)
+            .stored_record(material, anchor, Some(end), current_rules)
             .await?;
         Ok(Some(
             json!({"event":id,"material":material,"input":row.try_get::<Option<Uuid>,_>("input_id")?,"material_observation":row.try_get::<Option<Uuid>,_>("observation_id")?,"anchor":anchor,"end":end,"representation":if row.try_get::<Value,_>("parser_provenance")?["source"]==crate::ZSH_SOURCE {"original_zsh_history"} else {"canonical_sqlite_row"},"record_state":state,"archive":archive,"record":record,"privacy":"raw projection: attributed rule sequence, then current rules absent from attributed tuples; original raw rows retained as plain evidence"}),
         ))
     }
-    pub(crate) async fn retained_record(
+    pub(crate) async fn stored_record(
         &self,
         material: Uuid,
         anchor: i64,
         end: Option<i64>,
         current_rules: &[crate::PrivacyRule],
     ) -> Result<(Value, i64)> {
-        self.retained_record_raw(material, anchor, end, Some(current_rules))
+        self.stored_record_with_rules(material, anchor, end, Some(current_rules))
             .await
     }
-    pub(crate) async fn retained_record_raw(
+    pub(crate) async fn stored_record_with_rules(
         &self,
         material: Uuid,
         anchor: i64,
@@ -692,7 +692,7 @@ impl ReadPool {
                 serde_json::from_value(provenance["privacy_rules"].clone())
                     .map_err(|_| Error::Invalid("retained privacy provenance unavailable"))?;
             if let Some(current_rules) = presentation {
-                protect_retained(&mut record, &rules, current_rules)?;
+                apply_record_privacy(&mut record, &rules, current_rules)?;
             }
             return Ok((record, anchor + length as i64));
         }
@@ -711,7 +711,7 @@ impl ReadPool {
             serde_json::from_value(provenance["privacy_rules"].clone())
                 .map_err(|_| Error::Invalid("retained privacy provenance unavailable"))?;
         if let Some(current_rules) = presentation {
-            protect_retained(&mut record, &rules, current_rules)?;
+            apply_record_privacy(&mut record, &rules, current_rules)?;
         }
         Ok((record, anchor + length as i64))
     }
@@ -720,7 +720,7 @@ impl ReadPool {
 // Keep the full attributed sequence, then append current entries whose exact
 // tuple is absent there. Duplicate entries within either sequence retain their
 // multiplicity; this is deliberately not policy equivalence or normalization.
-fn protect_retained(
+fn apply_record_privacy(
     record: &mut Value,
     attributed: &[crate::PrivacyRule],
     current: &[crate::PrivacyRule],

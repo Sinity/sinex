@@ -32,9 +32,9 @@ pub struct Checkpoint {
     pub needs_full: bool,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ReadBasis {
+pub struct BrowserReadStart {
     pub input: Option<Uuid>,
-    pub basis: i64,
+    pub snapshot_seq: i64,
     pub checkpoint: Option<Checkpoint>,
     pub reconciliation_required: bool,
 }

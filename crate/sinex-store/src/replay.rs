@@ -46,7 +46,7 @@ struct Record {
 }
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct InterpretationBasis {
+struct ParserSettings {
     format: String,
     parser: String,
     artifact: String,
@@ -59,7 +59,7 @@ struct RequestRecord {
     method: String,
     material_id: Uuid,
     expected_basis: Option<String>,
-    interpretation_basis: InterpretationBasis,
+    interpretation_basis: ParserSettings,
 }
 impl RequestRecord {
     fn decode(value: Value) -> Result<Self> {
@@ -142,7 +142,7 @@ impl WriterPool {
             }
             let (record, end) = self
                 .reader
-                .retained_record_raw(material, anchor, None, None)
+                .stored_record_with_rules(material, anchor, None, None)
                 .await
                 .map_err(|_| Error::ReplayRefused("retained row unavailable or malformed"))?;
             let interpretation:Option<Uuid>=sqlx::query_scalar("SELECT id FROM core.events e WHERE source_material_id=$1 AND anchor_byte=$2 AND ordinal=0 AND source=$3 AND event_type='command.executed' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id)").bind(material).bind(anchor).bind(crate::ATUIN_SOURCE).fetch_optional(&mut self.connection).await?;
@@ -263,7 +263,7 @@ impl WriterPool {
             }
             let (mut record, _) = self
                 .reader
-                .retained_record_raw(material, expected.anchor, Some(expected.end), None)
+                .stored_record_with_rules(material, expected.anchor, Some(expected.end), None)
                 .await
                 .map_err(|_| Error::ReplayRefused("retained row unavailable or malformed"))?;
             record
@@ -396,7 +396,7 @@ impl WriterPool {
                     chunks += 1;
                 }
                 Ok(
-                    json!({"material_id":material,"basis":self.replay_basis(material,&ids,&rules).await?,"selected":ids.len(),"would_admit":would_admit,"would_archive":would_archive,"excluded":ids.iter().filter(|row|row.excluded).count(),"chunks":chunks.max(1),"chunk_max_records":CHUNK,"chunk_max_bytes":crate::MAX_STEP_BYTES,"representation":"canonical_sqlite_rows","dry_run":true,"search_projection":{"enabled":self.shell_producer.is_some(),"status":self.reader.projection_status().await?}}),
+                    json!({"material_id":material,"basis":self.replay_fingerprint(material,&ids,&rules).await?,"selected":ids.len(),"would_admit":would_admit,"would_archive":would_archive,"excluded":ids.iter().filter(|row|row.excluded).count(),"chunks":chunks.max(1),"chunk_max_records":CHUNK,"chunk_max_bytes":crate::MAX_STEP_BYTES,"representation":"canonical_sqlite_rows","dry_run":true,"search_projection":{"enabled":self.shell_producer.is_some(),"status":self.reader.projection_status().await?}}),
                 )
             }
             ReplayCommand::Start(p) => {
@@ -437,7 +437,7 @@ impl WriterPool {
                     if !matches!(current.state, State::Recorded | State::Running) {
                         return Ok(json!(current));
                     }
-                    if request.interpretation_basis != self.interpretation_basis(&rules).await? {
+                    if request.interpretation_basis != self.parser_settings(&rules).await? {
                         return self
                             .finish_without_effect(
                                 current,
@@ -469,13 +469,13 @@ impl WriterPool {
                         method: "replay.start".into(),
                         material_id: material,
                         expected_basis: p.expected_basis.clone(),
-                        interpretation_basis: self.interpretation_basis(&rules).await?,
+                        interpretation_basis: self.parser_settings(&rules).await?,
                     };
                     // Resolve and validate the entire bounded input before publishing
                     // a resumable operation. A crash cannot skip unfinished preflight.
                     let mut refusal = scope.err().map(|error| error.to_string());
                     if refusal.is_none() {
-                        let basis = self.replay_basis(material, &ids, &rules).await?;
+                        let basis = self.replay_fingerprint(material, &ids, &rules).await?;
                         if p.expected_basis
                             .as_ref()
                             .is_some_and(|expected| expected != &basis)
@@ -652,28 +652,25 @@ impl WriterPool {
             }
         }
     }
-    async fn interpretation_basis(
-        &mut self,
-        rules: &[crate::PrivacyRule],
-    ) -> Result<InterpretationBasis> {
+    async fn parser_settings(&mut self, rules: &[crate::PrivacyRule]) -> Result<ParserSettings> {
         let artifact:String=sqlx::query_scalar("SELECT m.artifact_digest FROM core.runs r JOIN core.manifests m ON m.id=r.manifest_id WHERE r.id=$1").bind(self.run_id).fetch_one(&mut self.connection).await?;
         let policy = serde_json::to_vec(rules)
             .map_err(|_| Error::Invalid("cannot encode current privacy rules"))?;
-        Ok(InterpretationBasis {
+        Ok(ParserSettings {
             format: "sinex.atuin.interpretation.v1".into(),
             parser: crate::atuin::PARSER.into(),
             artifact,
             privacy_rules_hash: format!("blake3:{}", blake3::hash(&policy).to_hex()),
         })
     }
-    async fn replay_basis(
+    async fn replay_fingerprint(
         &mut self,
         material: Uuid,
         ids: &[Record],
         rules: &[crate::PrivacyRule],
     ) -> Result<String> {
-        let interpretation_basis = self.interpretation_basis(rules).await?;
-        let bytes=serde_json::to_vec(&json!({"format":"sinex.replay.basis.v3","material":material,"records":ids,"interpretation_basis":interpretation_basis})).map_err(|_|Error::Invalid("cannot encode replay basis"))?;
+        let settings = self.parser_settings(rules).await?;
+        let bytes=serde_json::to_vec(&json!({"format":"sinex.replay.basis.v3","material":material,"records":ids,"interpretation_basis":settings})).map_err(|_|Error::Invalid("cannot encode replay basis"))?;
         Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
     }
     async fn replay_status(&mut self, id: Uuid) -> Result<Value> {

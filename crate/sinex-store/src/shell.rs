@@ -65,7 +65,7 @@ pub(crate) enum Phase {
     Archive,
 }
 pub(crate) struct Work {
-    pub basis: i64,
+    pub snapshot_seq: i64,
     phase: Phase,
     cursor: Option<Uuid>,
     queued_turns: u64,
@@ -149,14 +149,14 @@ impl WriterPool {
             .fetch_one(&mut self.connection)
             .await?;
         let phase: String = progress.try_get("phase")?;
-        let basis: i64 = if phase == "settled" {
+        let snapshot_seq: i64 = if phase == "settled" {
             sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
                 .fetch_one(&mut self.connection)
                 .await?
         } else {
             progress.try_get("basis")?
         };
-        let incomparable:bool=sqlx::query_scalar("SELECT count(DISTINCT e.source)>1 AND coalesce(bool_or(NOT coalesce(p.configuration#>>'{shell_field_basis,contract}'='sinex.shell-field-basis.v1' AND p.configuration#>'{shell_field_basis,comparable}'='true'::jsonb,false)),false) FROM core.events e LEFT JOIN core.producer_versions p ON p.id=e.producer_version_id WHERE ((e.source='terminal.atuin-history' AND e.event_type='command.executed') OR (e.source='terminal.zsh-history' AND e.event_type='command.imported')) AND e.record_state='present' AND e.commit_seq<=$1 AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$1)").bind(basis).fetch_one(&mut self.connection).await?;
+        let incomparable:bool=sqlx::query_scalar("SELECT count(DISTINCT e.source)>1 AND coalesce(bool_or(NOT coalesce(p.configuration#>>'{shell_field_basis,contract}'='sinex.shell-field-basis.v1' AND p.configuration#>'{shell_field_basis,comparable}'='true'::jsonb,false)),false) FROM core.events e LEFT JOIN core.producer_versions p ON p.id=e.producer_version_id WHERE ((e.source='terminal.atuin-history' AND e.event_type='command.executed') OR (e.source='terminal.zsh-history' AND e.event_type='command.imported')) AND e.record_state='present' AND e.commit_seq<=$1 AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$1)").bind(snapshot_seq).fetch_one(&mut self.connection).await?;
         if incomparable {
             self.shell_failed = true;
             sqlx::query("UPDATE derivation.shell_progress SET failure='cross-source original-value comparison unavailable for retained transformed or unrecorded field basis; use supported retained replay under current untransformed rules or disable the two-source capability' WHERE one").execute(&mut self.connection).await?;
@@ -164,16 +164,16 @@ impl WriterPool {
         }
         // A material digest is the stable ordering witness. Do not invent a digest
         // for a part which the source is still extending.
-        let open:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id WHERE e.source IN ('terminal.atuin-history','terminal.zsh-history') AND e.event_type IN ('command.executed','command.imported') AND e.commit_seq<=$1 AND m.blob_id IS NULL AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$1))").bind(basis).fetch_one(&mut self.connection).await?;
+        let open:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id WHERE e.source IN ('terminal.atuin-history','terminal.zsh-history') AND e.event_type IN ('command.executed','command.imported') AND e.commit_seq<=$1 AND m.blob_id IS NULL AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$1))").bind(snapshot_seq).fetch_one(&mut self.connection).await?;
         if open {
             return Ok(None);
         }
         for sql in WORK_TABLES {
             sqlx::query(sql).execute(&mut self.connection).await?;
         }
-        sqlx::query("UPDATE derivation.shell_progress SET basis=$1,phase='scan',failure=NULL,scanned=0,replaced=0 WHERE one").bind(basis).execute(&mut self.connection).await?;
+        sqlx::query("UPDATE derivation.shell_progress SET basis=$1,phase='scan',failure=NULL,scanned=0,replaced=0 WHERE one").bind(snapshot_seq).execute(&mut self.connection).await?;
         Ok(Some(Work {
-            basis,
+            snapshot_seq,
             phase: Phase::Scan,
             cursor: None,
             queued_turns: 0,
@@ -195,7 +195,7 @@ impl WriterPool {
         let r = rule();
         match work.phase {
             Phase::Scan => {
-                let rows=sqlx::query("SELECT e.id,e.source,coalesce(nullif(e.host,''),nullif(e.payload->>'hostname','')) AS host,e.payload->>'command' AS command,(extract(epoch FROM e.ts_orig)*1000000000+coalesce(e.ts_orig_tiebreak,0))::numeric::text AS at_ns,b.blake3,e.anchor_byte,e.equivalence_key FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id JOIN core.blobs b ON b.id=m.blob_id WHERE ((e.source='terminal.atuin-history' AND e.event_type='command.executed') OR (e.source='terminal.zsh-history' AND e.event_type='command.imported')) AND e.record_state='present' AND e.commit_seq<=$1 AND ($2::uuid IS NULL OR e.id>$2) AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$1) ORDER BY e.id LIMIT 64").bind(work.basis).bind(work.cursor).fetch_all(&mut self.connection).await?;
+                let rows=sqlx::query("SELECT e.id,e.source,coalesce(nullif(e.host,''),nullif(e.payload->>'hostname','')) AS host,e.payload->>'command' AS command,(extract(epoch FROM e.ts_orig)*1000000000+coalesce(e.ts_orig_tiebreak,0))::numeric::text AS at_ns,b.blake3,e.anchor_byte,e.equivalence_key FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id JOIN core.blobs b ON b.id=m.blob_id WHERE ((e.source='terminal.atuin-history' AND e.event_type='command.executed') OR (e.source='terminal.zsh-history' AND e.event_type='command.imported')) AND e.record_state='present' AND e.commit_seq<=$1 AND ($2::uuid IS NULL OR e.id>$2) AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$1) ORDER BY e.id LIMIT 64").bind(work.snapshot_seq).bind(work.cursor).fetch_all(&mut self.connection).await?;
                 if rows.is_empty() {
                     work.phase = Phase::Count2;
                     work.cursor = None;
@@ -310,14 +310,14 @@ impl WriterPool {
                         &mut self.connection,
                         self.shell_producer,
                         self.run_id,
-                        work.basis,
+                        work.snapshot_seq,
                         groups,
                     )
                     .await?;
                     crate::TestPause::reach(
                         &mut self.pause,
                         "fusion-replacement-committed",
-                        json!({"basis":work.basis,"pending":true,"queued_background_turns":work.queued_turns,"queued_commands_at_turn_entry":queued_commands}),
+                        json!({"basis":work.snapshot_seq,"pending":true,"queued_background_turns":work.queued_turns,"queued_commands_at_turn_entry":queued_commands}),
                     )
                     .await?;
                 }
@@ -327,10 +327,10 @@ impl WriterPool {
                 if rows.is_empty() {
                     let mut tx = self.connection.begin().await?;
                     sqlx::query("DELETE FROM derivation.shell_dirty WHERE dirty_seq<=$1")
-                        .bind(work.basis)
+                        .bind(work.snapshot_seq)
                         .execute(&mut *tx)
                         .await?;
-                    sqlx::query("UPDATE derivation.shell_progress SET last_evaluated=$1,phase='settled',failure=NULL WHERE one").bind(work.basis).execute(&mut *tx).await?;
+                    sqlx::query("UPDATE derivation.shell_progress SET last_evaluated=$1,phase='settled',failure=NULL WHERE one").bind(work.snapshot_seq).execute(&mut *tx).await?;
                     // An empty replacement still has committed progress. Readers observe the
                     // normal counter/status wakeup instead of inferring progress from events.
                     let _: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
@@ -378,7 +378,7 @@ impl WriterPool {
         connection: &mut sqlx::PgConnection,
         producer: Option<Uuid>,
         run_id: Uuid,
-        basis: i64,
+        snapshot_seq: i64,
         groups: Vec<sqlx::postgres::PgRow>,
     ) -> Result<()> {
         // The existing bounded turn is the visibility and rollback unit. Admission
@@ -392,7 +392,7 @@ impl WriterPool {
                 group.try_get("token")?,
                 group.try_get("parents")?,
                 group.try_get("strategy")?,
-                basis,
+                snapshot_seq,
             )
             .await?;
         }
@@ -406,7 +406,7 @@ impl WriterPool {
         token: Uuid,
         parents: Vec<Uuid>,
         strategy: i16,
-        basis: i64,
+        snapshot_seq: i64,
     ) -> Result<()> {
         let r = rule();
         let rows=sqlx::query("SELECT n.id,n.source,n.ekey,n.digest,n.anchor,trunc(n.at_ns)::text AS at_ns,n.count2,n.count60,e.payload,e.ts_quality FROM sinex_shell_nodes n JOIN core.events e ON e.id=n.id WHERE n.id=ANY($1) ORDER BY n.source,n.digest COLLATE \"C\",n.anchor").bind(&parents).fetch_all(&mut **tx).await?;
@@ -568,7 +568,7 @@ impl WriterPool {
         sqlx::query(
             "UPDATE derivation.shell_progress SET replaced=replaced+1 WHERE one AND basis=$1",
         )
-        .bind(basis)
+        .bind(snapshot_seq)
         .execute(&mut **tx)
         .await?;
         Ok(())

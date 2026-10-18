@@ -41,10 +41,10 @@ async fn mark_range(
     connection: &mut sqlx::PgConnection,
     day: &str,
     end_ns: &str,
-    basis: i64,
+    snapshot_seq: i64,
     next: bool,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq,through_day) SELECT ($1::text::date+CASE WHEN $4 THEN 1 ELSE 0 END)::text,$3,(((to_timestamp(floor($2::text::numeric/1000000000)::double precision) AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date+1)::text WHERE NOT $4 OR $2::text::numeric>=extract(epoch FROM (($1::text::date+1+time '04:00') AT TIME ZONE 'Europe/Warsaw'))*1000000000 ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq),through_day=greatest(coalesce(session_dirty.through_day,session_dirty.day),EXCLUDED.through_day)").bind(day).bind(end_ns).bind(basis).bind(next).execute(connection).await?;
+    sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq,through_day) SELECT ($1::text::date+CASE WHEN $4 THEN 1 ELSE 0 END)::text,$3,(((to_timestamp(floor($2::text::numeric/1000000000)::double precision) AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date+1)::text WHERE NOT $4 OR $2::text::numeric>=extract(epoch FROM (($1::text::date+1+time '04:00') AT TIME ZONE 'Europe/Warsaw'))*1000000000 ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq),through_day=greatest(coalesce(session_dirty.through_day,session_dirty.day),EXCLUDED.through_day)").bind(day).bind(end_ns).bind(snapshot_seq).bind(next).execute(connection).await?;
     Ok(())
 }
 
@@ -60,7 +60,7 @@ struct Group {
     parents: Vec<Uuid>,
 }
 pub(crate) struct Work {
-    basis: i64,
+    snapshot_seq: i64,
     day: String,
     through_day: String,
     phase: Phase,
@@ -79,7 +79,7 @@ impl WriterPool {
         if self.session_producer.is_none() || self.session_failed {
             return Ok(false);
         }
-        // No pinned session basis may include an unfinished fusion replacement.
+        // A session pass must not start while a grouping replacement is unfinished.
         if self.session_work.is_none() {
             let pending: bool =
                 sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM derivation.shell_dirty)")
@@ -98,9 +98,10 @@ impl WriterPool {
             };
             let day: String = row.try_get("day")?;
             let through_day: String = row.try_get("through_day")?;
-            let basis: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
-                .fetch_one(&mut self.connection)
-                .await?;
+            let snapshot_seq: i64 =
+                sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
+                    .fetch_one(&mut self.connection)
+                    .await?;
             for statement in [
                 "DROP TABLE IF EXISTS pg_temp.sinex_session_spans,pg_temp.sinex_session_groups",
                 "CREATE TEMP TABLE sinex_session_spans(at numeric NOT NULL,id uuid NOT NULL,end_at numeric NOT NULL,PRIMARY KEY(at,id))",
@@ -108,9 +109,9 @@ impl WriterPool {
             ] {
                 sqlx::query(statement).execute(&mut self.connection).await?;
             }
-            sqlx::query("UPDATE derivation.session_progress SET basis=$1,day=$2,through_day=$3,phase='scan',failure=NULL WHERE one").bind(basis).bind(&day).bind(&through_day).execute(&mut self.connection).await?;
+            sqlx::query("UPDATE derivation.session_progress SET basis=$1,day=$2,through_day=$3,phase='scan',failure=NULL WHERE one").bind(snapshot_seq).bind(&day).bind(&through_day).execute(&mut self.connection).await?;
             self.session_work = Some(Work {
-                basis,
+                snapshot_seq,
                 day,
                 through_day,
                 phase: Phase::Scan,
@@ -122,7 +123,7 @@ impl WriterPool {
         let mut w = self.session_work.take().unwrap();
         match w.phase {
             Phase::Scan => {
-                let rows=sqlx::query("SELECT e.id,trunc(extract(epoch FROM e.ts_orig)*1000000000+coalesce(e.ts_orig_tiebreak,0))::text AS ns,e.payload->>'duration_ns' AS duration FROM core.events e WHERE e.event_type='command.canonical' AND e.ts_orig IS NOT NULL AND e.record_state='present' AND e.commit_seq<=$1 AND ($2::uuid IS NULL OR e.id>$2) AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$1) AND NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) p(id) WHERE NOT EXISTS(SELECT 1 FROM core.events raw WHERE raw.id=p.id AND raw.record_state='present' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=raw.id AND a.archived_seq<=$1))) ORDER BY e.id LIMIT 16").bind(w.basis).bind(w.cursor).fetch_all(&mut self.connection).await?;
+                let rows=sqlx::query("SELECT e.id,trunc(extract(epoch FROM e.ts_orig)*1000000000+coalesce(e.ts_orig_tiebreak,0))::text AS ns,e.payload->>'duration_ns' AS duration FROM core.events e WHERE e.event_type='command.canonical' AND e.ts_orig IS NOT NULL AND e.record_state='present' AND e.commit_seq<=$1 AND ($2::uuid IS NULL OR e.id>$2) AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$1) AND NOT EXISTS(SELECT 1 FROM unnest(e.source_event_ids) p(id) WHERE NOT EXISTS(SELECT 1 FROM core.events raw WHERE raw.id=p.id AND raw.record_state='present' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=raw.id AND a.archived_seq<=$1))) ORDER BY e.id LIMIT 16").bind(w.snapshot_seq).bind(w.cursor).fetch_all(&mut self.connection).await?;
                 if rows.is_empty() {
                     w.phase = Phase::Group;
                 } else {
@@ -154,11 +155,11 @@ impl WriterPool {
                 let rows=sqlx::query("SELECT at::text,end_at::text,id FROM sinex_session_spans WHERE ($1::text IS NULL OR (at,id)>($1::text::numeric,$2)) ORDER BY at,id LIMIT 16").bind(w.span_position.as_ref().map(|p|p.0.clone())).bind(w.span_position.as_ref().map(|p|p.1)).fetch_all(&mut self.connection).await?;
                 if rows.is_empty() {
                     if let Some(g) = w.group.take() {
-                        self.session_group(&w.day, g, w.basis).await?;
+                        self.session_group(&w.day, g, w.snapshot_seq).await?;
                     }
                     // A removed bridge can leave no backwards crossing at all.
                     // Dirty the old owner as well as any newly observed one.
-                    sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq,through_day) SELECT e.payload->>'owner_day',$2,max((((to_timestamp(floor((e.payload->>'end_ns')::numeric/1000000000)::double precision) AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date+1)::text) FROM core.live_events e WHERE e.event_type='activity.session.boundary' AND e.payload->>'owner_day'<$1 AND (e.payload->>'end_ns')::numeric>=extract(epoch FROM (($1::text::date+time '04:00') AT TIME ZONE 'Europe/Warsaw'))*1000000000 AND NOT EXISTS(SELECT 1 FROM sinex_session_groups g WHERE g.start_ns=(e.payload->>'start_ns')::numeric AND g.end_ns=(e.payload->>'end_ns')::numeric AND g.parents=e.source_event_ids) GROUP BY 1 ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq),through_day=greatest(coalesce(session_dirty.through_day,session_dirty.day),EXCLUDED.through_day)").bind(&w.day).bind(w.basis).execute(&mut self.connection).await?;
+                    sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq,through_day) SELECT e.payload->>'owner_day',$2,max((((to_timestamp(floor((e.payload->>'end_ns')::numeric/1000000000)::double precision) AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date+1)::text) FROM core.live_events e WHERE e.event_type='activity.session.boundary' AND e.payload->>'owner_day'<$1 AND (e.payload->>'end_ns')::numeric>=extract(epoch FROM (($1::text::date+time '04:00') AT TIME ZONE 'Europe/Warsaw'))*1000000000 AND NOT EXISTS(SELECT 1 FROM sinex_session_groups g WHERE g.start_ns=(e.payload->>'start_ns')::numeric AND g.end_ns=(e.payload->>'end_ns')::numeric AND g.parents=e.source_event_ids) GROUP BY 1 ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq),through_day=greatest(coalesce(session_dirty.through_day,session_dirty.day),EXCLUDED.through_day)").bind(&w.day).bind(w.snapshot_seq).execute(&mut self.connection).await?;
                     w.phase = Phase::Publish;
                 } else {
                     for row in rows {
@@ -173,7 +174,7 @@ impl WriterPool {
                         let id: Uuid = row.try_get("id")?;
                         if w.group.as_ref().is_some_and(|g| at - g.end > GAP) {
                             let g = w.group.take().unwrap();
-                            self.session_group(&w.day, g, w.basis).await?;
+                            self.session_group(&w.day, g, w.snapshot_seq).await?;
                         }
                         let g = w.group.get_or_insert(Group {
                             start: at,
@@ -223,7 +224,7 @@ impl WriterPool {
                         } else {
                             // A changed crossing invalidates the following day's
                             // comparison. Unchanged retained groups do not ping-pong.
-                            mark_range(&mut tx, &w.day, &end, w.basis, true).await?;
+                            mark_range(&mut tx, &w.day, &end, w.snapshot_seq, true).await?;
                             let id = Uuid::now_v7();
                             let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
                             let hash = blake3::hash(&serde_json::to_vec(&payload).unwrap())
@@ -245,7 +246,7 @@ impl WriterPool {
                     crate::TestPause::reach(
                         &mut self.pause,
                         "session-replacement-committed",
-                        json!({"basis":w.basis,"day":w.day,"through_day":w.through_day,"pending":true}),
+                        json!({"basis":w.snapshot_seq,"day":w.day,"through_day":w.through_day,"pending":true}),
                     )
                     .await?;
                 }
@@ -255,9 +256,9 @@ impl WriterPool {
                 let mut tx = self.connection.begin().await?;
                 if rows.is_empty() {
                     if w.day < w.through_day {
-                        sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq,through_day) VALUES(($1::text::date+1)::text,$2,$3) ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq),through_day=greatest(coalesce(session_dirty.through_day,session_dirty.day),EXCLUDED.through_day)").bind(&w.day).bind(w.basis).bind(&w.through_day).execute(&mut *tx).await?;
+                        sqlx::query("INSERT INTO derivation.session_dirty(day,dirty_seq,through_day) VALUES(($1::text::date+1)::text,$2,$3) ON CONFLICT(day) DO UPDATE SET dirty_seq=greatest(session_dirty.dirty_seq,EXCLUDED.dirty_seq),through_day=greatest(coalesce(session_dirty.through_day,session_dirty.day),EXCLUDED.through_day)").bind(&w.day).bind(w.snapshot_seq).bind(&w.through_day).execute(&mut *tx).await?;
                     }
-                    sqlx::query("DELETE FROM derivation.session_dirty WHERE day=$1 AND dirty_seq<=$2 AND coalesce(through_day,day)<=$3").bind(&w.day).bind(w.basis).bind(&w.through_day).execute(&mut *tx).await?;
+                    sqlx::query("DELETE FROM derivation.session_dirty WHERE day=$1 AND dirty_seq<=$2 AND coalesce(through_day,day)<=$3").bind(&w.day).bind(w.snapshot_seq).bind(&w.through_day).execute(&mut *tx).await?;
                     sqlx::query("UPDATE derivation.session_progress SET phase='settled',failure=NULL WHERE one").execute(&mut *tx).await?;
                     let _: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
                     tx.commit().await?;
@@ -276,7 +277,7 @@ impl WriterPool {
                             &mut tx,
                             &w.day,
                             &row.try_get::<String, _>("end_ns")?,
-                            w.basis,
+                            w.snapshot_seq,
                             true,
                         )
                         .await?;
@@ -302,7 +303,7 @@ impl WriterPool {
         self.session_work = Some(w);
         Ok(true)
     }
-    async fn session_group(&mut self, day: &str, mut g: Group, basis: i64) -> Result<()> {
+    async fn session_group(&mut self, day: &str, mut g: Group, snapshot_seq: i64) -> Result<()> {
         g.parents.sort();
         let owner:String=sqlx::query_scalar("SELECT ((to_timestamp(floor($1::text::numeric/1000000000)::double precision) AT TIME ZONE 'Europe/Warsaw')-interval '4 hours')::date::text").bind(g.start.to_string()).fetch_one(&mut self.connection).await?;
         if owner == day {
@@ -319,7 +320,7 @@ impl WriterPool {
                         &mut self.connection,
                         &owner,
                         &g.end.to_string(),
-                        basis,
+                        snapshot_seq,
                         false,
                     )
                     .await?;

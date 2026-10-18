@@ -4,7 +4,11 @@ use serde_json::{Value, json};
 use sqlx::{Connection, PgConnection, Row};
 use uuid::Uuid;
 
-async fn setup(connection: &mut PgConnection, ids: &[Uuid], basis: i64) -> crate::Result<()> {
+async fn setup(
+    connection: &mut PgConnection,
+    ids: &[Uuid],
+    snapshot_seq: i64,
+) -> crate::Result<()> {
     for statement in WORK_TABLES {
         sqlx::query(statement).execute(&mut *connection).await?;
     }
@@ -13,7 +17,7 @@ async fn setup(connection: &mut PgConnection, ids: &[Uuid], basis: i64) -> crate
     sqlx::query(
         "UPDATE derivation.shell_progress SET basis=$1,phase='publish',replaced=0 WHERE one",
     )
-    .bind(basis)
+    .bind(snapshot_seq)
     .execute(&mut *connection)
     .await?;
     Ok(())
@@ -22,10 +26,10 @@ async fn publish(
     connection: &mut PgConnection,
     producer: Uuid,
     run: Uuid,
-    basis: i64,
+    snapshot_seq: i64,
 ) -> crate::Result<()> {
     let groups = sqlx::query("SELECT token,parents,strategy FROM sinex_shell_groups WHERE NOT done ORDER BY token LIMIT 64").fetch_all(&mut *connection).await?;
-    WriterPool::shell_publish_turn(connection, Some(producer), run, basis, groups).await
+    WriterPool::shell_publish_turn(connection, Some(producer), run, snapshot_seq, groups).await
 }
 async fn snapshot(connection: &mut PgConnection) -> crate::Result<Value> {
     sqlx::query_scalar("SELECT jsonb_build_object('counter',(SELECT seq FROM core.commit_counter WHERE one),'canonical',(SELECT count(*) FROM core.events WHERE event_type='command.canonical'),'log',(SELECT count(*) FROM core.commit_log WHERE event_type_id=3),'dirty',(SELECT coalesce(jsonb_agg(to_jsonb(d) ORDER BY day),'[]') FROM derivation.session_dirty d),'frontier',(SELECT coalesce(jsonb_agg(to_jsonb(d) ORDER BY parent_id),'[]') FROM derivation.shell_dirty d))").fetch_one(connection).await.map_err(Into::into)
@@ -69,18 +73,18 @@ async fn bounded_turn_rolls_back_mixed_groups_after_middle_statement_cancellatio
         .await?;
     let producer = Uuid::now_v7();
     sqlx::query("INSERT INTO core.producer_versions(id,name,version,run_id,configuration) VALUES($1,'fusion.shell-command',$2,$3,$4)").bind(producer).bind(rule().implementation).bind(run).bind(serde_json::from_str::<Value>(include_str!("shell-rule.json"))?).execute(&mut connection).await?;
-    let mut basis: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
+    let mut snapshot_seq: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
         .fetch_one(&mut connection)
         .await?;
-    setup(&mut connection, &ids[1..2], basis).await?;
-    publish(&mut connection, producer, run, basis).await?;
+    setup(&mut connection, &ids[1..2], snapshot_seq).await?;
+    publish(&mut connection, producer, run, snapshot_seq).await?;
     let reused: Uuid = sqlx::query_scalar("SELECT retained_id FROM sinex_shell_groups")
         .fetch_one(&mut connection)
         .await?;
-    basis = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
+    snapshot_seq = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
         .fetch_one(&mut connection)
         .await?;
-    // A pinned observation becomes ineligible after the basis, as in continuation.
+    // An observation pinned after the snapshot sequence is not eligible, as in continuation.
     let mut tx = connection.begin().await?;
     let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
     sqlx::query("INSERT INTO audit.archived(id,archived_seq,reason) VALUES($1,$2,'supersede')")
@@ -90,7 +94,7 @@ async fn bounded_turn_rolls_back_mixed_groups_after_middle_statement_cancellatio
         .await?;
     super::dirty(&mut tx, ids[0]).await?;
     tx.commit().await?;
-    setup(&mut connection, &ids, basis).await?;
+    setup(&mut connection, &ids, snapshot_seq).await?;
     let before = snapshot(&mut connection).await?;
     let backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut connection)
@@ -106,7 +110,7 @@ async fn bounded_turn_rolls_back_mixed_groups_after_middle_statement_cancellatio
     sqlx::raw_sql(&function).execute(&mut admin).await?;
     sqlx::raw_sql("CREATE TRIGGER publication_test_hold BEFORE INSERT ON core.events FOR EACH ROW EXECUTE FUNCTION sinex_schemas.publication_test_hold()").execute(&mut admin).await?;
     let task = tokio::spawn(async move {
-        let result = publish(&mut connection, producer, run, basis).await;
+        let result = publish(&mut connection, producer, run, snapshot_seq).await;
         (connection, result)
     });
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -161,7 +165,7 @@ async fn bounded_turn_rolls_back_mixed_groups_after_middle_statement_cancellatio
         .execute(&mut admin)
         .await?;
     sqlx::raw_sql("DROP TRIGGER publication_test_hold ON core.events; DROP FUNCTION sinex_schemas.publication_test_hold()").execute(&mut admin).await?;
-    publish(&mut connection, producer, run, basis).await?;
+    publish(&mut connection, producer, run, snapshot_seq).await?;
     let committed = snapshot(&mut connection).await?;
     assert_eq!(committed["canonical"].as_i64(), Some(5));
     assert_eq!(
@@ -192,8 +196,8 @@ async fn bounded_turn_rolls_back_mixed_groups_after_middle_statement_cancellatio
     // A new actual writer connection reconstructs temp state and reuses every ID.
     connection.close().await?;
     let mut connection = PgConnection::connect(&url).await?;
-    setup(&mut connection, &ids, basis).await?;
-    publish(&mut connection, producer, run, basis).await?;
+    setup(&mut connection, &ids, snapshot_seq).await?;
+    publish(&mut connection, producer, run, snapshot_seq).await?;
     assert_eq!(snapshot(&mut connection).await?, committed);
     let resumed: Vec<Uuid> = sqlx::query_scalar(
         "SELECT retained_id FROM sinex_shell_groups WHERE retained_id IS NOT NULL ORDER BY token",

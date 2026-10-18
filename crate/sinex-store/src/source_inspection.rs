@@ -150,7 +150,7 @@ impl ReadPool {
                 let anchor = failure["anchor_byte"]
                     .as_i64()
                     .ok_or(Error::Invalid("record failure anchor unavailable"))?;
-                match self.retained_record(material, anchor, None, &[]).await {
+                match self.stored_record(material, anchor, None, &[]).await {
                     Ok((record, end)) => {
                         failure["record"] = record;
                         failure["end"] = json!(end);

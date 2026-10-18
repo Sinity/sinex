@@ -173,7 +173,7 @@ impl Admission {
     pub async fn browser_begin(
         &self,
         begin: BrowserBegin,
-    ) -> Result<sinex_model::browser::ReadBasis> {
+    ) -> Result<sinex_model::browser::BrowserReadStart> {
         let (tx, rx) = oneshot::channel();
         self.sender
             .send(Command::BrowserBegin(begin, tx))
@@ -192,12 +192,12 @@ impl Admission {
     pub async fn browser_pending(
         &self,
         input: Uuid,
-        basis: i64,
+        snapshot_seq: i64,
         after: Option<Uuid>,
     ) -> Result<Vec<BrowserPending>> {
         let (tx, rx) = oneshot::channel();
         self.sender
-            .send(Command::BrowserPending(input, basis, after, tx))
+            .send(Command::BrowserPending(input, snapshot_seq, after, tx))
             .await
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
@@ -228,13 +228,13 @@ impl Admission {
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
     }
-    pub async fn atuin_read_basis(
+    pub async fn atuin_read_start(
         &self,
         locator: String,
-    ) -> Result<sinex_model::acquisition::AtuinReadBasis> {
+    ) -> Result<sinex_model::acquisition::AtuinReadStart> {
         let (tx, rx) = oneshot::channel();
         self.sender
-            .send(Command::AtuinReadBasis(locator, tx))
+            .send(Command::AtuinReadStart(locator, tx))
             .await
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
@@ -242,12 +242,12 @@ impl Admission {
     pub async fn atuin_unfinished_page(
         &self,
         input: Uuid,
-        basis: i64,
+        snapshot_seq: i64,
         after: Option<Uuid>,
     ) -> Result<Vec<(Uuid, String)>> {
         let (tx, rx) = oneshot::channel();
         self.sender
-            .send(Command::AtuinUnfinished(input, basis, after, tx))
+            .send(Command::AtuinUnfinished(input, snapshot_seq, after, tx))
             .await
             .map_err(|_| Error::Stopped)?;
         rx.await.map_err(|_| Error::Stopped)?
@@ -373,7 +373,7 @@ pub enum ReplayCommand {
 enum Command {
     BrowserBegin(
         BrowserBegin,
-        oneshot::Sender<Result<sinex_model::browser::ReadBasis>>,
+        oneshot::Sender<Result<sinex_model::browser::BrowserReadStart>>,
     ),
     BrowserStep(BrowserStep, oneshot::Sender<Result<serde_json::Value>>),
     BrowserPending(
@@ -409,9 +409,9 @@ enum Command {
         sinex_model::acquisition::PollSchedule,
         oneshot::Sender<Result<()>>,
     ),
-    AtuinReadBasis(
+    AtuinReadStart(
         String,
-        oneshot::Sender<Result<sinex_model::acquisition::AtuinReadBasis>>,
+        oneshot::Sender<Result<sinex_model::acquisition::AtuinReadStart>>,
     ),
     AtuinUnfinished(
         Uuid,
@@ -776,8 +776,8 @@ impl WriterPool {
                     let result = self.browser_step(step).await;
                     let _ = reply.send(result);
                 }
-                Command::BrowserPending(input, basis, after, reply) => {
-                    let result = self.browser_pending(input, basis, after).await;
+                Command::BrowserPending(input, snapshot_seq, after, reply) => {
+                    let result = self.browser_pending(input, snapshot_seq, after).await;
                     let _ = reply.send(result);
                 }
                 Command::BrowserKnown(profile, generation, keys, reply) => {
@@ -790,11 +790,12 @@ impl WriterPool {
                     let result = self.browser_snapshot(input, observation, path).await;
                     let _ = reply.send(result);
                 }
-                Command::AtuinReadBasis(locator, reply) => {
-                    let _ = reply.send(self.atuin_read_basis(&locator).await);
+                Command::AtuinReadStart(locator, reply) => {
+                    let _ = reply.send(self.atuin_read_start(&locator).await);
                 }
-                Command::AtuinUnfinished(input, basis, after, reply) => {
-                    let _ = reply.send(self.atuin_unfinished_page(input, basis, after).await);
+                Command::AtuinUnfinished(input, snapshot_seq, after, reply) => {
+                    let _ =
+                        reply.send(self.atuin_unfinished_page(input, snapshot_seq, after).await);
                 }
                 Command::Atuin(step, reply) => {
                     let result = self.admit_atuin(step).await;

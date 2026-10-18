@@ -5,14 +5,14 @@ mod atuin;
 mod atuin_guard;
 #[cfg(feature = "runtime")]
 mod browser;
+#[cfg(any(feature = "runtime", test))]
+#[path = "browser/snapshot.rs"]
+mod browser_snapshot;
 mod config;
 #[cfg(feature = "runtime")]
 mod output;
 #[cfg(feature = "runtime")]
 mod server;
-#[cfg(any(feature = "runtime", test))]
-#[path = "browser/custody.rs"]
-mod sqlite_custody;
 #[cfg(feature = "runtime")]
 mod zsh;
 use clap::{Parser, Subcommand};

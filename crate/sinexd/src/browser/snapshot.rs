@@ -346,7 +346,7 @@ impl Drop for CopyScratch {
     }
 }
 
-pub(super) struct Custodian {
+pub(super) struct HistorySource {
     pub identity: FileIdentity,
     pub epoch: Uuid,
     file: File,
@@ -356,7 +356,7 @@ pub(super) struct Custodian {
     cached: Option<(Pair, PathBuf)>,
     sequence: u64,
 }
-impl Custodian {
+impl HistorySource {
     pub async fn new(configured: &Path, root: PathBuf) -> Result<Self, Failure> {
         let identity = stamp(configured)?.identity;
         let file = File::open(configured).map_err(|_| "History file unavailable")?;
@@ -448,11 +448,11 @@ impl Custodian {
             let source_copy = source.clone();
             let dest_copy = destination.clone();
             let stop_copy = stop.clone();
-            let copy_basis = before.clone();
+            let copied_stamp = before.clone();
             let result = tokio::task::spawn_blocking(move || -> Result<(u64, bool), String> {
                 let (mut bytes, cloned) =
-                    copy_file(&source_copy, &dest_copy, &copy_basis.main, &stop_copy)?;
-                if let Some(journal) = &copy_basis.journal {
+                    copy_file(&source_copy, &dest_copy, &copied_stamp.main, &stop_copy)?;
+                if let Some(journal) = &copied_stamp.journal {
                     let (n, _) = copy_file(
                         &sidecar(&source_copy, "-journal"),
                         &sidecar(&dest_copy, "-journal"),
@@ -523,7 +523,7 @@ impl Custodian {
         Err(format!("busy_skipped after five verified-copy attempts: {last}").into())
     }
 }
-impl Drop for Custodian {
+impl Drop for HistorySource {
     fn drop(&mut self) {
         if let Some((_, path)) = &self.cached {
             let _ = std::fs::remove_file(path);
@@ -532,5 +532,5 @@ impl Drop for Custodian {
     }
 }
 #[cfg(test)]
-#[path = "custody_tests.rs"]
+#[path = "snapshot_tests.rs"]
 mod tests;

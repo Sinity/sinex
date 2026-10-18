@@ -97,7 +97,7 @@ impl Projection {
     }
 }
 fn caseless_version() -> String {
-    sinex_model::retrieval::normalization_basis()
+    sinex_model::retrieval::normalization_versions()
 }
 struct Owner {
     connection: PgConnection,
