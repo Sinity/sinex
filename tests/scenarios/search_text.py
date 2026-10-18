@@ -159,7 +159,7 @@ def exercise(h):
 
     def unavailable_text():
         # Collection is off so no new commit can hide a missing check behind pending work.
-        start('not-collecting', False)
+        start('not-collecting-2', False)
         wait_settled('index with collection off', 40)
         reference = 'sinex:ev/'+query('commands where repeat')['rows'][0]['id']
         event = reference.removeprefix('sinex:ev/')
@@ -182,7 +182,7 @@ def exercise(h):
         finally:
             sql(f"DELETE FROM audit.archived WHERE id='{parent}'::uuid")
             sql(f"UPDATE core.search_text SET tokens=convert_from(decode('{encoded}','hex'),'UTF8') WHERE id='{event}'::uuid")
-            start('collecting-again')
+            start('collecting-again-2')
             wait_settled('text available again', 40)
     scenario('unavailable token text refuses text queries and names an affected ref that is still current', unavailable_text)
 

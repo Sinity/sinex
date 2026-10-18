@@ -39,7 +39,8 @@ class Daemon:
 
     def configure(self, *, atuin=None, poll_ms=3_600_000, full_ms=100, rules=(), projects=(),
                   read_model=True, operator=True, sources=None, extra='', database='', store=None):
-        """Write the config. `atuin` is a history path to collect from; `database` prefixes the connection files."""
+        """Write the config. `atuin` is a history path to collect from; `database` prefixes the
+        connection files and `store` names separate state and store directories."""
         work = self.work
         if sources is None:
             sources = ['terminal.atuin-history'] if atuin else []
