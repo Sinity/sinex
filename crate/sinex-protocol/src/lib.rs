@@ -1,4 +1,4 @@
-//! JSON-RPC boundary for the implemented foundation. Future product routes are not registered here.
+//! JSON-RPC request, response and error types shared by sinexd and sinexctl.
 pub use sinex_model::retrieval::{
     ProjectEvidence, SessionProjectAttribution, UnknownProjectMember,
 };
@@ -8,98 +8,54 @@ pub mod rpc {
     use sinex_model::{CommitSeq, ValidationError};
 
     pub use sinex_model::DATA_NOTICE;
-    pub const SUPPORTED_METHODS: &[&str] = &[
-        "status",
-        "version",
-        "config.show",
-        "catalog",
-        "sources.list",
-        "query.run",
-        "search",
-        "object.show",
-        "object.trace",
-        "replay.plan",
-        "replay.start",
-        "replay.status",
-        "replay.cancel",
-        "delete.run",
-        "delete.undo",
-    ];
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-    pub enum Method {
-        #[serde(rename = "delete.run")]
-        Delete,
-        #[serde(rename = "delete.undo")]
-        DeleteUndo,
-        #[serde(rename = "status")]
-        Status,
-        #[serde(rename = "replay.plan")]
-        ReplayPlan,
-        #[serde(rename = "replay.start")]
-        ReplayStart,
-        #[serde(rename = "replay.status")]
-        ReplayStatus,
-        #[serde(rename = "replay.cancel")]
-        ReplayCancel,
-        #[serde(rename = "version")]
-        Version,
-        #[serde(rename = "config.show")]
-        ConfigShow,
-        #[serde(rename = "catalog")]
-        Catalog,
-        #[serde(rename = "sources.list")]
-        Sources,
-        #[serde(rename = "query.run")]
-        Query,
-        #[serde(rename = "search")]
-        Search,
-        #[serde(rename = "object.show")]
-        Show,
-        #[serde(rename = "object.trace")]
-        Trace,
-    }
-    impl Method {
-        pub const fn as_str(self) -> &'static str {
-            match self {
-                Self::Delete => "delete.run",
-                Self::DeleteUndo => "delete.undo",
-                Self::Status => "status",
-                Self::ReplayPlan => "replay.plan",
-                Self::ReplayStart => "replay.start",
-                Self::ReplayStatus => "replay.status",
-                Self::ReplayCancel => "replay.cancel",
-                Self::Version => "version",
-                Self::ConfigShow => "config.show",
-                Self::Catalog => "catalog",
-                Self::Sources => "sources.list",
-                Self::Query => "query.run",
-                Self::Search => "search",
-                Self::Show => "object.show",
-                Self::Trace => "object.trace",
+
+    macro_rules! methods {
+        ($($variant:ident => $name:literal, $description:literal;)*) => {
+            #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+            pub enum Method {
+                $(#[serde(rename = $name)] $variant),*
             }
-        }
-        pub fn parse(value: &str) -> Option<Self> {
-            match value {
-                "delete.run" => Some(Self::Delete),
-                "delete.undo" => Some(Self::DeleteUndo),
-                "status" => Some(Self::Status),
-                "replay.plan" => Some(Self::ReplayPlan),
-                "replay.start" => Some(Self::ReplayStart),
-                "replay.status" => Some(Self::ReplayStatus),
-                "replay.cancel" => Some(Self::ReplayCancel),
-                "version" => Some(Self::Version),
-                "config.show" => Some(Self::ConfigShow),
-                "catalog" => Some(Self::Catalog),
-                "sources.list" => Some(Self::Sources),
-                "query.run" => Some(Self::Query),
-                "search" => Some(Self::Search),
-                "object.show" => Some(Self::Show),
-                "object.trace" => Some(Self::Trace),
-                _ => None,
+            pub const SUPPORTED_METHODS: &[&str] = &[$($name),*];
+            impl Method {
+                pub const ALL: &[Self] = &[$(Self::$variant),*];
+                pub const fn as_str(self) -> &'static str {
+                    match self {
+                        $(Self::$variant => $name),*
+                    }
+                }
+                pub fn parse(value: &str) -> Option<Self> {
+                    match value {
+                        $($name => Some(Self::$variant),)*
+                        _ => None,
+                    }
+                }
+                pub const fn description(self) -> &'static str {
+                    match self {
+                        $(Self::$variant => $description),*
+                    }
+                }
             }
-        }
+        };
     }
-    /// A foundation request always expects a response; notifications/batches are not supported.
+    methods! {
+        Status => "status", "Schema version, writer state, and supported sources and methods";
+        Version => "version", "Package and protocol version";
+        ConfigShow => "config.show", "Configuration, with secrets shown as file paths";
+        Catalog => "catalog", "This list of methods";
+        Sources => "sources.list", "Source observations, read counts and unfinished reads";
+        Query => "query.run", "Run a query: raw event pages, indexed shell queries or recall last";
+        Search => "search", "Search shell commands by words or phrases, with ranked snippets and project and time filters";
+        Show => "object.show", "Show a raw event, canonical command or shell session, including archived readings and whether it is excluded";
+        Trace => "object.trace", "Follow canonical parents back to their source records and stored material, with text masked";
+        ReplayPlan => "replay.plan", "Preview a replay of stored Atuin material";
+        ReplayStart => "replay.start", "Start a replay; the writer processes it in chunks";
+        ReplayStatus => "replay.status", "Show replay progress";
+        ReplayCancel => "replay.cancel", "Stop a replay between chunks";
+        Delete => "delete.run", "Exclude one raw Atuin occurrence from reads; stored data is kept";
+        DeleteUndo => "delete.undo", "Remove an exclusion; the occurrence returns on its next read";
+    }
+
+    /// Request ID. Every request gets a response; notifications and batches are not supported.
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(untagged)]
     pub enum RpcId {
@@ -129,125 +85,63 @@ pub mod rpc {
             }
             let method = Method::parse(&self.method)
                 .ok_or_else(|| RpcError::method_not_found(&self.method))?;
+            self.validate_params(method)
+                .map_err(|message| RpcError::new(ErrorKind::BadQuery, message, Value::Null))?;
+            Ok(method)
+        }
+        fn params<T: serde::de::DeserializeOwned>(&self, error: &str) -> Result<T, String> {
+            serde_json::from_value(self.params.clone()).map_err(|_| error.to_string())
+        }
+        fn validate_params(&self, method: Method) -> Result<(), String> {
+            use sinex_model::{acquisition, exclusion, replay};
             match method {
-                Method::Sources => {
-                    let params =
-                        serde_json::from_value::<sinex_model::acquisition::SourcesRequest>(
-                            self.params.clone(),
-                        )
-                        .map_err(|_| {
-                            RpcError::new(
-                                ErrorKind::BadQuery,
-                                "invalid source inspection parameters",
-                                Value::Null,
-                            )
-                        })?;
-                    params.validate().map_err(|e| {
-                        RpcError::new(ErrorKind::BadQuery, e.to_string(), Value::Null)
-                    })?;
-                    return Ok(method);
-                }
+                Method::Sources => self
+                    .params::<acquisition::SourcesRequest>("invalid source inspection parameters")?
+                    .validate()
+                    .map_err(|e| e.to_string()),
                 Method::Delete | Method::DeleteUndo => {
-                    let params = serde_json::from_value::<sinex_model::exclusion::Request>(
-                        self.params.clone(),
+                    let params: exclusion::Request =
+                        self.params("delete requires ref, action_id and optional expected_key")?;
+                    params.event_id()?;
+                    if params.expected_key.is_some_and(|key| key.len() > 2048) {
+                        return Err("expected_key exceeds 2048 bytes".into());
+                    }
+                    Ok(())
+                }
+                Method::ReplayPlan => self
+                    .params::<replay::Selection>("replay.plan requires query")
+                    .map(drop),
+                Method::ReplayStart => self
+                    .params::<replay::Start>(
+                        "replay.start requires query and action_id, and accepts expected_basis",
                     )
-                    .map_err(|_| {
-                        RpcError::new(
-                            ErrorKind::BadQuery,
-                            "delete requires ref, action_id and optional expected_key",
-                            Value::Null,
-                        )
-                    })?;
-                    params.event_id().map_err(|message| {
-                        RpcError::new(ErrorKind::BadQuery, message, Value::Null)
-                    })?;
-                    if params
-                        .expected_key
-                        .as_ref()
-                        .is_some_and(|key| key.len() > 2048)
-                    {
-                        return Err(RpcError::new(
-                            ErrorKind::BadQuery,
-                            "expected_key exceeds 2048 bytes",
-                            Value::Null,
-                        ));
-                    }
-                    return Ok(method);
-                }
-                Method::ReplayPlan
-                | Method::ReplayStart
-                | Method::ReplayStatus
-                | Method::ReplayCancel => {
-                    let valid = match method {
-                        Method::ReplayPlan => serde_json::from_value::<
-                            sinex_model::replay::Selection,
-                        >(self.params.clone())
-                        .is_ok(),
-                        Method::ReplayStart => {
-                            serde_json::from_value::<sinex_model::replay::Start>(
-                                self.params.clone(),
-                            )
-                            .is_ok()
-                        }
-                        _ => serde_json::from_value::<sinex_model::replay::Operation>(
-                            self.params.clone(),
-                        )
-                        .is_ok(),
-                    };
-                    if !valid {
-                        return Err(RpcError::new(
-                            ErrorKind::BadQuery,
-                            "replay requires an explicit typed selection/action or operation identity",
-                            Value::Null,
-                        ));
-                    }
-                    return Ok(method);
-                }
+                    .map(drop),
+                Method::ReplayStatus | Method::ReplayCancel => self
+                    .params::<replay::Operation>("replay status and cancel require operation_id")
+                    .map(drop),
                 Method::Query | Method::Search => {
-                    let params = serde_json::from_value::<QueryParams>(self.params.clone())
-                        .map_err(|_| {
-                            RpcError::new(
-                                ErrorKind::BadQuery,
-                                "query requires text, optional page cursor and optional integer timeout_ms",
-                                Value::Null,
-                            )
-                        })?;
+                    let params: QueryParams = self.params(
+                        "query requires text, optional page cursor and optional integer timeout_ms",
+                    )?;
                     if params
                         .timeout_ms
                         .is_some_and(|ms| !(1..=3_600_000).contains(&ms))
                     {
-                        return Err(RpcError::new(
-                            ErrorKind::BadQuery,
-                            "query timeout_ms must be 1..=3600000",
-                            Value::Null,
-                        ));
+                        return Err("query timeout_ms must be 1..=3600000".into());
                     }
-                    return Ok(method);
+                    Ok(())
                 }
-                Method::Show | Method::Trace => {
-                    serde_json::from_value::<ShowParams>(self.params.clone()).map_err(|_| {
-                        RpcError::new(
-                            ErrorKind::BadQuery,
-                            "show requires an interpretation reference",
-                            Value::Null,
-                        )
-                    })?;
-                    return Ok(method);
+                Method::Show | Method::Trace => self
+                    .params::<ShowParams>("show and trace require ref and accept bytes")
+                    .map(drop),
+                Method::Status | Method::Version | Method::ConfigShow | Method::Catalog => {
+                    if self.params.as_object().is_some_and(|p| p.is_empty()) {
+                        Ok(())
+                    } else {
+                        Err("method requires empty object params".into())
+                    }
                 }
-                _ => {}
             }
-            if !self
-                .params
-                .as_object()
-                .is_some_and(|params| params.is_empty())
-            {
-                return Err(RpcError::new(
-                    ErrorKind::BadQuery,
-                    "method requires empty object params",
-                    Value::Null,
-                ));
-            }
-            Ok(method)
         }
     }
     #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -258,7 +152,7 @@ pub mod rpc {
         pub cursor: Option<String>,
         #[serde(default)]
         pub page: Option<u32>,
-        /// Whole-request read deadline; omitted API requests default to 10 seconds.
+        /// Deadline for the whole read; the API defaults to 10 seconds.
         #[serde(default)]
         pub timeout_ms: Option<u64>,
     }
@@ -341,7 +235,7 @@ pub mod rpc {
         }
     }
 
-    /// Exactly one result/error is represented, and every response carries JSON-RPC 2.0.
+    /// A JSON-RPC 2.0 response with exactly one of result or error.
     #[derive(Clone, Debug, Serialize, Deserialize)]
     #[serde(try_from = "ResponseWire", into = "ResponseWire")]
     pub struct RpcResponse {
@@ -461,7 +355,7 @@ pub mod rpc {
         pub schema: SchemaStatus,
         pub writer: WriterOwnership,
         pub commit_seq: CommitSeq,
-        /// Enabled implementations, not the broader design catalog. Empty does not certify source coverage.
+        /// Sources with an enabled collector.
         pub supported_sources: Vec<String>,
         pub supported_methods: Vec<String>,
         #[serde(default)]
@@ -478,65 +372,13 @@ pub mod rpc {
         pub description: String,
     }
     pub fn catalog() -> Vec<CatalogEntry> {
-        [
-            (
-                Method::Delete,
-                "Exclude one retained raw Atuin occurrence; keep original evidence",
-            ),
-            (
-                Method::DeleteUndo,
-                "Remove only an exclusion; no implicit readmission",
-            ),
-            (
-                Method::ReplayPlan,
-                "Plan bounded retained Atuin material replay",
-            ),
-            (
-                Method::ReplayStart,
-                "Admit retained replay; the owned writer completes bounded chunks",
-            ),
-            (Method::ReplayStatus, "Read durable replay progress"),
-            (
-                Method::ReplayCancel,
-                "Stop an existing replay between chunks",
-            ),
-            (
-                Method::Status,
-                "Database schema, writer ownership and supported scope",
-            ),
-            (Method::Version, "Package and protocol version"),
-            (
-                Method::ConfigShow,
-                "Public configuration with secret file references",
-            ),
-            (Method::Catalog, "Implemented foundation methods"),
-            (
-                Method::Sources,
-                "Retained source observations, accounting and incomplete reads",
-            ),
-            (
-                Method::Search,
-                "Indexed shell words/phrases, ranked snippets and project/time scope",
-            ),
-            (
-                Method::Query,
-                "Shared bound query owner: raw event pages, registered indexed shell queries or configured recall last",
-            ),
-            (
-                Method::Show,
-                "Read a raw observation, canonical command or shell session, including historical evidence and current eligibility",
-            ),
-            (
-                Method::Trace,
-                "Follow canonical parents to exact retained coordinates and masked source records",
-            ),
-        ]
-        .into_iter()
-        .map(|(method, description)| CatalogEntry {
-            method,
-            description: description.into(),
-        })
-        .collect()
+        Method::ALL
+            .iter()
+            .map(|&method| CatalogEntry {
+                method,
+                description: method.description().into(),
+            })
+            .collect()
     }
 }
 pub use rpc::*;
