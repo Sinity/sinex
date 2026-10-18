@@ -12,6 +12,7 @@ use sinex_model::{
 };
 
 pub mod append_file;
+pub mod live_stream;
 pub mod sqlite_rows;
 pub mod todo;
 

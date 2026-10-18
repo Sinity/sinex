@@ -45,6 +45,9 @@ enum Command {
         atuin: Option<PathBuf>,
         #[arg(long)]
         zsh: Option<PathBuf>,
+        /// A Hyprland capture spool directory.
+        #[arg(long)]
+        hyprland_spool: Option<PathBuf>,
         #[arg(long, default_value = "localhost")]
         host: String,
     },
@@ -75,6 +78,7 @@ async fn main() -> std::process::ExitCode {
             store,
             atuin,
             zsh,
+            hyprland_spool,
             host,
         } => {
             backfill::run(backfill::Options {
@@ -82,6 +86,7 @@ async fn main() -> std::process::ExitCode {
                 store,
                 atuin,
                 zsh,
+                hyprland_spool,
                 host,
             })
             .await

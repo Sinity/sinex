@@ -14,15 +14,6 @@ impl ExportArchive {
     }
 }
 
-/// A live stream (IPC sockets, D-Bus, netlink, journald), captured with receive
-/// times into open parts.
-pub struct LiveStream;
-impl LiveStream {
-    pub fn poll(&self, _cursor: &Value) -> Result<Acquired, DriverError> {
-        todo!("architecture §5.3 LiveStream: open parts with fsynced length")
-    }
-}
-
 /// A provider API with a cursor or page token; IMAP IDLE for live mail.
 pub struct ApiCursor;
 impl ApiCursor {

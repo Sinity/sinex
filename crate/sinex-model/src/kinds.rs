@@ -3,6 +3,10 @@
 //! generated from.
 use crate::{EventPayload, Timestamp};
 use schemars::JsonSchema;
+
+pub mod code;
+pub mod desktop;
+pub mod machine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -107,6 +111,23 @@ pub const ALL: &[KindInfo] = &[
     info::<CommandExecuted>(),
     info::<CommandImported>(),
     info::<CommandFused>(),
+    // Desktop
+    info::<desktop::WindowFocused>(),
+    info::<desktop::WindowOpened>(),
+    info::<desktop::WindowClosed>(),
+    info::<desktop::WindowMoved>(),
+    info::<desktop::WindowTitleChanged>(),
+    info::<desktop::WorkspaceSwitched>(),
+    info::<desktop::MonitorFocused>(),
+    info::<desktop::DesktopOther>(),
+    info::<desktop::WindowSpan>(),
+    info::<desktop::PresenceSpan>(),
+    info::<desktop::BrowserTabActive>(),
+    // Machine
+    info::<machine::JournalEntry>(),
+    info::<machine::FileChanged>(),
+    // Code
+    info::<code::GitCommit>(),
 ];
 
 #[cfg(test)]

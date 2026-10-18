@@ -16,6 +16,8 @@ pub struct Options {
     pub store: PathBuf,
     pub atuin: Option<PathBuf>,
     pub zsh: Option<PathBuf>,
+    /// A Hyprland capture spool (`sinex-session capture hyprland`).
+    pub hyprland_spool: Option<PathBuf>,
     pub host: String,
 }
 
@@ -101,7 +103,18 @@ pub async fn run(o: Options) -> Result<(), String> {
         kind: "source",
         version: env!("CARGO_PKG_VERSION"),
         build: option_env!("SINEX_BUILD").unwrap_or("dev"),
-        emits: &["command.executed", "command.imported"],
+        emits: &[
+            "command.executed",
+            "command.imported",
+            "window.focused",
+            "window.opened",
+            "window.closed",
+            "window.moved",
+            "window.title_changed",
+            "workspace.switched",
+            "monitor.focused",
+            "desktop.other",
+        ],
     };
     let run = runs::start(&mut aux, &manifest, &o.host)
         .await
@@ -137,6 +150,21 @@ pub async fn run(o: Options) -> Result<(), String> {
         )
         .await?;
         println!("zsh    {totals}");
+    }
+    if let Some(spool) = &o.hyprland_spool {
+        let source = sinex_sources::sources::hyprland::source();
+        let driver = sinex_sources::sources::hyprland::driver(spool.clone(), o.host.clone());
+        let totals = drive(
+            &mut aux,
+            &handle,
+            run,
+            &source,
+            &format!("hyprland@{}", o.host),
+            &sink,
+            |cursor| driver.poll(cursor),
+        )
+        .await?;
+        println!("hyprland {totals}");
     }
     runs::end(&mut aux, run).await.map_err(|e| e.to_string())?;
     drop(handle);

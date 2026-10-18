@@ -1,0 +1,131 @@
+//! The desktop: windows, workspaces and monitors as a compositor reports them
+//! live, and ActivityWatch's watcher spans. A focus change is the same event
+//! whichever compositor saw it, so the types name what happened, not the
+//! program that said so.
+//!
+//! Live streams carry no record IDs; each received line is its own record
+//! location, and a later reading of that location is a repeat. The time is
+//! when Sinex received the line.
+use crate::Timestamp;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// A window took keyboard focus.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "window.focused", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct WindowFocused {
+    pub received_at: Timestamp,
+    /// The compositor's window address; `None` when only class and title were
+    /// reported before the next event arrived.
+    pub window: Option<String>,
+    pub class: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "window.opened", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct WindowOpened {
+    pub received_at: Timestamp,
+    pub window: String,
+    pub workspace_id: Option<i64>,
+    pub workspace_name: String,
+    pub class: String,
+    pub title: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "window.closed", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct WindowClosed {
+    pub received_at: Timestamp,
+    pub window: String,
+}
+
+/// A window moved to another workspace.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "window.moved", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct WindowMoved {
+    pub received_at: Timestamp,
+    pub window: String,
+    pub workspace_id: Option<i64>,
+    pub workspace_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "window.title_changed", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct WindowTitleChanged {
+    pub received_at: Timestamp,
+    pub window: String,
+    pub title: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "workspace.switched", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct WorkspaceSwitched {
+    pub received_at: Timestamp,
+    pub workspace_id: Option<i64>,
+    pub workspace_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "monitor.focused", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct MonitorFocused {
+    pub received_at: Timestamp,
+    pub monitor: String,
+    pub workspace_name: String,
+}
+
+/// A compositor event Sinex has no type for yet, kept whole.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "desktop.other", key = location, replace = repeat, time = received_at, quality = captured)]
+pub struct DesktopOther {
+    pub received_at: Timestamp,
+    pub name: String,
+    pub data: String,
+}
+
+/// ActivityWatch's window watcher: the focused application and title over a
+/// span. ActivityWatch extends a span in place while the window stays the
+/// same, and the source joins adjacent identical events, so a newer reading
+/// of the span replaces the older one.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "window.span", key = ["bucket", "span_id"], replace = newer, time = started_at, quality = intrinsic)]
+pub struct WindowSpan {
+    pub bucket: String,
+    /// The row ID of the first ActivityWatch event in this span.
+    pub span_id: i64,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    pub app: String,
+    /// The title with animation glyphs removed (see the ActivityWatch source).
+    pub title: String,
+    /// How many ActivityWatch events this span combines.
+    pub merged: u32,
+}
+
+/// ActivityWatch's AFK watcher: whether the operator was at the machine.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "presence.span", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
+pub struct PresenceSpan {
+    pub bucket: String,
+    pub row: i64,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    /// `afk` or `not-afk`, as reported.
+    pub status: String,
+}
+
+/// ActivityWatch's browser watcher: the active tab over a span.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "browser.tab_active", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
+pub struct BrowserTabActive {
+    pub bucket: String,
+    pub row: i64,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    pub browser: String,
+    pub url: String,
+    pub title: String,
+    pub incognito: Option<bool>,
+    pub audible: Option<bool>,
+    pub tab_count: Option<i64>,
+}

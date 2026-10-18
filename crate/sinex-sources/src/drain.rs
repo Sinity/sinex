@@ -1,7 +1,9 @@
 //! The drain: everything around `Parser::parse`.
 use crate::{Parser, RecordError, RecordShape};
 use serde_json::Value;
-use sinex_model::{Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation, RecordOutcome};
+use sinex_model::{
+    Class, MaterialId, Origin, Payloads, ReadingOrder, RecordLocation, RecordOutcome,
+};
 
 /// Batch size bounds. Batches are sized by events and bytes; a record too large
 /// for a normal batch goes alone in a batch of one. No valid record is refused.
@@ -88,8 +90,7 @@ pub fn drain<P: Parser>(
                             break;
                         }
                     };
-                    match Event::build(
-                        payload,
+                    match payload.build(
                         input.source,
                         Origin::Record { location, ordinal },
                         order,
