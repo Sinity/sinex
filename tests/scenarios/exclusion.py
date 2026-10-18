@@ -11,7 +11,8 @@ import subprocess
 import threading
 import uuid
 
-from _daemon import Daemon, atuin_history
+from _atuin_daemon import (OPERATOR_TOKEN, Daemon, access_config, append_history, blob_path, create_history, kill,
+                           pause_at, paused, relaunch, sql)
 
 EPOCH = 1_700_000_000_000_000_000
 COMMAND = 'cargo test exclusion-fixture'
@@ -78,19 +79,23 @@ def mismatched_replies(h):
 def exercise(h):
     work, scenario = h['WORK'], h['scenario']
     d = Daemon(h, 'exclusion')
-    cli = d.cli
+    def cli(*args, operator=False, **kw):
+        return d.cli(*args, token_file=work/'operator' if operator else None, **kw)
+
+    def operator_api(method, params):
+        return h['rpc'](d.endpoint, OPERATOR_TOKEN, method, params, timeout=30)
     source = work/'history.db'
 
     def fixture_row(key):
         return (key, EPOCH, 1_000_000_000, 0, COMMAND, '/synthetic/exclusion', 'same-session', 'synthetic-host', None)
-    atuin_history(source, [fixture_row('occurrence-a')])
+    create_history(source, [fixture_row('occurrence-a')])
 
     def start(label, collect=False, *flags):
-        d.configure(atuin=source if collect else None)
-        d.start(label, *flags)
+        d.configure(source if collect else None, poll_ms=3_600_000, top=access_config(h))
+        relaunch(d, label, *flags)
 
     def action_audit(action):
-        return d.sql(
+        return sql(h, 
             "SELECT jsonb_build_object('operations',(SELECT count(*) FROM core.operations_log WHERE action_id='"+action+"'::uuid),"
             "'rows',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',o.id,'actor',o.actor,'request_format',o.request_format,"
             "'request_ref',o.request_ref,'outcome_format',o.outcome_format,'outcome_ref',o.outcome_ref,'progress',o.progress,"
@@ -107,7 +112,7 @@ def exercise(h):
             if not (index.get('serving') and index['position'] == status['commit_seq'] and not index['pending_canonical']):
                 return False
             return source_state is None or (len(d.sources()) == 1 and d.last_run()['status'] == source_state)
-        d.wait(caught_up, 'index and source to catch up')
+        d.wait('index and source to catch up', caught_up)
 
     def population(members, complete=True):
         """Raw and indexed queries, over the API and the CLI, return exactly these native IDs."""
@@ -162,14 +167,14 @@ def exercise(h):
         material = old_trace['material']
         d.stop()
         # B goes into a second material, so replaying the first one cannot create B again.
-        atuin_history(source, [fixture_row('occurrence-b')])
+        append_history(source, [fixture_row('occurrence-b')])
         start('a-and-b', True)
         settled('completed')
         start('a-and-b-not-collecting')
         originals, canonicals = population(['occurrence-a', 'occurrence-b'])
         b_ref = originals['occurrence-b']['id']
         assert originals['occurrence-a']['id'] == a_ref and a_ref != b_ref
-        keys = d.sql("SELECT jsonb_object_agg(payload->>'native_id',equivalence_key) FROM core.live_events WHERE event_type='command.executed'")
+        keys = sql(h, "SELECT jsonb_object_agg(payload->>'native_id',equivalence_key) FROM core.live_events WHERE event_type='command.executed'")
         assert keys['occurrence-a'] != keys['occurrence-b']
         denied_action = new_action()
         denied = deletion(a_ref, denied_action, operator=False, expected=4)
@@ -255,15 +260,15 @@ def exercise(h):
         settled()
     scenario('after undo, ordinary collection admits A again', collect_after_undo)
 
-    def kill(point, committed):
+    def kill_during(point, committed):
         population(['occurrence-a', 'occurrence-b'])
         action = new_action()
-        d.configure()
-        listener = d.pause_at(point)
+        d.configure(top=access_config(h))
+        listener = pause_at(d, point)
         settled()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(d.api, 'delete.run', {'ref': 'sinex:ev/'+a_ref, 'action_id': action}, True)
-            connection, frame = d.paused(listener, point)
+            future = executor.submit(operator_api, 'delete.run', {'ref': 'sinex:ev/'+a_ref, 'action_id': action})
+            connection, frame = paused(d, listener, point)
             before = action_audit(action)
             assert before['operations'] == (1 if committed else 0), before
             if committed:
@@ -273,13 +278,13 @@ def exercise(h):
                 partial = d.api('query.run', {'query': INDEXED_QUERY, 'page': 100, 'timeout_ms': 250})
                 assert (('error' in partial and partial['error']['kind'] in ['budget', 'partial'])
                         or partial.get('result', {}).get('complete') is False), partial
-            d.kill()
+            kill(d)
             connection.close()
             try:
                 future.result(timeout=10)
             except (OSError, ValueError, http.client.HTTPException):
                 pass
-        d.start(point + '-restart')
+        relaunch(d, point + '-restart')
         settled()
         if committed:
             population(['occurrence-b'])
@@ -300,20 +305,21 @@ def exercise(h):
         population(['occurrence-b'])
         assert replay()['admitted'] == 1
         population(['occurrence-a', 'occurrence-b'])
-    scenario('a kill before commit leaves nothing; the retry deletes once', lambda: kill('delete-staged', False))
-    scenario('a kill after commit keeps the deletion; the index reports pending work meanwhile', lambda: kill('delete-committed', True))
+    scenario('a kill before commit leaves nothing; the retry deletes once', lambda: kill_during('delete-staged', False))
+    scenario('a kill after commit keeps the deletion; the index reports pending work meanwhile', lambda: kill_during('delete-committed', True))
 
     def lost_reply():
         population(['occurrence-a', 'occurrence-b'])
         action = new_action()
-        d.configure()
-        listener = d.pause_at('delete-committed', 'lost-reply')
+        d.configure(top=access_config(h))
+        listener = pause_at(d, 'delete-committed', 'lost-reply')
         settled()
         out, err = (h['REPORT']/'lost-reply.stdout').open('w'), (h['REPORT']/'lost-reply.stderr').open('w')
-        client = subprocess.Popen([str(a) for a in d.cli_argv('delete', a_ref, '--action-id', action, operator=True)],
+        client = subprocess.Popen([str(h['BIN_DIR']/'sinexctl'), '--endpoint', d.endpoint, '--token-file', str(work/'operator'),
+                                   'delete', a_ref, '--action-id', action, '--json'],
                                   env=h['ENV'], stdout=out, stderr=err)
         h['CHILDREN'].append((client, out, err))
-        connection, frame = d.paused(listener, 'delete-committed')
+        connection, frame = paused(d, listener, 'delete-committed')
         before = action_audit(action)
         assert before['operations'] == 1
         client.kill()
@@ -330,7 +336,7 @@ def exercise(h):
     def retries_and_refusals():
         counts = ("SELECT jsonb_build_object('archives',(SELECT count(*) FROM audit.archived),"
                   "'deleted',(SELECT count(*) FROM core.deleted_occurrences),'events',(SELECT count(*) FROM core.events))")
-        before = d.sql(counts)
+        before = sql(h, counts)
         noop = deletion(a_ref)
         assert noop['state'] == 'noop' and noop['archived'] == []
         assert deletion(a_ref, initial_action) == initial_outcome
@@ -345,17 +351,17 @@ def exercise(h):
             absent = deletion(absent_ref, absent_action, expected=3)
             assert absent['details']['state'] == 'not_found'
             assert deletion(absent_ref, absent_action, expected=3) == absent
-            wire = d.api('delete.run', {'ref': absent_ref, 'action_id': absent_action}, True)
+            wire = operator_api('delete.run', {'ref': absent_ref, 'action_id': absent_action})
             assert wire['error']['kind'] == 'not_found' and wire['error']['data'] == absent['details']
             audit = action_audit(absent_action)
             assert audit['operations'] == 1 and len(audit['rows'][0]['effects']) == 1
             assert audit['rows'][0]['archives'] == audit['rows'][0]['exclusions'] == []
         canonical = deletion(canonicals['occurrence-b']['id'], expected=4)
         assert canonical['details']['raw_ref'] == 'sinex:ev/'+b_ref and canonical['details']['archived'] == []
-        assert d.api('delete.run', {'ref': 'events where kind = command.executed', 'action_id': new_action()}, True)['error']['kind'] == 'bad_query'
+        assert operator_api('delete.run', {'ref': 'events where kind = command.executed', 'action_id': new_action()})['error']['kind'] == 'bad_query'
         # With the stored request missing, a retry of a finished action is refused.
-        request_ref = d.sql(f"SELECT to_json(request_ref) FROM core.operations_log WHERE id='{initial_outcome['operation_id']}'::uuid")
-        path = d.blob_path(request_ref)
+        request_ref = sql(h, f"SELECT to_json(request_ref) FROM core.operations_log WHERE id='{initial_outcome['operation_id']}'::uuid")
+        path = blob_path(d, request_ref)
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         hidden = path.with_suffix('.hidden')
         path.rename(hidden)
@@ -365,7 +371,7 @@ def exercise(h):
             hidden.rename(path)
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
         assert deletion(a_ref, initial_action) == initial_outcome
-        assert d.sql(counts) == before
+        assert sql(h, counts) == before
         population(['occurrence-b'])
         d.stop()
     scenario('repeat deletes, conflicting retries, unknown targets and canonical refs', retries_and_refusals)

@@ -4,7 +4,7 @@ import hashlib
 import json
 import uuid
 
-from _daemon import Daemon, atuin_history
+from _atuin_daemon import Daemon, access_config, append_history, create_history, relaunch, sql
 
 CREDENTIAL = 'ghp_' + 'A'*36
 RULES = [('amber', 'amber!'), ('privateword', '[withheld]'), ('seedword', CREDENTIAL)]
@@ -13,35 +13,42 @@ EXPECTED = {'nonidempotent': 'echo amber!', 'idempotent': 'echo [withheld]',
             'injected': 'echo [credential: GitHub token, masked]',
             'fixed': 'echo [credential: GitHub token, masked]'}
 ATUIN_QUERY = 'events where source = terminal.atuin-history'
+PROJECT = '[[projects]]\nname = "privacy"\nroots = ["/synthetic/privacy"]\n'
+
+
+def rule_tables(rules):
+    return ''.join(f'[[privacy_rules]]\npattern = {json.dumps(p)}\nreplacement = {json.dumps(r)}\ncreated_by = "operator"\n'
+                   for p, r in rules)
 
 
 def exercise(h):
     work, scenario = h['WORK'], h['scenario']
     d = Daemon(h, 'privacy')
-    cli = d.cli
+    def cli(*args, operator=False, **kw):
+        return d.cli(*args, token_file=work/'operator' if operator else None, **kw)
     source = work/'privacy.db'
     rows = [('nonidempotent', 'echo amber'), ('idempotent', 'echo privateword'),
             ('injected', 'echo seedword'), ('fixed', 'echo '+CREDENTIAL)]
 
     def write_source():
-        atuin_history(source, [(key, 1_700_000_000_000_000_000+i*1_000_000_000, 1_000_000_000, 0, command,
+        create_history(source, [(key, 1_700_000_000_000_000_000+i*1_000_000_000, 1_000_000_000, 0, command,
                                 '/synthetic/privacy', 'synthetic-session', 'fixture-host', None)
                                for i, (key, command) in enumerate(rows)])
 
     def start(label, collect=True, rules=RULES):
-        d.configure(atuin=source if collect else None, rules=rules, projects=[('privacy', ['/synthetic/privacy'])])
-        d.start(label)
-        d.wait(settled, 'collection and index to catch up')
+        d.configure(source if collect else None, poll_ms=3_600_000, top=access_config(h), tables=PROJECT + rule_tables(rules))
+        relaunch(d, label)
+        d.wait('collection and index to catch up', settled)
 
     def settled():
         status = d.api('status')['result']
         index = status['indexed_retrieval']
         return (index.get('serving') and not index['pending_canonical'] and index['position'] == status['commit_seq']
                 and index['fusion']['phase'] == 'settled' and index['fusion']['scanned'] >= 4
-                and d.sql("SELECT to_json(coalesce((SELECT status='completed' FROM raw.observations ORDER BY seq DESC LIMIT 1),false))"))
+                and sql(h, "SELECT to_json(coalesce((SELECT status='completed' FROM raw.observations ORDER BY seq DESC LIMIT 1),false))"))
 
     def stored():
-        return d.sql("SELECT json_agg(json_build_object('id',e.id,'payload',e.payload,'hash',encode(e.record_hash,'hex'),"
+        return sql(h, "SELECT json_agg(json_build_object('id',e.id,'payload',e.payload,'hash',encode(e.record_hash,'hex'),"
                      "'material',e.source_material_id,'anchor',e.anchor_byte,'end',e.offset_end,'provenance',m.parser_provenance,"
                      "'blob',b.blake3) ORDER BY e.id) FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id "
                      "LEFT JOIN core.blobs b ON b.id=m.blob_id WHERE e.source='terminal.atuin-history'")
@@ -106,7 +113,7 @@ def exercise(h):
         replay = cli('replay', f'materials where id = {material}', '--action-id', action, operator=True)
         assert replay['state'] == 'completed' and replay['action_id'] == action
         assert cli('replay', f'materials where id = {material}', '--action-id', action, operator=True) == replay
-        d.wait(settled, 'index after replay')
+        d.wait('index after replay', settled)
         new_ids = {r['payload']['native_id']: r['id'] for r in cli('query', ATUIN_QUERY)['rows']}
         assert all(new_ids[key] != ids[key] for key in ids)
         check_reads(new_ids)
@@ -118,12 +125,12 @@ def exercise(h):
         # A row admitted with no rules keeps its text; trace --bytes still applies rules added later.
         d.stop()
         write_source()
-        atuin_history(source, [('oldplain', 1_700_000_009_000_000_000, 1_000_000_000, 0, 'echo amber',
+        append_history(source, [('oldplain', 1_700_000_009_000_000_000, 1_000_000_000, 0, 'echo amber',
                                 '/synthetic/privacy', 'synthetic-session', 'fixture-host', None)])
         start('no-rules', True, [])
-        plain = d.wait(lambda: next((r for r in cli('query', ATUIN_QUERY)['rows']
-                                     if r['payload']['native_id'] == 'oldplain' and r['payload']['command'] == 'echo amber'), None),
-                       'row admitted without rules')
+        plain = d.wait('row admitted without rules', lambda: next(
+            (r for r in cli('query', ATUIN_QUERY)['rows']
+             if r['payload']['native_id'] == 'oldplain' and r['payload']['command'] == 'echo amber'), None))
         d.stop()
         source.unlink()
         start('rule-added', False, [('amber', 'amber!')])
@@ -142,36 +149,39 @@ def exercise(h):
     scenario('Atuin: rules apply once at admission, current rules only in trace --bytes, replay re-applies', atuin_rules)
 
     def zsh_rules():
+        # A separate database: point the shared connection files at it for this step.
         urls = h['create_database']('privacy_zsh')
         for role in ['writer', 'reader']:
-            (work/('zsh-'+role)).write_text(urls[role])
+            (work/role).write_text(urls[role])
+        z = Daemon(h, 'privacy-zsh')
         zsh = work/'privacy.zsh'
         zsh.write_bytes(b': 1700000000:0;echo amber\n')
         original_bytes = zsh.read_bytes()
         zsh_config = f'[zsh]\npath = "{zsh}"\nexecution_host = "amber-host"\nprotocol = "append_only_extended_v1"\npoll_interval_ms = 3600000\n'
-        d.configure(sources=['terminal.zsh-history'], extra=zsh_config, read_model=False, operator=False,
-                    database='zsh-', store='zsh')
-        d.start('zsh')
-        d.wait(lambda: (r := d.last_run()) and r['status'] == 'completed', 'zsh read')
-        row = cli('query', 'events where source = terminal.zsh-history')['rows'][0]
-        traced = cli('trace', row['id'], '--bytes')
-        in_db = d.sql("SELECT json_build_object('host',host,'payload',payload) FROM core.events WHERE source='terminal.zsh-history'", urls['reader'])
+        z.configure(sources=['terminal.zsh-history'], tables=zsh_config)
+        relaunch(z, 'zsh')
+        z.wait('zsh read', lambda: z.last_run()['status'] == 'completed')
+        row = z.cli('query', 'events where source = terminal.zsh-history')['rows'][0]
+        traced = z.cli('trace', row['id'], '--bytes')
+        in_db = sql(h, "SELECT json_build_object('host',host,'payload',payload) FROM core.events WHERE source='terminal.zsh-history'", urls['reader'])
         assert in_db['host'] == in_db['payload']['hostname'] == 'amber-host'
         assert row['host'] == row['payload']['hostname'] == 'amber-host'
         assert row['payload']['command'] == 'echo amber'
-        assert cli('show', row['id'])['row']['host'] == 'amber-host'
+        assert z.cli('show', row['id'])['row']['host'] == 'amber-host'
         assert traced['row']['record']['unmetafied_record'] == ': 1700000000:0;echo amber\n'
         assert zsh.read_bytes() == original_bytes
         # zsh collection takes no optional rules; a rule added later applies to the stored original in trace --bytes.
-        d.stop()
+        z.stop()
         zsh.unlink()
-        d.configure(rules=[('amber', 'amber!')], read_model=False, operator=False, database='zsh-', store='zsh')
-        d.start('zsh-source-gone')
-        shown = cli('show', row['id'])
-        protected = cli('trace', row['id'], '--bytes')
+        z.configure(tables=rule_tables([('amber', 'amber!')]))
+        relaunch(z, 'zsh-source-gone')
+        shown = z.cli('show', row['id'])
+        protected = z.cli('trace', row['id'], '--bytes')
         assert shown['row']['payload']['command'] == 'echo amber' and shown['row']['host'] == 'amber-host'
         assert protected['row']['record']['unmetafied_record'] == ': 1700000000:0;echo amber!\n'
         assert protected['row']['record']['original_blake3'] == traced['row']['record']['original_blake3']
         assert all(protected['row'][key] == traced['row'][key] for key in ['event', 'material', 'anchor', 'end'])
-        d.stop()
+        z.stop()
+        (work/'writer').write_text(h['writer'])
+        (work/'reader').write_text(h['reader'])
     scenario('zsh: a rule added after collection applies to the stored original in trace --bytes', zsh_rules)

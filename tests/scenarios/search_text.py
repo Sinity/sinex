@@ -1,10 +1,8 @@
 """Text search over shell commands: exact words, phrases and prefixes in very long commands,
 ranking, what happens when token text is unavailable, and the probe query plans."""
 import json
-import select
-import subprocess
 
-from _daemon import Daemon, atuin_history
+from _atuin_daemon import Daemon, access_config, append_history, create_history, relaunch, table_lock
 
 EPOCH = 1_759_276_800_000_000_000  # 2025-10-01 UTC
 BROAD = 'commands where project = tide sort when limit 100'
@@ -30,13 +28,15 @@ LONG_ROWS = [
 def exercise(h):
     work, scenario = h['WORK'], h['scenario']
     d = Daemon(h, 'search-text')
-    cli = d.cli
+    def cli(*args, operator=False, **kw):
+        return d.cli(*args, token_file=work/'operator' if operator else None, **kw)
     source = work/'history.db'
-    atuin_history(source, [row('safe-'+str(n), n, 'needle safe '+str(n), duration=5) for n in range(32)])
+    create_history(source, [row('safe-'+str(n), n, 'needle safe '+str(n), duration=5) for n in range(32)])
 
     def start(label, collect=True):
-        d.configure(atuin=source if collect else None, poll_ms=500, full_ms=1000, projects=[('tide', ['/synthetic/tide'])])
-        d.start(label)
+        d.configure(source if collect else None, poll_ms=500, full_ms=1000, top=access_config(h),
+                    tables='[[projects]]\nname = "tide"\nroots = ["/synthetic/tide"]\n')
+        relaunch(d, label)
 
     def query(text):
         return d.api('query.run', {'query': text}).get('result')
@@ -52,10 +52,10 @@ def exercise(h):
         return q
 
     def wait_settled(what, total, available=True):
-        return d.wait(lambda: settled(total, available), what, 90)
+        return d.wait(what, lambda: settled(total, available), 90)
 
     def sql(text):
-        return d.psql(text, h['admin'])
+        return h['run'](['psql', h['admin'], '-XAtq', '-v', 'ON_ERROR_STOP=1', '-c', text], label='psql').stdout.strip()
 
     def text_unavailable_refusals():
         for text in ['commands where needle', 'commands where "needle safe"', 'commands where need*', 'commands where not needle',
@@ -76,24 +76,13 @@ def exercise(h):
         start('not-collecting', False)
         wait_settled('index with collection off', 32)
         before = cli('sources')['sources'][0]
-        locker = subprocess.Popen(['psql', h['admin'], '--no-psqlrc', '-qAt', '-v', 'ON_ERROR_STOP=1'], env=h['ENV'],
-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
-        try:
-            locker.stdin.write("BEGIN; LOCK TABLE core.events IN ACCESS EXCLUSIVE MODE; SELECT 'lock-held';\n")
-            locker.stdin.flush()
-            ready, _, _ = select.select([locker.stdout], [], [], 15)
-            assert ready and locker.stdout.readline().strip() == 'lock-held'
+        with table_lock(h, 'core.events'):
             for _ in range(3):
                 limited = cli('sources', '--input', before['input'])['sources'][0]
                 assert limited['last_run'] == before['last_run'], 'a receipt timeout changed the source read'
                 assert limited['acquisition'] == before['acquisition']
                 assert limited['inspection']['status'] == 'unavailable'
                 assert limited['history']['complete'] is False and limited['receipts']['complete'] is False
-        finally:
-            locker.stdin.write('ROLLBACK;\n\\q\n')
-            locker.stdin.close()
-            locker.wait(timeout=15)
-        assert locker.returncode == 0
         recovered = cli('sources', '--input', before['input'])['sources'][0]
         assert recovered['last_run'] == before['last_run'] and recovered['inspection']['status'] == 'available'
         answer = cli('query', BROAD, expected=(0, 5))
@@ -103,9 +92,9 @@ def exercise(h):
     scenario('blocked source receipts report unavailable and recover; the source read is unchanged', blocked_receipts)
 
     def long_commands():
-        atuin_history(source, LONG_ROWS)
+        append_history(source, LONG_ROWS)
         wait_settled('long commands indexed', 40)
-        q = d.wait(lambda: (v := cli('query', DAY_3, expected=(0, 5)))['complete'] and v, 'day-3 query complete', 90)
+        q = d.wait('day-3 query complete', lambda: (v := cli('query', DAY_3, expected=(0, 5)))['complete'] and v, 90)
         assert q['total'] == 1 and q['full_text']['available']
         later = q['rows'][0]['payload']
         assert later['native_id'] == 'later' and later['exit_code'] is None and later['duration_ns'] == 9
@@ -196,7 +185,7 @@ def exercise(h):
         d.stop()
         source.rename(work/'source-removed.db')
         start('source-missing')
-        d.wait(lambda: any(s['last_run']['status'] == 'unavailable' for s in d.sources()), 'missing source reported', 90)
+        d.wait('missing source reported', lambda: any(s['last_run']['status'] == 'unavailable' for s in d.sources()), 90)
         assert cli('query', DAY_3, expected=5)['rows'] == before['rows']
         assert cli('trace', ref, '--bytes') == trace
         assert cli('query', 'repeat', expected=5)['total'] == 1
@@ -225,8 +214,8 @@ def exercise(h):
         d.stop()
         sql("DELETE FROM core.search_text; DELETE FROM core.event_project; DELETE FROM derivation.read_model_position; "
             "DELETE FROM core.commit_log WHERE event_type_id=3 AND change=0")
-        d.start('broken-index')
-        d.wait(lambda: d.api('status')['result']['indexed_retrieval'].get('failure'), 'index failure reported', 90)
+        relaunch(d, 'broken-index')
+        d.wait('index failure reported', lambda: d.api('status')['result']['indexed_retrieval'].get('failure'), 90)
         for text in [DAY_3, 'commands where needle']:
             error = cli('query', text, expected=5)
             assert error['kind'] == 'partial' and 'rows' not in error

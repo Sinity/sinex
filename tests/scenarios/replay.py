@@ -5,7 +5,7 @@ import json
 import subprocess
 import uuid
 
-from _daemon import Daemon, atuin_history
+from _atuin_daemon import Daemon, access_config, blob_path, create_history, kill, pause_at, paused, relaunch, sql
 
 EPOCH = 1_700_000_000_123_456_789
 QUERY = 'events where source = terminal.atuin-history and kind = command.executed'
@@ -14,23 +14,24 @@ QUERY = 'events where source = terminal.atuin-history and kind = command.execute
 def exercise(h):
     work, scenario = h['WORK'], h['scenario']
     d = Daemon(h, 'replay')
-    cli = d.cli
+    def cli(*args, operator=False, **kw):
+        return d.cli(*args, token_file=work/'operator' if operator else None, **kw)
     source = work/'replay.db'
     # 130 rows: 0..63 present, 64..127 deleted at the source, 128 and 129 present.
-    atuin_history(source, [(f'fixture-{i:03}', EPOCH+i*1_000_000_000, 1_000_000_000, 0, f'echo fixture {i}',
+    create_history(source, [(f'fixture-{i:03}', EPOCH+i*1_000_000_000, 1_000_000_000, 0, f'echo fixture {i}',
                             '/synthetic/replay', 'fixture', 'fixture-host:fixture-user', EPOCH if 64 <= i < 128 else None)
                            for i in range(130)])
 
     def configure(collect=False, operator=True):
-        d.configure(atuin=source if collect else None, read_model=False, operator=operator)
+        d.configure(source if collect else None, poll_ms=3_600_000, top=access_config(h, operator, read_model=False))
 
     def audit():
-        return d.sql("SELECT json_build_object('seq',(SELECT seq FROM core.commit_counter WHERE one),"
+        return sql(h, "SELECT json_build_object('seq',(SELECT seq FROM core.commit_counter WHERE one),"
                      "'events',(SELECT count(*) FROM core.events),'archives',(SELECT count(*) FROM audit.archived),"
                      "'effects',(SELECT count(*) FROM core.operation_effects),'operations',(SELECT count(*) FROM core.operations_log))")
 
     def live_rows():
-        return d.sql("SELECT coalesce(json_agg(to_jsonb(e) ORDER BY e.anchor_byte),'[]') FROM core.events e "
+        return sql(h, "SELECT coalesce(json_agg(to_jsonb(e) ORDER BY e.anchor_byte),'[]') FROM core.events e "
                      f"WHERE source_material_id='{material}'::uuid AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id)")
 
     def ids(rows):
@@ -40,18 +41,18 @@ def exercise(h):
         return sum(ids(before)[a] != ids(after)[a] for a in ids(before))
 
     def progress(operation_id):
-        return d.sql(f"SELECT progress FROM core.operations_log WHERE id='{operation_id}'::uuid")
+        return sql(h, f"SELECT progress FROM core.operations_log WHERE id='{operation_id}'::uuid")
 
     def wait_operation(operation_id, state='completed'):
-        return d.wait(lambda: (p := progress(operation_id))['state'] == state and p, 'replay ' + state)
+        return d.wait('replay ' + state, lambda: (p := progress(operation_id))['state'] == state and p)
 
     material = initial = before_trace = None
 
     def bad_reading():
         nonlocal material, initial, before_trace
         configure(collect=True)
-        d.start('bad-reading', '--test-bad-atuin-parse')
-        run = d.wait(lambda: (r := d.last_run()) and r['status'] == 'completed' and r, 'first read')
+        relaunch(d, 'bad-reading', '--test-bad-atuin-parse')
+        run = d.wait('first read', lambda: (r := d.last_run()) and r['status'] == 'completed' and r)
         assert run['rows_read'] == 130 and run['admitted'] == 129 and run['record_errors'] == 1
         answer = cli('query', QUERY)
         assert answer['total'] == 65 and answer['complete'] is True
@@ -65,7 +66,7 @@ def exercise(h):
         d.stop()
         source.unlink()
         configure()
-        d.start('stored-only')
+        relaunch(d, 'stored-only')
         initial = live_rows()
         assert len(initial) == 129 and sum(r['record_state'] == 'removed' for r in initial) == 64
     scenario('a deliberately bad reading is stored and the source file removed', bad_reading)
@@ -84,13 +85,13 @@ def exercise(h):
         return cli('replay', selection, '--action-id', action_id, *extra, expected=expected, operator=True)
 
     def kill_and_restart(connection, frame, label, check_operator=False):
-        d.kill()
+        kill(d)
         connection.close()
         if not check_operator:
-            d.start(label + '-restart')
+            relaunch(d, label + '-restart')
             return
         configure(operator=False)
-        d.start(label + '-no-operator')
+        relaunch(d, label + '-no-operator')
         current = progress(frame['evidence']['operation']['operation_id'])
         assert current['processed'] == 128 and current['state'] == 'running'
         assert cli('status')['replay_authorized'] is False
@@ -98,7 +99,7 @@ def exercise(h):
         assert execute(action, 4, True)['kind'] == 'refused'
         assert audit() == before
         configure()
-        d.start(label + '-operator')
+        relaunch(d, label + '-operator')
 
     def same_rows_new_ids(old_rows, new_rows):
         assert len(old_rows) == 129 and len(new_rows) == 130
@@ -116,10 +117,10 @@ def exercise(h):
         preview = plan(action)
         assert preview['selected'] == 130 and preview['chunks'] == 3 and preview['chunk_max_records'] == 64
         assert audit() == before, 'dry run wrote state'
-        listener = d.pause_at('replay-staged-2')
+        listener = pause_at(d, 'replay-staged-2')
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(execute, action, (1, 4), True)
-            connection, frame = d.paused(listener, 'replay-staged-2')
+            connection, frame = paused(d, listener, 'replay-staged-2')
             operation = frame['evidence']['operation']['operation_id']
             running = progress(operation)
             assert running['processed'] == running['admitted'] == running['archived'] == 128 and running['state'] == 'running'
@@ -155,11 +156,11 @@ def exercise(h):
 
     def kill_after_commit():
         other = str(uuid.uuid4())
-        listener = d.pause_at('replay-committed-0')
+        listener = pause_at(d, 'replay-committed-0')
         before = live_rows()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(execute, other, 1)
-            connection, frame = d.paused(listener, 'replay-committed-0')
+            connection, frame = paused(d, listener, 'replay-committed-0')
             op = frame['evidence']['operation']['operation_id']
             assert progress(op)['admitted'] == 64
             held = live_rows()
@@ -173,14 +174,15 @@ def exercise(h):
     scenario('replay resumes after a kill right after a chunk commits', kill_after_commit)
 
     def disconnect():
-        listener = d.pause_at('replay-staged-0', 'disconnect')
+        listener = pause_at(d, 'replay-staged-0', 'disconnect')
         request = str(uuid.uuid4())
         before = live_rows()
         out, err = (h['REPORT']/'disconnected-client.stdout').open('w'), (h['REPORT']/'disconnected-client.stderr').open('w')
-        client = subprocess.Popen([str(a) for a in d.cli_argv('replay', selection, '--action-id', request, operator=True)],
+        client = subprocess.Popen([str(h['BIN_DIR']/'sinexctl'), '--endpoint', d.endpoint, '--token-file', str(work/'operator'),
+                                   'replay', selection, '--action-id', request, '--json'],
                                   env=h['ENV'], stdout=out, stderr=err)
         h['CHILDREN'].append((client, out, err))
-        connection, frame = d.paused(listener, 'replay-staged-0')
+        connection, frame = paused(d, listener, 'replay-staged-0')
         op = frame['evidence']['operation']['operation_id']
         client.kill()
         client.wait(timeout=10)
@@ -195,36 +197,36 @@ def exercise(h):
     scenario('a killed client does not stop its replay', disconnect)
 
     def changed_binary():
-        listener = d.pause_at('replay-staged-2', 'before-binary-change')
+        listener = pause_at(d, 'replay-staged-2', 'before-binary-change')
         request = str(uuid.uuid4())
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(execute, request, (1, 4))
-            connection, frame = d.paused(listener, 'replay-staged-2')
+            connection, frame = paused(d, listener, 'replay-staged-2')
             op = frame['evidence']['operation']['operation_id']
             assert progress(op)['processed'] == 128
             held, receipt = live_rows(), audit()
             artifact = "SELECT to_jsonb(m.artifact_digest) FROM core.runs r JOIN core.manifests m ON m.id=r.manifest_id ORDER BY r.started_at DESC LIMIT 1"
-            original_artifact = d.sql(artifact)
-            d.kill()
+            original_artifact = sql(h, artifact)
+            kill(d)
             connection.close()
             # A copy of the daemon with bytes appended runs the same code but has a different file digest.
             variant = work/'sinexd-variant'
             variant.write_bytes((h['BIN_DIR']/'sinexd').read_bytes() + b'\nsynthetic marker\n')
             variant.chmod(0o700)
-            d.start('changed-binary', binary=variant)
+            relaunch(d, 'changed-binary', binary=variant)
             refused = wait_operation(op, 'refused')
             assert refused['processed'] == refused['archived'] == refused['admitted'] == 128
             assert 'parser settings changed' in refused['reason']
             assert ids(live_rows()) == ids(held) and audit()['effects'] == receipt['effects']
-            assert d.sql(artifact) != original_artifact
+            assert sql(h, artifact) != original_artifact
             assert future.result(timeout=15)['kind'] in ('internal', 'refused')
-        d.start('original-binary')
+        relaunch(d, 'original-binary')
         receipt = audit()
         assert execute(request, 4)['details']['processed'] == 128 and audit() == receipt
     scenario('a different daemon binary refuses to continue a half-done replay', changed_binary)
 
     def missing_bytes():
-        path = d.blob_path(material)
+        path = blob_path(d, material)
         encoded = path.read_bytes()
         hidden = path.with_suffix('.hidden')
         for mode in ['absent', 'corrupt']:
@@ -255,11 +257,11 @@ def exercise(h):
         finally:
             hidden.rename(path)
         # Material that disappears mid-replay keeps the two committed chunks.
-        listener = d.pause_at('replay-staged-2', 'missing-mid-replay')
+        listener = pause_at(d, 'replay-staged-2', 'missing-mid-replay')
         request = str(uuid.uuid4())
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(execute, request, (1, 4))
-            connection, frame = d.paused(listener, 'replay-staged-2')
+            connection, frame = paused(d, listener, 'replay-staged-2')
             op = frame['evidence']['operation']['operation_id']
             held, receipt = live_rows(), audit()
             path.rename(hidden)
@@ -275,9 +277,9 @@ def exercise(h):
     scenario('missing or corrupt stored bytes refuse replay without changing anything', missing_bytes)
 
     def missing_action_records():
-        stored = d.sql(f"SELECT json_build_object('request_ref',request_ref,'outcome_ref',outcome_ref) FROM core.operations_log WHERE id='{operation}'::uuid")
+        stored = sql(h, f"SELECT json_build_object('request_ref',request_ref,'outcome_ref',outcome_ref) FROM core.operations_log WHERE id='{operation}'::uuid")
         for field in ['request_ref', 'outcome_ref']:
-            path = d.blob_path(stored[field])
+            path = blob_path(d, stored[field])
             encoded = path.read_bytes()
             hidden = path.with_suffix('.hidden')
             for mode in ['absent', 'corrupt']:
@@ -311,11 +313,11 @@ def exercise(h):
         plans[stale] = plans[action]
         assert execute(stale, 4, True)['kind'] == 'refused'
         # Release the paused writer only after the daemon has logged the cancel request.
-        listener = d.pause_at('replay-staged-0', 'cancel')
+        listener = pause_at(d, 'replay-staged-0', 'cancel')
         request = str(uuid.uuid4())
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             running = executor.submit(execute, request, 5)
-            connection, frame = d.paused(listener, 'replay-staged-0')
+            connection, frame = paused(d, listener, 'replay-staged-0')
             op = frame['evidence']['operation']['operation_id']
             cancelling = executor.submit(cli, 'replay-cancel', op, expected=5, operator=True)
 
@@ -327,7 +329,7 @@ def exercise(h):
                         continue
                     if note.get('phase') == 'replay_cancel_enqueued' and note.get('operation_id') == op:
                         return True
-            d.wait(cancel_logged, 'cancel request in the daemon log', 10)
+            d.wait('cancel request in the daemon log', cancel_logged, 10)
             connection.sendall(b'c')
             connection.close()
             stopped = cancelling.result(timeout=15)
@@ -335,7 +337,7 @@ def exercise(h):
             assert running.result(timeout=15) == stopped
         receipt = audit()
         assert execute(request, 5) == stopped and audit() == receipt
-        stored = d.sql("SELECT json_build_object('operations',(SELECT json_agg(to_jsonb(o)) FROM core.operations_log o),"
+        stored = sql(h, "SELECT json_build_object('operations',(SELECT json_agg(to_jsonb(o)) FROM core.operations_log o),"
                        "'effects',(SELECT json_agg(to_jsonb(e)) FROM core.operation_effects e))")
         assert all(o['request_ref'] and o['request_format'] == 'sinex.replay.request.v1' and o['action_principal'] == 'foundation.operator'
                    for o in stored['operations'])
@@ -349,12 +351,12 @@ def exercise(h):
 
     def malformed():
         d.stop()
-        atuin_history(source, [
+        create_history(source, [
             ('malformed-control-good', EPOCH, 1, 0, 'malformed control valid', '/synthetic', 'control', 'fixture-host:user', None),
             ('malformed-control-bad', 'not-a-time', 1, 0, 'malformed control invalid', '/synthetic', 'control', 'fixture-host:user', None)])
         configure(collect=True)
-        d.start('malformed')
-        d.wait(lambda: (r := d.last_run()) and r['status'] == 'completed' and r['rows_read'] == 2, 'malformed source read')
+        relaunch(d, 'malformed')
+        d.wait('malformed source read', lambda: (r := d.last_run()) and r['status'] == 'completed' and r['rows_read'] == 2)
         listed = d.sources()[0]
         assert listed['last_run']['record_errors'] == 1
         assert listed['first_record_error']['record']['timestamp'] == 'not-a-time'
@@ -363,7 +365,7 @@ def exercise(h):
         d.stop()
         source.unlink()
         configure()
-        d.start('malformed-stored-only')
+        relaunch(d, 'malformed-stored-only')
         receipt = audit()
         bad_selection = f'materials where id = {traced["material"]}'
         assert cli('replay', bad_selection, '--dry-run', expected=4)['kind'] == 'refused'
