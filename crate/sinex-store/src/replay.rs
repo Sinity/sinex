@@ -142,7 +142,7 @@ impl WriterPool {
             }
             let (record, end) = self
                 .reader
-                .stored_record_with_rules(material, anchor, None, None)
+                .stored_record(material, anchor, None, None)
                 .await
                 .map_err(|_| Error::ReplayRefused("retained row unavailable or malformed"))?;
             let interpretation:Option<Uuid>=sqlx::query_scalar("SELECT id FROM core.events e WHERE source_material_id=$1 AND anchor_byte=$2 AND ordinal=0 AND source=$3 AND event_type='command.executed' AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id)").bind(material).bind(anchor).bind(crate::ATUIN_SOURCE).fetch_optional(&mut self.connection).await?;
@@ -263,7 +263,7 @@ impl WriterPool {
             }
             let (mut record, _) = self
                 .reader
-                .stored_record_with_rules(material, expected.anchor, Some(expected.end), None)
+                .stored_record(material, expected.anchor, Some(expected.end), None)
                 .await
                 .map_err(|_| Error::ReplayRefused("retained row unavailable or malformed"))?;
             record
