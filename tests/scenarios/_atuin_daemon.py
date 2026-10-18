@@ -1,8 +1,11 @@
 """Shared pieces for scenarios that run the daemon on a synthetic Atuin history:
-the history table, daemon config, CLI/API/MCP clients, SQL and a held table lock."""
+the history table, daemon config, CLI/API/MCP clients, SQL, a held table lock,
+and restarting, killing and pausing the daemon's writer."""
 import contextlib
 import json
 import select
+import signal
+import socket
 import sqlite3
 import subprocess
 import time
@@ -167,3 +170,67 @@ class Mcp:
             self.proc.stdin.close()
             self.proc.wait(timeout=20)
         assert self.proc.returncode == 0, 'MCP server did not exit cleanly on stdin EOF'
+
+
+OPERATOR_TOKEN = 'synthetic-operator-token'
+
+
+def access_config(h, operator=True, read_model=True):
+    """Top-level config lines for the operator token (replay, delete) and the search index's read-model connection."""
+    work, lines = h['WORK'], ''
+    for enabled, key, name, value in [(operator, 'operator_token_file', 'operator', OPERATOR_TOKEN),
+                                      (read_model, 'read_model_connection_file', 'read-model', h['url']('sinex_read_model'))]:
+        if enabled:
+            (work/name).write_text(value)
+            (work/name).chmod(0o600)
+            lines += f'{key} = "{work/name}"\n'
+    return lines
+
+
+def append_history(path, rows):
+    with sqlite3.connect(path) as con:
+        con.executemany(INSERT, rows)
+
+
+def relaunch(d, label, *extra, binary=None):
+    """Stop the daemon if it is running, start it again and wait until it answers."""
+    if d.proc is not None and d.proc.poll() is None:
+        d.stop()
+    d.proc = d.h['start_daemon'](d.config, label, *extra, binary=binary)
+    d.ready()
+
+
+def kill(d):
+    d.proc.send_signal(signal.SIGKILL)
+    d.proc.wait(timeout=10)
+    assert d.proc.returncode == -signal.SIGKILL
+
+
+def pause_at(d, point, label=None):
+    """Restart the daemon so that its writer stops at `point`; pass the result to `paused`."""
+    path = d.h['WORK']/'pause.sock'
+    path.unlink(missing_ok=True)
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(str(path))
+    listener.listen(1)
+    listener.settimeout(30)
+    relaunch(d, label or point, '--test-pause-at', point, '--test-pause-socket', path)
+    return listener
+
+
+def paused(d, listener, point):
+    """Wait for the writer to reach the pause point; returns the connection (send b'c' to resume) and its frame."""
+    connection, _ = listener.accept()
+    connection.settimeout(10)
+    frame = json.loads(connection.makefile('rb').readline(262144))
+    assert frame['pid'] == d.proc.pid and frame['pause_point'] == point, frame
+    listener.close()
+    (d.h['WORK']/'pause.sock').unlink()
+    return connection, frame
+
+
+def blob_path(d, material):
+    """Where the daemon's store keeps the bytes of a source material or a stored action record."""
+    digest = sql(d.h, "SELECT to_json(b.blake3) FROM raw.source_material_registry m JOIN core.blobs b "
+                      f"ON b.id=m.blob_id WHERE m.id='{material}'::uuid").removeprefix('blake3:')
+    return d.store_dir/'blobs'/digest[:2]/(digest + '.zst')

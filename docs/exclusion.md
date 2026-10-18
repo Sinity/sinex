@@ -20,3 +20,5 @@ Undo removes only the `exclude` row. It never unarchives anything or reads the p
 ## Action IDs and retries
 
 Delete and undo use the same action ID rules as replay: the CLI generates and prints an ID when none is given, a retry with the same ID returns the original result, and the same ID with a different target, method or expected key conflicts. The CLI checks that the reply matches the requested action, method and target; if it does not, or no reply arrives, it reports an indeterminate outcome (exit 5) and asks you to retry with the same ID. If a committed result cannot pass credential masking, the API returns `partial` with `retained_but_unpresentable` and the action and operation IDs.
+
+The `exclusion` scenario (`xtask scenario exclusion`) covers this.
