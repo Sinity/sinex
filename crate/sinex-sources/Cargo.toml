@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 sinex-model.workspace = true
+sinex-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 blake3.workspace = true
@@ -17,9 +18,14 @@ rusqlite.workspace = true
 notify.workspace = true
 uuid.workspace = true
 gix.workspace = true
+tokio.workspace = true
+async-nats.workspace = true
+futures.workspace = true
+hashed-blobs.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+devkit.workspace = true
 
 [lints]
 workspace = true

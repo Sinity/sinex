@@ -55,8 +55,12 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
     match name {
         "sinex-macros" | "xtask" => Ok(&[]),
         "sinex-model" => Ok(&["sinex-macros"]),
-        "sinex-protocol" | "sinex-schema" | "sinex-sources" | "sinex-automata"
-        | "sinex-analysis" => Ok(&["sinex-model"]),
+        "sinex-protocol" | "sinex-schema" | "sinex-automata" | "sinex-analysis" => {
+            Ok(&["sinex-model"])
+        }
+        // Drivers include the producer side of the NATS ingress, which speaks
+        // the protocol's frames.
+        "sinex-sources" => Ok(&["sinex-model", "sinex-protocol"]),
         "sinex-store" => Ok(&["sinex-model", "sinex-schema"]),
         "sinex-library" => Ok(&["sinex-model", "sinex-store"]),
         "sinex-offline" => Ok(&["sinex-model", "sinex-schema", "sinex-store"]),

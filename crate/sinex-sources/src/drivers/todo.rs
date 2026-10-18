@@ -29,11 +29,3 @@ impl Media {
         todo!("architecture §5.3 Media")
     }
 }
-
-/// Batches from outside producers and capture nodes over the NATS ingress.
-pub struct Producer;
-impl Producer {
-    pub fn poll(&self, _cursor: &Value) -> Result<Acquired, DriverError> {
-        todo!("architecture §5.3 Producer: ingress material frames acknowledged before events")
-    }
-}
