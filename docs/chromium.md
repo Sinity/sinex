@@ -50,3 +50,7 @@ sinexctl … trace sinex:ev/INTERPRETATION_ID --bytes --json
 See [queries.md](queries.md) for the full raw query syntax. `trace --bytes` returns the masked stored row; MCP trace returns coordinates only. When the database disappears, stored events remain readable with `complete: false` and CLI exit 5.
 
 Replay and exclusion do not cover Chromium. Schema change 4 registers the browser event types ([schema.md](schema.md)).
+
+## Tests
+
+The `chromium` scenario (`xtask scenario chromium`) covers this end to end on generated History databases.
