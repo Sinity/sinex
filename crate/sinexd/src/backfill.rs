@@ -28,8 +28,25 @@ pub struct Options {
     pub activitywatch: Option<PathBuf>,
     /// Local repositories whose commits to read.
     pub repositories: Vec<PathBuf>,
+    /// Export and directory sources, as `kind=path` (see [`EXPORT_KINDS`]).
+    pub sources: Vec<String>,
+    /// The zone WeeChat logs were written in; the system zone when unset.
+    pub zone: Option<String>,
     pub host: String,
 }
+
+/// The kinds `--source kind=path` accepts. A directory given for a kind that
+/// reads one file is read file by file, each its own binding.
+pub const EXPORT_KINDS: &[&str] = &[
+    "chromium",
+    "takeout-chrome",
+    "spotify",
+    "raindrop",
+    "notes",
+    "mbox",
+    "maildir",
+    "weechat",
+];
 
 #[derive(Default)]
 struct Totals {
@@ -109,6 +126,14 @@ pub async fn run(o: Options) -> Result<(), String> {
             "browser.tab_active",
             "activitywatch.other",
             "git.commit",
+            "browser.visit",
+            "browser.url",
+            "browser.history_entry",
+            "music.played",
+            "bookmark.saved",
+            "note.document",
+            "mail.message",
+            "chat.message",
         ],
     };
     let run = runs::start(&mut ctx.aux, &manifest, &o.host)
@@ -233,6 +258,13 @@ pub async fn run(o: Options) -> Result<(), String> {
         .await?;
         println!("{} {totals}", path.display());
     }
+    for spec in &o.sources {
+        let (kind, path) = spec
+            .split_once('=')
+            .ok_or_else(|| format!("--source {spec}: expected kind=path"))?;
+        let totals = export(&mut ctx, run, &sink, kind, PathBuf::from(path), &o).await?;
+        println!("{kind} {totals}");
+    }
     runs::end(&mut ctx.aux, run)
         .await
         .map_err(|e| e.to_string())?;
@@ -308,5 +340,200 @@ async fn drive(
         }
     }
     totals.wall = started.elapsed();
+    Ok(totals)
+}
+
+impl Totals {
+    fn add(&mut self, o: Totals) {
+        self.polls += o.polls;
+        self.materials += o.materials;
+        self.material_bytes += o.material_bytes;
+        self.batches += o.batches;
+        self.events_offered += o.events_offered;
+        self.admitted += o.admitted;
+        self.repeats += o.repeats;
+        self.replaced += o.replaced;
+        self.older += o.older;
+        self.hidden += o.hidden;
+        self.superseded += o.superseded;
+        self.failures += o.failures;
+        self.dirty_keys += o.dirty_keys;
+        self.admit_time += o.admit_time;
+        self.wall += o.wall;
+    }
+}
+
+/// The files to read for `path`: itself, or a directory's files in name order
+/// (recursively when `recursive`), keeping those `keep` accepts.
+fn files(
+    path: &std::path::Path,
+    recursive: bool,
+    keep: fn(&std::path::Path) -> bool,
+) -> Vec<PathBuf> {
+    if path.is_file() {
+        return vec![path.to_path_buf()];
+    }
+    let mut out = Vec::new();
+    let mut dirs = vec![path.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if recursive {
+                    dirs.push(p);
+                }
+            } else if keep(&p) {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Read one `--source kind=path` to the end: one binding per file, profile or
+/// directory, each driver's memory rebuilt from what it stored before.
+async fn export(
+    ctx: &mut Context,
+    run: RunId,
+    sink: &Sink,
+    kind: &str,
+    path: PathBuf,
+    o: &Options,
+) -> Result<Totals, String> {
+    use sinex_sources::sources::{
+        chromium, mail, notes, raindrop, spotify, takeout_chrome, weechat,
+    };
+    let host = o.host.clone();
+    let mut totals = Totals::default();
+    let binding = |name: &str| format!("{kind}:{name}@{host}");
+    let any = |_: &std::path::Path| true;
+    match kind {
+        "chromium" => {
+            for (profile, history) in chromium::profiles(&path) {
+                for table in ["visits", "urls"] {
+                    let (source, driver): (Box<dyn Source>, _) = if table == "visits" {
+                        (
+                            Box::new(chromium::visits()),
+                            chromium::visits_driver(history.clone(), host.clone()),
+                        )
+                    } else {
+                        (
+                            Box::new(chromium::urls()),
+                            chromium::urls_driver(history.clone(), host.clone()),
+                        )
+                    };
+                    let name = binding(&format!("{profile}/{table}"));
+                    let chain = stored(ctx, &name).await?;
+                    let mut memory =
+                        drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(Vec::as_slice));
+                    totals.add(
+                        drive(
+                            &mut ctx.aux,
+                            &ctx.writer,
+                            run,
+                            source.as_ref(),
+                            &name,
+                            sink,
+                            |c| driver.poll(c, &mut memory),
+                        )
+                        .await?,
+                    );
+                }
+            }
+        }
+        "takeout-chrome" | "spotify" | "raindrop" | "mbox" => {
+            for file in files(&path, false, any) {
+                let name = binding(&file.display().to_string());
+                let (source, driver): (Box<dyn Source>, _) = match kind {
+                    "takeout-chrome" => (
+                        Box::new(takeout_chrome::source()),
+                        takeout_chrome::driver(file, host.clone()),
+                    ),
+                    "spotify" => (
+                        Box::new(spotify::source()),
+                        spotify::driver(file, host.clone()),
+                    ),
+                    "raindrop" => (
+                        Box::new(raindrop::source()),
+                        raindrop::driver(file, host.clone()),
+                    ),
+                    _ => (
+                        Box::new(mail::mbox_source()),
+                        mail::mbox_driver(file, host.clone()),
+                    ),
+                };
+                totals.add(
+                    drive(
+                        &mut ctx.aux,
+                        &ctx.writer,
+                        run,
+                        source.as_ref(),
+                        &name,
+                        sink,
+                        |c| driver.poll(c),
+                    )
+                    .await?,
+                );
+            }
+        }
+        "notes" | "maildir" => {
+            let (source, driver): (Box<dyn Source>, _) = if kind == "notes" {
+                (
+                    Box::new(notes::source()),
+                    notes::driver(path.clone(), host.clone()),
+                )
+            } else {
+                (
+                    Box::new(mail::maildir_source()),
+                    mail::maildir_driver(path.clone(), host.clone()),
+                )
+            };
+            // A restart reads the directory again; admission suppresses the
+            // repeats.
+            let mut memory = drivers::dir_snapshot::DirMemory::default();
+            let name = binding(&path.display().to_string());
+            totals.add(
+                drive(
+                    &mut ctx.aux,
+                    &ctx.writer,
+                    run,
+                    source.as_ref(),
+                    &name,
+                    sink,
+                    |c| driver.poll(c, &mut memory),
+                )
+                .await?,
+            );
+        }
+        "weechat" => {
+            let source = weechat::source(weechat::zone(o.zone.as_deref())?);
+            let logs = files(&path, true, |p| {
+                p.extension()
+                    .is_some_and(|e| e == "log" || e == "weechatlog")
+            });
+            for file in logs {
+                let driver = weechat::driver(file.clone(), host.clone());
+                let name = binding(&file.display().to_string());
+                let chain = stored(ctx, &name).await?;
+                let mut memory = drivers::append_file::AppendMemory::rebuild(
+                    chain.iter().map(Vec::as_slice),
+                    weechat::SPEC.framer,
+                );
+                totals.add(
+                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                        driver.poll(c, &mut memory)
+                    })
+                    .await?,
+                );
+            }
+        }
+        other => {
+            return Err(format!(
+                "unknown source kind {other}; one of {}",
+                EXPORT_KINDS.join(", ")
+            ));
+        }
+    }
     Ok(totals)
 }

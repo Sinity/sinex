@@ -267,6 +267,7 @@ impl AppendFile {
             material: Some(NewMaterial {
                 id,
                 bytes,
+                stored_file: None,
                 records,
                 part_index,
                 previous_part,

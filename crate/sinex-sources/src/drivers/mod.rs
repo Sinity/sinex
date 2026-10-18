@@ -13,6 +13,8 @@ use sinex_model::{
 
 pub mod api_cursor;
 pub mod append_file;
+pub mod dir_snapshot;
+pub mod export_archive;
 pub mod live_stream;
 pub mod producer;
 pub mod sqlite_rows;
@@ -23,6 +25,14 @@ pub mod todo;
 pub trait MaterialSink: Send + Sync {
     /// Store `bytes` and return their name, `blake3:<hex>`.
     fn put(&self, bytes: &[u8]) -> Result<String, String>;
+
+    /// Store a file's bytes as they are and return their name. Sinks that can
+    /// stream override this, so an archive of any size is stored without
+    /// holding it in memory.
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        self.put(&bytes)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -51,7 +61,12 @@ pub struct Acquired {
 
 pub struct NewMaterial {
     pub id: MaterialId,
+    /// The bytes the records index into.
     pub bytes: Vec<u8>,
+    /// When set, the material stored is this file as received (an export
+    /// archive) and `bytes` is the stream decoded from it as the manifest
+    /// describes, so a replay decodes the stored file the same way.
+    pub stored_file: Option<std::path::PathBuf>,
     pub records: Vec<(usize, usize)>,
     pub part_index: u32,
     pub previous_part: Option<MaterialId>,
@@ -110,12 +125,23 @@ pub fn batches(
             archive: vec![],
         }]);
     };
-    let blob = sink.put(&m.bytes).map_err(DriverError::Store)?;
+    let (blob, length) = match &m.stored_file {
+        Some(path) => {
+            let length = std::fs::metadata(path)
+                .map_err(|e| DriverError::Io(format!("{}: {e}", path.display())))?
+                .len();
+            (sink.put_file(path).map_err(DriverError::Store)?, length)
+        }
+        None => (
+            sink.put(&m.bytes).map_err(DriverError::Store)?,
+            m.bytes.len() as u64,
+        ),
+    };
     let material = MaterialRef {
         id: m.id,
         input: None,
         blob,
-        length: m.bytes.len() as u64,
+        length,
         part_index: m.part_index,
         previous_part: m.previous_part,
         parser: spec.parser.to_owned(),
@@ -140,6 +166,7 @@ pub fn batches(
             carry,
             reading_order: &*m.reading_order,
             limits,
+            manifest: &m.manifest,
         })
         .map_err(|e| DriverError::Carry(e.0))?;
     let mut out = Vec::with_capacity(chunks.len());

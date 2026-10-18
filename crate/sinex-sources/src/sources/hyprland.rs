@@ -390,6 +390,7 @@ mod tests {
                 carry: Value::Null,
                 reading_order: &|a| ReadingOrder(a as i64),
                 limits: Limits::default(),
+                manifest: &m.manifest,
             })
             .unwrap();
         let mut types: Vec<&str> = Vec::new();

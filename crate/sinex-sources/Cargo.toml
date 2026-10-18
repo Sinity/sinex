@@ -10,7 +10,7 @@ license.workspace = true
 sinex-model.workspace = true
 sinex-protocol.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 blake3.workspace = true
 thiserror.workspace = true
 time.workspace = true
@@ -22,6 +22,12 @@ tokio.workspace = true
 async-nats.workspace = true
 futures.workspace = true
 hashed-blobs.workspace = true
+zip = { version = "2", default-features = false, features = ["deflate", "bzip2"] }
+tar = "0.4"
+flate2 = "1"
+csv = "1"
+mailparse = "0.16"
+jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 
 [dev-dependencies]
 proptest.workspace = true

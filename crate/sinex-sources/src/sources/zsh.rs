@@ -170,6 +170,7 @@ mod tests {
         let out = drain(
             &ZshParser { host: "h".into() },
             DrainInput {
+                manifest: &serde_json::Value::Null,
                 source: SPEC.name,
                 class: Class::Open,
                 material: MaterialId(uuid::Uuid::nil()),
