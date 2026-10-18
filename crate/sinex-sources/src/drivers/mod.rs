@@ -11,6 +11,7 @@ use sinex_model::{
     RecordOutcome, RevisionChange, RunId, SourceProgress,
 };
 
+pub mod api_cursor;
 pub mod append_file;
 pub mod live_stream;
 pub mod sqlite_rows;

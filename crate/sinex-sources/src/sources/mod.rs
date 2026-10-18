@@ -3,6 +3,8 @@ pub mod activitywatch;
 pub mod atuin;
 pub mod hyprland;
 pub mod journald;
+/// Commits in local repositories (`code.git`).
+pub mod repository;
 pub mod zsh;
 
 use crate::registry::{Source, SourceSpec};
@@ -15,6 +17,7 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &hyprland::SPEC,
         &journald::SPEC,
         &activitywatch::SPEC,
+        &repository::SPEC,
     ]
 }
 
@@ -28,6 +31,7 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         p if p == hyprland::SPEC.parser => Some(Box::new(hyprland::source())),
         p if p == journald::SPEC.parser => Some(Box::new(journald::source())),
         p if p == activitywatch::SPEC.parser => Some(Box::new(activitywatch::source())),
+        p if p == repository::SPEC.parser => Some(Box::new(repository::source())),
         _ => None,
     }
 }

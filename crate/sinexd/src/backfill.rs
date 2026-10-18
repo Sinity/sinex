@@ -24,6 +24,8 @@ pub struct Options {
     pub journald_spool: Option<PathBuf>,
     /// ActivityWatch's `aw-server-rust` database.
     pub activitywatch: Option<PathBuf>,
+    /// Local repositories whose commits to read.
+    pub repositories: Vec<PathBuf>,
     pub host: String,
 }
 
@@ -103,6 +105,7 @@ pub async fn run(o: Options) -> Result<(), String> {
             "presence.span",
             "browser.tab_active",
             "activitywatch.other",
+            "git.commit",
         ],
     };
     let run = runs::start(&mut ctx.aux, &manifest, &o.host)
@@ -195,6 +198,22 @@ pub async fn run(o: Options) -> Result<(), String> {
         )
         .await?;
         println!("activitywatch {totals}");
+    }
+    for path in &o.repositories {
+        let source = sinex_sources::sources::repository::source();
+        let driver = sinex_sources::sources::repository::driver(path.clone(), o.host.clone());
+        let binding = format!("repository:{}@{}", path.display(), o.host);
+        let totals = drive(
+            &mut ctx.aux,
+            &ctx.writer,
+            run,
+            &source,
+            &binding,
+            &sink,
+            |cursor| driver.poll(cursor),
+        )
+        .await?;
+        println!("{} {totals}", path.display());
     }
     runs::end(&mut ctx.aux, run)
         .await
