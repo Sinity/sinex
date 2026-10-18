@@ -562,9 +562,14 @@ async fn archive_request(
                 )
                 .fetch_one(&mut *conn)
                 .await?;
+                // The search read model holds payload text; it goes with the
+                // events, in the same transaction.
                 sqlx::query!(
-                    r#"DELETE FROM core.events e WHERE e.source = $1 AND e.event_type = $2
-                       AND ((e.equivalence_key = $3) OR ($3::text IS NULL AND e.material_id = $4 AND e.anchor = $5 AND e.ordinal = $6))"#,
+                    r#"WITH gone AS (
+                         DELETE FROM core.events e WHERE e.source = $1 AND e.event_type = $2
+                         AND ((e.equivalence_key = $3) OR ($3::text IS NULL AND e.material_id = $4 AND e.anchor = $5 AND e.ordinal = $6))
+                         RETURNING e.id)
+                       DELETE FROM core.search_text s USING gone WHERE s.event_id = gone.id"#,
                     event.source,
                     event.event_type,
                     event.equivalence_key,

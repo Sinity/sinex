@@ -244,6 +244,18 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   action text NOT NULL CHECK (action IN ('classify', 'mask', 'drop_field'))
 )", class = c.class),
         "CREATE TABLE privacy.material_keys (material_id uuid PRIMARY KEY, class text NOT NULL, wrapped_key bytea NOT NULL)".into(),
+        // Full-text search read model (spec `query.md` §5, `storage.md`
+        // §3.11): each event's payload text, normalized (case-folded, NFC,
+        // words separated by single spaces), kept uncompressed apart from the
+        // hypertable. Rebuildable from the events; maintained from the commit
+        // log by its reader, never by a trigger.
+        "CREATE TABLE core.search_text (
+  event_id uuid PRIMARY KEY,
+  text text NOT NULL,
+  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED
+)".into(),
+        "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
+        "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)".into(),
         // Admission's staging table. Permanent and unlogged so compile-time
         // checked queries can name it; only the one writer uses it, inside its
         // transaction, and truncates it first.

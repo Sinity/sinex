@@ -1,0 +1,33 @@
+//! Read-only SQL under the caller's grants (architecture §7.1, `m1sz`): the
+//! statement runs in a read-only transaction as the reader role, so it can
+//! read the stable views and tables and change nothing. Rows come back as
+//! JSON objects with the statement's own column names, in order.
+use crate::{Error, Result};
+use serde_json::Value as Json;
+use sqlx::{Connection, PgConnection};
+
+/// The rows of a read-only statement.
+pub async fn run(conn: &mut PgConnection, statement: &str) -> Result<Vec<Json>> {
+    let statement = statement.trim().trim_end_matches(';').trim();
+    if statement.is_empty() {
+        return Err(Error::Invalid("empty SQL statement".into()));
+    }
+    // A second statement cannot hide inside the wrapping subquery: it is a
+    // syntax error there, and a prepared statement is one statement.
+    let mut tx = conn.begin().await?;
+    sqlx::query!("SET TRANSACTION READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query!("SET LOCAL ROLE sinex_reader")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query!("SET LOCAL TimeZone = 'UTC'")
+        .execute(&mut *tx)
+        .await?;
+    // Wrapping keeps column order (json, not jsonb) and refuses anything that
+    // is not a query.
+    let wrapped = format!("SELECT row_to_json(q) FROM ({statement}) q");
+    let rows: Vec<Json> = sqlx::query_scalar(&wrapped).fetch_all(&mut *tx).await?;
+    tx.rollback().await?;
+    Ok(rows)
+}
