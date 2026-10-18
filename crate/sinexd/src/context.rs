@@ -58,6 +58,14 @@ impl MaterialSink for Sink {
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         self.0.put(bytes).map_err(|e| e.to_string())
     }
+
+    /// An export archive is streamed into the store, never held in memory.
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
+        let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        self.0
+            .put_reader(std::io::BufReader::new(file))
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// The stored bytes of the chain ending at the cursor's last material, for

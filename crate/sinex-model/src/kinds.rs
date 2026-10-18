@@ -4,9 +4,12 @@
 use crate::{EventPayload, Timestamp};
 use schemars::JsonSchema;
 
+pub mod browser;
 pub mod code;
+pub mod communication;
 pub mod desktop;
 pub mod machine;
+pub mod media;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -254,6 +257,15 @@ pub const ALL: &[KindInfo] = &[
     info::<ShellSession>(),
     info::<StateInterval>(),
     info::<ActivitySummary>(),
+    // Browsing, listening, reading, notes, communication
+    info::<browser::BrowserVisit>(),
+    info::<browser::BrowserUrl>(),
+    info::<browser::BrowserHistoryEntry>(),
+    info::<media::MusicPlayed>(),
+    info::<media::BookmarkSaved>(),
+    info::<media::NoteDocument>(),
+    info::<communication::ChatMessage>(),
+    info::<communication::MailMessage>(),
 ];
 
 /// The registered type named `event_type`, for code that holds a type name

@@ -35,6 +35,40 @@ pub struct DrainInput<'a> {
     /// Which of two readings is newer, by the record's anchor.
     pub reading_order: &'a dyn Fn(usize) -> ReadingOrder,
     pub limits: Limits,
+    /// The material's manifest. A `members` array of `{path, stream_offset,
+    /// length, ...}` (archive member streams, directory snapshots) tells each
+    /// record which member it is in.
+    pub manifest: &'a Value,
+}
+
+/// What a parser may know about where its record came from.
+#[derive(Clone, Copy, Debug)]
+pub struct RecordContext<'a> {
+    pub manifest: &'a Value,
+    /// The manifest's member entry containing this record, if the material is
+    /// made of members.
+    pub member: Option<&'a Value>,
+}
+
+impl RecordContext<'_> {
+    /// The member's path, or the material's own `path`.
+    pub fn path(&self) -> Option<&str> {
+        self.member
+            .and_then(|m| m.get("path"))
+            .or_else(|| self.manifest.get("path"))
+            .and_then(Value::as_str)
+    }
+}
+
+/// The member of `manifest` whose stream range holds byte `anchor`. Members
+/// are in stream order and do not overlap.
+pub fn member_at(manifest: &Value, anchor: usize) -> Option<&Value> {
+    let members = manifest.get("members")?.as_array()?;
+    let offset = |m: &Value| m.get("stream_offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let length = |m: &Value| m.get("length").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let i = members.partition_point(|m| offset(m) <= anchor);
+    let member = members[..i].last()?;
+    (anchor < offset(member) + length(member)).then_some(member)
 }
 
 /// One batch's worth of drained records.
@@ -81,7 +115,11 @@ pub fn drain<P: Parser>(
             material: input.material,
             anchor: start as u64,
         };
-        let outcome = match parse_one(parser, raw, &carry) {
+        let context = RecordContext {
+            manifest: input.manifest,
+            member: member_at(input.manifest, start),
+        };
+        let outcome = match parse_one(parser, raw, &carry, &context) {
             Ok((payloads, next)) => {
                 carry = next;
                 let hash = <P::Record<'_> as RecordShape>::hash(raw, P::VOLATILE);
@@ -172,10 +210,11 @@ fn parse_one<P: Parser>(
     parser: &P,
     raw: &[u8],
     carry: &P::Carry,
+    context: &RecordContext<'_>,
 ) -> Result<(Vec<P::Payload>, P::Carry), RecordError> {
     let record = <P::Record<'_> as RecordShape>::decode(raw)?;
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        parser.parse(&record, carry)
+        parser.parse_record(&record, carry, context)
     })) {
         Ok(result) => result,
         Err(panic) => {
@@ -262,6 +301,7 @@ mod tests {
                 carry,
                 reading_order: &|a| ReadingOrder(a as i64),
                 limits,
+                manifest: &Value::Null,
             },
         )
         .unwrap()
@@ -358,6 +398,21 @@ mod tests {
         assert_eq!(commands(&out), vec![(0, "a".into()), (8, "b".into())]);
         assert_eq!(out[0].failures, 0);
         assert_eq!(out[0].end, 10);
+    }
+
+    #[test]
+    fn records_find_their_member() {
+        let manifest = serde_json::json!({"members": [
+            {"path": "a", "stream_offset": 0, "length": 4},
+            {"path": "b", "stream_offset": 4, "length": 6},
+        ]});
+        let path = |anchor| member_at(&manifest, anchor).and_then(|m| m["path"].as_str());
+        assert_eq!(path(0), Some("a"));
+        assert_eq!(path(3), Some("a"));
+        assert_eq!(path(4), Some("b"));
+        assert_eq!(path(9), Some("b"));
+        assert_eq!(path(10), None);
+        assert_eq!(member_at(&Value::Null, 0), None);
     }
 
     #[test]

@@ -14,7 +14,7 @@ pub mod drivers;
 pub mod registry;
 pub mod sources;
 
-pub use drain::{DrainInput, DrainOutput, Limits, drain};
+pub use drain::{DrainInput, DrainOutput, Limits, RecordContext, drain};
 pub use drivers::{Acquired, DriverError, MaterialSink};
 pub use registry::{Declared, Driver, Framer, Source, SourceSpec};
 
@@ -93,4 +93,17 @@ pub trait Parser: Send + Sync + 'static {
         record: &Self::Record<'_>,
         carry: &Self::Carry,
     ) -> Result<(Vec<Self::Payload>, Self::Carry), RecordError>;
+
+    /// `parse` with the record's material context: its manifest and, for a
+    /// material made of several members (an archive's member stream, a
+    /// directory snapshot), the member the record is in. Parsers that need a
+    /// file's path or a member's name override this; the rest use `parse`.
+    fn parse_record(
+        &self,
+        record: &Self::Record<'_>,
+        carry: &Self::Carry,
+        _context: &RecordContext<'_>,
+    ) -> Result<(Vec<Self::Payload>, Self::Carry), RecordError> {
+        self.parse(record, carry)
+    }
 }

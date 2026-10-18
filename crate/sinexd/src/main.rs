@@ -110,6 +110,16 @@ enum Command {
         /// A local repository whose commits to read; repeatable.
         #[arg(long = "repository")]
         repositories: Vec<PathBuf>,
+        /// An export or directory source as `kind=path`: chromium (a browser's
+        /// user-data directory), takeout-chrome, spotify, raindrop (a `.csv`
+        /// or `.jsonl` export), mbox (a file or a directory of files), notes,
+        /// maildir (a directory), weechat (a log file or directory).
+        #[arg(long = "source")]
+        sources: Vec<String>,
+        /// The zone WeeChat logs were written in (IANA name); the system zone
+        /// when unset.
+        #[arg(long)]
+        zone: Option<String>,
         #[arg(long, default_value = "localhost")]
         host: String,
     },
@@ -519,6 +529,8 @@ async fn main() -> std::process::ExitCode {
             file_watch_spool,
             activitywatch,
             repositories,
+            sources,
+            zone,
             host,
         } => {
             backfill::run(backfill::Options {
@@ -531,6 +543,8 @@ async fn main() -> std::process::ExitCode {
                 file_watch_spool,
                 activitywatch,
                 repositories,
+                sources,
+                zone,
                 host,
             })
             .await

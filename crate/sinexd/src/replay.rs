@@ -245,6 +245,16 @@ fn read_chain(
     for m in chain {
         let source = sources::by_parser(&m.parser, m.host.as_deref().unwrap_or_default())
             .ok_or_else(|| format!("material {}: no source has parser {}", m.id, m.parser))?;
+        // A compressed export's records are in its decoded member stream
+        // (`ExportArchive`), which replay does not decode yet.
+        if let Some(container) = m.manifest.get("container").and_then(Value::as_str)
+            && container != "plain"
+        {
+            return Err(format!(
+                "material {}: replaying a {container} export needs its member stream decoded, which replay does not do yet",
+                m.id
+            ));
+        }
         let bytes = ctx.blobs.read(&m.blob).map_err(|e| e.to_string())?;
         let records = drivers::stored_records(&m.manifest, &bytes, source.spec().framer);
         let order = drivers::reading_order(&m.manifest);
@@ -258,6 +268,7 @@ fn read_chain(
                 carry,
                 reading_order: &*order,
                 limits: Limits::default(),
+                manifest: &m.manifest,
             })
             .map_err(|e| format!("material {}: {e}", m.id))?;
         carry = chunks.last().map_or(Value::Null, |c| c.carry.clone());

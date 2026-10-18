@@ -133,14 +133,10 @@ impl SqliteRows {
             || now_ns.saturating_sub(previous.last_full_pass_ns)
                 >= self.full_pass_secs.saturating_mul(1_000_000_000);
 
-        let connection = match Connection::open_with_flags(
-            &self.path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        ) {
-            Ok(c) => c,
-            Err(e) => return Ok(unavailable(format!("cannot open read-only: {e}"))),
+        let (connection, copy) = match open_for_read(&self.path) {
+            Ok(opened) => opened,
+            Err(e) => return Ok(unavailable(e)),
         };
-        let _ = connection.busy_timeout(std::time::Duration::from_secs(2));
         let columns: Vec<String> = {
             let mut stmt = connection
                 .prepare(&format!(
@@ -271,7 +267,7 @@ impl SqliteRows {
         // never below what earlier polls gave out, so a row read again later
         // (in this poll or a later one) is always newer.
         let base = now_ns.max(previous.last_order.saturating_add(1));
-        let manifest = json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base});
+        let manifest = json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": if copy.is_some() { "verified copy" } else { "database" }});
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {
@@ -303,6 +299,7 @@ impl SqliteRows {
             material: Some(NewMaterial {
                 id,
                 bytes,
+                stored_file: None,
                 records,
                 part_index,
                 previous_part: previous.material,
@@ -313,6 +310,74 @@ impl SqliteRows {
             }),
             cursor_unchanged: Value::Null,
         })
+    }
+}
+
+/// Open `path` read-only. When its program holds it locked (Chromium keeps
+/// `History` locked while it runs), copy it and read the copy, accepted only
+/// if the file's size and times did not change while copying (`y0o3.4`). The
+/// returned guard removes the copy.
+fn open_for_read(path: &std::path::Path) -> Result<(Connection, Option<Copy>), String> {
+    let open = |p: &std::path::Path, immutable: bool| -> rusqlite::Result<Connection> {
+        let mut flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let target = if immutable {
+            flags |= OpenFlags::SQLITE_OPEN_URI;
+            format!("file:{}?immutable=1", p.display())
+        } else {
+            p.display().to_string()
+        };
+        let c = Connection::open_with_flags(target, flags)?;
+        c.busy_timeout(std::time::Duration::from_secs(2))?;
+        // Touch the schema so a lock shows now rather than mid-read.
+        c.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))?;
+        Ok(c)
+    };
+    match open(path, false) {
+        Ok(c) => return Ok((c, None)),
+        Err(e) if !is_locked(&e) => return Err(format!("cannot open read-only: {e}")),
+        Err(_) => {}
+    }
+    let facts = |p: &std::path::Path| file_facts(p).map(|f| (f.size, f.mtime_ns, f.ctime_ns));
+    for _ in 0..3 {
+        let before = facts(path).map_err(|e| e.to_string())?;
+        let copy = Copy::new()?;
+        std::fs::copy(path, &copy.file).map_err(|e| format!("copy {}: {e}", path.display()))?;
+        if facts(path).map_err(|e| e.to_string())? == before {
+            let c = open(&copy.file, true).map_err(|e| format!("cannot read the copy: {e}"))?;
+            return Ok((c, Some(copy)));
+        }
+    }
+    Err(format!(
+        "{} is locked and kept changing while being copied",
+        path.display()
+    ))
+}
+
+fn is_locked(e: &rusqlite::Error) -> bool {
+    matches!(
+        e.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
+}
+
+/// A temporary copy of a locked database, removed when dropped.
+struct Copy {
+    dir: PathBuf,
+    file: PathBuf,
+}
+
+impl Copy {
+    fn new() -> Result<Self, String> {
+        let dir = std::env::temp_dir().join(format!("sinex-sqlite-copy-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let file = dir.join("db");
+        Ok(Self { dir, file })
+    }
+}
+
+impl Drop for Copy {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
@@ -433,6 +498,27 @@ mod tests {
             (n.reading_order)(0) > b,
             "a later poll is newer than anything before"
         );
+    }
+
+    #[test]
+    fn a_locked_database_is_read_from_a_verified_copy() {
+        let path = db();
+        let holder = Connection::open(&path).unwrap();
+        holder
+            .execute_batch("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; UPDATE t SET n = n;")
+            .unwrap();
+        let a = driver(path)
+            .poll(&Value::Null, &mut RowMemory::default())
+            .unwrap();
+        assert!(
+            a.observation.unavailable.is_none(),
+            "{:?}",
+            a.observation.unavailable
+        );
+        let m = a.material.as_ref().unwrap();
+        assert_eq!(m.records.len(), 2);
+        assert_eq!(m.manifest["read_from"], "verified copy");
+        drop(holder);
     }
 
     #[test]

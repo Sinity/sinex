@@ -31,6 +31,13 @@ impl Blobs {
         Ok(self.0.contains(&parse(name)?))
     }
 
+    /// Store bytes read from `reader` (an export archive of any size) without
+    /// holding them in memory, and return their name.
+    pub fn put_reader(&self, reader: impl std::io::Read) -> Result<String> {
+        let hash = self.0.put(reader, 3)?;
+        Ok(format!("blake3:{}", hash.hex()))
+    }
+
     pub fn read_range(&self, name: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
         Ok(self.0.read_range(&parse(name)?, offset, len)?)
     }
