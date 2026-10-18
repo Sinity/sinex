@@ -15,6 +15,7 @@ thiserror.workspace = true
 time.workspace = true
 rusqlite.workspace = true
 uuid.workspace = true
+gix.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

@@ -14,14 +14,6 @@ impl ExportArchive {
     }
 }
 
-/// A provider API with a cursor or page token; IMAP IDLE for live mail.
-pub struct ApiCursor;
-impl ApiCursor {
-    pub fn poll(&self, _cursor: &Value) -> Result<Acquired, DriverError> {
-        todo!("architecture §5.3 ApiCursor: each response body is a material")
-    }
-}
-
 /// A directory walk: per-file classification; completed scans record what vanished.
 pub struct DirSnapshot;
 impl DirSnapshot {

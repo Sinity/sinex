@@ -63,6 +63,9 @@ enum Command {
         /// ActivityWatch's `aw-server-rust/sqlite.db`.
         #[arg(long)]
         activitywatch: Option<PathBuf>,
+        /// A local repository whose commits to read; repeatable.
+        #[arg(long = "repository")]
+        repositories: Vec<PathBuf>,
         #[arg(long, default_value = "localhost")]
         host: String,
     },
@@ -284,6 +287,7 @@ async fn main() -> std::process::ExitCode {
             hyprland_spool,
             journald_spool,
             activitywatch,
+            repositories,
             host,
         } => {
             backfill::run(backfill::Options {
@@ -294,6 +298,7 @@ async fn main() -> std::process::ExitCode {
                 hyprland_spool,
                 journald_spool,
                 activitywatch,
+                repositories,
                 host,
             })
             .await
