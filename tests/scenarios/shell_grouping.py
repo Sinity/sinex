@@ -358,7 +358,7 @@ poll_interval_ms = {poll}
         settled()
         before = sql(h, live_atuin)
         refused = cli('replay', selection, '--action-id', str(uuid.uuid4()), op=True, expected=4)
-        assert refused['details']['admitted'] == 0 and 'differs from the current occurrence reading' in refused['details']['reason'], refused
+        assert refused['details']['admitted'] == 0 and 'differs from the current reading' in refused['details']['reason'], refused
         assert sql(h, live_atuin) == before
         daemon.stop()
         update_history(source, "UPDATE history SET command='echo replay-binding-original' WHERE id='replay-binding'")
