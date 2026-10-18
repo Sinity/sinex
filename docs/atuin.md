@@ -49,6 +49,8 @@ Rows go to an open part file that is fsynced before the writer transaction commi
 
 When the Atuin database disappears, stored events, `show` and `trace --bytes` keep working; queries return incomplete coverage (CLI exit 5) and `sources` reports the source unavailable. Unavailable polls never create a replacement database.
 
+The `writer_kill` scenario (`xtask scenario writer_kill`) covers both: it kills the writer at each pause point, restarts it with and without the Atuin file, and compares the result with an uninterrupted run.
+
 A full read is not a snapshot of the SQLite file, and a row missing from the provider is never admitted as a deletion.
 
 ## Exclusion
