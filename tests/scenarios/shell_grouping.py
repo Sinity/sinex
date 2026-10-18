@@ -456,8 +456,9 @@ poll_interval_ms = {poll}
 
     def fairness():
         daemon.stop()
+        # Enough rows that regrouping is still running when the next source poll admits fair-later.
         add_history(source, *[(f'fair-{n}', 900_000_000_000_000 + n * 1_000_000_000, 1, 0, f'echo fair-{n}', '/work/harbor',
-                               'fair-session', 'fixture-host', None) for n in range(150)])
+                               'fair-session', 'fixture-host', None) for n in range(1000)])
         address = work/'fair.sock'
         with pause_listener(address, 60) as listener:
             configure(poll=100)
