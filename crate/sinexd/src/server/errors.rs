@@ -68,7 +68,7 @@ pub(super) fn exclusion_outcome(mut value: Value) -> Result<Value, RpcError> {
     // The exclusion may already be committed, so a value that cannot be shown
     // must not read as a failed mutation.
     let identity = json!({"action_id":value["action_id"],"operation_id":value["operation_id"],"outcome":"retained_but_unpresentable"});
-    if crate::output::admit(&mut value).is_err() {
+    if crate::output::mask(&mut value).is_err() {
         return Err(RpcError::new(
             ErrorKind::Partial,
             "mutation committed but its outcome cannot be presented; retry the same action_id to read it",

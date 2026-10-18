@@ -1,5 +1,6 @@
-//! Read-only Atuin acquisition. A poll owns one SQLite read transaction and yields bounded
-//! steps to the canonical writer. A restart retries a full poll; it never resumes a lost snapshot.
+//! Atuin history reading. Each poll reads one SQLite transaction and admits its
+//! rows to the writer in bounded steps. After a failure or restart the next poll
+//! is a full read; a partial read is never resumed.
 use crate::config::AtuinConfig;
 use crate::sqlite_file;
 use serde_json::{Value, json};
@@ -28,8 +29,8 @@ pub async fn run(
         }
         let observation_id = observation.observation;
         poll(&config, &mut reader, observation, &admission, &stop).await?;
-        // Sample both clocks at the scheduling decision. Persist that wall-clock target
-        // and wait to this monotonic target, including time spent committing metadata.
+        // Sample both clocks once: store the wall-clock target and sleep until the
+        // monotonic one, so time spent committing counts toward the interval.
         let monotonic = tokio::time::Instant::now();
         let schedule = sinex_model::acquisition::PollSchedule::after(
             OffsetDateTime::now_utc(),
@@ -55,8 +56,8 @@ pub async fn run(
     }
 }
 
-/// Commit the configured input and its reading observation before SQLite I/O.
-/// Startup awaits only this writer admission, never the provider read.
+/// Commit the reading observation before touching SQLite. Startup waits for
+/// this commit, never for the read itself.
 pub async fn begin_poll(
     path: &Path,
     rules: &[PrivacyRule],
@@ -96,17 +97,21 @@ pub async fn begin_poll(
 #[derive(Default)]
 struct Reader {
     connection: Option<SqliteConnection>,
+    /// Identifies this open connection; a checkpoint from another epoch forces a full read.
     epoch: Option<Uuid>,
     full_due: Option<tokio::time::Instant>,
 }
 impl Reader {
+    fn reset(&mut self) {
+        self.connection = None;
+        self.epoch = None;
+        self.full_due = None;
+    }
     async fn connected(&mut self, path: &Path) -> Result<(&mut SqliteConnection, Uuid), String> {
         if let Some(connection) = self.connection.as_mut()
             && sqlite_file::verify(connection, path).await.is_err()
         {
-            self.connection.take();
-            self.epoch = None;
-            self.full_due = None;
+            self.reset();
         }
         if self.connection.is_none() {
             let options = SqliteConnectOptions::new()
@@ -136,11 +141,9 @@ async fn poll(
 ) -> Result<(), String> {
     let result = read(config, reader, &observation, admission, stop).await;
     if let Err(reason) = result {
-        // A lost/partial snapshot can never resume incremental progress. Its
-        // already acknowledged prefix stays retained under its original observation.
-        reader.connection.take();
-        reader.epoch = None;
-        reader.full_due = None;
+        // Rows already admitted stay with this observation; the next poll
+        // reopens and reads everything.
+        reader.reset();
         admission
             .submit_atuin(AtuinStep {
                 rows: vec![],
@@ -212,7 +215,7 @@ impl Batch<'_> {
             .checked_add(256)
             .ok_or("Atuin row size overflow")?;
         if size > MAX_STEP_BYTES {
-            return Err("Atuin row exceeds bounded retention budget; poll incomplete".into());
+            return Err("Atuin row exceeds step size limit; poll incomplete".into());
         }
         if self.rows.len() == MAX_STEP_ROWS || self.bytes + size > MAX_STEP_BYTES {
             self.admission
@@ -221,7 +224,7 @@ impl Batch<'_> {
                     ..self.observation.clone()
                 })
                 .await
-                .map_err(|_| "Atuin retained admission failed")?;
+                .map_err(|_| "Atuin rows could not be admitted")?;
             self.bytes = 0;
         }
         self.bytes += size;
@@ -247,7 +250,7 @@ async fn read(
         .begin()
         .await
         .map_err(|_| "Atuin consistent read unavailable")?;
-    // First read pins one snapshot for coordinates, cookies and every selected value.
+    // The first statement starts the read snapshot; every later value comes from it.
     let schema: i64 = sqlx::query_scalar("PRAGMA schema_version")
         .fetch_one(&mut *tx)
         .await
@@ -282,9 +285,7 @@ async fn read(
     let mut through = if full { None } else { Some(old_through) };
     loop {
         if *stop.borrow() {
-            return Err(
-                "Atuin poll interrupted by daemon shutdown; committed prefix retained".into(),
-            );
+            return Err("Atuin poll interrupted by daemon shutdown; admitted rows kept".into());
         }
         // Separate first/full and incremental SQL keeps the rowid range indexed.
         let row = if let Some(through) = through {
@@ -307,12 +308,12 @@ async fn read(
         let mut after = None;
         loop {
             if *stop.borrow() {
-                return Err("Atuin unfinished read interrupted; committed prefix retained".into());
+                return Err("Atuin unfinished read interrupted; admitted rows kept".into());
             }
             let keys = admission
                 .atuin_unfinished_page(start.input, start.snapshot_seq, after)
                 .await
-                .map_err(|_| "Atuin prior unfinished eligibility unavailable")?;
+                .map_err(|_| "Atuin unfinished keys unavailable")?;
             if keys.is_empty() {
                 break;
             }
@@ -323,7 +324,7 @@ async fn read(
                 if let Some(row) = row {
                     batch.push(row).await?;
                 }
-                // Missing prior keys do not establish removal; no census is admitted.
+                // A missing key is not evidence of deletion.
             }
         }
     }
@@ -385,17 +386,17 @@ async fn read(
     };
     final_step.metadata["_sinex_read_plan_v1"] =
         serde_json::to_value(plan).map_err(|_| "Atuin read plan encoding")?;
-    // Checkpoint and successful completion share the final admission transaction.
+    // The checkpoint commits in the same writer transaction as the final rows.
     admission
         .submit_atuin(final_step)
         .await
-        .map_err(|_| "Atuin retained admission/finalization failed")?;
+        .map_err(|_| "Atuin final admission failed")?;
     reader.full_due = next_full;
     Ok(())
 }
 
-// The persisted wall target describes this decision; the live epoch also has a
-// monotonic deadline so realtime rollback cannot postpone a full indefinitely.
+// A wall-clock change can push the stored due time back, so a live reader also
+// keeps a monotonic deadline.
 fn full_required(
     deadline: Option<tokio::time::Instant>,
     now: tokio::time::Instant,
