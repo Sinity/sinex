@@ -1,10 +1,18 @@
 [package]
 name = "sinex-protocol"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+description = "Wire types: the command table for CLI, API and MCP, and the producer protocol."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
-sinex-model = { path = "../sinex-model" }
+sinex-model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lints]
+workspace = true

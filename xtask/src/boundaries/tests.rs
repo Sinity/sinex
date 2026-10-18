@@ -69,15 +69,19 @@ fn pure_crates_refuse_io_dependencies_directly_and_transitively() {
 }
 
 #[test]
-fn only_store_uses_postgres_and_the_daemon_only_sqlite() {
-    let client = metadata(&[("sinexctl", vec![dep("sqlx", None)], vec![])]);
-    assert!(validate(client).is_err());
-    let sqlite = json!({"name": "sqlx", "kind": null, "target": null,
-        "features": ["runtime-tokio", "sqlite"], "uses_default_features": false});
-    assert!(validate(metadata(&[("sinexd", vec![sqlite.clone()], vec![])])).is_ok());
-    let mut postgres = sqlite;
-    postgres["features"] = json!(["postgres"]);
-    assert!(validate(metadata(&[("sinexd", vec![postgres], vec![])])).is_err());
+fn only_store_schema_and_daemon_use_sqlx() {
+    for client in ["sinexctl", "sinex-sources", "sinex-library"] {
+        assert!(
+            validate(metadata(&[(client, vec![dep("sqlx", None)], vec![])])).is_err(),
+            "{client}"
+        );
+    }
+    for allowed in ["sinex-store", "sinex-schema", "sinexd"] {
+        assert!(
+            validate(metadata(&[(allowed, vec![dep("sqlx", None)], vec![])])).is_ok(),
+            "{allowed}"
+        );
+    }
 }
 
 #[test]

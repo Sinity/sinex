@@ -1,6 +1,22 @@
 [workspace]
 resolver = "2"
-members = ["crate/sinex-model", "crate/sinex-protocol", "crate/sinex-store", "crate/sinexd", "crate/sinexctl", "xtask"]
+members = [
+    "crate/sinex-macros",
+    "crate/sinex-model",
+    "crate/sinex-protocol",
+    "crate/sinex-schema",
+    "crate/sinex-store",
+    "crate/sinex-sources",
+    "crate/sinex-automata",
+    "crate/sinex-analysis",
+    "crate/sinex-library",
+    "crate/sinexd",
+    "crate/sinex-session",
+    "crate/sinex-capture",
+    "crate/sinexctl",
+    "crate/sinex-offline",
+    "xtask",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,10 +27,36 @@ license = "MIT"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "signal"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
+blake3 = "1"
+thiserror = "2"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "json", "macros", "time"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+clap = { version = "4", features = ["derive"] }
+proptest = "1"
+hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0" }
+devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0", features = ["pg"] }
+sinex-macros = { path = "crate/sinex-macros" }
+sinex-model = { path = "crate/sinex-model" }
+sinex-protocol = { path = "crate/sinex-protocol" }
+sinex-schema = { path = "crate/sinex-schema" }
+sinex-store = { path = "crate/sinex-store" }
+sinex-sources = { path = "crate/sinex-sources" }
+sinex-automata = { path = "crate/sinex-automata" }
+sinex-analysis = { path = "crate/sinex-analysis" }
+sinex-library = { path = "crate/sinex-library" }
+sinex-offline = { path = "crate/sinex-offline" }
 
-# Line tables keep backtraces useful at a fraction of the binary size; the
-# daemon hashes its own executable at startup.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Skeleton bodies are allowed while the workspace is being filled.
+todo = "warn"
+
+# Line tables keep backtraces useful at a fraction of the binary size.
 [profile.dev]
 debug = "line-tables-only"
 

@@ -1,16 +1,23 @@
 [package]
 name = "sinex-model"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+description = "Sinex's shared types: identifiers, clocks, events, payloads, batches. No IO."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-uuid = { version = "1", features = ["serde", "v7"] }
-time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
-blake3 = "1"
-caseless = "0.2.2"
-unicode-normalization = "0.1"
-unicode-segmentation = "1.12"
-winnow = "0.7"
+sinex-macros.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+time.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+schemars = { version = "1", features = ["uuid1"] }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

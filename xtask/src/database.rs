@@ -1,9 +1,9 @@
 //! Sinex's schema on devkit's PostgreSQL: the roles, the schema bootstrap
-//! (`sinexd admin schema`), and the environment database tests and
-//! scenarios read.
+//! (the query-free `sinex-schema apply`), and the environment compile-time
+//! checks and tests read.
 use crate::Result;
 use devkit::pg::{ClusterOptions, Schema, SchemaDatabases, Server};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 pub const ROLES: &[&str] = &["sinex_writer", "sinex_reader"];
@@ -20,8 +20,9 @@ pub fn cluster_options() -> ClusterOptions {
     }
 }
 
-/// The schema is declared in `crate/sinex-store/src/schema`; the server
-/// version is part of its identity because it decides the catalog.
+/// The schema is declared in `crate/sinex-schema`, with its CHECK lists and
+/// typed views generated from `crate/sinex-model`; the server version is part
+/// of its identity because it decides the catalog.
 pub fn schema_hash(root: &Path) -> Result<String> {
     let version = Command::new("postgres")
         .arg("--version")
@@ -29,54 +30,50 @@ pub fn schema_hash(root: &Path) -> Result<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
         .map_err(|e| format!("postgres --version: {e}"))?;
     Ok(devkit::pg::schema_hash(
-        &[root.join("crate/sinex-store/src/schema")],
+        &[
+            root.join("crate/sinex-schema/src"),
+            root.join("crate/sinex-model/src"),
+            root.join("crate/sinex-macros/src"),
+        ],
         &[&version],
     )?)
 }
 
-/// Applies the schema with the admin-only daemon at `admin`, building it
-/// first when no binary is given.
-pub fn bootstrap(server: &Server, database: &str, admin: Option<&Path>) -> devkit::pg::Result {
+/// Build the query-free schema tool and apply the schema to `database`.
+pub fn bootstrap(server: &Server, database: &str) -> devkit::pg::Result {
     server.ensure_roles(ROLES)?;
-    let admin = match admin {
-        Some(path) => path.to_owned(),
-        None => {
-            let status = Command::new("cargo")
-                .args(["build", "--locked", "-p", "sinexd", "--no-default-features"])
-                .status()
-                .map_err(|e| format!("cargo build: {e}"))?;
-            if !status.success() {
-                return Err(format!("building the admin-only sinexd failed: {status}"));
-            }
-            crate::target_dir().join("debug/sinexd")
-        }
-    };
-    let file = std::env::temp_dir().join(format!("sinex-admin-{}", std::process::id()));
-    std::fs::write(&file, server.url(database, None)).map_err(|e| e.to_string())?;
-    let output = Command::new(&admin)
-        .args(["admin", "schema", "--connection-file"])
-        .arg(&file)
+    let status = Command::new("cargo")
+        .args(["build", "--locked", "-p", "sinex-schema"])
+        .status()
+        .map_err(|e| format!("cargo build: {e}"))?;
+    if !status.success() {
+        return Err(format!("building sinex-schema failed: {status}"));
+    }
+    let output = Command::new(crate::target_dir().join("debug/sinex-schema"))
+        .arg("apply")
+        .arg(server.url(database, None))
         .output()
-        .map_err(|e| format!("{}: {e}", admin.display()));
-    let _ = std::fs::remove_file(&file);
-    let output = output?;
+        .map_err(|e| format!("sinex-schema: {e}"))?;
     if output.status.success() {
         Ok(())
     } else {
         Err(format!(
-            "sinexd admin schema failed: {}\n{}",
+            "sinex-schema apply failed: {}\n{}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
         ))
     }
 }
 
+pub fn schema(root: &Path) -> Result<(String, impl Fn(&Server, &str) -> devkit::pg::Result)> {
+    Ok((schema_hash(root)?, bootstrap))
+}
+
 /// The server and this schema version's databases, built if needed.
-pub fn prepare(root: &Path, admin: Option<&Path>) -> Result<(Server, SchemaDatabases)> {
+pub fn prepare(root: &Path) -> Result<(Server, SchemaDatabases)> {
     let server = Server::service_or_start(&cluster_options())?;
     server.ensure_roles(ROLES)?;
-    let hash = schema_hash(root)?;
-    let apply = |server: &Server, database: &str| bootstrap(server, database, admin);
+    let (hash, apply) = schema(root)?;
     let databases = server.ensure_schema(&Schema {
         project: "sinex",
         hash,
@@ -85,25 +82,11 @@ pub fn prepare(root: &Path, admin: Option<&Path>) -> Result<(Server, SchemaDatab
     Ok((server, databases))
 }
 
-/// What a database test or scenario reads for the database `name`: the
-/// admin, writer and reader URLs, a store directory under `scratch`,
-/// `DATABASE_URL` for compile-time checks against `schema`, and `PGHOST` and
-/// `PGPORT` for the command-line tools.
-pub fn env(server: &Server, schema: &str, name: &str, scratch: &Path) -> Vec<(String, String)> {
-    let store: PathBuf = scratch.join(format!("{name}-store"));
-    let mut env = vec![
-        ("DATABASE_URL".into(), server.url(schema, None)),
-        ("SINEX_TEST_ADMIN_URL".into(), server.url(name, None)),
-        (
-            "SINEX_TEST_WRITER_URL".into(),
-            server.url(name, Some("sinex_writer")),
-        ),
-        (
-            "SINEX_TEST_READER_URL".into(),
-            server.url(name, Some("sinex_reader")),
-        ),
-        ("SINEX_TEST_STORE_DIR".into(), store.display().to_string()),
-    ];
+/// `DATABASE_URL` for compile-time checks against the schema database, and
+/// what tests need to clone the template (`devkit::pg::test_database`).
+pub fn env(server: &Server, databases: &SchemaDatabases) -> Vec<(String, String)> {
+    let mut env = vec![("DATABASE_URL".into(), server.url(&databases.schema, None))];
+    env.extend(server.test_env(&databases.template));
     env.extend(server.pg_env());
     env
 }

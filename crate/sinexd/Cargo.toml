@@ -1,30 +1,28 @@
 [package]
 name = "sinexd"
+description = "The Sinex daemon: admission and the one writer, sources, derivations, the API, the confirmed stream."
 version.workspace = true
 edition.workspace = true
+publish.workspace = true
 license.workspace = true
 
-[features]
-default = ["runtime"]
-runtime = ["sinex-store/product", "dep:axum", "dep:futures-util"]
-
 [dependencies]
-credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0" }
-sinex-model = { path = "../sinex-model" }
-sinex-protocol = { path = "../sinex-protocol" }
-sinex-store = { path = "../sinex-store", default-features = false }
-serde.workspace = true
+sinex-model.workspace = true
+sinex-schema.workspace = true
+sinex-store.workspace = true
+sinex-sources.workspace = true
+sinex-automata.workspace = true
+sinex-protocol.workspace = true
 serde_json.workspace = true
+sqlx.workspace = true
 tokio.workspace = true
-clap = { version = "4", features = ["derive"] }
-toml = "0.8"
-schemars = "0.8"
-fs2 = "0.4"
-axum = { version = "0.8", optional = true }
-blake3 = "1"
+clap.workspace = true
+time.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
 
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
-uuid = { version = "1", features = ["v7", "serde"] }
-time = { version = "0.3", features = ["formatting"] }
+[dev-dependencies]
+devkit.workspace = true
 
-futures-util = { version = "0.3", default-features = false, features = ["std"], optional = true }
+[lints]
+workspace = true

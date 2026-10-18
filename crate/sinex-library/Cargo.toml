@@ -1,0 +1,15 @@
+[package]
+name = "sinex-library"
+description = "The media library: items, renditions, curation and handoff."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+sinex-model.workspace = true
+sinex-store.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true
