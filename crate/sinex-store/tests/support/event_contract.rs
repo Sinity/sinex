@@ -1,4 +1,5 @@
-//! Direct SQL fixtures distinguish database laws; they are not supported producer routes.
+//! Inserts events with direct SQL to check the constraints on `core.events` and
+//! `reflection.events`. Producers never write events this way.
 use sinex_store::{Error, check_schema};
 use sqlx::{Connection, Executor, PgConnection};
 use uuid::Uuid;
@@ -40,8 +41,7 @@ async fn insert_into(
     c: &Case<'_>,
     reflection: bool,
 ) -> std::result::Result<(), sqlx::Error> {
-    // Positive structural fixtures must name a real declared producer. This
-    // does not bypass the producer FK or make this an admission route.
+    // Derived events must reference a registered producer version.
     if let Some(producer) = c.producer {
         sqlx::query("INSERT INTO core.producer_versions(id,name,version,run_id,configuration) VALUES($1,'synthetic.schema-contract','fixture-v1',$2,'{\"fixture\":\"direct structural SQL, not a product producer\"}'::jsonb) ON CONFLICT(id) DO NOTHING").bind(producer).bind(run).execute(&mut *conn).await?;
     }
@@ -139,7 +139,7 @@ pub async fn verify(admin: &str, reader: &str, parent: Uuid, material: Uuid) -> 
             Some("ts_clock")
         );
     }
-    // Both hypertables enforce time/quality pairing independently of constructors.
+    // Both event tables enforce the time/quality pairing themselves, not only the Rust constructors.
     for reflection in [false, true] {
         for (original, quality) in [
             (Some("2000-01-01T00:00:00Z"), Some("unknown")),
