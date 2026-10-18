@@ -303,15 +303,14 @@ impl WriterPool {
             };
             let (key, keyhash) = occurrence(profile, generation, parsed.kind, &parsed.key);
             let old=sqlx::query("SELECT l.event_id,l.read_order,l.record_hash,p.version FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id LEFT JOIN core.producer_versions p ON p.id=e.producer_version_id WHERE l.store=0 AND l.key_hash=$1").bind(&keyhash).fetch_optional(&mut *tx).await?;
-            if let Some(old) = &old {
-                if old.try_get::<i64, _>("read_order")? >= read_order
+            if let Some(old) = &old
+                && (old.try_get::<i64, _>("read_order")? >= read_order
                     || old.try_get::<Vec<u8>, _>("record_hash")? == hash
-                        && old.try_get::<Option<String>, _>("version")?.as_deref() == Some(PARSER)
-                {
-                    sqlx::query("UPDATE core.live_equivalence SET read_order=greatest(read_order,$2) WHERE store=0 AND key_hash=$1").bind(&keyhash).bind(read_order).execute(&mut *tx).await?;
-                    repeated += 1;
-                    continue;
-                }
+                        && old.try_get::<Option<String>, _>("version")?.as_deref() == Some(PARSER))
+            {
+                sqlx::query("UPDATE core.live_equivalence SET read_order=greatest(read_order,$2) WHERE store=0 AND key_hash=$1").bind(&keyhash).bind(read_order).execute(&mut *tx).await?;
+                repeated += 1;
+                continue;
             }
             let id = Uuid::now_v7();
             let event_type = if parsed.kind == "page.visited" {

@@ -1397,7 +1397,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
         ));
     }
     for table in &expected {
-        let bad: bool = sqlx::query_scalar("SELECT NOT has_table_privilege('sinex_reader',$1,'SELECT') OR has_table_privilege('sinex_reader',$1,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('sinex_reader',$1,'INSERT,UPDATE,REFERENCES')").bind(&table).fetch_one(&mut *conn).await?;
+        let bad: bool = sqlx::query_scalar("SELECT NOT has_table_privilege('sinex_reader',$1,'SELECT') OR has_table_privilege('sinex_reader',$1,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('sinex_reader',$1,'INSERT,UPDATE,REFERENCES')").bind(table).fetch_one(&mut *conn).await?;
         if bad {
             return Err(Error::Schema(format!("reader grants unsafe for {table}")));
         }
@@ -1440,7 +1440,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
                     | "derivation.session_dirty"
                     | "derivation.session_progress"
             );
-        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1 IN ('core.deleted_occurrences','core.live_equivalence','core.live_coordinates','derivation.shell_dirty','derivation.session_dirty')) AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(&table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
+        let good: bool = sqlx::query_scalar("SELECT has_table_privilege('sinex_writer',$1,'SELECT') AND has_table_privilege('sinex_writer',$1,'INSERT')=$2 AND has_table_privilege('sinex_writer',$1,'UPDATE')=$3 AND has_any_column_privilege('sinex_writer',$1,'INSERT')=$2 AND has_any_column_privilege('sinex_writer',$1,'UPDATE')=($3 OR $1='raw.source_material_registry') AND NOT has_any_column_privilege('sinex_writer',$1,'REFERENCES') AND has_table_privilege('sinex_writer',$1,'DELETE')=($1 IN ('core.deleted_occurrences','core.live_equivalence','core.live_coordinates','derivation.shell_dirty','derivation.session_dirty')) AND NOT has_table_privilege('sinex_writer',$1,'TRUNCATE,REFERENCES,TRIGGER')").bind(table).bind(writer_insert).bind(writer_update).fetch_one(&mut *conn).await?;
         if !good {
             return Err(Error::Schema(format!("writer grants differ for {table}")));
         }

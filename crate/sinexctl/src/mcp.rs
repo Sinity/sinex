@@ -1,12 +1,8 @@
 //! A transport adapter only. The authenticated daemon owns binding, execution,
 //! deadlines, qualification and presentation for every advertised tool.
 use rmcp::{
-    RoleServer, ServerHandler, ServiceExt,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::*,
-    schemars,
-    service::RequestContext,
-    tool, tool_handler, tool_router,
+    RoleServer, ServerHandler, ServiceExt, handler::server::wrapper::Parameters, model::*,
+    schemars, service::RequestContext, tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -17,7 +13,6 @@ struct Reader {
     endpoint: String,
     token: String,
     client: reqwest::Client,
-    tool_router: ToolRouter<Self>,
 }
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -237,7 +232,6 @@ pub fn run(endpoint: String, path: PathBuf) -> Result<(), Box<dyn std::error::Er
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(15))
                 .build()?,
-            tool_router: Reader::tool_router(),
         };
         let service = reader.serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;

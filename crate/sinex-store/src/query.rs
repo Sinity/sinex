@@ -366,9 +366,7 @@ impl ReadPool {
             (f.field == "kind" && f.value.as_str() != Some("command.canonical"))
                 || (f.field == "source" && f.value.as_str() != Some("fusion.shell-command"))
         });
-        let mut q: QueryBuilder<Postgres> = QueryBuilder::new(format!(
-            "WITH matching AS (SELECT e.id,to_char(e.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(e.ts_orig_tiebreak,0)::text,3,'0') || 'Z' AS at FROM core.events e WHERE e.record_state='present' AND e.commit_seq<="
-        ));
+        let mut q: QueryBuilder<Postgres> = QueryBuilder::new("WITH matching AS (SELECT e.id,to_char(e.ts_orig AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US') || lpad(COALESCE(e.ts_orig_tiebreak,0)::text,3,'0') || 'Z' AS at FROM core.events e WHERE e.record_state='present' AND e.commit_seq<=".to_string());
         q.push_bind(seq).push(" AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=").push_bind(seq).push(")");
         q.push(" AND (e.event_type NOT IN ('command.canonical','activity.session.boundary') OR ")
             .push(CURRENT_PARENTS)
@@ -737,7 +735,7 @@ fn protect_retained(
     if matches!(before["table"].as_str(), Some("visits" | "downloads")) {
         // Provider content may be protected recursively; acquisition selectors,
         // native keys and typed BLOB envelopes must remain exact or refuse.
-        fn selectors(original: &Value, masked: &Value, parent: &str) -> bool {
+        fn selectors(original: &Value, masked: &Value) -> bool {
             match original {
                 Value::Object(fields) => fields.iter().all(|(key, value)| {
                     if matches!(
@@ -753,18 +751,17 @@ fn protect_retained(
                     ) {
                         masked.get(key) == Some(value)
                     } else {
-                        selectors(value, &masked[key], key)
+                        selectors(value, &masked[key])
                     }
                 }),
                 Value::Array(items) => masked.as_array().is_some_and(|m| {
-                    items.len() == m.len()
-                        && items.iter().zip(m).all(|(a, b)| selectors(a, b, parent))
+                    items.len() == m.len() && items.iter().zip(m).all(|(a, b)| selectors(a, b))
                 }),
                 Value::String(_) => true,
                 _ => original == masked,
             }
         }
-        if !selectors(&before, record, "") {
+        if !selectors(&before, record) {
             return Err(Error::ReplayRefused(
                 "raw privacy projection changes an opaque selector",
             ));

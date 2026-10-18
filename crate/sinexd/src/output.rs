@@ -200,6 +200,26 @@ pub fn encode(response: RpcResponse) -> Vec<u8> {
     }
     output.0
 }
+
+pub fn request_safe(id: &RpcId, params: &Value) -> bool {
+    let id_safe = match id {
+        RpcId::Number(_) => true,
+        RpcId::String(raw) => text(raw).is_ok_and(|masked| masked == *raw),
+    };
+    // Screening does not decorate or change request values. The protocol
+    // validator, called next, owns method-specific parameter shapes.
+    fn safe(value: &Value) -> bool {
+        match value {
+            Value::String(raw) => text(raw).is_ok_and(|masked| masked == *raw),
+            Value::Array(values) => values.iter().all(safe),
+            Value::Object(fields) => fields
+                .iter()
+                .all(|(key, value)| text(key).is_ok_and(|masked| masked == *key) && safe(value)),
+            _ => true,
+        }
+    }
+    id_safe && safe(params)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,24 +316,4 @@ mod tests {
         assert_eq!(value["error"]["kind"], "refused");
         assert!(!String::from_utf8(bytes).unwrap().contains(&token));
     }
-}
-
-pub fn request_safe(id: &RpcId, params: &Value) -> bool {
-    let id_safe = match id {
-        RpcId::Number(_) => true,
-        RpcId::String(raw) => text(raw).is_ok_and(|masked| masked == *raw),
-    };
-    // Screening does not decorate or change request values. The protocol
-    // validator, called next, owns method-specific parameter shapes.
-    fn safe(value: &Value) -> bool {
-        match value {
-            Value::String(raw) => text(raw).is_ok_and(|masked| masked == *raw),
-            Value::Array(values) => values.iter().all(safe),
-            Value::Object(fields) => fields
-                .iter()
-                .all(|(key, value)| text(key).is_ok_and(|masked| masked == *key) && safe(value)),
-            _ => true,
-        }
-    }
-    id_safe && safe(params)
 }

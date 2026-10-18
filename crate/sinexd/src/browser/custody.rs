@@ -427,17 +427,17 @@ impl Custodian {
             if &header[..16] != b"SQLite format 3\0" || header[18] != 1 || header[19] != 1 {
                 return Err("locked source is not a supported rollback-journal database".into());
             }
-            if let Some((prior, path)) = &self.cached {
-                if &before == prior {
-                    tokio::select! {_ = tokio::time::sleep(Duration::from_millis(50))=>{},_ = async {let mut stop=stop.clone();let _=stop.changed().await;}=>return Err("browser acquisition cancelled".into())}
-                    let after = pair(&source)?;
-                    self.verify()?;
-                    if after == before && quiet(&before) {
-                        return Ok((
-                            path.clone(),
-                            json!({"kind":"verified_locked_copy_reused","source_pair":before,"copied_bytes":0,"premise":"unchanged coherent local-FS identities/size/nanosecond metadata imply unchanged bytes; unobserved ABA and arbitrary byte overwrites are not proved"}),
-                        ));
-                    }
+            if let Some((prior, path)) = &self.cached
+                && &before == prior
+            {
+                tokio::select! {_ = tokio::time::sleep(Duration::from_millis(50))=>{},_ = async {let mut stop=stop.clone();let _=stop.changed().await;}=>return Err("browser acquisition cancelled".into())}
+                let after = pair(&source)?;
+                self.verify()?;
+                if after == before && quiet(&before) {
+                    return Ok((
+                        path.clone(),
+                        json!({"kind":"verified_locked_copy_reused","source_pair":before,"copied_bytes":0,"premise":"unchanged coherent local-FS identities/size/nanosecond metadata imply unchanged bytes; unobserved ABA and arbitrary byte overwrites are not proved"}),
+                    ));
                 }
             }
             let destination = self.next_path("view");

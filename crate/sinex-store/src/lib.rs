@@ -838,9 +838,9 @@ impl WriterPool {
             .execute(&mut self.connection)
             .await?;
         self.connection.close().await?;
-        if let Some(reply) = shutdown {
-            if reply.send(()).is_err() { /* requester gone */ }
-        }
+        if let Some(reply) = shutdown
+            && reply.send(()).is_err()
+        { /* requester gone */ }
         Ok(())
     }
 
@@ -1083,6 +1083,7 @@ fn coordinate_hash(material: Uuid, anchor: i64, event_type: &str, ordinal: i16) 
     hash.finalize().as_bytes()[..16].to_vec()
 }
 
+#[cfg(any(feature = "product", test))]
 fn dotted(s: &str) -> bool {
     s.len() <= 128
         && s.contains('.')
