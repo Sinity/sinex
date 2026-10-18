@@ -214,7 +214,7 @@ def exercise(h):
             d.start('changed-binary', binary=variant)
             refused = wait_operation(op, 'refused')
             assert refused['processed'] == refused['archived'] == refused['admitted'] == 128
-            assert 'interpretation basis changed' in refused['reason']
+            assert 'parser settings changed' in refused['reason']
             assert ids(live_rows()) == ids(held) and audit()['effects'] == receipt['effects']
             assert d.sql(artifact) != original_artifact
             assert future.result(timeout=15)['kind'] in ('internal', 'refused')
