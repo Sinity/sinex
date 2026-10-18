@@ -1,4 +1,4 @@
-"""Finite synthetic controls for independently complete metadata and exact FTS."""
+"""Finite synthetic controls for complete normalized tokens, exact SQL search and metadata availability."""
 import hashlib
 import json
 from pathlib import Path
@@ -10,13 +10,13 @@ import urllib.request
 import uuid
 
 PLANNED = [
-    'guarded stage-four metadata upgrade preserves evidence and refuses old writer',
+    'guarded stage-six token-text upgrade preserves evidence and refuses old writer',
     'blocked optional receipts preserve the primary source snapshot and recover',
-    'oversized text preserves exact later metadata and refuses every FTS shape',
+    'oversized text preserves exact complete words phrases prefixes and metadata',
     'unavailable text diagnostics honor current parent eligibility',
     'retained metadata restart provider-loss exclusion and replay keep capability truth',
     'metadata maintenance failure remains globally unavailable',
-    'unavailable-vector probes use their bounded partial-index path',
+    'unavailable-text probes use their bounded partial-index path',
     'native shell working-set indexes preserve pending sets and membership',
 ]
 
@@ -24,14 +24,14 @@ PLANNED = [
 def exercise(h):
     work, report, env, bins = (h[k] for k in ['WORK', 'REPORT', 'ENV', 'BIN_DIR'])
     run, scenario, start, stop = (h[k] for k in ['run', 'scenario', 'start_daemon', 'stop'])
-    pin = json.loads(h['OPTIONS'].metadata_fts_predecessor_pin.read_text())
+    pin = json.loads(h['OPTIONS'].search_text_predecessor_pin.read_text())
     old = Path(pin['package']) / 'bin/sinexd'
-    assert pin['candidate'] == '5c508255eaa76f9f44bde5d93c0b2ab8bd1747e6'
+    assert pin['candidate'] == '1729f952d60b697c286d846e7861a92869c34f89'
     assert pin['exit_code'] == 0 and not pin['dirty']
     assert hashlib.sha256(old.read_bytes()).hexdigest() == pin['binaries']['sinexd']['sha256']
-    (report/'metadata-fts-predecessor.json').write_text(json.dumps(pin, indent=2))
-    run(['createdb', 'metadata_fts'], label='owned metadata upgrade database')
-    connections = {k: h[k].replace('/foundation?', '/metadata_fts?') for k in ['admin','writer','reader']}
+    (report/'search-text-predecessor.json').write_text(json.dumps(pin, indent=2))
+    run(['createdb', 'search_text'], label='owned metadata upgrade database')
+    connections = {k: h[k].replace('/foundation?', '/search_text?') for k in ['admin','writer','reader']}
     connections['read-model'] = connections['reader'].replace('sinex_reader', 'sinex_read_model')
     for key, value in connections.items():
         (work/('fts-'+key)).write_text(value); (work/('fts-'+key)).chmod(0o600)
@@ -43,7 +43,7 @@ def exercise(h):
     with sqlite3.connect(source) as c:
         c.execute('CREATE TABLE history(id TEXT PRIMARY KEY,timestamp INTEGER,duration INTEGER,exit INTEGER,command TEXT,cwd TEXT,session TEXT,hostname TEXT,deleted_at INTEGER)')
         c.executemany('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)', facts)
-    endpoint = f'http://127.0.0.1:{h["free_port"]()}/rpc'; token = (work/'token').read_text(); config = work/'metadata-fts.toml'
+    endpoint = f'http://127.0.0.1:{h["free_port"]()}/rpc'; token = (work/'token').read_text(); config = work/'search-text.toml'
     config.write_text(f'''listen = "{endpoint.removeprefix('http://').removesuffix('/rpc')}"
 state_dir = "{work/'fts-state'}"
 store_dir = "{work/'fts-blobs'}"
@@ -67,7 +67,7 @@ full_interval_ms = 1000
     def api(method, params=None):
         request = urllib.request.Request(endpoint, data=json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params or {}}).encode(), headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
         with urllib.request.urlopen(request, timeout=15) as reply: value=json.load(reply)
-        with (report/'metadata-fts-rpc.jsonl').open('a') as log: log.write(json.dumps({'method':method,'params':params,'response':value})+'\n')
+        with (report/'search-text-rpc.jsonl').open('a') as log: log.write(json.dumps({'method':method,'params':params,'response':value})+'\n')
         return value
     def cli(command, *args, expected=0, operator=False):
         value=run([bins/'sinexctl','--endpoint',endpoint,'--token-file',work/('fts-operator' if operator else 'token'),command,*args,'--json'],expected=expected,label='metadata FTS '+command)
@@ -108,10 +108,10 @@ full_interval_ms = 1000
             cursor=before['page']['cursor'];assert cursor
             raw=api('query.run',{'query':'events where source = terminal.atuin-history'})['result']['rows'][0]
             reference='sinex:ev/'+raw['id'];trace=api('object.trace',{'ref':reference,'bytes':True})['result'];stop(daemon)
-            pending=schema(bins/'sinexd','--check');assert [x['number'] for x in pending['pending_changes']]==[5,6]
+            pending=schema(bins/'sinexd','--check');assert [x['number'] for x in pending['pending_changes']]==[7]
             schema(bins/'sinexd','--apply',expected=2)
             result=schema(bins/'sinexd','--apply','--dump-file',work/'metadata-before-change.dump')
-            assert result['checked_changes']==[{'number':5,'outcome':'applied'},{'number':6,'outcome':'applied'}]
+            assert result['checked_changes']==[{'number':7,'outcome':'applied'}]
             assert sql("SELECT fingerprint FROM sinex_schemas.definition") == sql("SELECT fingerprint FROM sinex_schemas.definition", h['admin'])
             assert sql("SELECT catalog FROM sinex_schemas.definition") == sql("SELECT catalog FROM sinex_schemas.definition", h['admin'])
             rejected=run([old,'serve','--config',config],expected=1,label='published old writer refuses upgraded catalog')
@@ -161,31 +161,60 @@ full_interval_ms = 1000
                 wait('source-budget acquisition restored',lambda:settled(32,True))
         scenario(PLANNED[1],source_budget)
         oversized=[
-            ('frequency',epoch+86_400_000_000_000,0,0,'repeat '*257,'/synthetic/tide','s','h',None),
-            ('positions',epoch+86_400_000_000_001,0,0,' '.join('w'+str(n) for n in range(16001)),'/synthetic/tide','s','h',None),
-            ('token-bytes',epoch+86_400_000_000_002,0,0,'x'*901,'/synthetic/tide','s','h',None),
+            ('frequency',epoch+86_400_000_000_000,0,0,'repeat '*290+'late neighbor','/synthetic/tide','s','h',None),
+            ('positions',epoch+86_400_000_000_001,0,0,' '.join('w'+str(n) for n in range(17001)),'/synthetic/tide','s','h',None),
+            ('token-bytes',epoch+86_400_000_000_002,0,0,'x'*1100,'/synthetic/tide','s','h',None),
             ('empty-command',epoch+86_400_000_000_003,0,0,'','/synthetic/tide','s','h',None),
+            ('delimiters',epoch+86_400_000_000_004,0,0,'first\u0001second\u0002third percent% underscore_ slash\\tail','/synthetic/tide','s','h',None),
+            ('field-boundary',epoch+86_400_000_000_005,0,0,'fieldtail','/synthetic/tide/head','s','h',None),
+            ('wildcard-neighbor',epoch+86_400_000_000_006,0,0,'underscorex backXslash percentZ','/synthetic/tide','s','h',None),
             ('later',epoch+172_800_000_000_000+123,9,-1,'needle later exact','/synthetic/tide','s','h',None),
         ]
         def metadata():
             with sqlite3.connect(source) as c:c.executemany('INSERT INTO history VALUES(?,?,?,?,?,?,?,?,?)',oversized)
-            answer=wait('all metadata with unavailable FTS',lambda:settled(37,False));fts_refusals()
-            def complete_selected():
-                q=cli('query',selected,expected=(0,5))
-                assert 'rows' in q and q['total']==1 and not q['full_text']['available'],q
-                return q if q['complete'] else None
-            q=wait('clean source metadata remains complete despite unavailable FTS',complete_selected)
-            selected_answer=q
-            p=q['rows'][0]['payload'];assert p['native_id']=='later' and p['command']=='needle later exact' and p['timestamp_ns']==oversized[-1][1] and p['exit_code'] is None and p['duration_ns']==9
-            for key in ['frequency','positions','token-bytes','empty-command']:
-                n=next(i for i,x in enumerate(oversized) if x[0]==key)
-                q=cli('query',f'commands where project = tide and when = 2025-10-02T00:00:00.{n:09d}Z',expected=(0,5))
-                assert q['total']==1 and q['rows'][0]['payload']['native_id']==key
-            values=json.loads(sql("SELECT jsonb_build_object('null_vectors',(SELECT count(*) FROM core.search_text WHERE tsv IS NULL),'real_empty_distinct',(''::tsvector IS NOT NULL),'index',(SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indexrelid='core.search_text_unavailable'::regclass))"))
-            assert values['null_vectors']==3 and values['real_empty_distinct']
-            reference=answer['full_text']['first_affected_ref'];assert reference
-            assert cli('show',reference)['row']['current_eligible']
-            save('metadata-later-and-capabilities',{'query':selected_answer,'counts':values,'first_reference_trace':cli('trace',reference,'--bytes')})
+            answer=wait('complete token search and metadata',lambda:settled(40,True))
+            q=wait('complete source metadata',lambda:cli('query',selected,expected=(0,5)) if cli('query',selected,expected=(0,5))['complete'] else None)
+            assert q['total']==1 and q['full_text']['available']
+            later=q['rows'][0]['payload'];assert later['native_id']=='later' and later['exit_code'] is None and later['duration_ns']==9
+            checks={
+                'repeat':{'frequency'}, '"late neighbor"':{'frequency'}, '"late repeat"':set(),
+                'neigh*':{'frequency'}, 'w17000':{'positions'}, 'x'*1100:{'token-bytes'},
+                '"first second third"':{'delimiters'}, json.dumps('first\u0001second\u0002third'):{'delimiters'},
+                '"fieldtail synthetic"':set(), '"fieldtail head"':set(), 'fieldtail':{'field-boundary'},
+                'commands where not repeat and command = "needle later exact"':{'later'},
+                'commands where repeat or command = "needle later exact"':{'frequency','later'},
+                'commands where repeat and exit_code = 0':{'frequency'},
+                'underscore_':{'delimiters'}, 'underscore':set(), 'underscorex':{'wildcard-neighbor'},
+                json.dumps('slash\\tail'):{'delimiters'},
+                '"slash tail"':{'delimiters'},
+                'commands where "percent underscore_ slash tail"':{'delimiters'},
+            }
+            observations={}
+            for question,expected in checks.items():
+                value=cli('query',question,expected=(0,5));keys={row['payload']['native_id'] for row in value['rows']}
+                assert keys==expected and value['total']==len(expected),(question,keys,expected)
+                observations[question]=value
+            # Independent literal fixture membership, PostgreSQL's declared score,
+            # and the complete relation establish the expected order before paging.
+            expected_rank=json.loads(sql("SELECT jsonb_agg(jsonb_build_object('native_id',key,'rank',rank) ORDER BY rank DESC,at ASC,tie ASC,id ASC) FROM (SELECT e.payload->>'native_id' AS key,word_similarity('needle repeat' COLLATE \"C\",s.tokens COLLATE \"C\")::float8 AS rank,s.ts_orig AS at,coalesce(s.ts_orig_tiebreak,0) AS tie,s.id FROM core.search_text s JOIN core.live_events e ON e.id=s.id WHERE e.payload->>'native_id' LIKE 'safe-%' OR e.payload->>'native_id' IN ('later','frequency'))expected"))
+            assert len(expected_rank)==34
+            ranked=[];cursor=None;rank_pages=[]
+            while True:
+                page=api('query.run',{'query':'needle or repeat','page':7,**({'cursor':cursor} if cursor else {})})['result']
+                assert page['total']==34 and 'word_similarity' in page['read_as']
+                ranked.extend({'native_id':row['payload']['native_id'],'rank':row['rank']} for row in page['rows']);rank_pages.append(page)
+                cursor=page['page']['cursor']
+                if not cursor:break
+            assert ranked==expected_rank,(ranked,expected_rank)
+            for question,total in [('commands where not repeat',39),('commands where project = tide',40),('needle or repeat sort when',34)]:
+                unranked=api('query.run',{'query':question,'page':100})['result']
+                assert unranked['total']==total and all(row['rank']==0 for row in unranked['rows']),unranked
+            bad=cli('query','"first\u0001second"',expected=2);assert bad['kind']=='bad_query'
+            save('whole-population-relevance',{'independent_expected':expected_rank,'pages':rank_pages,'invalid_raw_control_query':bad})
+            values=json.loads(sql("SELECT jsonb_build_object('unavailable',(SELECT count(*) FROM core.search_text WHERE tokens IS NULL),'real_empty_distinct',(''::text IS NOT NULL),'index',(SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indexrelid='core.search_text_tokens'::regclass))"))
+            assert values['unavailable']==0 and values['real_empty_distinct']
+            assert cli('search','repeat')['total']==1
+            save('complete-search-text-and-capabilities',{'later':q,'counts':values,'checks':observations})
         scenario(PLANNED[2],metadata)
         def authority():
             nonlocal daemon
@@ -194,8 +223,17 @@ full_interval_ms = 1000
             enabled=config.read_text();stop(daemon)
             config.write_text(enabled.split('[atuin]')[0].replace('sources = ["terminal.atuin-history"]','sources = []'))
             daemon=start(config,'metadata-authority-stable')
-            wait('stable metadata authority basis',lambda:settled(37,False))
-            status=api('status')['result']['indexed_retrieval'];reference=status['full_text']['first_affected_ref'];assert reference
+            wait('stable metadata authority basis',lambda:settled(40,True))
+            reference='sinex:ev/'+query('commands where repeat')['rows'][0]['id']
+            event=reference.removeprefix('sinex:ev/')
+            encoded=sql("SELECT encode(convert_to(tokens,'UTF8'),'hex') FROM core.search_text WHERE id='"+event+"'::uuid")
+            # Existing unavailable representation state, not an oversized-text
+            # admission failure. It must retain refusal and disclosure authority.
+            sql("UPDATE core.search_text SET tokens=NULL WHERE id='"+event+"'::uuid")
+            stop(daemon);daemon=start(config,'unavailable-text-stable-restart')
+            wait('unavailable text state after compatible restart',lambda:settled(40,False))
+            fts_refusals()
+            status=api('status')['result']['indexed_retrieval'];assert status['full_text']['first_affected_ref']==reference
             traced=cli('trace',reference,'--bytes')['row'];parent=traced['parents'][0]['event']
             # A direct-state read-fence control deliberately holds commit position
             # fixed, so missing metadata catch-up cannot mask a leaked reference.
@@ -209,30 +247,34 @@ full_interval_ms = 1000
                 save('metadata-reference-authority-fence',{'before':reference,'after':value,'scope':'direct-state current-parent fence, not writer removal qualification'})
             finally:
                 sql("DELETE FROM audit.archived WHERE id='"+parent+"'::uuid")
+                sql("UPDATE core.search_text SET tokens=convert_from(decode('"+encoded+"','hex'),'UTF8') WHERE id='"+event+"'::uuid")
                 stop(daemon);config.write_text(enabled);daemon=start(config,'metadata-authority-restored')
-                wait('restored acquisition basis',lambda:settled(37,False))
+                wait('restored acquisition basis',lambda:settled(40,True))
         scenario(PLANNED[3],authority)
         def retained():
             nonlocal daemon
             before=cli('query',selected,expected=(0,5));ref='sinex:ev/'+before['rows'][0]['id'];trace=cli('trace',ref,'--bytes')
-            stop(daemon);daemon=start(config,'metadata-restart');wait('restart unavailable-text metadata',lambda:settled(37,False))
+            stop(daemon);daemon=start(config,'metadata-restart');wait('restart complete-text metadata',lambda:settled(40,True))
             assert cli('query',selected,expected=(0,5))['rows']==before['rows'] and cli('trace',ref,'--bytes')==trace
             source.rename(work/'metadata-provider-held.db');stop(daemon);daemon=start(config,'metadata-provider-loss')
             wait('missing provider reported',lambda:any(x['last_run']['status']=='unavailable' for x in api('sources.list')['result']['sources']))
-            after=cli('query',selected,expected=5);assert after['rows']==before['rows'];assert cli('trace',ref,'--bytes')==trace;fts_refusals()
+            after=cli('query',selected,expected=5);assert after['rows']==before['rows'];assert cli('trace',ref,'--bytes')==trace;assert cli('query','repeat',expected=5)['total']==1
             rows=api('query.run',{'query':'events where source = terminal.atuin-history'})['result']['rows']
             large=[r for r in rows if r['payload']['native_id'] in ['frequency','positions','token-bytes']];assert len(large)==3
+            unavailable_ref=query('commands where repeat')['rows'][0]['id']
+            sql("UPDATE core.search_text SET tokens=NULL WHERE id='"+unavailable_ref+"'::uuid")
+            fts_refusals()
             rawref='sinex:ev/'+large[0]['id'];material=cli('trace',rawref,'--bytes')['row']['material']
             for r in large:cli('delete','sinex:ev/'+r['id'],operator=True)
-            wait('FTS recovers after excluded rows',lambda:settled(34,True))
+            wait('FTS recovers after excluded rows',lambda:settled(37,True))
             assert cli('query','commands where needle',expected=5)['total']==33
             cli('delete','--undo',rawref,operator=True)
             replay=cli('replay','materials where id = '+material,operator=True)
             assert replay['state']=='completed'
-            wait('replay restores unavailable text',lambda:settled(35,False));fts_refusals()
+            wait('replay restores complete text',lambda:settled(38,True));assert cli('query','repeat',expected=5)['total']==1
             current=api('query.run',{'query':'events where source = terminal.atuin-history'})['result']['rows']
             restored=next(r for r in current if r['payload']['native_id']==large[0]['payload']['native_id'])
-            cli('delete','sinex:ev/'+restored['id'],operator=True);wait('replay removal restores text capability',lambda:settled(34,True))
+            cli('delete','sinex:ev/'+restored['id'],operator=True);wait('replay removal restores text capability',lambda:settled(37,True))
             save('metadata-retained-lifecycle',{'before':before,'after_provider_loss':after,'trace':trace,'replay':replay})
         scenario(PLANNED[4],retained)
         def maintenance():
@@ -246,15 +288,21 @@ full_interval_ms = 1000
         scenario(PLANNED[5],maintenance)
         def plans():
             run(['createdb','fts_probe'],label='ordinary PostgreSQL readiness plan database')
-            uri=connections['admin'].replace('/metadata_fts?','/fts_probe?')
-            probe_sql="""CREATE SCHEMA core;
-CREATE TABLE core.search_text(generation uuid NOT NULL,id uuid PRIMARY KEY,tsv tsvector);
-CREATE INDEX search_text_unavailable ON core.search_text(generation,id) WHERE tsv IS NULL;
-INSERT INTO core.search_text SELECT '00000000-0000-0000-0000-000000000000',md5(n::text)::uuid,''::tsvector FROM generate_series(1,20000)n;
+            uri=connections['admin'].replace('/search_text?','/fts_probe?')
+            probe_sql="""CREATE EXTENSION pg_trgm;
+CREATE SCHEMA core;
+CREATE TABLE core.search_text(generation uuid NOT NULL,id uuid PRIMARY KEY,tokens text);
+CREATE INDEX search_text_unavailable ON core.search_text(generation,id) WHERE tokens IS NULL;
+CREATE INDEX search_text_tokens ON core.search_text USING gin((tokens COLLATE "C") gin_trgm_ops);
+INSERT INTO core.search_text SELECT '00000000-0000-0000-0000-000000000000',md5(n::text)::uuid,chr(1)||'ordinary'||chr(1)||n::text||chr(1)||chr(2) FROM generate_series(1,20000)n;
+INSERT INTO core.search_text VALUES('00000000-0000-0000-0000-000000000000',md5('raretoken')::uuid,chr(1)||'raretoken'||chr(1)||chr(2));
+ANALYZE core.search_text;
 INSERT INTO core.search_text SELECT '00000000-0000-0000-0000-000000000000',md5('null'||n)::uuid,NULL FROM generate_series(1,17)n;
-EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT EXISTS(SELECT 1 FROM core.search_text WHERE generation='00000000-0000-0000-0000-000000000000' AND tsv IS NULL LIMIT 1);
-EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE generation='00000000-0000-0000-0000-000000000000' AND tsv IS NULL ORDER BY id LIMIT 16;
+EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT EXISTS(SELECT 1 FROM core.search_text WHERE generation='00000000-0000-0000-0000-000000000000' AND tokens IS NULL LIMIT 1);
+EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE generation='00000000-0000-0000-0000-000000000000' AND tokens IS NULL ORDER BY id LIMIT 16;
 """
+            probe_sql += "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE tokens COLLATE \"C\" LIKE ('%'||chr(1)||'raretoken'||chr(1)||'%');\n"
+            probe_sql += "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT count(*) FROM core.search_text WHERE tokens COLLATE \"C\" LIKE ('%'||chr(1)||'o%');\n"
             fixture=report/'unavailable-probe-plan.sql';fixture.write_text(probe_sql)
             text=run(['psql',uri,'-XAtq','-v','ON_ERROR_STOP=1','--file',fixture],label='ordinary PostgreSQL unavailable probe plans').stdout
             decoder=json.JSONDecoder();actual=[]
@@ -263,11 +311,14 @@ EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT id FROM core.search_text WHERE gene
             def nodes(plan):
                 yield plan
                 for child in plan.get('Plans',[]):yield from nodes(child)
-            assert len(actual)==2
-            for plan in actual:
+            assert len(actual)==4
+            for plan in actual[:2]:
                 assert any(n.get('Index Name')=='search_text_unavailable' for n in nodes(plan['Plan'])),plan
             assert actual[1]['Plan']['Actual Rows']==16
-            save('unavailable-vector-query-plans',{'plans':actual,'scope':'ordinary PostgreSQL exact probe predicates; twenty-thousand real empty vectors and seventeen unavailable vectors; no forced planner settings or capacity claim'})
+            assert actual[2]['Plan']['Actual Rows']==1
+            assert any(n.get('Index Name')=='search_text_tokens' for n in nodes(actual[2]['Plan'])),actual[2]
+            assert any(n.get('Node Type')=='Seq Scan' for n in nodes(actual[3]['Plan'])),actual[3]
+            save('unavailable-text-query-plans',{'plans':actual,'scope':'ordinary PostgreSQL exact probe predicates; twenty-thousand complete ordinary token strings, one rare-token row and seventeen unavailable states; exact rare GIN and short-pattern sequential plans, no forced planner settings or capacity/speed claim'})
         scenario(PLANNED[6],plans)
         def shell_work_tables():
             isolated=env.copy();isolated['SINEX_TEST_WRITER_URL']=h['writer']

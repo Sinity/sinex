@@ -1,6 +1,6 @@
 //! SQL generated only from fixed Rust declarations, applied before sealing the catalog receipt.
 pub(crate) const FULL_TEXT_UNAVAILABLE_INDEX: &str =
-    "CREATE INDEX search_text_unavailable ON core.search_text(generation,id) WHERE tsv IS NULL";
+    "CREATE INDEX search_text_unavailable ON core.search_text(generation,id) WHERE tokens IS NULL";
 pub(crate) fn declarations() -> Vec<String> {
     let mut statements = vec![r#"CREATE FUNCTION sinex_schemas.event_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog AS $$
@@ -67,7 +67,7 @@ END $$"#.into());
         "CREATE INDEX search_text_cwd ON core.search_text USING gin(cwd_normalized gin_trgm_ops)"
             .into(),
     );
-    statements.push("CREATE INDEX search_text_tsv ON core.search_text USING gin(tsv)".into());
+    statements.push("CREATE INDEX search_text_tokens ON core.search_text USING gin((tokens COLLATE \"C\") gin_trgm_ops)".into());
     statements.push(FULL_TEXT_UNAVAILABLE_INDEX.into());
     statements.push(
         "CREATE INDEX search_text_time ON core.search_text(generation,ts_orig,ts_orig_tiebreak,id)"

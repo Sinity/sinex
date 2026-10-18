@@ -1,28 +1,48 @@
-use super::{exact_vector, payload_strings};
+use super::payload_strings;
 use serde_json::json;
+use sinex_model::retrieval::token_text;
 
 #[test]
-fn unavailable_vector_is_distinct_from_exact_empty_and_preserves_text() {
-    assert_eq!(exact_vector(&[String::new()]), Some(String::new()));
-    let payload = json!({"command":"repeat ".repeat(257),"cwd":"/synthetic/late"});
+fn complete_token_text_preserves_oversized_and_empty_source_strings() {
+    assert_eq!(token_text(&[String::new()]), Some(String::new()));
+    let payload = json!({"command":format!("{}late neighbor", "repeat ".repeat(290)),"cwd":"/synthetic/late"});
     let strings = payload_strings(&payload);
     assert_eq!(strings[0], payload["command"]);
     assert!(strings.iter().any(|s| s == "/synthetic/late"));
-    assert_eq!(exact_vector(&strings), None);
-    assert!(exact_vector(&["repeat ".repeat(256)]).is_some());
-}
-
-#[test]
-fn all_existing_exact_text_bounds_and_field_gaps_remain() {
-    let positional = (0..16000)
+    let tokens = token_text(&strings).unwrap();
+    assert_eq!(
+        tokens.split('\u{1}').filter(|s| *s == "repeat").count(),
+        290
+    );
+    assert!(tokens.contains("\u{1}late\u{1}neighbor\u{1}"));
+    let positional = (0..17000)
         .map(|n| format!("w{n}"))
         .collect::<Vec<_>>()
         .join(" ");
-    assert!(exact_vector(&[positional.clone()]).is_some());
-    assert_eq!(exact_vector(&[format!("{positional} extra")]), None);
-    assert!(exact_vector(&["a".repeat(900)]).is_some());
-    assert_eq!(exact_vector(&["a".repeat(901)]), None);
-    assert_eq!(exact_vector(&["é".repeat(451)]), None);
-    let vector = exact_vector(&["first".into(), "second".into()]).unwrap();
-    assert_eq!(vector, "'x6669727374':1 'x7365636f6e64':3");
+    assert!(
+        token_text(&[positional])
+            .unwrap()
+            .contains("\u{1}w16999\u{1}")
+    );
+    assert!(
+        token_text(&["a".repeat(1100)])
+            .unwrap()
+            .contains(&"a".repeat(1100))
+    );
+}
+
+#[test]
+fn tokenization_owns_literal_delimiters_and_field_boundaries() {
+    assert_eq!(
+        token_text(&["first".into(), "second".into()]).unwrap(),
+        "\u{1}first\u{1}\u{2}\u{1}second\u{1}\u{2}"
+    );
+    assert_eq!(
+        token_text(&["first\u{1}second\u{2}third".into()]).unwrap(),
+        "\u{1}first\u{1}second\u{1}third\u{1}\u{2}"
+    );
+    assert_eq!(
+        token_text(&["Straße CAFE\u{301}".into()]).unwrap(),
+        "\u{1}strasse\u{1}café\u{1}\u{2}"
+    );
 }

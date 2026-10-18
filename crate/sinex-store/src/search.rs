@@ -29,9 +29,14 @@ fn expression(q: &mut QueryBuilder<'_, Postgres>, e: &Expr) {
             expression(q, e);
         }
         Expr::Text(t) => {
-            q.push("s.tsv @@ ")
-                .push_bind(t.tsquery())
-                .push("::text::tsquery");
+            for (index, pattern) in t.like_patterns().into_iter().enumerate() {
+                if index > 0 {
+                    q.push(" AND ");
+                }
+                q.push("s.tokens COLLATE \"C\" LIKE ")
+                    .push_bind(pattern)
+                    .push(" ESCAPE E'\\\\'");
+            }
         }
         Expr::Compare { field, op, value } => {
             let column = match field.as_str() {
@@ -99,7 +104,7 @@ fn expression(q: &mut QueryBuilder<'_, Postgres>, e: &Expr) {
                     _ => unreachable!(),
                 };
                 let escaped = normalize(value)
-                    .replace('\\', "\\\\")
+                    .replace('\\', "\\")
                     .replace('%', "\\%")
                     .replace('_', "\\_");
                 q.push(column)
@@ -143,13 +148,13 @@ async fn full_text_state(
         });
     }
     let unavailable: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM core.search_text WHERE generation=$1 AND tsv IS NULL LIMIT 1)",
+        "SELECT EXISTS(SELECT 1 FROM core.search_text WHERE generation=$1 AND tokens IS NULL LIMIT 1)",
     )
     .bind(generation)
     .fetch_one(&mut *connection)
     .await?;
     let first: Option<Uuid> = if unavailable {
-        sqlx::query_scalar(&format!("WITH candidates AS MATERIALIZED (SELECT id FROM core.search_text WHERE generation=$1 AND tsv IS NULL ORDER BY id LIMIT 16) SELECT e.id FROM candidates c JOIN core.live_events e ON e.id=c.id WHERE e.event_type='command.canonical' AND {} ORDER BY e.id LIMIT 1", crate::query::CURRENT_PARENTS))
+        sqlx::query_scalar(&format!("WITH candidates AS MATERIALIZED (SELECT id FROM core.search_text WHERE generation=$1 AND tokens IS NULL ORDER BY id LIMIT 16) SELECT e.id FROM candidates c JOIN core.live_events e ON e.id=c.id WHERE e.event_type='command.canonical' AND {} ORDER BY e.id LIMIT 1", crate::query::CURRENT_PARENTS))
             .bind(generation).fetch_optional(&mut *connection).await?
     } else {
         None
@@ -351,8 +356,8 @@ impl ReadPool {
         let expires = after
             .as_ref()
             .map_or(clock.unix_timestamp() + 86400, |c| c.expires);
-        let text_query = bound.filter.as_ref().and_then(Expr::text_query);
-        let ranked = bound.sort.is_none() && text_query.is_some();
+        let rank_text = bound.filter.as_ref().and_then(Expr::rank_text);
+        let ranked = bound.sort.is_none() && rank_text.is_some();
         let desc = bound.sort == Some(true);
         let order = if ranked {
             "rank DESC,at ASC NULLS LAST,id ASC"
@@ -365,9 +370,9 @@ impl ReadPool {
         let size = page.min(remaining);
         let mut q = QueryBuilder::<Postgres>::new("WITH matching AS MATERIALIZED (SELECT s.id,");
         if ranked {
-            q.push("ts_rank(s.tsv,")
-                .push_bind(text_query.unwrap())
-                .push("::text::tsquery)::float8");
+            q.push("word_similarity(")
+                .push_bind(rank_text.unwrap())
+                .push(" COLLATE \"C\",s.tokens COLLATE \"C\")::float8");
         } else {
             q.push("0::float8");
         }
@@ -460,7 +465,7 @@ impl ReadPool {
         tx.commit().await?;
         drop(lease.0.take());
         Ok(
-            json!({"notice":sinex_model::DATA_NOTICE,"unit":bound.unit,"query":text,"rows":rows,"total":total,"complete":complete,"fusion":fusion,"coverage":"unknown; retained shell observations do not prove continuous capture","source_status":source_status,"full_text":full_text,"truncated":more && next.is_none(),"page":{"size":page,"cursor":next,"first_commit_seq":first,"changed_since_first_page":first!=current,"change_notice":if first!=current{Some("Current-state continuation; additions or changed rank/order keys may be absent or repeated.")}else{None}},"resolved":{"commit_seq":current,"projection_seq":position,"generation":generation,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Eligible live policy-selected canonical commands matching {text}; {}. Continuous source coverage is unknown.",if ranked{"ranked over every selected match, then original time and ID"}else if desc{"ordered by original time descending, unknown last, then ID"}else{"ordered by original time ascending, unknown last, then ID"}),"excluded":{}}),
+            json!({"notice":sinex_model::DATA_NOTICE,"unit":bound.unit,"query":text,"rows":rows,"total":total,"complete":complete,"fusion":fusion,"coverage":"unknown; retained shell observations do not prove continuous capture","source_status":source_status,"full_text":full_text,"truncated":more && next.is_none(),"page":{"size":page,"cursor":next,"first_commit_seq":first,"changed_since_first_page":first!=current,"change_notice":if first!=current{Some("Current-state continuation; additions or changed rank/order keys may be absent or repeated.")}else{None}},"resolved":{"commit_seq":current,"projection_seq":position,"generation":generation,"now":now,"zone":"UTC","logical_start":"04:00"},"read_as":format!("Eligible live policy-selected canonical commands matching {text}; {}. Continuous source coverage is unknown.",if ranked{"ranked by PostgreSQL word_similarity over every selected match, then original time and ID"}else if desc{"ordered by original time descending, unknown last, then ID"}else{"ordered by original time ascending, unknown last, then ID"}),"excluded":{}}),
         )
     }
     pub async fn projection_status(&self) -> Result<Value> {

@@ -761,6 +761,21 @@ fn record_state_check() -> Result<String> {
 // This is the sole supported installed predecessor, published at 4b5bf0619.
 // Reuse unchanged declarations; spell out only the released differences.
 const OLD_SHELL_CHECK: &str = "CHECK (event_type<>'command.canonical' OR (payload_schema_id IS NOT DISTINCT FROM 3 AND source='fusion.shell-command' AND cardinality(source_event_ids)=1 AND jsonb_typeof(payload->'command') IS NOT DISTINCT FROM 'string' AND jsonb_typeof(payload->'observed_by') IS NOT DISTINCT FROM 'array'))";
+const SEARCH_TOKEN_COLUMNS: &[Column] = &[
+    col!("generation", "uuid"),
+    col!("id", "uuid"),
+    col!("ts_orig", "timestamp with time zone", null),
+    col!("ts_orig_tiebreak", "integer", null),
+    col!("source", "text"),
+    col!("event_type", "text"),
+    col!("tokens", "text", null),
+    col!("text", "text"),
+    col!("command", "text"),
+    col!("command_normalized", "text"),
+    col!("cwd_normalized", "text", null),
+    col!("cwd", "text", null),
+    col!("exit_code", "bigint", null),
+];
 fn installed_tables(stage: usize) -> Vec<Definition> {
     TABLES
         .iter()
@@ -774,6 +789,8 @@ fn installed_tables(stage: usize) -> Vec<Definition> {
             name: d.name,
             columns: if stage < 2 && d.name == "shell_dirty" {
                 &d.columns[..1]
+            } else if stage >= 7 && d.name == "search_text" {
+                SEARCH_TOKEN_COLUMNS
             } else {
                 d.columns
             },
@@ -784,14 +801,31 @@ fn installed_tables(stage: usize) -> Vec<Definition> {
 fn nullable_at(stage: usize, table: &Definition, column: &Column) -> bool {
     column.nullable && !(stage < 5 && table.name == "search_text" && column.name == "tsv")
 }
+// Released physical declarations are part of their guarded fingerprints.
+const LEGACY_UNAVAILABLE_INDEX: &str =
+    "CREATE INDEX search_text_unavailable ON core.search_text(generation,id) WHERE tsv IS NULL";
+const LEGACY_VECTOR_INDEX: &str = "CREATE INDEX search_text_tsv ON core.search_text USING gin(tsv)";
 fn storage_at(stage: usize) -> Vec<String> {
     crate::event_storage::declarations()
         .into_iter()
-        .filter(|sql| stage >= 5 || sql != crate::event_storage::FULL_TEXT_UNAVAILABLE_INDEX)
+        .filter_map(|sql| {
+            if sql == crate::event_storage::FULL_TEXT_UNAVAILABLE_INDEX {
+                if stage < 5 {
+                    return None;
+                }
+                if stage < 7 {
+                    return Some(LEGACY_UNAVAILABLE_INDEX.to_owned());
+                }
+            }
+            if stage < 7 && sql.starts_with("CREATE INDEX search_text_tokens ") {
+                return Some(LEGACY_VECTOR_INDEX.to_owned());
+            }
+            Some(sql)
+        })
         .collect()
 }
 fn declarations() -> Result<Vec<String>> {
-    declarations_at(6)
+    declarations_at(7)
 }
 fn declarations_at(stage: usize) -> Result<Vec<String>> {
     installed_tables(stage)
@@ -847,7 +881,7 @@ async fn configure_events(conn: &mut PgConnection) -> Result<()> {
 }
 
 fn fingerprint() -> Result<String> {
-    fingerprint_at(6)
+    fingerprint_at(7)
 }
 fn fingerprint_at(stage: usize) -> Result<String> {
     Ok(blake3::hash(
@@ -917,6 +951,10 @@ pub fn schema_changes() -> Vec<SchemaChange> {
         SchemaChange {
             number: 6,
             description: "preserve signed Atuin provider exit statuses",
+        },
+        SchemaChange {
+            number: 7,
+            description: "replace bounded vectors with complete normalized search token text",
         },
     ]
 }
@@ -1116,7 +1154,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             .fetch_one(&mut *conn)
             .await?;
     let mut stage = None;
-    for candidate in 0..=6 {
+    for candidate in 0..=7 {
         if stored == fingerprint_at(candidate)? {
             stage = Some(candidate);
         }
@@ -1708,8 +1746,7 @@ async fn apply_change_entry(
             }
             conn.execute("ALTER TABLE core.search_text ALTER COLUMN tsv DROP NOT NULL")
                 .await?;
-            conn.execute(crate::event_storage::FULL_TEXT_UNAVAILABLE_INDEX)
-                .await?;
+            conn.execute(LEGACY_UNAVAILABLE_INDEX).await?;
         }
         6 => {
             let exists: bool = sqlx::query_scalar(
@@ -1731,6 +1768,31 @@ async fn apply_change_entry(
                 return Err(Error::Schema(
                     "registered Atuin payload schema missing".into(),
                 ));
+            }
+        }
+        7 => {
+            let exists: bool =
+                sqlx::query_scalar("SELECT to_regclass('core.search_text') IS NOT NULL")
+                    .fetch_one(&mut *conn)
+                    .await?;
+            if !exists {
+                return Ok(SchemaChangeCheck {
+                    number: entry.number,
+                    outcome: "old_objects_absent",
+                });
+            }
+            // Discard only derived vector contents, never retained text/events.
+            // v5 reconstruction remains non-serving until the full log catches up.
+            sqlx::raw_sql("DROP INDEX core.search_text_tsv; DROP INDEX core.search_text_unavailable; ALTER TABLE core.search_text RENAME COLUMN tsv TO tokens; ALTER TABLE core.search_text ALTER COLUMN tokens TYPE text USING NULL::text; UPDATE derivation.read_model_position SET serving=false")
+                .execute(&mut *conn).await?;
+            for sql in crate::event_storage::declarations()
+                .into_iter()
+                .filter(|s| {
+                    s.starts_with("CREATE INDEX search_text_tokens ")
+                        || s == crate::event_storage::FULL_TEXT_UNAVAILABLE_INDEX
+                })
+            {
+                conn.execute(sql.as_str()).await?;
             }
         }
         _ => return Err(Error::Schema("unknown schema change".into())),

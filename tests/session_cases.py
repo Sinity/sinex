@@ -248,7 +248,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
         proc=start(config('predecessor',False),'session-predecessor',binary=old/'bin/sinexd');procs.append(proc)
         wait(proc,lambda:api().get('result') and len(api('query.run',{'query':'events where kind = command.executed'}).get('result',{}).get('rows',[]))==len(facts) and settled(False),'published predecessor acquisition')
         before=raw();stop(proc)
-        check=run([bins/'sinexd','admin','schema','--connection-file',work/'session-admin','--check']);assert [e['number'] for e in json.loads(check.stdout)['pending_changes']]==[3,4,5,6]
+        check=run([bins/'sinexd','admin','schema','--connection-file',work/'session-admin','--check']);assert [e['number'] for e in json.loads(check.stdout)['pending_changes']]==[3,4,5,6,7]
         dump=report/'stage2-preupgrade.dump'
         run([bins/'sinexd','admin','schema','--connection-file',work/'session-admin','--apply','--dump-file',dump])
         assert dump.stat().st_size>0 and dump.stat().st_mode&0o777==0o600

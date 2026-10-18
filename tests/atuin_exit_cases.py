@@ -109,9 +109,9 @@ poll_interval_ms=500
             stop(daemon)
             materials=json.loads(sql("SELECT json_agg(id) FROM raw.source_material_registry WHERE observation_id='"+obs['last_run']['id']+"'::uuid AND durable_bytes>0"))
             assert materials
-            pending=schema(bins/'sinexd','--check');assert [x['number'] for x in pending['pending_changes']]==[6],pending
+            pending=schema(bins/'sinexd','--check');assert [x['number'] for x in pending['pending_changes']]==[6,7],pending
             applied=schema(bins/'sinexd','--apply','--dump-file',work/'signed-before-six.dump')
-            assert applied['checked_changes']==[{'number':6,'outcome':'applied'}],applied
+            assert applied['checked_changes']==[{'number':6,'outcome':'applied'},{'number':7,'outcome':'applied'}],applied
             for field in ['fingerprint','catalog']:
                 cold=run(['psql',h['admin'],'-XAtq','-v','ON_ERROR_STOP=1','-c','SELECT '+field+' FROM sinex_schemas.definition'],label='signed canonical cold catalog').stdout.strip()
                 assert sql('SELECT '+field+' FROM sinex_schemas.definition')==cold,field
