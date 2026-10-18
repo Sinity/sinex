@@ -4,7 +4,7 @@
 use crate::source_admission::{
     Tx, key_hash, observation_status, producer_version, record_failure, row_hash, set_part_length,
 };
-use crate::{Error, Result, WriterPool, coordinate_hash, current_commit_seq, next_commit_seq};
+use crate::{Error, Result, Writer, coordinate_hash, current_commit_seq, next_commit_seq};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sqlx::{Connection, Row};
@@ -661,7 +661,7 @@ async fn record_progress(
     Ok(summary)
 }
 
-impl WriterPool {
+impl Writer {
     pub(crate) async fn atuin_read_start(
         &mut self,
         locator: &str,

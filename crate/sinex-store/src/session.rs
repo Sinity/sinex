@@ -2,7 +2,7 @@
 //! `activity.session.boundary` events, one logical day at a time.
 //! `derivation.session_dirty` lists the days to redo; temp work is discarded
 //! on restart and the day is redone.
-use crate::{Error, Result, WriterPool, current_commit_seq, next_commit_seq};
+use crate::{Error, Result, Writer, current_commit_seq, next_commit_seq};
 use serde_json::{Value, json};
 use sqlx::{Connection, Row};
 use uuid::Uuid;
@@ -145,7 +145,7 @@ impl Work {
     }
 }
 
-impl WriterPool {
+impl Writer {
     pub(crate) async fn session_enable(&mut self) -> Result<()> {
         let producer = Uuid::now_v7();
         sqlx::query(

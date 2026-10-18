@@ -3,7 +3,7 @@
 //! same row from being admitted. Each action is an operation whose request,
 //! outcome and effects are stored records, so a repeated action ID returns its
 //! first outcome.
-use crate::{Error, Result, WriterPool, next_commit_seq};
+use crate::{Error, Result, Writer, next_commit_seq};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::exclusion::{Action, Occurrence, Outcome, Request, State};
@@ -41,7 +41,7 @@ struct Coordinates {
     material: Option<Uuid>,
     anchor: Option<i64>,
 }
-impl WriterPool {
+impl Writer {
     pub(crate) async fn exclude(&mut self, action: Action, request: Request) -> Result<Value> {
         if self.replay_rules.is_none() {
             return Err(Error::ReplayRefused(

@@ -1,8 +1,8 @@
-use super::{Error, WriterPool};
+use super::{Error, Writer};
 
 #[test]
 fn only_timeouts_make_session_work_retry() {
-    assert!(WriterPool::session_retryable(&Error::Deadline));
+    assert!(Writer::session_retryable(&Error::Deadline));
     // The reason text of a timeout must not make a validation error retryable.
     for error in [
         Error::Invalid("session computation turn exceeded 3 seconds; dirty keys kept for retry"),
@@ -10,6 +10,6 @@ fn only_timeouts_make_session_work_retry() {
         Error::ProjectionUnavailable("shell session reconciliation pending or failed"),
         Error::Stopped,
     ] {
-        assert!(!WriterPool::session_retryable(&error));
+        assert!(!Writer::session_retryable(&error));
     }
 }

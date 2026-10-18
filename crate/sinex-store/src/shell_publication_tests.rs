@@ -1,5 +1,5 @@
 use super::{WORK_TABLES, rule};
-use crate::{WriterPool, current_commit_seq, next_commit_seq};
+use crate::{Writer, current_commit_seq, next_commit_seq};
 use serde_json::{Value, json};
 use sqlx::{Connection, PgConnection, Row};
 use uuid::Uuid;
@@ -28,8 +28,8 @@ async fn publish(
     run: Uuid,
     snapshot_seq: i64,
 ) -> crate::Result<()> {
-    let groups = WriterPool::shell_pending_groups(connection).await?;
-    WriterPool::shell_publish_batch(connection, Some(producer), run, snapshot_seq, groups).await
+    let groups = Writer::shell_pending_groups(connection).await?;
+    Writer::shell_publish_batch(connection, Some(producer), run, snapshot_seq, groups).await
 }
 async fn snapshot(connection: &mut PgConnection) -> crate::Result<Value> {
     sqlx::query_scalar("SELECT jsonb_build_object('counter',(SELECT seq FROM core.commit_counter WHERE one),'canonical',(SELECT count(*) FROM core.events WHERE event_type='command.canonical'),'log',(SELECT count(*) FROM core.commit_log WHERE event_type_id=3),'dirty',(SELECT coalesce(jsonb_agg(to_jsonb(d) ORDER BY day),'[]') FROM derivation.session_dirty d),'frontier',(SELECT coalesce(jsonb_agg(to_jsonb(d) ORDER BY parent_id),'[]') FROM derivation.shell_dirty d))").fetch_one(connection).await.map_err(Into::into)

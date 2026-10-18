@@ -605,7 +605,7 @@ impl Drop for ReadLease {
 }
 impl ReadPool {
     pub(crate) async fn read_lease(&self) -> Result<ReadLease> {
-        Ok(ReadLease(Some(self.0.acquire().await?)))
+        Ok(ReadLease(Some(self.pool.acquire().await?)))
     }
     pub async fn query(&self, text: &str, cursor: Option<&str>) -> Result<Value> {
         self.query_with_timeout(text, cursor, std::time::Duration::from_secs(10))
@@ -850,8 +850,8 @@ impl ReadPool {
         anchor: i64,
         end: i64,
     ) -> Result<Vec<u8>> {
-        let blobs = self.1.clone();
-        let root = self.2.clone();
+        let blobs = self.blobs.clone();
+        let root = self.root.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
             use std::io::{Read, Seek, SeekFrom};
             if let Some(name) = blob {

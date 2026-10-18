@@ -2,7 +2,7 @@
 //! Not a registered source and not reachable over RPC.
 #[cfg(feature = "product")]
 use crate::{Error, writer::coordinate_hash};
-use crate::{Result, WriterPool};
+use crate::{Result, Writer};
 use serde::Serialize;
 #[cfg(feature = "product")]
 use sqlx::Connection;
@@ -29,7 +29,7 @@ pub struct Receipt {
 #[cfg(feature = "product")]
 const MAX_BYTES: usize = 1024 * 1024;
 
-impl WriterPool {
+impl Writer {
     #[cfg(not(feature = "product"))]
     pub(crate) async fn admit(&mut self, _event: MaterialEvent) -> Result<Receipt> {
         Err(crate::Error::ProductUnavailable)

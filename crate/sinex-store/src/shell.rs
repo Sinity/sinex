@@ -2,7 +2,7 @@
 //! a `command.canonical` event. A pass works in turns over per-connection
 //! temp tables, 64 rows per turn; `derivation.shell_dirty` survives a restart
 //! and the pass reruns.
-use crate::{Error, Result, WriterPool, current_commit_seq, next_commit_seq};
+use crate::{Error, Result, Writer, current_commit_seq, next_commit_seq};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
@@ -278,7 +278,7 @@ fn canonical(command: &str) -> Option<String> {
     Some(out)
 }
 
-impl WriterPool {
+impl Writer {
     pub(crate) async fn shell_enable(&mut self) -> Result<()> {
         if self.shell_producer.is_some() {
             return Ok(());

@@ -2,7 +2,7 @@
 //!
 //! A blob row is inserted as `writing` before its file is written and marked
 //! `present` in the transaction that first references it.
-use crate::{Error, Result, WriterPool};
+use crate::{Error, Result, Writer};
 use uuid::Uuid;
 
 const BLOB_REGISTER: &str = "INSERT INTO core.blobs (id,blake3,size_bytes,root,status) VALUES ($1,$2,$3,$4,'writing') ON CONFLICT (blake3) DO NOTHING";
@@ -34,7 +34,7 @@ pub(crate) fn parse_hash(name: &str) -> Result<hashed_blobs::Hash> {
 /// Statements for `prepare_admission_statements`.
 pub(crate) const STATEMENTS: [&str; 4] = [BLOB_REGISTER, BLOB_LOOKUP, BLOB_PRESENT, WRITING_BLOBS];
 
-impl WriterPool {
+impl Writer {
     /// Inserts a `writing` row for the blob unless its hash is already registered,
     /// and returns the row id. An existing row must have the same size and root.
     pub(crate) async fn register_blob(&mut self, name: &str, length: i64) -> Result<Uuid> {

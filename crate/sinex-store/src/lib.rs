@@ -45,7 +45,7 @@ pub use zsh::{PROTOCOL as ZSH_PROTOCOL, SOURCE as ZSH_SOURCE, ZshStep};
 
 pub(crate) use blob::{BLOB_PRESENT, parse_hash};
 pub(crate) use commit::{current_commit_seq, next_commit_seq};
-pub(crate) use writer::{MATERIAL, WriterPool, coordinate_hash};
+pub(crate) use writer::{MATERIAL, Writer, coordinate_hash};
 
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]

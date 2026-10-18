@@ -32,7 +32,7 @@ pub struct RuntimeIdentity {
 
 /// State owned by the writer task. Holds the only write connection, including its
 /// session advisory lock; nothing else gets a write connection.
-pub(crate) struct WriterPool {
+pub(crate) struct Writer {
     pub(crate) connection: PgConnection,
     pub(crate) blobs: Arc<hashed_blobs::Store>,
     _lock: std::fs::File,
@@ -128,7 +128,7 @@ impl Store {
         }
         let reader = ReadPool::new(reader_pool, root.clone());
         let observe_atuin_queue = pause.as_ref().is_some_and(TestPause::observes_atuin_queue);
-        let mut owner = WriterPool {
+        let mut owner = Writer {
             connection,
             blobs: Arc::new(blobs),
             _lock: lock,
@@ -294,7 +294,7 @@ fn changed_rows(outcome: &Value) -> bool {
     outcome["admitted"].as_i64().unwrap_or(0) > 0 || outcome["removed"].as_i64().unwrap_or(0) > 0
 }
 
-impl WriterPool {
+impl Writer {
     async fn run(mut self, mut rx: mpsc::Receiver<Command>) -> Result<()> {
         let mut shutdown = None;
         let mut replay_turn = false;

@@ -1,6 +1,6 @@
 //! `sources`: per-input status from stored observations, with optional history
 //! and receipt pages. Never reads the source itself.
-use crate::{Error, ReadPool, Result, WriterPool, current_commit_seq, next_commit_seq};
+use crate::{Error, ReadPool, Result, Writer, current_commit_seq, next_commit_seq};
 use serde_json::{Value, json};
 use sinex_model::acquisition::{
     AcquisitionState, CollectorScope, OutcomeRefs, PollSchedule, SourcesRequest,
@@ -43,7 +43,7 @@ fn primary_statement_error(error: sqlx::Error) -> Error {
     }
 }
 
-impl WriterPool {
+impl Writer {
     /// Records the next planned poll on a finished observation of this run.
     pub(crate) async fn schedule_source(
         &mut self,

@@ -5,7 +5,7 @@
 use crate::atuin::{NewEvent, archive_replaced, insert_event};
 use crate::source_admission::row_hash;
 use crate::{
-    BLOB_PRESENT, Error, MATERIAL, ReadPool, ReplayCommand, Result, WriterPool, next_commit_seq,
+    BLOB_PRESENT, Error, MATERIAL, ReadPool, ReplayCommand, Result, Writer, next_commit_seq,
 };
 use serde_json::{Value, json};
 use sinex_model::replay::{Outcome, State};
@@ -147,7 +147,7 @@ fn record_hash_text(hash: &[u8]) -> String {
         hash.iter().map(|b| format!("{b:02x}")).collect::<String>()
     )
 }
-impl WriterPool {
+impl Writer {
     /// Read every row of a closed Atuin part with the live events it relates to.
     async fn replay_scope(&mut self, material: Uuid) -> Result<Vec<Record>> {
         let length: Option<i64> = sqlx::query_scalar(
@@ -901,7 +901,7 @@ impl ReadPool {
             ));
         }
         let hash = crate::parse_hash(&row.try_get::<String, _>("blake3")?)?;
-        let reader = self.1.clone();
+        let reader = self.blobs.clone();
         let bytes = tokio::task::spawn_blocking(move || {
             reader.read_range_checked::<hashed_blobs::Error>(
                 &hash,
