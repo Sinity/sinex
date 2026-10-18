@@ -2,14 +2,11 @@ use super::*;
 use crate::{AtuinInterpretation, AtuinStep, ReplayCommand, RuntimeIdentity, Store};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 #[tokio::test]
-#[ignore = "needs PostgreSQL"]
 async fn exclude_and_undo_keep_stored_rows_and_retries_return_first_outcome()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let admin = std::env::var("SINEX_TEST_ADMIN_URL")?;
-    let writer = std::env::var("SINEX_TEST_WRITER_URL")?;
-    let reader = std::env::var("SINEX_TEST_READER_URL")?;
-    let root = std::path::PathBuf::from(std::env::var("SINEX_TEST_STORE_DIR")?);
-    crate::bootstrap(&admin).await?;
+    let db = sinex_testkit::database().await;
+    let (admin, writer, reader) = (db.admin.clone(), db.writer.clone(), db.reader.clone());
+    let root = db.store_dir();
     let executable = std::fs::read(std::env::current_exe()?)?;
     let identity = || RuntimeIdentity {
         service_name: "synthetic-exclusion-contract".into(),

@@ -8,13 +8,11 @@ use sinex_store::{
 use sqlx::{Connection, Executor, PgConnection, Row};
 
 #[tokio::test]
-#[ignore = "needs the PostgreSQL roles, URLs and blob root that xtask test provides"]
 async fn roles_writer_lock_synthetic_admission_and_schema_checks()
 -> Result<(), Box<dyn std::error::Error>> {
-    let admin = std::env::var("SINEX_TEST_ADMIN_URL")?;
-    let writer = std::env::var("SINEX_TEST_WRITER_URL")?;
-    let reader = std::env::var("SINEX_TEST_READER_URL")?;
-    let state = std::path::PathBuf::from(std::env::var("SINEX_TEST_STORE_DIR")?);
+    let db = sinex_testkit::database().await;
+    let (admin, writer, reader) = (db.admin.clone(), db.writer.clone(), db.reader.clone());
+    let state = db.store_dir();
     let first = bootstrap(&admin).await?;
     assert_eq!(first.fingerprint, bootstrap(&admin).await?.fingerprint);
     prepare_admission_statements(&admin).await?;

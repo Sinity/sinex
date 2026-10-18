@@ -22,13 +22,14 @@
           allowBuiltinFetchGit = true;
         };
         nativeBuildInputs = [ postgres ];
+        # The cluster stays up for the check phase; database tests clone their own databases.
         preBuild = ''
           cargo run --offline --locked -p xtask -- boundaries
           export PGDATA=$(mktemp -d)
           export PGHOST=$(mktemp -d)
           export PGPORT=55439
           initdb --no-locale --auth=trust --data-checksums > /dev/null
-          pg_ctl -D "$PGDATA" -o "-k $PGHOST -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -p $PGPORT" -w start > /dev/null
+          pg_ctl -D "$PGDATA" -o "-k $PGHOST -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -c timescaledb.max_background_workers=0 -p $PGPORT" -w start > /dev/null
           trap 'pg_ctl -D "$PGDATA" -m immediate -w stop >/dev/null || true' EXIT
           createdb foundation
           createuser sinex_writer
@@ -45,7 +46,7 @@
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ rustPkgs.cargo rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.python3 pkgs.pkg-config ];
+        packages = [ rustPkgs.cargo rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy pkgs.cargo-nextest postgres pkgs.python3 pkgs.pkg-config ];
         shellHook = "export CARGO_TARGET_DIR=\"$PWD/target\"";
       };
     };

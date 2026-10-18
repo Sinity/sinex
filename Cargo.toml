@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crate/sinex-model", "crate/sinex-protocol", "crate/sinex-store", "crate/sinexd", "crate/sinexctl", "xtask"]
+members = ["crate/sinex-model", "crate/sinex-protocol", "crate/sinex-store", "crate/sinex-testkit", "crate/sinexd", "crate/sinexctl", "xtask"]
 
 [workspace.package]
 version = "0.1.0"

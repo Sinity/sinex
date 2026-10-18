@@ -138,9 +138,9 @@ fn plan_nodes(plan: &Value) -> Vec<&Value> {
 }
 
 #[tokio::test]
-#[ignore = "requires SINEX_TEST_ADMIN_URL"]
 async fn shell_count_sql_matches_a_plain_count_and_uses_its_index() -> Result {
-    let mut db = PgConnection::connect(&std::env::var("SINEX_TEST_ADMIN_URL")?).await?;
+    let test_db = sinex_testkit::database().await;
+    let mut db = PgConnection::connect(&test_db.admin).await?;
     for statement in TABLE {
         sqlx::query(statement).execute(&mut db).await?;
     }

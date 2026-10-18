@@ -59,6 +59,23 @@ fn internal_edge_is_refused_for_every_dependency_kind() {
 }
 
 #[test]
+fn test_helpers_are_allowed_only_as_dev_dependencies() {
+    let with = |kind| {
+        metadata(&[
+            ("sinex-model", vec![], vec![]),
+            ("sinex-testkit", vec![], vec![]),
+            (
+                "sinex-store",
+                vec![dep("sinex-model", None), dep("sinex-testkit", kind)],
+                vec![],
+            ),
+        ])
+    };
+    assert!(validate(with(Some("dev"))).is_ok());
+    assert!(validate(with(None)).is_err());
+}
+
+#[test]
 fn pure_crates_refuse_io_dependencies_directly_and_transitively() {
     assert!(validate(workspace(vec![dep("tokio", None)])).is_err());
     let wrapped = metadata(&[("sinex-model", vec![dep("wrapper", None)], vec!["wrapper"])]);

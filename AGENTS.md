@@ -3,8 +3,7 @@
 This is the Rust rewrite of Sinex. The README describes what works today and
 how to run it; `docs/` has a note per implemented feature. The design
 lives in the spec repository (`/realm/inbox/spec/sinex-spec/`). The old Sinex
-is in Git history and is still the deployed version; nothing here touches
-production state.
+is in Git history and is still the deployed version.
 
 ## Structure
 
@@ -15,15 +14,19 @@ production state.
 - `crate/sinexd`: the daemon: configuration, source collectors (Atuin, zsh,
   Chromium), the RPC server and `sinexd admin schema`.
 - `crate/sinexctl`: the CLI client and the MCP server.
-- `xtask`: developer commands (`check`, `test`, `db`, `boundaries`).
-- `tests/`: Python end-to-end scenarios that run the real daemon and CLI.
+- `crate/sinex-testkit`: test helpers, used only as a dev-dependency:
+  per-test PostgreSQL databases cloned from a schema template.
+- `xtask`: developer commands (`check`, `test`, `scenario`, `boundaries`).
+- `tests/`: Python end-to-end scenarios that run the real daemon and CLI; they
+  are being moved into Rust integration tests.
 
 `xtask boundaries` enforces which crates may depend on which.
 
 The admin-only daemon (`cargo build -p sinexd --no-default-features`) builds
-without a database and applies the schema. Everything else compiles its SQL
-against a real schema (SQLx checked queries; no offline cache), so set
-`DATABASE_URL` to a development database or use `xtask db`/`xtask test`.
+without a database and applies the schema. Everything else uses SQLx checked
+queries against a live development database; no offline cache. `xtask test`
+and `xtask scenario` start one and set `DATABASE_URL`; for a plain build, point
+`DATABASE_URL` at a development database with the schema applied.
 
 ## Development loop
 
@@ -34,8 +37,8 @@ Optimize for fast integration.
   `xtask boundaries` (seconds). There is no hosted CI and no required check;
   open a PR and merge it when it is ready.
 - Heavier work runs as AgentCTL operations (`agentctl project operations
-  sinex`): `check` (fmt, boundaries, cargo check), `test` (all Rust tests in an
-  owned PostgreSQL), `package` (Nix build) and the end-to-end scenarios. Run
+  sinex`): `check` (fmt, boundaries, cargo check), `test` (all tests, with
+  nextest, in an owned PostgreSQL), `scenario`, and `package` (Nix build). Run
   them on batches of merged work, not before every merge, and fix what they
   find afterwards.
 - Merge small PRs often. Rebase before pushing; do not keep long-lived
@@ -48,17 +51,17 @@ Optimize for fast integration.
 - Comments state constraints and reasons, briefly. No status, history or spec
   narration in code; Git and Beads hold those.
 - Tests go in separate files (`src/<module>_tests.rs`, `src/<module>/tests.rs`
-  or `tests/`); small tests may stay inline. Tests that need PostgreSQL are
-  `#[ignore]` and read `SINEX_TEST_ADMIN_URL`, `SINEX_TEST_WRITER_URL`,
-  `SINEX_TEST_READER_URL` and `SINEX_TEST_STORE_DIR`; `xtask test` gives each
-  one a fresh database. CLI and MCP behavior is tested through the public
-  commands, not by widening visibility.
+  or `tests/`); small tests may stay inline. A test that needs PostgreSQL calls
+  `sinex_testkit::database()` for its own database and runs under `xtask
+  test`. CLI and MCP behavior is tested through the public commands, not by
+  widening visibility. Tests never wait out real default timeouts; configure
+  short ones.
 - Register only operations that are implemented. Unsupported requests return a
   typed error, never an empty success. Unknown times stay unknown.
 - Do not change stored source material; keep what was captured.
 
-## Data and safety
+## Data
 
-Fixtures are synthetic. Keep credentials, real captures, private reports and
-real databases out of Git. Merging code is fine at any time; touching live
-stores, deploying, or changing task routing needs the operator's say-so.
+The repository is public: fixtures are synthetic, and credentials, real
+captures, private reports and real databases stay out of Git. Reading the
+operator's real files on this machine for development and measurement is fine.

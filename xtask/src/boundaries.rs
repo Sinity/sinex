@@ -51,6 +51,7 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         "sinex-protocol" | "sinex-store" => Ok(&["sinex-model"]),
         "sinexd" => Ok(&["sinex-model", "sinex-protocol", "sinex-store"]),
         "sinexctl" => Ok(&["sinex-model", "sinex-protocol"]),
+        "sinex-testkit" => Ok(&["sinex-model", "sinex-protocol", "sinex-store"]),
         _ => Err(format!("unassigned workspace package: {name}")),
     }
 }
@@ -93,13 +94,16 @@ fn validate(metadata: Metadata) -> Result<(), String> {
         // Declarations include optional, target-specific, build and development dependencies,
         // even when the host build does not activate them. Renames retain the package name.
         for dep in &package.dependencies {
-            let forbidden_internal =
-                names.contains(dep.name.as_str()) && !permitted.contains(&dep.name.as_str());
+            // Any crate may use the test helpers in its tests.
+            let test_helper = dep.name == "sinex-testkit" && dep.kind.as_deref() == Some("dev");
+            let forbidden_internal = names.contains(dep.name.as_str())
+                && !permitted.contains(&dep.name.as_str())
+                && !test_helper;
             let forbidden_pure = matches!(package.name.as_str(), "sinex-model" | "sinex-protocol")
                 && impure(&dep.name);
             let forbidden_sql = dep.name == "sqlx"
                 && match package.name.as_str() {
-                    "sinex-store" => false,
+                    "sinex-store" | "sinex-testkit" => false,
                     // Provider acquisition is SQLite-only. Canonical PostgreSQL belongs to store.
                     "sinexd" => {
                         dep.uses_default_features
@@ -113,7 +117,8 @@ fn validate(metadata: Metadata) -> Result<(), String> {
             if forbidden_internal
                 || forbidden_pure
                 || forbidden_sql
-                || (dep.name.starts_with("sqlx-") && package.name != "sinex-store")
+                || (dep.name.starts_with("sqlx-")
+                    && !matches!(package.name.as_str(), "sinex-store" | "sinex-testkit"))
             {
                 return Err(format!(
                     "forbidden dependency: {} -> {} (kind={}, target={})",

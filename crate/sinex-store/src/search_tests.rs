@@ -19,9 +19,8 @@ fn snippet_marks_phrase_and_prefix_matches_in_the_first_matching_field() {
 
 /// Checks the SQL for unknown times directly; the Atuin parser does not emit them.
 #[tokio::test]
-#[ignore = "requires isolated PostgreSQL credentials"]
 async fn unknown_time_stays_unknown_under_negation() -> Result<()> {
-    let url = std::env::var("SINEX_TEST_READER_URL").expect("reader URL required");
+    let url = sinex_testkit::database().await.reader;
     let mut connection = sqlx::PgConnection::connect(&url).await?;
     for (predicate, known) in [
         ("when = 2026-09-14T00:00:00Z", true),

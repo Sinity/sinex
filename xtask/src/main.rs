@@ -1,4 +1,4 @@
-//! Development commands: `check`, `test`, `scenario`, `db` and `boundaries`.
+//! Development commands: `check`, `test`, `scenario` and `boundaries`.
 mod boundaries;
 mod postgres;
 
@@ -8,17 +8,11 @@ use std::process::{Command, ExitCode};
 
 const USAGE: &str = "\
 xtask check                  fmt, dependency boundaries, cargo check (no database)
-xtask test [FILTER]          Rust tests; database tests each get a fresh database
+xtask test [FILTER]          all tests (cargo nextest) with an owned PostgreSQL
 xtask scenario NAME... [--package DIR]
                              end-to-end scenarios (tests/run.py) against the
                              development build, or the package in DIR; `all` runs all
-xtask db -- COMMAND...       run COMMAND with an owned PostgreSQL (DATABASE_URL set)
 xtask boundaries [DIR]       check the workspace dependency graph";
-
-/// Ignored tests that `xtask test` does not run: they need rows admitted by a
-/// running daemon first, so a scenario runs them.
-const SCENARIO_ONLY_TESTS: &[&str] =
-    &["shell::publication_tests::cancelled_publish_batch_rolls_back_and_republishes_with_same_ids"];
 
 type Result<T = ()> = std::result::Result<T, String>;
 
@@ -32,7 +26,6 @@ fn main() -> ExitCode {
         "check" => check(),
         "test" => test(rest),
         "scenario" => scenario(rest),
-        "db" => db(rest),
         "boundaries" => boundaries::check(Path::new(rest.first().map_or(".", String::as_str)))
             .map(|()| println!("dependency boundaries passed")),
         "help" | "--help" | "-h" => {
@@ -53,7 +46,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// Everything that needs no database. The runtime's SQL is checked by `test`.
+/// Everything that compiles without a database. The runtime's SQL is checked by `test`.
 fn check() -> Result {
     cargo(&["fmt", "--all", "--", "--check"])?;
     boundaries::check(Path::new("."))?;
@@ -75,60 +68,34 @@ fn check() -> Result {
     ])
 }
 
-fn test(args: &[String]) -> Result {
-    let filter: Vec<&str> = args.iter().map(String::as_str).collect();
-    let cluster = Cluster::start_with_schema(&admin_binary()?)?;
-    let mut all = vec!["test", "--locked", "--workspace", "--"];
-    all.extend(&filter);
-    cargo_with(&all, &cluster.env("sinex"))?;
-    // Database tests are `#[ignore]`d; each runs alone in a fresh database.
-    for name in ignored_tests(&cluster, &filter)? {
-        if SCENARIO_ONLY_TESTS.contains(&name.as_str()) {
-            continue;
-        }
-        let database = cluster.fresh_database()?;
-        cargo_with(
-            &[
-                "test",
-                "--locked",
-                "--workspace",
-                "--",
-                "--ignored",
-                "--exact",
-                &name,
-            ],
-            &cluster.env(&database),
-        )?;
-    }
-    Ok(())
+/// One build and one nextest run. Checked queries compile against a schema
+/// applied by the admin-only daemon; database tests clone their own databases.
+fn test(filter: &[String]) -> Result {
+    let cluster = Cluster::start()?;
+    let env = development_database(&cluster)?;
+    let mut args = vec!["nextest", "run", "--locked", "--workspace"];
+    args.extend(filter.iter().map(String::as_str));
+    cargo_with(&args, &env)
 }
 
-fn ignored_tests(cluster: &Cluster, filter: &[&str]) -> Result<Vec<String>> {
-    let output = Command::new("cargo")
-        .args([
-            "test",
-            "--locked",
-            "--workspace",
-            "--quiet",
-            "--",
-            "--ignored",
-            "--list",
-        ])
-        .args(filter)
-        .envs(cluster.env("sinex"))
-        .output()
-        .map_err(|e| format!("could not run cargo: {e}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-    }
-    let mut names: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.strip_suffix(": test"))
-        .map(str::to_owned)
-        .collect();
-    names.sort();
-    names.dedup();
-    Ok(names)
+/// Create the `sinex` database with the schema, applied by the admin-only
+/// daemon (which compiles without a database), and return the environment
+/// for compiling checked queries against it and for reaching the cluster.
+fn development_database(cluster: &Cluster) -> Result<Vec<(String, String)>> {
+    cargo(&["build", "--locked", "-p", "sinexd", "--no-default-features"])?;
+    let admin = cluster.fast_dir().join("admin-sinexd");
+    copy_file(&target_dir().join("debug/sinexd"), &admin)?;
+    let url = cluster.create_database("sinex")?;
+    let file = cluster.fast_dir().join("admin-url");
+    std::fs::write(&file, &url).map_err(|e| e.to_string())?;
+    status(
+        Command::new(admin)
+            .args(["admin", "schema", "--connection-file"])
+            .arg(&file),
+    )?;
+    let mut env = cluster.env();
+    env.push(("DATABASE_URL".into(), url));
+    Ok(env)
 }
 
 fn scenario(args: &[String]) -> Result {
@@ -147,16 +114,15 @@ fn scenario(args: &[String]) -> Result {
     if names.is_empty() {
         return Err("name at least one scenario, or `all`".into());
     }
-    let (cluster, bin, packaged) = match package {
-        Some(dir) => {
-            let bin = dir.join("bin");
-            (Cluster::start_with_schema(&bin.join("sinexd"))?, bin, true)
-        }
+    let cluster = Cluster::start()?;
+    let (bin, packaged, env) = match package {
+        Some(dir) => (dir.join("bin"), true, cluster.env()),
         None => {
-            let cluster = Cluster::start_with_schema(&admin_binary()?)?;
+            // DATABASE_URL stays set: shell_publication compiles a database test.
+            let env = development_database(&cluster)?;
             cargo_with(
                 &["build", "--locked", "-p", "sinexd", "-p", "sinexctl"],
-                &cluster.env("sinex"),
+                &env,
             )?;
             // Copy the binaries, so a concurrent build cannot replace them mid-scenario.
             let bin = cluster.fast_dir().join("bin");
@@ -164,36 +130,19 @@ fn scenario(args: &[String]) -> Result {
             for name in ["sinexd", "sinexctl"] {
                 copy_file(&target_dir().join("debug").join(name), &bin.join(name))?;
             }
-            (cluster, bin, false)
+            (bin, false, env)
         }
     };
     let mut command = Command::new("python3");
     command
         .arg("tests/run.py")
         .args(&names)
-        .envs(cluster.env("sinex"))
+        .envs(env)
         .env("SINEX_BIN_DIR", &bin);
     if packaged {
         command.env("SINEX_PACKAGED", "1");
     }
     status(&mut command)
-}
-
-fn db(args: &[String]) -> Result {
-    let command = match args.split_first() {
-        Some((first, rest)) if first == "--" => rest,
-        _ => args,
-    };
-    let (program, rest) = command.split_first().ok_or("db needs a command")?;
-    let cluster = Cluster::start_with_schema(&admin_binary()?)?;
-    status(Command::new(program).args(rest).envs(cluster.env("sinex")))
-}
-
-/// Build the admin-only daemon: it applies the schema and compiles without a
-/// database. The cluster keeps its own copy.
-fn admin_binary() -> Result<PathBuf> {
-    cargo(&["build", "--locked", "-p", "sinexd", "--no-default-features"])?;
-    Ok(target_dir().join("debug/sinexd"))
 }
 
 fn copy_file(from: &Path, to: &Path) -> Result {

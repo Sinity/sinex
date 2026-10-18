@@ -1,27 +1,23 @@
-//! A throwaway PostgreSQL cluster with the canonical schema, for tests and
-//! scenarios. It lives in a temporary directory and is stopped and removed on drop.
-//! It never fsyncs: on `/realm` a synced initdb alone takes a minute, and the
-//! tests kill processes, not machines.
+//! A throwaway PostgreSQL cluster for tests and scenarios. It lives in a
+//! temporary directory and is stopped and removed on drop. Tests create their
+//! own databases in it (see sinex-testkit). It never fsyncs: on `/realm` a
+//! synced initdb alone takes a minute, and the tests kill processes, not machines.
 use crate::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct Cluster {
     dir: PathBuf,
     /// Short tmpfs path for the socket (Unix socket paths are limited to about
-    /// 100 bytes) and for executables (the daemon hashes its own executable at
-    /// startup, which is slow from a busy disk).
+    /// 100 bytes) and for executables under test (the daemon hashes its own
+    /// executable at startup, which is slow from a busy disk).
     fast: PathBuf,
     port: u16,
-    admin: PathBuf,
-    databases: AtomicUsize,
 }
 
 impl Cluster {
-    /// Start a cluster, create the roles and a `sinex` database with the
-    /// schema applied by `admin` (a `sinexd` binary, copied into the cluster dir).
-    pub fn start_with_schema(admin: &Path) -> Result<Self> {
+    /// Start a cluster with the `sinex_writer` and `sinex_reader` roles.
+    pub fn start() -> Result<Self> {
         let unique = format!(
             "{}-{}",
             std::process::id(),
@@ -43,15 +39,7 @@ impl Cluster {
             .and_then(|l| l.local_addr())
             .map_err(|e| format!("pick a port: {e}"))?
             .port();
-        let copied = fast.join("admin-sinexd");
-        crate::copy_file(admin, &copied)?;
-        let cluster = Self {
-            dir,
-            fast,
-            port,
-            admin: copied,
-            databases: AtomicUsize::new(0),
-        };
+        let cluster = Self { dir, fast, port };
         let data = cluster.dir.join("data");
         cluster.pg(Command::new("initdb")
             .args([
@@ -62,11 +50,14 @@ impl Cluster {
                 "-D",
             ])
             .arg(&data))?;
+        // No TimescaleDB background workers: they hold sessions on every
+        // database, and a database cannot be cloned while it has sessions.
         let options = format!(
             "-k {} -c listen_addresses= -c shared_preload_libraries=timescaledb \
              -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on \
+             -c timescaledb.max_background_workers=0 -c max_connections=500 \
              -c fsync=off -c synchronous_commit=off -c full_page_writes=off -p {}",
-            cluster.socket().display(),
+            cluster.fast.display(),
             port
         );
         cluster.pg(Command::new("pg_ctl")
@@ -78,7 +69,6 @@ impl Cluster {
         for role in ["sinex_writer", "sinex_reader"] {
             cluster.pg(Command::new("createuser").arg(role))?;
         }
-        cluster.create_database("sinex")?;
         Ok(cluster)
     }
 
@@ -87,65 +77,28 @@ impl Cluster {
         &self.fast
     }
 
-    /// A new database with the schema applied, for one isolated test.
-    pub fn fresh_database(&self) -> Result<String> {
-        let name = format!("test_{}", self.databases.fetch_add(1, Ordering::Relaxed));
-        self.create_database(&name)?;
-        Ok(name)
-    }
-
-    fn create_database(&self, name: &str) -> Result {
-        self.pg(Command::new("createdb").arg(name))?;
-        let file = self.dir.join(format!("{name}.admin"));
-        std::fs::write(&file, self.url("", name)).map_err(|e| e.to_string())?;
-        self.pg(Command::new(&self.admin)
-            .args(["admin", "schema", "--connection-file"])
-            .arg(&file))
-    }
-
-    /// Environment for commands using database `name`: `DATABASE_URL` for
-    /// SQLx, `SINEX_TEST_*` for database tests and scenarios, `PG*` for psql.
-    pub fn env(&self, name: &str) -> Vec<(String, String)> {
-        let store = self.dir.join(format!("{name}-store"));
+    /// Environment that points libpq, psql and sinex-testkit at this cluster.
+    pub fn env(&self) -> Vec<(String, String)> {
         vec![
-            ("DATABASE_URL".into(), self.url("", name)),
-            ("SINEX_TEST_ADMIN_URL".into(), self.url("", name)),
-            (
-                "SINEX_TEST_WRITER_URL".into(),
-                self.url("sinex_writer", name),
-            ),
-            (
-                "SINEX_TEST_READER_URL".into(),
-                self.url("sinex_reader", name),
-            ),
-            ("SINEX_TEST_STORE_DIR".into(), store.display().to_string()),
-            ("PGHOST".into(), self.socket().display().to_string()),
+            ("PGHOST".into(), self.fast.display().to_string()),
             ("PGPORT".into(), self.port.to_string()),
         ]
     }
 
-    fn url(&self, role: &str, database: &str) -> String {
-        let user = if role.is_empty() {
-            String::new()
-        } else {
-            format!("{role}@localhost")
-        };
-        format!(
-            "postgresql://{user}/{database}?host={}&port={}",
-            self.socket().display(),
+    /// Create database `name` and return its admin URL.
+    pub fn create_database(&self, name: &str) -> Result<String> {
+        self.pg(Command::new("createdb").arg(name))?;
+        Ok(format!(
+            "postgresql:///{name}?host={}&port={}",
+            self.fast.display(),
             self.port
-        )
-    }
-
-    fn socket(&self) -> &Path {
-        &self.fast
+        ))
     }
 
     fn pg(&self, command: &mut Command) -> Result {
         let shown = format!("{command:?}");
         let output = command
-            .env("PGHOST", self.socket())
-            .env("PGPORT", self.port.to_string())
+            .envs(self.env())
             .env_remove("PGDATABASE")
             .env_remove("PGUSER")
             .output()

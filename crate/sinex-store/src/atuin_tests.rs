@@ -1,13 +1,10 @@
 use super::*;
 #[tokio::test]
-#[ignore = "needs PostgreSQL"]
 async fn new_parser_readmits_unchanged_row_and_keeps_old_event()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let admin = std::env::var("SINEX_TEST_ADMIN_URL")?;
-    let writer = std::env::var("SINEX_TEST_WRITER_URL")?;
-    let reader = std::env::var("SINEX_TEST_READER_URL")?;
-    let state = std::path::PathBuf::from(std::env::var("SINEX_TEST_STORE_DIR")?);
-    crate::bootstrap(&admin).await?;
+    let db = sinex_testkit::database().await;
+    let (writer, reader) = (db.writer.clone(), db.reader.clone());
+    let state = db.store_dir();
     let executable = std::fs::read(std::env::current_exe()?)?;
     let store = crate::Store::connect(
         &writer,

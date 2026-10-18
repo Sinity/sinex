@@ -14,10 +14,10 @@ fn plans(value: &Value) -> Vec<&Value> {
 }
 
 #[tokio::test]
-#[ignore = "requires the runner-created isolated PostgreSQL writer credential"]
 async fn work_table_indexes_serve_pending_and_output_lookups()
 -> Result<(), Box<dyn std::error::Error>> {
-    let mut connection = PgConnection::connect(&std::env::var("SINEX_TEST_WRITER_URL")?).await?;
+    let db = sinex_testkit::database().await;
+    let mut connection = PgConnection::connect(&db.writer).await?;
     let role: String = sqlx::query_scalar("SELECT current_user::text")
         .fetch_one(&mut connection)
         .await?;

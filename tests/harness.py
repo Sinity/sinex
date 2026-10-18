@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import tempfile
 import threading
@@ -21,6 +22,25 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = 'synthetic-foundation-token'
+
+
+TEMPLATE = 'scenario_template'
+
+
+def create_template():
+    """Create the schema template that every scenario database is cloned from.
+
+    Applying the schema once matters: it also creates cluster-wide roles, and
+    concurrent applications race on them.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in ('PGDATABASE', 'PGUSER')}
+    subprocess.run(['createdb', TEMPLATE], env=env, check=True)
+    url = f"postgresql:///{TEMPLATE}?host={env['PGHOST']}&port={env['PGPORT']}"
+    with tempfile.NamedTemporaryFile('w', suffix='.url') as connection:
+        connection.write(url)
+        connection.flush()
+        subprocess.run([str(Path(env['SINEX_BIN_DIR'])/'sinexd'), 'admin', 'schema', '--connection-file', connection.name],
+                       env=env, check=True, stdout=subprocess.DEVNULL)
 
 
 def free_port():
@@ -84,15 +104,9 @@ class Harness(dict):
 
     def create_database(self, name):
         """A new database with the schema applied; returns its admin, writer and reader URLs."""
-        self.run(['createdb', name], label='create database ' + name)
-        urls = {role: self['url'](user, name) for role, user in
+        self.run(['createdb', '--template', TEMPLATE, name], label='create database ' + name)
+        return {role: self['url'](user, name) for role, user in
                 [('admin', ''), ('writer', 'sinex_writer'), ('reader', 'sinex_reader')]}
-        connection = self['WORK']/(name + '-admin')
-        connection.write_text(urls['admin'])
-        connection.chmod(0o600)
-        self.run([self['BIN_DIR']/'sinexd', 'admin', 'schema', '--connection-file', connection],
-                 label='schema for ' + name)
-        return urls
 
     def run(self, args, *, expected=0, env=None, label=None, timeout=900):
         """Run a command, keep its output in the report, and check its exit status."""
@@ -159,7 +173,11 @@ class Harness(dict):
         (self['REPORT']/'traceback.txt').write_text(failure)
         kept = Path(os.environ.get('CARGO_TARGET_DIR', ROOT/'target'))/'scenario-failures'/self.dir.name
         kept.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(self.dir, kept)
+        # Copy rather than move: the directory is on tmpfs, and sockets cannot be copied.
+        def sockets(directory, names):
+            return [n for n in names if stat.S_ISSOCK(os.lstat(os.path.join(directory, n)).st_mode)]
+        shutil.copytree(self.dir, kept, ignore=sockets, symlinks=True)
+        shutil.rmtree(self.dir, ignore_errors=True)
         return kept
 
 

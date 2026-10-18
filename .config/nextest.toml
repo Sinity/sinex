@@ -1,0 +1,4 @@
+[profile.default]
+# Report a test as slow after 30 s and kill it after 2 minutes.
+slow-timeout = { period = "30s", terminate-after = 4 }
+fail-fast = false

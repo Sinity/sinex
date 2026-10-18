@@ -32,7 +32,7 @@ The Nix flake pins the toolchain and PostgreSQL 18 with TimescaleDB. Build the a
 nix develop --command cargo build -p sinexd --no-default-features
 ```
 
-The full daemon compiles its SQL queries against a live database schema (there is no offline SQLx cache). Point `DATABASE_URL` at a development database that already has the schema applied, then build normally. `nix build .#default` bootstraps its own temporary database inside the build.
+The full daemon compiles its SQL queries against a live database schema (there is no offline SQLx cache). Point `DATABASE_URL` at a development database that already has the schema applied, then build normally; `xtask test` and `xtask scenario` do this themselves. `nix build .#default` bootstraps its own temporary database inside the build.
 
 ## Database
 
@@ -95,15 +95,14 @@ sinexctl --endpoint http://127.0.0.1:41037/rpc --token-file /abs/token trace EVE
 
 ```
 nix develop --command cargo run -p xtask -- check     # fmt, dependency boundaries, cargo check; no database
-nix develop --command cargo run -p xtask -- test      # all Rust tests in an owned PostgreSQL
+nix develop --command cargo run -p xtask -- test      # all tests (nextest) in an owned PostgreSQL
 nix develop --command cargo run -p xtask -- scenario NAME|all [--package DIR]
                                                       # end-to-end scenarios, tests/scenarios/NAME.py
-nix develop --command cargo run -p xtask -- db -- CMD # run CMD with DATABASE_URL set to a fresh schema
 nix build .#default                                   # the package; runs the Rust tests in the builder
 ```
 
-`xtask test`, `scenario` and `db` start a throwaway PostgreSQL cluster in
-`$TMPDIR` with the canonical schema and remove it afterwards. Scenarios run the
+`xtask test` and `scenario` start a throwaway PostgreSQL cluster and remove it
+afterwards; each test or scenario gets its own database with the schema applied. Scenarios run the
 real daemon, CLI and MCP server against synthetic sources; a failed scenario
 leaves its logs in `target/scenario-failures/`. The same commands are AgentCTL
 operations (`check`, `test`, `scenario`, `package`). The pre-push hook runs

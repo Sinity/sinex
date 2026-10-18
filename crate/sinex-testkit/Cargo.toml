@@ -1,0 +1,14 @@
+[package]
+name = "sinex-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Test-only helpers. Other workspace crates may use it only as a dev-dependency.
+[dependencies]
+sinex-store = { path = "../sinex-store" }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+uuid = { version = "1", features = ["v4"] }

@@ -17,7 +17,7 @@ timeout_seconds = 1800
 cache = "none"
 
 [operations.test]
-description = "All Rust tests; database tests each get a fresh database in an owned PostgreSQL"
+description = "All tests with nextest; database tests each clone a template database in an owned PostgreSQL"
 exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
 pool = "bulk"
 result = "exit"
