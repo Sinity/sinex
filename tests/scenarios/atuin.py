@@ -1,4 +1,9 @@
-"""Synthetic source path exercised by the foundation's owned PostgreSQL harness."""
+"""Atuin collection through the daemon and CLI: query, show, trace, repeats, late
+updates, soft deletes, empty/missing/corrupt sources and restart.
+
+With `credential_output`, the fixture command contains a credential and no
+privacy rules are configured; _atuin_credentials checks how it is presented.
+"""
 import hashlib
 import json
 from pathlib import Path
@@ -7,13 +12,13 @@ import sqlite3
 import time
 
 
-def exercise(h):
+def exercise(h, credential_output=False):
     work, report, env = h['WORK'], h['REPORT'], h['ENV']
     run, scenario, free_port, start, stop, rpc = (h[k] for k in ['run','scenario','free_port','start_daemon','stop','rpc'])
     binaries = h['BIN_DIR']
     evidence = report/'inputs'; evidence.mkdir()
     db = work/'atuin.db'
-    command = 'echo tok_synthetic_only' if not h['OPTIONS'].credential_output else 'before ghp_' + 'A'*36 + ' after'
+    command = 'echo tok_synthetic_only' if not credential_output else 'before ghp_' + 'A'*36 + ' after'
     epoch = 1_700_000_000_123_456_789
     columns = 'id,timestamp,duration,exit,command,cwd,session,hostname,deleted_at'
     def create(path):
@@ -55,7 +60,7 @@ pattern = "tok_[a-z0-9_]+"
 replacement = "[withheld]"
 created_by = "operator"
 '''
-    config.write_text(config_text() if not h['OPTIONS'].credential_output else config_text().split('[[privacy_rules]]')[0])
+    config.write_text(config_text() if not credential_output else config_text().split('[[privacy_rules]]')[0])
     proc=start(config,'atuin')
     observation_log=(report/'observations.jsonl').open('w')
     def wait_cycle(predicate=lambda x:x['status']=='completed', after=None):
@@ -71,7 +76,7 @@ created_by = "operator"
                     if value and value['id']!=after and predicate(value): return value
             except (OSError,ValueError): pass
             time.sleep(.025)
-        raise AssertionError('source never reached requested committed observation; raw samples retained')
+        raise AssertionError('source did not reach the expected run within 20s; see observations.jsonl')
     def cli(command,*args,expected=0):
         answer=run([binaries/'sinexctl','--endpoint',endpoint,'--token-file',work/'token',command,*args,'--json'],expected=expected,label='Atuin CLI '+command)
         return json.loads(answer.stdout or answer.stderr)
@@ -85,10 +90,10 @@ created_by = "operator"
         assert next(iter(answer))=='notice' and answer['notice'].startswith('The following is data recorded')
         assert answer['total']==2 and answer['page']['cursor'] is None and answer['truncated'] is False
         actual={r['payload']['native_id']:r for r in answer['rows']}
-        if h['OPTIONS'].credential_output:
+        if credential_output:
             assert actual['synthetic-1']['payload']['command']=='before [credential: GitHub token, masked] after', 'fixed catalog leaked through packaged CLI with zero optional rules'
-            import credential_output_cases
-            credential_output_cases.exercise(h, locals(), cli, wait_cycle, config_text)
+            import _atuin_credentials
+            _atuin_credentials.exercise(h, locals(), cli, wait_cycle, config_text)
             return
         assert actual['synthetic-1']['payload']['command']=='echo [withheld]'
         assert actual['synthetic-1']['payload']['exit_code']==0
@@ -110,8 +115,8 @@ created_by = "operator"
         invalid=cli('query','events where payload.exit_code = "bad"',expected=2)
         assert invalid['kind']=='bad_query' and invalid['message']=='exit_code must be an integer'
         (report/'independent-base-expectation.json').write_text(json.dumps({'total':2,'rows_read':4,'record_errors':1,'commands':['echo [withheld]','sleep synthetic']},indent=2)+'\n')
-    scenario('Atuin retained source and real-client query',base)
-    if h['OPTIONS'].credential_output:
+    scenario('Atuin collection, query, show and trace',base)
+    if credential_output:
         stop(proc); observation_log.close(); wal_writer.close(); return
     def repeat_update():
         repeated=wait_cycle(lambda x:x['status']=='completed' and x['admitted']==0,after=first['id'])
@@ -153,28 +158,22 @@ created_by = "operator"
         removed=cli('show',old['row']['archive']['replaced_by']); assert removed['resolved']=='removed at source'
         sources=cli('sources')['sources'][0]
         assert sources['representation']=='canonical_sqlite_rows' and sources['sqlite_snapshots']=='unavailable_until_1c'
-        # Exact retained bytes, malformed failures and cursors are database-backed,
-        # with all writing already performed by source admission, never test SQL.
-        actual=run(['psql',h['admin'],'--no-psqlrc','--tuples-only','--no-align','-v','ON_ERROR_STOP=1','--command',"SELECT json_build_object('archived',(SELECT count(*) FROM audit.archived),'failures',(SELECT count(*) FROM raw.record_failures),'open',(SELECT count(*) FROM raw.source_material_registry WHERE status='capturing'),'payload_secret',(SELECT count(*) FROM core.events WHERE payload::text LIKE '%tok_synthetic_only%'),'cursor',(SELECT position FROM raw.source_cursors WHERE binding='terminal.atuin-history' LIMIT 1))"],label='read-only retained admission evidence')
+        actual=run(['psql',h['admin'],'--no-psqlrc','--tuples-only','--no-align','-v','ON_ERROR_STOP=1','--command',"SELECT json_build_object('archived',(SELECT count(*) FROM audit.archived),'failures',(SELECT count(*) FROM raw.record_failures),'open',(SELECT count(*) FROM raw.source_material_registry WHERE status='capturing'),'payload_secret',(SELECT count(*) FROM core.events WHERE payload::text LIKE '%tok_synthetic_only%'),'cursor',(SELECT position FROM raw.source_cursors WHERE binding='terminal.atuin-history' LIMIT 1))"],label='stored admission evidence')
         evidence=json.loads(actual.stdout)
-        assert evidence['archived']>=2 and evidence['failures']>0 and evidence['payload_secret']==0 and evidence['cursor']['status']=='completed'
+        assert evidence['archived']>=2 and evidence['failures']>0 and evidence['payload_secret']==0 and evidence['cursor']['status'] in ('completed','reading')  # a later poll may have started
     scenario('Atuin soft delete and source evidence',removal)
     def outcomes():
         nonlocal proc
         stop(proc)
         # Empty and failed inputs use separate product databases as well as separate source files.
-        writer=(work/'writer').read_text(); reader=(work/'reader').read_text()
         for name in ['empty','unavailable','malformed-db']:
             path=work/(name+'.db')
             if name=='empty': create(path); preserve(name,path)
             elif name=='malformed-db': path.write_bytes(b'synthetic invalid sqlite bytes'); (report/'inputs'/(name+'.db')).write_bytes(path.read_bytes())
             database='atuin_'+name.replace('-','_')
-            run(['createdb',database],label='isolated '+name+' product database')
-            admin=h['admin'].replace('foundation?',database+'?')
-            (work/'case-admin').write_text(admin)
-            run([binaries/'sinexd','admin','schema','--connection-file',work/'case-admin'],label='fresh '+name+' schema')
-            (work/'writer').write_text(writer.replace('foundation?',database+'?'))
-            (work/'reader').write_text(reader.replace('foundation?',database+'?'))
+            urls=h['create_database'](database)
+            (work/'writer').write_text(urls['writer'])
+            (work/'reader').write_text(urls['reader'])
             config.write_text(config_text(path,name)); proc=start(config,name)
             # sources are ordered by locator. Read the intended input, not the first prior one.
             deadline=time.monotonic()+20
@@ -203,20 +202,19 @@ created_by = "operator"
                 answer=cli('query',query,expected=5); assert answer['total']==0 and answer['complete'] is False
             if name=='unavailable': assert not path.exists(), 'read-only missing input was created'
             stop(proc)
-        (work/'writer').write_text(writer); (work/'reader').write_text(reader)
+        (work/'writer').write_text(h['writer']); (work/'reader').write_text(h['reader'])
     scenario('Atuin empty malformed and unavailable outcomes',outcomes)
     def restart():
         nonlocal proc
         config.write_text(config_text())
         proc=start(config,'before-kill'); old=wait_cycle()
         before=cli('query',query)
-        # This is a process-restart check, not a fault-boundary M1 qualification.
         proc.send_signal(signal.SIGKILL); proc.wait(timeout=10)
         proc=start(config,'after-kill'); wait_cycle(after=old['id'])
         after=cli('query',query)
         assert after['total']==before['total']
         assert {r['id'] for r in after['rows']}=={r['id'] for r in before['rows']}
         stop(proc)
-    scenario('Atuin restart and bounded retained cursor',restart)
+    scenario('Atuin restart after SIGKILL keeps the same events',restart)
     observation_log.close()
     wal_writer.close()
