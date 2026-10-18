@@ -69,6 +69,34 @@ fn pure_crates_refuse_io_dependencies_directly_and_transitively() {
 }
 
 #[test]
+fn an_optional_dependency_counts_only_when_a_feature_enables_it() {
+    let graph = |features: Vec<&str>| -> Metadata {
+        serde_json::from_value(json!({
+            "packages": [
+                {"id": "sinex-model", "name": "sinex-model", "dependencies": [dep("timelib", None)]},
+                {"id": "timelib", "name": "timelib",
+                 "dependencies": [{"name": "tokio", "kind": null, "target": null, "optional": true}],
+                 "features": {"std": ["tokio?/std"], "io": ["dep:tokio"]}},
+                {"id": "tokio", "name": "tokio", "dependencies": []},
+            ],
+            "workspace_members": ["sinex-model"],
+            "resolve": {"nodes": [
+                {"id": "sinex-model", "deps": [{"pkg": "timelib", "dep_kinds": [{"kind": null}]}]},
+                {"id": "timelib", "deps": [{"pkg": "tokio", "dep_kinds": [{"kind": null}]}], "features": features},
+                {"id": "tokio", "deps": []},
+            ]},
+        }))
+        .unwrap()
+    };
+    // `tokio?/std` names tokio weakly; it is not built.
+    assert!(validate(graph(vec!["std"])).is_ok());
+    assert_eq!(
+        validate(graph(vec!["std", "io"])).unwrap_err(),
+        "forbidden transitive dependency: sinex-model -> tokio"
+    );
+}
+
+#[test]
 fn only_store_schema_and_daemon_use_sqlx() {
     for client in ["sinexctl", "sinex-sources", "sinex-library"] {
         assert!(
