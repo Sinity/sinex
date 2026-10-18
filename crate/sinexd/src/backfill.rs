@@ -1,14 +1,16 @@
 //! Read configured sources to the end through the writer, reporting counts and
 //! rates. The same driver, drain and admission path the daemon uses; only the
 //! scheduling differs (read until caught up, then stop).
-use crate::keys::Registered;
+//!
+//! A driver's memory of what it already stored is rebuilt from the stored
+//! materials before the first read, so a second run reads only what changed.
+use crate::context::{Context, Sink, stored_chain};
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
 use sinex_sources::{Limits, Source, drivers};
-use sinex_store::{Blobs, positions, runs};
-use sqlx::{Connection, PgConnection};
+use sinex_store::{positions, runs};
+use sqlx::PgConnection;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub struct Options {
@@ -21,13 +23,6 @@ pub struct Options {
     /// A journald capture spool (`sinexd capture journald`).
     pub journald_spool: Option<PathBuf>,
     pub host: String,
-}
-
-struct Sink(Blobs);
-impl drivers::MaterialSink for Sink {
-    fn put(&self, bytes: &[u8]) -> Result<String, String> {
-        self.0.put(bytes).map_err(|e| e.to_string())
-    }
 }
 
 #[derive(Default)]
@@ -83,23 +78,8 @@ impl std::fmt::Display for Totals {
 }
 
 pub async fn run(o: Options) -> Result<(), String> {
-    let mut aux = PgConnection::connect(&o.database)
-        .await
-        .map_err(|e| e.to_string())?;
-    sinex_schema::apply(&mut aux)
-        .await
-        .map_err(|e| e.to_string())?;
-    let sink = Sink(Blobs::open(&o.store).map_err(|e| e.to_string())?);
-    let writer_conn = PgConnection::connect(&o.database)
-        .await
-        .map_err(|e| e.to_string())?;
-    let (handle, queues) = writer::channels();
-    let writer_task = tokio::spawn(writer::run(
-        o.database.clone(),
-        writer_conn,
-        queues,
-        Arc::new(Registered(sinex_automata::keyed())),
-    ));
+    let mut ctx = Context::open(&o.database, &o.store).await?;
+    let sink = Sink(ctx.blobs.clone());
     let manifest = runs::Manifest {
         name: "sinexd backfill",
         kind: "source",
@@ -119,20 +99,22 @@ pub async fn run(o: Options) -> Result<(), String> {
             "journal.entry",
         ],
     };
-    let run = runs::start(&mut aux, &manifest, &o.host)
+    let run = runs::start(&mut ctx.aux, &manifest, &o.host)
         .await
         .map_err(|e| e.to_string())?;
 
     if let Some(path) = &o.atuin {
         let source = sinex_sources::sources::atuin::source();
         let driver = sinex_sources::sources::atuin::driver(path.clone(), o.host.clone());
-        let mut memory = drivers::sqlite_rows::RowMemory::default();
+        let binding = format!("atuin@{}", o.host);
+        let chain = stored(&mut ctx, &binding).await?;
+        let mut memory = drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(Vec::as_slice));
         let totals = drive(
-            &mut aux,
-            &handle,
+            &mut ctx.aux,
+            &ctx.writer,
             run,
             &source,
-            &format!("atuin@{}", o.host),
+            &binding,
             &sink,
             |cursor| driver.poll(cursor, &mut memory),
         )
@@ -142,14 +124,20 @@ pub async fn run(o: Options) -> Result<(), String> {
     if let Some(path) = &o.zsh {
         let source = sinex_sources::sources::zsh::source(o.host.clone());
         let driver = sinex_sources::sources::zsh::driver(path.clone(), o.host.clone());
+        let binding = format!("zsh@{}", o.host);
+        let chain = stored(&mut ctx, &binding).await?;
+        let mut memory = drivers::append_file::AppendMemory::rebuild(
+            chain.iter().map(Vec::as_slice),
+            sinex_sources::sources::zsh::frame,
+        );
         let totals = drive(
-            &mut aux,
-            &handle,
+            &mut ctx.aux,
+            &ctx.writer,
             run,
             &source,
-            &format!("zsh@{}", o.host),
+            &binding,
             &sink,
-            |cursor| driver.poll(cursor),
+            |cursor| driver.poll(cursor, &mut memory),
         )
         .await?;
         println!("zsh    {totals}");
@@ -158,8 +146,8 @@ pub async fn run(o: Options) -> Result<(), String> {
         let source = sinex_sources::sources::hyprland::source();
         let driver = sinex_sources::sources::hyprland::driver(spool.clone(), o.host.clone());
         let totals = drive(
-            &mut aux,
-            &handle,
+            &mut ctx.aux,
+            &ctx.writer,
             run,
             &source,
             &format!("hyprland@{}", o.host),
@@ -173,8 +161,8 @@ pub async fn run(o: Options) -> Result<(), String> {
         let source = sinex_sources::sources::journald::source();
         let driver = sinex_sources::sources::journald::driver(spool.clone(), o.host.clone());
         let totals = drive(
-            &mut aux,
-            &handle,
+            &mut ctx.aux,
+            &ctx.writer,
             run,
             &source,
             &format!("journald@{}", o.host),
@@ -184,10 +172,20 @@ pub async fn run(o: Options) -> Result<(), String> {
         .await?;
         println!("journald {totals}");
     }
-    runs::end(&mut aux, run).await.map_err(|e| e.to_string())?;
-    drop(handle);
-    writer_task.await.map_err(|e| e.to_string())?;
-    Ok(())
+    runs::end(&mut ctx.aux, run)
+        .await
+        .map_err(|e| e.to_string())?;
+    ctx.close().await
+}
+
+/// The stored bytes the binding's driver read last, for its memory.
+async fn stored(ctx: &mut Context, binding: &str) -> Result<Vec<Vec<u8>>, String> {
+    let cursor = positions::load(&mut ctx.aux, binding)
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|(cursor, _)| cursor)
+        .unwrap_or(serde_json::Value::Null);
+    stored_chain(&mut ctx.aux, &ctx.blobs, &cursor).await
 }
 
 async fn drive(

@@ -32,6 +32,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "journald-json",
     parser_version: 1,
     event_types: &["journal.entry"],
+    framer: crate::drivers::append_file::lines,
 };
 
 pub struct JournaldParser;

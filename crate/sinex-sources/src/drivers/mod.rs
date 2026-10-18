@@ -58,6 +58,11 @@ pub struct NewMaterial {
     pub reading_order: Box<dyn Fn(usize) -> ReadingOrder + Send + Sync>,
     /// The cursor after the record ending at the given byte of the material.
     pub cursor_at: Box<dyn Fn(usize) -> Value + Send + Sync>,
+    /// A rewrite aligned against the previous revision: `records` holds only
+    /// the records not read before. Its records are admitted as one batch, so
+    /// the cursor never stops inside it (a resumed read would take the
+    /// records skipped as already read for new ones).
+    pub aligned: bool,
 }
 
 /// Turn one poll into admission batches. The material's bytes go to the
@@ -115,6 +120,14 @@ pub fn batches(
         parser_version: spec.parser_version,
         manifest: m.manifest.clone(),
     };
+    let limits = if m.aligned {
+        Limits {
+            max_events: usize::MAX,
+            max_bytes: usize::MAX,
+        }
+    } else {
+        limits
+    };
     let chunks = source
         .drain(DrainInput {
             source: spec.name,
@@ -129,7 +142,15 @@ pub fn batches(
         .map_err(|e| DriverError::Carry(e.0))?;
     let mut out = Vec::with_capacity(chunks.len());
     let mut first = true;
-    for chunk in chunks {
+    let count = chunks.len();
+    for (i, chunk) in chunks.into_iter().enumerate() {
+        // After the last chunk the whole material is read, records skipped as
+        // already read included.
+        let end = if i + 1 == count {
+            m.bytes.len()
+        } else {
+            chunk.end
+        };
         let (observation, revision) = if first {
             (acquired.observation.clone(), acquired.revision)
         } else {
@@ -146,7 +167,7 @@ pub fn batches(
             run,
             kind: progress(
                 first.then(|| material.clone()),
-                (m.cursor_at)(chunk.end),
+                (m.cursor_at)(end),
                 chunk.carry,
                 observation,
                 revision,
@@ -157,6 +178,39 @@ pub fn batches(
         first = false;
     }
     Ok(out)
+}
+
+/// Which of two readings of a record is newer, as the material's manifest
+/// records it: the time a database snapshot was read (`read_at_ns`), or the
+/// record's byte offset in its file (`file_offset` plus the anchor). The
+/// driver and a replay both compute it here, so a replayed reading keeps the
+/// order of the reading it replaces.
+pub fn reading_order(manifest: &Value) -> Box<dyn Fn(usize) -> ReadingOrder + Send + Sync> {
+    if let Some(at) = manifest.get("read_at_ns").and_then(Value::as_i64) {
+        return Box::new(move |_| ReadingOrder(at));
+    }
+    let offset = manifest
+        .get("file_offset")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    Box::new(move |anchor| ReadingOrder(offset.saturating_add(anchor as u64) as i64))
+}
+
+/// The records of a stored material the driver read: every framed record,
+/// or, for a rewrite aligned against the previous revision, only those the
+/// manifest lists as new (`records`), since the rest were read before.
+pub fn stored_records(
+    manifest: &Value,
+    bytes: &[u8],
+    framer: crate::Framer,
+) -> Vec<(usize, usize)> {
+    match manifest.get("records").and_then(Value::as_array) {
+        Some(listed) => listed
+            .iter()
+            .filter_map(|r| Some((r.get(0)?.as_u64()? as usize, r.get(1)?.as_u64()? as usize)))
+            .collect(),
+        None => framer(bytes).0,
+    }
 }
 
 /// File facts for an observation.

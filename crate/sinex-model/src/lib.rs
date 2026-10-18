@@ -16,7 +16,7 @@ pub mod query;
 
 pub use batch::{
     ArchiveRequest, Batch, BatchKind, InputRef, MaterialRef, ObservationFacts, RecordOutcome,
-    RevisionChange, SourceProgress,
+    ReplayScope, RevisionChange, SourceProgress,
 };
 pub use clock::{TimeQuality, Timestamp, TsOrig};
 pub use event::{BuildError, Event, Origin, ReadingOrder, RecordLocation, RecordState};

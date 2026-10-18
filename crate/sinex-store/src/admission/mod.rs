@@ -11,14 +11,17 @@
 //! 6. insert events, commit log and side-table rows, archive replaced readings;
 //! 7. record failures and the source position;
 //! 8. mark dirty keys for keyed derivations whose inputs changed;
-//! 9. apply hide, unhide and excise requests.
+//! 9. apply hide and unhide requests.
+//!
+//! A replay's request to archive the readings it re-reads runs first, before
+//! staging, so the new readings are classified against what remains.
 //!
 //! The caller commits; events and progress are then durable together.
 use crate::{Error, Result, privacy, stage};
 use serde_json::Value;
 use sinex_model::{
-    ArchiveRequest, Batch, BatchKind, Event, EventId, InputId, ObservationId, RecordOutcome,
-    RevisionChange, RevisionId, SourceProgress, Timestamp,
+    ArchiveRequest, Batch, BatchKind, Event, EventId, InputId, ObservationId, OperationId,
+    RecordOutcome, ReplayScope, RevisionChange, RevisionId, SourceProgress, Timestamp,
 };
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -56,12 +59,15 @@ pub struct Outcome {
     pub replaced: usize,
     /// Older readings of a record that has a newer live reading: suppressed.
     pub older: usize,
-    /// Readings of hidden or excised records: suppressed.
+    /// Readings of hidden or excised records, or of bytes an excision
+    /// removed: suppressed.
     pub hidden: usize,
     /// Superseded by a newer reading of the same record in this batch.
     pub superseded: usize,
     pub failures: usize,
     pub dirty_keys: usize,
+    /// Live readings a replay archived before admitting its new readings.
+    pub replay_archived: usize,
     /// The commit sequence range given to admitted events.
     pub commit_seq: Option<(i64, i64)>,
     pub admitted_ids: Vec<EventId>,
@@ -87,6 +93,13 @@ pub async fn admit(
 
     if let BatchKind::Source(progress) = &batch.kind {
         register_source(conn, progress).await?;
+    }
+    for request in &batch.archive {
+        if let ArchiveRequest::Replay { scope, operation } = request {
+            let (archived, dirty) = archive_replay_scope(conn, scope, *operation, keys).await?;
+            outcome.replay_archived += archived;
+            outcome.dirty_keys += dirty;
+        }
     }
 
     // Privacy rules apply once, here; reads never apply a rule again.
@@ -120,7 +133,7 @@ pub async fn admit(
                SELECT s.ord AS "ord!",
                  CASE
                    WHEN s.rank > 1 THEN 'superseded'
-                   WHEN hk.id IS NOT NULL OR hl.id IS NOT NULL THEN 'hidden'
+                   WHEN hk.id IS NOT NULL OR hl.id IS NOT NULL OR xd.record_hash IS NOT NULL THEN 'hidden'
                    WHEN coalesce(le.event_id, lc.event_id) IS NULL THEN 'new'
                    WHEN coalesce(le.record_hash, lc.record_hash) = s.record_hash THEN 'repeat'
                    WHEN s.replace_rule = 'suppress_repeat' THEN 'repeat'
@@ -135,6 +148,9 @@ pub async fn admit(
                LEFT JOIN core.hidden_occurrences hl
                  ON s.equivalence_key IS NULL AND hl.material_id = s.material_id
                  AND hl.anchor = s.anchor AND hl.event_type = s.event_type AND hl.ordinal = s.ordinal
+               LEFT JOIN core.excised_digests xd
+                 ON s.material_id IS NOT NULL AND xd.source = s.source
+                 AND xd.event_type = s.event_type AND xd.record_hash = s.record_hash
                LEFT JOIN core.live_equivalence le
                  ON s.equivalence_key IS NOT NULL AND le.source = s.source
                  AND le.event_type = s.event_type AND le.equivalence_key = s.equivalence_key
@@ -324,6 +340,66 @@ pub async fn admit(
     Ok(outcome)
 }
 
+/// Archive the live readings a replay re-reads: those read from the scope's
+/// materials (narrowed by type and time), and the live derived events that
+/// descend from them. Their keys become dirty, so derivations recompute. The
+/// materials' failure rows go too when whole materials are re-read: the
+/// replay records its own.
+async fn archive_replay_scope(
+    conn: &mut PgConnection,
+    scope: &ReplayScope,
+    operation: OperationId,
+    keys: &dyn DirtyKeys,
+) -> Result<(usize, usize)> {
+    let materials: Vec<Uuid> = scope.materials.iter().map(|m| m.0).collect();
+    let types: Option<Vec<String>> = scope.event_types.clone();
+    let live: Vec<Uuid> = sqlx::query_scalar!(
+        r#"WITH RECURSIVE read_here AS (
+             SELECT e.id FROM core.events e
+             WHERE e.material_id = ANY($1)
+               AND ($2::text[] IS NULL OR e.event_type = ANY($2))
+               AND ($3::timestamptz IS NULL OR e.ts_orig >= $3)
+               AND ($4::timestamptz IS NULL OR e.ts_orig < $4)
+               AND ($3::timestamptz IS NULL AND $4::timestamptz IS NULL OR e.ts_orig IS NOT NULL)),
+           descendants AS (
+             SELECT id FROM read_here
+             UNION
+             SELECT d.id FROM core.events d JOIN descendants p ON d.parents @> ARRAY[p.id])
+           SELECT x.id AS "id!" FROM descendants x
+           WHERE EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = x.id)
+              OR EXISTS (SELECT 1 FROM core.live_coordinates l WHERE l.event_id = x.id)"#,
+        &materials,
+        types.as_deref(),
+        scope.from.map(|t| t.0),
+        scope.until.map(|t| t.0),
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let seq = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
+        .fetch_one(&mut *conn)
+        .await?;
+    let dirty = mark_archived_dirty(conn, &live, seq, keys).await?;
+    sqlx::query!(
+        r#"INSERT INTO audit.archived (event_id, archived_seq, reason, operation_id)
+           SELECT id, $2, 'replay', $3 FROM unnest($1::uuid[]) AS id ON CONFLICT (event_id) DO NOTHING"#,
+        &live,
+        seq,
+        operation.0,
+    )
+    .execute(&mut *conn)
+    .await?;
+    remove_live(conn, &live).await?;
+    if scope.event_types.is_none() && scope.from.is_none() && scope.until.is_none() {
+        sqlx::query!(
+            "DELETE FROM raw.failures WHERE material_id = ANY($1)",
+            &materials
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok((live.len(), dirty))
+}
+
 /// Upsert the input, record the observation, open a revision when the content
 /// changed in a way that is not a plain append, and register the material.
 /// Bytes are already in the content store, so they exist before any row refers
@@ -463,7 +539,7 @@ async fn mark_dirty(
 
 /// Archived readings make their keys dirty too: a derivation's output must stop
 /// counting them.
-async fn mark_archived_dirty(
+pub(crate) async fn mark_archived_dirty(
     conn: &mut PgConnection,
     ids: &[Uuid],
     seq: i64,
@@ -486,7 +562,7 @@ async fn mark_archived_dirty(
     mark_dirty(conn, dirty, seq).await
 }
 
-/// Hide, unhide and excise work on equivalence keys, or record locations for
+/// Hide and unhide work on equivalence keys, or record locations for
 /// keyless types, and need nothing per source (architecture §5.5).
 async fn archive_request(
     conn: &mut PgConnection,
@@ -497,13 +573,9 @@ async fn archive_request(
         .fetch_one(&mut *conn)
         .await?;
     match request {
-        ArchiveRequest::Hide { target, operation }
-        | ArchiveRequest::Excise { target, operation } => {
-            let kind = if matches!(request, ArchiveRequest::Hide { .. }) {
-                "hide"
-            } else {
-                "excise"
-            };
+        ArchiveRequest::Replay { .. } => Ok(0),
+        ArchiveRequest::Hide { target, operation } => {
+            let kind = "hide";
             let event = sqlx::query!(
                 "SELECT source, event_type, equivalence_key, material_id, anchor, ordinal FROM core.events WHERE id = $1",
                 target.0
@@ -552,37 +624,6 @@ async fn archive_request(
             .execute(&mut *conn)
             .await?;
             remove_live(conn, &live).await?;
-            if kind == "excise" {
-                // Permanent: every reading of the record goes. Removing the
-                // material bytes and sealed-key destruction are the excision
-                // lane's (architecture §3.4).
-                sqlx::query!(
-                    "SELECT set_config('sinex.excise_operation', $1, true)",
-                    operation.0.to_string()
-                )
-                .fetch_one(&mut *conn)
-                .await?;
-                // The search read model holds payload text; it goes with the
-                // events, in the same transaction.
-                sqlx::query!(
-                    r#"WITH gone AS (
-                         DELETE FROM core.events e WHERE e.source = $1 AND e.event_type = $2
-                         AND ((e.equivalence_key = $3) OR ($3::text IS NULL AND e.material_id = $4 AND e.anchor = $5 AND e.ordinal = $6))
-                         RETURNING e.id)
-                       DELETE FROM core.search_text s USING gone WHERE s.event_id = gone.id"#,
-                    event.source,
-                    event.event_type,
-                    event.equivalence_key,
-                    event.material_id,
-                    event.anchor,
-                    event.ordinal,
-                )
-                .execute(&mut *conn)
-                .await?;
-                sqlx::query!("SELECT set_config('sinex.excise_operation', '', true)")
-                    .fetch_one(&mut *conn)
-                    .await?;
-            }
             Ok(dirty)
         }
         ArchiveRequest::Unhide {
@@ -681,7 +722,7 @@ async fn live_reading(
     })
 }
 
-async fn remove_live(conn: &mut PgConnection, ids: &[Uuid]) -> Result<()> {
+pub(crate) async fn remove_live(conn: &mut PgConnection, ids: &[Uuid]) -> Result<()> {
     sqlx::query!(
         "DELETE FROM core.live_equivalence WHERE event_id = ANY($1)",
         ids

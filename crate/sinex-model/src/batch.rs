@@ -29,9 +29,21 @@ impl Batch {
 #[derive(Clone, Debug)]
 pub enum BatchKind {
     Source(Box<SourceProgress>),
-    Derived { derivation: String, scope: Value },
-    Api { actor: String },
-    Ingress { producer: String },
+    Derived {
+        derivation: String,
+        scope: Value,
+    },
+    Api {
+        actor: String,
+    },
+    Ingress {
+        producer: String,
+    },
+    /// New readings of stored materials, from a replay; the material is
+    /// already registered, so there is no source progress.
+    Replay {
+        operation: OperationId,
+    },
 }
 
 /// One framed record's result: its events, or why the parser could not read it.
@@ -117,7 +129,9 @@ pub struct MaterialRef {
     pub manifest: Value,
 }
 
-/// Requests that archive live readings in the same transaction.
+/// Requests that archive live readings in the same transaction. Excision is
+/// not one of them: it rewrites material bytes, so it is its own writer job
+/// (`sinex_store::excision`).
 #[derive(Clone, Debug)]
 pub enum ArchiveRequest {
     Hide {
@@ -128,8 +142,38 @@ pub enum ArchiveRequest {
         target: EventId,
         operation: OperationId,
     },
-    Excise {
-        target: EventId,
+    /// Archive the live readings a replay re-reads, before its new readings
+    /// are admitted in the same transaction (architecture §5.5).
+    Replay {
+        scope: ReplayScope,
         operation: OperationId,
     },
+}
+
+/// Which live readings a replay re-reads: those read from `materials`,
+/// optionally narrowed to some event types and a `ts_orig` window, and every
+/// derived event that descends from them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplayScope {
+    pub materials: Vec<MaterialId>,
+    pub event_types: Option<Vec<String>>,
+    pub from: Option<Timestamp>,
+    pub until: Option<Timestamp>,
+}
+
+impl ReplayScope {
+    /// Whether a new reading belongs to the scope (its material is checked by
+    /// the caller, which only re-reads in-scope materials).
+    pub fn admits(&self, event: &Event) -> bool {
+        if let Some(types) = &self.event_types
+            && !types.iter().any(|t| t == event.event_type)
+        {
+            return false;
+        }
+        match (event.ts_orig.at, self.from, self.until) {
+            (None, None, None) => true,
+            (None, _, _) => false,
+            (Some(at), from, until) => from.is_none_or(|f| at >= f) && until.is_none_or(|u| at < u),
+        }
+    }
 }

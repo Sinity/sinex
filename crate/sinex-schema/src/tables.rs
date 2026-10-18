@@ -88,6 +88,33 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 )".into(),
         "CREATE UNIQUE INDEX hidden_by_key ON core.hidden_occurrences (source, event_type, equivalence_key) WHERE equivalence_key IS NOT NULL".into(),
         "CREATE UNIQUE INDEX hidden_by_location ON core.hidden_occurrences (material_id, anchor, event_type, ordinal) WHERE material_id IS NOT NULL".into(),
+        // What an excision removed: identity and time, never the payload
+        // (spec storage.md §9).
+        "CREATE TABLE core.event_tombstones (
+  event_id uuid PRIMARY KEY,
+  source text NOT NULL,
+  event_type text NOT NULL,
+  ts_orig timestamptz,
+  operation_id uuid NOT NULL,
+  removed_at timestamptz NOT NULL DEFAULT now()
+)".into(),
+        // Record hashes an excision removed, so re-staging the same bytes
+        // (a new material, so a new location) does not bring them back.
+        "CREATE TABLE core.excised_digests (
+  source text NOT NULL,
+  event_type text NOT NULL,
+  record_hash bytea NOT NULL,
+  operation_id uuid NOT NULL,
+  PRIMARY KEY (source, event_type, record_hash)
+)".into(),
+        // Replay runs one transaction per material chain; a finished chain is
+        // recorded here, so a resumed replay skips it.
+        "CREATE TABLE core.replay_chains (
+  operation_id uuid NOT NULL,
+  chain_root uuid NOT NULL,
+  completed_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (operation_id, chain_root)
+)".into(),
         // Commit order, read by derivations inside the daemon and by the publisher.
         "CREATE TABLE core.commit_log (
   commit_seq bigint PRIMARY KEY,
@@ -307,7 +334,10 @@ END $$"
             "CREATE INDEX ON $T (source, ts_orig)",
             "CREATE INDEX ON $T (event_type, ts_orig)",
             "CREATE INDEX ON $T (material_id, anchor)",
-            "CREATE INDEX ON $T USING gin (parents)",
+            // Only derived events have parents. Without the pending list a
+            // search never scans an unsorted backlog of bulk inserts (which
+            // made each probe cost 0.6 ms after a backfill).
+            "CREATE INDEX ON $T USING gin (parents) WITH (fastupdate = off) WHERE parents IS NOT NULL",
             "CREATE TRIGGER event_guard BEFORE UPDATE OR DELETE ON $T FOR EACH ROW EXECUTE FUNCTION core.event_guard()",
             "ALTER TABLE $T SET (timescaledb.compress, timescaledb.compress_segmentby = 'source, event_type', timescaledb.compress_orderby = 'ts_orig, id')",
             "SELECT enable_chunk_skipping('$T', 'ts_orig')",

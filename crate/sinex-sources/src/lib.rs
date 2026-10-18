@@ -16,7 +16,7 @@ pub mod sources;
 
 pub use drain::{DrainInput, DrainOutput, Limits, drain};
 pub use drivers::{Acquired, DriverError, MaterialSink};
-pub use registry::{Declared, Driver, Source, SourceSpec};
+pub use registry::{Declared, Driver, Framer, Source, SourceSpec};
 
 use serde::{Serialize, de::DeserializeOwned};
 use sinex_model::Payloads;

@@ -10,13 +10,16 @@
 //! row's columns, so the record location is the line's offset and a replay
 //! reads exactly the bytes the parser saw. Rows identical to what this driver
 //! already stored are left out of the material.
+//!
+//! What the driver already stored survives a restart: the rows still open
+//! travel in the cursor, and the row hashes are rebuilt from the stored parts
+//! ([`RowMemory::rebuild`]), so a restart does not read and store every row
+//! again.
 use super::{Acquired, DriverError, NewMaterial, file_facts};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sinex_model::{
-    InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
-};
+use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -41,18 +44,42 @@ pub struct Cursor {
     pub last_full_pass_ns: i64,
     pub material: Option<MaterialId>,
     pub part_index: u32,
+    /// Rows that were still open (matched the mutable predicate) when last
+    /// read; re-read by rowid until they settle.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open: Vec<i64>,
 }
 
-/// What this driver already stored, kept for the life of the source task: row
-/// hashes by rowid, and the rows that were still open (matched the mutable
-/// predicate) when last read. Open rows are re-read by rowid, because a row
-/// that changes stops matching the predicate that selected it. An empty
-/// memory (after a restart) triggers a full pass, whose repeats admission
-/// suppresses.
-#[derive(Default)]
+/// What this driver already stored: the hash of each row's stored line, by
+/// rowid. Kept for the life of the source task and rebuilt from the stored
+/// parts after a restart. An empty memory (no stored parts yet) triggers a
+/// full pass, whose repeats admission suppresses.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowMemory {
     hashes: HashMap<i64, [u8; 32]>,
-    open: std::collections::BTreeSet<i64>,
+}
+
+impl RowMemory {
+    /// The memory after the stored rows parts `materials`, in order: the
+    /// last stored line of each row wins.
+    pub fn rebuild<'a>(materials: impl IntoIterator<Item = &'a [u8]>) -> Self {
+        let mut memory = Self::default();
+        for bytes in materials {
+            for line in bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+                let Ok(row) = serde_json::from_slice::<Map<String, Value>>(line) else {
+                    continue;
+                };
+                if let Some(rowid) = row.get("_rowid").and_then(Value::as_i64) {
+                    memory.hashes.insert(rowid, *blake3::hash(line).as_bytes());
+                }
+            }
+        }
+        memory
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty()
+    }
 }
 
 impl SqliteRows {
@@ -121,10 +148,11 @@ impl SqliteRows {
                 self.table
             )));
         }
-        let reopen = if memory.open.is_empty() {
+        let mut open: std::collections::BTreeSet<i64> = previous.open.iter().copied().collect();
+        let reopen = if open.is_empty() {
             String::new()
         } else {
-            let ids: Vec<String> = memory.open.iter().map(i64::to_string).collect();
+            let ids: Vec<String> = open.iter().map(i64::to_string).collect();
             format!(" OR rowid IN ({})", ids.join(","))
         };
         let filter = match (full, self.mutable) {
@@ -160,7 +188,7 @@ impl SqliteRows {
                 .map_err(|e| DriverError::Io(e.to_string()))?;
             while let Some(row) = rows.next().map_err(|e| DriverError::Io(e.to_string()))? {
                 let mut object = Map::new();
-                let open: i64 = row.get(0).unwrap_or(0);
+                let is_open: i64 = row.get(0).unwrap_or(0);
                 for (i, name) in names.iter().enumerate().skip(1) {
                     let value = match row.get_ref(i).map_err(|e| DriverError::Io(e.to_string()))? {
                         ValueRef::Null => Value::Null,
@@ -179,10 +207,10 @@ impl SqliteRows {
                     .and_then(Value::as_i64)
                     .unwrap_or_default();
                 max_rowid = max_rowid.max(rowid);
-                if open != 0 {
-                    memory.open.insert(rowid);
+                if is_open != 0 {
+                    open.insert(rowid);
                 } else {
-                    memory.open.remove(&rowid);
+                    open.remove(&rowid);
                 }
                 let line = Value::Object(object).to_string();
                 let hash = *blake3::hash(line.as_bytes()).as_bytes();
@@ -205,10 +233,12 @@ impl SqliteRows {
         } else {
             previous.last_full_pass_ns
         };
+        let open: Vec<i64> = open.into_iter().collect();
         if records.is_empty() {
             let unchanged = Cursor {
                 max_rowid,
                 last_full_pass_ns: last_full,
+                open,
                 ..previous
             };
             return Ok(Acquired {
@@ -222,6 +252,7 @@ impl SqliteRows {
                 cursor_unchanged: serde_json::to_value(unchanged).expect("cursor serializes"),
             });
         }
+        let manifest = json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns});
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
@@ -241,6 +272,7 @@ impl SqliteRows {
                 last_full_pass_ns: last_full,
                 material: Some(id),
                 part_index,
+                open: open.clone(),
             })
             .expect("cursor serializes")
         };
@@ -254,10 +286,11 @@ impl SqliteRows {
                 records,
                 part_index,
                 previous_part: previous.material,
-                manifest: json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "media_type": "application/x-ndjson", "full_pass": full}),
                 // Every row in this snapshot was read now; a later snapshot is newer.
-                reading_order: Box::new(move |_| ReadingOrder(now_ns)),
+                reading_order: super::reading_order(&manifest),
+                manifest,
                 cursor_at: Box::new(cursor_at),
+                aligned: false,
             }),
             cursor_unchanged: Value::Null,
         })
@@ -323,6 +356,38 @@ mod tests {
             vec![json!("b"), json!("c")],
             "the changed row and the new row; the unchanged row is left out"
         );
+    }
+
+    #[test]
+    fn a_restart_with_rebuilt_memory_stores_nothing_new() {
+        let path = db();
+        let d = driver(path.clone());
+        let mut memory = RowMemory::default();
+        let first = d.poll(&Value::Null, &mut memory).unwrap();
+        let m = first.material.as_ref().unwrap();
+        let cursor = (m.cursor_at)(m.bytes.len());
+        assert_eq!(
+            cursor["open"],
+            json!([2]),
+            "the running row travels in the cursor"
+        );
+        assert!(m.manifest["read_at_ns"].as_i64().is_some());
+
+        // A new process: the memory comes back from the stored part.
+        let mut rebuilt = RowMemory::rebuild([m.bytes.as_slice()]);
+        assert_eq!(rebuilt, memory);
+        let again = d.poll(&cursor, &mut rebuilt).unwrap();
+        assert!(again.material.is_none(), "no full pass, no new part");
+
+        // The open row settles: read by rowid, though it no longer matches.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("UPDATE t SET n = 7 WHERE id = 'b'")
+            .unwrap();
+        let settled = d.poll(&again.cursor_unchanged, &mut rebuilt).unwrap();
+        assert_eq!(lines(&settled)[0]["n"], json!(7));
+        let s = settled.material.as_ref().unwrap();
+        assert_eq!((s.cursor_at)(s.bytes.len())["open"], Value::Null);
     }
 
     #[test]

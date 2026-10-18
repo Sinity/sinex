@@ -19,6 +19,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "zsh-extended-history",
     parser_version: 1,
     event_types: &["command.imported"],
+    framer: frame,
 };
 
 pub struct ZshParser {

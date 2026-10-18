@@ -2,8 +2,11 @@
 //! commit-log reader; the confirmed-stream publisher; the NATS ingress
 //! consumer; the automaton driver; replay; the API (architecture §7.4).
 mod backfill;
+mod context;
 mod daemon;
 mod keys;
+mod operate;
+mod replay;
 mod writer;
 
 #[cfg(test)]
@@ -86,6 +89,166 @@ enum Admin {
         #[arg(long)]
         database: String,
     },
+    /// Read stored materials again with the current parsers and rules
+    /// (architecture §5.5).
+    Replay {
+        #[command(flatten)]
+        at: Store,
+        /// A material to re-read; repeat for more.
+        #[arg(long = "material")]
+        materials: Vec<uuid::Uuid>,
+        /// Every material of a binding (`atuin@host`).
+        #[arg(long)]
+        binding: Option<String>,
+        /// Only readings of this event type; repeat for more.
+        #[arg(long = "event-type")]
+        event_types: Vec<String>,
+        /// Only readings at or after this time (RFC 3339).
+        #[arg(long, value_parser = timestamp)]
+        from: Option<sinex_model::Timestamp>,
+        /// Only readings before this time (RFC 3339).
+        #[arg(long, value_parser = timestamp)]
+        until: Option<sinex_model::Timestamp>,
+        /// Show what the replay would change and keep nothing.
+        #[arg(long)]
+        compare: bool,
+        /// Continue an interrupted replay, skipping the chains it finished.
+        #[arg(long, conflicts_with_all = ["materials", "binding", "event_types", "from", "until"])]
+        resume: Option<uuid::Uuid>,
+        /// List every change, not only the first few of each kind.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Take a record's readings out of views, counts and re-imports.
+    Hide {
+        #[command(flatten)]
+        at: Store,
+        #[arg(long)]
+        event: uuid::Uuid,
+    },
+    /// Put a hidden record back.
+    Unhide {
+        #[command(flatten)]
+        at: Store,
+        #[arg(long)]
+        event: uuid::Uuid,
+    },
+    /// Permanently delete a record (or a whole material) and its bytes.
+    Excise {
+        #[command(flatten)]
+        at: Store,
+        #[arg(
+            long,
+            required_unless_present = "material",
+            conflicts_with = "material"
+        )]
+        event: Option<uuid::Uuid>,
+        #[arg(long)]
+        material: Option<uuid::Uuid>,
+        /// Report exactly what would be removed, and remove nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(clap::Args)]
+struct Store {
+    #[arg(long)]
+    database: String,
+    /// Content store directory.
+    #[arg(long)]
+    store: PathBuf,
+}
+
+fn timestamp(s: &str) -> Result<sinex_model::Timestamp, String> {
+    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+        .map(sinex_model::Timestamp)
+        .map_err(|e| format!("not an RFC 3339 time: {e}"))
+}
+
+/// Who an admin command acts as, for the operation log.
+const ACTOR: &str = "operator";
+
+async fn hide(at: Store, event: sinex_model::EventId, undo: bool) -> Result<(), String> {
+    let ctx = context::Context::open(&at.database, &at.store).await?;
+    let result = operate::hide(&ctx, event, undo, ACTOR).await;
+    ctx.close().await?;
+    result?;
+    println!("{} {event}", if undo { "unhidden" } else { "hidden" });
+    Ok(())
+}
+
+async fn admin(command: Admin) -> Result<(), String> {
+    use sinex_model::{EventId, MaterialId, OperationId};
+    use sinex_store::excision::Target;
+    match command {
+        Admin::Schema { database } => sinex_schema::apply_url(&database)
+            .await
+            .map(|applied| println!("{applied}"))
+            .map_err(|e| e.to_string()),
+        Admin::Replay {
+            at,
+            materials,
+            binding,
+            event_types,
+            from,
+            until,
+            compare,
+            resume,
+            all,
+        } => {
+            let mut ctx = context::Context::open(&at.database, &at.store).await?;
+            let report = replay::run(
+                &mut ctx,
+                replay::Options {
+                    scope: replay::Scope {
+                        materials,
+                        binding,
+                        event_types: (!event_types.is_empty()).then_some(event_types),
+                        from,
+                        until,
+                    },
+                    compare,
+                    resume: resume.map(OperationId),
+                    actor: ACTOR.into(),
+                },
+            )
+            .await;
+            ctx.close().await?;
+            let report = report?;
+            if compare {
+                println!("compare only: nothing was changed");
+            }
+            println!("{report}");
+            print!("{}", replay::describe(&report.diff, all));
+            Ok(())
+        }
+        Admin::Hide { at, event } => hide(at, EventId(event), false).await,
+        Admin::Unhide { at, event } => hide(at, EventId(event), true).await,
+        Admin::Excise {
+            at,
+            event,
+            material,
+            dry_run,
+        } => {
+            let target = match (event, material) {
+                (Some(e), _) => Target::Event(EventId(e)),
+                (None, Some(m)) => Target::Material(MaterialId(m)),
+                (None, None) => unreachable!("clap requires one"),
+            };
+            let mut ctx = context::Context::open(&at.database, &at.store).await?;
+            let result = if dry_run {
+                operate::plan(&mut ctx, target)
+                    .await
+                    .map(|plan| format!("dry run: {}", operate::describe(&plan)))
+            } else {
+                operate::excise(&mut ctx, target, ACTOR).await
+            };
+            ctx.close().await?;
+            println!("{}", result?);
+            Ok(())
+        }
+    }
 }
 
 #[tokio::main]
@@ -109,12 +272,7 @@ async fn main() -> std::process::ExitCode {
                 .map(|n| println!("captured {n} journal entries"))
                 .map_err(|e| e.to_string())
         }
-        Command::Admin {
-            command: Admin::Schema { database },
-        } => sinex_schema::apply_url(&database)
-            .await
-            .map(|applied| println!("{applied}"))
-            .map_err(|e| e.to_string()),
+        Command::Admin { command } => admin(command).await,
         Command::Backfill {
             database,
             store,

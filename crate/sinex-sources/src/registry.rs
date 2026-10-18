@@ -17,6 +17,10 @@ pub enum Driver {
     Producer,
 }
 
+/// Frames complete records in `bytes`: their ranges, and how many bytes they
+/// cover. A trailing partial record is left for the next read.
+pub type Framer = fn(&[u8]) -> (Vec<(usize, usize)>, usize);
+
 #[derive(Clone, Debug)]
 pub struct SourceSpec {
     pub name: &'static str,
@@ -27,6 +31,9 @@ pub struct SourceSpec {
     pub parser: &'static str,
     pub parser_version: u32,
     pub event_types: &'static [&'static str],
+    /// How the source's stored materials split into records, so a replay or
+    /// an excision finds the same records the driver read.
+    pub framer: Framer,
 }
 
 /// A declared source: its spec and its parser.
