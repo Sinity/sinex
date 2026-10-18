@@ -30,9 +30,9 @@ fn other_cancellation_reports_no_limit() {
     )));
     assert_eq!(error.kind, ErrorKind::Budget);
     assert_eq!(error.data, json!({"reason":"statement_cancelled"}));
-    let explicit = deadline_error(37);
-    assert_eq!(explicit.data["reason"], "execution_deadline");
-    assert_eq!(explicit.data["timeout_ms"], 37);
+    let deadline = deadline_error(37);
+    assert_eq!(deadline.data["reason"], "execution_deadline");
+    assert_eq!(deadline.data["timeout_ms"], 37);
 }
 
 #[derive(Debug)]

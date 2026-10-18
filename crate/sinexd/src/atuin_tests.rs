@@ -1,6 +1,6 @@
 use super::*;
 #[test]
-fn realtime_rollback_cannot_postpone_the_live_epoch_full_deadline() {
+fn wall_clock_rollback_cannot_postpone_a_due_full_read() {
     let epoch = Uuid::now_v7();
     let wall = OffsetDateTime::parse("2026-10-17T10:00:00Z", &Rfc3339).unwrap();
     let checkpoint = sinex_model::acquisition::AtuinCheckpoint {

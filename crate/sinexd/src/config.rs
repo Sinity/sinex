@@ -9,7 +9,7 @@ pub struct AtuinConfig {
     pub path: PathBuf,
     #[serde(default = "poll_interval")]
     pub poll_interval_ms: u64,
-    /// Full value-comparison due interval. Failures can delay successful completion.
+    /// How often a full read compares every row.
     #[serde(default = "full_interval")]
     pub full_interval_ms: u64,
 }
@@ -38,7 +38,8 @@ fn snapshot_interval() -> u64 {
 pub struct ZshConfig {
     pub path: PathBuf,
     pub execution_host: String,
-    /// Independently declared protocol premise, not proof supplied by a prefix test.
+    /// Must be `append_only_extended_v1`: the operator declares that the file is
+    /// only ever appended to.
     pub protocol: String,
     #[serde(default = "poll_interval")]
     pub poll_interval_ms: u64,
@@ -88,7 +89,7 @@ pub struct Config {
     pub writer_connection_file: PathBuf,
     pub reader_connection_file: PathBuf,
     pub token_file: PathBuf,
-    /// Explicit fixed operator profile for replay and exclusion; the ordinary token remains read-only.
+    /// Token for replay and exclusion; `token_file` stays read-only.
     pub operator_token_file: Option<PathBuf>,
     #[serde(default)]
     pub sources: Vec<String>,
@@ -142,10 +143,10 @@ impl Config {
             .parse()
             .map_err(|_| "listen must be a numeric loopback address".to_string())?;
         if address.port() == 0 {
-            return Err("listen requires an explicit nonzero port".into());
+            return Err("listen requires a nonzero port".into());
         }
         if !address.ip().is_loopback() {
-            return Err("foundation listens only on loopback".into());
+            return Err("listen must be a loopback address".into());
         }
         if self.sources.iter().any(|s| {
             s != sinex_store::ATUIN_SOURCE
@@ -159,7 +160,7 @@ impl Config {
             != self.sources.len()
             || !(self.automata.is_empty() || self.automata == ["session"])
         {
-            return Err("only Atuin, configured Chromium, append-only extended zsh and the shell fusion interpretation are implemented; only the session automaton is additionally supported".into());
+            return Err("unsupported source or automaton: sources are Atuin, Chromium and zsh; the only automaton is session".into());
         }
         if self.sources.iter().any(|s| s == sinex_store::ATUIN_SOURCE) != self.atuin.is_some() {
             return Err("Atuin source enablement and [atuin] configuration must agree".into());
@@ -174,7 +175,7 @@ impl Config {
                 || zsh.execution_host.len() > 255
                 || zsh.protocol != sinex_store::ZSH_PROTOCOL)
         {
-            return Err("zsh requires absolute path, execution_host, append_only_extended_v1 protocol and poll interval100..=3600000ms".into());
+            return Err("zsh requires absolute path, execution_host, append_only_extended_v1 protocol and poll interval 100..=3600000 ms".into());
         }
         if let Some(atuin) = &self.atuin
             && (!atuin.path.is_absolute()
@@ -210,11 +211,11 @@ impl Config {
                 || !profiles.insert(&c.profile)
                 || !paths.insert(&c.path)
             {
-                return Err("Chromium requires distinct profile/path declarations, nonnil generation UUID, absolute History path and bounded polling/full/snapshot intervals".into());
+                return Err("Chromium requires distinct profiles and paths, a non-nil generation UUID, an absolute History path and intervals in range".into());
             }
         }
         if self.zsh.is_some() && !self.privacy_rules.is_empty() {
-            return Err("optional ingest privacy transformations are unavailable for the selected zsh/two-source capability; Atuin-only reading and mandatory credential presentation remain supported".into());
+            return Err("privacy rules are not supported with the zsh source".into());
         }
         if self.privacy_rules.len() > 32 {
             return Err("at most 32 privacy rules are supported".into());

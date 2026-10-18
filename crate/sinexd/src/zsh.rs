@@ -1,5 +1,6 @@
-//! A bounded original-byte reader. Append continuity is an explicit configured
-//! source protocol, never inferred from inode or equal prefix bytes alone.
+//! zsh history reading. Bytes are admitted as stored, after checking that the
+//! file still starts with the bytes already admitted. The configured protocol
+//! declares the file append-only; the reader never infers that.
 use crate::config::ZshConfig;
 use sinex_store::{Admission, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule, ZshStep};
 use std::io::{BufRead, BufReader, Read};
@@ -32,9 +33,7 @@ pub async fn run(
             .submit_zsh(base.clone())
             .await
             .map_err(|_| "zsh observation registration failed")?;
-        let offset = position["offset"]
-            .as_i64()
-            .ok_or("zsh retained cursor invalid")?;
+        let offset = position["offset"].as_i64().ok_or("zsh cursor invalid")?;
         let result = if position["chain_broken"].as_bool() == Some(true) {
             Err(ReadFailure::Unavailable(
                 "zsh input chain fenced after observed rewrite; declare a new input chain",
@@ -46,15 +45,15 @@ pub async fn run(
                 offset,
                 position["prefix_blake3"]
                     .as_str()
-                    .ok_or("zsh retained prefix invalid")?,
+                    .ok_or("zsh prefix digest invalid")?,
                 &admission,
                 &stop,
             )
             .await
         };
         if let Err(reason) = result {
-            // Earlier chunks may have committed. Read the current cursor instead of
-            // reusing the poll's old offset for the unavailable outcome.
+            // Earlier chunks may have committed, so read the current cursor rather
+            // than reuse this poll's starting offset.
             let current = admission
                 .submit_zsh(ZshStep {
                     start: None,
@@ -109,7 +108,7 @@ async fn read(
     while left > 0 {
         let n = usize::try_from(left.min(block.len() as i64)).unwrap();
         reader.read_exact(&mut block[..n]).map_err(|_| {
-            ReadFailure::Chain("zsh retained chain truncated; rewrite correspondence unsupported")
+            ReadFailure::Chain("zsh history is shorter than the admitted prefix; rewritten files are not supported")
         })?;
         hash.update(&block[..n]);
         left -= n as i64;
@@ -120,7 +119,7 @@ async fn read(
     }
     if hash.finalize().to_hex().as_str() != expected {
         return Err(ReadFailure::Chain(
-            "zsh retained prefix differs; rewrite correspondence unsupported",
+            "zsh history prefix changed; rewritten files are not supported",
         ));
     }
     let mut batch = Vec::new();
@@ -128,7 +127,7 @@ async fn read(
     let mut count = 0;
     loop {
         if *stop.borrow() {
-            return Err("zsh read interrupted; committed prefix retained".into());
+            return Err("zsh read interrupted; admitted rows kept".into());
         }
         let mut line = Vec::new();
         let n = Read::by_ref(&mut reader)
@@ -137,16 +136,16 @@ async fn read(
             .map_err(|_| "zsh read unavailable")?;
         if n == 0 {
             if !record.is_empty() {
-                return Err("zsh trailing incomplete record; committed prefix retained".into());
+                return Err("zsh trailing incomplete record; admitted rows kept".into());
             };
             break;
         }
         record.extend_from_slice(&line);
         if record.len() > MAX_STEP_BYTES {
-            return Err("zsh record exceeds bounded byte budget".into());
+            return Err("zsh record exceeds step size limit".into());
         }
         if !line.ends_with(b"\n") {
-            return Err("zsh trailing incomplete record; committed prefix retained".into());
+            return Err("zsh trailing incomplete record; admitted rows kept".into());
         }
         if line.len() > 1 && line[line.len() - 2] == b'\\' {
             continue;
@@ -163,7 +162,7 @@ async fn read(
                     ..base.clone()
                 })
                 .await
-                .map_err(|_| "zsh bounded admission failed")?;
+                .map_err(|_| "zsh step admission failed")?;
             offset += length;
             count = 0;
         }

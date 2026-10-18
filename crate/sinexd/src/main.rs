@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(version, about = "Sinex isolated foundation daemon")]
+#[command(version, about = "Sinex daemon")]
 struct Args {
     #[command(subcommand)]
     command: Command,

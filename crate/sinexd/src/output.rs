@@ -1,17 +1,17 @@
-//! Whole-response presentation admission. No bytes are released before this succeeds.
+//! Credential masking for RPC traffic. A response is masked as a whole before
+//! any byte is sent; if it cannot be shown safely, a refusal is sent instead.
 use credential_output::Masker;
 use serde_json::Value;
 use sinex_protocol::rpc::{ErrorKind, RpcError, RpcId, RpcResponse};
 use std::io::{self, Write};
 
-// Existing pages contain at most 100 rows. This also bounds marker expansion and
-// non-query registered responses; recognition never concatenates logical strings.
+// Pages hold at most 100 rows; this caps the masked size of any response.
 const RESPONSE_BYTES: usize = 128 * 1024 * 1024;
 struct Limited(Vec<u8>);
 impl Write for Limited {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if self.0.len().saturating_add(bytes.len()) > RESPONSE_BYTES {
-            return Err(io::Error::other("presentation budget"));
+            return Err(io::Error::other("response size limit"));
         }
         self.0.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -20,14 +20,18 @@ impl Write for Limited {
         Ok(())
     }
 }
-fn text(raw: &str) -> Result<String, ()> {
+fn mask_text(raw: &str) -> Result<String, ()> {
     let mut output = Limited(Vec::new());
     let mut masker = Masker::new();
     masker.push(raw, &mut output).map_err(|_| ())?;
     masker.finish(&mut output).map_err(|_| ())?;
     String::from_utf8(output.0).map_err(|_| ())
 }
-fn identity(key: &str) -> bool {
+/// True when masking would leave `raw` as it is.
+fn unchanged(raw: &str) -> bool {
+    mask_text(raw).is_ok_and(|masked| masked == raw)
+}
+fn is_identity_key(key: &str) -> bool {
     matches!(
         key,
         "id" | "reference"
@@ -51,7 +55,7 @@ fn identity(key: &str) -> bool {
     )
 }
 fn display_field(key: &str, presentation: bool) -> bool {
-    !identity(key)
+    !is_identity_key(key)
         && (presentation
             || matches!(
                 key,
@@ -69,13 +73,16 @@ fn display_field(key: &str, presentation: bool) -> bool {
                     | "text"
             ))
 }
-pub fn admit(value: &mut Value) -> Result<bool, ()> {
+/// Mask every string in `value`. Credentials found in display fields are
+/// masked; one in a key or an identifier fails the whole value.
+/// Returns whether anything was masked.
+pub fn mask(value: &mut Value) -> Result<bool, ()> {
     walk(value, false)
 }
 fn walk(value: &mut Value, presentation: bool) -> Result<bool, ()> {
     match value {
         Value::String(raw) => {
-            let masked = text(raw)?;
+            let masked = mask_text(raw)?;
             let changed = masked != *raw;
             if changed && !presentation {
                 return Err(());
@@ -95,7 +102,7 @@ fn walk(value: &mut Value, presentation: bool) -> Result<bool, ()> {
             let is_snippet = fields.contains_key("spans") && fields.contains_key("span_unit");
             let mut changed = false;
             for (key, value) in fields.iter_mut() {
-                if text(key)? != *key {
+                if mask_text(key)? != *key {
                     return Err(());
                 }
                 let display = display_field(key, presentation);
@@ -126,8 +133,8 @@ fn walk(value: &mut Value, presentation: bool) -> Result<bool, ()> {
         _ => Ok(false),
     }
 }
-/// Cutting happens only after the complete logical string passed the fixed
-/// floor. Cutting raw text first could detach a password from its URL/header.
+/// Cut search snippets to a window around the first match. This runs after
+/// masking: cutting first could separate a password from its URL or header.
 fn finish_snippets(value: &mut Value) {
     let Some(rows) = value
         .get_mut("result")
@@ -179,19 +186,19 @@ pub fn refusal(id: Option<RpcId>) -> RpcResponse {
         id,
         RpcError::new(
             ErrorKind::Refused,
-            "credential presentation unavailable: identity, structural key or bounded recognition cannot be represented safely",
+            "response refused: a credential appears in a key or identifier, or the response is too large to mask",
             Value::Null,
         ),
     )
 }
 pub fn encode(response: RpcResponse) -> Vec<u8> {
     let id = response.id().cloned().filter(|id| match id {
-        RpcId::String(raw) => text(raw).is_ok_and(|masked| masked == *raw),
+        RpcId::String(raw) => unchanged(raw),
         RpcId::Number(_) => true,
     });
     let mut value = serde_json::to_value(&response).expect("RPC response serializes");
     let mut output = Limited(Vec::new());
-    if admit(&mut value).is_err() {
+    if mask(&mut value).is_err() {
         return serde_json::to_vec(&refusal(id)).expect("static refusal serializes");
     }
     finish_snippets(&mut value);
@@ -204,116 +211,22 @@ pub fn encode(response: RpcResponse) -> Vec<u8> {
 pub fn request_safe(id: &RpcId, params: &Value) -> bool {
     let id_safe = match id {
         RpcId::Number(_) => true,
-        RpcId::String(raw) => text(raw).is_ok_and(|masked| masked == *raw),
+        RpcId::String(raw) => unchanged(raw),
     };
-    // Screening does not decorate or change request values. The protocol
-    // validator, called next, owns method-specific parameter shapes.
+    // Only checks; request values are never changed. Parameter shapes are
+    // checked by the protocol validator afterwards.
     fn safe(value: &Value) -> bool {
         match value {
-            Value::String(raw) => text(raw).is_ok_and(|masked| masked == *raw),
+            Value::String(raw) => unchanged(raw),
             Value::Array(values) => values.iter().all(safe),
             Value::Object(fields) => fields
                 .iter()
-                .all(|(key, value)| text(key).is_ok_and(|masked| masked == *key) && safe(value)),
+                .all(|(key, value)| unchanged(key) && safe(value)),
             _ => true,
         }
     }
     id_safe && safe(params)
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-    #[test]
-    fn malformed_request_rows_reach_protocol_validation_without_panicking() {
-        use sinex_protocol::rpc::{Method, RpcRequest};
-        for params in [
-            json!({"rows":[1]}),
-            json!({"rows":[[]]}),
-            json!({"rows":[null]}),
-            json!({"rows":[true]}),
-            json!({"rows":["plain"]}),
-            json!({"rows":1}),
-            json!({"rows":[]}),
-            json!([1]),
-            json!(null),
-        ] {
-            let original = params.clone();
-            assert!(request_safe(&RpcId::Number(7), &params));
-            assert_eq!(params, original);
-            let error = RpcRequest::new(RpcId::Number(7), Method::Status, params)
-                .validate()
-                .unwrap_err();
-            assert_eq!(error.kind, ErrorKind::BadQuery);
-        }
-    }
-    #[test]
-    fn malformed_response_rows_refuse_before_encoding_success() {
-        for rows in [
-            json!([1]),
-            json!([[]]),
-            json!([null]),
-            json!([true]),
-            json!(["plain"]),
-            json!(1),
-            json!(null),
-            json!({}),
-        ] {
-            let bytes = encode(RpcResponse::success(RpcId::Number(9), json!({"rows":rows})));
-            let wire: Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(wire["id"], 9);
-            assert_eq!(wire["error"]["kind"], "refused");
-            assert!(wire.get("result").is_none());
-        }
-        let bytes = encode(RpcResponse::success(RpcId::Number(9), json!({"rows":[]})));
-        let wire: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(wire["result"]["rows"], json!([]));
-    }
-    #[test]
-    fn whole_document_refusal_discards_staged_text_and_ambiguous_keys() {
-        let token = format!("ghp_{}", "A".repeat(36));
-        for payload in [
-            json!({token.clone():"one", "other":"two"}),
-            json!({"ordinary":"before", "nested":[{"text":format!("before https://u:{}", "A".repeat(600))}]}),
-        ] {
-            let bytes = encode(RpcResponse::success(
-                RpcId::Number(7),
-                json!({"row":{"payload":payload}}),
-            ));
-            let wire: Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(wire["id"], 7);
-            assert_eq!(wire["error"]["kind"], "refused");
-            assert!(wire.get("result").is_none());
-            assert!(!String::from_utf8(bytes).unwrap().contains(&token));
-        }
-        let mut read = json!({"rows":[{"payload":{"nested":["--secret=x",{"text":"plain"}]}}]});
-        admit(&mut read).unwrap();
-        assert_eq!(read["rows"][0]["secret"], true);
-        assert_eq!(read["rows"][0]["payload"]["nested"][1]["text"], "plain");
-    }
-    #[test]
-    fn values_metadata_and_rows_mask_but_keys_and_identities_refuse() {
-        let token = format!("ghp_{}", "A".repeat(36));
-        let mut row = json!({"payload":{"command":format!("before {token} after"),"nested":["--secret=x"]},"hostname":token});
-        assert!(admit(&mut row).unwrap());
-        assert_eq!(
-            row["payload"]["command"],
-            "before [credential: GitHub token, masked] after"
-        );
-        for value in [
-            json!({token.clone():"x"}),
-            json!({"native_id":token.clone()}),
-            json!({"page":{"cursor":token.clone()}}),
-        ] {
-            assert!(admit(&mut value.clone()).is_err());
-        }
-        let bytes = encode(RpcResponse::success(
-            RpcId::String(token.clone()),
-            json!({"ok":true}),
-        ));
-        let value: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["id"], Value::Null);
-        assert_eq!(value["error"]["kind"], "refused");
-        assert!(!String::from_utf8(bytes).unwrap().contains(&token));
-    }
-}
+#[path = "output_tests.rs"]
+mod tests;
