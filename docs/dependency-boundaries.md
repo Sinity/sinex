@@ -11,4 +11,4 @@ A new workspace package must be added to the policy. Every declared dependency c
 
 Only `sinex-store` may use SQLx for PostgreSQL. `sinexd` also reads SQLite sources, so it may depend on SQLx with default features off and only `sqlite` and `runtime-tokio` requested. No other package may depend on SQLx or its component crates.
 
-`xtask build`, `test` and `check` run this check before calling Cargo, and refuse `--manifest-path`, `--config`, `--lockfile-path` and `-C`, which could point Cargo at a different workspace. Run the frontend from the workspace you want to check. The Nix package build and the pre-push hook also run the check.
+The pre-push hook, `xtask check` and the Nix package build run the check. Its unit tests are in `xtask/src/boundaries/tests.rs`.

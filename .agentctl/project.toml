@@ -1,15 +1,65 @@
 schema = 1
 [project]
 id = "sinex"
-display_name = "Sinex isolated foundation"
+display_name = "Sinex"
 root_markers = ["Cargo.toml", "flake.nix", "xtask"]
 [environment]
 kind = "nix-develop"
 command = ["nix", "develop", "--command"]
-inherit = ["HOME", "USER", "LANG", "PATH", "XDG_RUNTIME_DIR"]
+inherit = ["HOME", "USER", "LANG", "PATH", "TMPDIR", "XDG_RUNTIME_DIR"]
 unset = ["DATABASE_URL", "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "SQLX_OFFLINE"]
-[operations.foundation_exec]
-description = "Run an explicit command in the pinned Sinex development shell"
+[operations.check]
+description = "Format check, dependency boundaries and cargo check; no database"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "check"]
+pool = "normal"
+result = "exit"
+timeout_seconds = 1800
+cache = "none"
+
+[operations.test]
+description = "All Rust tests; database tests each get a fresh database in an owned PostgreSQL"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
+
+[operations.scenario]
+description = "End-to-end scenarios (tests/scenarios/) through the real daemon, CLI and MCP; pass names or all, and --package DIR to test a built package"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "scenario"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 3600
+cache = "none"
+
+[operations.package]
+description = "Build the Nix package (runs the Rust tests inside the builder)"
+exec = ["nix", "build", "--no-link", ".#default", "--print-build-logs", "--max-jobs", "1"]
+pool = "bulk"
+result = "exit"
+timeout_seconds = 2400
+cache = "none"
+
+[operations.fmt]
+description = "Format the workspace"
+exec = ["cargo", "fmt", "--all"]
+pool = "normal"
+result = "exit"
+timeout_seconds = 300
+cache = "none"
+
+[operations.lock]
+description = "Update selected Cargo.lock entries, e.g. -- -p serde"
+exec = ["cargo", "update"]
+arguments = "required"
+pool = "normal"
+result = "exit"
+timeout_seconds = 300
+cache = "none"
+
+[operations.exec]
+description = "Run a command in the development shell"
 exec = ["env"]
 arguments = "required"
 pool = "bulk"
@@ -18,51 +68,12 @@ timeout_seconds = 1800
 scratch = "nvme"
 cache = "none"
 
-[operations.foundation_build]
-description = "Build query-free schema/admin foundation"
-exec = ["cargo", "build", "-p", "sinexd", "--no-default-features"]
-pool = "bulk"
-result = "exit"
-timeout_seconds = 1800
-cache = "none"
 [operations.foundation_acceptance]
 description = "Cold bootstrap and real-client foundation acceptance in owned isolated PostgreSQL"
 exec = ["python3", "tests/foundation.py"]
 pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
-cache = "none"
-[operations.foundation_package]
-description = "Build fresh source packages with query-free schema bootstrap inside the Nix builder"
-exec = ["nix", "build", "--no-link", ".#default", "--print-build-logs", "--max-jobs", "1"]
-pool = "bulk"
-result = "exit"
-timeout_seconds = 2400
-cache = "none"
-
-[operations.foundation_format]
-description = "Format the foundation workspace before candidate qualification"
-exec = ["cargo", "fmt", "--package", "sinex-model", "--package", "sinex-protocol", "--package", "sinex-store", "--package", "sinexd", "--package", "sinexctl", "--package", "xtask"]
-pool = "normal"
-result = "exit"
-timeout_seconds = 300
-cache = "none"
-
-[operations.foundation_lock]
-description = "Update explicitly selected foundation dependency lock entries"
-exec = ["cargo", "update"]
-arguments = "required"
-pool = "normal"
-result = "exit"
-timeout_seconds = 300
-cache = "none"
-
-[operations.foundation_contracts]
-description = "Run pure concrete model and wire boundary tests without a database"
-exec = ["cargo", "test", "--locked", "-p", "sinex-model", "-p", "sinex-protocol"]
-pool = "bulk"
-result = "exit"
-timeout_seconds = 900
 cache = "none"
 
 [operations.foundation_package_acceptance]
@@ -140,15 +151,6 @@ result = "exit"
 timeout_seconds = 3600
 cache = "none"
 
-[operations.foundation_publish]
-description = "Push explicit reviewed foundation refs through normal hooks"
-exec = ["git", "push"]
-arguments = "required"
-pool = "normal"
-result = "exit"
-timeout_seconds = 1800
-cache = "none"
-
 [operations.retained_replay_acceptance]
 description = "Packaged retained Atuin replay with independent changed-interpretation facts, bounded replacement kills, durable action recovery and evidence refusals"
 exec = ["python3", "tests/foundation.py", "--packaged", "--retained-replay"]
@@ -181,30 +183,6 @@ result = "exit"
 timeout_seconds = 3600
 cache = "none"
 
-[operations.atuin_contracts]
-description = "Check Atuin source interpretation boundaries without a database"
-exec = ["cargo", "test", "--locked", "-p", "sinex-store", "--lib", "atuin::tests"]
-pool = "bulk"
-result = "exit"
-timeout_seconds = 900
-cache = "none"
-
-[operations.zsh_contracts]
-description = "Check exact installed-provider zsh record codec controls without a database"
-exec = ["cargo", "test", "--locked", "-p", "sinex-store", "--lib", "zsh::tests"]
-pool = "bulk"
-result = "exit"
-timeout_seconds = 900
-cache = "none"
-
-[operations.exclusion_contracts]
-description = "Typed exact-occurrence exclusion, undo, replay eligibility and finalized action recovery in owned isolated PostgreSQL"
-exec = ["python3", "tests/foundation.py", "--exclusion-contracts"]
-pool = "bulk"
-result = "exit"
-timeout_seconds = 1800
-cache = "none"
-
 [operations.exclusion_package_acceptance]
 description = "Exact retained Atuin exclusion through the explicitly pinned package; actual CLI/API, provider loss, replay, and observed transaction interruptions without rebuilding"
 exec = ["python3", "tests/foundation.py", "--packaged", "--reversible-exclusion"]
@@ -232,23 +210,6 @@ result = "exit"
 timeout_seconds = 3600
 cache = "none"
 
-[operations.dependency_boundaries]
-description = "Qualify workspace dependency boundaries and actual copied-manifest refusal controls without PostgreSQL"
-exec = ["python3", "tests/dependency_boundaries.py"]
-pool = "normal"
-result = "exit"
-timeout_seconds = 900
-cache = "none"
-
-[operations.dependency_routing_control]
-description = "Dependency qualification plus actual alternate-manifest reproduction with an explicit pre-fix xtask executable"
-exec = ["python3", "tests/dependency_boundaries.py", "--before-checker"]
-arguments = "required"
-pool = "normal"
-result = "exit"
-timeout_seconds = 900
-cache = "none"
-
 [operations.schema_upgrade_acceptance]
 description = "Packaged guarded populated published predecessor upgrade, dump refusal, real interrupted progress, catalog equivalence and retained reads"
 exec = ["python3", "tests/schema_upgrade.py"]
@@ -256,14 +217,6 @@ arguments = "required"
 pool = "bulk"
 result = "exit"
 timeout_seconds = 3600
-cache = "none"
-
-[operations.schema_upgrade_contracts]
-description = "Check released predecessor declaration binding and decoded secret-free dump connection arguments without PostgreSQL"
-exec = ["cargo", "test", "--locked", "-p", "sinex-store", "--lib", "upgrade_tests"]
-pool = "bulk"
-result = "exit"
-timeout_seconds = 900
 cache = "none"
 
 [operations.configured_continuation]
@@ -336,14 +289,6 @@ result = "exit"
 timeout_seconds = 2400
 cache = "none"
 
-[operations.atuin_read_plan_contracts]
-description = "Atuin actual Unix VFS correspondence, schema/VACUUM and typed read-plan controls without PostgreSQL"
-exec = ["cargo", "test", "--locked", "-p", "sinexd", "--no-default-features", "atuin_guard::"]
-pool = "bulk"
-result = "exit"
-timeout_seconds = 1200
-cache = "none"
-
 [operations.atuin_read_plan_acceptance]
 description = "Connection-scoped Atuin new/unfinished/full values and exact public recovery in owned PostgreSQL"
 exec = ["python3", "tests/foundation.py", "--atuin-read-plan"]
@@ -359,14 +304,6 @@ arguments = "required"
 pool = "bulk"
 result = "exit"
 timeout_seconds = 2400
-cache = "none"
-
-[operations.chromium_custody_contracts]
-description = "Real SQLite WAL/rollback custody, cancellation and file/journal validation without PostgreSQL"
-exec = ["cargo", "test", "--locked", "-p", "sinexd", "--no-default-features", "sqlite_custody::"]
-pool = "bulk"
-result = "exit"
-timeout_seconds = 1200
 cache = "none"
 
 [operations.chromium_acceptance]

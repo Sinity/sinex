@@ -93,6 +93,21 @@ sinexctl --endpoint http://127.0.0.1:41037/rpc --token-file /abs/token trace EVE
 
 ## Development
 
-Builds and tests that need PostgreSQL run as declared AgentCTL operations; `agentctl project operations sinex` lists them, and `agentctl job start <checkout> <operation> --workspace <checkout>` runs one. `cargo run -p xtask -- boundaries` checks the crate dependency rules ([docs/dependency-boundaries.md](docs/dependency-boundaries.md)); the pre-push hook runs it with `cargo fmt --check`.
+```
+nix develop --command cargo run -p xtask -- check     # fmt, dependency boundaries, cargo check; no database
+nix develop --command cargo run -p xtask -- test      # all Rust tests in an owned PostgreSQL
+nix develop --command cargo run -p xtask -- scenario NAME|all [--package DIR]
+                                                      # end-to-end scenarios, tests/scenarios/NAME.py
+nix develop --command cargo run -p xtask -- db -- CMD # run CMD with DATABASE_URL set to a fresh schema
+nix build .#default                                   # the package; runs the Rust tests in the builder
+```
+
+`xtask test`, `scenario` and `db` start a throwaway PostgreSQL cluster in
+`$TMPDIR` with the canonical schema and remove it afterwards. Scenarios run the
+real daemon, CLI and MCP server against synthetic sources; a failed scenario
+leaves its logs in `target/scenario-failures/`. The same commands are AgentCTL
+operations (`check`, `test`, `scenario`, `package`). The pre-push hook runs
+`cargo fmt --check` and `xtask boundaries` ([dependency rules](docs/dependency-boundaries.md)).
+See `AGENTS.md` for the development loop.
 
 The shared blob store comes from Polylogue's [`hashed-blobs` v0.1.1 release](https://github.com/Sinity/polylogue/tree/hashed-blobs-v0.1.1/crates/hashed-blobs); `Cargo.lock` pins its commit and the Nix build checks its source hash.

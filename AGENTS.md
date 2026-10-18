@@ -1,17 +1,64 @@
-# Sinex foundation contributor guide
+# Repository Guidelines
 
-This isolated source tree implements the fresh Sinex foundation. The normative design is pinned in docs/rewrite; the predecessor remains in Git history. No command in this tree operates on production state by default.
+This is the Rust rewrite of Sinex. The README describes what works today and
+how to run it; `docs/` has a note per implemented feature. The design
+lives in the spec repository (`/realm/inbox/spec/sinex-spec/`). The old Sinex
+is in Git history and is still the deployed version; nothing here touches
+production state.
 
-Use the declared AgentCTL foundation operations for builds and real PostgreSQL acceptance. The narrow xtask frontend builds/tests this workspace; read README.md for supported commands. Do not copy predecessor xtask, runtime or schema machinery to bypass a missing implementation.
+## Structure
 
-Keep concrete domain types and wire errors in sinex-model and sinex-protocol. sinex-store owns canonical schema declarations and actual role-bound connections. Only its writer owner admits events; API handlers retain read capabilities and admission-channel handles. Query-free schema bootstrap must build before the development database exists. Checked product queries compile against the isolated schema; no SQLX_OFFLINE cache.
+- `crate/sinex-model`: domain types; no IO.
+- `crate/sinex-protocol`: RPC request, reply and error types; no IO.
+- `crate/sinex-store`: the PostgreSQL schema and every PostgreSQL connection.
+  Only its writer admits events; readers get read-only handles.
+- `crate/sinexd`: the daemon: configuration, source collectors (Atuin, zsh,
+  Chromium), the RPC server and `sinexd admin schema`.
+- `crate/sinexctl`: the CLI client and the MCP server.
+- `xtask`: developer commands (`check`, `test`, `db`, `boundaries`).
+- `tests/`: Python end-to-end scenarios that run the real daemon and CLI.
 
-Register only implemented operations. The README and owning contracts in docs/rewrite define supported source, query, indexed retrieval, MCP and replay subsets. Do not turn unavailable into empty success. Preserve authored state and exact retained material; do not touch live stores, consumer pins, master or external task routing during foundation preparation.
+`xtask boundaries` enforces which crates may depend on which.
 
-Keep substantial unit-test bodies and fixtures in external private `#[cfg(test)]` modules. Tiny tests may remain inline. Exercise CLI, MCP and integration acceptance through public routes; never widen runtime visibility merely to relocate tests.
+The admin-only daemon (`cargo build -p sinexd --no-default-features`) builds
+without a database and applies the schema. Everything else compiles its SQL
+against a real schema (SQLx checked queries; no offline cache), so set
+`DATABASE_URL` to a development database or use `xtask db`/`xtask test`.
 
-## Development flow
+## Development loop
 
-Optimize routine development for fast feedback and integration. Use cheap checks and focused behavioral tests for the actual delta; full local packages, full behavioral suites and full-corpus verification are not prerequisites for every development merge. Development bugs can be repaired after integration. Keep pass, fail, pending, unrun and superseded outcomes explicit; integration is not proof of testing. Run extended validation separately on meaningful integrated batches and continue independent development while it runs. Coalesce expensive queued checks to useful latest-main candidates through supported job tooling; do not enqueue a full verification sequence for every small change. Use the normal permitted PR route and existing required checks; do not change branch protection. Real-data custody, secrets, destructive operations and deployment retain their separate safeguards.
+Optimize for fast integration.
 
-Stage explicit paths, review public content and run scoped checks before a normal local commit. Product publication and activation require their own integration decision. Preserve other agents' edits and use named ownership for shared seams. Fixtures are synthetic; private run evidence stays outside tracked files.
+- While editing, run focused tests for the change.
+- The pre-push hook (`.githooks/pre-push`) runs `cargo fmt --check` and
+  `xtask boundaries` (seconds). There is no hosted CI and no required check;
+  open a PR and merge it when it is ready.
+- Heavier work runs as AgentCTL operations (`agentctl project operations
+  sinex`): `check` (fmt, boundaries, cargo check), `test` (all Rust tests in an
+  owned PostgreSQL), `package` (Nix build) and the end-to-end scenarios. Run
+  them on batches of merged work, not before every merge, and fix what they
+  find afterwards.
+- Merge small PRs often. Rebase before pushing; do not keep long-lived
+  branches.
+- Report what you ran and what you did not. A merge is not evidence of testing.
+
+## Code
+
+- Rust, four-space indent, `rustfmt`.
+- Comments state constraints and reasons, briefly. No status, history or spec
+  narration in code; Git and Beads hold those.
+- Tests go in separate files (`src/<module>_tests.rs`, `src/<module>/tests.rs`
+  or `tests/`); small tests may stay inline. Tests that need PostgreSQL are
+  `#[ignore]` and read `SINEX_TEST_ADMIN_URL`, `SINEX_TEST_WRITER_URL`,
+  `SINEX_TEST_READER_URL` and `SINEX_TEST_STORE_DIR`; `xtask test` gives each
+  one a fresh database. CLI and MCP behavior is tested through the public
+  commands, not by widening visibility.
+- Register only operations that are implemented. Unsupported requests return a
+  typed error, never an empty success. Unknown times stay unknown.
+- Do not change stored source material; keep what was captured.
+
+## Data and safety
+
+Fixtures are synthetic. Keep credentials, real captures, private reports and
+real databases out of Git. Merging code is fine at any time; touching live
+stores, deploying, or changing task routing needs the operator's say-so.
