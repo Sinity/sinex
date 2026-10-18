@@ -3,7 +3,7 @@ use serde_json::json;
 use sinex_model::retrieval::token_text;
 
 #[test]
-fn complete_token_text_preserves_oversized_and_empty_source_strings() {
+fn token_text_keeps_long_and_empty_strings_whole() {
     assert_eq!(token_text(&[String::new()]), Some(String::new()));
     let payload = json!({"command":format!("{}late neighbor", "repeat ".repeat(290)),"cwd":"/synthetic/late"});
     let strings = payload_strings(&payload);
@@ -32,7 +32,7 @@ fn complete_token_text_preserves_oversized_and_empty_source_strings() {
 }
 
 #[test]
-fn tokenization_owns_literal_delimiters_and_field_boundaries() {
+fn token_text_separates_fields_and_drops_literal_delimiters() {
     assert_eq!(
         token_text(&["first".into(), "second".into()]).unwrap(),
         "\u{1}first\u{1}\u{2}\u{1}second\u{1}\u{2}"

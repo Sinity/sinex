@@ -1,8 +1,11 @@
-//! One restricted read-model owner. Rows and log position commit together; the
-//! complete retained log is the only supported bootstrap basis in this slice.
+//! Maintains the shell-search projection (`core.search_text` and
+//! `core.event_project`) from the commit log. One process holds it at a time;
+//! rows and the log position commit together.
 use crate::{Error, Result, TestPause};
 use serde_json::Value;
-use sinex_model::retrieval::{CONTRACT, Project, normalize, project, token_text};
+use sinex_model::retrieval::{
+    CONTRACT, Project, normalization_versions, normalize, project, token_text,
+};
 use sqlx::{Connection, PgConnection, Row};
 use uuid::Uuid;
 
@@ -58,12 +61,20 @@ impl Projection {
             sqlx::query("DELETE FROM core.event_project")
                 .execute(&mut *tx)
                 .await?;
-            sqlx::query("INSERT INTO derivation.read_model_position(name,generation,configuration,position,serving,failure) VALUES('shell-search',$1,$2,0,false,NULL) ON CONFLICT(name) DO UPDATE SET generation=EXCLUDED.generation,configuration=EXCLUDED.configuration,position=0,serving=false,failure=NULL").bind(Uuid::now_v7()).bind(&configuration).execute(&mut *tx).await?;
+            sqlx::query(
+                "INSERT INTO derivation.read_model_position(name,generation,configuration,position,serving,failure) \
+                 VALUES('shell-search',$1,$2,0,false,NULL) ON CONFLICT(name) DO UPDATE SET \
+                 generation=EXCLUDED.generation,configuration=EXCLUDED.configuration,position=0,serving=false,failure=NULL",
+            )
+            .bind(Uuid::now_v7())
+            .bind(&configuration)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
         let (stop, mut stopped) = tokio::sync::watch::channel(false);
         let task = tokio::spawn(async move {
-            let mut owner = Owner {
+            let mut indexer = Indexer {
                 connection,
                 projects,
                 pause,
@@ -73,7 +84,7 @@ impl Projection {
                 if *stopped.borrow() {
                     break;
                 }
-                match owner.step().await {
+                match indexer.step().await {
                     Ok(true) => continue,
                     Ok(false) => {}
                     Err(error) => {
@@ -81,12 +92,12 @@ impl Projection {
                             "{}",
                             serde_json::json!({"component":"sinex-read-model","phase":"unavailable","reason":error.to_string()})
                         );
-                        sqlx::query("UPDATE derivation.read_model_position SET serving=false,failure='projection maintenance unavailable' WHERE name='shell-search'").execute(&mut owner.connection).await?;
+                        sqlx::query("UPDATE derivation.read_model_position SET serving=false,failure='projection maintenance unavailable' WHERE name='shell-search'").execute(&mut indexer.connection).await?;
                     }
                 }
                 tokio::select! {_=stopped.changed()=>{},_=tokio::time::sleep(std::time::Duration::from_millis(100))=>{}}
             }
-            owner.connection.close().await?;
+            indexer.connection.close().await?;
             Ok(())
         });
         Ok(Self { stop, task })
@@ -96,16 +107,13 @@ impl Projection {
         self.task.await?
     }
 }
-fn caseless_version() -> String {
-    sinex_model::retrieval::normalization_versions()
-}
-struct Owner {
+struct Indexer {
     connection: PgConnection,
     projects: Vec<Project>,
     pause: Option<TestPause>,
     step: usize,
 }
-impl Owner {
+impl Indexer {
     async fn step(&mut self) -> Result<bool> {
         let mut tx = self.connection.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
@@ -119,7 +127,7 @@ impl Owner {
             .await?;
         if position > current {
             return Err(Error::ProjectionUnavailable(
-                "projection frontier exceeds committed state",
+                "projection position exceeds committed state",
             ));
         }
         if position == current && state.try_get::<bool, _>("serving")? {
@@ -151,7 +159,27 @@ impl Owner {
             let strings = payload_strings(&payload);
             let tokens = token_text(&strings);
             let at: Option<String> = row.try_get("at")?;
-            sqlx::query("INSERT INTO core.search_text(generation,id,ts_orig,ts_orig_tiebreak,source,event_type,tokens,text,cwd,exit_code,command,command_normalized,cwd_normalized) VALUES($1,$2,$3::text::timestamptz,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(generation).bind(id).bind(&at).bind(row.try_get::<Option<i32>,_>("ts_orig_tiebreak")?).bind(row.try_get::<String,_>("source")?).bind(row.try_get::<String,_>("event_type")?).bind(tokens).bind(serde_json::to_string(&strings).unwrap()).bind(payload["cwd"].as_str()).bind(payload["exit_code"].as_i64()).bind(payload["command"].as_str().unwrap_or("")).bind(normalize(payload["command"].as_str().unwrap_or(""))).bind(payload["cwd"].as_str().map(normalize)).execute(&mut *tx).await?;
+            let command = payload["command"].as_str().unwrap_or("");
+            sqlx::query(
+                "INSERT INTO core.search_text(generation,id,ts_orig,ts_orig_tiebreak,source,event_type,tokens,text,\
+                 cwd,exit_code,command,command_normalized,cwd_normalized) \
+                 VALUES($1,$2,$3::text::timestamptz,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+            )
+            .bind(generation)
+            .bind(id)
+            .bind(&at)
+            .bind(row.try_get::<Option<i32>, _>("ts_orig_tiebreak")?)
+            .bind(row.try_get::<String, _>("source")?)
+            .bind(row.try_get::<String, _>("event_type")?)
+            .bind(tokens)
+            .bind(serde_json::to_string(&strings).unwrap())
+            .bind(payload["cwd"].as_str())
+            .bind(payload["exit_code"].as_i64())
+            .bind(command)
+            .bind(normalize(command))
+            .bind(payload["cwd"].as_str().map(normalize))
+            .execute(&mut *tx)
+            .await?;
             if let Some(project) = payload["cwd"]
                 .as_str()
                 .and_then(|cwd| project(cwd, &self.projects))
@@ -162,30 +190,37 @@ impl Owner {
         if !more {
             next = current;
         }
-        // Index the writer's whole live canonical population until its own archive
-        // log arrives. Parent eligibility is the reader's current-state fence;
-        // bounded replacement may leave an old canonical body live temporarily.
-        // Dropping it here would turn a complete log into a false reconstruction
-        // failure while older projection rows await that later archive transition.
-        // Publication still verifies the complete canonical population.
-        // A missing old log row therefore cannot certify a complete empty projection.
-        let exact = if !more {
-            sqlx::query_scalar::<_,bool>("SELECT NOT EXISTS((SELECT id FROM core.live_events e WHERE event_type='command.canonical' EXCEPT SELECT id FROM core.search_text WHERE generation=$1) UNION ALL (SELECT id FROM core.search_text WHERE generation=$1 EXCEPT SELECT id FROM core.live_events e WHERE event_type='command.canonical'))").bind(generation).fetch_one(&mut *tx).await?
+        // Index every live canonical event, including one whose parents are gone:
+        // readers apply the parent check, and a replaced canonical event stays
+        // live until its archive entry reaches the log. Once caught up, the
+        // projection must hold exactly the live canonical events; if it does not,
+        // the log cannot rebuild it and the projection stops serving.
+        let matches_live = if !more {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT NOT EXISTS(\
+                 (SELECT id FROM core.live_events e WHERE event_type='command.canonical' \
+                  EXCEPT SELECT id FROM core.search_text WHERE generation=$1) \
+                 UNION ALL (SELECT id FROM core.search_text WHERE generation=$1 \
+                  EXCEPT SELECT id FROM core.live_events e WHERE event_type='command.canonical'))",
+            )
+            .bind(generation)
+            .fetch_one(&mut *tx)
+            .await?
         } else {
             false
         };
-        if !more && !exact {
+        if !more && !matches_live {
             return Err(Error::ProjectionUnavailable(
-                "retained log cannot reconstruct current canonical population; bootstrap required",
+                "commit log cannot rebuild the current canonical population; rebuild required",
             ));
         }
-        sqlx::query("UPDATE derivation.read_model_position SET position=$1,serving=$2,failure=NULL WHERE name='shell-search'").bind(next).bind(exact).execute(&mut *tx).await?;
-        TestPause::reach(&mut self.pause,&format!("projection-staged-{}",self.step),serde_json::json!({"generation":generation,"from":position,"through":next,"serving":exact})).await?;
+        sqlx::query("UPDATE derivation.read_model_position SET position=$1,serving=$2,failure=NULL WHERE name='shell-search'").bind(next).bind(matches_live).execute(&mut *tx).await?;
+        TestPause::reach(&mut self.pause,&format!("projection-staged-{}",self.step),serde_json::json!({"generation":generation,"from":position,"through":next,"serving":matches_live})).await?;
         tx.commit().await?;
         TestPause::reach(
             &mut self.pause,
             &format!("projection-committed-{}", self.step),
-            serde_json::json!({"generation":generation,"through":next,"serving":exact}),
+            serde_json::json!({"generation":generation,"through":next,"serving":matches_live}),
         )
         .await?;
         self.step += 1;
@@ -193,10 +228,11 @@ impl Owner {
     }
 }
 
-// The reader binds own-cwd attribution to the exact same configured projection.
+/// Digest of what the projection is built from. A change rebuilds it, and
+/// recall refuses a projection built for other projects.
 pub(crate) fn configuration(projects: &[Project]) -> String {
     blake3::hash(
-        serde_json::to_string(&(CONTRACT, projects, caseless_version()))
+        serde_json::to_string(&(CONTRACT, projects, normalization_versions()))
             .unwrap()
             .as_bytes(),
     )
@@ -204,8 +240,8 @@ pub(crate) fn configuration(projects: &[Project]) -> String {
     .to_string()
 }
 
-// None is a typed unavailable representation, distinct from a real empty vector.
-// Metadata and original presentation strings remain complete in either case.
+/// The strings indexed for a canonical payload: the command first, then every
+/// other string in key order.
 fn payload_strings(payload: &Value) -> Vec<String> {
     fn texts(value: &Value, out: &mut Vec<String>) {
         match value {

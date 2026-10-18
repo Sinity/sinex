@@ -2,7 +2,7 @@ use super::statement_millis;
 use std::time::{Duration, Instant};
 
 #[test]
-fn optional_statements_share_one_deadline_without_extending_the_server_cap() {
+fn detail_statements_share_one_deadline_capped_at_100ms() {
     let start = Instant::now();
     let deadline = start + Duration::from_millis(200);
     assert_eq!(statement_millis(deadline, start), Some(100));

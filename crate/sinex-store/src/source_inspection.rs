@@ -1,19 +1,37 @@
-//! Bounded inspection over canonical acquisition observations. No provider reads.
+//! `sources`: per-input status from stored observations, with optional history
+//! and receipt pages. Never reads the source itself.
 use crate::{COUNTER, Error, ReadPool, Result, WriterPool};
 use serde_json::{Value, json};
-use sinex_model::acquisition::{CollectorScope, OutcomeRefs, PollSchedule, SourcesRequest};
-use sqlx::Connection;
+use sinex_model::acquisition::{
+    AcquisitionState, CollectorScope, OutcomeRefs, PollSchedule, SourcesRequest,
+};
+use sqlx::{Connection, Postgres, Transaction};
+use std::time::{Duration, Instant};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 const INPUTS: usize = 16;
 const HISTORY: usize = 8;
 const RECEIPTS: usize = 16;
+const STATEMENT_TIMEOUT: &str = "SET LOCAL statement_timeout='2000ms'";
+/// Detail reads per input: each statement gets at most 100 ms, all of them
+/// together 200 ms.
+const DETAIL_STATEMENT_MS: u64 = 100;
+const DETAIL_INPUT_MS: u64 = 200;
 
-// The three named collectors insert failures and increment record_errors in
-// one admission transaction. Their zero count needs no historical lookup;
-// preserve lookup for any other retained binding with no established invariant.
-const SOURCE_ROWS: &str = r#"SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,'representation',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN 'canonical_sqlite_rows' ELSE 'original_zsh_history' END,'sqlite_snapshots',CASE WHEN i.binding='terminal.atuin-history' THEN 'unavailable_until_1c' WHEN i.binding='browser.history.chromium' THEN 'periodic_full_bases; page_patches_unavailable' ELSE NULL END,'last_run',to_jsonb(o),'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),'read_checkpoint',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN (SELECT carry FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text) ELSE NULL END,'first_record_error',CASE WHEN o.record_errors>0 OR i.binding NOT IN ('terminal.atuin-history','browser.history.chromium','terminal.zsh-history') THEN (SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1) ELSE NULL END) FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true WHERE ($1::uuid IS NULL OR i.id=$1) AND ($2::uuid IS NULL OR i.id>$2) ORDER BY i.id LIMIT $3"#;
+// The Atuin, Chromium and zsh collectors insert record failures and count
+// record_errors in one transaction, so a zero count needs no failure lookup.
+// Other bindings always look.
+const SOURCE_ROWS: &str = r#"SELECT jsonb_build_object('source',i.binding,'input',i.id,'locator',i.locator,
+'representation',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN 'canonical_sqlite_rows' ELSE 'original_zsh_history' END,
+'sqlite_snapshots',CASE WHEN i.binding='terminal.atuin-history' THEN 'unavailable_until_1c' WHEN i.binding='browser.history.chromium' THEN 'periodic_full_bases; page_patches_unavailable' ELSE NULL END,
+'last_run',to_jsonb(o),
+'cursor',(SELECT position FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text),
+'read_checkpoint',CASE WHEN i.binding IN ('terminal.atuin-history','browser.history.chromium') THEN (SELECT carry FROM raw.source_cursors WHERE binding=i.binding AND input=i.id::text) ELSE NULL END,
+'first_record_error',CASE WHEN o.record_errors>0 OR i.binding NOT IN ('terminal.atuin-history','browser.history.chromium','terminal.zsh-history') THEN
+  (SELECT to_jsonb(f) FROM raw.record_failures f JOIN raw.source_material_registry fm ON fm.id=f.material_id WHERE f.observation_id=o.id ORDER BY fm.staged_at,fm.id,f.anchor_byte LIMIT 1) ELSE NULL END)
+FROM raw.inputs i LEFT JOIN LATERAL (SELECT * FROM raw.observations WHERE input_id=i.id ORDER BY seq DESC LIMIT 1) o ON true
+WHERE ($1::uuid IS NULL OR i.id=$1) AND ($2::uuid IS NULL OR i.id>$2) ORDER BY i.id LIMIT $3"#;
 
 fn primary_statement_error(error: sqlx::Error) -> Error {
     if matches!(&error, sqlx::Error::Database(e) if e.code().as_deref() == Some("57014")) {
@@ -26,6 +44,7 @@ fn primary_statement_error(error: sqlx::Error) -> Error {
 }
 
 impl WriterPool {
+    /// Records the next planned poll on a finished observation of this run.
     pub(crate) async fn schedule_source(
         &mut self,
         observation: Uuid,
@@ -36,14 +55,94 @@ impl WriterPool {
             .map_err(|_| Error::Invalid("invalid acquisition schedule"))?;
         let mut tx = self.connection.begin().await?;
         let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
-        let count = sqlx::query("UPDATE raw.observations SET commit_seq=$3,metadata=jsonb_set(metadata,'{_sinex_acquisition_v1,schedule}',$2) WHERE id=$1 AND status IN ('completed','unavailable') AND metadata->'_sinex_acquisition_v1'->>'version'='1' AND metadata->'_sinex_acquisition_v1'->>'owner_run'=$4 AND NOT (metadata->'_sinex_acquisition_v1' ? 'schedule')")
-            .bind(observation).bind(serde_json::to_value(schedule).map_err(|_| Error::Invalid("invalid schedule encoding"))?).bind(seq).bind(self.run_id.to_string()).execute(&mut *tx).await?.rows_affected();
+        let count = sqlx::query(
+            "UPDATE raw.observations SET commit_seq=$3,metadata=jsonb_set(metadata,'{_sinex_acquisition_v1,schedule}',$2) \
+             WHERE id=$1 AND status IN ('completed','unavailable') \
+             AND metadata->'_sinex_acquisition_v1'->>'version'='1' \
+             AND metadata->'_sinex_acquisition_v1'->>'owner_run'=$4 \
+             AND NOT (metadata->'_sinex_acquisition_v1' ? 'schedule')",
+        )
+        .bind(observation)
+        .bind(
+            serde_json::to_value(schedule)
+                .map_err(|_| Error::Invalid("invalid schedule encoding"))?,
+        )
+        .bind(seq)
+        .bind(self.run_id.to_string())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
         if count != 1 {
-            return Err(Error::Invalid("source settlement cannot be rescheduled"));
+            return Err(Error::Invalid(
+                "observation is unfinished, from another run, or already scheduled",
+            ));
         }
         tx.commit().await?;
         Ok(())
     }
+}
+
+/// The input's acquisition state. A schedule written by an earlier run, or for
+/// an input that is no longer configured, leaves the current state unknown.
+fn acquisition(row: &Value, active: &[CollectorScope], now: OffsetDateTime) -> Value {
+    let last = &row["last_run"];
+    let marker = &last["metadata"]["_sinex_acquisition_v1"];
+    let schedule = serde_json::from_value::<PollSchedule>(marker["schedule"].clone())
+        .ok()
+        .filter(|s| s.validate().is_ok());
+    let owner_run = marker["owner_run"]
+        .as_str()
+        .and_then(|s| Uuid::parse_str(s).ok());
+    let applies = sinex_model::acquisition::is_active_collector(
+        active,
+        row["source"].as_str().unwrap_or(""),
+        row["locator"].as_str().unwrap_or(""),
+        owner_run,
+    );
+    let state = if applies {
+        sinex_model::acquisition::state(last["status"].as_str(), schedule.as_ref(), now)
+    } else {
+        AcquisitionState::Unknown
+    };
+    json!({
+        "state": state,
+        "attempt_started_at": last["observed_at"],
+        "schedule_evidence": if schedule.is_some() { "collector_observed_v1" } else { "unknown" },
+        "schedule": schedule,
+        "schedule_applicability": if applies { "current_collector_run" } else { "historical_or_unknown" },
+        "cause": last["reason"],
+    })
+}
+
+/// Reads the stored record behind an input's first record error, masked with
+/// the rules it was stored under.
+async fn attach_failed_record(reader: &ReadPool, source: &mut Value) -> Result<()> {
+    let failure = &mut source["first_record_error"];
+    if failure.is_null() {
+        return Ok(());
+    }
+    let material: Uuid = serde_json::from_value(failure["material_id"].clone())
+        .map_err(|_| Error::Invalid("record failure material unavailable"))?;
+    let anchor = failure["anchor_byte"]
+        .as_i64()
+        .ok_or(Error::Invalid("record failure anchor unavailable"))?;
+    match reader
+        .stored_record(material, anchor, None, Some(&[]))
+        .await
+    {
+        Ok((record, end)) => {
+            failure["record"] = record;
+            failure["end"] = json!(end);
+            failure["evidence_status"] = json!("available");
+        }
+        Err(_) => {
+            failure["record"] = Value::Null;
+            failure["end"] = Value::Null;
+            failure["evidence_status"] = json!("unavailable");
+        }
+    }
+    failure["representation"] = json!("canonical_sqlite_row");
+    Ok(())
 }
 
 impl ReadPool {
@@ -61,9 +160,7 @@ impl ReadPool {
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .execute(&mut *tx)
             .await?;
-        sqlx::query("SET LOCAL statement_timeout='2000ms'")
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(STATEMENT_TIMEOUT).execute(&mut *tx).await?;
         let seq: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
             .fetch_one(&mut *tx)
             .await?;
@@ -77,130 +174,111 @@ impl ReadPool {
         let inputs_more = rows.len() > INPUTS;
         rows.truncate(INPUTS);
         for row in &mut rows {
-            let input: Uuid = serde_json::from_value(row["input"].clone())
-                .map_err(|_| Error::Invalid("invalid input identity"))?;
-            let last = &row["last_run"];
-            let schedule = serde_json::from_value::<PollSchedule>(
-                last["metadata"]["_sinex_acquisition_v1"]["schedule"].clone(),
-            )
-            .ok()
-            .filter(|s| s.validate().is_ok());
-            let owner_run = last["metadata"]["_sinex_acquisition_v1"]["owner_run"]
-                .as_str()
-                .and_then(|s| Uuid::parse_str(s).ok());
-            let applies = sinex_model::acquisition::is_active_collector(
-                &active,
-                row["source"].as_str().unwrap_or(""),
-                row["locator"].as_str().unwrap_or(""),
-                owner_run,
-            );
-            let state = if applies {
-                sinex_model::acquisition::state(last["status"].as_str(), schedule.as_ref(), now)
-            } else {
-                sinex_model::acquisition::AcquisitionState::Unknown
-            };
-            row["acquisition"] = json!({"state":state,"attempt_started_at":last["observed_at"],"schedule":schedule,"schedule_applicability":if applies{"current_collector_run"}else{"historical_or_unknown; not the current configured collector run"},"schedule_evidence":if schedule.is_some(){"collector_observed_v1"}else{"unknown"},"coverage":"unknown; acquisition outcomes do not prove historical capture","cause":last["reason"],"overdue_cause":"unknown; a missed planned start is not a capture-stop time or reading-poll deadline"});
-            sqlx::query("SAVEPOINT source_detail")
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("SET LOCAL statement_timeout='100ms'")
-                .execute(&mut *tx)
-                .await?;
-            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
-            // Await PostgreSQL's cancellation response before reusing this
-            // transaction. Dropping an in-flight fetch cannot safely recover a
-            // savepoint on the same transport.
-            let inspected = inspect_detail(&mut tx, row, &request, input, deadline).await;
-            if inspected.is_err() {
-                // Roll back a failed optional statement while keeping the primary
-                // source snapshot and latest outcome available.
-                if sqlx::query("ROLLBACK TO SAVEPOINT source_detail")
-                    .execute(&mut *tx)
-                    .await
-                    .is_err()
-                {
-                    return Err(Error::Invalid("source detail connection unavailable"));
-                }
-                row["inspection"] = json!({"status":"unavailable","reason":"optional inspection budget or evidence unavailable","retry":"sources --input INPUT"});
-                row["outcome_reference_evidence"] = json!({"success_known":false,"failure_known":false,"reason":"inspection unavailable"});
-                row["last_success"] = Value::Null;
-                row["last_failure"] = Value::Null;
-                row["history"] =
-                    json!({"complete":false,"rows":[],"reason":"inspection unavailable"});
-                row["receipts"] =
-                    json!({"complete":false,"rows":[],"reason":"inspection unavailable"});
-            } else {
-                row["inspection"] =
-                    json!({"status":"available","statement_budget_ms":100,"input_budget_ms":200});
-            }
-            sqlx::query("SET LOCAL statement_timeout='2000ms'")
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("RELEASE SAVEPOINT source_detail")
-                .execute(&mut *tx)
-                .await?;
+            row["acquisition"] = acquisition(row, &active, now);
+            inspect_detail_or_skip(&mut tx, row, &request).await?;
         }
         tx.commit().await?;
         lease.finish();
         for source in &mut rows {
-            if !source["first_record_error"].is_null() {
-                let failure = &mut source["first_record_error"];
-                let material: Uuid = serde_json::from_value(failure["material_id"].clone())
-                    .map_err(|_| Error::Invalid("record failure material unavailable"))?;
-                let anchor = failure["anchor_byte"]
-                    .as_i64()
-                    .ok_or(Error::Invalid("record failure anchor unavailable"))?;
-                match self.stored_record(material, anchor, None, Some(&[])).await {
-                    Ok((record, end)) => {
-                        failure["record"] = record;
-                        failure["end"] = json!(end);
-                        failure["evidence_status"] = json!("available");
-                    }
-                    Err(_) => {
-                        failure["record"] = Value::Null;
-                        failure["end"] = Value::Null;
-                        failure["evidence_status"] = json!("unavailable");
-                    }
-                }
-                failure["representation"] = json!("canonical_sqlite_row");
-            }
+            attach_failed_record(self, source).await?;
         }
         let next_input = inputs_more
             .then(|| rows.last().map(|r| r["input"].clone()))
             .flatten();
-        Ok(
-            json!({"notice":sinex_model::DATA_NOTICE,"sources":rows,"page":{"size":INPUTS,"complete":!inputs_more,"next_after_input":next_input,"continuation":"sources --after-input NEXT"},"resolved":{"now":now.format(&Rfc3339).map_err(|_| Error::Invalid("source clock encoding"))?,"commit_seq":seq},"read_as":"Current retained observations; pages use current snapshots. History continues toward older sequence numbers; acquisition receipts continue by interpretation ID."}),
-        )
+        Ok(json!({
+            "notice": sinex_model::DATA_NOTICE,
+            "sources": rows,
+            "page": {
+                "size": INPUTS,
+                "complete": !inputs_more,
+                "next_after_input": next_input,
+                "continuation": "sources --after-input NEXT",
+            },
+            "resolved": {
+                "now": now.format(&Rfc3339).map_err(|_| Error::Invalid("source clock encoding"))?,
+                "commit_seq": seq,
+            },
+        }))
     }
 }
 
+/// Adds last outcomes, history and receipts to `row` within the detail budget.
+/// When that fails, the detail statements are rolled back to a savepoint and
+/// the row is marked unavailable; the primary status stays.
+async fn inspect_detail_or_skip(
+    tx: &mut Transaction<'_, Postgres>,
+    row: &mut Value,
+    request: &SourcesRequest,
+) -> Result<()> {
+    let input: Uuid = serde_json::from_value(row["input"].clone())
+        .map_err(|_| Error::Invalid("invalid input identity"))?;
+    sqlx::query("SAVEPOINT source_detail")
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(&format!(
+        "SET LOCAL statement_timeout='{DETAIL_STATEMENT_MS}ms'"
+    ))
+    .execute(&mut **tx)
+    .await?;
+    let deadline = Instant::now() + Duration::from_millis(DETAIL_INPUT_MS);
+    // Await PostgreSQL's cancel response before reusing the transaction:
+    // dropping an in-flight fetch cannot safely roll back to a savepoint on
+    // the same connection.
+    if inspect_detail(tx, row, request, input, deadline)
+        .await
+        .is_err()
+    {
+        if sqlx::query("ROLLBACK TO SAVEPOINT source_detail")
+            .execute(&mut **tx)
+            .await
+            .is_err()
+        {
+            return Err(Error::Invalid("source detail connection unavailable"));
+        }
+        row["inspection"] = json!({"status":"unavailable","reason":"detail budget exceeded or detail unreadable","retry":"sources --input INPUT"});
+        row["outcome_reference_evidence"] =
+            json!({"success_known":false,"failure_known":false,"reason":"inspection unavailable"});
+        row["last_success"] = Value::Null;
+        row["last_failure"] = Value::Null;
+        row["history"] = json!({"complete":false,"rows":[],"reason":"inspection unavailable"});
+        row["receipts"] = json!({"complete":false,"rows":[],"reason":"inspection unavailable"});
+    } else {
+        row["inspection"] = json!({"status":"available","statement_budget_ms":DETAIL_STATEMENT_MS,"input_budget_ms":DETAIL_INPUT_MS});
+    }
+    sqlx::query(STATEMENT_TIMEOUT).execute(&mut **tx).await?;
+    sqlx::query("RELEASE SAVEPOINT source_detail")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 async fn inspect_detail(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut Transaction<'_, Postgres>,
     row: &mut Value,
     request: &SourcesRequest,
     input: Uuid,
-    deadline: std::time::Instant,
+    deadline: Instant,
 ) -> Result<()> {
     let last = row["last_run"].clone();
     let refs = serde_json::from_value::<OutcomeRefs>(
         last["metadata"]["_sinex_acquisition_v1"]["outcomes"].clone(),
     )
     .ok();
-    let id = last["id"].as_str().and_then(|s| Uuid::parse_str(s).ok());
+    let last_id = last["id"].as_str().and_then(|s| Uuid::parse_str(s).ok());
     let success = if last["status"] == "completed" {
-        id
+        last_id
     } else {
         refs.as_ref().and_then(|r| r.last_success)
     };
     let failure = if last["status"] == "unavailable" || last["status"] == "interrupted" {
-        id
+        last_id
     } else {
         refs.as_ref().and_then(|r| r.last_failure)
     };
     for (key, reference) in [("last_success", success), ("last_failure", failure)] {
         row[key] = match reference {
             Some(id) => {
-                optional_statement_budget(tx, deadline).await?;
+                detail_statement_budget(tx, deadline).await?;
                 sqlx::query_scalar::<_, Value>(
                     "SELECT to_jsonb(o) FROM raw.observations o WHERE id=$1 AND input_id=$2",
                 )
@@ -213,20 +291,26 @@ async fn inspect_detail(
             None => Value::Null,
         };
     }
-    row["outcome_reference_evidence"] = json!({"success_known":success.is_some() || refs.as_ref().is_some_and(|r| r.success_known),"failure_known":failure.is_some() || refs.as_ref().is_some_and(|r| r.failure_known),"read_as":"Indexed last-outcome references for this observation; missing predecessor summaries remain unknown."});
-    optional_statement_budget(tx, deadline).await?;
-    let mut history: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(o) FROM raw.observations o WHERE input_id=$1 AND ($2::bigint IS NULL OR seq<$2) ORDER BY seq DESC LIMIT $3")
-                .bind(input).bind(request.before_seq).bind((HISTORY+1) as i64).fetch_all(&mut **tx).await?;
+    row["outcome_reference_evidence"] = json!({
+        "success_known": success.is_some() || refs.as_ref().is_some_and(|r| r.success_known),
+        "failure_known": failure.is_some() || refs.as_ref().is_some_and(|r| r.failure_known),
+    });
+    detail_statement_budget(tx, deadline).await?;
+    let mut history: Vec<Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(o) FROM raw.observations o WHERE input_id=$1 AND ($2::bigint IS NULL OR seq<$2) \
+         ORDER BY seq DESC LIMIT $3",
+    )
+    .bind(input)
+    .bind(request.before_seq)
+    .bind((HISTORY + 1) as i64)
+    .fetch_all(&mut **tx)
+    .await?;
     let history_more = history.len() > HISTORY;
     history.truncate(HISTORY);
-    let selected = request.observation.or_else(|| {
-        row["last_run"]["id"]
-            .as_str()
-            .and_then(|s| Uuid::parse_str(s).ok())
-    });
+    let selected = request.observation.or(last_id);
     let observed: Option<Value> = match selected {
         Some(id) => {
-            optional_statement_budget(tx, deadline).await?;
+            detail_statement_budget(tx, deadline).await?;
             sqlx::query_scalar(
                 "SELECT to_jsonb(o) FROM raw.observations o WHERE input_id=$1 AND id=$2",
             )
@@ -244,11 +328,23 @@ async fn inspect_detail(
         .as_ref()
         .is_some_and(|o| o["metadata"]["_sinex_acquisition_v1"]["receipts"] == "capture_insert_v1");
     let mut receipts: Vec<Value> = if known {
-        optional_statement_budget(tx, deadline).await?;
-        // Replay reparses the same material but sets created_by_operation. It
-        // must never become an original acquisition's recovery receipt.
-        sqlx::query_scalar("SELECT jsonb_build_object('event',e.id,'material',e.source_material_id,'start',e.offset_start,'end',e.offset_end,'record_state',e.record_state) FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id WHERE m.input_id=$1 AND m.observation_id=$2 AND e.source IN ('terminal.atuin-history','browser.history.chromium') AND e.event_type IN ('command.executed','page.visited','download.observed') AND e.created_by_operation IS NULL AND ($3::uuid IS NULL OR e.id>$3) ORDER BY e.id LIMIT $4")
-                    .bind(input).bind(selected).bind(request.after_receipt).bind((RECEIPTS+1) as i64).fetch_all(&mut **tx).await?
+        detail_statement_budget(tx, deadline).await?;
+        // Replay reparses the same material but sets created_by_operation; its
+        // events are not receipts of the original read.
+        sqlx::query_scalar(
+            "SELECT jsonb_build_object('event',e.id,'material',e.source_material_id,'start',e.offset_start,'end',e.offset_end,'record_state',e.record_state) \
+             FROM core.events e JOIN raw.source_material_registry m ON m.id=e.source_material_id \
+             WHERE m.input_id=$1 AND m.observation_id=$2 \
+             AND e.source IN ('terminal.atuin-history','browser.history.chromium') \
+             AND e.event_type IN ('command.executed','page.visited','download.observed') \
+             AND e.created_by_operation IS NULL AND ($3::uuid IS NULL OR e.id>$3) ORDER BY e.id LIMIT $4",
+        )
+        .bind(input)
+        .bind(selected)
+        .bind(request.after_receipt)
+        .bind((RECEIPTS + 1) as i64)
+        .fetch_all(&mut **tx)
+        .await?
     } else {
         vec![]
     };
@@ -260,28 +356,47 @@ async fn inspect_detail(
     let next_history = history_more
         .then(|| history.last().map(|r| r["seq"].clone()))
         .flatten();
-    row["history"] = json!({"rows":history,"complete":!history_more,"next_before_seq":next_history,"page_size":HISTORY,"continuation":"sources --input INPUT --before-seq NEXT"});
-    row["receipts"] = json!({"observation":observed,"rows":receipts,"evidence":if known{"capture_insert_v1"}else{"unknown_legacy_or_no_observation"},"complete":known && !receipts_more,"next_after_receipt":next_receipt,"page_size":RECEIPTS,"continuation":"sources --input INPUT --observation OBSERVATION --after-receipt NEXT","read_as":"New acquisition interpretations including removed records; current show/trace governs eligibility and protected content. No historical coverage claim."});
+    row["history"] = json!({
+        "rows": history,
+        "complete": !history_more,
+        "next_before_seq": next_history,
+        "page_size": HISTORY,
+        "continuation": "sources --input INPUT --before-seq NEXT",
+    });
+    row["receipts"] = json!({
+        "observation": observed,
+        "rows": receipts,
+        "evidence": if known { "capture_insert_v1" } else { "unknown_legacy_or_no_observation" },
+        "complete": known && !receipts_more,
+        "next_after_receipt": next_receipt,
+        "page_size": RECEIPTS,
+        "continuation": "sources --input INPUT --observation OBSERVATION --after-receipt NEXT",
+    });
     Ok(())
 }
 
-fn statement_millis(deadline: std::time::Instant, now: std::time::Instant) -> Option<u64> {
-    let remaining = deadline.checked_duration_since(now)?.as_millis().min(100) as u64;
+/// Milliseconds the next detail statement may run: the time left before
+/// `deadline`, capped at DETAIL_STATEMENT_MS; None once less than 1 ms is left.
+fn statement_millis(deadline: Instant, now: Instant) -> Option<u64> {
+    let remaining = deadline
+        .checked_duration_since(now)?
+        .as_millis()
+        .min(DETAIL_STATEMENT_MS as u128) as u64;
     (remaining > 0).then_some(remaining)
 }
 
-async fn optional_statement_budget(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    deadline: std::time::Instant,
+async fn detail_statement_budget(
+    tx: &mut Transaction<'_, Postgres>,
+    deadline: Instant,
 ) -> Result<()> {
-    let millis = statement_millis(deadline, std::time::Instant::now())
-        .ok_or(Error::Invalid("optional source inspection deadline"))?;
+    let millis = statement_millis(deadline, Instant::now())
+        .ok_or(Error::Invalid("source detail deadline"))?;
     sqlx::query("SELECT set_config('statement_timeout',$1,true)")
         .bind(format!("{millis}ms"))
         .execute(&mut **tx)
         .await?;
-    statement_millis(deadline, std::time::Instant::now())
-        .ok_or(Error::Invalid("optional source inspection deadline"))?;
+    // Setting the timeout itself takes time; refuse if nothing is left.
+    statement_millis(deadline, Instant::now()).ok_or(Error::Invalid("source detail deadline"))?;
     Ok(())
 }
 
