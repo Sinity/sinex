@@ -20,7 +20,7 @@ fn null_success_is_not_missing_and_two_outcomes_are_rejected() {
     );
 }
 #[test]
-fn surface_failures_have_declared_exit_and_application_codes() {
+fn error_kinds_map_to_exit_and_rpc_codes() {
     for (kind, exit) in [
         (ErrorKind::BadQuery, 2),
         (ErrorKind::NotFound, 3),
@@ -35,7 +35,7 @@ fn surface_failures_have_declared_exit_and_application_codes() {
     }
 }
 #[test]
-fn unimplemented_surfaces_are_absent_and_real_methods_validate_params() {
+fn unknown_methods_are_not_found_and_params_are_checked() {
     for method in ["replay", "polylogue.have", "commands"] {
         let request: RpcRequest =
             serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":method,"params":{}}))
@@ -53,7 +53,7 @@ fn unimplemented_surfaces_are_absent_and_real_methods_validate_params() {
 }
 
 #[test]
-fn owned_writer_state_rejects_unavailable_reason() {
+fn owned_writer_state_has_no_reason() {
     let valid = json!({"state":"owned"});
     let parsed: WriterOwnership = serde_json::from_value(valid.clone()).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap(), valid);
@@ -64,7 +64,7 @@ fn owned_writer_state_rejects_unavailable_reason() {
 }
 
 #[test]
-fn query_deadline_is_optional_bounded_and_does_not_change_its_question() {
+fn query_timeout_is_optional_and_limited() {
     for timeout in [None, Some(1), Some(10_000), Some(60_000), Some(3_600_000)] {
         let mut params = json!({"query":"events"});
         if let Some(ms) = timeout {
@@ -96,7 +96,7 @@ fn query_deadline_is_optional_bounded_and_does_not_change_its_question() {
 }
 
 #[test]
-fn replay_has_explicit_scope_action_and_no_caller_authorship() {
+fn replay_start_needs_query_and_action_and_rejects_extra_fields() {
     let start = json!({"query":"materials where id = 019a0000-0000-7000-8000-000000000001","action_id":"019a0000-0000-7000-8000-000000000002"});
     assert_eq!(
         RpcRequest::new(RpcId::Number(1), Method::ReplayStart, start.clone())
@@ -126,4 +126,17 @@ fn replay_has_explicit_scope_action_and_no_caller_authorship() {
             .kind,
         ErrorKind::BadQuery
     );
+}
+
+#[test]
+fn every_method_name_round_trips_and_has_a_catalog_entry() {
+    let catalog = rpc::catalog();
+    assert_eq!(catalog.len(), SUPPORTED_METHODS.len());
+    for (name, entry) in SUPPORTED_METHODS.iter().zip(&catalog) {
+        let method = Method::parse(name).unwrap();
+        assert_eq!(method.as_str(), *name);
+        assert_eq!(entry.method, method);
+        assert_eq!(serde_json::to_value(method).unwrap(), json!(name));
+        assert!(!entry.description.is_empty());
+    }
 }
