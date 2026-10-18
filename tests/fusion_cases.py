@@ -36,6 +36,9 @@ PLANNED=[
 
 
 def planned(focus):
+    if focus=='publication-turn':
+        import fusion_publication_cases
+        return fusion_publication_cases.PLANNED
     if focus=='source-codec':return [PLANNED[0],PLANNED[8]]
     if focus=='source-privacy':return [PLANNED[0],PLANNED[8],PLANNED[9]]
     if focus=='maintenance':return [PLANNED[0],'independent maintenance source setup',PLANNED[7],PLANNED[11],PLANNED[12],PLANNED[8],PLANNED[9]]
@@ -43,6 +46,9 @@ def planned(focus):
 
 
 def exercise(h):
+    if h['OPTIONS'].fusion_focus=='publication-turn':
+        import fusion_publication_cases
+        return fusion_publication_cases.exercise(h)
     work,report,bins=(h[k] for k in ['WORK','REPORT','BIN_DIR'])
     run,scenario,start,stop=(h[k] for k in ['run','scenario','start_daemon','stop'])
     token='synthetic-foundation-token';operator='synthetic-fusion-operator'
@@ -277,10 +283,11 @@ poll_interval_ms={poll}
                 if reply.get('id')==request['id']:return reply['result']
         def tool(name,args):
             r=call('tools/call',{'name':name,'arguments':args});assert not r.get('isError');return r.get('structuredContent') or json.loads(r['content'][0]['text'])
-        call('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'independent-selected-fusion','version':'1'}})
-        mcp.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');mcp.stdin.flush()
-        assert {t['name'] for t in call('tools/list',{})['tools']}=={'sinex_search','sinex_query','sinex_show','sinex_trace','sinex_sources','sinex_status'}
-        try:yield tool,call
+        try:
+            call('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'independent-selected-fusion','version':'1'}})
+            mcp.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');mcp.stdin.flush()
+            assert {t['name'] for t in call('tools/list',{})['tools']}=={'sinex_recall','sinex_search','sinex_query','sinex_show','sinex_trace','sinex_sources','sinex_status'}
+            yield tool,call
         finally:
             (report/(name+'.wire.json')).write_text(json.dumps(log,ensure_ascii=False,indent=2)+'\n')
             mcp.stdin.close();mcp.wait(timeout=5)
@@ -447,13 +454,16 @@ poll_interval_ms={poll}
         queued_status=wait(later_enqueued)
         queued_observed_at=time.monotonic()
         assert queued_status['indexed_retrieval']['fusion']['basis']==basis and queued_status['indexed_retrieval']['fusion']['phase']!='settled',queued_status
-        enqueue_basis=sql("SELECT to_jsonb(p) FROM derivation.shell_progress p WHERE one")
-        assert enqueue_basis['basis']==basis and enqueue_basis['phase']!='settled',enqueue_basis
-        (report/'fair-enqueue-basis.json').write_text(json.dumps({'replacement_boundary':notice,'queued_step':queued,'selected_provider_record':{'native_id':'fair-later','sqlite_rowid':later_rowid},'enqueue_status':queued_status,'atomic_enqueue_basis':enqueue_basis},indent=2)+'\n')
+        atomic=sql("SELECT jsonb_build_object('seed',(SELECT max(commit_seq) FROM core.events WHERE source='terminal.atuin-history' AND payload->>'native_id'='fair-later'),'progress',(SELECT to_jsonb(p) FROM derivation.shell_progress p WHERE one))")
+        enqueue_basis=atomic['progress']
+        assert enqueue_basis['basis']==basis and enqueue_basis['phase']!='settled',atomic
+        (report/'fair-enqueue-basis.json').write_text(json.dumps({'replacement_boundary':notice,'queued_step':queued,'selected_provider_record':{'native_id':'fair-later','sqlite_rowid':later_rowid},'enqueue_status':queued_status,'atomic_enqueue_basis':enqueue_basis,'atomic_seed_and_basis':atomic},indent=2)+'\n')
         during=[]
         deadline=queued_observed_at+30
-        seed=None
-        while time.monotonic()<deadline:
+        seed=atomic['seed']
+        # Reuse the earliest atomic witness: a fast pass can finish between this
+        # read and the next API round trip without changing the witnessed order.
+        while time.monotonic()<deadline and not (seed is not None and atomic['progress']['basis']==basis and atomic['progress']['phase']!='settled'):
             state=api('status')['result'];during.append(state)
             atomic=sql("SELECT jsonb_build_object('seed',(SELECT max(commit_seq) FROM core.events WHERE source='terminal.atuin-history' AND payload->>'native_id'='fair-later'),'progress',(SELECT to_jsonb(p) FROM derivation.shell_progress p WHERE one))")
             seed=atomic['seed']
