@@ -1,7 +1,16 @@
 use super::*;
 
 #[test]
-fn source_cancellation_reports_only_its_configured_statement_limit() {
+fn unpresentable_exclusion_outcome_is_partial_not_failed() {
+    let value = json!({"action_id":"01800000-0000-7000-8000-000000000001","operation_id":"01800000-0000-7000-8000-000000000002","state":"completed","occurrence":{"equivalence_key":"Authorization: Bearer synthetic_sensitive_value"}});
+    let error = exclusion_outcome(value).unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Partial);
+    assert_eq!(error.data["outcome"], "retained_but_unpresentable");
+    assert!(error.data["operation_id"].as_str().is_some());
+}
+
+#[test]
+fn source_cancellation_reports_the_configured_statement_limit() {
     let error = read_error(sinex_store::Error::SourceStatementCancelled {
         configured_statement_timeout_ms: 2000,
     });
@@ -15,15 +24,12 @@ fn source_cancellation_reports_only_its_configured_statement_limit() {
 }
 
 #[test]
-fn unclassified_cancellation_has_no_invented_deadline_or_cause() {
+fn other_cancellation_reports_no_limit() {
     let error = read_error(sinex_store::Error::Database(sqlx::Error::Database(
         Box::new(Cancelled),
     )));
     assert_eq!(error.kind, ErrorKind::Budget);
-    assert_eq!(
-        error.data,
-        serde_json::json!({"reason":"statement_cancelled"})
-    );
+    assert_eq!(error.data, json!({"reason":"statement_cancelled"}));
     let explicit = deadline_error(37);
     assert_eq!(explicit.data["reason"], "execution_deadline");
     assert_eq!(explicit.data["timeout_ms"], 37);
