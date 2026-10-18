@@ -3,7 +3,7 @@
 use crate::{Error, ReadPool, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sinex_model::retrieval::{Bound, Expr, Text, bind, normalize};
+use sinex_model::retrieval::{Bound, Expr, Text, bind, like_literal, normalize};
 use sqlx::{Connection, Postgres, QueryBuilder, Row};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
@@ -103,10 +103,7 @@ fn expression(q: &mut QueryBuilder<'_, Postgres>, e: &Expr) {
                     "project" => "p.project",
                     _ => unreachable!(),
                 };
-                let escaped = normalize(value)
-                    .replace('\\', "\\")
-                    .replace('%', "\\%")
-                    .replace('_', "\\_");
+                let escaped = like_literal(&normalize(value));
                 q.push(column)
                     .push(" LIKE ")
                     .push_bind(format!(

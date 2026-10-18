@@ -108,10 +108,13 @@ full_interval_ms = 1000
             cursor=before['page']['cursor'];assert cursor
             raw=api('query.run',{'query':'events where source = terminal.atuin-history'})['result']['rows'][0]
             reference='sinex:ev/'+raw['id'];trace=api('object.trace',{'ref':reference,'bytes':True})['result'];stop(daemon)
+            sql("INSERT INTO derivation.read_model_position(name,generation,configuration,position,serving,failure) VALUES('unrelated-fixture','00000000-0000-0000-0000-000000000099','independent',0,true,NULL)")
+            unrelated=json.loads(sql("SELECT row_to_json(p) FROM derivation.read_model_position p WHERE name='unrelated-fixture'"))
             pending=schema(bins/'sinexd','--check');assert [x['number'] for x in pending['pending_changes']]==[7]
             schema(bins/'sinexd','--apply',expected=2)
             result=schema(bins/'sinexd','--apply','--dump-file',work/'metadata-before-change.dump')
             assert result['checked_changes']==[{'number':7,'outcome':'applied'}]
+            assert json.loads(sql("SELECT row_to_json(p) FROM derivation.read_model_position p WHERE name='unrelated-fixture'"))==unrelated
             assert sql("SELECT fingerprint FROM sinex_schemas.definition") == sql("SELECT fingerprint FROM sinex_schemas.definition", h['admin'])
             assert sql("SELECT catalog FROM sinex_schemas.definition") == sql("SELECT catalog FROM sinex_schemas.definition", h['admin'])
             rejected=run([old,'serve','--config',config],expected=1,label='published old writer refuses upgraded catalog')
@@ -165,9 +168,9 @@ full_interval_ms = 1000
             ('positions',epoch+86_400_000_000_001,0,0,' '.join('w'+str(n) for n in range(17001)),'/synthetic/tide','s','h',None),
             ('token-bytes',epoch+86_400_000_000_002,0,0,'x'*1100,'/synthetic/tide','s','h',None),
             ('empty-command',epoch+86_400_000_000_003,0,0,'','/synthetic/tide','s','h',None),
-            ('delimiters',epoch+86_400_000_000_004,0,0,'first\u0001second\u0002third percent% underscore_ slash\\tail','/synthetic/tide','s','h',None),
+            ('delimiters',epoch+86_400_000_000_004,0,0,'first\u0001second\u0002third percent% underscore_ slash\\tail \"literal\"','/synthetic/tide','s','h',None),
             ('field-boundary',epoch+86_400_000_000_005,0,0,'fieldtail','/synthetic/tide/head','s','h',None),
-            ('wildcard-neighbor',epoch+86_400_000_000_006,0,0,'underscorex backXslash percentZ','/synthetic/tide','s','h',None),
+            ('wildcard-control',epoch+86_400_000_000_006,0,0,'underscorex slashtail percentZ','/synthetic/tide','s','h',None),
             ('later',epoch+172_800_000_000_000+123,9,-1,'needle later exact','/synthetic/tide','s','h',None),
         ]
         def metadata():
@@ -184,11 +187,17 @@ full_interval_ms = 1000
                 'commands where not repeat and command = "needle later exact"':{'later'},
                 'commands where repeat or command = "needle later exact"':{'frequency','later'},
                 'commands where repeat and exit_code = 0':{'frequency'},
-                'underscore_':{'delimiters'}, 'underscore':set(), 'underscorex':{'wildcard-neighbor'},
+                'wildcard':{'wildcard-control'},
+                'underscore_':{'delimiters'}, 'underscore':set(), 'underscorex':{'wildcard-control'},
                 json.dumps('slash\\tail'):{'delimiters'},
                 '"slash tail"':{'delimiters'},
                 'commands where "percent underscore_ slash tail"':{'delimiters'},
             }
+            checks['commands where command ~ '+json.dumps('slash\\tail')]={'delimiters'}
+            checks['commands where command ~ '+json.dumps('slashtail')]={'wildcard-control'}
+            checks['commands where command ~ '+json.dumps('underscore_')]={'delimiters'}
+            checks['commands where command ~ '+json.dumps('percent% underscore_ slash\\tail \"literal\"')]={'delimiters'}
+            checks['commands where command ^ '+json.dumps('first\u0001second\u0002third percent% underscore_ slash\\')]={'delimiters'}
             observations={}
             for question,expected in checks.items():
                 value=cli('query',question,expected=(0,5));keys={row['payload']['native_id'] for row in value['rows']}
@@ -206,7 +215,7 @@ full_interval_ms = 1000
                 cursor=page['page']['cursor']
                 if not cursor:break
             assert ranked==expected_rank,(ranked,expected_rank)
-            for question,total in [('commands where not repeat',39),('commands where project = tide',40),('needle or repeat sort when',34)]:
+            for question,total in [('commands where not repeat',39),('commands where project = tide',40),('commands where not not repeat',1),('needle or repeat sort when',34)]:
                 unranked=api('query.run',{'query':question,'page':100})['result']
                 assert unranked['total']==total and all(row['rank']==0 for row in unranked['rows']),unranked
             bad=cli('query','"first\u0001second"',expected=2);assert bad['kind']=='bad_query'

@@ -61,7 +61,8 @@ pub fn token_text(strings: &[String]) -> Option<String> {
     }
     Some(out)
 }
-fn like_literal(word: &str) -> String {
+/// Escape a literal for PostgreSQL LIKE with an explicit backslash escape.
+pub fn like_literal(word: &str) -> String {
     word.replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")

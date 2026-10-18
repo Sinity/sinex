@@ -1783,7 +1783,7 @@ async fn apply_change_entry(
             }
             // Discard only derived vector contents, never retained text/events.
             // v5 reconstruction remains non-serving until the full log catches up.
-            sqlx::raw_sql("DROP INDEX core.search_text_tsv; DROP INDEX core.search_text_unavailable; ALTER TABLE core.search_text RENAME COLUMN tsv TO tokens; ALTER TABLE core.search_text ALTER COLUMN tokens TYPE text USING NULL::text; UPDATE derivation.read_model_position SET serving=false")
+            sqlx::raw_sql("DROP INDEX core.search_text_tsv; DROP INDEX core.search_text_unavailable; ALTER TABLE core.search_text RENAME COLUMN tsv TO tokens; ALTER TABLE core.search_text ALTER COLUMN tokens TYPE text USING NULL::text; UPDATE derivation.read_model_position SET serving=false WHERE name='shell-search'")
                 .execute(&mut *conn).await?;
             for sql in crate::event_storage::declarations()
                 .into_iter()

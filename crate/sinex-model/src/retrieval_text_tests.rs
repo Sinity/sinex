@@ -43,6 +43,14 @@ fn query_delimiters_are_tokenized_and_negative_text_never_supplies_rank() {
             .is_none()
     );
     assert!(
+        bind("commands where not not hidden")
+            .unwrap()
+            .filter
+            .unwrap()
+            .rank_text()
+            .is_none()
+    );
+    assert!(
         bind("commands where project = tide")
             .unwrap()
             .filter
