@@ -15,6 +15,10 @@ time.workspace = true
 blake3.workspace = true
 thiserror.workspace = true
 schemars = { version = "1", features = ["uuid1"] }
+jiff.workspace = true
+caseless.workspace = true
+unicode-normalization.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

@@ -17,12 +17,18 @@ struct Package {
     id: String,
     name: String,
     dependencies: Vec<Dependency>,
+    #[serde(default)]
+    features: HashMap<String, Vec<String>>,
 }
 #[derive(Deserialize)]
 struct Dependency {
     name: String,
     kind: Option<String>,
     target: Option<String>,
+    #[serde(default)]
+    optional: bool,
+    #[serde(default)]
+    rename: Option<String>,
 }
 #[derive(Deserialize)]
 struct Resolve {
@@ -32,6 +38,8 @@ struct Resolve {
 struct Node {
     id: String,
     deps: Vec<Edge>,
+    #[serde(default)]
+    features: Vec<String>,
 }
 #[derive(Deserialize)]
 struct Edge {
@@ -170,6 +178,12 @@ fn validate(metadata: Metadata) -> Result<(), String> {
                 let dependency = packages
                     .get(edge.pkg.as_str())
                     .ok_or_else(|| format!("missing resolved package: {}", edge.pkg))?;
+                let dependent = packages
+                    .get(id)
+                    .ok_or_else(|| format!("missing resolved package: {id}"))?;
+                if !activated(dependent, node, &dependency.name) {
+                    continue;
+                }
                 if impure(&dependency.name) {
                     return Err(format!(
                         "forbidden transitive dependency: {} -> {}",
@@ -181,6 +195,32 @@ fn validate(metadata: Metadata) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Whether `dependent` really builds its dependency `name`. `cargo metadata`
+/// lists an optional dependency as resolved when a feature only names it
+/// weakly (`log?/std`), which does not enable it; count it only when a
+/// resolved feature enables it (`dep:log`, `log/std`, or the implicit `log`).
+fn activated(dependent: &Package, node: &Node, name: &str) -> bool {
+    let declared: Vec<&Dependency> = dependent
+        .dependencies
+        .iter()
+        .filter(|d| d.name == name && d.kind.as_deref() != Some("dev"))
+        .collect();
+    if declared.is_empty() || declared.iter().any(|d| !d.optional) {
+        return true;
+    }
+    declared.iter().any(|d| {
+        let key = d.rename.as_deref().unwrap_or(&d.name);
+        node.features.iter().any(|enabled| {
+            enabled == key
+                || dependent.features.get(enabled).is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item == &format!("dep:{key}") || item.starts_with(&format!("{key}/"))
+                    })
+                })
+        })
+    })
 }
 
 /// Check the declared and resolved dependency graph of the workspace at `root`.

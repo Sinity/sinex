@@ -12,6 +12,7 @@ pub mod id;
 pub mod kinds;
 pub mod payload;
 pub mod privacy;
+pub mod query;
 
 pub use batch::{
     ArchiveRequest, Batch, BatchKind, InputRef, MaterialRef, ObservationFacts, RecordOutcome,

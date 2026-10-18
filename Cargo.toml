@@ -36,6 +36,20 @@ sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio
 rusqlite = { version = "0.32", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
 proptest = "1"
+jiff = "0.2"
+caseless = "0.2"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+sea-query = { version = "1", default-features = false, features = ["backend-postgres", "with-json", "with-uuid", "with-time"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+rmcp = { version = "3", features = ["server", "transport-io"] }
+schemars = { version = "1", features = ["uuid1"] }
+credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0" }
 hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0" }
 devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0", features = ["pg"] }
 sinex-macros = { path = "crate/sinex-macros" }
