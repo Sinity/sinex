@@ -4,7 +4,7 @@
 //! records a run, then moves the one write connection into a task that executes
 //! queued commands in order and runs background recomputation between them.
 use crate::admission::{Admission, Command, ReplayCommand};
-use crate::blob::{BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, WRITING_BLOBS, parse_hash};
+use crate::blob::parse_hash;
 use crate::read_pool::{ReadPool, require_reader};
 use crate::schema::{WRITER_ROLE, check_schema};
 use crate::{Error, PrivacyRule, Result, TestPause, session, shell};
@@ -270,19 +270,19 @@ pub(crate) fn coordinate_hash(
 /// check them against the installed schema. Checked `query!` macros need no such step.
 pub async fn prepare_admission_statements(admin_url: &str) -> Result<()> {
     let mut conn = PgConnection::connect(admin_url).await?;
-    for sql in crate::commit::STATEMENTS.into_iter().chain([
-        MATERIAL,
-        BLOB_REGISTER,
-        BLOB_LOOKUP,
-        BLOB_PRESENT,
-        WRITING_BLOBS,
-        RUN_INTERRUPT,
-        MANIFEST,
-        RUN_START,
-        RUN_END,
-        WRITER_LOCK,
-        "SELECT current_user::text",
-    ]) {
+    for sql in crate::commit::STATEMENTS
+        .into_iter()
+        .chain(crate::blob::STATEMENTS)
+        .chain([
+            MATERIAL,
+            RUN_INTERRUPT,
+            MANIFEST,
+            RUN_START,
+            RUN_END,
+            WRITER_LOCK,
+            "SELECT current_user::text",
+        ])
+    {
         conn.prepare(sql).await?;
     }
     Ok(())

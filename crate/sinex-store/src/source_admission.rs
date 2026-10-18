@@ -1,7 +1,7 @@
 //! Writer steps shared by the Atuin, zsh and Chromium admissions: input and
 //! producer registration, record failures, and stream parts (rows appended to a
 //! file under `<root>/open` that is closed into a blob).
-use crate::{BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, Error, Result, WriterPool};
+use crate::{BLOB_PRESENT, Error, Result, WriterPool};
 use serde_json::Value;
 use sqlx::{Connection, Row};
 use std::io::{Seek, SeekFrom, Write};
@@ -225,23 +225,7 @@ impl WriterPool {
         })
         .await??;
         let name = hash.to_string();
-        sqlx::query(BLOB_REGISTER)
-            .bind(Uuid::now_v7())
-            .bind(&name)
-            .bind(length)
-            .bind(&self.root)
-            .execute(&mut self.connection)
-            .await?;
-        let row = sqlx::query(BLOB_LOOKUP)
-            .bind(&name)
-            .fetch_one(&mut self.connection)
-            .await?;
-        let blob: Uuid = row.try_get("id")?;
-        if row.try_get::<i64, _>("size_bytes")? != length
-            || row.try_get::<String, _>("root")? != self.root
-        {
-            return Err(Error::Invalid("blob registry entry differs from the part"));
-        }
+        let blob = self.register_blob(&name, length).await?;
         let blobs = self.blobs.clone();
         let put_path = path.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {

@@ -63,27 +63,7 @@ impl WriterPool {
         let blob_name = hash.to_string();
         // Register the blob row as 'writing' before writing the file, so startup
         // recovery can find a file left behind by an interrupted write.
-        let new_blob_id = Uuid::now_v7();
-        sqlx::query!(
-            "INSERT INTO core.blobs (id,blake3,size_bytes,root,status) \
-             VALUES ($1,$2,$3,$4,'writing') ON CONFLICT (blake3) DO NOTHING",
-            new_blob_id,
-            blob_name,
-            length,
-            self.root
-        )
-        .execute(&mut self.connection)
-        .await?;
-        let row = sqlx::query!(
-            "SELECT id,size_bytes,root FROM core.blobs WHERE blake3=$1",
-            blob_name
-        )
-        .fetch_one(&mut self.connection)
-        .await?;
-        let blob_id = row.id;
-        if row.size_bytes != length || row.root != self.root {
-            return Err(Error::Invalid("existing blob registry identity differs"));
-        }
+        let blob_id = self.register_blob(&blob_name, length).await?;
         let store = self.blobs.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
             store.put(event.bytes.as_slice(), 3)?;

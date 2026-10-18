@@ -5,8 +5,8 @@
 use crate::{Error, Result, WriterPool};
 use uuid::Uuid;
 
-pub(crate) const BLOB_REGISTER: &str = "INSERT INTO core.blobs (id,blake3,size_bytes,root,status) VALUES ($1,$2,$3,$4,'writing') ON CONFLICT (blake3) DO NOTHING";
-pub(crate) const BLOB_LOOKUP: &str = "SELECT id,size_bytes,root FROM core.blobs WHERE blake3=$1";
+const BLOB_REGISTER: &str = "INSERT INTO core.blobs (id,blake3,size_bytes,root,status) VALUES ($1,$2,$3,$4,'writing') ON CONFLICT (blake3) DO NOTHING";
+const BLOB_LOOKUP: &str = "SELECT id,size_bytes,root FROM core.blobs WHERE blake3=$1";
 pub(crate) const BLOB_PRESENT: &str = "UPDATE core.blobs SET status='present' WHERE id=$1";
 pub(crate) const WRITING_BLOBS: &str =
     "SELECT id,blake3 FROM core.blobs WHERE status='writing' AND root=$1";
@@ -31,7 +31,35 @@ pub(crate) fn parse_hash(name: &str) -> Result<hashed_blobs::Hash> {
     Ok(hashed_blobs::Hash(raw))
 }
 
+/// Statements for `prepare_admission_statements`.
+pub(crate) const STATEMENTS: [&str; 4] = [BLOB_REGISTER, BLOB_LOOKUP, BLOB_PRESENT, WRITING_BLOBS];
+
 impl WriterPool {
+    /// Inserts a `writing` row for the blob unless its hash is already registered,
+    /// and returns the row id. An existing row must have the same size and root.
+    pub(crate) async fn register_blob(&mut self, name: &str, length: i64) -> Result<Uuid> {
+        use sqlx::Row;
+        sqlx::query(BLOB_REGISTER)
+            .bind(Uuid::now_v7())
+            .bind(name)
+            .bind(length)
+            .bind(&self.root)
+            .execute(&mut self.connection)
+            .await?;
+        let row = sqlx::query(BLOB_LOOKUP)
+            .bind(name)
+            .fetch_one(&mut self.connection)
+            .await?;
+        if row.try_get::<i64, _>("size_bytes")? != length
+            || row.try_get::<String, _>("root")? != self.root
+        {
+            return Err(Error::Invalid(
+                "existing blob row has a different size or root",
+            ));
+        }
+        Ok(row.try_get("id")?)
+    }
+
     /// Marks `writing` blobs whose file is intact as `present`. A missing file leaves
     /// the row `writing` so a later write can complete it; a corrupt file is an error.
     pub(crate) async fn recover_blobs(&mut self) -> Result<()> {
