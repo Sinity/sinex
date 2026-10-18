@@ -453,13 +453,16 @@ poll_interval_ms={poll}
         queued_status=wait(later_enqueued)
         queued_observed_at=time.monotonic()
         assert queued_status['indexed_retrieval']['fusion']['basis']==basis and queued_status['indexed_retrieval']['fusion']['phase']!='settled',queued_status
-        enqueue_basis=sql("SELECT to_jsonb(p) FROM derivation.shell_progress p WHERE one")
-        assert enqueue_basis['basis']==basis and enqueue_basis['phase']!='settled',enqueue_basis
-        (report/'fair-enqueue-basis.json').write_text(json.dumps({'replacement_boundary':notice,'queued_step':queued,'selected_provider_record':{'native_id':'fair-later','sqlite_rowid':later_rowid},'enqueue_status':queued_status,'atomic_enqueue_basis':enqueue_basis},indent=2)+'\n')
+        atomic=sql("SELECT jsonb_build_object('seed',(SELECT max(commit_seq) FROM core.events WHERE source='terminal.atuin-history' AND payload->>'native_id'='fair-later'),'progress',(SELECT to_jsonb(p) FROM derivation.shell_progress p WHERE one))")
+        enqueue_basis=atomic['progress']
+        assert enqueue_basis['basis']==basis and enqueue_basis['phase']!='settled',atomic
+        (report/'fair-enqueue-basis.json').write_text(json.dumps({'replacement_boundary':notice,'queued_step':queued,'selected_provider_record':{'native_id':'fair-later','sqlite_rowid':later_rowid},'enqueue_status':queued_status,'atomic_enqueue_basis':enqueue_basis,'atomic_seed_and_basis':atomic},indent=2)+'\n')
         during=[]
         deadline=queued_observed_at+30
-        seed=None
-        while time.monotonic()<deadline:
+        seed=atomic['seed']
+        # Reuse the earliest atomic witness: a fast pass can finish between this
+        # read and the next API round trip without changing the witnessed order.
+        while time.monotonic()<deadline and not (seed is not None and atomic['progress']['basis']==basis and atomic['progress']['phase']!='settled'):
             state=api('status')['result'];during.append(state)
             atomic=sql("SELECT jsonb_build_object('seed',(SELECT max(commit_seq) FROM core.events WHERE source='terminal.atuin-history' AND payload->>'native_id'='fair-later'),'progress',(SELECT to_jsonb(p) FROM derivation.shell_progress p WHERE one))")
             seed=atomic['seed']
