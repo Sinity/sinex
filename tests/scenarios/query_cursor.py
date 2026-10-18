@@ -70,7 +70,7 @@ def exercise(h):
         assert fresh['rows'][0]['payload']['native_id'] == 'append-before' and fresh['total'] == 242
     scenario('continuation reads current rows after the cursor and reports changes', continuation)
 
-    def bad_cursors_and_restart():
+    def bad_cursors():
         cursor = first['page']['cursor']
         assert query('events', cursor, expected=2)['kind'] == 'bad_query'
         assert query(cursor='not a cursor', expected=2)['kind'] == 'bad_query'
@@ -80,8 +80,10 @@ def exercise(h):
             assert query(cursor=json.dumps({**decoded, field: value}), expected=2)['kind'] == 'bad_query', field
         old_format = {k: decoded[k] for k in ['query', 'last_when', 'last_id']}
         assert query(cursor=json.dumps(old_format), expected=2)['kind'] == 'bad_query'
-        for other in ['commands', 'events sort by id', 'events as of now', 'events where source = x or kind = x']:
-            assert query(other, cursor, expected=2)['kind'] == 'bad_query', other
+    scenario('malformed, altered and old-format cursors are bad queries', bad_cursors)
+
+    def restart_and_source_loss():
+        cursor = first['page']['cursor']
         before = query(RESTATED, cursor)
         daemon.restart('cursor-restart')
         daemon.wait('read after restart', lambda: daemon.last_run()['status'] == 'completed')
@@ -98,5 +100,11 @@ def exercise(h):
         assert partial['complete'] is False and partial['source_status'][0]['status'] == 'unavailable'
         assert partial['total'] == 242 and len(partial['rows']) == 100 and partial['page']['cursor']
         assert [r['id'] for r in partial['rows']] == [r['id'] for r in before['rows']]
+    scenario('a cursor survives restart and an unavailable source', restart_and_source_loss)
+
+    def other_query_forms():
+        cursor = first['page']['cursor']
+        for other in ['events sort by id', 'events as of now', 'events where source = x or kind = x', 'commands']:
+            assert query(other, cursor, expected=2)['kind'] == 'bad_query', other
         daemon.stop()
-    scenario('bad cursors are refused; a cursor survives restart and an unavailable source', bad_cursors_and_restart)
+    scenario('a cursor cannot continue a different query form', other_query_forms)
