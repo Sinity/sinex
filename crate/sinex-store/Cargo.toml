@@ -10,7 +10,7 @@ product = []
 [dependencies]
 sinex-model = { path = "../sinex-model" }
 blake3 = "1.8"
-hashed-blobs = { git = "https://github.com/Sinity/polylogue", tag = "hashed-blobs-v0.1.1" }
+hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.1.0" }
 fs2 = "0.4"
 sea-query = { version = "0.32.7", default-features = false, features = ["backend-postgres"] }
 serde = { version = "1", features = ["derive"] }
