@@ -227,8 +227,17 @@ impl LiveStream {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
-        let present = segments(&self.spool)
-            .map_err(|e| DriverError::Io(format!("spool {}: {e}", self.spool.display())))?;
+        let present = match segments(&self.spool) {
+            Ok(present) => present,
+            // Capture has not created its spool yet.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => {
+                return Err(DriverError::Io(format!(
+                    "spool {}: {e}",
+                    self.spool.display()
+                )));
+            }
+        };
         let Some(first) = present.first() else {
             // Capture has not written anything yet: an unchanged look.
             return Ok(Acquired {
@@ -448,5 +457,8 @@ mod tests {
         let a = live.poll(&Value::Null).unwrap();
         assert!(a.material.is_none());
         assert!(a.observation.unavailable.is_none() && !a.observation.changed);
+        // Nor is a spool capture has not created yet.
+        let missing = stream(&dir()).poll(&Value::Null).unwrap();
+        assert!(missing.material.is_none() && missing.observation.unavailable.is_none());
     }
 }

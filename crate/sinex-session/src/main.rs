@@ -26,6 +26,43 @@ enum Command {
         #[command(subcommand)]
         source: Live,
     },
+    /// Capture the session's sources and produce them to `sinexd` over the
+    /// NATS ingress, until stopped.
+    Run(Run),
+}
+
+#[derive(clap::Args)]
+struct Run {
+    /// The NATS server, with this producer's credentials in the URL when the
+    /// server requires them.
+    #[arg(long)]
+    nats: String,
+    /// Subject root (`sinex` unless several deployments share a server).
+    #[arg(long, default_value = "sinex")]
+    subjects: String,
+    /// This producer's name, as its credentials allow.
+    #[arg(long)]
+    producer: String,
+    /// The content store `sinexd` uses on this host.
+    #[arg(long)]
+    store: PathBuf,
+    /// Where spools and positions live.
+    #[arg(long)]
+    state: PathBuf,
+    #[arg(long, default_value = "localhost")]
+    host: String,
+    /// Capture Hyprland's event socket.
+    #[arg(long)]
+    hyprland: bool,
+    /// A directory whose file changes to capture; repeatable.
+    #[arg(long = "watch")]
+    watch: Vec<PathBuf>,
+    /// Seconds between productions of what was captured.
+    #[arg(long, default_value_t = 2)]
+    every: u64,
+    /// Stop after this many seconds.
+    #[arg(long)]
+    seconds: Option<u64>,
 }
 
 #[derive(Subcommand)]
@@ -57,6 +94,16 @@ enum Live {
 
 fn main() -> ExitCode {
     match Cli::parse().command {
+        Command::Run(run) => {
+            let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+            match runtime.block_on(produce(run)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("sinex-session: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Capture {
             source:
                 Live::Files {
@@ -118,5 +165,102 @@ fn main() -> ExitCode {
                 Err(_) => ExitCode::FAILURE,
             }
         }
+    }
+}
+
+/// A captured source and where it is produced from.
+struct Binding {
+    source: Box<dyn sinex_sources::Source>,
+    name: String,
+    driver: sinex_sources::drivers::live_stream::LiveStream,
+}
+
+/// Capture threads write spools; this loop produces what they wrote.
+async fn produce(run: Run) -> Result<(), String> {
+    use sinex_sources::drivers::producer::{Position, Producer, Store};
+    use sinex_sources::sources::{file_watch, hyprland};
+
+    let spools = run.state.join("spool");
+    let positions = run.state.join("positions");
+    let store = Store::open(&run.store).map_err(|e| format!("content store: {e}"))?;
+    let mut producer = Producer::connect(
+        &run.nats,
+        sinex_protocol::Subjects::new(run.subjects.clone()),
+        &run.producer,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut bindings = Vec::new();
+    if run.hyprland {
+        let socket = hyprland::socket_path().ok_or("no Hyprland instance in this environment")?;
+        let spool = spools.join("hyprland");
+        let s = spool.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = hyprland::capture(&socket, &s) {
+                eprintln!("sinex-session: Hyprland capture: {e}");
+            }
+        });
+        bindings.push(Binding {
+            source: Box::new(hyprland::source()),
+            name: format!("hyprland@{}", run.host),
+            driver: hyprland::driver(spool, run.host.clone()),
+        });
+    }
+    if !run.watch.is_empty() {
+        let spool = spools.join("files");
+        let (s, roots) = (spool.clone(), run.watch.clone());
+        std::thread::spawn(move || {
+            let roots = file_watch::Roots {
+                roots,
+                skip: file_watch::SKIP.iter().map(|s| (*s).to_owned()).collect(),
+            };
+            if let Err(e) = file_watch::capture(&roots, &s, None) {
+                eprintln!("sinex-session: file watch: {e}");
+            }
+        });
+        bindings.push(Binding {
+            source: Box::new(file_watch::source()),
+            name: format!("file-watch@{}", run.host),
+            driver: file_watch::driver(spool, run.host.clone()),
+        });
+    }
+    if bindings.is_empty() {
+        return Err("nothing to capture: pass --hyprland and/or --watch".into());
+    }
+
+    let deadline = run
+        .seconds
+        .map(|s| std::time::Instant::now() + Duration::from_secs(s));
+    loop {
+        for b in &bindings {
+            // Drain everything captured so far, one material at a time.
+            loop {
+                let position = Position::load(&positions, &b.name).map_err(|e| e.to_string())?;
+                let acquired = b.driver.poll(&position.cursor).map_err(|e| e.to_string())?;
+                let had_material = acquired.material.is_some();
+                let sent = producer
+                    .produce(b.source.as_ref(), &b.name, acquired, &store, &positions)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if had_material {
+                    println!(
+                        "{}: {} events in {} frames, {} admitted, {} unread",
+                        b.name, sent.events, sent.frames, sent.admitted, sent.unread
+                    );
+                }
+                let committed = Position::load(&positions, &b.name).map_err(|e| e.to_string())?;
+                b.driver
+                    .remove_passed(&committed.cursor)
+                    .map_err(|e| e.to_string())?;
+                if !had_material {
+                    break;
+                }
+            }
+        }
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(run.every)).await;
     }
 }

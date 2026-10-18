@@ -3490,9 +3490,11 @@ dependencies = [
 name = "sinex-capture"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "sinex-model",
  "sinex-protocol",
  "sinex-sources",
+ "tokio",
 ]
 
 [[package]]
@@ -3574,22 +3576,29 @@ dependencies = [
  "sinex-model",
  "sinex-protocol",
  "sinex-sources",
+ "tokio",
 ]
 
 [[package]]
 name = "sinex-sources"
 version = "0.1.0"
 dependencies = [
+ "async-nats",
  "blake3",
+ "devkit",
+ "futures",
  "gix",
+ "hashed-blobs",
  "notify",
  "proptest",
  "rusqlite",
  "serde",
  "serde_json",
  "sinex-model",
+ "sinex-protocol",
  "thiserror 2.0.21",
  "time",
+ "tokio",
  "uuid",
 ]
 

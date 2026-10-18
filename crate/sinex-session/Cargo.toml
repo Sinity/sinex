@@ -11,6 +11,7 @@ sinex-model.workspace = true
 sinex-protocol.workspace = true
 sinex-sources.workspace = true
 clap.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
