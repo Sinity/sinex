@@ -314,8 +314,8 @@ impl WriterPool {
                         groups,
                     )
                     .await?;
-                    crate::QualificationBoundary::reach(
-                        &mut self.qualification,
+                    crate::TestPause::reach(
+                        &mut self.pause,
                         "fusion-replacement-committed",
                         json!({"basis":work.basis,"pending":true,"queued_background_turns":work.queued_turns,"queued_commands_at_turn_entry":queued_commands}),
                     )

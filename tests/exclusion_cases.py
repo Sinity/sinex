@@ -244,12 +244,12 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
         path=work/'delete.sock'
         if path.exists():path.unlink()
         listener=socket.socket(socket.AF_UNIX);listener.bind(str(path));listener.listen(1);listener.settimeout(30)
-        configure(False);daemon=start(config,name,'--qualification-boundary',point,'--qualification-socket',path);ready();settled()
+        configure(False);daemon=start(config,name,'--test-pause-at',point,'--test-pause-socket',path);ready();settled()
         return listener
     def accept(listener,point):
         connection,_=listener.accept();connection.settimeout(10)
         frame=json.loads(connection.makefile('rb').readline())
-        assert frame['pid']==daemon.pid and frame['qualification_boundary']==point,frame
+        assert frame['pid']==daemon.pid and frame['pause_point']==point,frame
         return connection,frame
     def recover_population():
         deletion(a_ref,undo=True)

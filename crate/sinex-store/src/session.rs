@@ -242,8 +242,8 @@ impl WriterPool {
                         .await?;
                         tx.commit().await?;
                     }
-                    crate::QualificationBoundary::reach(
-                        &mut self.qualification,
+                    crate::TestPause::reach(
+                        &mut self.pause,
                         "session-replacement-committed",
                         json!({"basis":w.basis,"day":w.day,"through_day":w.through_day,"pending":true}),
                     )

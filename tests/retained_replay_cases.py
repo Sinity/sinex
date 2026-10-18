@@ -48,7 +48,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
 ''' if acquire else ''))
         if not authority:config.write_text(config.read_text().replace(f'operator_token_file = "{work/"operator-token"}"\n',''))
     configure(True)
-    daemon=start(config,'replay-historical-fixture','--qualification-historical-atuin')
+    daemon=start(config,'replay-historical-fixture','--test-bad-atuin-parse')
     def wait_ready():
         deadline=time.monotonic()+30
         while True:
@@ -86,7 +86,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
         assert answer['total']==65 and answer['complete'] is True
         bad=next(r for r in answer['rows'] if r['payload']['native_id']=='fixture-000')
         assert bad['payload']['hostname']=='controlled-historical-bad-interpretation'
-        assert bad['written_by']['kind']=='qualification_fixture'
+        assert bad['written_by']['kind']=='test_fixture'
         before_trace=cli('trace',bad['id'],'--bytes')['row']
         assert before_trace['record']['hostname']=='fixture-host:fixture-user'
         assert before_trace['record']['timestamp']==epoch
@@ -123,12 +123,12 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
         sock_path=work/'replay.sock'
         if sock_path.exists():sock_path.unlink()
         listener=socket.socket(socket.AF_UNIX);listener.bind(str(sock_path));listener.listen(1);listener.settimeout(30)
-        daemon=start(config,name or point,'--qualification-boundary',point,'--qualification-socket',sock_path);wait_ready()
+        daemon=start(config,name or point,'--test-pause-at',point,'--test-pause-socket',sock_path);wait_ready()
         return listener,sock_path
     def accept(listener,point):
         connection,_=listener.accept();connection.settimeout(10)
         frame=json.loads(connection.makefile('rb').readline(262144))
-        assert frame['pid']==daemon.pid and frame['qualification_boundary']==point
+        assert frame['pid']==daemon.pid and frame['pause_point']==point
         return connection,frame
     def kill_and_restart(connection,listener,path,frame,name,check_authority=False):
         nonlocal daemon

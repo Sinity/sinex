@@ -265,16 +265,16 @@ impl WriterPool {
             if let Some(current) = current {
                 crate::shell::dirty(&mut tx, current.try_get("id")?).await?;
             }
-            crate::QualificationBoundary::reach(
-                &mut self.qualification,
+            crate::TestPause::reach(
+                &mut self.pause,
                 "delete-staged",
                 json!({"outcome":outcome,"effects":effects}),
             )
             .await?;
             tx.commit().await?;
             // A postcommit lost controller/reply does not reclassify committed success.
-            let _ = crate::QualificationBoundary::reach(
-                &mut self.qualification,
+            let _ = crate::TestPause::reach(
+                &mut self.pause,
                 "delete-committed",
                 json!({"outcome":outcome,"effects":effects}),
             )
@@ -582,7 +582,7 @@ mod tests {
             .join("blobs")
             .join(&request_hash[..2])
             .join(format!("{request_hash}.zst"));
-        let held = backing.with_extension("qualification-missing");
+        let held = backing.with_extension("missing");
         std::fs::rename(&backing, &held)?;
         let unavailable = store
             .admission
@@ -659,10 +659,6 @@ mod tests {
                 )
                 .await
                 .is_err()
-        );
-        println!(
-            "{}",
-            json!({"qualification":"typed single-writer exclusion control; not a public client receipt","raw_a":a_id,"raw_b":b_id,"applied":applied,"undone":undone,"stale_preview":stale,"restored":restored,"restored_id":restored_id,"old_trace":old_trace,"archived_trace":final_trace,"restored_trace":restored_trace})
         );
         store.shutdown().await?;
         Ok(())

@@ -409,7 +409,7 @@ impl Custodian {
     pub async fn copied_view(
         &mut self,
         stop: &tokio::sync::watch::Receiver<bool>,
-        qualification: &mut Option<sinex_store::QualificationBoundary>,
+        pause: &mut Option<sinex_store::TestPause>,
     ) -> Result<(PathBuf, Value), Failure> {
         let mut last = "locked History copy unavailable".to_string();
         for attempt in 0..5 {
@@ -466,12 +466,12 @@ impl Custodian {
             })
             .await
             .map_err(|_| "owned copy worker failed")?;
-            sinex_store::QualificationBoundary::browser_copy_before_check(
-                qualification,
+            sinex_store::TestPause::browser_copy_before_check(
+                pause,
                 json!({"source_pair":before,"attempt":attempt,"owned_copy":destination}),
             )
             .await
-            .map_err(|_| "copy qualification refused")?;
+            .map_err(|_| "test pause refused")?;
             let after = pair(&source);
             if let (Ok((bytes, cloned)), Ok(after)) = (result, after) {
                 self.verify()?;

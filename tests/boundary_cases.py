@@ -185,11 +185,11 @@ created_by = "operator"
             socket_path = work/'boundary.sock'
             listener.bind(str(socket_path)); listener.listen(1); listener.settimeout(30)
             try:
-                proc = start(config, name+'-before-kill', '--qualification-boundary', point, '--qualification-socket', socket_path)
+                proc = start(config, name+'-before-kill', '--test-pause-at', point, '--test-pause-socket', socket_path)
                 connection, _ = listener.accept(); connection.settimeout(30)
                 with connection:
                     frame = json.loads(connection.makefile('rb').readline(65536))
-                    assert frame['pid'] == proc.pid and frame['qualification_boundary'] == point
+                    assert frame['pid'] == proc.pid and frame['pause_point'] == point
                     custody = frame['evidence'] if point == 'retained-fsynced' else frame['evidence']['custody']
                     assert custody['acknowledged'] is False and custody['source_eof'] is True
                     assert custody['step_rows'] == expected['rows_read']
@@ -309,8 +309,8 @@ created_by = "operator"
             finally:
                 listener.close(); socket_path.unlink(missing_ok=True)
         else:
-            for extra, expected_exit in [(['--qualification-boundary', 'retained-fsynced'], 2),
-                                         (['--qualification-boundary', 'unknown', '--qualification-socket', work/'absent.sock'], 1)]:
+            for extra, expected_exit in [(['--test-pause-at', 'retained-fsynced'], 2),
+                                         (['--test-pause-at', 'unknown', '--test-pause-socket', work/'absent.sock'], 1)]:
                 run([binaries/'sinexd', 'serve', '--config', config, *extra], expected=expected_exit, label='qualification control refuses missing or invalid boundary')
                 assert not store.exists() and not (work/(name+'-state')).exists()
             proc = start(config, name)

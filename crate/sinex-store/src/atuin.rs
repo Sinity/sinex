@@ -94,9 +94,9 @@ pub fn mask(value: &mut Value, rules: &[PrivacyRule]) -> Result<()> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AtuinInterpretation {
     Current,
-    HistoricalFixture,
+    TestBadParse,
     #[cfg(test)]
-    PriorCompletionFixture,
+    TestOldParser,
 }
 #[derive(Clone)]
 pub struct AtuinStep {
@@ -188,7 +188,7 @@ pub(crate) async fn parser_producer(
     parser: &str,
     rules: &[PrivacyRule],
 ) -> Result<Uuid> {
-    let configuration = json!({"representation":"canonical_sqlite_rows","parser":parser,"qualification_fixture":parser!=PARSER,"shell_field_basis":shell_field_basis(rules)});
+    let configuration = json!({"representation":"canonical_sqlite_rows","parser":parser,"test_fixture":parser!=PARSER,"shell_field_basis":shell_field_basis(rules)});
     if let Some(id) = sqlx::query_scalar(
         "SELECT id FROM core.producer_versions WHERE name=$1 AND version=$2 AND run_id=$3 AND configuration=$4 LIMIT 1",
     )
@@ -425,7 +425,7 @@ impl WriterPool {
         };
         let parser = PARSER;
         #[cfg(test)]
-        let parser = if step.interpretation == AtuinInterpretation::PriorCompletionFixture {
+        let parser = if step.interpretation == AtuinInterpretation::TestOldParser {
             "atuin-v1"
         } else {
             parser
@@ -471,9 +471,9 @@ impl WriterPool {
                 .to_vec();
             let result = parse(&Value::Object(original.clone()));
             #[cfg(test)]
-            let result = if step.interpretation == AtuinInterpretation::PriorCompletionFixture {
+            let result = if step.interpretation == AtuinInterpretation::TestOldParser {
                 result.map(|mut parsed| {
-                    // Controlled prior-recipe reading, not an actual predecessor binary.
+                    // Test: read with the old parser.
                     parsed.payload["completion"] = json!("running");
                     parsed.payload["duration_ns"] = Value::Null;
                     parsed
@@ -500,8 +500,8 @@ impl WriterPool {
             .await?;
         let boundary_evidence = json!({"input":input,"observation":step.observation,"material":material,"start":start,"end":start+bytes.len() as i64,"canonical_bytes":bytes.len(),"canonical_blake3":blake3::hash(&bytes).to_hex().to_string(),"step_rows":prepared.len(),"source_eof":step.complete,"acknowledged":false});
         if !bytes.is_empty() {
-            crate::QualificationBoundary::reach(
-                &mut self.qualification,
+            crate::TestPause::reach(
+                &mut self.pause,
                 "retained-fsynced",
                 boundary_evidence.clone(),
             )
@@ -526,7 +526,7 @@ impl WriterPool {
                     continue;
                 }
             };
-            if step.interpretation == AtuinInterpretation::HistoricalFixture
+            if step.interpretation == AtuinInterpretation::TestBadParse
                 && parsed.native_id == "fixture-129"
             {
                 sqlx::query("INSERT INTO raw.record_failures (observation_id,material_id,anchor_byte,reason) VALUES ($1,$2,$3,'controlled historical parser omission; current parser accepts this retained row')").bind(step.observation).bind(material).bind(anchor).execute(&mut *tx).await?;
@@ -573,7 +573,7 @@ impl WriterPool {
                 )
                 .map_err(|_| Error::Invalid("invalid projected source time"))?;
             let mut payload = parsed.payload;
-            let fixture = step.interpretation == AtuinInterpretation::HistoricalFixture
+            let fixture = step.interpretation == AtuinInterpretation::TestBadParse
                 && parsed.native_id == "fixture-000";
             if fixture {
                 payload["hostname"] = json!("controlled-historical-bad-interpretation");
@@ -581,10 +581,10 @@ impl WriterPool {
             let fixture_write = fixture;
             #[cfg(test)]
             let fixture_write =
-                fixture_write || step.interpretation == AtuinInterpretation::PriorCompletionFixture;
+                fixture_write || step.interpretation == AtuinInterpretation::TestOldParser;
             mask(&mut payload, &step.privacy_rules)?;
             sqlx::query("INSERT INTO core.events (id,source,event_type,payload,ts_orig,ts_orig_tiebreak,ts_quality,ts_clock,time_suspect,payload_schema_id,commit_seq,source_material_id,anchor_byte,offset_start,offset_end,offset_kind,ordinal,record_hash,record_state,run_id,equivalence_key,written_by,producer_version_id) VALUES ($1,$2,'command.executed',$3,$4::text::timestamptz,$13,'intrinsic','producer',$14,2,$5,$6,$7,$7,$8,'bytes',0,$9,$10,$11,$12,$15,$16)")
-                .bind(id).bind(SOURCE).bind(payload).bind(parsed.time).bind(last_seq).bind(material).bind(anchor).bind(start+end).bind(&record_hash).bind(if parsed.removed {"removed"} else {"present"}).bind(self.run_id).bind(key).bind(parsed.nanos).bind(projected.suspect).bind(if fixture_write {json!({"kind":"qualification_fixture","description":"controlled historical bad interpretation; not a predecessor binary"})}else{Value::Null}).bind(producer).execute(&mut *tx).await?;
+                .bind(id).bind(SOURCE).bind(payload).bind(parsed.time).bind(last_seq).bind(material).bind(anchor).bind(start+end).bind(&record_hash).bind(if parsed.removed {"removed"} else {"present"}).bind(self.run_id).bind(key).bind(parsed.nanos).bind(projected.suspect).bind(if fixture_write {json!({"kind":"test_fixture","description":"deliberately wrong interpretation for replay tests"})}else{Value::Null}).bind(producer).execute(&mut *tx).await?;
             sqlx::query(
                 "INSERT INTO core.live_coordinates (store,occ_hash,event_id) VALUES (0,$1,$2)",
             )
@@ -638,10 +638,10 @@ impl WriterPool {
         }
         let committed_evidence = json!({"custody":boundary_evidence,"progress":summary});
         // Empty reading registration and EOF/unavailable accounting are not
-        // retained data boundaries. Keep qualification on data-bearing steps.
+        // data-bearing steps, so tests only pause on steps with bytes.
         if !bytes.is_empty() {
-            crate::QualificationBoundary::reach(
-                &mut self.qualification,
+            crate::TestPause::reach(
+                &mut self.pause,
                 "transaction-staged",
                 committed_evidence.clone(),
             )
@@ -649,12 +649,8 @@ impl WriterPool {
         }
         tx.commit().await?;
         if !bytes.is_empty() {
-            crate::QualificationBoundary::reach(
-                &mut self.qualification,
-                "transaction-committed",
-                committed_evidence,
-            )
-            .await?;
+            crate::TestPause::reach(&mut self.pause, "transaction-committed", committed_evidence)
+                .await?;
         }
         if step.complete || step.unavailable.is_some() {
             let open: Option<Uuid> = sqlx::query_scalar("SELECT id FROM raw.source_material_registry WHERE input_id=$1 AND status='capturing' LIMIT 1").bind(input).fetch_optional(&mut self.connection).await?;
@@ -707,7 +703,7 @@ mod tests {
                 .format(&Rfc3339)
                 .unwrap(),
             locator: "synthetic-recipe-fixture".into(),
-            metadata: json!({"qualification_fixture":"controlled prior parser interpretation; not a predecessor binary"}),
+            metadata: json!({"test_fixture":"old parser interpretation"}),
             rows: vec![source.clone()],
             complete: true,
             unavailable: None,
@@ -715,7 +711,7 @@ mod tests {
         };
         let first = store
             .admission
-            .submit_atuin(step(AtuinInterpretation::PriorCompletionFixture, 0))
+            .submit_atuin(step(AtuinInterpretation::TestOldParser, 0))
             .await?;
         assert_eq!(first["admitted"], 1);
         let mut conn = sqlx::PgConnection::connect(&reader).await?;
@@ -793,7 +789,7 @@ mod tests {
         assert_eq!(repeated["repeated"], 1);
         let stale = store
             .admission
-            .submit_atuin(step(AtuinInterpretation::PriorCompletionFixture, -1))
+            .submit_atuin(step(AtuinInterpretation::TestOldParser, -1))
             .await?;
         assert_eq!(
             stale["admitted"], 0,
@@ -807,10 +803,6 @@ mod tests {
         for field in ["material", "anchor", "end", "record"] {
             assert_eq!(before[field], after[field]);
         }
-        println!(
-            "{}",
-            json!({"qualification":"controlled typed prior recipe, not a predecessor binary","old":old_id,"new":new_id,"source_record_hash":old.try_get::<Vec<u8>,_>("record_hash")?,"source_hash_equal":true,"equivalence_unchanged":true,"old_parser":"atuin-v1","new_parser":PARSER,"old_trace":before,"old_trace_after":after,"new_payload":payload,"canonical_old":old_canonical,"canonical_new":new_canonical,"current_repeat":repeated,"stale_reading":stale})
-        );
         store.shutdown().await?;
         Ok(())
     }

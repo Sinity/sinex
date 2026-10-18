@@ -268,7 +268,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
     save('disabled-session-family-refusal.json',dict(raw_session=absent,recall=absent_recall,raw_observations=observed,status=api()))
     stop(disabled)
     control=socket.socket(socket.AF_UNIX);control.bind(str(work/'session-boundary.sock'));control.listen(1);control.settimeout(30)
-    proc=start(config('sessions'),'sessions-initial','--qualification-boundary','session-replacement-committed','--qualification-socket',work/'session-boundary.sock');procs.append(proc)
+    proc=start(config('sessions'),'sessions-initial','--test-pause-at','session-replacement-committed','--test-pause-socket',work/'session-boundary.sock');procs.append(proc)
     connection,_=control.accept();connection.settimeout(5);frame=json.loads(connection.makefile('rb').readline());assert frame['pid']==proc.pid and frame['evidence']['pending']
     pending=cli('recall','last','--project','tide',expected=5);assert 'partial' in json.dumps(pending)
     raw_pending=cli('query','events where kind = activity.session.boundary',expected=5);assert not raw_pending['complete'] and raw_pending['sessions']['pending_keys']>0
@@ -329,7 +329,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
         beforegroups=[g for g in current() if set(g['parents']) & pointids];assert len(beforegroups)==3
         stop(baseline)
         multi=socket.socket(socket.AF_UNIX);multi.bind(str(work/'multi-day-publish.sock'));multi.listen(1);multi.settimeout(60)
-        baseline=start(config('multi-day',baseline=True),'sessions-multi-day','--qualification-boundary','session-replacement-committed','--qualification-socket',work/'multi-day-publish.sock');procs.append(baseline)
+        baseline=start(config('multi-day',baseline=True),'sessions-multi-day','--test-pause-at','session-replacement-committed','--test-pause-socket',work/'multi-day-publish.sock');procs.append(baseline)
         wait(baseline,lambda:api().get('result') and settled(),'multi-day compatible restart')
         bridge_start=span_at(1,'05:59:00');bridge_end=span_at(5,'06:01:00')
         spanbridge=dict(zip(COLUMNS,['span-bridge',bridge_start,bridge_end-bridge_start,0,'synthetic multi-day recorded span','/synthetic/session/span','synthetic-shell','synthetic-host:user',None]))
@@ -363,7 +363,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
         oldsession=original['session']['id'];oldcanonical=next(r for r in original['rows'] if r['payload']['native_id']=='a0')
         stop(baseline)
         fence=socket.socket(socket.AF_UNIX);fence.bind(str(work/'grandparent-fence.sock'));fence.listen(1);fence.settimeout(30)
-        baseline=start(config('grandparent-fence',baseline=True),'sessions-grandparent-fence','--qualification-boundary','fusion-replacement-committed','--qualification-socket',work/'grandparent-fence.sock');procs.append(baseline)
+        baseline=start(config('grandparent-fence',baseline=True),'sessions-grandparent-fence','--test-pause-at','fusion-replacement-committed','--test-pause-socket',work/'grandparent-fence.sock');procs.append(baseline)
         wait(baseline,lambda:api().get('result') and settled(),'grandparent fence restart')
         rewritten_fact=next(r for r in facts if r['id']=='a0');rewritten_fact['command']+=' revised retained reading';fill([rewritten_fact])
         connection,_=fence.accept();connection.settimeout(5);frame=json.loads(connection.makefile('rb').readline());assert frame['pid']==baseline.pid

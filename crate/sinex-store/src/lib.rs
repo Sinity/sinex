@@ -7,7 +7,6 @@ pub use zsh::{PROTOCOL as ZSH_PROTOCOL, SOURCE as ZSH_SOURCE, ZshStep};
 mod event_storage;
 mod exclusion;
 mod projection;
-mod qualification;
 mod query;
 mod recall;
 mod replay;
@@ -16,16 +15,17 @@ mod session;
 mod shell;
 mod source_coverage;
 mod source_inspection;
+mod test_pause;
 pub use atuin::mask as present;
 pub use atuin::{
     AtuinInterpretation, AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule,
     SOURCE as ATUIN_SOURCE,
 };
 pub use projection::Projection;
-pub use qualification::QualificationBoundary;
 pub use query::{validate_installed_raw_query, validate_query};
 pub use recall::{is_recall, validate_recall};
 pub use search::indexed as is_indexed_query;
+pub use test_pause::TestPause;
 mod schema;
 pub use schema::{
     CAPTURED_FUTURE_SKEW_SECONDS, READER_ROLE, SchemaStatus, TIMESCALEDB_VERSION, WRITER_ROLE,
@@ -253,17 +253,14 @@ impl Admission {
         rx.await.map_err(|_| Error::Stopped)?
     }
     pub async fn submit_atuin(&self, step: AtuinStep) -> Result<serde_json::Value> {
-        // Explicit synthetic qualification only. Opaque hashes and source record
-        // addresses identify a prepared bounded step without logging captured keys.
+        // Test pause only. Log key hashes and row ids, never captured keys.
         let evidence = self.observe_atuin_queue.then(|| serde_json::json!({
             "component":"sinex-store",
-            "qualification_phase":"atuin-step-enqueued",
+            "test_phase":"atuin-step-enqueued",
             "observation":step.observation,
             "sqlite_rowids":step.rows.iter().filter_map(|row| row["_rowid"].as_i64()).collect::<Vec<_>>(),
             "native_key_hashes":step.rows.iter().filter_map(|row| row["id"].as_str()).map(|key| blake3::hash(key.as_bytes()).to_hex().to_string()).collect::<Vec<_>>(),
-            "source_eof":step.complete,
-            "admission":"accepted by existing bounded writer channel",
-            "custody":"writer acknowledgement not observed; retention and commit unconfirmed"
+            "source_eof":step.complete
         }));
         let (tx, rx) = oneshot::channel();
         self.sender
@@ -444,7 +441,7 @@ struct WriterPool {
     session_work: Option<session::Work>,
     session_failed: bool,
     session_retry_at: Option<tokio::time::Instant>,
-    qualification: Option<QualificationBoundary>,
+    pause: Option<TestPause>,
 }
 
 pub struct Store {
@@ -460,7 +457,7 @@ impl Store {
         state_dir: PathBuf,
         capacity: usize,
         identity: RuntimeIdentity,
-        qualification: Option<QualificationBoundary>,
+        pause: Option<TestPause>,
     ) -> Result<Self> {
         if capacity == 0 || capacity > 1024 {
             return Err(Error::Invalid("queue capacity must be 1..=1024"));
@@ -545,9 +542,7 @@ impl Store {
             std::sync::Arc::new(hashed_blobs::Reader::new(root.clone(), vec![])),
             root.clone(),
         );
-        let observe_atuin_queue = qualification
-            .as_ref()
-            .is_some_and(QualificationBoundary::observes_atuin_queue);
+        let observe_atuin_queue = pause.as_ref().is_some_and(TestPause::observes_atuin_queue);
         let mut owner = WriterPool {
             connection,
             blobs: std::sync::Arc::new(blobs),
@@ -563,7 +558,7 @@ impl Store {
             session_work: None,
             session_failed: false,
             session_retry_at: None,
-            qualification,
+            pause,
         };
         owner.recover_blobs().await?;
         owner.recover_parts().await?;
@@ -875,7 +870,7 @@ impl WriterPool {
                 .execute(&mut self.connection)
                 .await?;
             let result = tokio::time::timeout(
-                std::time::Duration::from_secs(if self.qualification.is_some() { 125 } else { 3 }),
+                std::time::Duration::from_secs(if self.pause.is_some() { 125 } else { 3 }),
                 self.session_step(),
             )
             .await

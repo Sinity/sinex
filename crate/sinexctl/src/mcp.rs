@@ -1,5 +1,5 @@
 //! A transport adapter only. The authenticated daemon owns binding, execution,
-//! deadlines, qualification and presentation for every advertised tool.
+//! deadlines, validation and presentation for every advertised tool.
 use rmcp::{
     RoleServer, ServerHandler, ServiceExt, handler::server::wrapper::Parameters, model::*,
     schemars, service::RequestContext, tool, tool_handler, tool_router,

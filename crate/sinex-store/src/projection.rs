@@ -1,6 +1,6 @@
 //! One restricted read-model owner. Rows and log position commit together; the
 //! complete retained log is the only supported bootstrap basis in this slice.
-use crate::{Error, QualificationBoundary, Result};
+use crate::{Error, Result, TestPause};
 use serde_json::Value;
 use sinex_model::retrieval::{CONTRACT, Project, normalize, project, token_text};
 use sqlx::{Connection, PgConnection, Row};
@@ -15,7 +15,7 @@ impl Projection {
         url: &str,
         run_id: Uuid,
         projects: Vec<Project>,
-        qualification: Option<QualificationBoundary>,
+        pause: Option<TestPause>,
     ) -> Result<Self> {
         Project::validate_all(&projects).map_err(Error::Invalid)?;
         let mut connection = PgConnection::connect(url).await?;
@@ -66,7 +66,7 @@ impl Projection {
             let mut owner = Owner {
                 connection,
                 projects,
-                qualification,
+                pause,
                 step: 0,
             };
             loop {
@@ -102,7 +102,7 @@ fn caseless_version() -> String {
 struct Owner {
     connection: PgConnection,
     projects: Vec<Project>,
-    qualification: Option<QualificationBoundary>,
+    pause: Option<TestPause>,
     step: usize,
 }
 impl Owner {
@@ -180,10 +180,10 @@ impl Owner {
             ));
         }
         sqlx::query("UPDATE derivation.read_model_position SET position=$1,serving=$2,failure=NULL WHERE name='shell-search'").bind(next).bind(exact).execute(&mut *tx).await?;
-        QualificationBoundary::reach(&mut self.qualification,&format!("projection-staged-{}",self.step),serde_json::json!({"generation":generation,"from":position,"through":next,"serving":exact})).await?;
+        TestPause::reach(&mut self.pause,&format!("projection-staged-{}",self.step),serde_json::json!({"generation":generation,"from":position,"through":next,"serving":exact})).await?;
         tx.commit().await?;
-        QualificationBoundary::reach(
-            &mut self.qualification,
+        TestPause::reach(
+            &mut self.pause,
             &format!("projection-committed-{}", self.step),
             serde_json::json!({"generation":generation,"through":next,"serving":exact}),
         )

@@ -257,10 +257,10 @@ poll_interval_ms={poll}
         address=work/'late-boundary.sock'
         with socket.socket(socket.AF_UNIX) as listener:
             listener.bind(str(address));listener.listen();listener.settimeout(40)
-            configure();daemon=start(config,'late-committed','--qualification-boundary','fusion-replacement-committed','--qualification-socket',address)
+            configure();daemon=start(config,'late-committed','--test-pause-at','fusion-replacement-committed','--test-pause-socket',address)
             conn,_=listener.accept();conn.settimeout(10)
             with conn:
-                notice=json.loads(conn.makefile('r').readline());assert notice['pid']==daemon.pid and notice['qualification_boundary']=='fusion-replacement-committed';late_boundary=notice
+                notice=json.loads(conn.makefile('r').readline());assert notice['pid']==daemon.pid and notice['pause_point']=='fusion-replacement-committed';late_boundary=notice
                 # Projection owner remains independent while writer is parked.
                 wait(lambda s:s['indexed_retrieval']['position']==s['commit_seq'])
                 pending=query('commands');assert pending['complete'] is False and pending['fusion']['current_now_settled'] is False
@@ -432,7 +432,7 @@ poll_interval_ms={poll}
         address=work/'fair-boundary.sock'
         with socket.socket(socket.AF_UNIX) as listener:
             listener.bind(str(address));listener.listen();listener.settimeout(60)
-            configure(poll=100);daemon=start(config,'fair-live','--qualification-boundary','fusion-replacement-committed','--qualification-socket',address)
+            configure(poll=100);daemon=start(config,'fair-live','--test-pause-at','fusion-replacement-committed','--test-pause-socket',address)
             conn,_=listener.accept();conn.settimeout(15)
             with conn:
                 notice=json.loads(conn.makefile('r').readline());basis=notice['evidence']['basis'];assert notice['pid']==daemon.pid
@@ -449,7 +449,7 @@ poll_interval_ms={poll}
             for line in (report/'fair-live.stderr').read_text().splitlines():
                 try:message=json.loads(line)
                 except ValueError:continue
-                if message.get('qualification_phase')=='atuin-step-enqueued' and later_rowid in message['sqlite_rowids']:queued.append(message)
+                if message.get('test_phase')=='atuin-step-enqueued' and later_rowid in message['sqlite_rowids']:queued.append(message)
             return bool(queued)
         queued_status=wait(later_enqueued)
         queued_observed_at=time.monotonic()
@@ -498,7 +498,7 @@ poll_interval_ms={poll}
                 lost['transport_error']=type(error).__name__+': '+str(error);return None
         with socket.socket(socket.AF_UNIX) as listener:
             listener.bind(str(address));listener.listen();listener.settimeout(45)
-            configure(False);daemon=start(config,'head-race-committed','--qualification-boundary','replay-committed-0','--qualification-socket',address);ready()
+            configure(False);daemon=start(config,'head-race-committed','--test-pause-at','replay-committed-0','--test-pause-socket',address);ready()
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future=executor.submit(request);conn,_=listener.accept();conn.settimeout(10)
                 with conn:

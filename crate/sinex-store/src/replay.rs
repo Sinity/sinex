@@ -595,16 +595,16 @@ impl WriterPool {
                 }
                 sqlx::query("INSERT INTO core.operation_effects (operation_id,step_no,effect_format,effects_ref) VALUES ($1,$2,'sinex.replay.effects.v1',$3)").bind(id).bind(current.steps as i64).bind(effect_ref).execute(&mut *tx).await?;
                 sqlx::query("UPDATE core.operations_log SET admission_state='admitted',outcome_format='sinex.replay.outcome.v1',outcome_ref=$2,progress=$3 WHERE id=$1").bind(id).bind(outcome_ref).bind(json!(done)).execute(&mut *tx).await?;
-                crate::QualificationBoundary::reach(
-                    &mut self.qualification,
+                crate::TestPause::reach(
+                    &mut self.pause,
                     &format!("replay-staged-{}", current.steps),
                     json!({"operation":done,"effects":effects}),
                 )
                 .await?;
                 tx.commit().await?;
                 // A lost controller after commit cannot turn durable success into failure.
-                let _ = crate::QualificationBoundary::reach(
-                    &mut self.qualification,
+                let _ = crate::TestPause::reach(
+                    &mut self.pause,
                     &format!("replay-committed-{}", current.steps),
                     json!({"operation":done,"effects":effects}),
                 )
