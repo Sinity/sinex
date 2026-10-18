@@ -1,19 +1,13 @@
-//! Development commands: `check`, `test`, `scenario`, `db` and `boundaries`.
+//! Development commands: `check`, `test`, `scenario`, `db`, `boundaries`,
+//! plus devkit's `status`, `history` and `changed`.
 mod boundaries;
 mod postgres;
 
+use clap::Parser;
+use devkit::{Nextest, Run};
 use postgres::Cluster;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-
-const USAGE: &str = "\
-xtask check                  fmt, dependency boundaries, cargo check (no database)
-xtask test [FILTER]          Rust tests; database tests each get a fresh database
-xtask scenario NAME... [--package DIR]
-                             end-to-end scenarios (tests/run.py) against the
-                             development build, or the package in DIR; `all` runs all
-xtask db -- COMMAND...       run COMMAND with an owned PostgreSQL (DATABASE_URL set)
-xtask boundaries [DIR]       check the workspace dependency graph";
 
 /// Ignored tests that `xtask test` does not run: they need rows admitted by a
 /// running daemon first, so a scenario runs them.
@@ -22,88 +16,140 @@ const SCENARIO_ONLY_TESTS: &[&str] =
 
 type Result<T = ()> = std::result::Result<T, String>;
 
+#[derive(Parser)]
+#[command(name = "xtask", about = "Sinex development commands")]
+enum Cli {
+    /// fmt, dependency boundaries and cargo check; no database.
+    Check,
+    /// Rust tests; database tests each get a fresh database in an owned PostgreSQL.
+    Test {
+        /// Run only tests whose name contains this.
+        filter: Option<String>,
+    },
+    /// End-to-end scenarios against the development build, or the package in
+    /// `--package DIR`; `all` runs all.
+    Scenario {
+        #[arg(required = true)]
+        names: Vec<String>,
+        #[arg(long)]
+        package: Option<PathBuf>,
+    },
+    /// Run a command with an owned PostgreSQL (`DATABASE_URL` set).
+    Db {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Check the workspace dependency graph.
+    Boundaries { dir: Option<PathBuf> },
+    #[command(flatten)]
+    Shared(devkit::cli::Command),
+}
+
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let (cmd, rest) = match args.split_first() {
-        Some((cmd, rest)) => (cmd.as_str(), rest),
-        None => ("help", &[][..]),
-    };
-    let result = match cmd {
-        "check" => check(),
-        "test" => test(rest),
-        "scenario" => scenario(rest),
-        "db" => db(rest),
-        "boundaries" => boundaries::check(Path::new(rest.first().map_or(".", String::as_str)))
-            .map(|()| println!("dependency boundaries passed")),
-        "help" | "--help" | "-h" => {
-            println!("{USAGE}");
-            Ok(())
+    match Cli::parse() {
+        Cli::Check => recorded("check", &[], check),
+        Cli::Test { filter } => {
+            let args: Vec<String> = filter.iter().cloned().collect();
+            recorded("test", &args, |run| test(run, filter.as_deref()))
         }
-        other => {
-            eprintln!("unknown xtask command: {other}\n{USAGE}");
-            return ExitCode::from(2);
+        Cli::Scenario { names, package } => {
+            recorded("scenario", &names, |run| scenario(run, &names, package))
         }
-    };
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("xtask {cmd}: {error}");
-            ExitCode::FAILURE
+        Cli::Db { command } => recorded("db", &command, |run| db(run, &command)),
+        Cli::Boundaries { dir } => {
+            match boundaries::check(dir.as_deref().unwrap_or(Path::new("."))) {
+                Ok(()) => {
+                    println!("dependency boundaries passed");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("xtask boundaries: {error}");
+                    ExitCode::FAILURE
+                }
+            }
         }
+        Cli::Shared(command) => devkit::cli::execute("sinex", command),
     }
 }
 
-/// Everything that needs no database. The runtime's SQL is checked by `test`.
-fn check() -> Result {
-    cargo(&["fmt", "--all", "--", "--check"])?;
-    boundaries::check(Path::new("."))?;
-    cargo(&[
-        "check",
-        "--locked",
-        "--workspace",
-        "--exclude",
-        "sinexd",
-        "--all-targets",
-    ])?;
-    cargo(&[
-        "check",
-        "--locked",
-        "-p",
-        "sinexd",
-        "--no-default-features",
-        "--all-targets",
-    ])
+fn recorded(command: &str, args: &[String], steps: impl FnOnce(&mut Run) -> Result) -> ExitCode {
+    let mut run = Run::start("sinex", command, args);
+    if let Err(error) = steps(&mut run) {
+        run.failure.get_or_insert(error);
+    }
+    run.finish()
 }
 
-fn test(args: &[String]) -> Result {
-    let filter: Vec<&str> = args.iter().map(String::as_str).collect();
-    let cluster = Cluster::start_with_schema(&admin_binary()?)?;
-    let mut all = vec!["test", "--locked", "--workspace", "--"];
-    all.extend(&filter);
-    cargo_with(&all, &cluster.env("sinex"))?;
+/// Everything that needs no database. The runtime's SQL is checked by `test`.
+fn check(run: &mut Run) -> Result {
+    run.command(
+        "fmt",
+        Command::new("cargo").args(["fmt", "--all", "--", "--check"]),
+    )?;
+    run.step("boundaries", |run| Ok(boundaries::check(&run.root)?))?;
+    run.cargo(
+        "check",
+        &[
+            "check",
+            "--locked",
+            "--workspace",
+            "--exclude",
+            "sinexd",
+            "--all-targets",
+        ],
+    )?;
+    run.cargo(
+        "check sinexd admin",
+        &[
+            "check",
+            "--locked",
+            "-p",
+            "sinexd",
+            "--no-default-features",
+            "--all-targets",
+        ],
+    )?;
+    Ok(())
+}
+
+fn test(run: &mut Run, filter: Option<&str>) -> Result {
+    let cluster = Cluster::start_with_schema(&admin_binary(run)?)?;
+    let mut args = vec!["--locked".to_owned(), "--workspace".to_owned()];
+    args.extend(filter.map(str::to_owned));
+    let names = ignored_tests(&cluster, filter)?;
+    run.nextest(
+        "test",
+        &Nextest {
+            args,
+            env: cluster.env("sinex"),
+            // A name filter may match only database tests.
+            allow_no_tests: filter.is_some(),
+            ..Nextest::default()
+        },
+    )?;
     // Database tests are `#[ignore]`d; each runs alone in a fresh database.
-    for name in ignored_tests(&cluster, &filter)? {
+    for name in names {
         if SCENARIO_ONLY_TESTS.contains(&name.as_str()) {
             continue;
         }
         let database = cluster.fresh_database()?;
-        cargo_with(
-            &[
-                "test",
-                "--locked",
-                "--workspace",
-                "--",
-                "--ignored",
-                "--exact",
-                &name,
-            ],
-            &cluster.env(&database),
+        run.nextest(
+            &format!("database test {name}"),
+            &Nextest {
+                args: ["--locked", "--workspace", "--run-ignored", "only", "-E"]
+                    .map(String::from)
+                    .into_iter()
+                    .chain([format!("test(={name})")])
+                    .collect(),
+                env: cluster.env(&database),
+                ..Nextest::default()
+            },
         )?;
     }
     Ok(())
 }
 
-fn ignored_tests(cluster: &Cluster, filter: &[&str]) -> Result<Vec<String>> {
+fn ignored_tests(cluster: &Cluster, filter: Option<&str>) -> Result<Vec<String>> {
     let output = Command::new("cargo")
         .args([
             "test",
@@ -131,30 +177,16 @@ fn ignored_tests(cluster: &Cluster, filter: &[&str]) -> Result<Vec<String>> {
     Ok(names)
 }
 
-fn scenario(args: &[String]) -> Result {
-    let mut names = Vec::new();
-    let mut package = None;
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        if arg == "--package" {
-            package = Some(PathBuf::from(
-                args.next().ok_or("--package needs a directory")?,
-            ));
-        } else {
-            names.push(arg.as_str());
-        }
-    }
-    if names.is_empty() {
-        return Err("name at least one scenario, or `all`".into());
-    }
+fn scenario(run: &mut Run, names: &[String], package: Option<PathBuf>) -> Result {
     let (cluster, bin, packaged) = match package {
         Some(dir) => {
             let bin = dir.join("bin");
             (Cluster::start_with_schema(&bin.join("sinexd"))?, bin, true)
         }
         None => {
-            let cluster = Cluster::start_with_schema(&admin_binary()?)?;
-            cargo_with(
+            let cluster = Cluster::start_with_schema(&admin_binary(run)?)?;
+            run.cargo_with(
+                "build",
                 &["build", "--locked", "-p", "sinexd", "-p", "sinexctl"],
                 &cluster.env("sinex"),
             )?;
@@ -170,29 +202,31 @@ fn scenario(args: &[String]) -> Result {
     let mut command = Command::new("python3");
     command
         .arg("tests/run.py")
-        .args(&names)
+        .args(names)
         .envs(cluster.env("sinex"))
         .env("SINEX_BIN_DIR", &bin);
     if packaged {
         command.env("SINEX_PACKAGED", "1");
     }
-    status(&mut command)
+    Ok(run.command("scenarios", &mut command)?)
 }
 
-fn db(args: &[String]) -> Result {
-    let command = match args.split_first() {
-        Some((first, rest)) if first == "--" => rest,
-        _ => args,
-    };
+fn db(run: &mut Run, command: &[String]) -> Result {
     let (program, rest) = command.split_first().ok_or("db needs a command")?;
-    let cluster = Cluster::start_with_schema(&admin_binary()?)?;
-    status(Command::new(program).args(rest).envs(cluster.env("sinex")))
+    let cluster = Cluster::start_with_schema(&admin_binary(run)?)?;
+    Ok(run.command(
+        "command",
+        Command::new(program).args(rest).envs(cluster.env("sinex")),
+    )?)
 }
 
 /// Build the admin-only daemon: it applies the schema and compiles without a
 /// database. The cluster keeps its own copy.
-fn admin_binary() -> Result<PathBuf> {
-    cargo(&["build", "--locked", "-p", "sinexd", "--no-default-features"])?;
+fn admin_binary(run: &mut Run) -> Result<PathBuf> {
+    run.cargo(
+        "build sinexd admin",
+        &["build", "--locked", "-p", "sinexd", "--no-default-features"],
+    )?;
     Ok(target_dir().join("debug/sinexd"))
 }
 
@@ -204,24 +238,4 @@ fn copy_file(from: &Path, to: &Path) -> Result {
 
 fn target_dir() -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| PathBuf::from("target"), PathBuf::from)
-}
-
-fn cargo(args: &[&str]) -> Result {
-    cargo_with(args, &[])
-}
-
-fn cargo_with(args: &[&str], env: &[(String, String)]) -> Result {
-    status(Command::new("cargo").args(args).envs(env.iter().cloned()))
-}
-
-fn status(command: &mut Command) -> Result {
-    let shown = format!("{command:?}");
-    let status = command
-        .status()
-        .map_err(|e| format!("could not run {shown}: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{shown} failed: {status}"))
-    }
 }

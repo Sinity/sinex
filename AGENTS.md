@@ -14,7 +14,9 @@ is in Git history and is still the deployed version.
 - `crate/sinexd`: the daemon: configuration, source collectors (Atuin, zsh,
   Chromium), the RPC server and `sinexd admin schema`.
 - `crate/sinexctl`: the CLI client and the MCP server.
-- `xtask`: developer commands (`check`, `test`, `db`, `boundaries`).
+- `xtask`: developer commands (`check`, `test`, `scenario`, `db`, `boundaries`),
+  built on `devkit` from polylogue-sinex-common. Every run is recorded;
+  `xtask status` shows what failed last time and `xtask history` reads more.
 - `tests/`: Python end-to-end scenarios that run the real daemon and CLI.
 
 `xtask boundaries` enforces which crates may depend on which.

@@ -99,8 +99,14 @@ nix develop --command cargo run -p xtask -- test      # all Rust tests in an own
 nix develop --command cargo run -p xtask -- scenario NAME|all [--package DIR]
                                                       # end-to-end scenarios, tests/scenarios/NAME.py
 nix develop --command cargo run -p xtask -- db -- CMD # run CMD with DATABASE_URL set to a fresh schema
+nix develop --command cargo run -p xtask -- status    # failing tests and errors from this checkout's last run
 nix build .#default                                   # the package; runs the Rust tests in the builder
 ```
+
+Tests run under cargo nextest. Every xtask run is recorded in the machine-wide
+history store (`$XDG_STATE_HOME/devkit/history.db`); `xtask history failures`
+and `xtask history diagnostics` show a run's failing tests and compiler
+messages.
 
 `xtask test`, `scenario` and `db` start a throwaway PostgreSQL cluster in
 `$TMPDIR` with the canonical schema and remove it afterwards. Scenarios run the

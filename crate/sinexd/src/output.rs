@@ -1,6 +1,6 @@
 //! Credential masking for RPC traffic. A response is masked as a whole before
 //! any byte is sent; if it cannot be shown safely, a refusal is sent instead.
-use credential_output::Masker;
+use credential_masking::Masker;
 use serde_json::Value;
 use sinex_protocol::rpc::{ErrorKind, RpcError, RpcId, RpcResponse};
 use std::io::{self, Write};

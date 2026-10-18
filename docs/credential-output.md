@@ -1,6 +1,6 @@
 # Credential masking
 
-Every JSON-RPC response, including errors, passes through a credential filter before any bytes are sent. The daemon, CLI and MCP tools share it. The filter is the `credential-output` crate from Polylogue's [`credential-output-v0.1.1` release](https://github.com/Sinity/polylogue/tree/credential-output-v0.1.1), pinned by commit in `crate/sinexd/Cargo.toml` and `Cargo.lock`. It masks a fixed catalog of credential patterns and runs regardless of configured privacy rules. There is no way to reveal masked values through the API.
+Every JSON-RPC response, including errors, passes through a credential filter before any bytes are sent. The daemon, CLI and MCP tools share it. The filter is the `credential-masking` crate from [polylogue-sinex-common](https://github.com/Sinity/polylogue-sinex-common), pinned in `crate/sinexd/Cargo.toml` and `Cargo.lock`. It masks a fixed catalog of credential patterns and runs regardless of configured privacy rules. There is no way to reveal masked values through the API.
 
 - Each JSON string is scanned as one value, including nested captured JSON and host metadata. Different fields are never joined.
 - Query, show and trace rows carry `secret: true` when masking changed their text. This describes the response, not the stored bytes.
