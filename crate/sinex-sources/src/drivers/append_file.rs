@@ -38,6 +38,11 @@ pub struct Cursor {
     pub window: String,
     pub material: Option<MaterialId>,
     pub part_index: u32,
+    /// How many bytes of `material` the stored readings cover. A restart
+    /// rebuilds the driver's memory from those bytes only: the rest of the
+    /// material may never have been admitted.
+    #[serde(default)]
+    pub through: usize,
 }
 
 /// The records of the current revision, by content hash, counted: what a
@@ -169,6 +174,7 @@ impl AppendFile {
             window: String::new(),
             material: if restarted { None } else { previous.material },
             part_index: if restarted { 0 } else { previous.part_index },
+            through: if restarted { 0 } else { previous.through },
         };
         if consumed == 0 {
             // Nothing complete yet; keep the old offset and window, note the new facts.
@@ -236,12 +242,17 @@ impl AppendFile {
             let w = &joined[joined.len().saturating_sub(WINDOW as usize)..];
             serde_json::to_value(Cursor {
                 offset: start + end as u64,
-                size,
+                // Only a cursor that covers everything this poll read may
+                // skip an unchanged file. One left between two batches of the
+                // same read has records after it, so it records no file size
+                // and the next poll reads on from its offset.
+                size: if end == tail_source.len() { size } else { 0 },
                 mtime_ns: mtime,
                 inode,
                 window: blake3::hash(w).to_hex().to_string(),
                 material: Some(id),
                 part_index,
+                through: end,
             })
             .expect("cursor serializes")
         };
@@ -310,6 +321,31 @@ mod tests {
             .iter()
             .map(|(s, e)| String::from_utf8(m.bytes[*s..*e].to_vec()).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn a_cursor_between_two_batches_reads_on_though_the_file_is_unchanged() {
+        let path = temp("h");
+        std::fs::write(&path, b"a\nb\nc\n").unwrap();
+        let d = AppendFile {
+            path: path.clone(),
+            host: "h".into(),
+            framer: lines,
+        };
+        let first = d.poll(&Value::Null, &mut AppendMemory::default()).unwrap();
+        let m = first.material.unwrap();
+        // The first batch (one record) committed; the process died before the next.
+        let between = (m.cursor_at)(2);
+        let after = (m.cursor_at)(m.bytes.len());
+        let again = d.poll(&between, &mut AppendMemory::default()).unwrap();
+        assert_eq!(records(&again), vec!["b\n", "c\n"]);
+        assert!(
+            d.poll(&after, &mut AppendMemory::default())
+                .unwrap()
+                .material
+                .is_none(),
+            "a cursor covering the whole read skips the unchanged file"
+        );
     }
 
     #[test]

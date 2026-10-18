@@ -35,6 +35,7 @@ devkit.workspace = true
 tower = { version = "0.5", features = ["util"] }
 http-body-util.workspace = true
 blake3.workspace = true
+rusqlite.workspace = true
 
 [lints]
 workspace = true

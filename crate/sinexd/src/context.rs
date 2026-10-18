@@ -62,6 +62,9 @@ impl MaterialSink for Sink {
 
 /// The stored bytes of the chain ending at the cursor's last material, for
 /// rebuilding a driver's memory after a restart; empty before the first read.
+/// The last material is cut at the cursor's `through`: bytes after it were
+/// stored but their readings never committed, so the driver must read them
+/// again.
 pub async fn stored_chain(
     aux: &mut PgConnection,
     blobs: &Blobs,
@@ -77,8 +80,15 @@ pub async fn stored_chain(
     let names = sinex_store::replay::chain_ending(aux, last)
         .await
         .map_err(|e| e.to_string())?;
-    names
+    let mut chain: Vec<Vec<u8>> = names
         .iter()
         .map(|n| blobs.read(n).map_err(|e| e.to_string()))
-        .collect()
+        .collect::<Result<_, _>>()?;
+    if let (Some(last), Some(through)) = (
+        chain.last_mut(),
+        cursor.get("through").and_then(serde_json::Value::as_u64),
+    ) {
+        last.truncate(usize::try_from(through).unwrap_or(usize::MAX));
+    }
+    Ok(chain)
 }

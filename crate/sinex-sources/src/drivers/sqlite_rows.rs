@@ -58,6 +58,10 @@ pub struct Cursor {
     /// read; re-read by rowid until they settle.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open: Vec<i64>,
+    /// How many bytes of `material` the stored readings cover; a restart
+    /// rebuilds the row memory from those bytes only.
+    #[serde(default)]
+    pub through: usize,
 }
 
 /// What this driver already stored: the hash of each row's stored line, by
@@ -288,6 +292,7 @@ impl SqliteRows {
                 material: Some(id),
                 part_index,
                 open: open.clone(),
+                through: end,
             })
             .expect("cursor serializes")
         };

@@ -3644,6 +3644,7 @@ dependencies = [
  "http-body-util",
  "jiff",
  "jsonschema",
+ "rusqlite",
  "serde",
  "serde_json",
  "sinex-automata",
