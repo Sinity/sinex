@@ -2,6 +2,7 @@
 //! a `command.canonical` event. A pass works in turns over per-connection
 //! temp tables, 64 rows per turn; `derivation.shell_dirty` survives a restart
 //! and the pass reruns.
+use crate::commit::{Change, event_type, log_commit};
 use crate::{Error, Result, Writer, current_commit_seq, next_commit_seq};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -655,13 +656,13 @@ impl Writer {
                 .execute(&mut *tx)
                 .await?;
                 crate::session::dirty(&mut tx, id).await?;
-                sqlx::query(
-                    "INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id)
-                     VALUES($1,$2,1,0,3)",
+                log_commit(
+                    &mut tx,
+                    seq,
+                    id,
+                    Change::Removed,
+                    event_type::COMMAND_CANONICAL,
                 )
-                .bind(seq)
-                .bind(id)
-                .execute(&mut *tx)
                 .await?;
             }
             work.cursor = Some(id);
@@ -787,14 +788,7 @@ impl Writer {
                 .execute(&mut **tx)
                 .await?;
                 crate::session::dirty(tx, id).await?;
-                sqlx::query(
-                    "INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id)
-                     VALUES($1,$2,0,0,3)",
-                )
-                .bind(seq)
-                .bind(id)
-                .execute(&mut **tx)
-                .await?;
+                log_commit(tx, seq, id, Change::Added, event_type::COMMAND_CANONICAL).await?;
                 id
             }
         };

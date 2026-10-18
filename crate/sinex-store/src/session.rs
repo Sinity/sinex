@@ -2,6 +2,7 @@
 //! `activity.session.boundary` events, one logical day at a time.
 //! `derivation.session_dirty` lists the days to redo; temp work is discarded
 //! on restart and the day is redone.
+use crate::commit::{Change, event_type, log_commit};
 use crate::{Error, Result, Writer, current_commit_seq, next_commit_seq};
 use serde_json::{Value, json};
 use sqlx::{Connection, Row};
@@ -542,13 +543,13 @@ GROUP BY 1",
                 .bind(&key)
                 .execute(&mut *tx)
                 .await?;
-                sqlx::query(
-                    "INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id)
-                     VALUES($1,$2,0,0,5)",
+                log_commit(
+                    &mut tx,
+                    seq,
+                    id,
+                    Change::Added,
+                    event_type::SESSION_BOUNDARY,
                 )
-                .bind(seq)
-                .bind(id)
-                .execute(&mut *tx)
                 .await?;
                 id
             }
@@ -631,13 +632,13 @@ GROUP BY 1",
                 .bind(seq)
                 .execute(&mut *tx)
                 .await?;
-                sqlx::query(
-                    "INSERT INTO core.commit_log(commit_seq,event_id,change,store,event_type_id)
-                     VALUES($1,$2,1,0,5)",
+                log_commit(
+                    &mut tx,
+                    seq,
+                    id,
+                    Change::Removed,
+                    event_type::SESSION_BOUNDARY,
                 )
-                .bind(seq)
-                .bind(id)
-                .execute(&mut *tx)
                 .await?;
             }
             work.cursor = Some(id);
