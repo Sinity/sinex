@@ -55,6 +55,10 @@ pub enum Error {
     ProjectionUnavailable(&'static str),
     #[error("read execution deadline exceeded")]
     Deadline,
+    #[error("primary source inspection statement cancelled")]
+    SourceStatementCancelled {
+        configured_statement_timeout_ms: u64,
+    },
     #[error("writer already owned by another connection")]
     WriterOwned,
     #[error("admission owner has stopped")]

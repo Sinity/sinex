@@ -746,13 +746,32 @@ fn deadline_error(timeout_ms: u64) -> RpcError {
     )
 }
 
+fn statement_cancelled(source_budget_ms: Option<u64>) -> RpcError {
+    let mut context = serde_json::json!({"reason":"statement_cancelled"});
+    if let Some(limit) = source_budget_ms {
+        context["operation"] = serde_json::json!("sources.list");
+        context["phase"] = serde_json::json!("primary_source_rows");
+        context["configured_statement_timeout_ms"] = serde_json::json!(limit);
+    }
+    // SQLSTATE 57014 includes user cancellation. The configured server limit
+    // is context, not proof of the cancellation cause or elapsed duration.
+    RpcError::new(ErrorKind::Budget, "database statement cancelled", context)
+}
+
+#[cfg(test)]
+#[path = "server_cancellation_tests.rs"]
+mod cancellation_tests;
+
 fn read_error(error: sinex_store::Error) -> RpcError {
     match error {
         sinex_store::Error::Database(sqlx::Error::Database(error))
             if error.code().as_deref() == Some("57014") =>
         {
-            deadline_error(10000)
+            statement_cancelled(None)
         }
+        sinex_store::Error::SourceStatementCancelled {
+            configured_statement_timeout_ms,
+        } => statement_cancelled(Some(configured_statement_timeout_ms)),
         sinex_store::Error::ProjectionUnavailable(reason) => RpcError::new(
             ErrorKind::Partial,
             reason,

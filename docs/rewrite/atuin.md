@@ -88,7 +88,11 @@ claim. Read-only custody audits with the actual restricted reader role additiona
 verify committed lengths, recovered blob lengths and interrupted versus completed
 observations; admission itself always uses the product writer. These source durability controls do not qualify the separate indexed read model.
 
+The primary `sources` statement keeps its PostgreSQL 2000ms limit. A cancelled source statement returns a budget error with `reason = statement_cancelled`, its operation/phase and `configured_statement_timeout_ms = 2000`. This is the configured server limit, not measured elapsed time or proof of why PostgreSQL cancelled it. Unclassified database cancellations report no invented duration; explicit query execution deadlines retain their own context. Optional inspection separately keeps its 100ms statement and 200ms input budgets.
+
 ## Per-input record diagnostics
+
+Supported Atuin, Chromium and Zsh collectors commit record failures and their observation counter in the same transaction. A current zero-error observation skips historical failure lookup; a positive count preserves the existing first-error order by material staging time, material ID and byte anchor. This reduces unnecessary metadata reads without claiming a source-load latency guarantee.
 
 The normal `sources --json` response includes `cursor` (the committed admission
 summary or null) and `first_record_error` for each input's `last_run`. With no
