@@ -7,6 +7,7 @@
 //! `sqlx::query!`; there is no offline cache (operator ruling, 2025-08-10).
 pub mod admission;
 pub mod blobs;
+pub mod derived;
 pub mod excision;
 pub mod positions;
 pub mod privacy;
@@ -16,7 +17,7 @@ pub mod replay;
 pub mod runs;
 mod stage;
 
-pub use admission::{DirtyKeys, KeyInput, NoDerivations, Outcome, admit};
+pub use admission::{DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, admit};
 pub use blobs::Blobs;
 
 #[derive(Debug, thiserror::Error)]

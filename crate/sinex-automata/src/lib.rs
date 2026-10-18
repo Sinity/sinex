@@ -3,17 +3,22 @@
 //! - a **per-event derivation** reads committed events in commit order and
 //!   writes zero or more outputs for each (document text, OCR, mark linking);
 //! - a **keyed derivation** keeps each key's outputs equal to a function of the
-//!   key's current inputs (fused commands, sessions, intervals, daily summaries).
+//!   key's current inputs (fused commands, sessions, intervals, summaries).
 //!
 //! Admission marks keys dirty when an input of a keyed derivation is admitted
-//! or archived; the runner in `sinexd` recomputes only dirty keys and submits
+//! or archived; the driver in `sinexd` recomputes only dirty keys and submits
 //! the outputs as a `Derived` batch that replaces the key's previous outputs.
 //! Order independence holds by construction: `compute` always sees the key's
-//! full current input set.
+//! full current input set, sorted by `ts_orig`.
 use serde_json::Value;
-use sinex_model::{Event, Timestamp};
+use sinex_model::civil::Civil;
+use sinex_model::{Event, EventId, Timestamp};
 
 pub mod fusion;
+pub mod interval;
+pub mod output;
+pub mod session;
+pub mod summary;
 
 /// What a key function sees of an admitted or archived event.
 #[derive(Clone, Copy, Debug)]
@@ -23,14 +28,44 @@ pub struct KeyView<'a> {
     pub payload: &'a Value,
 }
 
-/// Which events `compute` reads for one key.
+/// Which events `compute` reads for one key: live events of `event_types`
+/// whose `ts_orig` is in `window` and whose payload contains `equal`, plus the
+/// neighbours a key needs from outside its window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputQuery {
-    pub event_types: &'static [&'static str],
+    pub event_types: Vec<&'static str>,
     /// `ts_orig` window, inclusive start, exclusive end.
-    pub window: Option<(Timestamp, Timestamp)>,
+    pub window: (Timestamp, Timestamp),
     /// Payload fields that must equal these values.
     pub equal: Vec<(&'static str, Value)>,
+    /// The latest events before the window: the state a key starts in.
+    pub before: Vec<Neighbour>,
+    /// The earliest events after the window: what ends a state the key opened.
+    pub after: Vec<Neighbour>,
+}
+
+impl InputQuery {
+    pub fn window(event_types: &[&'static str], start: Timestamp, end: Timestamp) -> Self {
+        Self {
+            event_types: event_types.to_vec(),
+            window: (start, end),
+            equal: Vec::new(),
+            before: Vec::new(),
+            after: Vec::new(),
+        }
+    }
+}
+
+/// One neighbour request: of `event_types` (and payload `equal`; an array
+/// value means "one of"), the `count` nearest events to the window edge; with
+/// `per` set, the `count` nearest for each value of that payload field seen
+/// in the window.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Neighbour {
+    pub event_types: Vec<&'static str>,
+    pub equal: Vec<(&'static str, Value)>,
+    pub per: Option<&'static str>,
+    pub count: u32,
 }
 
 /// Whether a key can still receive inputs. Joins take closed, settled inputs
@@ -45,9 +80,29 @@ pub enum KeyState {
 #[derive(Clone, Debug)]
 pub struct Env {
     pub now: Timestamp,
-    /// The logical day boundary, one setting (architecture §13).
-    pub day_starts_at: time::Time,
+    /// The operator's zone and logical-day start, one setting (architecture §13).
+    pub civil: Civil,
     pub settings: Value,
+}
+
+impl Env {
+    pub fn at(now: Timestamp) -> Self {
+        Self {
+            now,
+            civil: Civil::operator_default(),
+            settings: Value::Null,
+        }
+    }
+}
+
+/// What one key's computation produced.
+#[derive(Clone, Debug, Default)]
+pub struct Computed {
+    pub outputs: Vec<Event>,
+    /// Some output still waits for evidence that may arrive later and outside
+    /// the key's window (an interval still open, a session still growing).
+    /// The driver recomputes such keys whenever the derivation runs again.
+    pub waiting: bool,
 }
 
 pub trait Keyed: Send + Sync {
@@ -55,48 +110,122 @@ pub trait Keyed: Send + Sync {
     const NAME: &'static str;
     const VERSION: u32;
     const INPUTS: &'static [&'static str];
+    const OUTPUTS: &'static [&'static str];
 
     /// The keys an input event affects. Windows are keyed by `ts_orig`, so a
     /// late or historical event lands in the right key.
-    fn keys_for(&self, input: &KeyView<'_>) -> Vec<Value>;
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value>;
 
-    fn inputs(&self, key: &Value) -> InputQuery;
+    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
 
-    /// The key's outputs, as events derived from `inputs` (each names its parents).
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Vec<Event>;
+    /// The key's outputs, as events derived from `inputs` (each names its
+    /// parents). `inputs` are sorted by `ts_orig`, then commit order.
+    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed;
 
-    fn key_state(&self, key: &Value, now: Timestamp) -> KeyState;
+    fn key_state(&self, key: &Value, env: &Env) -> KeyState;
 }
 
 pub trait PerEvent: Send + Sync {
     const NAME: &'static str;
     const VERSION: u32;
     const INPUTS: &'static [&'static str];
+    const OUTPUTS: &'static [&'static str];
 
     fn derive(&self, input: &Event, env: &Env) -> Vec<Event>;
 }
 
-/// A keyed derivation with its type erased, for the registry and for
-/// admission's dirty-key marking.
+/// A keyed derivation with its type erased, for the registry, admission's
+/// dirty-key marking and the driver.
 pub trait AnyKeyed: Send + Sync {
     fn name(&self) -> &'static str;
+    fn version(&self) -> u32;
     fn inputs_types(&self) -> &'static [&'static str];
-    fn keys_for(&self, input: &KeyView<'_>) -> Vec<Value>;
+    fn output_types(&self) -> &'static [&'static str];
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value>;
+    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
+    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed;
+    fn key_state(&self, key: &Value, env: &Env) -> KeyState;
 }
 
 impl<K: Keyed> AnyKeyed for K {
     fn name(&self) -> &'static str {
         K::NAME
     }
+    fn version(&self) -> u32 {
+        K::VERSION
+    }
     fn inputs_types(&self) -> &'static [&'static str] {
         K::INPUTS
     }
-    fn keys_for(&self, input: &KeyView<'_>) -> Vec<Value> {
-        Keyed::keys_for(self, input)
+    fn output_types(&self) -> &'static [&'static str] {
+        K::OUTPUTS
+    }
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+        Keyed::keys_for(self, input, env)
+    }
+    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
+        Keyed::inputs(self, key, env)
+    }
+    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+        Keyed::compute(self, key, inputs, env)
+    }
+    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
+        Keyed::key_state(self, key, env)
     }
 }
 
-/// Every keyed derivation, in one list.
+/// A per-event derivation with its type erased.
+pub trait AnyPerEvent: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn version(&self) -> u32;
+    fn inputs_types(&self) -> &'static [&'static str];
+    fn output_types(&self) -> &'static [&'static str];
+    fn derive(&self, input: &Event, env: &Env) -> Vec<Event>;
+}
+
+impl<P: PerEvent> AnyPerEvent for P {
+    fn name(&self) -> &'static str {
+        P::NAME
+    }
+    fn version(&self) -> u32 {
+        P::VERSION
+    }
+    fn inputs_types(&self) -> &'static [&'static str] {
+        P::INPUTS
+    }
+    fn output_types(&self) -> &'static [&'static str] {
+        P::OUTPUTS
+    }
+    fn derive(&self, input: &Event, env: &Env) -> Vec<Event> {
+        PerEvent::derive(self, input, env)
+    }
+}
+
+/// Every keyed derivation, in one list. Order matters only for reading the
+/// list: the driver runs whatever is dirty.
 pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
-    vec![Box::new(fusion::CommandFusion)]
+    vec![
+        Box::new(fusion::CommandFusion),
+        Box::new(session::ShellSessions),
+        Box::new(interval::IntervalLift),
+        Box::new(summary::HourlySummary),
+        Box::new(summary::DailySummary),
+    ]
+}
+
+/// Every per-event derivation (document text, OCR, mark linking come with
+/// their source lanes).
+pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
+    Vec::new()
+}
+
+/// The parent IDs of a set of input events, in input order, without repeats.
+pub fn parents_of<'a>(inputs: impl IntoIterator<Item = &'a Event>) -> Vec<EventId> {
+    let mut out: Vec<EventId> = Vec::new();
+    for e in inputs {
+        if !out.contains(&e.id) {
+            out.push(e.id);
+        }
+    }
+    out
 }

@@ -1731,6 +1731,7 @@ dependencies = [
  "defmt 1.2.0",
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb",
  "jiff-tzdb-platform",
  "log",
  "portable-atomic",
@@ -2564,6 +2565,8 @@ dependencies = [
 name = "sinex-automata"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "jiff",
  "serde",
  "serde_json",
  "sinex-model",
@@ -2710,6 +2713,7 @@ dependencies = [
 name = "sinexd"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "clap",
  "devkit",
  "serde_json",

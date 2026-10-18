@@ -34,7 +34,7 @@ impl Context {
             database.to_owned(),
             writer_conn,
             queues,
-            Arc::new(Registered(sinex_automata::keyed())),
+            Arc::new(Registered::new(sinex_automata::keyed())),
         ));
         Ok(Self {
             aux,

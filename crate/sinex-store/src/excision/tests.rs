@@ -301,6 +301,7 @@ async fn derived_descendants_go_with_their_parent() {
     admit_events(&mut conn, vec![parent.clone()]).await;
     let fused = Event::build(
         &CommandFused {
+            record: "command.executed:k".into(),
             command: "make".into(),
             host: "h".into(),
             started_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
