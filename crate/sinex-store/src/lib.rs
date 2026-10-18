@@ -15,6 +15,7 @@ mod schema;
 mod search;
 mod session;
 mod shell;
+mod source_admission;
 mod source_coverage;
 mod source_inspection;
 mod synthetic;
@@ -23,7 +24,6 @@ mod writer;
 mod zsh;
 
 pub use admission::{Admission, ReplayCommand};
-pub use atuin::mask as present;
 pub use atuin::{
     AtuinInterpretation, AtuinStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule,
     SOURCE as ATUIN_SOURCE,
