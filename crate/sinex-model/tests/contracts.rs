@@ -2,7 +2,7 @@ use serde_json::json;
 use sinex_model::events::*;
 
 #[test]
-fn derived_wire_rejects_empty_parents_and_two_origins() {
+fn derived_provenance_rejects_empty_parents_and_coordinates() {
     assert!(
         serde_json::from_value::<Provenance>(json!({"origin":"derived","parents":[]})).is_err()
     );
@@ -14,7 +14,7 @@ fn derived_wire_rejects_empty_parents_and_two_origins() {
     );
 }
 #[test]
-fn canonical_keys_preserve_boundaries_and_utf8() {
+fn equivalence_keys_keep_part_boundaries_and_utf8() {
     assert_ne!(
         EquivalenceKey::from_parts(["a:b", "c"]),
         EquivalenceKey::from_parts(["a", "b:c"])
@@ -32,7 +32,7 @@ fn canonical_keys_preserve_boundaries_and_utf8() {
     }
 }
 #[test]
-fn explicit_unknown_does_not_become_staging_time() {
+fn unknown_time_has_no_value_and_no_fields() {
     let unknown: TsOrig = serde_json::from_value(json!({"state":"unknown"})).unwrap();
     assert_eq!(unknown.at(), None);
     assert!(serde_json::from_value::<TsOrig>(json!({"state":"unknown","at":0})).is_err());
@@ -78,7 +78,7 @@ fn tagged_empty_variants_reject_fields_from_other_states() {
 }
 
 #[test]
-fn bounded_time_preserves_equal_endpoints_and_rejects_reversed_bounds() {
+fn bounded_time_allows_equal_ends_and_rejects_reversed() {
     let at = time::OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
     assert!(
         TsOrig::from_record_field(at, "observed_at", TimePrecision::Bounded { until: at }).is_ok()
@@ -96,7 +96,7 @@ fn bounded_time_preserves_equal_endpoints_and_rejects_reversed_bounds() {
 }
 
 #[test]
-fn capture_clock_is_required_and_projection_preserves_evidence() {
+fn captured_time_needs_matching_clock_and_limits_future_skew() {
     let id = EventId::new_v7();
     let future = time::OffsetDateTime::from_unix_timestamp(4_102_444_800).unwrap();
     let producer = TsOrig::captured(

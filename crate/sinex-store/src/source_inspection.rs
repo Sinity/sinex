@@ -88,7 +88,7 @@ impl ReadPool {
             let owner_run = last["metadata"]["_sinex_acquisition_v1"]["owner_run"]
                 .as_str()
                 .and_then(|s| Uuid::parse_str(s).ok());
-            let applies = sinex_model::acquisition::current_scope(
+            let applies = sinex_model::acquisition::is_active_collector(
                 &active,
                 row["source"].as_str().unwrap_or(""),
                 row["locator"].as_str().unwrap_or(""),
