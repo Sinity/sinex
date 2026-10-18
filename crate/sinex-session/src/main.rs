@@ -38,10 +38,55 @@ enum Live {
         #[arg(long)]
         seconds: Option<u64>,
     },
+    /// Changes to files under the given directories.
+    Files {
+        #[arg(long)]
+        spool: PathBuf,
+        /// A directory to watch; repeatable.
+        #[arg(long = "root", required = true)]
+        roots: Vec<PathBuf>,
+        /// A directory name not to watch; repeatable. Defaults to `.git`,
+        /// `target`, `node_modules`, `.direnv`, `__pycache__`.
+        #[arg(long = "skip")]
+        skip: Vec<String>,
+        /// Stop after this many seconds; watch until stopped otherwise.
+        #[arg(long)]
+        seconds: Option<u64>,
+    },
 }
 
 fn main() -> ExitCode {
     match Cli::parse().command {
+        Command::Capture {
+            source:
+                Live::Files {
+                    spool,
+                    roots,
+                    skip,
+                    seconds,
+                },
+        } => {
+            use sinex_sources::sources::file_watch;
+            let skip = if skip.is_empty() {
+                file_watch::SKIP.iter().map(|s| (*s).to_owned()).collect()
+            } else {
+                skip
+            };
+            match file_watch::capture(
+                &file_watch::Roots { roots, skip },
+                &spool,
+                seconds.map(Duration::from_secs),
+            ) {
+                Ok(n) => {
+                    println!("captured {n} changes");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("sinex-session: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Capture {
             source: Live::Hyprland { spool, seconds },
         } => {
