@@ -1,7 +1,6 @@
 """Atuin exit codes across the signed 64-bit range: query, show, trace and indexed
 filters agree; a late exit code, restart, source loss, delete/undo with replay and a
 privacy rule keep the stored values and their citations."""
-import json
 import sqlite3
 import time
 

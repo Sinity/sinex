@@ -1,11 +1,9 @@
 """`sinexctl sources` (and MCP `sinex_sources`) through Atuin outages: acquisition state,
 schedule and overdue reads, admission receipts, history and input paging, record errors
 and statement budgets."""
-import json
 import re
 import socket
 import sqlite3
-import time
 import uuid
 
 from _atuin_daemon import COLUMNS, INSERT, Daemon, Mcp, create_history, sql, table_lock
