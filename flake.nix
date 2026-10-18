@@ -18,8 +18,8 @@
         src = ./.;
         cargoLock = {
           lockFile = ./Cargo.lock;
-          outputHashes."credential-output-0.1.0" = "sha256-RZ3FSG5h5dEzl7W0U82lP9k7ivCoa/yslCv/jMhnq1Q=";
-          outputHashes."hashed-blobs-0.1.1" = "sha256-/9poa8qWdNaTxIOpD+EXezalCYFD/FDVPvDvsNT5TsY=";
+          # Git dependencies are fetched at the SHA recorded in Cargo.lock.
+          allowBuiltinFetchGit = true;
         };
         nativeBuildInputs = [ postgres ];
         preBuild = ''

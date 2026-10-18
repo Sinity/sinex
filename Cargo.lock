@@ -412,8 +412,8 @@ checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
 
 [[package]]
 name = "credential-output"
-version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue?tag=credential-output-v0.1.0#beba1cbd21ee0c251819a2ff38282c4875368cca"
+version = "0.1.1"
+source = "git+https://github.com/Sinity/polylogue?rev=72e298a9f47076b5d226f745333abd6e3c5bc593#72e298a9f47076b5d226f745333abd6e3c5bc593"
 
 [[package]]
 name = "crossbeam-queue"

@@ -9,7 +9,7 @@ default = ["runtime"]
 runtime = ["sinex-store/product", "dep:axum", "dep:futures-util"]
 
 [dependencies]
-credential-output = { git = "https://github.com/Sinity/polylogue", tag = "credential-output-v0.1.0" }
+credential-output = { git = "https://github.com/Sinity/polylogue", rev = "72e298a9f47076b5d226f745333abd6e3c5bc593" }
 sinex-model = { path = "../sinex-model" }
 sinex-protocol = { path = "../sinex-protocol" }
 sinex-store = { path = "../sinex-store", default-features = false }
