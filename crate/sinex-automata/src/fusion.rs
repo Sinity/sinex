@@ -195,6 +195,7 @@ fn fused(group: &[usize], records: &[Record<'_>]) -> Event {
     let first = &records[group[0]];
     let pick = |f: fn(&Record<'_>) -> Option<String>| group.iter().find_map(|&m| f(&records[m]));
     let payload = CommandFused {
+        record: crate::output::record_identity(first.event),
         command: first.command.clone(),
         host: first.host.clone(),
         started_at: first.event.ts_orig.at.expect("fused records have a time"),
@@ -504,6 +505,20 @@ pub(crate) mod tests {
         let out = run(&[a, zsh("rm -rf x", H + 10.1)]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].observed_by, vec!["terminal.zsh"]);
+    }
+
+    #[test]
+    fn the_same_command_twice_in_one_second_is_two_runs() {
+        let a = zsh("ls", H + 5.0);
+        let mut b = zsh("ls", H + 5.0);
+        if let Origin::Record { location, .. } = &mut b.origin {
+            location.anchor = 40;
+        }
+        let env = Env::at(Timestamp::now());
+        let key = json!({"host": "box", "hour": (H as i64) / 3600});
+        let out = CommandFusion.compute(&key, &[a, b], &env).outputs;
+        assert_eq!(out.len(), 2);
+        assert_ne!(out[0].equivalence_key, out[1].equivalence_key);
     }
 
     #[test]

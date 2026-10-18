@@ -67,16 +67,21 @@ pub struct CommandImported {
 
 /// One command run, combined from every source that saw it (Atuin, zsh,
 /// kitty). Derived by the fusion derivation with every source record as a
-/// parent.
+/// parent. Identified by its preferred source record, not by host, time and
+/// text: the same command run twice in one second is two runs (zsh history
+/// holds about a thousand such pairs on the operator's machine).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "command.fused",
-    key = ["host", "started_at", "command"],
+    key = ["host", "record"],
     replace = newer,
     time = started_at,
     quality = intrinsic
 )]
 pub struct CommandFused {
+    /// The preferred member's identity: `<type>:<native id>` when the source
+    /// has one (Atuin), otherwise its record location.
+    pub record: String,
     pub command: String,
     pub host: String,
     pub started_at: Timestamp,

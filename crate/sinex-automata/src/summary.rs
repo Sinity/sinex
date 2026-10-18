@@ -328,6 +328,7 @@ mod tests {
         let p = parent();
         derived(
             &CommandFused {
+                record: format!("r{secs}"),
                 command: "c".into(),
                 host: "box".into(),
                 started_at: Timestamp::from_unix_secs(T + secs).unwrap(),

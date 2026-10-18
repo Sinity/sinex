@@ -5,6 +5,25 @@
 //! replaces the old reading.
 use sinex_model::{Class, Event, EventId, EventPayload, Origin, ReadingOrder};
 
+/// A stable name for the record an event was read from: `<type>:<native id>`
+/// when the payload carries the source's own ID, otherwise the record
+/// location. It survives a replay, unlike the event ID.
+pub fn record_identity(event: &Event) -> String {
+    if let Some(id) = event
+        .payload
+        .get("native_id")
+        .and_then(serde_json::Value::as_str)
+    {
+        return format!("{}:{id}", event.event_type);
+    }
+    match &event.origin {
+        Origin::Record { location, ordinal } => {
+            format!("{}:{}:{ordinal}", location.material, location.anchor)
+        }
+        Origin::Derived { .. } => event.id.to_string(),
+    }
+}
+
 /// A derived event from `payload` with `inputs` as parents. The reading order
 /// is set by the driver when it submits the key's outputs.
 pub fn derived<'a, P: EventPayload>(

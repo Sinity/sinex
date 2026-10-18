@@ -140,6 +140,7 @@ mod tests {
         let parent = crate::fusion::tests::zsh("x", secs as f64);
         derived(
             &CommandFused {
+                record: format!("r{secs}"),
                 command: format!("c{secs}"),
                 host: "box".into(),
                 started_at: Timestamp::from_unix_secs(secs).unwrap(),

@@ -332,6 +332,7 @@ impl<const V: u32> Keyed for Count<V> {
     }
     fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
         let payload = CommandFused {
+            record: "all".into(),
             command: format!("v{V}:{}", inputs.len()),
             host: "box".into(),
             started_at: at(0),
@@ -367,7 +368,7 @@ async fn compare_shows_a_version_change_before_switching() {
     // Version 2 computes a different output; compare writes nothing.
     let mut v2 = w.driver_with(vec![Box::new(Count::<2>)], vec![]).await;
     let cmp = v2.compare("test.count", None, 3).await.unwrap();
-    assert_eq!(cmp.added + cmp.removed, 2, "{cmp}");
+    assert_eq!((cmp.changed, cmp.added, cmp.removed), (1, 0, 0), "{cmp}");
     assert!(cmp.to_string().contains("v2:2"));
     // Starting version 2 queued its recompute; settling switches.
     v2.settle().await.unwrap();
@@ -387,6 +388,7 @@ impl sinex_automata::PerEvent for Echo {
         let c: CommandImported = input.payload_as().unwrap();
         vec![sinex_automata::output::derived(
             &CommandFused {
+                record: sinex_automata::output::record_identity(input),
                 command: c.command.to_uppercase(),
                 host: c.hostname,
                 started_at: c.started_at,

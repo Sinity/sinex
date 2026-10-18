@@ -58,6 +58,7 @@ pub(crate) async fn admit_commands(
         .unwrap();
         let fused = Event::build(
             &CommandFused {
+                record: format!("command.executed:{}", observed.id),
                 command: command.to_string(),
                 host: "kestrel".into(),
                 started_at,
