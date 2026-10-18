@@ -23,8 +23,6 @@ struct Dependency {
     name: String,
     kind: Option<String>,
     target: Option<String>,
-    features: Vec<String>,
-    uses_default_features: bool,
 }
 #[derive(Deserialize)]
 struct Resolve {
@@ -47,12 +45,36 @@ struct Kind {
 
 fn allowed(name: &str) -> Result<&'static [&'static str], String> {
     match name {
-        "sinex-model" | "xtask" => Ok(&[]),
-        "sinex-protocol" | "sinex-store" => Ok(&["sinex-model"]),
-        "sinexd" => Ok(&["sinex-model", "sinex-protocol", "sinex-store"]),
-        "sinexctl" => Ok(&["sinex-model", "sinex-protocol"]),
+        "sinex-macros" | "xtask" => Ok(&[]),
+        "sinex-model" => Ok(&["sinex-macros"]),
+        "sinex-protocol" | "sinex-schema" | "sinex-sources" | "sinex-automata"
+        | "sinex-analysis" => Ok(&["sinex-model"]),
+        "sinex-store" => Ok(&["sinex-model", "sinex-schema"]),
+        "sinex-library" => Ok(&["sinex-model", "sinex-store"]),
+        "sinex-offline" => Ok(&["sinex-model", "sinex-schema", "sinex-store"]),
+        "sinexd" => Ok(&[
+            "sinex-model",
+            "sinex-protocol",
+            "sinex-schema",
+            "sinex-store",
+            "sinex-sources",
+            "sinex-automata",
+            "sinex-analysis",
+            "sinex-library",
+        ]),
+        "sinex-session" | "sinex-capture" => {
+            Ok(&["sinex-model", "sinex-protocol", "sinex-sources"])
+        }
+        "sinexctl" => Ok(&["sinex-model", "sinex-protocol", "sinex-offline"]),
         _ => Err(format!("unassigned workspace package: {name}")),
     }
+}
+/// Crates of pure logic over model types: no IO in them or below them.
+fn pure(name: &str) -> bool {
+    matches!(
+        name,
+        "sinex-model" | "sinex-protocol" | "sinex-automata" | "sinex-analysis"
+    )
 }
 fn impure(name: &str) -> bool {
     matches!(
@@ -95,25 +117,19 @@ fn validate(metadata: Metadata) -> Result<(), String> {
         for dep in &package.dependencies {
             let forbidden_internal =
                 names.contains(dep.name.as_str()) && !permitted.contains(&dep.name.as_str());
-            let forbidden_pure = matches!(package.name.as_str(), "sinex-model" | "sinex-protocol")
-                && impure(&dep.name);
+            let forbidden_pure = pure(&package.name) && impure(&dep.name);
+            // Statements live in the store; the schema crate applies the
+            // declarations and the daemon only opens connections.
             let forbidden_sql = dep.name == "sqlx"
-                && match package.name.as_str() {
-                    "sinex-store" => false,
-                    // Provider acquisition is SQLite-only. Canonical PostgreSQL belongs to store.
-                    "sinexd" => {
-                        dep.uses_default_features
-                            || dep
-                                .features
-                                .iter()
-                                .any(|f| !matches!(f.as_str(), "runtime-tokio" | "sqlite"))
-                    }
-                    _ => true,
-                };
+                && !matches!(
+                    package.name.as_str(),
+                    "sinex-store" | "sinex-schema" | "sinexd"
+                );
             if forbidden_internal
                 || forbidden_pure
                 || forbidden_sql
-                || (dep.name.starts_with("sqlx-") && package.name != "sinex-store")
+                || (dep.name.starts_with("sqlx-")
+                    && !matches!(package.name.as_str(), "sinex-store" | "sinex-schema"))
             {
                 return Err(format!(
                     "forbidden dependency: {} -> {} (kind={}, target={})",
@@ -133,10 +149,7 @@ fn validate(metadata: Metadata) -> Result<(), String> {
         .iter()
         .map(|n| (n.id.as_str(), n))
         .collect();
-    for package in members
-        .iter()
-        .filter(|p| matches!(p.name.as_str(), "sinex-model" | "sinex-protocol"))
-    {
+    for package in members.iter().filter(|p| pure(&p.name)) {
         let mut pending = vec![package.id.as_str()];
         let mut seen = HashSet::new();
         while let Some(id) = pending.pop() {

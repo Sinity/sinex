@@ -1,0 +1,129 @@
+//! Typed payloads. Every event type is a Rust type deriving `EventPayload`,
+//! which declares its type name, how a repeat of it is recognized, which
+//! reading wins, and when it happened. Schemaless events are a fallback only
+//! (operator 2025-08-01); they are not modelled here.
+use crate::{Class, RecordState, TsOrig};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Value;
+
+/// How Sinex recognizes the same record seen again (identity rule 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyKind {
+    /// No stable identity: one live reading per record location, event type and
+    /// output number. Used when the source has no native ID (zsh history).
+    Location,
+    /// The listed payload fields identify the record across materials (an
+    /// Atuin row ID, a browser visit ID).
+    Fields(&'static [&'static str]),
+}
+
+/// What admission does with a second reading of a live record (identity rule 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, crate::DbCheck)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplaceRule {
+    /// A record can change: a newer reading with different content replaces
+    /// the live one, which is archived.
+    ReplaceWhenNewer,
+    /// A record never changes once read; any later reading is a repeat.
+    SuppressRepeat,
+}
+
+/// The key under which a keyed record is remembered: BLAKE3 over the canonical
+/// JSON of its key fields, in declared order.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct EquivalenceKey(pub String);
+
+impl EquivalenceKey {
+    /// The key for `payload` under `fields`. A missing field is part of the key
+    /// as `null`, so a record without its identity field is still keyed
+    /// consistently rather than dropped.
+    pub fn of(event_type: &str, fields: &[&str], payload: &Value) -> Self {
+        let values: Vec<&Value> = fields
+            .iter()
+            .map(|f| payload.get(*f).unwrap_or(&Value::Null))
+            .collect();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(event_type.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(
+            serde_json::to_string(&values)
+                .expect("JSON values always serialize")
+                .as_bytes(),
+        );
+        Self(hasher.finalize().to_hex().to_string())
+    }
+}
+
+pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
+    /// The stored event type, such as `command.executed`.
+    const EVENT_TYPE: &'static str;
+    const KEY: KeyKind;
+    const REPLACE: ReplaceRule;
+    /// Per-field privacy hints; rules in the store decide the effective class.
+    const FIELD_CLASSES: &'static [(&'static str, Class)] = &[];
+
+    /// When the thing happened, by the source's evidence.
+    fn ts_orig(&self) -> TsOrig;
+
+    /// Whether this reading says the record was removed at the source.
+    fn record_state(&self) -> RecordState {
+        RecordState::Present
+    }
+
+    /// The JSON Schema registered for this type and used to validate payloads
+    /// arriving over the NATS ingress.
+    fn payload_schema() -> Value;
+}
+
+/// Enums stored as text: the column's CHECK list is generated from the variants,
+/// so the database and the Rust type cannot disagree.
+pub trait DbCheck {
+    const VALUES: &'static [&'static str];
+
+    /// `CHECK (<column> IN (...))`.
+    fn check(column: &str) -> String {
+        let values: Vec<String> = Self::VALUES.iter().map(|v| format!("'{v}'")).collect();
+        format!("CHECK ({column} IN ({}))", values.join(", "))
+    }
+
+    fn as_db(&self) -> &'static str;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn key_depends_on_type_fields_and_order() {
+        let p = json!({"a": 1, "b": "x", "c": true});
+        let k = EquivalenceKey::of("t", &["a", "b"], &p);
+        assert_eq!(
+            k,
+            EquivalenceKey::of("t", &["a", "b"], &json!({"b": "x", "a": 1, "c": false}))
+        );
+        assert_ne!(k, EquivalenceKey::of("u", &["a", "b"], &p));
+        assert_ne!(k, EquivalenceKey::of("t", &["b", "a"], &p));
+        assert_eq!(k.0.len(), 64);
+    }
+
+    #[test]
+    fn missing_key_field_is_null() {
+        assert_eq!(
+            EquivalenceKey::of("t", &["a"], &json!({})),
+            EquivalenceKey::of("t", &["a"], &json!({"a": null}))
+        );
+    }
+
+    #[test]
+    fn check_lists_variants() {
+        assert_eq!(
+            ReplaceRule::check("rule"),
+            "CHECK (rule IN ('replace_when_newer', 'suppress_repeat'))"
+        );
+        assert_eq!(ReplaceRule::SuppressRepeat.as_db(), "suppress_repeat");
+    }
+}

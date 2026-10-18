@@ -31,16 +31,16 @@
           pg_ctl -D "$PGDATA" -o "-k $PGHOST -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -p $PGPORT" -w start > /dev/null
           trap 'pg_ctl -D "$PGDATA" -m immediate -w stop >/dev/null || true' EXIT
           createdb foundation
-          createuser sinex_writer
-          createuser sinex_reader
           export DATABASE_URL="postgresql:///foundation?host=$PGHOST&port=$PGPORT"
-          printf '%s' "$DATABASE_URL" > admin-connection
-          cargo build --offline --locked -p sinexd --no-default-features --target-dir target --target ${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}
-          target/${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinexd admin schema --connection-file "$PWD/admin-connection"
+          # The schema tool has no checked queries, so it builds before the
+          # database exists and provisions the one the store's queries need.
+          cargo build --offline --locked -p sinex-schema --target-dir target --target ${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}
+          target/${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema apply "$DATABASE_URL"
         '';
         cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "xtask" ];
         doCheck = true;
-        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinexd" "-p" "sinex-store" "-p" "xtask" ];
+        # Database tests need devkit's server; they run under `xtask test`.
+        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-automata" ];
       };
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };

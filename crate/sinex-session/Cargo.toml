@@ -1,0 +1,15 @@
+[package]
+name = "sinex-session"
+description = "The user service for sources that need the operator's desktop session; an outside producer over the NATS ingress."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+sinex-model.workspace = true
+sinex-protocol.workspace = true
+sinex-sources.workspace = true
+
+[lints]
+workspace = true

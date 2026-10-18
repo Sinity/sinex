@@ -1,26 +1,27 @@
 [package]
 name = "sinex-store"
-version = "0.1.0"
-edition = "2024"
-
-[features]
-default = []
-product = []
+description = "PostgreSQL and the content store: admission, materials, positions, archive, queries. Knows no source by name."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
 
 [dependencies]
-sinex-model = { path = "../sinex-model" }
-blake3 = "1.8"
-hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0" }
-fs2 = "0.4"
-sea-query = { version = "0.32.7", default-features = false, features = ["backend-postgres"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "json", "macros"] }
-thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "fs", "macros"] }
-uuid = { version = "1", features = ["v7", "serde"] }
-regex = "1"
-time = { version = "0.3", features = ["formatting", "parsing"] }
-shlex = "1.3"
-unicode-segmentation = "1.12"
-percent-encoding = "2"
+sinex-model.workspace = true
+sinex-schema.workspace = true
+hashed-blobs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+time.workspace = true
+thiserror.workspace = true
+blake3.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+devkit.workspace = true
+
+[lints]
+workspace = true

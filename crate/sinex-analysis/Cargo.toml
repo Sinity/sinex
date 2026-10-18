@@ -1,0 +1,14 @@
+[package]
+name = "sinex-analysis"
+description = "The analysis layer as pure code: relations, metrics, plans, products, findings."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
