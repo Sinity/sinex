@@ -481,12 +481,12 @@ impl Reader {
     fn and(&mut self) -> Result<Expr, &'static str> {
         let mut e = self.term()?;
         loop {
-            if self.take("and") {
-                e = Expr::And(Box::new(e), Box::new(self.term()?));
-            } else if self.at < self.tokens.len()
-                && !["or", ")", "sort", "limit", "since"]
-                    .iter()
-                    .any(|s| self.is(s))
+            // `and` is optional between terms: `a b` means `a and b`.
+            if self.take("and")
+                || self.at < self.tokens.len()
+                    && !["or", ")", "sort", "limit", "since"]
+                        .iter()
+                        .any(|s| self.is(s))
             {
                 e = Expr::And(Box::new(e), Box::new(self.term()?));
             } else {
@@ -742,9 +742,8 @@ pub fn bind(text: &str) -> Result<Bound, &'static str> {
     }
     let unit = if r.take("commands") {
         "commands"
-    } else if r.take("events") {
-        "events"
     } else {
+        r.take("events");
         "events"
     }
     .to_string();

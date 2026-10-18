@@ -14,23 +14,38 @@ fn rule(pattern: &str, replacement: &str) -> PrivacyRule {
 fn raw_projection_keeps_attributed_order_and_skips_only_exact_attributed_tuples() {
     let once = rule("amber", "amber!");
     let mut record = json!({"id":"fixture", "command":"echo amber"});
-    protect_retained(&mut record, &[once.clone()], &[once.clone()]).unwrap();
+    protect_retained(
+        &mut record,
+        std::slice::from_ref(&once),
+        std::slice::from_ref(&once),
+    )
+    .unwrap();
     assert_eq!(record["command"], "echo amber!");
     // Repetition inside the attributed sequence is authored and stays meaningful.
     let mut record = json!({"command":"echo amber"});
-    protect_retained(&mut record, &[once.clone(), once.clone()], &[once.clone()]).unwrap();
+    protect_retained(
+        &mut record,
+        &[once.clone(), once.clone()],
+        std::slice::from_ref(&once),
+    )
+    .unwrap();
     assert_eq!(record["command"], "echo amber!!");
     // Different replacements on the same pattern are distinct tuples, in order.
     let mut record = json!({"command":"echo amber"});
-    protect_retained(&mut record, &[once.clone()], &[rule("amber", "azure")]).unwrap();
+    protect_retained(
+        &mut record,
+        std::slice::from_ref(&once),
+        &[rule("amber", "azure")],
+    )
+    .unwrap();
     assert_eq!(record["command"], "echo azure!");
     // Additional current duplicates remain a sequence, not a normalized set.
     let double = rule("!", "!!");
     let mut record = json!({"command":"echo amber"});
     protect_retained(
         &mut record,
-        &[once.clone()],
-        &[once, double.clone(), double],
+        std::slice::from_ref(&once),
+        &[once.clone(), double.clone(), double],
     )
     .unwrap();
     assert_eq!(record["command"], "echo amber!!!!");

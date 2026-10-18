@@ -338,7 +338,7 @@ impl WriterPool {
                 file.sync_all()?;
                 std::fs::File::open(std::path::Path::new(&self.root).join("open"))?.sync_all()?;
                 sqlx::query("INSERT INTO raw.source_material_registry (id,material_kind,source_identifier,status,ts_quality,blob_id,total_bytes,durable_bytes,input_id,observation_id,parser_provenance) VALUES ($1,'stream_chunk',$2,'capturing','unknown',NULL,0,0,$3,$4,$5)")
-                    .bind(id).bind(source).bind(input).bind(observation).bind(&provenance).execute(&mut self.connection).await?;
+                    .bind(id).bind(source).bind(input).bind(observation).bind(provenance).execute(&mut self.connection).await?;
                 material = Some(id);
             }
             let path = std::path::Path::new(&self.root)
@@ -543,15 +543,14 @@ impl WriterPool {
                 continue;
             }
             let old = sqlx::query("SELECT l.event_id,l.read_order,l.record_hash,p.version AS parser FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id LEFT JOIN core.producer_versions p ON p.id=e.producer_version_id AND p.name='parser.terminal.atuin-history' WHERE l.store=0 AND l.key_hash=$1").bind(&key_hash).fetch_optional(&mut *tx).await?;
-            if let Some(ref old) = old {
-                if (old.try_get::<Vec<u8>, _>("record_hash")? == record_hash
+            if let Some(ref old) = old
+                && ((old.try_get::<Vec<u8>, _>("record_hash")? == record_hash
                     && old.try_get::<Option<String>, _>("parser")?.as_deref() == Some(parser))
-                    || old.try_get::<i64, _>("read_order")? >= read_order
-                {
-                    sqlx::query("UPDATE core.live_equivalence SET read_order=GREATEST(read_order,$2) WHERE store=0 AND key_hash=$1").bind(&key_hash).bind(read_order).execute(&mut *tx).await?;
-                    repeated += 1;
-                    continue;
-                }
+                    || old.try_get::<i64, _>("read_order")? >= read_order)
+            {
+                sqlx::query("UPDATE core.live_equivalence SET read_order=GREATEST(read_order,$2) WHERE store=0 AND key_hash=$1").bind(&key_hash).bind(read_order).execute(&mut *tx).await?;
+                repeated += 1;
+                continue;
             }
             let id = Uuid::now_v7();
             if let Some(old) = old {
@@ -612,29 +611,30 @@ impl WriterPool {
             .bind(step.observation).bind(admitted).bind(repeated).bind(failures).bind(removed).bind(status).bind(&step.unavailable).bind(last_seq).bind(excluded).fetch_one(&mut *tx).await?;
         sqlx::query("INSERT INTO raw.source_cursors (binding,input,position,carry) VALUES ($1,$2,$3,'{}'::jsonb) ON CONFLICT (binding,input) DO UPDATE SET position=EXCLUDED.position,updated_at=now()")
             .bind(SOURCE).bind(input.to_string()).bind(&summary).execute(&mut *tx).await?;
-        if step.complete && step.unavailable.is_none() {
-            if let Some(value) = step.metadata.get("_sinex_read_plan_v1") {
-                let mut plan: sinex_model::acquisition::AtuinReadPlan =
-                    serde_json::from_value(value.clone())
-                        .map_err(|_| Error::Invalid("invalid Atuin read plan"))?;
-                if plan.version != 1 || !plan.checkpoint.valid() {
-                    return Err(Error::Invalid("invalid Atuin checkpoint"));
-                }
-                // Parser omissions remain a reason to compare the full provider again.
-                // An empty reduced poll must never silently clear an old malformed row.
-                plan.checkpoint.needs_full |= summary["record_errors"].as_i64().unwrap_or(1) != 0;
-                let checkpoint = serde_json::to_value(&plan.checkpoint)
-                    .map_err(|_| Error::Invalid("Atuin checkpoint encoding"))?;
-                let plan = serde_json::to_value(&plan)
-                    .map_err(|_| Error::Invalid("Atuin read plan encoding"))?;
-                sqlx::query("UPDATE raw.source_cursors SET carry=$3 WHERE binding=$1 AND input=$2")
-                    .bind(SOURCE)
-                    .bind(input.to_string())
-                    .bind(checkpoint)
-                    .execute(&mut *tx)
-                    .await?;
-                sqlx::query("UPDATE raw.observations SET metadata=jsonb_set(metadata,'{_sinex_read_plan_v1}',$2) WHERE id=$1").bind(step.observation).bind(plan).execute(&mut *tx).await?;
+        if step.complete
+            && step.unavailable.is_none()
+            && let Some(value) = step.metadata.get("_sinex_read_plan_v1")
+        {
+            let mut plan: sinex_model::acquisition::AtuinReadPlan =
+                serde_json::from_value(value.clone())
+                    .map_err(|_| Error::Invalid("invalid Atuin read plan"))?;
+            if plan.version != 1 || !plan.checkpoint.valid() {
+                return Err(Error::Invalid("invalid Atuin checkpoint"));
             }
+            // Parser omissions remain a reason to compare the full provider again.
+            // An empty reduced poll must never silently clear an old malformed row.
+            plan.checkpoint.needs_full |= summary["record_errors"].as_i64().unwrap_or(1) != 0;
+            let checkpoint = serde_json::to_value(&plan.checkpoint)
+                .map_err(|_| Error::Invalid("Atuin checkpoint encoding"))?;
+            let plan = serde_json::to_value(&plan)
+                .map_err(|_| Error::Invalid("Atuin read plan encoding"))?;
+            sqlx::query("UPDATE raw.source_cursors SET carry=$3 WHERE binding=$1 AND input=$2")
+                .bind(SOURCE)
+                .bind(input.to_string())
+                .bind(checkpoint)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE raw.observations SET metadata=jsonb_set(metadata,'{_sinex_read_plan_v1}',$2) WHERE id=$1").bind(step.observation).bind(plan).execute(&mut *tx).await?;
         }
         let committed_evidence = json!({"custody":boundary_evidence,"progress":summary});
         // Empty reading registration and EOF/unavailable accounting are not

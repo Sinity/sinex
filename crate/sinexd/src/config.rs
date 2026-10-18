@@ -166,25 +166,23 @@ impl Config {
         if self.sources.iter().any(|s| s == sinex_store::ZSH_SOURCE) != self.zsh.is_some() {
             return Err("zsh source enablement and [zsh] configuration must agree".into());
         }
-        if let Some(zsh) = &self.zsh {
-            if !zsh.path.is_absolute()
+        if let Some(zsh) = &self.zsh
+            && (!zsh.path.is_absolute()
                 || !(100..=3_600_000).contains(&zsh.poll_interval_ms)
                 || zsh.execution_host.trim().is_empty()
                 || zsh.execution_host.len() > 255
-                || zsh.protocol != sinex_store::ZSH_PROTOCOL
-            {
-                return Err("zsh requires absolute path, execution_host, append_only_extended_v1 protocol and poll interval100..=3600000ms".into());
-            }
+                || zsh.protocol != sinex_store::ZSH_PROTOCOL)
+        {
+            return Err("zsh requires absolute path, execution_host, append_only_extended_v1 protocol and poll interval100..=3600000ms".into());
         }
-        if let Some(atuin) = &self.atuin {
-            if !atuin.path.is_absolute()
+        if let Some(atuin) = &self.atuin
+            && (!atuin.path.is_absolute()
                 || !(100..=3_600_000).contains(&atuin.poll_interval_ms)
-                || !(100..=604_800_000).contains(&atuin.full_interval_ms)
-            {
-                return Err(
+                || !(100..=604_800_000).contains(&atuin.full_interval_ms))
+        {
+            return Err(
                     "Atuin requires an absolute path, poll interval 100..=3600000 ms and full interval 100..=604800000 ms".into(),
                 );
-            }
         }
         if self
             .sources

@@ -109,11 +109,11 @@ fn canonical(command: &str) -> Option<String> {
     ];
     let args: Vec<_> = words.collect();
     let mut out = program.clone();
-    if ACTIONS.contains(&program.as_str()) {
-        if let Some(action) = args.first() {
-            out.push(' ');
-            out.push_str(action);
-        }
+    if ACTIONS.contains(&program.as_str())
+        && let Some(action) = args.first()
+    {
+        out.push(' ');
+        out.push_str(action);
     }
     for (p, flag) in MUTATIONS {
         if *p == program

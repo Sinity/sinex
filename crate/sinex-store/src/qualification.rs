@@ -56,7 +56,7 @@ impl QualificationBoundary {
             let mut bytes = serde_json::to_vec(&notice).map_err(|_| Error::Invalid("collector control encoding"))?;
             bytes.push(b'\n'); socket.write_all(&bytes).await?;
             let mut release = [0]; socket.read_exact(&mut release).await?;
-            if release != [b'c'] { return Err(Error::Invalid("collector release refused")); }
+            if release != *b"c" { return Err(Error::Invalid("collector release refused")); }
             Ok(())
         }).await.map_err(|_| Error::Invalid("collector control timed out"))?
     }
@@ -93,7 +93,7 @@ impl QualificationBoundary {
             // it with 'c' or kills its recorded process. EOF/timeouts fail the admission.
             let mut release = [0];
             socket.read_exact(&mut release)?;
-            if release != [b'c'] {
+            if release != *b"c" {
                 return Err(Error::Invalid("qualification boundary release refused"));
             }
             Ok(())

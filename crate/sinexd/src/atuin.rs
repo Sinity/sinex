@@ -101,12 +101,12 @@ struct Reader {
 }
 impl Reader {
     async fn connected(&mut self, path: &Path) -> Result<(&mut SqliteConnection, Uuid), String> {
-        if let Some(connection) = self.connection.as_mut() {
-            if guard::verify(connection, path).await.is_err() {
-                self.connection.take();
-                self.epoch = None;
-                self.full_due = None;
-            }
+        if let Some(connection) = self.connection.as_mut()
+            && guard::verify(connection, path).await.is_err()
+        {
+            self.connection.take();
+            self.epoch = None;
+            self.full_due = None;
         }
         if self.connection.is_none() {
             let options = SqliteConnectOptions::new()
