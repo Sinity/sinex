@@ -104,7 +104,9 @@ def exercise(h):
 
     def other_query_forms():
         cursor = first['page']['cursor']
-        for other in ['events sort by id', 'events as of now', 'events where source = x or kind = x', 'commands']:
+        for other in ['events sort by id', 'events as of now', 'events where source = x or kind = x']:
             assert query(other, cursor, expected=2)['kind'] == 'bad_query', other
+        # Indexed retrieval is not configured here, so that is reported before the cursor is read.
+        assert query('commands', cursor, expected=5)['kind'] == 'partial'
         daemon.stop()
-    scenario('a cursor cannot continue a different query form', other_query_forms)
+    scenario('unsupported forms are refused with a cursor; commands report indexed search unavailable', other_query_forms)
