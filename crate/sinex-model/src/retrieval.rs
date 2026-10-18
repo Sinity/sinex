@@ -31,31 +31,33 @@ const FIELD_BOUNDARY: char = '\u{2}';
 /// Complete normalized token sequences, kept separate across payload strings.
 /// None means the backend representation cannot be admitted, never empty text.
 pub fn token_text(strings: &[String]) -> Option<String> {
+    fn append(out: &mut String, value: &str) -> Option<()> {
+        // PostgreSQL MaxAllocSize (2^30-1) includes the four-byte varlena header.
+        // Check every token and delimiter before reserving backend-sized text.
+        const MAX_TEXT_BYTES: usize = (1 << 30) - 1 - 4;
+        if out.len().checked_add(value.len())? > MAX_TEXT_BYTES {
+            return None;
+        }
+        out.try_reserve(value.len()).ok()?;
+        out.push_str(value);
+        Some(())
+    }
     let mut out = String::new();
     for field in strings {
         let mut tokens = field.unicode_words().peekable();
         if tokens.peek().is_none() {
             continue;
         }
-        out.try_reserve(1).ok()?;
-        out.push(TOKEN_BOUNDARY);
+        append(&mut out, "\u{1}")?;
         for raw_token in tokens {
             let token = normalize(raw_token);
             if token.contains([TOKEN_BOUNDARY, FIELD_BOUNDARY]) {
                 return None;
             }
-            let length = out.len().checked_add(token.len())?.checked_add(1)?;
-            // PostgreSQL text uses a signed varlena length. Refuse before an
-            // unrepresentable value; ordinary source/admission budgets are separate.
-            if length > 1_000_000_000 {
-                return None;
-            }
-            out.try_reserve(token.len().checked_add(1)?).ok()?;
-            out.push_str(&token);
-            out.push(TOKEN_BOUNDARY);
+            append(&mut out, &token)?;
+            append(&mut out, "\u{1}")?;
         }
-        out.try_reserve(1).ok()?;
-        out.push(FIELD_BOUNDARY);
+        append(&mut out, "\u{2}")?;
     }
     Some(out)
 }
