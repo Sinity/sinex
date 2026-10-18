@@ -10,7 +10,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 pub const SOURCE: &str = "terminal.atuin-history";
-pub(crate) const PARSER: &str = "atuin-v2";
+pub(crate) const PARSER: &str = "atuin-v3";
 const PARSER_NAME: &str = "parser.terminal.atuin-history";
 pub const MAX_STEP_ROWS: usize = 64;
 pub const MAX_STEP_BYTES: usize = 1024 * 1024;
@@ -20,7 +20,7 @@ pub(crate) fn payload_schema() -> Value {
     json!({"type":"object","additionalProperties":false,
         "required":["native_id","command","cwd","session","hostname","exit_code","duration_ns","timestamp_ns","completion"],
         "properties":{"native_id":{"type":"string"},"command":{"type":"string"},"cwd":{"type":"string"},"session":{"type":"string"},"hostname":{"type":"string"},
-        "exit_code":{"type":["integer","null"],"minimum":0},"duration_ns":{"type":["integer","null"],"minimum":0},"timestamp_ns":{"type":"integer"},"completion":{"enum":["running","end_not_recorded","ended"]}}})
+        "exit_code":{"type":["integer","null"]},"duration_ns":{"type":["integer","null"],"minimum":0},"timestamp_ns":{"type":"integer"},"completion":{"enum":["running","end_not_recorded","ended"]}}})
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,8 +140,8 @@ pub(crate) fn occurrence(input: Uuid, native_id: &str) -> (String, Vec<u8>) {
 pub(crate) fn parse(row: &Value) -> std::result::Result<Parsed, &'static str> {
     let r: AtuinRow = serde_json::from_value(row.clone())
         .map_err(|_| "invalid Atuin record field type or missing field")?;
-    if r.id.is_empty() || r.id.len() > 512 || r.exit < -1 || r.duration < -1 {
-        return Err("invalid Atuin native key, exit or duration");
+    if r.id.is_empty() || r.id.len() > 512 || r.duration < -1 {
+        return Err("invalid Atuin native key or duration");
     }
     let at = OffsetDateTime::from_unix_timestamp_nanos(i128::from(r.timestamp))
         .map_err(|_| "Atuin timestamp out of range")?;
@@ -152,7 +152,9 @@ pub(crate) fn parse(row: &Value) -> std::result::Result<Parsed, &'static str> {
         sinex_model::events::TimePrecision::Instant,
     )
     .map_err(|_| "invalid Atuin time evidence")?;
-    let ended = r.duration >= 0 || r.exit >= 0;
+    // Atuin records signed status values at history end; -1 is its unknown
+    // sentinel. Preserve other values without decoding their signal meaning.
+    let ended = r.duration >= 0 || r.exit != -1;
     let state = if ended {
         "ended"
     } else {
@@ -162,7 +164,7 @@ pub(crate) fn parse(row: &Value) -> std::result::Result<Parsed, &'static str> {
     Ok(Parsed {
         payload: json!({"native_id":r.id,"command":r.command,"cwd":r.cwd,"session":r.session,
             "hostname":r.hostname.split(':').next().unwrap_or(&r.hostname),
-            "exit_code":if r.exit >= 0 { Some(r.exit) } else { None },
+            "exit_code":if r.exit != -1 { Some(r.exit) } else { None },
             "timestamp_ns":r.timestamp,"duration_ns":if ended && r.duration >= 0 { Some(r.duration) } else { None }, "completion":state}),
         native_id: r.id,
         time: at
@@ -729,12 +731,22 @@ mod tests {
             .unwrap();
         async fn canonical(conn: &mut sqlx::PgConnection, parent: Uuid) -> Result<Uuid> {
             for _ in 0..100 {
-                if let Some(id)=sqlx::query_scalar("SELECT id FROM core.live_events WHERE event_type='command.canonical' AND source_event_ids=ARRAY[$1]::uuid[]").bind(parent).fetch_optional(&mut *conn).await? {return Ok(id)}
+                if let Some(id)=sqlx::query_scalar("SELECT id FROM core.live_events WHERE event_type='command.canonical' AND source_event_ids=ARRAY[$1]::uuid[] AND NOT EXISTS(SELECT 1 FROM derivation.shell_dirty) AND EXISTS(SELECT 1 FROM derivation.shell_progress WHERE one AND phase='settled' AND failure IS NULL)").bind(parent).fetch_optional(&mut *conn).await? {return Ok(id)}
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
             Err(Error::Invalid("canonical fixture did not settle"))
         }
-        let old_canonical = canonical(&mut conn, old_id).await?;
+        let old_canonical = match canonical(&mut conn, old_id).await {
+            Ok(id) => id,
+            Err(error) => {
+                if store.writer.is_finished() {
+                    // Preserve the owner failure instead of hiding it behind a
+                    // reader polling assertion in this standalone fixture.
+                    store.writer.await??;
+                }
+                return Err(error.into());
+            }
+        };
         let corrected = store
             .admission
             .submit_atuin(step(AtuinInterpretation::Current, 1))
@@ -837,3 +849,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "atuin_exit_tests.rs"]
+mod signed_exit_tests;

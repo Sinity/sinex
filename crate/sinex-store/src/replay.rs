@@ -70,7 +70,7 @@ impl RequestRecord {
             || record.interpretation_basis.format != "sinex.atuin.interpretation.v1"
             || !matches!(
                 record.interpretation_basis.parser.as_str(),
-                "atuin-v1" | crate::atuin::PARSER
+                "atuin-v1" | "atuin-v2" | crate::atuin::PARSER
             )
         {
             return Err(Error::ReplayRefused(
@@ -122,7 +122,7 @@ fn outcome(id: Uuid, action: Uuid, selected: usize) -> Outcome {
 }
 impl WriterPool {
     async fn replay_scope(&mut self, material: Uuid) -> Result<Vec<Record>> {
-        let durable:Option<i64>=sqlx::query_scalar("SELECT durable_bytes FROM raw.source_material_registry WHERE id=$1 AND source_identifier=$2 AND material_kind='stream_chunk' AND status<>'capturing' AND parser_provenance->>'parser' IN ('atuin-v1','atuin-v2') AND parser_provenance->>'representation'='canonical_sqlite_rows'").bind(material).bind(crate::ATUIN_SOURCE).fetch_optional(&mut self.connection).await?;
+        let durable:Option<i64>=sqlx::query_scalar("SELECT durable_bytes FROM raw.source_material_registry WHERE id=$1 AND source_identifier=$2 AND material_kind='stream_chunk' AND status<>'capturing' AND parser_provenance->>'parser' IN ('atuin-v1','atuin-v2','atuin-v3') AND parser_provenance->>'representation'='canonical_sqlite_rows'").bind(material).bind(crate::ATUIN_SOURCE).fetch_optional(&mut self.connection).await?;
         let durable = durable.ok_or(Error::ReplayRefused(
             "replay requires an existing closed retained Atuin logical-row material",
         ))?;

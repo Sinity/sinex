@@ -791,7 +791,7 @@ fn storage_at(stage: usize) -> Vec<String> {
         .collect()
 }
 fn declarations() -> Result<Vec<String>> {
-    declarations_at(5)
+    declarations_at(6)
 }
 fn declarations_at(stage: usize) -> Result<Vec<String>> {
     installed_tables(stage)
@@ -847,7 +847,7 @@ async fn configure_events(conn: &mut PgConnection) -> Result<()> {
 }
 
 fn fingerprint() -> Result<String> {
-    fingerprint_at(5)
+    fingerprint_at(6)
 }
 fn fingerprint_at(stage: usize) -> Result<String> {
     Ok(blake3::hash(
@@ -855,6 +855,15 @@ fn fingerprint_at(stage: usize) -> Result<String> {
             declarations_at(stage)?,
             storage_at(stage),
             vec![TIMESCALEDB_VERSION.to_owned()],
+            if stage >= 6 {
+                // Attest the relaxed registered payload contract without rewriting
+                // any predecessor stage's canonical catalog fingerprint.
+                let mut schema = atuin_payload_schema_at(stage);
+                schema.sort_all_objects();
+                vec![schema.to_string()]
+            } else {
+                vec![]
+            },
         ]
         .concat()
         .join("\n")
@@ -904,6 +913,10 @@ pub fn schema_changes() -> Vec<SchemaChange> {
         SchemaChange {
             number: 5,
             description: "retain exact metadata when full-text representation is unavailable",
+        },
+        SchemaChange {
+            number: 6,
+            description: "preserve signed Atuin provider exit statuses",
         },
     ]
 }
@@ -1103,7 +1116,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
             .fetch_one(&mut *conn)
             .await?;
     let mut stage = None;
-    for candidate in 0..=5 {
+    for candidate in 0..=6 {
         if stored == fingerprint_at(candidate)? {
             stage = Some(candidate);
         }
@@ -1237,7 +1250,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
         ));
     }
     let registered: Option<serde_json::Value> = sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=2 AND event_type='command.executed' AND version='atuin-v1'").fetch_optional(&mut *conn).await?;
-    if registered.as_ref() != Some(&crate::atuin::payload_schema()) {
+    if registered.as_ref() != Some(&atuin_payload_schema_at(stage)) {
         return Err(Error::Schema(
             "registered Atuin payload schema differs".into(),
         ));
@@ -1437,9 +1450,17 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
     })
 }
 
+fn atuin_payload_schema_at(stage: usize) -> serde_json::Value {
+    let mut schema = crate::atuin::payload_schema();
+    if stage < 6 {
+        schema["properties"]["exit_code"]["minimum"] = serde_json::json!(0);
+    }
+    schema
+}
+
 fn predecessor_shell_payload() -> serde_json::Value {
     use serde_json::json;
-    let mut schema = crate::atuin::payload_schema();
+    let mut schema = atuin_payload_schema_at(5);
     let properties = schema["properties"].as_object_mut().unwrap();
     properties.insert("canonical".into(), json!({"type":["string","null"]}));
     properties.insert(
@@ -1690,6 +1711,28 @@ async fn apply_change_entry(
             conn.execute(crate::event_storage::FULL_TEXT_UNAVAILABLE_INDEX)
                 .await?;
         }
+        6 => {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT to_regclass('sinex_schemas.payload_schemas') IS NOT NULL",
+            )
+            .fetch_one(&mut *conn)
+            .await?;
+            if !exists {
+                return Ok(SchemaChangeCheck {
+                    number: entry.number,
+                    outcome: "old_objects_absent",
+                });
+            }
+            let changed = sqlx::query("UPDATE sinex_schemas.payload_schemas SET schema=$1 WHERE id=2 AND event_type='command.executed' AND version='atuin-v1'")
+                .bind(atuin_payload_schema_at(6))
+                .execute(&mut *conn)
+                .await?;
+            if changed.rows_affected() != 1 {
+                return Err(Error::Schema(
+                    "registered Atuin payload schema missing".into(),
+                ));
+            }
+        }
         _ => return Err(Error::Schema("unknown schema change".into())),
     }
     Ok(SchemaChangeCheck {
@@ -1801,6 +1844,30 @@ mod upgrade_tests {
         assert_eq!(fields["PGPASSWORD"], "p@ss+word");
         assert_eq!(fields["PGSSLMODE"], "verify-full");
         assert_eq!(fields["PGSSLROOTCERT"], "/synthetic/ca");
+    }
+    #[test]
+    fn signed_exit_registration_preserves_stage_five_binding() {
+        assert_eq!(
+            super::fingerprint_at(5).unwrap(),
+            "6ccf124f6bc31bb4c86522d1585e98a173b3b35c2db2205ff786dbf2909e17d7"
+        );
+        assert_eq!(
+            super::fingerprint_at(6).unwrap(),
+            "2f7b2a8789b6b7aadb0f2d6b06b1272d614d37e23cb480ce1455c1beeadee773"
+        );
+        assert_eq!(
+            super::atuin_payload_schema_at(5)["properties"]["exit_code"]["minimum"],
+            0
+        );
+        assert!(
+            super::atuin_payload_schema_at(6)["properties"]["exit_code"]
+                .get("minimum")
+                .is_none()
+        );
+        assert_eq!(
+            super::predecessor_shell_payload()["properties"]["exit_code"]["minimum"],
+            0
+        );
     }
     #[test]
     fn published_stage_four_declarations_keep_their_binding() {

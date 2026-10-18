@@ -108,10 +108,10 @@ full_interval_ms = 1000
             cursor=before['page']['cursor'];assert cursor
             raw=api('query.run',{'query':'events where source = terminal.atuin-history'})['result']['rows'][0]
             reference='sinex:ev/'+raw['id'];trace=api('object.trace',{'ref':reference,'bytes':True})['result'];stop(daemon)
-            pending=schema(bins/'sinexd','--check');assert [x['number'] for x in pending['pending_changes']]==[5]
+            pending=schema(bins/'sinexd','--check');assert [x['number'] for x in pending['pending_changes']]==[5,6]
             schema(bins/'sinexd','--apply',expected=2)
             result=schema(bins/'sinexd','--apply','--dump-file',work/'metadata-before-change.dump')
-            assert result['checked_changes']==[{'number':5,'outcome':'applied'}]
+            assert result['checked_changes']==[{'number':5,'outcome':'applied'},{'number':6,'outcome':'applied'}]
             assert sql("SELECT fingerprint FROM sinex_schemas.definition") == sql("SELECT fingerprint FROM sinex_schemas.definition", h['admin'])
             assert sql("SELECT catalog FROM sinex_schemas.definition") == sql("SELECT catalog FROM sinex_schemas.definition", h['admin'])
             rejected=run([old,'serve','--config',config],expected=1,label='published old writer refuses upgraded catalog')

@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--recovery-prior-accounting",type=Path,help="reuse an exact successful recovery accounting report and qualify the repeated recovery whole loop with observed costs")
 parser.add_argument("--recovery-context", action="store_true", help="qualify bounded mixed-context project recall through configured Atuin and public clients")
+parser.add_argument("--atuin-exits",action="store_true",help="qualify signed Atuin statuses and guarded schema-six reprocessing")
+parser.add_argument("--atuin-exits-predecessor-pin",type=Path,help="exact stage-five published package pin")
 parser.add_argument("--metadata-fts",action="store_true",help="qualify exact metadata availability with explicitly unavailable full-text vectors")
 parser.add_argument("--metadata-fts-predecessor-pin",type=Path,help="exact stage-4 package pin for guarded metadata/FTS schema upgrade controls")
 parser.add_argument("--chromium-predecessor-pin",type=Path,help="exact published stage-3 package pin used only to qualify guarded populated Chromium registration upgrade")
@@ -55,6 +57,10 @@ parser.add_argument("--demo-boundaries", action="store_true", help="qualify obse
 parser.add_argument("--demo-provider-loss", action="store_true", help="qualify committed retained reads after observed kill and provider loss")
 parser.add_argument("--demo-control", choices=["launch-failure", "corrupt-answer"])
 OPTIONS = parser.parse_args()
+if OPTIONS.atuin_exits:
+    incompatible=[v for k,v in vars(OPTIONS).items() if k not in ('atuin_exits','atuin_exits_predecessor_pin') and v]
+    if incompatible or not OPTIONS.atuin_exits_predecessor_pin: parser.error("signed Atuin controls require their own selector and exact stage-five pin")
+if OPTIONS.atuin_exits_predecessor_pin and not OPTIONS.atuin_exits: parser.error("signed Atuin predecessor pin requires --atuin-exits")
 if OPTIONS.metadata_fts:
     incompatible=[v for k,v in vars(OPTIONS).items() if k not in ('metadata_fts','metadata_fts_predecessor_pin') and v]
     if incompatible or not OPTIONS.metadata_fts_predecessor_pin: parser.error("metadata FTS controls require their own development selector and exact predecessor pin")
@@ -182,6 +188,9 @@ if OPTIONS.chromium:
     import chromium_cases,chromium_upgrade
     PLANNED=["canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract"]+[chromium_upgrade.NAME]+(chromium_cases.PLANNED[3:] if OPTIONS.chromium_focus else chromium_cases.PLANNED)
     if not OPTIONS.packaged: PLANNED=["cold query-free admin build"]+PLANNED[:2]+["checked runtime build and pure contracts"]+PLANNED[2:]
+if OPTIONS.atuin_exits:
+    import atuin_exit_cases
+    PLANNED=["cold query-free admin build","canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","checked runtime build and pure contracts"]+atuin_exit_cases.PLANNED
 if OPTIONS.metadata_fts:
     import metadata_fts_cases
     PLANNED=["cold query-free admin build","canonical schema cold apply and idempotent check","owned PostgreSQL extension and checksum contract","checked runtime build and pure contracts"]+metadata_fts_cases.PLANNED
@@ -391,7 +400,9 @@ try:
         for name in ["sinexd","sinexctl"]: shutil.copy2(BIN_DIR/name,runtime_bin/name)
         BIN_DIR=runtime_bin
         daemon=BIN_DIR/"sinexd"
-    if OPTIONS.metadata_fts:
+    if OPTIONS.atuin_exits:
+        atuin_exit_cases.exercise(globals())
+    elif OPTIONS.metadata_fts:
         metadata_fts_cases.exercise(globals())
     elif OPTIONS.chromium:
         scenario(chromium_upgrade.NAME,lambda:chromium_upgrade.exercise(globals(),chromium_cases.create))

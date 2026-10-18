@@ -2,7 +2,7 @@
 
 The native schema owner recognizes the exact declarations published at
 `4b5bf06197ffb1d07d57794f37f7273b634e0efd`, the recorded intermediate
-states, the current published stage-2 declarations and the new session declarations. It refuses unrelated fingerprints,
+states, and the ordered session, Chromium, metadata/text and signed Atuin declarations. It refuses unrelated fingerprints,
 changed definitions, missing objects, unsafe grants and change records that
 are not the exact ordered prefix. The protected definition receipt is checked
 against the live catalog before any change. No general migration framework or
@@ -93,3 +93,7 @@ Entry 3 registers the [selected shell session](shell-sessions.md) contract and s
 ## Metadata and full-text availability
 
 Ordered change 5 recognizes the exact published stage-4 catalog, makes `core.search_text.tsv` nullable and adds the declared partial unavailable-vector index. Existing vectors and all canonical/raw events, source observations, retained materials and operation evidence remain unchanged. The ordinary guarded `--apply --dump-file` route is required; an ordinary schema check reports the pending entry without applying it. Fresh and upgraded catalogs must agree. The previous writer refuses the new fingerprint. The separate retrieval-basis change rebuilds derived metadata/text readiness and invalidates old indexed cursor generations; it never remints source events or rewrites raw evidence. See [indexed retrieval](indexed-retrieval.md) for independent metadata readiness, exact text refusal and bounded diagnostics.
+
+## Signed Atuin status domain
+
+Ordered change 6 relaxes only registered Atuin payload schema 2 to admit signed provider exit integers. It preserves every earlier stage fingerprint and the retired single-source canonical schema 3. The current fingerprint additionally binds the sorted Atuin payload declaration, so an old writer refuses the relaxed catalog. Fresh creation and guarded populated upgrade have identical catalogs. No event, retained byte, reading order, source identity, query column or limit changes during schema application. Parser recipe `atuin-v3` readmission and retained replay are separate ordinary writer operations; they preserve `-1` as unknown and other signed values exactly. See [Atuin](atuin.md) for the provider meaning and bounded controls.
