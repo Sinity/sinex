@@ -5,8 +5,9 @@ import datetime as dt
 import json
 import socket
 
+from _atuin_daemon import create_history as create
 from _clients import Clients, wait
-from _shell_history import COLUMNS, check_trace, create, independent, write
+from _shell_history import COLUMNS, check_trace, independent, write
 
 
 def fixture_row(identity, clock, cwd, duration=0):

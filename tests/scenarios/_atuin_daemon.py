@@ -160,10 +160,14 @@ class Mcp:
             if reply.get('id') == self.last_id:
                 return reply
 
-    def tool(self, name, arguments):
+    def tool(self, name, arguments, error=False):
+        """Call a tool and check whether it reported an error; returns its structured answer."""
         result = self.call('tools/call', {'name': name, 'arguments': arguments})['result']
-        assert not result.get('isError'), result
+        assert bool(result.get('isError')) == error, result
         return result.get('structuredContent') or json.loads(result['content'][0]['text'])
+
+    def tool_names(self):
+        return {t['name'] for t in self.call('tools/list', {})['result']['tools']}
 
     def close(self):
         if self.proc.poll() is None:

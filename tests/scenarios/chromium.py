@@ -525,7 +525,7 @@ automata = []
             assert unsupported['last_run']['rows_read'] == 0
         scenario('schema change and VACUUM reread; duplicate GUID, replaced file, ID reset and unsupported schema are refused', refusals)
     finally:
-        if clients.mcp is not None and clients.mcp.poll() is None:
+        if clients.mcp is not None and clients.mcp.proc.poll() is None:
             clients.close_mcp()
         if daemon is not None and daemon.poll() is None:
             stop(daemon)

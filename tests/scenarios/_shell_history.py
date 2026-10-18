@@ -1,16 +1,9 @@
 """Synthetic Atuin history and an independent session grouping to compare against."""
 import sqlite3
 
-COLUMNS = ['id', 'timestamp', 'duration', 'exit', 'command', 'cwd', 'session', 'hostname', 'deleted_at']
+from _atuin_daemon import COLUMNS
+
 GAP_NS = 300_000_000_000
-
-
-def create(path):
-    with sqlite3.connect(path) as con:
-        con.execute('CREATE TABLE history(id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,duration INTEGER NOT NULL,'
-                    'exit INTEGER NOT NULL,command TEXT NOT NULL,cwd TEXT NOT NULL,session TEXT NOT NULL,'
-                    'hostname TEXT NOT NULL,deleted_at INTEGER)')
-    con.close()
 
 
 def write(path, rows, replace=False):

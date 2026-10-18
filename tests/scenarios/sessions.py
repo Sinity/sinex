@@ -13,8 +13,9 @@ import sqlite3
 import subprocess
 import time
 
+from _atuin_daemon import create_history as create
 from _clients import Clients, wait
-from _shell_history import check_trace, create, independent, query_all, write
+from _shell_history import check_trace, independent, query_all, write
 
 PROJECT = '/synthetic/session/tide'
 DAY = '2026-10-13'
