@@ -98,7 +98,7 @@ async fn locked_hot_journal_copy_recovers_only_owned_files_and_reuses_quiet_view
         .unwrap();
     let source_before = std::fs::read(&path).unwrap();
     let journal_before = std::fs::read(sidecar(&path, "-journal")).unwrap();
-    let mut owner = Custodian::new(&path, f.0.join("owned")).await.unwrap();
+    let mut owner = HistorySource::new(&path, f.0.join("owned")).await.unwrap();
     assert!(owner.direct.is_none());
     let (_keep_stop, stop) = tokio::sync::watch::channel(false);
     let (copy, evidence) = owner.copied_view(&stop, &mut None).await.unwrap();

@@ -358,13 +358,13 @@ impl WriterPool {
         Ok((material, start))
     }
 
-    pub(crate) async fn atuin_read_basis(
+    pub(crate) async fn atuin_read_start(
         &mut self,
         locator: &str,
-    ) -> Result<sinex_model::acquisition::AtuinReadBasis> {
+    ) -> Result<sinex_model::acquisition::AtuinReadStart> {
         let (input, carry): (Uuid, Option<Value>) = sqlx::query_as("SELECT i.id,c.carry FROM raw.inputs i LEFT JOIN raw.source_cursors c ON c.binding=i.binding AND c.input=i.id::text WHERE i.binding=$1 AND i.locator=$2")
             .bind(SOURCE).bind(locator).fetch_one(&mut self.connection).await?;
-        let basis = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
+        let snapshot_seq = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
             .fetch_one(&mut self.connection)
             .await?;
         let checkpoint = carry
@@ -372,16 +372,16 @@ impl WriterPool {
                 serde_json::from_value::<sinex_model::acquisition::AtuinCheckpoint>(v).ok()
             })
             .filter(|v| v.valid());
-        Ok(sinex_model::acquisition::AtuinReadBasis {
+        Ok(sinex_model::acquisition::AtuinReadStart {
             input,
-            basis,
+            snapshot_seq,
             checkpoint,
         })
     }
     pub(crate) async fn atuin_unfinished_page(
         &mut self,
         input: Uuid,
-        basis: i64,
+        snapshot_seq: i64,
         after: Option<Uuid>,
     ) -> Result<Vec<(Uuid, String)>> {
         // Historical eligibility is fixed before admission. Updating an old unfinished
@@ -392,7 +392,7 @@ impl WriterPool {
             .execute(&mut *tx)
             .await?;
         let rows = sqlx::query_as("SELECT e.id,e.equivalence_key::jsonb->>1 FROM core.events e WHERE e.source=$1 AND e.event_type='command.executed' AND e.record_state='present' AND e.payload->>'completion'='end_not_recorded' AND (e.equivalence_key::jsonb->>0)=$2 AND e.commit_seq<=$3 AND ($4::uuid IS NULL OR e.id>$4) AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.id=e.id AND a.archived_seq<=$3) ORDER BY e.id LIMIT 64")
-            .bind(SOURCE).bind(input.to_string()).bind(basis).bind(after).fetch_all(&mut *tx).await?;
+            .bind(SOURCE).bind(input.to_string()).bind(snapshot_seq).bind(after).fetch_all(&mut *tx).await?;
         tx.commit().await?;
         Ok(rows)
     }

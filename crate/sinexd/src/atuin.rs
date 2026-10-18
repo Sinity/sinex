@@ -237,10 +237,10 @@ async fn read(
     stop: &tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), String> {
     use sinex_model::acquisition::{AtuinCheckpoint, AtuinReadKind, AtuinReadPlan};
-    let basis = admission
-        .atuin_read_basis(observation.locator.clone())
+    let start = admission
+        .atuin_read_start(observation.locator.clone())
         .await
-        .map_err(|_| "Atuin canonical read basis unavailable")?;
+        .map_err(|_| "Atuin read start unavailable")?;
     let monotonic_due = reader.full_due;
     let (conn, epoch) = reader.connected(&config.path).await?;
     let mut tx = conn
@@ -251,15 +251,15 @@ async fn read(
     let schema: i64 = sqlx::query_scalar("PRAGMA schema_version")
         .fetch_one(&mut *tx)
         .await
-        .map_err(|_| "Atuin schema basis unavailable")?;
+        .map_err(|_| "Atuin schema version unavailable")?;
     let user: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(&mut *tx)
         .await
-        .map_err(|_| "Atuin version basis unavailable")?;
+        .map_err(|_| "Atuin user version unavailable")?;
     let full = full_required(
         monotonic_due,
         tokio::time::Instant::now(),
-        basis
+        start
             .checkpoint
             .as_ref()
             .is_some_and(|c| c.reusable(epoch, schema, user, OffsetDateTime::now_utc())),
@@ -274,7 +274,7 @@ async fn read(
         rows: Vec::new(),
         bytes: 0,
     };
-    let old_through = basis
+    let old_through = start
         .checkpoint
         .as_ref()
         .map(|c| c.through_rowid)
@@ -310,7 +310,7 @@ async fn read(
                 return Err("Atuin unfinished read interrupted; committed prefix retained".into());
             }
             let keys = admission
-                .atuin_unfinished_page(basis.input, basis.basis, after)
+                .atuin_unfinished_page(start.input, start.snapshot_seq, after)
                 .await
                 .map_err(|_| "Atuin prior unfinished eligibility unavailable")?;
             if keys.is_empty() {
@@ -364,7 +364,7 @@ async fn read(
             needs_full: false,
         }
     } else {
-        basis.checkpoint.expect("reusable checkpoint")
+        start.checkpoint.expect("reusable checkpoint")
     };
     checkpoint.through_rowid = ceiling.map_or(checkpoint.through_rowid, |v| {
         checkpoint.through_rowid.max(v)
@@ -399,9 +399,9 @@ async fn read(
 fn full_required(
     deadline: Option<tokio::time::Instant>,
     now: tokio::time::Instant,
-    basis_reusable: bool,
+    checkpoint_reusable: bool,
 ) -> bool {
-    !basis_reusable || deadline.is_none_or(|due| now >= due)
+    !checkpoint_reusable || deadline.is_none_or(|due| now >= due)
 }
 #[cfg(test)]
 #[path = "atuin/read_plan_tests.rs"]

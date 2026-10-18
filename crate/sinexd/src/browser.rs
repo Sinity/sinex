@@ -1,10 +1,10 @@
 //! Configured Chromium History reading. Browser evidence never enters shell derivation.
 use crate::{
+    browser_snapshot::{Failure as PollFailure, HistorySource},
     config::ChromiumConfig,
-    sqlite_custody::{Custodian, Failure as PollFailure},
 };
 use serde_json::{Value, json};
-use sinex_model::browser::{Checkpoint, ReadBasis};
+use sinex_model::browser::{BrowserReadStart, Checkpoint};
 use sinex_store::{
     Admission, BrowserBegin, BrowserStep, MAX_STEP_BYTES, MAX_STEP_ROWS, PrivacyRule,
 };
@@ -22,7 +22,7 @@ use rows::ProviderRows;
 
 pub struct Attempt {
     observation: Uuid,
-    basis: ReadBasis,
+    start: BrowserReadStart,
 }
 pub async fn begin(
     config: &ChromiumConfig,
@@ -33,7 +33,7 @@ pub async fn begin(
     let observed_at = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .map_err(|_| "browser observation clock encoding")?;
-    let basis = admission
+    let start = admission
         .browser_begin(BrowserBegin {
             profile: config.profile.clone(),
             generation: config.database_generation,
@@ -44,7 +44,7 @@ pub async fn begin(
         })
         .await
         .map_err(|_| "browser reading registration unavailable")?;
-    Ok(Attempt { observation, basis })
+    Ok(Attempt { observation, start })
 }
 pub async fn run(
     config: ChromiumConfig,
@@ -55,7 +55,7 @@ pub async fn run(
     mut attempt: Attempt,
     mut pause: Option<sinex_store::TestPause>,
 ) -> Result<(), String> {
-    let mut custodian: Option<Custodian> = None;
+    let mut source: Option<HistorySource> = None;
     let mut full_due = None;
     let mut snapshot_due = None;
     loop {
@@ -66,7 +66,7 @@ pub async fn run(
         let result = poll(
             &config,
             &root,
-            &mut custodian,
+            &mut source,
             &mut full_due,
             &mut snapshot_due,
             &attempt,
@@ -77,10 +77,10 @@ pub async fn run(
         .await;
         if let Err(failure) = result {
             let (reason, fence) = failure.into_outcome();
-            custodian = None;
+            source = None;
             full_due = None;
             snapshot_due = None;
-            admission.browser_step(BrowserStep{input:attempt.basis.input.ok_or("browser input absent")?,observation,rows:vec![],complete:false,unavailable:Some(reason),metadata:json!({"coverage":"unknown; previous retained values remain available"}),checkpoint:None,fence}).await.map_err(|_|"browser unavailable outcome could not commit")?;
+            admission.browser_step(BrowserStep{input:attempt.start.input.ok_or("browser input absent")?,observation,rows:vec![],complete:false,unavailable:Some(reason),metadata:json!({"coverage":"unknown; previous retained values remain available"}),checkpoint:None,fence}).await.map_err(|_|"browser unavailable outcome could not commit")?;
         }
         let decision = tokio::time::Instant::now();
         let schedule = sinex_model::acquisition::PollSchedule::after(
@@ -319,7 +319,7 @@ fn physical_deadline(
 async fn poll(
     config: &ChromiumConfig,
     root: &Path,
-    custodian: &mut Option<Custodian>,
+    source: &mut Option<HistorySource>,
     full_due: &mut Option<tokio::time::Instant>,
     snapshot_due: &mut Option<tokio::time::Instant>,
     attempt: &Attempt,
@@ -327,14 +327,14 @@ async fn poll(
     stop: &tokio::sync::watch::Receiver<bool>,
     pause: &mut Option<sinex_store::TestPause>,
 ) -> Result<(), PollFailure> {
-    if attempt.basis.reconciliation_required {
+    if attempt.start.reconciliation_required {
         return Err(PollFailure::ReconciliationRequired(
             "configured browser generation is fenced; explicit reconciliation required",
         ));
     }
-    if custodian.is_none() {
-        *custodian = Some(
-            Custodian::new(
+    if source.is_none() {
+        *source = Some(
+            HistorySource::new(
                 &config.path,
                 root.join(config.database_generation.to_string())
                     .join(blake3::hash(config.profile.as_bytes()).to_hex().as_str()),
@@ -342,9 +342,9 @@ async fn poll(
             .await?,
         );
     }
-    let owner = custodian.as_mut().expect("opened custodian");
+    let owner = source.as_mut().expect("opened custodian");
     owner.verify()?;
-    let previous = attempt.basis.checkpoint.as_ref();
+    let previous = attempt.start.checkpoint.as_ref();
     if previous
         .is_some_and(|p| p.generation != config.database_generation || p.identity != owner.identity)
     {
@@ -357,7 +357,7 @@ async fn poll(
     let snapshot_path = owner.next_path("snapshot");
     let _snapshot_cleanup = SnapshotScratch(snapshot_path.clone());
     let mut owned = None;
-    let custody = if owner.direct.is_none() {
+    let read_method = if owner.direct.is_none() {
         let (path, evidence) = owner.copied_view(stop, pause).await?;
         owned = Some(
             SqliteConnection::connect_with(
@@ -481,12 +481,12 @@ async fn poll(
         )?,
     };
     let snapshot_is_due = tokio::time::Instant::now() >= snapshot_deadline;
-    let mut metadata = json!({"browser_read_plan_v1":{"kind":if full{"full_value_comparison"}else{"new_keys_and_prior_unfinished"},"custody":custody,"profile":config.profile,"generation":config.database_generation,"ordering_basis":"AUTOINCREMENT visits; GUID download key census, not an ID monotonicity claim","privacy_class":"plain","coverage":"selected retained values; no attention, population completeness or deletion inference"}});
+    let mut metadata = json!({"browser_read_plan_v1":{"kind":if full{"full_value_comparison"}else{"new_keys_and_prior_unfinished"},"custody":read_method,"profile":config.profile,"generation":config.database_generation,"ordering_basis":"AUTOINCREMENT visits; GUID download key census, not an ID monotonicity claim","privacy_class":"plain","coverage":"selected retained values; no attention, population completeness or deletion inference"}});
     let physical_snapshot = if snapshot_is_due {
-        let bytes = crate::sqlite_custody::backup(&mut tx, &snapshot_path, stop).await?;
+        let bytes = crate::browser_snapshot::backup(&mut tx, &snapshot_path, stop).await?;
         let mut snapshot = admission
             .browser_snapshot(
-                attempt.basis.input.ok_or("browser input absent")?,
+                attempt.start.input.ok_or("browser input absent")?,
                 attempt.observation,
                 snapshot_path.clone(),
             )
@@ -512,7 +512,7 @@ async fn poll(
         None
     };
     let mut batch = Batch {
-        input: attempt.basis.input.ok_or("browser input absent")?,
+        input: attempt.start.input.ok_or("browser input absent")?,
         observation: attempt.observation,
         admission,
         metadata,
@@ -598,7 +598,7 @@ async fn poll(
                 return Err("Chromium unfinished selection cancelled".into());
             }
             let pending = admission
-                .browser_pending(batch.input, attempt.basis.basis, after)
+                .browser_pending(batch.input, attempt.start.snapshot_seq, after)
                 .await
                 .map_err(|_| "Chromium canonical unfinished basis unavailable")?;
             if pending.is_empty() {

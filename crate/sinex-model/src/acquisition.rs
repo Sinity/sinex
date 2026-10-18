@@ -208,11 +208,10 @@ pub enum AtuinReadKind {
     NewCoordinatesAndPriorUnfinished,
 }
 
-/// One bounded page of prior unfinished native keys from the canonical owner.
-/// `basis` fixes eligibility while read admissions replace the corresponding heads.
+/// Where an Atuin read starts: the input, the commit sequence it reads as of, and the last checkpoint.
 #[derive(Clone, Debug)]
-pub struct AtuinReadBasis {
+pub struct AtuinReadStart {
     pub input: Uuid,
-    pub basis: i64,
+    pub snapshot_seq: i64,
     pub checkpoint: Option<AtuinCheckpoint>,
 }

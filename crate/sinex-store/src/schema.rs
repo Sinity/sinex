@@ -1001,7 +1001,7 @@ pub async fn bootstrap(admin_url: &str) -> Result<SchemaStatus> {
         configure_events(&mut tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas (id,event_type,version,schema) VALUES (2,'command.executed','atuin-v1',$1)")
             .bind(crate::atuin::payload_schema()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(3,'command.canonical','shell-command-v1-single-source',$1)").bind(predecessor_shell_payload()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(3,'command.canonical','shell-command-v1-single-source',$1)").bind(first_release_shell_payload()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(5,'command.canonical','shell-command-v1-atuin-zsh',$1)").bind(crate::shell::payload_schema()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(4,'command.imported','zsh-extended-v1',$1)").bind(crate::zsh::payload_schema()).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO sinex_schemas.payload_schemas(id,event_type,version,schema) VALUES(6,'activity.session.boundary','shell-session-v1',$1)").bind(crate::session::payload_schema()).execute(&mut *tx).await?;
@@ -1309,7 +1309,7 @@ pub(crate) async fn inspect(conn: &mut PgConnection) -> Result<SchemaStatus> {
     }
     {
         let canonical:Option<serde_json::Value>=sqlx::query_scalar("SELECT schema FROM sinex_schemas.payload_schemas WHERE id=3 AND event_type='command.canonical' AND version='shell-command-v1-single-source'").fetch_optional(&mut *conn).await?;
-        if canonical.as_ref() != Some(&predecessor_shell_payload()) {
+        if canonical.as_ref() != Some(&first_release_shell_payload()) {
             return Err(Error::Schema("released singleton payload differs".into()));
         }
     }
@@ -1496,7 +1496,7 @@ fn atuin_payload_schema_at(stage: usize) -> serde_json::Value {
     schema
 }
 
-fn predecessor_shell_payload() -> serde_json::Value {
+fn first_release_shell_payload() -> serde_json::Value {
     use serde_json::json;
     let mut schema = atuin_payload_schema_at(5);
     let properties = schema["properties"].as_object_mut().unwrap();
@@ -1927,7 +1927,7 @@ mod upgrade_tests {
                 .is_none()
         );
         assert_eq!(
-            super::predecessor_shell_payload()["properties"]["exit_code"]["minimum"],
+            super::first_release_shell_payload()["properties"]["exit_code"]["minimum"],
             0
         );
     }
@@ -1939,7 +1939,7 @@ mod upgrade_tests {
         );
     }
     #[test]
-    fn published_predecessor_declarations_retain_the_released_binding() {
+    fn first_release_declarations_keep_the_released_binding() {
         // Observed from the independently built and published 4b5bf0619 package.
         assert_eq!(
             super::fingerprint_at(0).unwrap(),

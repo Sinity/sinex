@@ -4,7 +4,7 @@ use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 use winnow::{Parser, token::take_while};
 
-pub fn normalization_basis() -> String {
+pub fn normalization_versions() -> String {
     format!(
         "casefold={:?};nfc={:?};words={:?}",
         caseless::UNICODE_VERSION,
