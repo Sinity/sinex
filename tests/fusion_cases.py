@@ -283,10 +283,11 @@ poll_interval_ms={poll}
                 if reply.get('id')==request['id']:return reply['result']
         def tool(name,args):
             r=call('tools/call',{'name':name,'arguments':args});assert not r.get('isError');return r.get('structuredContent') or json.loads(r['content'][0]['text'])
-        call('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'independent-selected-fusion','version':'1'}})
-        mcp.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');mcp.stdin.flush()
-        assert {t['name'] for t in call('tools/list',{})['tools']}=={'sinex_search','sinex_query','sinex_show','sinex_trace','sinex_sources','sinex_status'}
-        try:yield tool,call
+        try:
+            call('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'independent-selected-fusion','version':'1'}})
+            mcp.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');mcp.stdin.flush()
+            assert {t['name'] for t in call('tools/list',{})['tools']}=={'sinex_recall','sinex_search','sinex_query','sinex_show','sinex_trace','sinex_sources','sinex_status'}
+            yield tool,call
         finally:
             (report/(name+'.wire.json')).write_text(json.dumps(log,ensure_ascii=False,indent=2)+'\n')
             mcp.stdin.close();mcp.wait(timeout=5)
