@@ -2,7 +2,7 @@
 //! `activity.session.boundary` events, one logical day at a time.
 //! `derivation.session_dirty` lists the days to redo; temp work is discarded
 //! on restart and the day is redone.
-use crate::{COUNTER, Error, Result, WriterPool};
+use crate::{Error, Result, WriterPool, current_commit_seq, next_commit_seq};
 use serde_json::{Value, json};
 use sqlx::{Connection, Row};
 use uuid::Uuid;
@@ -227,9 +227,7 @@ impl WriterPool {
         };
         let day: String = row.try_get("day")?;
         let through_day: String = row.try_get("through_day")?;
-        let snapshot_seq: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
-            .fetch_one(&mut self.connection)
-            .await?;
+        let snapshot_seq: i64 = current_commit_seq(&mut self.connection).await?;
         for statement in [
             "DROP TABLE IF EXISTS pg_temp.sinex_session_spans,pg_temp.sinex_session_groups",
             "CREATE TEMP TABLE sinex_session_spans(
@@ -517,7 +515,7 @@ GROUP BY 1",
                 // too. A reused session marks nothing, so neighbouring days stop.
                 mark_days_dirty(&mut tx, &work.day, &end, work.snapshot_seq, true).await?;
                 let id = Uuid::now_v7();
-                let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+                let seq: i64 = next_commit_seq(&mut tx).await?;
                 let hash = blake3::hash(&serde_json::to_vec(&payload).unwrap())
                     .as_bytes()
                     .to_vec();
@@ -604,7 +602,7 @@ GROUP BY 1",
                 .bind(IDLE_PHASE)
                 .execute(&mut *tx)
                 .await?;
-            let _: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+            let _: i64 = next_commit_seq(&mut tx).await?;
             tx.commit().await?;
             return Ok(true);
         }
@@ -625,7 +623,7 @@ GROUP BY 1",
                     true,
                 )
                 .await?;
-                let seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+                let seq: i64 = next_commit_seq(&mut tx).await?;
                 sqlx::query(
                     "INSERT INTO audit.archived(id,archived_seq,reason) VALUES($1,$2,'supersede')",
                 )

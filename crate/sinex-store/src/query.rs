@@ -1,6 +1,6 @@
 //! The `events` query language over stored raw events, plus `show` and `trace`
 //! for one event. Unsupported syntax is refused before any database query.
-use crate::{Error, PrivacyRule, ReadPool, Result};
+use crate::{Error, PrivacyRule, ReadPool, Result, current_commit_seq};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{Connection, PgConnection, Postgres, QueryBuilder, Row, Transaction};
@@ -64,9 +64,7 @@ pub(crate) async fn begin_snapshot(
     .bind(format!("{}ms", budget.as_millis().max(1)))
     .execute(&mut *tx)
     .await?;
-    let seq: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
-        .fetch_one(&mut *tx)
-        .await?;
+    let seq: i64 = current_commit_seq(&mut tx).await?;
     Ok((tx, seq))
 }
 

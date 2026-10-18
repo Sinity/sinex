@@ -4,6 +4,7 @@ mod admission;
 mod atuin;
 mod blob;
 mod browser;
+mod commit;
 mod exclusion;
 mod projection;
 mod query;
@@ -43,7 +44,8 @@ pub use writer::{RuntimeIdentity, Store, prepare_admission_statements};
 pub use zsh::{PROTOCOL as ZSH_PROTOCOL, SOURCE as ZSH_SOURCE, ZshStep};
 
 pub(crate) use blob::{BLOB_LOOKUP, BLOB_PRESENT, BLOB_REGISTER, parse_hash};
-pub(crate) use writer::{COUNTER, MATERIAL, WriterPool, coordinate_hash};
+pub(crate) use commit::{current_commit_seq, next_commit_seq};
+pub(crate) use writer::{MATERIAL, WriterPool, coordinate_hash};
 
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]

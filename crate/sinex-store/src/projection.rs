@@ -1,7 +1,7 @@
 //! Maintains the shell-search projection (`core.search_text` and
 //! `core.event_project`) from the commit log. One process holds it at a time;
 //! rows and the log position commit together.
-use crate::{Error, Result, TestPause};
+use crate::{Error, Result, TestPause, current_commit_seq};
 use serde_json::Value;
 use sinex_model::retrieval::{
     CONTRACT, Project, normalization_versions, normalize, project, token_text,
@@ -122,9 +122,7 @@ impl Indexer {
         let state=sqlx::query("SELECT generation,position,serving FROM derivation.read_model_position WHERE name='shell-search'").fetch_one(&mut *tx).await?;
         let generation: Uuid = state.try_get("generation")?;
         let position: i64 = state.try_get("position")?;
-        let current: i64 = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
-            .fetch_one(&mut *tx)
-            .await?;
+        let current: i64 = current_commit_seq(&mut tx).await?;
         if position > current {
             return Err(Error::ProjectionUnavailable(
                 "projection position exceeds committed state",

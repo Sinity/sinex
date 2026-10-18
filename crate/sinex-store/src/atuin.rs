@@ -4,7 +4,7 @@
 use crate::source_admission::{
     Tx, key_hash, observation_status, producer_version, record_failure, row_hash, set_part_length,
 };
-use crate::{COUNTER, Error, Result, WriterPool, coordinate_hash};
+use crate::{Error, Result, WriterPool, coordinate_hash, current_commit_seq, next_commit_seq};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sqlx::{Connection, Row};
@@ -548,7 +548,7 @@ async fn admit_row(
         let old: Uuid = old.try_get("event_id")?;
         crate::shell::dirty(tx, old).await?;
         archive_replaced(tx, old, id, *seq, "supersede", None).await?;
-        *seq = sqlx::query_scalar(COUNTER).fetch_one(&mut **tx).await?;
+        *seq = next_commit_seq(tx).await?;
     }
     let test_fixture = step.interpretation.mislabel(&mut parsed);
     mask(&mut parsed.payload, &step.privacy_rules)?;
@@ -580,7 +580,7 @@ async fn admit_row(
         },
     )
     .await?;
-    *seq = sqlx::query_scalar(COUNTER).fetch_one(&mut **tx).await?;
+    *seq = next_commit_seq(tx).await?;
     counts.admitted += 1;
     counts.removed += i64::from(removed);
     Ok(())
@@ -675,9 +675,7 @@ impl WriterPool {
         .bind(locator)
         .fetch_one(&mut self.connection)
         .await?;
-        let snapshot_seq = sqlx::query_scalar("SELECT seq FROM core.commit_counter WHERE one")
-            .fetch_one(&mut self.connection)
-            .await?;
+        let snapshot_seq = current_commit_seq(&mut self.connection).await?;
         let checkpoint = carry
             .and_then(|v| {
                 serde_json::from_value::<sinex_model::acquisition::AtuinCheckpoint>(v).ok()
@@ -772,7 +770,7 @@ impl WriterPool {
             crate::TestPause::reach(&mut self.pause, "retained-fsynced", stored.clone()).await?;
         }
         let mut tx = self.connection.begin().await?;
-        let mut seq: i64 = sqlx::query_scalar(COUNTER).fetch_one(&mut *tx).await?;
+        let mut seq: i64 = next_commit_seq(&mut tx).await?;
         let producer = parser_producer(&mut tx, self.run_id, parser, &step.privacy_rules).await?;
         if let Some(id) = material {
             set_part_length(&mut tx, id, start + bytes.len() as i64).await?;
