@@ -2,11 +2,14 @@
 //! commit-log reader; the confirmed-stream publisher; the NATS ingress
 //! consumer; the automaton driver; replay; the API (architecture §7.4).
 mod backfill;
+mod commits;
 mod context;
 mod daemon;
 mod derive;
+mod ingress;
 mod keys;
 mod operate;
+mod publisher;
 mod replay;
 mod writer;
 
@@ -29,8 +32,28 @@ enum Command {
     Run {
         #[arg(long)]
         database: String,
+        /// Content store directory.
         #[arg(long)]
         store: PathBuf,
+        /// NATS server URL, with the daemon's credentials when required.
+        #[arg(long)]
+        nats: String,
+        /// Subject root on the NATS server.
+        #[arg(long, default_value = "sinex")]
+        subjects: String,
+        #[arg(long, default_value = "localhost")]
+        host: String,
+    },
+    /// Publish every committed event not yet on the confirmed stream, then
+    /// stop and report the rate. For first publication and measurement; the
+    /// running daemon does the same continuously.
+    Publish {
+        #[arg(long)]
+        database: String,
+        #[arg(long)]
+        nats: String,
+        #[arg(long, default_value = "sinex")]
+        subjects: String,
     },
     /// Capture a live system source into its spool (the daemon runs the same
     /// capture as a task).
@@ -372,11 +395,45 @@ async fn run_derive(database: String, host: String) -> Result<(), String> {
     writer_task.await.map_err(|e| e.to_string())
 }
 
+async fn publish(database: &str, nats: &str, subjects: &str) -> Result<(), String> {
+    use sqlx::Connection;
+    let mut conn = sqlx::PgConnection::connect(database)
+        .await
+        .map_err(|e| format!("database: {e}"))?;
+    let client = async_nats::connect(nats)
+        .await
+        .map_err(|e| format!("NATS at {nats}: {e}"))?;
+    let js = publisher::context(client);
+    let report = publisher::drain(&mut conn, &js, &sinex_protocol::Subjects::new(subjects)).await?;
+    println!("{report}");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Run { database, store } => daemon::run(database, store).await,
+        Command::Run {
+            database,
+            store,
+            nats,
+            subjects,
+            host,
+        } => {
+            daemon::run(daemon::Options {
+                database,
+                store,
+                nats,
+                subjects,
+                host,
+            })
+            .await
+        }
+        Command::Publish {
+            database,
+            nats,
+            subjects,
+        } => publish(&database, &nats, &subjects).await,
         Command::Capture {
             source:
                 Capture::Journald {

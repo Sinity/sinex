@@ -15,7 +15,7 @@ use sinex_store::replay::{self, Diff};
 use sinex_store::{Blobs, DirtyKeys, Outcome};
 use sqlx::{Connection, PgConnection};
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Priority {
@@ -166,11 +166,18 @@ pub fn channels() -> (WriterHandle, Queues) {
 /// Run the writer until every handle is dropped. A failed batch is rolled back
 /// and refused; the writer continues with the next. If the connection is lost
 /// it reconnects to `url` before the next batch.
-pub async fn run(
+pub async fn run(url: String, connection: PgConnection, queues: Queues, keys: Arc<dyn DirtyKeys>) {
+    run_notifying(url, connection, queues, keys, watch::channel(0).0).await;
+}
+
+/// [`run`], also counting committed batches on `commits`, which wakes the
+/// commit-log reader and the publisher (architecture §4.2 step 8).
+pub async fn run_notifying(
     url: String,
     mut connection: PgConnection,
     mut queues: Queues,
     keys: Arc<dyn DirtyKeys>,
+    commits: watch::Sender<u64>,
 ) {
     loop {
         let job = tokio::select! {
@@ -196,6 +203,9 @@ pub async fn run(
             && let Ok(fresh) = PgConnection::connect(&url).await
         {
             connection = fresh;
+        }
+        if result.is_ok() {
+            commits.send_modify(|n| *n += 1);
         }
         let _ = job.reply.send(result);
     }

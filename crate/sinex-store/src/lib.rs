@@ -7,6 +7,7 @@
 //! `sqlx::query!`; there is no offline cache (operator ruling, 2025-08-10).
 pub mod admission;
 pub mod blobs;
+pub mod committed;
 pub mod derived;
 pub mod excision;
 pub mod positions;

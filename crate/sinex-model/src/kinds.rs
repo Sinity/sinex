@@ -188,7 +188,21 @@ pub struct KindInfo {
     pub key: crate::KeyKind,
     pub replace: crate::ReplaceRule,
     pub json_schema: fn() -> Value,
+    /// Build an event of this type from a JSON payload, as arriving over the
+    /// NATS ingress: the payload is decoded into the Rust type first, so the
+    /// type's time and removal rules apply exactly as for in-process sources.
+    pub build: Build,
 }
+
+/// See [`KindInfo::build`].
+pub type Build = fn(
+    &Value,
+    &str,
+    crate::Origin,
+    crate::ReadingOrder,
+    [u8; 32],
+    crate::Class,
+) -> Result<crate::Event, crate::BuildError>;
 
 const fn info<P: EventPayload>() -> KindInfo {
     KindInfo {
@@ -196,7 +210,21 @@ const fn info<P: EventPayload>() -> KindInfo {
         key: P::KEY,
         replace: P::REPLACE,
         json_schema: P::payload_schema,
+        build: build_from_json::<P>,
     }
+}
+
+fn build_from_json<P: EventPayload>(
+    payload: &Value,
+    source: &str,
+    origin: crate::Origin,
+    reading_order: crate::ReadingOrder,
+    record_hash: [u8; 32],
+    class: crate::Class,
+) -> Result<crate::Event, crate::BuildError> {
+    let typed: P = serde_json::from_value(payload.clone())
+        .map_err(|e| crate::BuildError::Payload(P::EVENT_TYPE, e.to_string()))?;
+    crate::Event::build(&typed, source, origin, reading_order, record_hash, class)
 }
 
 /// Every event type Sinex stores.
@@ -277,6 +305,44 @@ mod tests {
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|f| f == "command"));
         assert!(required.iter().any(|f| f == "started_at"));
+    }
+
+    #[test]
+    fn json_payloads_build_through_the_rust_type() {
+        let kind = find("command.executed").unwrap();
+        let origin = || crate::Origin::Record {
+            location: crate::RecordLocation {
+                material: crate::MaterialId::new(),
+                anchor: 0,
+            },
+            ordinal: 0,
+        };
+        let payload = serde_json::to_value(atuin(true)).unwrap();
+        let event = (kind.build)(
+            &payload,
+            "producer:p",
+            origin(),
+            crate::ReadingOrder(1),
+            [0; 32],
+            crate::Class::Open,
+        )
+        .unwrap();
+        assert_eq!(event.event_type, "command.executed");
+        assert_eq!(event.record_state, RecordState::Removed);
+        assert!(event.equivalence_key.is_some());
+        let bad = serde_json::json!({"command": "ls"});
+        assert!(matches!(
+            (kind.build)(
+                &bad,
+                "producer:p",
+                origin(),
+                crate::ReadingOrder(1),
+                [0; 32],
+                crate::Class::Open
+            ),
+            Err(crate::BuildError::Payload("command.executed", _))
+        ));
+        assert!(find("no.such.type").is_none());
     }
 
     #[test]

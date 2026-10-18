@@ -25,6 +25,12 @@ impl Blobs {
         Ok(format!("blake3:{}", hash.hex()))
     }
 
+    /// Whether the store holds the bytes named `name` (an outside producer
+    /// places a material's bytes before registering it).
+    pub fn contains(&self, name: &str) -> Result<bool> {
+        Ok(self.0.contains(&parse(name)?))
+    }
+
     pub fn read_range(&self, name: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
         Ok(self.0.read_range(&parse(name)?, offset, len)?)
     }
@@ -74,6 +80,13 @@ mod tests {
             format!("blake3:{}", blake3::hash(b"hello world").to_hex())
         );
         assert_eq!(blobs.read_range(&name, 6, 5).unwrap(), b"world");
+        assert!(blobs.contains(&name).unwrap());
+        assert!(
+            !blobs
+                .contains(&format!("blake3:{}", blake3::hash(b"other").to_hex()))
+                .unwrap()
+        );
+        assert!(blobs.contains("sha256:00").is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

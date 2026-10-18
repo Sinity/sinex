@@ -6,6 +6,6 @@ license.workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0", features = ["pg"] }
+devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.3.0", features = ["pg", "nats"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

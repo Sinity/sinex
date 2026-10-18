@@ -13,8 +13,8 @@
 //! - **Per-event derivations:** read committed events after their position, in
 //!   commit order, and commit the new position with their outputs.
 //!
-//! The driver wakes on `wake` (the commit-log reader signals it after each
-//! commit) and also polls, so it makes progress before that signal is wired.
+//! The driver wakes on `wake`, which the daemon signals after every commit, and
+//! also looks for work every so often, for keys that settle with time.
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;
 use sinex_automata::{AnyKeyed, AnyPerEvent, Env, InputQuery, KeyView, Neighbour};
@@ -443,11 +443,7 @@ impl Driver {
     }
 
     /// The daemon's driver task: a pass whenever woken, or every `idle`. The
-    /// commit-log reader signals `wake` after each commit.
-    #[allow(
-        dead_code,
-        reason = "the daemon supervisor (architecture §7.4) starts this task"
-    )]
+    /// daemon signals `wake` after each commit.
     pub async fn run(mut self, wake: Arc<Notify>, idle: Duration) -> Result<(), String> {
         loop {
             if self.pass().await? == 0 {

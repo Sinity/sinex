@@ -54,6 +54,8 @@ pub enum BuildError {
     NoParents,
     #[error("a location-keyed type ({0}) cannot be derived; derived events need key fields")]
     DerivedWithoutKey(&'static str),
+    #[error("payload is not a valid {0}: {1}")]
+    Payload(&'static str, String),
 }
 
 /// An event ready for admission.

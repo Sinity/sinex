@@ -124,9 +124,43 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // The writer's counters. One writer, so a row update allocates a range.
         "CREATE TABLE core.counters (name text PRIMARY KEY, value bigint NOT NULL)".into(),
         "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0)".into(),
+        // Positions of the commit-log consumers that are not derivations: the
+        // confirmed-stream publisher and the read-model maintainers. Each
+        // commits its position with the work it covers.
+        "CREATE TABLE core.consumer_positions (
+  consumer text PRIMARY KEY,
+  commit_seq bigint NOT NULL,
+  notice_seq bigint NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now()
+)".into(),
+        // Where each published event sits in the confirmed stream, so an
+        // excision can erase it there too: excision reaches every surface
+        // (architecture §3.4). The row goes once the message is erased.
+        "CREATE TABLE core.published (
+  event_id uuid PRIMARY KEY,
+  stream_seq bigint NOT NULL
+)".into(),
+        // Frames outside producers sent over the NATS ingress and what Sinex did
+        // with each, written by admission with the frame's events, so a producer
+        // can ask what Sinex holds (`mn8u`) and a redelivered frame is answered
+        // from here instead of admitted twice.
+        "CREATE TABLE core.ingress_frames (
+  producer text NOT NULL,
+  frame text NOT NULL,
+  material_id uuid,
+  admitted uuid[] NOT NULL DEFAULT '{}',
+  outcome jsonb NOT NULL,
+  refusal text,
+  commit_seq bigint,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (producer, frame)
+)".into(),
         // The archive is logical: archived rows stay in core.events.
+        // `notice_seq` orders archive notices on the confirmed stream: one
+        // writer, so insertion order is commit order.
         "CREATE TABLE audit.archived (
   event_id uuid PRIMARY KEY,
+  notice_seq bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
   archived_seq bigint NOT NULL,
   reason text NOT NULL CHECK (reason IN ('replay', 'newer_reading', 'hide', 'excise', 'version_change', 'recomputed')),
   replaced_by uuid,

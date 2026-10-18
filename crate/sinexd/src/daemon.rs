@@ -1,13 +1,154 @@
 //! The running daemon (architecture §7.4): tasks under one supervisor in one
-//! tokio runtime. The writer is built; the other tasks are filled by their
-//! Stage 2 lanes and each names its section.
+//! tokio runtime, built once here from one configuration. Every task gets the
+//! connections and handles it needs from this function; none opens its own
+//! configuration. A task that ends with an error stops the daemon, so the
+//! service manager restarts it whole.
+//!
+//! Built: the writer (§4.3), the automaton driver for keyed and per-event
+//! derivations (§6.2), the commit-log reader for read models (§4.3), the
+//! confirmed-stream publisher (§4.3) and the NATS ingress with its have
+//! responder (§4.3). Every commit wakes the driver, the reader and the
+//! publisher. The source tasks (§5), the API server and signals (§7.2) are
+//! added here by their lanes.
+use crate::commits::{self, Consumer, ReadModelRunner};
+use crate::keys::Registered;
+use crate::{derive, ingress, publisher, writer};
+use sinex_protocol::Subjects;
+use sinex_store::Blobs;
+use sqlx::{Connection, PgConnection};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{Notify, watch};
+use tokio::task::JoinSet;
 
-pub async fn run(_database: String, _store: PathBuf) -> Result<(), String> {
-    // writer: crate::writer::run, the only database writer (§4.3).
-    // sources: one task per enabled binding running its driver and drain on a
-    //   schedule (§5); `crate::backfill` shows the same path run to the end.
-    todo!(
-        "architecture §7.4: supervisor; source tasks; commit-log reader (§4.3); publisher to the confirmed stream (§4.3); NATS ingress consumer (§4.3); automaton driver (§6.2); API server (§7.2); signals (§7.2)"
+/// How often the automaton driver looks for work when no commit woke it:
+/// keys whose outputs wait on evidence outside their window settle with time.
+const DRIVER_IDLE: Duration = Duration::from_secs(30);
+
+pub struct Options {
+    pub database: String,
+    pub store: PathBuf,
+    /// The NATS server, with the daemon's credentials in the URL when the
+    /// server requires them.
+    pub nats: String,
+    /// Subject root: `sinex` unless several deployments share a server.
+    pub subjects: String,
+    pub host: String,
+}
+
+async fn connect(url: &str) -> Result<PgConnection, String> {
+    PgConnection::connect(url)
+        .await
+        .map_err(|e| format!("database: {e}"))
+}
+
+pub async fn run(o: Options) -> Result<(), String> {
+    let subjects = Subjects::new(o.subjects.clone());
+    let blobs = Blobs::open(&o.store).map_err(|e| e.to_string())?;
+    let client = async_nats::connect(&o.nats)
+        .await
+        .map_err(|e| format!("NATS at {}: {e}", o.nats))?;
+    let js = publisher::context(client.clone());
+
+    let (stop_tx, stop) = watch::channel(false);
+    let (commits_tx, commits) = watch::channel(0u64);
+    let (handle, queues) = writer::channels();
+    let mut tasks: JoinSet<(&'static str, Result<(), String>)> = JoinSet::new();
+
+    let writer_conn = connect(&o.database).await?;
+    let url = o.database.clone();
+    tasks.spawn(async move {
+        writer::run_notifying(
+            url,
+            writer_conn,
+            queues,
+            Arc::new(Registered::new(sinex_automata::keyed())),
+            commits_tx,
+        )
+        .await;
+        ("writer", Ok(()))
+    });
+
+    let driver = derive::Driver::start(
+        connect(&o.database).await?,
+        handle.clone(),
+        sinex_automata::keyed(),
+        sinex_automata::per_event(),
+        &o.host,
     )
+    .await?;
+    let wake = Arc::new(Notify::new());
+    let (w, mut c) = (wake.clone(), commits.clone());
+    tasks.spawn(async move {
+        tokio::select! {
+            result = driver.run(w.clone(), DRIVER_IDLE) => ("automaton driver", result),
+            // Every commit wakes the driver.
+            () = async move {
+                while c.changed().await.is_ok() {
+                    w.notify_one();
+                }
+            } => ("automaton driver wake", Ok(())),
+        }
+    });
+
+    let mut consumers: Vec<Box<dyn Consumer>> = Vec::new();
+    for model in commits::read_models() {
+        consumers.push(Box::new(ReadModelRunner(model)));
+    }
+    let reader_conn = connect(&o.database).await?;
+    let (c, s) = (commits.clone(), stop.clone());
+    tasks.spawn(async move {
+        (
+            "commit-log reader",
+            commits::run(reader_conn, consumers, c, s).await,
+        )
+    });
+
+    let publisher_conn = connect(&o.database).await?;
+    let (c, s, sj) = (commits.clone(), stop.clone(), subjects.clone());
+    tasks.spawn(async move {
+        (
+            "publisher",
+            publisher::run(publisher_conn, js, sj, c, s).await,
+        )
+    });
+
+    let ingest = ingress::Ingest::new(
+        subjects,
+        handle.clone(),
+        connect(&o.database).await?,
+        blobs,
+        o.host.clone(),
+    )?;
+    let s = stop.clone();
+    tasks.spawn(async move { ("ingress", ingress::run(client, ingest, s).await) });
+    // The writer stops when every handle is gone; the tasks above hold theirs.
+    drop(handle);
+
+    let outcome = tokio::select! {
+        _ = shutdown_signal() => Ok(()),
+        Some(done) = tasks.join_next() => match done {
+            Ok((name, Ok(()))) => Err(format!("{name} stopped")),
+            Ok((name, Err(error))) => Err(format!("{name}: {error}")),
+            Err(error) => Err(format!("a task panicked: {error}")),
+        },
+    };
+    let _ = stop_tx.send(true);
+    // Give tasks a moment to finish their current step, then stop the rest.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while tasks.join_next().await.is_some() {}
+    })
+    .await;
+    tasks.abort_all();
+    outcome
+}
+
+async fn shutdown_signal() {
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = term.recv() => {}
+    }
 }

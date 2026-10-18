@@ -52,9 +52,12 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 rmcp = { version = "3", features = ["server", "transport-io"] }
 schemars = { version = "1", features = ["uuid1"] }
-credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0" }
-hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0" }
-devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.2.0", features = ["pg"] }
+credential-masking = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.3.0" }
+hashed-blobs = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.3.0" }
+devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.3.0", features = ["pg", "nats"] }
+async-nats = "0.47"
+jsonschema = { version = "0.42", default-features = false }
+futures = "0.3"
 sinex-macros = { path = "crate/sinex-macros" }
 sinex-model = { path = "crate/sinex-model" }
 sinex-protocol = { path = "crate/sinex-protocol" }
