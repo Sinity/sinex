@@ -39,10 +39,17 @@ pub struct JournalEntry {
 #[event(type = "file.changed", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct FileChanged {
     pub received_at: Timestamp,
-    /// `created`, `modified`, `removed`, `renamed`, `attributes` or `other`.
+    /// `created`, `modified`, `written` (closed after writing), `removed`,
+    /// `renamed`, `moved_from`, `moved_to`, `attributes`, `other`, or
+    /// `unwatched` (the kernel refused a watch on this directory; see `note`).
     pub change: String,
-    pub path: String,
+    /// The path, when it is UTF-8 (otherwise see `path_hex`).
+    pub path: Option<String>,
+    /// The path's bytes in hex, when they are not UTF-8.
+    pub path_hex: Option<String>,
     /// The new path, for a rename that reported both ends.
     pub to: Option<String>,
     pub is_dir: Option<bool>,
+    /// Why, for an `unwatched` directory.
+    pub note: Option<String>,
 }

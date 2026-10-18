@@ -35,6 +35,7 @@ thiserror = "2"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "json", "macros", "time"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 gix = { version = "0.89", default-features = false, features = ["sha1"] }
+notify = { version = "8", default-features = false }
 clap = { version = "4", features = ["derive"] }
 proptest = "1"
 # Civil time in the operator's zone (sinex-model::civil); the tz database is

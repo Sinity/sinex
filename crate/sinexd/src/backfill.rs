@@ -22,6 +22,8 @@ pub struct Options {
     pub hyprland_spool: Option<PathBuf>,
     /// A journald capture spool (`sinexd capture journald`).
     pub journald_spool: Option<PathBuf>,
+    /// A file-watch capture spool (`sinex-session capture files`).
+    pub file_watch_spool: Option<PathBuf>,
     /// ActivityWatch's `aw-server-rust` database.
     pub activitywatch: Option<PathBuf>,
     /// Local repositories whose commits to read.
@@ -101,6 +103,7 @@ pub async fn run(o: Options) -> Result<(), String> {
             "monitor.focused",
             "desktop.other",
             "journal.entry",
+            "file.changed",
             "window.span",
             "presence.span",
             "browser.tab_active",
@@ -165,6 +168,21 @@ pub async fn run(o: Options) -> Result<(), String> {
         )
         .await?;
         println!("hyprland {totals}");
+    }
+    if let Some(spool) = &o.file_watch_spool {
+        let source = sinex_sources::sources::file_watch::source();
+        let driver = sinex_sources::sources::file_watch::driver(spool.clone(), o.host.clone());
+        let totals = drive(
+            &mut ctx.aux,
+            &ctx.writer,
+            run,
+            &source,
+            &format!("file-watch@{}", o.host),
+            &sink,
+            |cursor| driver.poll(cursor),
+        )
+        .await?;
+        println!("file-watch {totals}");
     }
     if let Some(spool) = &o.journald_spool {
         let source = sinex_sources::sources::journald::source();

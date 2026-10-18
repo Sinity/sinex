@@ -84,6 +84,9 @@ enum Command {
         /// A journald capture spool directory.
         #[arg(long)]
         journald_spool: Option<PathBuf>,
+        /// A file-watch capture spool directory.
+        #[arg(long)]
+        file_watch_spool: Option<PathBuf>,
         /// ActivityWatch's `aw-server-rust/sqlite.db`.
         #[arg(long)]
         activitywatch: Option<PathBuf>,
@@ -458,6 +461,7 @@ async fn main() -> std::process::ExitCode {
             zsh,
             hyprland_spool,
             journald_spool,
+            file_watch_spool,
             activitywatch,
             repositories,
             host,
@@ -469,6 +473,7 @@ async fn main() -> std::process::ExitCode {
                 zsh,
                 hyprland_spool,
                 journald_spool,
+                file_watch_spool,
                 activitywatch,
                 repositories,
                 host,

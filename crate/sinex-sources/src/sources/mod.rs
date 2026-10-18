@@ -1,6 +1,7 @@
 //! Every source, one module per family, registered in one list.
 pub mod activitywatch;
 pub mod atuin;
+pub mod file_watch;
 pub mod hyprland;
 pub mod journald;
 /// Commits in local repositories (`code.git`).
@@ -18,6 +19,7 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &journald::SPEC,
         &activitywatch::SPEC,
         &repository::SPEC,
+        &file_watch::SPEC,
     ]
 }
 
@@ -32,6 +34,7 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         p if p == journald::SPEC.parser => Some(Box::new(journald::source())),
         p if p == activitywatch::SPEC.parser => Some(Box::new(activitywatch::source())),
         p if p == repository::SPEC.parser => Some(Box::new(repository::source())),
+        p if p == file_watch::SPEC.parser => Some(Box::new(file_watch::source())),
         _ => None,
     }
 }
