@@ -116,7 +116,10 @@ full_interval_ms = 100
             wait(proc, 'all commands admitted and sessions published',
                  lambda: raw_count() == len(facts) and settled(), seconds)
         except AssertionError as error:
-            raise AssertionError(f'{error}; expected {len(facts)} commands, status {api()}') from None
+            raw_answer = api('query.run', {'query': 'events where kind = command.executed'})
+            raw_answer.get('result', {}).pop('rows', None)
+            raise AssertionError(f'{error}; expected {len(facts)} commands; raw query {raw_answer}; '
+                                 f'sources {api("sources.list")}; status {api()}') from None
 
     def raw():
         return query_all(cli, 'events where kind = command.executed')
