@@ -105,6 +105,13 @@ pub struct Config {
     pub(crate) input_blake3: String,
 }
 impl Config {
+    #[cfg(feature = "runtime")]
+    pub fn rules(&self) -> Vec<sinex_store::PrivacyRule> {
+        self.privacy_rules.iter().map(PrivacyConfig::rule).collect()
+    }
+    pub fn project_models(&self) -> Vec<sinex_model::retrieval::Project> {
+        self.projects.iter().map(ProjectConfig::model).collect()
+    }
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path)
             .map_err(|_| "cannot read configuration file".to_string())?;
@@ -122,14 +129,8 @@ impl Config {
         {
             return Err("read model credential path must be absolute".into());
         }
-        sinex_model::retrieval::Project::validate_all(
-            &self
-                .projects
-                .iter()
-                .map(ProjectConfig::model)
-                .collect::<Vec<_>>(),
-        )
-        .map_err(str::to_string)?;
+        sinex_model::retrieval::Project::validate_all(&self.project_models())
+            .map_err(str::to_string)?;
         if !self.projects.is_empty() && self.read_model_connection_file.is_none() {
             return Err("projects require indexed retrieval configuration".into());
         }
