@@ -2,7 +2,7 @@
 //! complete retained log is the only supported bootstrap basis in this slice.
 use crate::{Error, QualificationBoundary, Result};
 use serde_json::Value;
-use sinex_model::retrieval::{CONTRACT, Project, lexeme, normalize, project, words};
+use sinex_model::retrieval::{CONTRACT, Project, normalize, project, token_text};
 use sqlx::{Connection, PgConnection, Row};
 use uuid::Uuid;
 
@@ -149,9 +149,9 @@ impl Owner {
             let Some(row) = row else { continue };
             let payload: serde_json::Value = row.try_get("payload")?;
             let strings = payload_strings(&payload);
-            let vector = exact_vector(&strings);
+            let tokens = token_text(&strings);
             let at: Option<String> = row.try_get("at")?;
-            sqlx::query("INSERT INTO core.search_text(generation,id,ts_orig,ts_orig_tiebreak,source,event_type,tsv,text,cwd,exit_code,command,command_normalized,cwd_normalized) VALUES($1,$2,$3::text::timestamptz,$4,$5,$6,$7::text::tsvector,$8,$9,$10,$11,$12,$13)").bind(generation).bind(id).bind(&at).bind(row.try_get::<Option<i32>,_>("ts_orig_tiebreak")?).bind(row.try_get::<String,_>("source")?).bind(row.try_get::<String,_>("event_type")?).bind(vector).bind(serde_json::to_string(&strings).unwrap()).bind(payload["cwd"].as_str()).bind(payload["exit_code"].as_i64()).bind(payload["command"].as_str().unwrap_or("")).bind(normalize(payload["command"].as_str().unwrap_or(""))).bind(payload["cwd"].as_str().map(normalize)).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO core.search_text(generation,id,ts_orig,ts_orig_tiebreak,source,event_type,tokens,text,cwd,exit_code,command,command_normalized,cwd_normalized) VALUES($1,$2,$3::text::timestamptz,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(generation).bind(id).bind(&at).bind(row.try_get::<Option<i32>,_>("ts_orig_tiebreak")?).bind(row.try_get::<String,_>("source")?).bind(row.try_get::<String,_>("event_type")?).bind(tokens).bind(serde_json::to_string(&strings).unwrap()).bind(payload["cwd"].as_str()).bind(payload["exit_code"].as_i64()).bind(payload["command"].as_str().unwrap_or("")).bind(normalize(payload["command"].as_str().unwrap_or(""))).bind(payload["cwd"].as_str().map(normalize)).execute(&mut *tx).await?;
             if let Some(project) = payload["cwd"]
                 .as_str()
                 .and_then(|cwd| project(cwd, &self.projects))
@@ -236,25 +236,6 @@ fn payload_strings(payload: &Value) -> Vec<String> {
         .remove("command");
     texts(&remainder, &mut strings);
     strings
-}
-fn exact_vector(strings: &[String]) -> Option<String> {
-    let mut terms = Vec::new();
-    let mut index = 0usize;
-    let mut frequency = std::collections::HashMap::new();
-    for text in strings {
-        for word in words(text) {
-            index += 1;
-            let count = frequency.entry(word.clone()).or_insert(0usize);
-            *count += 1;
-            if *count > 256 || index > 16000 || word.len() > 900 {
-                return None;
-            }
-            terms.push(format!("'{}':{index}", lexeme(&word)));
-        }
-        // Preserve the field gap so phrases cannot cross payload fields.
-        index += 1;
-    }
-    Some(terms.join(" "))
 }
 #[cfg(test)]
 #[path = "projection_text_tests.rs"]

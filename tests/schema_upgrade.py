@@ -152,11 +152,11 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
     pending_processes=[]
     def pending():
         before=sql('SELECT fingerprint,catalog FROM sinex_schemas.definition');actual_schema=schema_dump()
-        value=schema(binary);assert [c['number'] for c in value['pending_changes']]==[1,2]
+        value=schema(binary);assert [c['number'] for c in value['pending_changes']]==list(range(1,8))
         assert sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')==before and sql("SELECT to_regclass('derivation.shell_progress') IS NULL AND to_regclass('sinex_schemas.applied_changes') IS NULL")=='t'
         proc=launch([binary,'serve','--config',config],'pending-reader')
         status=wait(lambda:rpc('status').get('result'),proc,'pending status')
-        assert status['writer']['state']=='unavailable' and status['schema']['pending_changes']==[1,2] and not status['schema']['compatible']
+        assert status['writer']['state']=='unavailable' and status['schema']['pending_changes']==list(range(1,8)) and not status['schema']['compatible']
         assert sql('SELECT pg_try_advisory_lock(73018924012)')=='t'
         assert cli('query',raw_query)['rows']==baseline['rows']
         refusal=cli('query','commands',expected=2);assert refusal['kind']=='bad_query'
@@ -227,13 +227,13 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
             assert time.monotonic()<released_by,'killed admin backend did not release its writer exclusion'
             time.sleep(.05)
         assert snapshot()==baseline_rows
-        status=schema(binary,None,'--check');assert [c['number'] for c in status['pending_changes']]==[2]
+        status=schema(binary,None,'--check');assert [c['number'] for c in status['pending_changes']]==list(range(2,8))
         sql("UPDATE sinex_schemas.applied_changes SET number=2 WHERE number=1")
         failure=schema(binary,None,'--apply','--dump-file',WORK/'wrong-order.dump',expected=1)
         assert 'exact ordered prefix' in failure.stderr and not (WORK/'wrong-order.dump').exists()
         sql("UPDATE sinex_schemas.applied_changes SET number=1 WHERE number=2")
         status=schema(binary,None,'--apply','--dump-file',WORK/'resume.dump');assert status['pending_changes']==[]
-        assert status['checked_changes']==[{'number':2,'outcome':'applied'}]
+        assert status['checked_changes']==[{'number':n,'outcome':'applied'} for n in range(2,8)]
         assert snapshot()==baseline_rows
         assert json.loads(sql("SELECT to_jsonb(p) FROM sinex_schemas.payload_schemas p WHERE id=3"))==old_payload
         registered=json.loads(payload_catalog());assert [(r['id'],r['version']) for r in registered]==[(2,'atuin-v1'),(3,'shell-command-v1-single-source'),(4,'zsh-extended-v1'),(5,'shell-command-v1-atuin-zsh')]
@@ -255,7 +255,7 @@ full_interval_ms = 100 # this fixture deliberately compares the full provider
     def fresh_and_repeat():
         run(['createdb','fresh']);fresh=admin.replace('/upgrade?','/fresh?');(WORK/'fresh-admin').write_text(fresh);(WORK/'fresh-admin').chmod(0o600)
         created=schema(binary,WORK/'fresh-admin');assert created['pending_changes']==[]
-        assert created['checked_changes']==[{'number':1,'outcome':'old_objects_absent'},{'number':2,'outcome':'old_objects_absent'}]
+        assert created['checked_changes']==[{'number':n,'outcome':'old_objects_absent'} for n in range(1,8)]
         assert sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')==sql('SELECT fingerprint,catalog FROM sinex_schemas.definition',url=fresh)
         before=sql('SELECT fingerprint,catalog FROM sinex_schemas.definition')
         repeated=schema(binary,None,'--apply','--dump-file',WORK/'no-op.dump');assert repeated['pending_changes']==[] and not (WORK/'no-op.dump').exists()

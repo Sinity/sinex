@@ -5,8 +5,7 @@ The native schema owner recognizes the exact declarations published at
 states, and the ordered session, Chromium, metadata/text and signed Atuin declarations. It refuses unrelated fingerprints,
 changed definitions, missing objects, unsafe grants and change records that
 are not the exact ordered prefix. The protected definition receipt is checked
-against the live catalog before any change. No general migration framework or
-production column rename is introduced.
+against the live catalog before any change. The entries implement only their declared physical changes; there is no general migration framework.
 
 `sinexd admin schema --connection-file FILE` creates a fresh database or
 inspects an existing one. `--check` only inspects. An existing database with
@@ -97,3 +96,8 @@ Ordered change 5 recognizes the exact published stage-4 catalog, makes `core.sea
 ## Signed Atuin status domain
 
 Ordered change 6 relaxes only registered Atuin payload schema 2 to admit signed provider exit integers. It preserves every earlier stage fingerprint and the retired single-source canonical schema 3. The current fingerprint additionally binds the sorted Atuin payload declaration, so an old writer refuses the relaxed catalog. Fresh creation and guarded populated upgrade have identical catalogs. No event, retained byte, reading order, source identity, query column or limit changes during schema application. Parser recipe `atuin-v3` readmission and retained replay are separate ordinary writer operations; they preserve `-1` as unknown and other signed values exactly. See [Atuin](atuin.md) for the provider meaning and bounded controls.
+
+
+## Complete normalized search text
+
+Ordered change 7 recognizes the exact published stage-6 catalog and replaces only disposable `core.search_text.tsv` with nullable `tokens text`. The column keeps its physical order; old vector contents become NULL, the old GIN index is replaced by a trigram GIN index with explicit `C` collation, and the partial unavailable index now addresses token text. Metadata, presentation strings, project rows and all retained events/materials/observations stay intact. The entry marks the projection non-serving before commit. Retrieval basis `sinex.shell-search.v5` reconstructs from the complete retained log and invalidates older indexed cursor generations; no source replay, canonical remint or progress reset substitutes for that reconstruction. Fresh/upgraded catalogs must agree and old writers refuse the new fingerprint. Every stage0-6 declaration/fingerprint remains immutable. The normal guarded dump/apply route is required; no daemon auto-upgrade is added. See [indexed retrieval](indexed-retrieval.md) for exact membership, declared relevance changes and representation/deadline refusals.

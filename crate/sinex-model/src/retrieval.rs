@@ -15,20 +15,57 @@ pub fn normalization_basis() -> String {
 
 // Bump for changed token/text/project/filter/ranking/order meaning; this binds
 // reconstruction and cursor generation compatibility, independently of build time.
-pub const CONTRACT: &str = "sinex.shell-search.v4";
+pub const CONTRACT: &str = "sinex.shell-search.v5";
 pub fn normalize(text: &str) -> String {
     caseless::default_case_fold_str(text).nfc().collect()
 }
 pub fn words(text: &str) -> Vec<String> {
     text.unicode_words().map(normalize).collect()
 }
-pub fn lexeme(word: &str) -> String {
-    let mut out = String::from("x");
-    for byte in word.bytes() {
-        use std::fmt::Write;
-        write!(out, "{byte:02x}").unwrap();
+// These control characters cannot be emitted by Unicode word segmentation.
+// Encoding happens after tokenization, so literal delimiters in input are data,
+// never authority to create token or field boundaries.
+const TOKEN_BOUNDARY: char = '\u{1}';
+const FIELD_BOUNDARY: char = '\u{2}';
+
+/// Complete normalized token sequences, kept separate across payload strings.
+/// None means the backend representation cannot be admitted, never empty text.
+pub fn token_text(strings: &[String]) -> Option<String> {
+    fn append(out: &mut String, value: &str) -> Option<()> {
+        // PostgreSQL MaxAllocSize (2^30-1) includes the four-byte varlena header.
+        // Check every token and delimiter before reserving backend-sized text.
+        const MAX_TEXT_BYTES: usize = (1 << 30) - 1 - 4;
+        if out.len().checked_add(value.len())? > MAX_TEXT_BYTES {
+            return None;
+        }
+        out.try_reserve(value.len()).ok()?;
+        out.push_str(value);
+        Some(())
     }
-    out
+    let mut out = String::new();
+    for field in strings {
+        let mut tokens = field.unicode_words().peekable();
+        if tokens.peek().is_none() {
+            continue;
+        }
+        append(&mut out, "\u{1}")?;
+        for raw_token in tokens {
+            let token = normalize(raw_token);
+            if token.contains([TOKEN_BOUNDARY, FIELD_BOUNDARY]) {
+                return None;
+            }
+            append(&mut out, &token)?;
+            append(&mut out, "\u{1}")?;
+        }
+        append(&mut out, "\u{2}")?;
+    }
+    Some(out)
+}
+/// Escape a literal for PostgreSQL LIKE with an explicit backslash escape.
+pub fn like_literal(word: &str) -> String {
+    word.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
@@ -148,27 +185,36 @@ pub struct Text {
     pub phrase: bool,
 }
 impl Text {
-    pub fn tsquery(&self) -> String {
-        let terms: Vec<_> = self
-            .words
-            .iter()
-            .enumerate()
-            .map(|(i, w)| {
-                format!(
-                    "'{}'{}",
-                    lexeme(w),
-                    if self.prefix && i + 1 == self.words.len() {
-                        ":*"
-                    } else {
-                        ""
-                    }
-                )
-            })
-            .collect();
-        format!(
-            "({})",
-            terms.join(if self.phrase { " <-> " } else { " & " })
-        )
+    pub fn like_patterns(&self) -> Vec<String> {
+        let pattern = |tokens: &[String], prefix: bool| {
+            let mut value = format!("%{TOKEN_BOUNDARY}");
+            value.push_str(
+                &tokens
+                    .iter()
+                    .map(|w| like_literal(w))
+                    .collect::<Vec<_>>()
+                    .join(&TOKEN_BOUNDARY.to_string()),
+            );
+            if !prefix {
+                value.push(TOKEN_BOUNDARY);
+            }
+            value.push('%');
+            value
+        };
+        if self.phrase {
+            vec![pattern(&self.words, self.prefix)]
+        } else {
+            self.words
+                .iter()
+                .enumerate()
+                .map(|(i, word)| {
+                    pattern(
+                        std::slice::from_ref(word),
+                        self.prefix && i + 1 == self.words.len(),
+                    )
+                })
+                .collect()
+        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -297,18 +343,12 @@ pub enum Expr {
     Not(Box<Expr>),
 }
 impl Expr {
-    pub fn text_query(&self) -> Option<String> {
+    /// Ranking uses positive text only, independently of exact membership.
+    pub fn rank_text(&self) -> Option<String> {
         match self {
-            Self::Text(t) => Some(t.tsquery()),
-            Self::And(a, b) | Self::Or(a, b) => match (a.text_query(), b.text_query()) {
-                (Some(a), Some(b)) => Some(format!(
-                    "({a} {} {b})",
-                    if matches!(self, Self::And(..)) {
-                        "&"
-                    } else {
-                        "|"
-                    }
-                )),
+            Self::Text(t) => Some(t.words.join(" ")),
+            Self::And(a, b) | Self::Or(a, b) => match (a.rank_text(), b.rank_text()) {
+                (Some(a), Some(b)) => Some(format!("{a} {b}")),
                 (a, b) => a.or(b),
             },
             Self::Not(_) => None,
@@ -612,10 +652,7 @@ impl Reader {
             return Err("only a trailing word prefix * is supported");
         }
         let words = words(raw);
-        if words.is_empty()
-            || (!t.quoted && words.len() != 1)
-            || words.iter().any(|w| w.len() > 900)
-        {
+        if words.is_empty() || (!t.quoted && words.len() != 1) {
             return Err("search requires words or a quoted phrase");
         }
         Ok(Expr::Text(Text {
@@ -914,3 +951,7 @@ mod tests {
 #[cfg(test)]
 #[path = "project_evidence_tests.rs"]
 mod project_evidence_tests;
+
+#[cfg(test)]
+#[path = "retrieval_text_tests.rs"]
+mod text_representation_tests;

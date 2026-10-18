@@ -247,3 +247,5 @@ MCP and retained citations. Existing full-comparison fixtures explicitly select
 a short full interval; their earlier published evidence remains bound to its
 original source and binaries. Physical snapshots, completed key censuses,
 physical deletion proof and sustained resource acceptance remain unavailable.
+
+Ordinary indexed shell text search uses complete casefolded/NFC token sequences with exact PostgreSQL `LIKE` membership and trigram indexing. Repeated words, long tokens and late phrase positions are retained. Positive text relevance uses PostgreSQL `word_similarity` over all selected matches; explicit time sorting disables relevance. Guarded schema change7 and retrieval basisv5 replace the previous vector representation and invalidate older search cursors. [Indexed retrieval](docs/rewrite/indexed-retrieval.md) owns the exact grammar, ranking, availability, privacy and deadline qualifications.
