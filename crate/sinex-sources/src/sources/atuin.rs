@@ -112,6 +112,7 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
         path,
         host,
         table: "history",
+        from: None,
         required: &[
             "id",
             "timestamp",

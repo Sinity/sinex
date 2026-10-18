@@ -60,6 +60,9 @@ enum Command {
         /// A journald capture spool directory.
         #[arg(long)]
         journald_spool: Option<PathBuf>,
+        /// ActivityWatch's `aw-server-rust/sqlite.db`.
+        #[arg(long)]
+        activitywatch: Option<PathBuf>,
         #[arg(long, default_value = "localhost")]
         host: String,
     },
@@ -280,6 +283,7 @@ async fn main() -> std::process::ExitCode {
             zsh,
             hyprland_spool,
             journald_spool,
+            activitywatch,
             host,
         } => {
             backfill::run(backfill::Options {
@@ -289,6 +293,7 @@ async fn main() -> std::process::ExitCode {
                 zsh,
                 hyprland_spool,
                 journald_spool,
+                activitywatch,
                 host,
             })
             .await

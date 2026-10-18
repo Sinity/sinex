@@ -22,6 +22,8 @@ pub struct Options {
     pub hyprland_spool: Option<PathBuf>,
     /// A journald capture spool (`sinexd capture journald`).
     pub journald_spool: Option<PathBuf>,
+    /// ActivityWatch's `aw-server-rust` database.
+    pub activitywatch: Option<PathBuf>,
     pub host: String,
 }
 
@@ -97,6 +99,10 @@ pub async fn run(o: Options) -> Result<(), String> {
             "monitor.focused",
             "desktop.other",
             "journal.entry",
+            "window.span",
+            "presence.span",
+            "browser.tab_active",
+            "activitywatch.other",
         ],
     };
     let run = runs::start(&mut ctx.aux, &manifest, &o.host)
@@ -171,6 +177,24 @@ pub async fn run(o: Options) -> Result<(), String> {
         )
         .await?;
         println!("journald {totals}");
+    }
+    if let Some(path) = &o.activitywatch {
+        let source = sinex_sources::sources::activitywatch::source();
+        let driver = sinex_sources::sources::activitywatch::driver(path.clone(), o.host.clone());
+        let binding = format!("activitywatch@{}", o.host);
+        let chain = stored(&mut ctx, &binding).await?;
+        let mut memory = drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(Vec::as_slice));
+        let totals = drive(
+            &mut ctx.aux,
+            &ctx.writer,
+            run,
+            &source,
+            &binding,
+            &sink,
+            |cursor| driver.poll(cursor, &mut memory),
+        )
+        .await?;
+        println!("activitywatch {totals}");
     }
     runs::end(&mut ctx.aux, run)
         .await

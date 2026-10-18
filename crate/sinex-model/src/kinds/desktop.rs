@@ -114,6 +114,17 @@ pub struct PresenceSpan {
     pub status: String,
 }
 
+/// An ActivityWatch event from a watcher Sinex has no type for yet, kept whole.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "activitywatch.other", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]
+pub struct ActivityWatchOther {
+    pub bucket: String,
+    pub row: i64,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    pub data: serde_json::Value,
+}
+
 /// ActivityWatch's browser watcher: the active tab over a span.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "browser.tab_active", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]

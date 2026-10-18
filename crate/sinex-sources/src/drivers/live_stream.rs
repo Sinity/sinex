@@ -262,6 +262,12 @@ impl LiveStream {
                     material.previous_part = state.last_material;
                 }
                 material.manifest["spool_segment"] = json!(state.segment);
+                // Offsets restart in each segment; the segment number keeps
+                // later records newer. Recorded so a replay computes the same.
+                let offset = material.manifest["file_offset"].as_u64().unwrap_or(0);
+                let base = (state.segment << 40) | offset;
+                material.manifest["order_base"] = json!(base as i64);
+                material.reading_order = super::reading_order(&material.manifest);
                 let inner_cursor =
                     std::mem::replace(&mut material.cursor_at, Box::new(|_| Value::Null));
                 let wrapped = state.clone();

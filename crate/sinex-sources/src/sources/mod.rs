@@ -1,4 +1,5 @@
 //! Every source, one module per family, registered in one list.
+pub mod activitywatch;
 pub mod atuin;
 pub mod hyprland;
 pub mod journald;
@@ -8,7 +9,13 @@ use crate::registry::{Source, SourceSpec};
 
 /// Every source's declaration.
 pub fn specs() -> Vec<&'static SourceSpec> {
-    vec![&atuin::SPEC, &zsh::SPEC, &hyprland::SPEC, &journald::SPEC]
+    vec![
+        &atuin::SPEC,
+        &zsh::SPEC,
+        &hyprland::SPEC,
+        &journald::SPEC,
+        &activitywatch::SPEC,
+    ]
 }
 
 /// The source whose parser read a stored material, as a replay re-reads it
@@ -20,6 +27,7 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         p if p == zsh::SPEC.parser => Some(Box::new(zsh::source(host.to_owned()))),
         p if p == hyprland::SPEC.parser => Some(Box::new(hyprland::source())),
         p if p == journald::SPEC.parser => Some(Box::new(journald::source())),
+        p if p == activitywatch::SPEC.parser => Some(Box::new(activitywatch::source())),
         _ => None,
     }
 }
