@@ -96,13 +96,18 @@ struct World {
 
 impl World {
     async fn new() -> Self {
+        Self::with_keys(sinex_automata::keyed()).await
+    }
+
+    /// A world whose writer marks the keys of `keyed` dirty.
+    async fn with_keys(keyed: Vec<Box<dyn AnyKeyed>>) -> Self {
         let (db, url, connection) = crate::testdb::fresh().await;
         let (handle, queues) = writer::channels();
         let task = tokio::spawn(writer::run(
             url.clone(),
             connection,
             queues,
-            Arc::new(Keys::new(sinex_automata::keyed())),
+            Arc::new(Keys::new(keyed)),
         ));
         Self {
             _db: db,
@@ -281,6 +286,103 @@ async fn an_open_interval_waits_and_closes_on_the_next_transition() {
     assert_eq!(intervals[1].ended_at, None);
 }
 
+/// A derivation with one key per command, each always waiting for more
+/// evidence.
+struct Waiting;
+
+impl Keyed for Waiting {
+    const NAME: &'static str = "test.waiting";
+    const VERSION: u32 = 1;
+    const INPUTS: &'static [&'static str] = &["command.imported"];
+    const OUTPUTS: &'static [&'static str] = &["command.fused"];
+
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+        vec![input.payload["command"].clone()]
+    }
+    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
+        let mut q = InputQuery::window(Self::INPUTS, at(-86_400), at(86_400));
+        q.equal.push(("command", key.clone()));
+        Some(q)
+    }
+    fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
+        let record = key.as_str().unwrap_or_default().to_owned();
+        let payload = CommandFused {
+            record: record.clone(),
+            command: record,
+            host: "box".into(),
+            started_at: at(0),
+            cwd: None,
+            session: None,
+            duration_ns: None,
+            exit_code: None,
+            observed_by: vec![],
+        };
+        Computed {
+            outputs: vec![sinex_automata::output::derived(
+                &payload,
+                "test.waiting",
+                inputs,
+            )],
+            waiting: true,
+        }
+    }
+    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+        KeyState::Open
+    }
+}
+
+#[tokio::test]
+async fn a_waiting_key_stops_waiting_past_the_horizon() {
+    let w = World::with_keys(vec![Box::new(Waiting)]).await;
+    let waiting = "SELECT count(*) FROM derivation.waiting";
+    w.admit(vec![zsh("a", 0, 1)]).await;
+    let mut d = w.driver_with(vec![Box::new(Waiting)], vec![]).await;
+    d.settle().await.unwrap();
+    assert_eq!(w.count(waiting).await, 1);
+
+    // An old window alone does not stop a wait: the next run, which
+    // refreshes waiting keys, keeps "a" waiting.
+    w.admit(vec![zsh("b", 10, 2)]).await;
+    d.settle().await.unwrap();
+    assert_eq!(w.count(waiting).await, 2);
+
+    // Once they have waited past the horizon, the next run leaves their last
+    // outputs standing and stops waiting; the new key waits as usual.
+    d.clock = Some(Timestamp(
+        Timestamp::now().0 + WAITING_HORIZON + time::Duration::days(1),
+    ));
+    w.admit(vec![zsh("c", 20, 3)]).await;
+    d.settle().await.unwrap();
+    assert_eq!(w.count(waiting).await, 1);
+    let out: Vec<CommandFused> = w.live().await;
+    assert_eq!(out.len(), 3, "{out:?}");
+}
+
+#[test]
+fn derivations_rank_after_the_derivations_they_read() {
+    let catalog: Vec<Registered> = sinex_automata::keyed()
+        .iter()
+        .map(|d| Registered {
+            name: d.name().to_owned(),
+            kind: "keyed",
+            version: 1,
+            inputs: d.inputs_types().iter().map(|s| (*s).to_owned()).collect(),
+            outputs: d.output_types().iter().map(|s| (*s).to_owned()).collect(),
+        })
+        .collect();
+    let r = ranks(&catalog);
+    let fusion = r["command.fusion"];
+    for (name, rank) in &r {
+        let d = catalog.iter().find(|d| d.name == *name).unwrap();
+        for u in &catalog {
+            if u.name != d.name && u.outputs.iter().any(|o| d.inputs.contains(o)) {
+                assert!(rank > &r[u.name.as_str()], "{name} after {}", u.name);
+            }
+        }
+    }
+    assert!(r.values().any(|&rank| rank > fusion), "{r:?}");
+}
+
 #[tokio::test]
 async fn a_key_dirtied_again_stays_dirty() {
     let w = World::new().await;
@@ -369,6 +471,15 @@ async fn compare_shows_a_version_change_before_switching() {
     let cmp = v2.compare("test.count", None, 3).await.unwrap();
     assert_eq!((cmp.changed, cmp.added, cmp.removed), (1, 0, 0), "{cmp}");
     assert!(cmp.to_string().contains("v2:2"));
+    // The comparison is kept, newest first, with its examples.
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    let kept = derived::comparisons(&mut conn, Some("test.count"), 10)
+        .await
+        .unwrap();
+    assert_eq!(kept.len(), 2);
+    assert_eq!(Some(kept[0].id), cmp.id);
+    assert_eq!((kept[0].version, kept[0].changed), (2, 1));
+    assert_eq!(kept[0].examples[0]["kind"], "changed");
     // Starting version 2 queued its recompute; settling switches.
     v2.settle().await.unwrap();
     let out: Vec<CommandFused> = w.live().await;

@@ -21,7 +21,8 @@ use crate::{Error, Result, privacy, stage};
 use serde_json::Value;
 use sinex_model::{
     ArchiveRequest, Batch, BatchKind, Class, Event, EventId, InputId, ObservationId, OperationId,
-    Origin, RecordOutcome, ReplayScope, RevisionChange, RevisionId, SourceProgress, Timestamp,
+    Origin, ReadingOrder, RecordOutcome, ReplayScope, RevisionChange, RevisionId, SourceProgress,
+    Timestamp,
 };
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -156,6 +157,27 @@ pub async fn admit(
         .execute(&mut *conn)
         .await?;
     }
+    // Records the source dropped: a newer reading of each live one, removed.
+    // Built from the stored reading, whose privacy rules already applied.
+    for request in &batch.archive {
+        if let ArchiveRequest::RemovedAtSource { locations } = request {
+            for live in crate::derived::live_at(conn, locations).await? {
+                if live.record_state == sinex_model::RecordState::Removed {
+                    continue;
+                }
+                let mut hash = blake3::Hasher::new();
+                hash.update(&live.record_hash);
+                hash.update(b"removed at source");
+                events.push(Event {
+                    id: sinex_model::EventId::new(),
+                    reading_order: ReadingOrder(live.reading_order.0.saturating_add(1)),
+                    record_hash: *hash.finalize().as_bytes(),
+                    record_state: sinex_model::RecordState::Removed,
+                    ..live
+                });
+            }
+        }
+    }
 
     if !events.is_empty() {
         sqlx::query!("TRUNCATE core.admission_stage")
@@ -182,6 +204,11 @@ pub async fn admit(
                    WHEN hk.id IS NOT NULL OR hl.id IS NOT NULL OR xd.record_hash IS NOT NULL THEN 'hidden'
                    WHEN coalesce(le.event_id, lc.event_id) IS NULL THEN 'new'
                    WHEN coalesce(le.record_hash, lc.record_hash) = s.record_hash THEN 'repeat'
+                   -- The source dropping a record is a fact, not another
+                   -- reading of the same content: it replaces even where
+                   -- repeats are suppressed.
+                   WHEN s.record_state = 'removed'
+                     AND s.reading_order > coalesce(le.reading_order, lc.reading_order) THEN 'newer'
                    WHEN s.replace_rule = 'suppress_repeat' THEN 'repeat'
                    WHEN s.reading_order > coalesce(le.reading_order, lc.reading_order) THEN 'newer'
                    ELSE 'older'
@@ -579,7 +606,8 @@ async fn register_source(conn: &mut PgConnection, p: &SourceProgress) -> Result<
     let length =
         i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
     sqlx::query!(
-        "INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present') ON CONFLICT (hash) DO NOTHING",
+        r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
+           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
         m.blob,
         length,
     )
@@ -819,7 +847,7 @@ async fn archive_request(
         .fetch_one(&mut *conn)
         .await?;
     match request {
-        ArchiveRequest::Replay { .. } => Ok(0),
+        ArchiveRequest::Replay { .. } | ArchiveRequest::RemovedAtSource { .. } => Ok(0),
         ArchiveRequest::Hide { target, operation } => {
             let kind = "hide";
             let event = sqlx::query!(

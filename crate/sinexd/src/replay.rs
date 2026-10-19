@@ -154,9 +154,17 @@ pub async fn run(ctx: &mut Context, o: Options) -> Result<Report, String> {
             report.chains_skipped += 1;
             continue;
         }
-        let chain = &chain[..=last];
-        let batches = read_chain(ctx, chain, &in_scope, &scope, operation, &mut report)?;
-        let (outcomes, diff) = ctx
+        let chain: Vec<Stored> = chain[..=last].iter().map(|m| (*m).clone()).collect();
+        // The chain is read on a blocking thread while the writer admits its
+        // batches as they come, a few at a time.
+        let (sender, batches) = tokio::sync::mpsc::channel(READ_AHEAD);
+        let reading = {
+            let (blobs, in_scope, scope) = (ctx.blobs.clone(), in_scope.clone(), scope.clone());
+            tokio::task::spawn_blocking(move || {
+                read_chain(&blobs, &chain, &in_scope, &scope, operation, &sender)
+            })
+        };
+        let replayed = ctx
             .writer
             .replay(ReplayChain {
                 operation,
@@ -166,8 +174,12 @@ pub async fn run(ctx: &mut Context, o: Options) -> Result<Report, String> {
                 compare: o.compare,
                 batches,
             })
-            .await
-            .map_err(|e| format!("chain from material {root}: {e}"))?;
+            .await;
+        let read = reading.await.map_err(|e| e.to_string())?;
+        let (outcomes, diff) = replayed.map_err(|e| format!("chain from material {root}: {e}"))?;
+        report.materials += read.materials;
+        report.events_read += read.events_read;
+        report.failures += read.failures;
         report.chains += 1;
         for out in &outcomes {
             report.archived += out.replay_archived;
@@ -207,17 +219,51 @@ fn chains(stored: &[Stored]) -> Vec<Vec<&Stored>> {
         .collect()
 }
 
-/// Drain every material of a chain in order, carrying parser state, and
-/// build the batches that replace the in-scope materials' readings. The
-/// first batch carries the request to archive what is re-read.
+/// Batches of one chain read ahead of the writer.
+const READ_AHEAD: usize = 4;
+
+/// What reading one chain counted.
+#[derive(Debug, Default)]
+struct Read {
+    materials: usize,
+    events_read: usize,
+    failures: usize,
+}
+
+/// Drain every material of a chain in order, carrying parser state, and send
+/// the batches that replace the in-scope materials' readings to the writer as
+/// they are built. The first batch carries the request to archive what is
+/// re-read. A material that cannot be read is sent as an error, which rolls
+/// the chain back.
 fn read_chain(
-    ctx: &Context,
-    chain: &[&Stored],
+    blobs: &sinex_store::Blobs,
+    chain: &[Stored],
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
-    report: &mut Report,
-) -> Result<Vec<Batch>, String> {
+    out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
+) -> Read {
+    let mut read = Read::default();
+    if let Err(error) = read_chain_into(blobs, chain, in_scope, scope, operation, out, &mut read) {
+        // The writer may already have stopped reading; nothing else to tell.
+        let _ = out.blocking_send(Err(error));
+    }
+    read
+}
+
+fn read_chain_into(
+    blobs: &sinex_store::Blobs,
+    chain: &[Stored],
+    in_scope: &BTreeSet<Uuid>,
+    scope: &Scope,
+    operation: OperationId,
+    out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
+    report: &mut Read,
+) -> Result<(), String> {
+    let send = |batch: Batch| {
+        out.blocking_send(Ok(batch))
+            .map_err(|_| "the writer stopped reading the chain".to_owned())
+    };
     let whole = scope.event_types.is_none() && scope.from.is_none() && scope.until.is_none();
     let narrowing = ReplayScope {
         materials: Vec::new(),
@@ -225,7 +271,7 @@ fn read_chain(
         from: scope.from,
         until: scope.until,
     };
-    let mut batches = vec![Batch {
+    send(Batch {
         run: RunId::new(),
         kind: BatchKind::Replay { operation },
         records: Vec::new(),
@@ -240,7 +286,7 @@ fn read_chain(
             },
             operation,
         }],
-    }];
+    })?;
     let mut carry = Value::Null;
     for m in chain {
         let source = sources::by_parser(&m.parser, m.host.as_deref().unwrap_or_default())
@@ -257,13 +303,13 @@ fn read_chain(
         }
         // A sealed material needs the class unlocked to be read; replay does
         // not unlock, so it is deferred and named rather than read blind.
-        if ctx.blobs.is_sealed(&m.blob).map_err(|e| e.to_string())? {
+        if blobs.is_sealed(&m.blob).map_err(|e| e.to_string())? {
             return Err(format!(
                 "material {}: sealed; replaying it needs the sealed class unlocked, which replay does not do yet (deferred)",
                 m.id
             ));
         }
-        let bytes = ctx.blobs.read(&m.blob).map_err(|e| e.to_string())?;
+        let bytes = blobs.read(&m.blob).map_err(|e| e.to_string())?;
         let records = drivers::stored_records(&m.manifest, &bytes, source.spec().framer);
         let order = drivers::reading_order(&m.manifest);
         let chunks = source
@@ -305,15 +351,15 @@ fn read_chain(
             if records.is_empty() {
                 continue;
             }
-            batches.push(Batch {
+            send(Batch {
                 run: RunId::new(),
                 kind: BatchKind::Replay { operation },
                 records,
                 archive: Vec::new(),
-            });
+            })?;
         }
     }
-    Ok(batches)
+    Ok(())
 }
 
 fn merge(into: &mut Diff, from: Diff) {

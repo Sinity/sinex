@@ -77,7 +77,18 @@ pub async fn run(o: Options) -> Result<(), String> {
     let (handle, queues) = writer::channels();
     let mut tasks: JoinSet<(&'static str, Result<(), String>)> = JoinSet::new();
 
-    let writer_conn = connect(&o.database).await?;
+    let mut writer_conn = connect(&o.database).await?;
+    // Blob files an excision committed to deleting but a crash left behind.
+    let (deleted, left) = sinex_store::excision::finish_deletions(&mut writer_conn, &blobs)
+        .await
+        .map_err(|e| format!("finishing blob deletions: {e}"))?;
+    if !deleted.is_empty() || !left.is_empty() {
+        eprintln!(
+            "sinexd: finished {} blob deletions left by a stop; {} files could not be deleted",
+            deleted.len(),
+            left.len()
+        );
+    }
     let url = o.database.clone();
     tasks.spawn(async move {
         writer::run_notifying(

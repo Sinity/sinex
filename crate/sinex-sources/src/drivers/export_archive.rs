@@ -304,6 +304,7 @@ impl ExportArchive {
                 manifest,
                 cursor_at: Box::new(cursor_at),
                 aligned: false,
+                vanished: Vec::new(),
             }),
             cursor_unchanged: Value::Null,
         })

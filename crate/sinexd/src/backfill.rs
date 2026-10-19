@@ -157,7 +157,8 @@ pub async fn run(o: Options) -> Result<(), String> {
         let driver = sinex_sources::sources::atuin::driver(path.clone(), o.host.clone());
         let binding = format!("atuin@{}", o.host);
         let chain = stored(&mut ctx, &binding).await?;
-        let mut memory = drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(Vec::as_slice));
+        let mut memory =
+            drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(|(_, b)| b.as_slice()));
         let totals = drive(
             &mut ctx.aux,
             &ctx.writer,
@@ -176,7 +177,7 @@ pub async fn run(o: Options) -> Result<(), String> {
         let binding = format!("zsh@{}", o.host);
         let chain = stored(&mut ctx, &binding).await?;
         let mut memory = drivers::append_file::AppendMemory::rebuild(
-            chain.iter().map(Vec::as_slice),
+            chain.iter().map(|(id, b)| (*id, b.as_slice())),
             sinex_sources::sources::zsh::frame,
         );
         let totals = drive(
@@ -241,7 +242,8 @@ pub async fn run(o: Options) -> Result<(), String> {
         let driver = sinex_sources::sources::activitywatch::driver(path.clone(), o.host.clone());
         let binding = format!("activitywatch@{}", o.host);
         let chain = stored(&mut ctx, &binding).await?;
-        let mut memory = drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(Vec::as_slice));
+        let mut memory =
+            drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(|(_, b)| b.as_slice()));
         let totals = drive(
             &mut ctx.aux,
             &ctx.writer,
@@ -284,7 +286,10 @@ pub async fn run(o: Options) -> Result<(), String> {
 }
 
 /// The stored bytes the binding's driver read last, for its memory.
-async fn stored(ctx: &mut Context, binding: &str) -> Result<Vec<Vec<u8>>, String> {
+async fn stored(
+    ctx: &mut Context,
+    binding: &str,
+) -> Result<Vec<(sinex_model::MaterialId, Vec<u8>)>, String> {
     let cursor = positions::load(&mut ctx.aux, binding)
         .await
         .map_err(|e| e.to_string())?
@@ -472,8 +477,9 @@ async fn export(
                     };
                     let name = binding(&format!("{profile}/{table}"));
                     let chain = stored(ctx, &name).await?;
-                    let mut memory =
-                        drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(Vec::as_slice));
+                    let mut memory = drivers::sqlite_rows::RowMemory::rebuild(
+                        chain.iter().map(|(_, b)| b.as_slice()),
+                    );
                     totals.add(
                         drive(
                             &mut ctx.aux,
@@ -627,7 +633,7 @@ async fn export(
             let name = binding(&path.display().to_string());
             let chain = stored(ctx, &name).await?;
             let mut memory = drivers::append_file::AppendMemory::rebuild(
-                chain.iter().map(Vec::as_slice),
+                chain.iter().map(|(id, b)| (*id, b.as_slice())),
                 operator::frame_log,
             );
             totals.add(
@@ -644,8 +650,9 @@ async fn export(
                 let driver = operator::steering_driver(path.clone(), host.clone(), table);
                 let name = binding(&format!("{}/{table}", path.display()));
                 let chain = stored(ctx, &name).await?;
-                let mut memory =
-                    drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(Vec::as_slice));
+                let mut memory = drivers::sqlite_rows::RowMemory::rebuild(
+                    chain.iter().map(|(_, b)| b.as_slice()),
+                );
                 totals.add(
                     drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
                         driver.poll(c, &mut memory)
@@ -694,7 +701,7 @@ async fn export(
                 let name = binding(&file.display().to_string());
                 let chain = stored(ctx, &name).await?;
                 let mut memory = drivers::append_file::AppendMemory::rebuild(
-                    chain.iter().map(Vec::as_slice),
+                    chain.iter().map(|(id, b)| (*id, b.as_slice())),
                     weechat::SPEC.framer,
                 );
                 totals.add(
@@ -717,7 +724,7 @@ async fn export(
                     let name = binding(&file.display().to_string());
                     let chain = stored(ctx, &name).await?;
                     let mut memory = drivers::append_file::AppendMemory::rebuild(
-                        chain.iter().map(Vec::as_slice),
+                        chain.iter().map(|(id, b)| (*id, b.as_slice())),
                         lane.spec.framer,
                     );
                     lane_totals.add(

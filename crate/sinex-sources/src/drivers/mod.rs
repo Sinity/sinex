@@ -80,6 +80,9 @@ pub struct NewMaterial {
     /// the cursor never stops inside it (a resumed read would take the
     /// records skipped as already read for new ones).
     pub aligned: bool,
+    /// Records the previous revision held that a rewrite dropped, by where
+    /// they were read: each becomes a removed-at-source reading.
+    pub vanished: Vec<sinex_model::RecordLocation>,
 }
 
 /// Turn one poll into admission batches. The material's bytes go to the
@@ -202,7 +205,13 @@ pub fn batches(
                 revision,
             ),
             records,
-            archive: vec![],
+            archive: if first && !m.vanished.is_empty() {
+                vec![sinex_model::ArchiveRequest::RemovedAtSource {
+                    locations: m.vanished.clone(),
+                }]
+            } else {
+                vec![]
+            },
         });
         first = false;
     }

@@ -171,7 +171,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE core.blobs (
   hash text PRIMARY KEY CHECK (hash ~ '^blake3:[0-9a-f]{64}$'),
   size bigint NOT NULL CHECK (size >= 0),
-  status text NOT NULL CHECK (status IN ('present', 'quarantined')),
+  -- `deleting`: no row refers to the bytes any more (an excision); the
+  -- file is deleted after commit, then this row. A row left `deleting` by a
+  -- crash is finished when the daemon starts.
+  status text NOT NULL CHECK (status IN ('present', 'quarantined', 'deleting')),
   registered_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         "CREATE TABLE raw.inputs (
@@ -315,6 +318,23 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   key jsonb NOT NULL,
   since timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (derivation, key)
+)".into(),
+        // The comparison lane (architecture §6.3): what a recompute of a
+        // derivation would change, computed without writing outputs, kept so a
+        // version change can be judged before it is applied.
+        "CREATE TABLE derivation.comparisons (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  derivation text NOT NULL,
+  version integer NOT NULL,
+  range_from timestamptz,
+  range_until timestamptz,
+  made_at timestamptz NOT NULL DEFAULT now(),
+  keys bigint NOT NULL,
+  unchanged bigint NOT NULL,
+  added bigint NOT NULL,
+  changed bigint NOT NULL,
+  removed bigint NOT NULL,
+  examples jsonb NOT NULL
 )".into(),
         // Privacy rules (spec `privacy.md` §1 rule 2): insert-only. A change is
         // a new row with the same name; a removal is a row with `ended`. The

@@ -146,6 +146,25 @@ async fn admit_events(conn: &mut PgConnection, events: Vec<Event>) -> crate::Out
 /// files: what the writer does.
 async fn excise(conn: &mut PgConnection, store: &Store, target: Target) -> Result<Applied> {
     let plan = plan(conn, target).await?;
+    let rewrites = rewrites_for(conn, store, &plan).await;
+    let mut tx = conn.begin().await?;
+    let applied = apply(
+        &mut tx,
+        target,
+        &plan,
+        &rewrites,
+        OperationId::new(),
+        "operator",
+        &NoDerivations,
+    )
+    .await?;
+    tx.commit().await?;
+    finish_deletions(conn, &store.blobs).await?;
+    Ok(applied)
+}
+
+/// The blanked bytes for each material a plan rewrites, stored.
+async fn rewrites_for(_conn: &mut PgConnection, store: &Store, plan: &Plan) -> Vec<Rewrite> {
     let mut rewrites = Vec::new();
     for m in plan.materials.iter().filter(|m| !m.sealed) {
         let mut bytes = store.blobs.read(&m.blob).unwrap();
@@ -167,22 +186,7 @@ async fn excise(conn: &mut PgConnection, store: &Store, target: Target) -> Resul
             length: bytes.len() as u64,
         });
     }
-    let mut tx = conn.begin().await?;
-    let applied = apply(
-        &mut tx,
-        target,
-        &plan,
-        &rewrites,
-        OperationId::new(),
-        "operator",
-        &NoDerivations,
-    )
-    .await?;
-    tx.commit().await?;
-    for name in &applied.delete_after_commit {
-        store.blobs.delete(name).unwrap();
-    }
-    Ok(applied)
+    rewrites
 }
 
 async fn count(conn: &mut PgConnection, sql: &str) -> i64 {
@@ -203,6 +207,72 @@ fn blank_keeps_length_framing_and_neighbours() {
         &whole, b"    \n",
         "a whole-material span blanks inner newlines too"
     );
+}
+
+#[tokio::test]
+async fn deletions_a_stop_left_are_finished_and_reused_bytes_kept() {
+    let (_db, mut conn) = testdb::fresh().await;
+    let store = Store::new();
+    let first = b"keep-1\nsecret v1\n".to_vec();
+    let (m1, blob1) = material(&mut conn, &store, &first).await;
+    let old = keyed(m1, &first, 7, "k", 1);
+    admit_events(&mut conn, vec![keyed(m1, &first, 0, "a", 1), old.clone()]).await;
+
+    // The excision commits; the process stops before deleting the file.
+    let target = Target::Event(old.id);
+    let plan = plan(&mut conn, target).await.unwrap();
+    let rewrites = rewrites_for(&mut conn, &store, &plan).await;
+    let mut tx = conn.begin().await.unwrap();
+    apply(
+        &mut tx,
+        target,
+        &plan,
+        &rewrites,
+        OperationId::new(),
+        "operator",
+        &NoDerivations,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert!(
+        store.blobs.read(&blob1).is_ok(),
+        "the file outlived the stop"
+    );
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT count(*) FROM core.blobs WHERE status = 'deleting'"
+        )
+        .await,
+        1
+    );
+
+    // The next start finishes it.
+    let (deleted, left) = finish_deletions(&mut conn, &store.blobs).await.unwrap();
+    assert_eq!((deleted, left.len()), (vec![blob1.clone()], 0));
+    assert!(store.blobs.read(&blob1).is_err());
+    assert_eq!(
+        count(
+            &mut conn,
+            "SELECT count(*) FROM core.blobs WHERE status = 'deleting'"
+        )
+        .await,
+        0
+    );
+
+    // Bytes registered again while their deletion was pending are kept.
+    let second = b"other\n".to_vec();
+    let (_, blob2) = material(&mut conn, &store, &second).await;
+    sqlx::query("UPDATE core.blobs SET status = 'deleting' WHERE hash = $1")
+        .bind(&blob2)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    material(&mut conn, &store, &second).await;
+    let (deleted, _) = finish_deletions(&mut conn, &store.blobs).await.unwrap();
+    assert!(deleted.is_empty());
+    assert!(store.blobs.read(&blob2).is_ok());
 }
 
 #[tokio::test]

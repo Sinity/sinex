@@ -246,6 +246,59 @@ async fn hidden_stays_hidden_across_readmission_until_unhidden() {
 }
 
 #[tokio::test]
+async fn a_dropped_record_gets_a_removed_reading_once() {
+    let (_db, mut conn) = testdb::fresh().await;
+    let location = RecordLocation {
+        material: MaterialId::new(),
+        anchor: 2,
+    };
+    let read = Event::build(
+        &CommandImported {
+            command: "b".into(),
+            hostname: "h".into(),
+            started_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
+            header_elapsed: 0,
+        },
+        "terminal.zsh",
+        Origin::Record {
+            location,
+            ordinal: 0,
+        },
+        ReadingOrder(2),
+        *blake3::hash(b"b").as_bytes(),
+        Class::Open,
+    )
+    .unwrap();
+    admit_one(&mut conn, &batch(vec![read.clone()])).await;
+
+    let mut dropped = batch(vec![]);
+    dropped.archive.push(ArchiveRequest::RemovedAtSource {
+        locations: vec![location],
+    });
+    let out = admit_one(&mut conn, &dropped).await;
+    assert_eq!(out.replaced, 1, "{out:?}");
+    let state: (String, String) = sqlx::query_as(
+        "SELECT e.record_state, e.payload->>'command' FROM core.live_coordinates c
+         JOIN core.events e ON e.id = c.event_id WHERE c.anchor = 2",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(state, ("removed".into(), "b".into()));
+    let archived: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit.archived WHERE event_id = $1")
+            .bind(read.id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(archived, 1, "the earlier reading is archived, not deleted");
+
+    // Reported again: already removed, nothing new.
+    let again = admit_one(&mut conn, &dropped).await;
+    assert_eq!((again.admitted, again.replaced), (0, 0));
+}
+
+#[tokio::test]
 async fn events_and_progress_commit_together() {
     let (_db, mut conn) = testdb::fresh().await;
     let progress = |cursor: i64| SourceProgress {

@@ -3,6 +3,7 @@
 //! through `aux`, never the writer's connection.
 use crate::keys::Registered;
 use crate::writer::{self, WriterHandle};
+use sinex_model::MaterialId;
 use sinex_sources::drivers::MaterialSink;
 use sinex_store::Blobs;
 use sqlx::{Connection, PgConnection};
@@ -163,7 +164,7 @@ pub async fn stored_chain(
     aux: &mut PgConnection,
     blobs: &Blobs,
     cursor: &serde_json::Value,
-) -> Result<Vec<Vec<u8>>, String> {
+) -> Result<Vec<(MaterialId, Vec<u8>)>, String> {
     let Some(last) = cursor
         .get("material")
         .and_then(serde_json::Value::as_str)
@@ -174,11 +175,16 @@ pub async fn stored_chain(
     let names = sinex_store::replay::chain_ending(aux, last)
         .await
         .map_err(|e| e.to_string())?;
-    let mut chain: Vec<Vec<u8>> = names
+    let mut chain: Vec<(MaterialId, Vec<u8>)> = names
         .iter()
-        .map(|n| blobs.read(n).map_err(|e| e.to_string()))
+        .map(|(id, n)| {
+            blobs
+                .read(n)
+                .map(|bytes| (MaterialId(*id), bytes))
+                .map_err(|e| e.to_string())
+        })
         .collect::<Result<_, _>>()?;
-    if let (Some(last), Some(through)) = (
+    if let (Some((_, last)), Some(through)) = (
         chain.last_mut(),
         cursor.get("through").and_then(serde_json::Value::as_u64),
     ) {

@@ -344,7 +344,8 @@ pub async fn apply(
         let length = i64::try_from(rewrite.length)
             .map_err(|_| Error::Invalid("material length beyond i64".into()))?;
         sqlx::query!(
-            "INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present') ON CONFLICT (hash) DO NOTHING",
+            r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
+           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
             rewrite.blob,
             length,
         )
@@ -376,13 +377,49 @@ pub async fn apply(
         .fetch_one(&mut *conn)
         .await?;
         if unreferenced && m.blob != rewrite.blob {
-            sqlx::query!("DELETE FROM core.blobs WHERE hash = $1", m.blob)
-                .execute(&mut *conn)
-                .await?;
+            sqlx::query!(
+                "UPDATE core.blobs SET status = 'deleting' WHERE hash = $1",
+                m.blob
+            )
+            .execute(&mut *conn)
+            .await?;
             applied.delete_after_commit.push(m.blob.clone());
         }
     }
     Ok(applied)
+}
+
+/// Delete the files of blobs left `deleting`, then their rows: after an
+/// excision commits, and at daemon start for any a crash left behind. A blob
+/// registered again meanwhile is `present` and is kept, as is one a row
+/// refers to again. Returns the blobs deleted and those whose file could not
+/// be deleted (their rows stay for the next attempt).
+pub async fn finish_deletions(
+    conn: &mut PgConnection,
+    blobs: &crate::Blobs,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let pending = sqlx::query_scalar!(
+        r#"SELECT hash FROM core.blobs b WHERE status = 'deleting'
+             AND NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = b.hash)
+             AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = b.hash)"#
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let (mut deleted, mut left) = (Vec::new(), Vec::new());
+    for name in pending {
+        if blobs.delete(&name).is_ok() {
+            sqlx::query!(
+                "DELETE FROM core.blobs WHERE hash = $1 AND status = 'deleting'",
+                name
+            )
+            .execute(&mut *conn)
+            .await?;
+            deleted.push(name);
+        } else {
+            left.push(name);
+        }
+    }
+    Ok((deleted, left))
 }
 
 #[cfg(test)]

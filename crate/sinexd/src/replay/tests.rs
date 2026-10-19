@@ -218,7 +218,8 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
     let chain = crate::context::stored_chain(&mut f.ctx.aux, &f.ctx.blobs, &cursor)
         .await
         .unwrap();
-    let mut rebuilt = AppendMemory::rebuild(chain.iter().map(Vec::as_slice), zsh::frame);
+    let mut rebuilt =
+        AppendMemory::rebuild(chain.iter().map(|(id, b)| (*id, b.as_slice())), zsh::frame);
     assert_eq!(rebuilt, memory);
     ingest(&mut f.ctx, &path, &mut rebuilt).await;
     assert_eq!(
