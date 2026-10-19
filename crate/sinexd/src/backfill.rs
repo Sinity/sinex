@@ -53,6 +53,8 @@ pub const EXPORT_KINDS: &[&str] = &[
     "sleep-as-android",
     "wykop",
     "reddit",
+    "samsung-health",
+    "samsung-sms",
 ];
 
 #[derive(Default)]
@@ -485,16 +487,32 @@ async fn export(
             }
         }
         "takeout-chrome" | "spotify" | "raindrop" | "mbox" | "goodreads" | "messenger"
-        | "sleep-as-android" | "wykop" | "reddit" => {
-            use sinex_sources::sources::{goodreads, messenger, reddit, sleep_as_android, wykop};
+        | "sleep-as-android" | "wykop" | "reddit" | "samsung-health" | "samsung-sms" => {
+            use sinex_sources::sources::{
+                goodreads, messenger, reddit, samsung_health, samsung_sms, sleep_as_android, wykop,
+            };
             let keep: fn(&std::path::Path) -> bool = match kind {
                 "wykop" => wykop::is_own,
-                "reddit" => |p| p.extension().is_some_and(|e| e == "zip"),
+                "reddit" | "samsung-health" => |p| p.extension().is_some_and(|e| e == "zip"),
+                "samsung-sms" => |p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("SMS_") && n.ends_with(".csv"))
+                },
                 _ => any,
             };
-            for file in files(&path, false, keep) {
+            let recursive = matches!(kind, "samsung-health" | "samsung-sms");
+            for file in files(&path, recursive, keep) {
                 let name = binding(&file.display().to_string());
                 let (source, driver): (Box<dyn Source>, _) = match kind {
+                    "samsung-health" => (
+                        Box::new(samsung_health::source()),
+                        samsung_health::driver(file, host.clone()),
+                    ),
+                    "samsung-sms" => (
+                        Box::new(samsung_sms::source()),
+                        samsung_sms::driver(file, host.clone()),
+                    ),
                     "wykop" => (Box::new(wykop::source()), wykop::driver(file, host.clone())),
                     "reddit" => (Box::new(reddit::source()), reddit::driver(file, host.clone())),
                     "goodreads" => (

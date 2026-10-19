@@ -16,6 +16,8 @@ pub mod raindrop;
 pub mod reddit;
 /// Commits in local repositories (`code.git`).
 pub mod repository;
+pub mod samsung_health;
+pub mod samsung_sms;
 pub mod sleep_as_android;
 pub mod spotify;
 pub mod takeout_chrome;
@@ -56,6 +58,8 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &sleep_as_android::SPEC,
         &wykop::SPEC,
         &reddit::SPEC,
+        &samsung_health::SPEC,
+        &samsung_sms::SPEC,
     ]
 }
 
@@ -107,6 +111,8 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         p if p == sleep_as_android::SPEC.parser => Some(Box::new(sleep_as_android::source())),
         p if p == wykop::SPEC.parser => Some(Box::new(wykop::source())),
         p if p == reddit::SPEC.parser => Some(Box::new(reddit::source())),
+        p if p == samsung_health::SPEC.parser => Some(Box::new(samsung_health::source())),
+        p if p == samsung_sms::SPEC.parser => Some(Box::new(samsung_sms::source())),
         // Like WeeChat, floating times are read in this system's zone.
         p if p == calendar::SPEC.parser => Some(Box::new(calendar::source(
             weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
