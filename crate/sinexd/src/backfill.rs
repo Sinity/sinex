@@ -38,6 +38,7 @@ pub struct Options {
 /// The kinds `--source kind=path` accepts. A directory given for a kind that
 /// reads one file is read file by file, each its own binding.
 pub const EXPORT_KINDS: &[&str] = &[
+    "sinnix-lake",
     "chromium",
     "takeout-chrome",
     "spotify",
@@ -701,6 +702,65 @@ async fn export(
                         driver.poll(c, &mut memory)
                     })
                     .await?,
+                );
+            }
+        }
+        "sinnix-lake" => {
+            // `path` is the lake root (`/realm`); each lane's directories are
+            // its configuration (spec `port-sinnix.md` §3.1).
+            use sinex_sources::sources::sinnix_lake;
+            for lane in sinnix_lake::LANES {
+                let source = sinnix_lake::source(lane);
+                let mut lane_totals = Totals::default();
+                for file in sinnix_lake::day_files(&path, lane) {
+                    let driver = sinnix_lake::driver(file.clone(), host.clone());
+                    let name = binding(&file.display().to_string());
+                    let chain = stored(ctx, &name).await?;
+                    let mut memory = drivers::append_file::AppendMemory::rebuild(
+                        chain.iter().map(Vec::as_slice),
+                        lane.spec.framer,
+                    );
+                    lane_totals.add(
+                        drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                            driver.poll(c, &mut memory)
+                        })
+                        .await?,
+                    );
+                }
+                eprintln!(
+                    "sinnix-lake {}: {} materials, {} bytes, {} events offered, {} admitted, {} repeats, {} failures",
+                    lane.spec.name,
+                    lane_totals.materials,
+                    lane_totals.material_bytes,
+                    lane_totals.events_offered,
+                    lane_totals.admitted,
+                    lane_totals.repeats,
+                    lane_totals.failures,
+                );
+                totals.add(lane_totals);
+            }
+            // Sequence gaps per lane: numbers between the first and last seen
+            // with no record. Facts about Sinnix's capture, not errors here.
+            let gaps = sqlx::query!(
+                r#"SELECT payload->>'lane' AS "lane!", payload->>'host' AS "host!",
+                          count(DISTINCT (payload->>'seq')::bigint) AS "seen!",
+                          min((payload->>'seq')::bigint) AS "first!",
+                          max((payload->>'seq')::bigint) AS "last!"
+                   FROM core.events WHERE event_type = 'capture.observed'
+                   GROUP BY 1, 2 ORDER BY 1, 2"#
+            )
+            .fetch_all(&mut ctx.aux)
+            .await
+            .map_err(|e| e.to_string())?;
+            for g in gaps {
+                eprintln!(
+                    "sinnix-lake gaps {}@{}: {} seen in {}..={}, {} numbers without a record",
+                    g.lane,
+                    g.host,
+                    g.seen,
+                    g.first,
+                    g.last,
+                    (g.last - g.first + 1) - g.seen
                 );
             }
         }
