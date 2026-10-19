@@ -54,6 +54,13 @@ fn refused(reason: impl Into<String>) -> Reply {
     }
 }
 
+/// An RFC 3339 time argument.
+fn timestamp(s: &str) -> Result<sinex_model::Timestamp, String> {
+    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+        .map(sinex_model::Timestamp)
+        .map_err(|e| format!("{s}: not an RFC 3339 time: {e}"))
+}
+
 fn not_built(reason: impl Into<String>) -> Reply {
     Reply::Refused {
         reason: reason.into(),
@@ -288,7 +295,138 @@ impl Api {
                 })
                 .await
             }
-            Request::Excise { reference } => self.excise(caller, &reference, actor).await,
+            Request::Excise {
+                reference,
+                material,
+                dry_run,
+            } => {
+                self.excise(
+                    caller,
+                    reference.as_deref(),
+                    material.as_deref(),
+                    dry_run.unwrap_or(false),
+                    actor,
+                )
+                .await
+            }
+            Request::Replay {
+                material,
+                binding,
+                event_type,
+                from,
+                until,
+                compare,
+                resume,
+                all,
+            } => {
+                let scope = (|| -> Result<crate::replay::Scope, String> {
+                    Ok(crate::replay::Scope {
+                        materials: material
+                            .iter()
+                            .map(|m| {
+                                uuid::Uuid::parse_str(m).map_err(|e| format!("material {m}: {e}"))
+                            })
+                            .collect::<Result<_, _>>()?,
+                        binding,
+                        event_types: (!event_type.is_empty()).then_some(event_type),
+                        from: from.as_deref().map(timestamp).transpose()?,
+                        until: until.as_deref().map(timestamp).transpose()?,
+                    })
+                })();
+                let resume = resume
+                    .as_deref()
+                    .map(|r| uuid::Uuid::parse_str(r).map(OperationId))
+                    .transpose();
+                match (scope, resume) {
+                    (Ok(scope), Ok(resume)) => {
+                        self.replay(
+                            caller,
+                            crate::replay::Options {
+                                scope,
+                                compare: compare.unwrap_or(false),
+                                resume,
+                                actor: actor.to_string(),
+                            },
+                            all.unwrap_or(false),
+                        )
+                        .await
+                    }
+                    (Err(e), _) => refused(e),
+                    (_, Err(e)) => refused(format!("resume: {e}")),
+                }
+            }
+            Request::Recompute {
+                derivation,
+                compare,
+                from,
+                until,
+                examples,
+            } => {
+                let range = match (
+                    from.as_deref().map(timestamp).transpose(),
+                    until.as_deref().map(timestamp).transpose(),
+                ) {
+                    (Ok(None), Ok(None)) => None,
+                    (Ok(f), Ok(u)) => Some((
+                        f.unwrap_or(sinex_model::Timestamp(time::OffsetDateTime::UNIX_EPOCH)),
+                        u.unwrap_or_else(sinex_model::Timestamp::now),
+                    )),
+                    (Err(e), _) | (_, Err(e)) => return refused(e),
+                };
+                self.recompute(
+                    caller,
+                    &derivation,
+                    compare.unwrap_or(false),
+                    range,
+                    usize::try_from(examples.unwrap_or(5)).unwrap_or(usize::MAX),
+                )
+                .await
+            }
+            Request::Comparisons { derivation, limit } => {
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                let limit = i64::try_from(limit.unwrap_or(20)).unwrap_or(i64::MAX);
+                match sinex_store::derived::comparisons(&mut conn, derivation.as_deref(), limit)
+                    .await
+                {
+                    Ok(kept) => {
+                        let rows: Vec<Value> = kept
+                            .into_iter()
+                            .map(|c| {
+                                json!({
+                                    "id": c.id,
+                                    "derivation": c.derivation,
+                                    "version": c.version,
+                                    "from": c.range.and_then(|r| r.0),
+                                    "until": c.range.and_then(|r| r.1),
+                                    "made_at": c.made_at,
+                                    "keys": c.keys,
+                                    "unchanged": c.unchanged,
+                                    "added": c.added,
+                                    "changed": c.changed,
+                                    "removed": c.removed,
+                                    "examples": c.examples,
+                                })
+                            })
+                            .collect();
+                        Reply::Ok {
+                            result: json!({ "total": rows.len(), "comparisons": rows }),
+                        }
+                    }
+                    Err(e) => refused(e.to_string()),
+                }
+            }
+            Request::Crawl {
+                allow,
+                url,
+                limit,
+                pause,
+            } => {
+                self.crawl(caller, allow, url, limit, pause.unwrap_or(2))
+                    .await
+            }
             Request::AnalysisCatalog
             | Request::AnalysisRun { .. }
             | Request::AnalysisShow { .. }
@@ -296,12 +434,6 @@ impl Api {
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
             Request::Stage { .. } => not_built(
                 "stage needs the staging path of the source framework, which this daemon does not run yet (architecture §5.4)",
-            ),
-            Request::Replay { .. } => not_built(
-                "replay is not offered over the API yet; run `sinexd admin replay` (architecture §5.5)",
-            ),
-            Request::Recompute { .. } => not_built(
-                "recompute is not offered over the API yet; run `sinexd admin recompute` (architecture §6.3)",
             ),
             Request::Same { .. } | Request::Distinct { .. } => not_built(
                 "duplicate decisions need the fusion derivation's decision records, not built yet (architecture §6.4)",
@@ -639,26 +771,140 @@ impl Api {
         }
     }
 
-    async fn excise(&self, caller: &Caller, reference: &str, actor: &str) -> Reply {
+    async fn excise(
+        &self,
+        caller: &Caller,
+        reference: Option<&str>,
+        material: Option<&str>,
+        dry_run: bool,
+        actor: &str,
+    ) -> Reply {
         let Some(writer) = &self.writer else {
             return refused("this daemon has no writer; writes go through `sinexd run`");
-        };
-        let r = match query::parse_reference(reference) {
-            Ok(r) => r,
-            Err(e) => return query_refusal(reference, e),
         };
         let mut conn = match self.acquire(caller).await {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
         };
-        let id = match sinex_store::query::resolve(&mut conn, &r).await {
-            Ok(id) => id,
-            Err(e) => return refused(e.to_string()),
+        let target = match (reference, material) {
+            (Some(reference), None) => {
+                let r = match query::parse_reference(reference) {
+                    Ok(r) => r,
+                    Err(e) => return query_refusal(reference, e),
+                };
+                match sinex_store::query::resolve(&mut conn, &r).await {
+                    Ok(id) => sinex_store::excision::Target::Event(EventId(id)),
+                    Err(e) => return refused(e.to_string()),
+                }
+            }
+            (None, Some(m)) => match uuid::Uuid::parse_str(m) {
+                Ok(m) => sinex_store::excision::Target::Material(sinex_model::MaterialId(m)),
+                Err(e) => return refused(format!("material {m}: {e}")),
+            },
+            _ => return refused("excise needs exactly one of an event reference or --material"),
         };
-        let target = sinex_store::excision::Target::Event(EventId(id));
+        if dry_run {
+            return match sinex_store::excision::plan(&mut conn, target).await {
+                Ok(plan) => Reply::Ok {
+                    result: json!({ "dry_run": true, "would_excise": crate::operate::describe(&plan) }),
+                },
+                Err(e) => refused(e.to_string()),
+            };
+        }
         match crate::operate::excise_with(&mut conn, &self.blobs, writer, target, actor).await {
             Ok(summary) => Reply::Ok {
-                result: json!({ "event": id, "excised": summary }),
+                result: json!({ "excised": summary }),
+            },
+            Err(e) => refused(e),
+        }
+    }
+
+    async fn replay(&self, caller: &Caller, o: crate::replay::Options, all: bool) -> Reply {
+        let Some(writer) = &self.writer else {
+            return refused("this daemon has no writer; writes go through `sinexd run`");
+        };
+        let mut conn = match self.acquire(caller).await {
+            Ok(c) => c,
+            Err(e) => return refused(e.to_string()),
+        };
+        let compare = o.compare;
+        match crate::replay::run(&mut conn, &self.blobs, writer, o).await {
+            Ok(report) => Reply::Ok {
+                result: report.to_json(compare, all),
+            },
+            Err(e) => refused(e),
+        }
+    }
+
+    async fn recompute(
+        &self,
+        caller: &Caller,
+        derivation: &str,
+        compare: bool,
+        range: Option<(sinex_model::Timestamp, sinex_model::Timestamp)>,
+        examples: usize,
+    ) -> Reply {
+        let Some(writer) = &self.writer else {
+            return refused("this daemon has no writer; writes go through `sinexd run`");
+        };
+        let conn = match self.acquire(caller).await {
+            Ok(c) => c.detach(),
+            Err(e) => return refused(e.to_string()),
+        };
+        let mut driver =
+            match crate::derive::Driver::operating(conn, writer.clone(), derivation, &self.host)
+                .await
+            {
+                Ok(d) => d,
+                Err(e) => return refused(e),
+            };
+        let result = if compare {
+            driver
+                .compare(derivation, range, examples)
+                .await
+                .map(|cmp| json!({ "comparison": cmp.id, "summary": cmp.to_string() }))
+        } else {
+            driver
+                .recompute_all(derivation, range)
+                .await
+                .map(|n| json!({ "derivation": derivation, "keys_marked": n }))
+        };
+        let ended = driver.end_runs().await;
+        match (result, ended) {
+            (Ok(result), Ok(())) => Reply::Ok { result },
+            (Err(e), _) | (_, Err(e)) => refused(e),
+        }
+    }
+
+    async fn crawl(
+        &self,
+        caller: &Caller,
+        allow: Vec<String>,
+        urls: Vec<String>,
+        limit: Option<u64>,
+        pause: u64,
+    ) -> Reply {
+        let Some(writer) = &self.writer else {
+            return refused("this daemon has no writer; writes go through `sinexd run`");
+        };
+        let mut conn = match self.acquire(caller).await {
+            Ok(c) => c,
+            Err(e) => return refused(e.to_string()),
+        };
+        match crate::crawl::run(
+            &mut conn,
+            &self.blobs,
+            writer,
+            &self.host,
+            allow,
+            urls,
+            limit.map(|l| usize::try_from(l).unwrap_or(usize::MAX)),
+            std::time::Duration::from_secs(pause),
+        )
+        .await
+        {
+            Ok(totals) => Reply::Ok {
+                result: json!({ "crawl": totals.to_string() }),
             },
             Err(e) => refused(e),
         }

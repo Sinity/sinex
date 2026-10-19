@@ -12,15 +12,16 @@
 //!
 //! `--compare` runs exactly the same transactions and rolls each back after
 //! reading what it would change.
-use crate::context::Context;
-use crate::writer::ReplayChain;
+use crate::writer::{ReplayChain, WriterHandle};
 use serde_json::{Value, json};
 use sinex_model::{
     ArchiveRequest, Batch, BatchKind, MaterialId, OperationId, RecordOutcome, ReplayScope, RunId,
     Timestamp,
 };
 use sinex_sources::{DrainInput, Limits, drivers, sources};
+use sinex_store::Blobs;
 use sinex_store::replay::{self, Change, Diff, Stored};
+use sqlx::PgConnection;
 use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
@@ -97,6 +98,30 @@ impl std::fmt::Display for Report {
     }
 }
 
+impl Report {
+    /// The report as a reply: the counts, the summary line, and the changes
+    /// (all of them with `all`, otherwise the first few of each kind).
+    pub fn to_json(&self, compare: bool, all: bool) -> Value {
+        json!({
+            "operation": self.operation,
+            "compare_only": compare,
+            "chains": self.chains,
+            "chains_skipped": self.chains_skipped,
+            "materials": self.materials,
+            "readings": self.events_read,
+            "failures": self.failures,
+            "archived": self.archived,
+            "admitted": self.admitted,
+            "unchanged": self.diff.unchanged,
+            "changed": self.diff.changed.len(),
+            "added": self.diff.added.len(),
+            "removed": self.diff.removed.len(),
+            "summary": self.to_string(),
+            "changes": describe(&self.diff, all),
+        })
+    }
+}
+
 pub struct Options {
     pub scope: Scope,
     pub compare: bool,
@@ -104,14 +129,21 @@ pub struct Options {
     pub actor: String,
 }
 
-pub async fn run(ctx: &mut Context, o: Options) -> Result<Report, String> {
+/// Replay with its parts: a read connection, the content store and the writer
+/// (the daemon's API and a local `sinexd admin` run hold these).
+pub async fn run(
+    aux: &mut PgConnection,
+    blobs: &Blobs,
+    writer: &WriterHandle,
+    o: Options,
+) -> Result<Report, String> {
     let (operation, scope, done) = match o.resume {
         Some(op) => {
-            let stored = replay::scope_of(&mut ctx.aux, op)
+            let stored = replay::scope_of(aux, op)
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("no replay operation {op}"))?;
-            let done: BTreeSet<Uuid> = replay::chains_done(&mut ctx.aux, op)
+            let done: BTreeSet<Uuid> = replay::chains_done(aux, op)
                 .await
                 .map_err(|e| e.to_string())?
                 .into_iter()
@@ -121,7 +153,7 @@ pub async fn run(ctx: &mut Context, o: Options) -> Result<Report, String> {
         None => (OperationId::new(), o.scope, BTreeSet::new()),
     };
     let in_scope: BTreeSet<Uuid> = replay::select(
-        &mut ctx.aux,
+        aux,
         &scope.materials,
         scope.binding.as_deref(),
         scope.event_types.as_deref(),
@@ -133,10 +165,10 @@ pub async fn run(ctx: &mut Context, o: Options) -> Result<Report, String> {
     .into_iter()
     .collect();
     let in_scope_list: Vec<Uuid> = in_scope.iter().copied().collect();
-    let inputs = replay::inputs_of(&mut ctx.aux, &in_scope_list)
+    let inputs = replay::inputs_of(aux, &in_scope_list)
         .await
         .map_err(|e| e.to_string())?;
-    let stored = replay::chains(&mut ctx.aux, &inputs, &in_scope_list)
+    let stored = replay::chains(aux, &inputs, &in_scope_list)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -159,13 +191,12 @@ pub async fn run(ctx: &mut Context, o: Options) -> Result<Report, String> {
         // batches as they come, a few at a time.
         let (sender, batches) = tokio::sync::mpsc::channel(READ_AHEAD);
         let reading = {
-            let (blobs, in_scope, scope) = (ctx.blobs.clone(), in_scope.clone(), scope.clone());
+            let (blobs, in_scope, scope) = (blobs.clone(), in_scope.clone(), scope.clone());
             tokio::task::spawn_blocking(move || {
                 read_chain(&blobs, &chain, &in_scope, &scope, operation, &sender)
             })
         };
-        let replayed = ctx
-            .writer
+        let replayed = writer
             .replay(ReplayChain {
                 operation,
                 actor: o.actor.clone(),

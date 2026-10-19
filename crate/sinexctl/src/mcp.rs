@@ -23,12 +23,17 @@ pub struct Sinex {
 fn schema(c: &Command) -> Map<String, Value> {
     let mut properties = Map::new();
     for a in c.args {
-        let ty = match a.kind {
-            ArgKind::Integer => "integer",
-            ArgKind::Bool => "boolean",
-            ArgKind::Text | ArgKind::Rest | ArgKind::Reference => "string",
+        let property = match a.kind {
+            ArgKind::Integer => json!({ "type": "integer", "description": a.help }),
+            ArgKind::Bool => json!({ "type": "boolean", "description": a.help }),
+            ArgKind::List => {
+                json!({ "type": "array", "items": { "type": "string" }, "description": a.help })
+            }
+            ArgKind::Text | ArgKind::Rest | ArgKind::Reference => {
+                json!({ "type": "string", "description": a.help })
+            }
         };
-        properties.insert(a.name.into(), json!({ "type": ty, "description": a.help }));
+        properties.insert(a.name.into(), property);
     }
     let required: Vec<&str> = c
         .args

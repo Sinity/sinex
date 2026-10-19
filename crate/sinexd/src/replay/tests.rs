@@ -1,12 +1,31 @@
 //! Replay through the real writer and the zsh driver, on a real database.
 use super::*;
-use crate::context::Sink;
+use crate::context::{Context, Sink};
 use crate::writer::Priority;
 use sinex_sources::drivers::append_file::AppendMemory;
 use sinex_sources::sources::zsh;
 use sinex_store::positions;
 use sqlx::PgConnection;
 use std::path::{Path, PathBuf};
+
+/// Hide the record `target` was read from, as the API's `hide` does.
+async fn hide(writer: &crate::writer::WriterHandle, target: sinex_model::EventId) {
+    writer
+        .submit(
+            Priority::Live,
+            sinex_model::Batch {
+                run: sinex_model::RunId::new(),
+                kind: sinex_model::BatchKind::Api { actor: "t".into() },
+                records: Vec::new(),
+                archive: vec![sinex_model::ArchiveRequest::Hide {
+                    target,
+                    operation: sinex_model::OperationId::new(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+}
 
 struct Fixture {
     _db: devkit::pg::TestDatabase,
@@ -114,9 +133,14 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
     let ids_before = live_ids(&mut f.ctx.aux).await;
     assert_eq!(before, vec!["ls", "echo a\nb", "make"]);
 
-    let compared = run(&mut f.ctx, options(whole_binding(), true))
-        .await
-        .unwrap();
+    let compared = run(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), true),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (
             compared.chains,
@@ -139,9 +163,14 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
         .unwrap();
     assert_eq!(ops, 0);
 
-    let applied = run(&mut f.ctx, options(whole_binding(), false))
-        .await
-        .unwrap();
+    let applied = run(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), false),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (applied.archived, applied.admitted, applied.diff.unchanged),
         (3, 3, 3)
@@ -163,7 +192,9 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
 
     // Resuming the finished operation skips its chain.
     let resumed = run(
-        &mut f.ctx,
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
         Options {
             resume: Some(applied.operation),
             ..options(Scope::default(), false)
@@ -184,11 +215,11 @@ async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden() {
             .fetch_one(&mut f.ctx.aux)
             .await
             .unwrap();
-    crate::operate::hide(&f.ctx, sinex_model::EventId(two), false, "t")
-        .await
-        .unwrap();
+    hide(&f.ctx.writer, sinex_model::EventId(two)).await;
     let report = run(
-        &mut f.ctx,
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
         options(
             Scope {
                 from: Some(Timestamp::from_unix_secs(150).unwrap()),
@@ -231,9 +262,14 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
         vec!["a", "b", "a", "c"],
         "only the new command was read from the rewrite"
     );
-    let report = run(&mut f.ctx, options(whole_binding(), true))
-        .await
-        .unwrap();
+    let report = run(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), true),
+    )
+    .await
+    .unwrap();
     assert_eq!(report.chains, 2, "the first revision and the rewrite");
     assert_eq!(
         (
@@ -257,8 +293,10 @@ async fn an_excised_record_stays_out_of_a_replay() {
     .fetch_one(&mut f.ctx.aux)
     .await
     .unwrap();
-    let out = crate::operate::excise(
-        &mut f.ctx,
+    let out = crate::operate::excise_with(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
         sinex_store::excision::Target::Event(sinex_model::EventId(secret)),
         "t",
     )
@@ -276,9 +314,14 @@ async fn an_excised_record_stays_out_of_a_replay() {
     assert!(!bytes.windows(6).any(|w| w == b"secret"));
     assert_eq!(bytes.len(), ": 1:0;ls\n: 2:0;cat secret\n: 3:0;pwd\n".len());
 
-    let report = run(&mut f.ctx, options(whole_binding(), false))
-        .await
-        .unwrap();
+    let report = run(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), false),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (report.archived, report.admitted, report.failures),
         (2, 2, 0)

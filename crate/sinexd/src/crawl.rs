@@ -1,20 +1,23 @@
-//! `sinexd admin crawl`: fetch pages from stored browser history whose host is
+//! The `crawl` command: fetch pages from stored browser history whose host is
 //! on the allow list and that have not been fetched yet (architecture §5.6).
 //! The allow list is the opt-in: nothing is fetched without one.
 use crate::backfill::{Totals, drive};
-use crate::context::{Context, Sink};
+use crate::context::Sink;
+use crate::writer::WriterHandle;
 use sinex_sources::sources::page_crawl::{self, Crawl};
+use sinex_store::Blobs;
 use sinex_store::payloads::{self, State};
 use sinex_store::runs;
+use sqlx::PgConnection;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 /// URLs the browser sources stored, newest reading order first deduplicated.
-async fn history_urls(ctx: &mut Context) -> Result<Vec<String>, String> {
+async fn history_urls(aux: &mut PgConnection) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
     for event_type in ["browser.url", "browser.history_entry", "browser.visit"] {
-        let rows = payloads::live_all(&mut ctx.aux, event_type, State::Present)
+        let rows = payloads::live_all(aux, event_type, State::Present)
             .await
             .map_err(|e| e.to_string())?;
         for p in rows {
@@ -28,8 +31,12 @@ async fn history_urls(ctx: &mut Context) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// Crawl with its parts: a read connection, the content store and the writer.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
-    ctx: &mut Context,
+    aux: &mut PgConnection,
+    blobs: &Blobs,
+    writer: &WriterHandle,
     host: &str,
     allow: Vec<String>,
     urls: Vec<String>,
@@ -39,7 +46,7 @@ pub async fn run(
     if allow.is_empty() {
         return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
     }
-    let fetched: BTreeSet<String> = payloads::live_all(&mut ctx.aux, "page.fetched", State::Any)
+    let fetched: BTreeSet<String> = payloads::live_all(aux, "page.fetched", State::Any)
         .await
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -50,7 +57,7 @@ pub async fn run(
         })
         .collect();
     let candidates = if urls.is_empty() {
-        history_urls(ctx).await?
+        history_urls(aux).await?
     } else {
         urls
     };
@@ -70,26 +77,18 @@ pub async fn run(
         build: option_env!("SINEX_BUILD").unwrap_or("dev"),
         emits: &["page.fetched"],
     };
-    let run = runs::start(&mut ctx.aux, &manifest, host)
+    let run = runs::start(aux, &manifest, host)
         .await
         .map_err(|e| e.to_string())?;
     let crawl = Crawl::new(todo, allow, pause, host.to_owned());
     let source = page_crawl::source();
-    let sink = Sink(ctx.blobs.clone());
+    let sink = Sink(blobs.clone());
     // Each crawl is its own list, so its binding starts from the beginning.
     let binding = format!("page-crawl@{host}/{}", run.0);
-    let totals = drive(
-        &mut ctx.aux,
-        &ctx.writer,
-        run,
-        &source,
-        &binding,
-        &sink,
-        |c| crawl.poll(c),
-    )
+    let totals = drive(aux, writer, run, &source, &binding, &sink, |c| {
+        crawl.poll(c)
+    })
     .await?;
-    runs::end(&mut ctx.aux, run)
-        .await
-        .map_err(|e| e.to_string())?;
+    runs::end(aux, run).await.map_err(|e| e.to_string())?;
     Ok(totals)
 }

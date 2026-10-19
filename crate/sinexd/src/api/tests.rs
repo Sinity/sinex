@@ -214,13 +214,20 @@ async fn bad_queries_are_refused_with_the_place() {
     )
     .await;
     assert_eq!(body["not_built"], json!(true));
+}
+
+#[tokio::test]
+async fn replay_is_offered_through_the_api() {
+    let w = world().await;
     let (_, body) = call(
         &w,
         Some(AGENT),
-        json!({"method": "replay", "scope": "materials"}),
+        json!({"method": "replay", "binding": "nothing@here", "compare": true}),
     )
     .await;
-    assert_eq!(body["not_built"], json!(true));
+    assert_eq!(body["outcome"], json!("ok"), "{body}");
+    assert_eq!(body["result"]["chains"], json!(0));
+    assert_eq!(body["result"]["compare_only"], json!(true));
 }
 
 #[tokio::test]
