@@ -46,15 +46,27 @@ impl Parser for MediaParser {
     type Payload = MediaSegment;
 
     fn parse(&self, _: &&[u8], _: &()) -> Result<(Vec<MediaSegment>, ()), RecordError> {
-        Err(RecordError::new("a media segment is read with its manifest"))
+        Err(RecordError::new(
+            "a media segment is read with its manifest",
+        ))
     }
 
-    fn parse_record(&self, record: &&[u8], _: &(), context: &RecordContext<'_>) -> Result<(Vec<MediaSegment>, ()), RecordError> {
+    fn parse_record(
+        &self,
+        record: &&[u8],
+        _: &(),
+        context: &RecordContext<'_>,
+    ) -> Result<(Vec<MediaSegment>, ()), RecordError> {
         let m = context.manifest;
-        let started_at = ts(&m["started_ns"]).ok_or_else(|| RecordError::new("segment has no start"))?;
+        let started_at =
+            ts(&m["started_ns"]).ok_or_else(|| RecordError::new("segment has no start"))?;
         let ended_at = ts(&m["ended_ns"]).unwrap_or(started_at);
         let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
-        let n = |k: &str| m.get(k).and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok());
+        let n = |k: &str| {
+            m.get(k)
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+        };
         Ok((
             vec![MediaSegment {
                 kind: s("kind").ok_or_else(|| RecordError::new("segment has no kind"))?,
@@ -95,7 +107,11 @@ fn stem(start: Timestamp, end: Timestamp, kind: &str) -> String {
 
 /// Outputs (monitors) and their pixel sizes, from Hyprland.
 pub fn outputs() -> Vec<(String, u32, u32)> {
-    let Ok(out) = Command::new("hyprctl").args(["monitors", "-j"]).stderr(Stdio::null()).output() else {
+    let Ok(out) = Command::new("hyprctl")
+        .args(["monitors", "-j"])
+        .stderr(Stdio::null())
+        .output()
+    else {
         return Vec::new();
     };
     serde_json::from_slice::<Vec<Value>>(&out.stdout)
@@ -116,20 +132,36 @@ fn private_on() -> bool {
 
 /// Take a still of every output each `every`, for `seconds` (forever
 /// otherwise). Returns the stills written.
-pub fn capture_screen(spool: &Path, every: Duration, seconds: Option<Duration>) -> std::io::Result<u64> {
+pub fn capture_screen(
+    spool: &Path,
+    every: Duration,
+    seconds: Option<Duration>,
+) -> std::io::Result<u64> {
     std::fs::create_dir_all(spool)?;
     let deadline = seconds.map(|s| Instant::now() + s);
     let mut n = 0;
     loop {
         let tick = Instant::now();
         if !private_on() {
-            for (output, width, height) in outputs() {
+            // Without Hyprland to name the outputs, one still of everything.
+            let mut targets: Vec<(Option<String>, u32, u32)> = outputs()
+                .into_iter()
+                .map(|(n, w, h)| (Some(n), w, h))
+                .collect();
+            if targets.is_empty() {
+                targets.push((None, 0, 0));
+            }
+            for (output, width, height) in targets {
                 let at = Timestamp::now();
-                let kind = format!("screen-{output}");
+                let kind = format!("screen-{}", output.as_deref().unwrap_or("all"));
                 let st = stem(at, at, &kind);
                 let partial = spool.join(format!("{st}.jpg.partial"));
-                let ok = Command::new("grim")
-                    .args(["-o", &output, "-t", "jpeg", "-q", "75"])
+                let mut grim = Command::new("grim");
+                if let Some(o) = &output {
+                    grim.args(["-o", o]);
+                }
+                let ok = grim
+                    .args(["-t", "jpeg", "-q", "75"])
                     .arg(&partial)
                     .stderr(Stdio::null())
                     .status()
@@ -145,7 +177,8 @@ pub fn capture_screen(spool: &Path, every: Duration, seconds: Option<Duration>) 
                     "jpg",
                     &json!({
                         "kind": "screen", "started_ns": at.unix_ns().to_string(), "ended_ns": at.unix_ns().to_string(),
-                        "mime": "image/jpeg", "target": output, "width": width, "height": height,
+                        "mime": "image/jpeg", "target": output.as_deref().unwrap_or("all"),
+                        "width": (width > 0).then_some(width), "height": (height > 0).then_some(height),
                         "media_type": "image/jpeg",
                     }),
                 )?;
@@ -161,17 +194,28 @@ pub fn capture_screen(spool: &Path, every: Duration, seconds: Option<Duration>) 
 
 /// Record the default audio source in segments of `segment`, for `seconds`
 /// (forever otherwise). Returns the segments written.
-pub fn capture_audio(spool: &Path, segment: Duration, seconds: Option<Duration>) -> std::io::Result<u64> {
+pub fn capture_audio(
+    spool: &Path,
+    segment: Duration,
+    seconds: Option<Duration>,
+) -> std::io::Result<u64> {
     std::fs::create_dir_all(spool)?;
     let deadline = seconds.map(|s| Instant::now() + s);
-    let encode = Command::new("ffmpeg").arg("-version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok();
+    let encode = Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok();
     let mut n = 0;
     while deadline.is_none_or(|d| Instant::now() < d) {
         if private_on() {
             std::thread::sleep(Duration::from_secs(1));
             continue;
         }
-        let length = deadline.map_or(segment, |d| segment.min(d.saturating_duration_since(Instant::now())));
+        let length = deadline.map_or(segment, |d| {
+            segment.min(d.saturating_duration_since(Instant::now()))
+        });
         if length < Duration::from_secs(1) {
             break;
         }
@@ -185,7 +229,9 @@ pub fn capture_audio(spool: &Path, segment: Duration, seconds: Option<Duration>)
             .stderr(Stdio::null())
             .spawn()?;
         std::thread::sleep(length);
-        let _ = Command::new("kill").args(["-INT", &child.id().to_string()]).status();
+        let _ = Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status();
         let _ = child.wait();
         let end = Timestamp::now();
         if !wav.exists() {
@@ -246,7 +292,11 @@ mod tests {
                     "target": "DP-3", "width": 3840, "height": 2160}),
         )
         .unwrap();
-        let m = driver(dir.clone(), "h".into(), "screen").poll(&Value::Null).unwrap().material.unwrap();
+        let m = driver(dir.clone(), "h".into(), "screen")
+            .poll(&Value::Null)
+            .unwrap()
+            .material
+            .unwrap();
         let chunks = source()
             .drain(DrainInput {
                 source: SPEC.name,

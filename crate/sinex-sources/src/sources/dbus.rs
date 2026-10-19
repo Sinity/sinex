@@ -58,16 +58,31 @@ pub fn capture(
             let _ = Command::new("kill").arg(pid.to_string()).status();
         });
     }
-    let n = live_stream::capture_lines(BufReader::new(stdout), &mut writer, Duration::from_secs(1))?;
+    let n =
+        live_stream::capture_lines(BufReader::new(stdout), &mut writer, Duration::from_secs(1))?;
     let _ = child.wait();
     Ok(n + initial.len() as u64)
 }
 
 /// Call a method with `busctl --user call … --json=short` and return its
 /// decoded reply, or `None` when the call fails (the name went away).
-pub fn call(destination: &str, path: &str, interface: &str, method: &str, args: &[&str]) -> Option<Value> {
+pub fn call(
+    destination: &str,
+    path: &str,
+    interface: &str,
+    method: &str,
+    args: &[&str],
+) -> Option<Value> {
     let out = Command::new("busctl")
-        .args(["--user", "--json=short", "call", destination, path, interface, method])
+        .args([
+            "--user",
+            "--json=short",
+            "call",
+            destination,
+            path,
+            interface,
+            method,
+        ])
         .args(args)
         .stderr(Stdio::null())
         .output()
@@ -99,10 +114,14 @@ pub fn names() -> Vec<String> {
 /// (`{"type": …, "data": …}`) replaced by its data.
 pub fn decode(value: &Value) -> Value {
     match value {
-        Value::Object(map) if map.len() == 2 && map.contains_key("type") && map.contains_key("data") => {
+        Value::Object(map)
+            if map.len() == 2 && map.contains_key("type") && map.contains_key("data") =>
+        {
             decode(&map["data"])
         }
-        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), decode(v))).collect()),
+        Value::Object(map) => {
+            Value::Object(map.iter().map(|(k, v)| (k.clone(), decode(v))).collect())
+        }
         Value::Array(items) => Value::Array(items.iter().map(decode).collect()),
         other => other.clone(),
     }
@@ -123,7 +142,12 @@ impl Message {
     pub fn parse(line: &[u8]) -> Result<Self, String> {
         let m: Map<String, Value> =
             serde_json::from_slice(line).map_err(|e| format!("not a busctl JSON message: {e}"))?;
-        let text = |k: &str| m.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
+        let text = |k: &str| {
+            m.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
         let args = match m.get("payload").and_then(|p| p.get("data")) {
             Some(Value::Array(items)) => items.iter().map(decode).collect(),
             Some(other) => vec![decode(other)],
@@ -149,7 +173,10 @@ mod tests {
     fn variants_decode_to_their_data() {
         let v = json!({"urgency": {"type": "y", "data": 1}, "list": {"type": "as", "data": ["a"]},
                        "nested": {"type": "a{sv}", "data": {"k": {"type": "s", "data": "v"}}}});
-        assert_eq!(decode(&v), json!({"urgency": 1, "list": ["a"], "nested": {"k": "v"}}));
+        assert_eq!(
+            decode(&v),
+            json!({"urgency": 1, "list": ["a"], "nested": {"k": "v"}})
+        );
     }
 
     #[test]

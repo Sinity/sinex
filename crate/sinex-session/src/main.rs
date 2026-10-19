@@ -207,49 +207,101 @@ fn secs(s: Option<u64>) -> Option<Duration> {
 /// The command `wl-paste --watch` runs: this binary's frame printer.
 fn clipboard_helper(selection: &str) -> Vec<std::ffi::OsString> {
     let exe = std::env::current_exe().unwrap_or_else(|_| "sinex-session".into());
-    vec![exe.into(), "clipboard-frame".into(), "--selection".into(), selection.into()]
+    vec![
+        exe.into(),
+        "clipboard-frame".into(),
+        "--selection".into(),
+        selection.into(),
+    ]
 }
 
 fn capture(source: Live) -> Result<String, String> {
-    use sinex_sources::sources::{clipboard, file_watch, media_capture, mpris, notifications, session_socket};
+    use sinex_sources::sources::{
+        clipboard, file_watch, media_capture, mpris, notifications, session_socket,
+    };
     let e = |e: std::io::Error| e.to_string();
     Ok(match source {
-        Live::Files { spool, roots, skip, seconds } => {
+        Live::Files {
+            spool,
+            roots,
+            skip,
+            seconds,
+        } => {
             let skip = if skip.is_empty() {
                 file_watch::SKIP.iter().map(|s| (*s).to_owned()).collect()
             } else {
                 skip
             };
-            let n = file_watch::capture(&file_watch::Roots { roots, skip }, &spool, secs(seconds)).map_err(|e| e.to_string())?;
+            let n = file_watch::capture(&file_watch::Roots { roots, skip }, &spool, secs(seconds))
+                .map_err(|e| e.to_string())?;
             format!("captured {n} changes")
         }
         Live::Notifications { spool, seconds } => {
-            format!("captured {} messages", notifications::capture(&spool, secs(seconds)).map_err(e)?)
+            format!(
+                "captured {} messages",
+                notifications::capture(&spool, secs(seconds)).map_err(e)?
+            )
         }
         Live::Players { spool, seconds } => {
-            format!("captured {} lines", mpris::capture(&spool, secs(seconds)).map_err(e)?)
+            format!(
+                "captured {} lines",
+                mpris::capture(&spool, secs(seconds)).map_err(e)?
+            )
         }
-        Live::Clipboard { spool, primary, seconds } => {
+        Live::Clipboard {
+            spool,
+            primary,
+            seconds,
+        } => {
             let selection = if primary { "primary" } else { "clipboard" };
-            let n = clipboard::capture(selection, &clipboard_helper(selection), &spool, secs(seconds)).map_err(e)?;
+            let n = clipboard::capture(
+                selection,
+                &clipboard_helper(selection),
+                &spool,
+                secs(seconds),
+            )
+            .map_err(e)?;
             format!("captured {n} {selection} changes")
         }
-        Live::Producers { spool, socket, seconds } => {
-            let socket = socket.or_else(session_socket::default_path).ok_or("no producer socket path (XDG_RUNTIME_DIR unset)")?;
-            format!("captured {} lines", session_socket::capture(&socket, &spool, secs(seconds)).map_err(e)?)
+        Live::Producers {
+            spool,
+            socket,
+            seconds,
+        } => {
+            let socket = socket
+                .or_else(session_socket::default_path)
+                .ok_or("no producer socket path (XDG_RUNTIME_DIR unset)")?;
+            format!(
+                "captured {} lines",
+                session_socket::capture(&socket, &spool, secs(seconds)).map_err(e)?
+            )
         }
-        Live::Screen { spool, every, seconds } => {
-            let n = media_capture::capture_screen(&spool, Duration::from_secs(every), secs(seconds)).map_err(e)?;
+        Live::Screen {
+            spool,
+            every,
+            seconds,
+        } => {
+            let n =
+                media_capture::capture_screen(&spool, Duration::from_secs(every), secs(seconds))
+                    .map_err(e)?;
             format!("captured {n} stills")
         }
-        Live::Audio { spool, segment, seconds } => {
-            let n = media_capture::capture_audio(&spool, Duration::from_secs(segment), secs(seconds)).map_err(e)?;
+        Live::Audio {
+            spool,
+            segment,
+            seconds,
+        } => {
+            let n =
+                media_capture::capture_audio(&spool, Duration::from_secs(segment), secs(seconds))
+                    .map_err(e)?;
             format!("captured {n} segments")
         }
         Live::Hyprland { spool, seconds } => {
             let socket = sinex_sources::sources::hyprland::socket_path()
                 .ok_or("no Hyprland instance in this environment (HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset)")?;
-            let capture = std::thread::spawn(move || sinex_sources::sources::hyprland::capture(&socket, &spool));
+            let capture = std::thread::spawn(move || {
+                sinex_sources::sources::hyprland::capture(&socket, &spool)
+            });
             if let Some(seconds) = seconds {
                 std::thread::sleep(Duration::from_secs(seconds));
                 // Everything captured is already written to the spool file;
@@ -329,7 +381,9 @@ async fn produce(run: Run) -> Result<(), String> {
         let socket = hyprland::socket_path().ok_or("no Hyprland instance in this environment")?;
         let spool = spools.join("hyprland");
         let s = spool.clone();
-        spawn("Hyprland", move || hyprland::capture(&socket, &s).map_err(|e| e.to_string()));
+        spawn("Hyprland", move || {
+            hyprland::capture(&socket, &s).map_err(|e| e.to_string())
+        });
         bindings.push(Binding {
             source: Box::new(hyprland::source()),
             name: format!("hyprland@{host}"),
@@ -355,7 +409,9 @@ async fn produce(run: Run) -> Result<(), String> {
     if run.notifications {
         let spool = spools.join("notifications");
         let s = spool.clone();
-        spawn("notifications", move || notifications::capture(&s, None).map_err(|e| e.to_string()));
+        spawn("notifications", move || {
+            notifications::capture(&s, None).map_err(|e| e.to_string())
+        });
         bindings.push(Binding {
             source: Box::new(notifications::source()),
             name: format!("notifications@{host}"),
@@ -365,7 +421,9 @@ async fn produce(run: Run) -> Result<(), String> {
     if run.players {
         let spool = spools.join("players");
         let s = spool.clone();
-        spawn("players", move || mpris::capture(&s, None).map_err(|e| e.to_string()));
+        spawn("players", move || {
+            mpris::capture(&s, None).map_err(|e| e.to_string())
+        });
         bindings.push(Binding {
             source: Box::new(mpris::source()),
             name: format!("players@{host}"),
@@ -377,7 +435,8 @@ async fn produce(run: Run) -> Result<(), String> {
             let spool = spools.join(selection);
             let s = spool.clone();
             spawn("clipboard", move || {
-                clipboard::capture(selection, &clipboard_helper(selection), &s, None).map_err(|e| e.to_string())
+                clipboard::capture(selection, &clipboard_helper(selection), &s, None)
+                    .map_err(|e| e.to_string())
             });
             bindings.push(Binding {
                 source: Box::new(clipboard::source()),
@@ -387,10 +446,13 @@ async fn produce(run: Run) -> Result<(), String> {
         }
     }
     if run.producers {
-        let socket = session_socket::default_path().ok_or("no producer socket path (XDG_RUNTIME_DIR unset)")?;
+        let socket = session_socket::default_path()
+            .ok_or("no producer socket path (XDG_RUNTIME_DIR unset)")?;
         let spool = spools.join("producers");
         let s = spool.clone();
-        spawn("producer socket", move || session_socket::capture(&socket, &s, None).map_err(|e| e.to_string()));
+        spawn("producer socket", move || {
+            session_socket::capture(&socket, &s, None).map_err(|e| e.to_string())
+        });
         bindings.push(Binding {
             source: Box::new(session_socket::source()),
             name: format!("producers@{host}"),
@@ -401,7 +463,8 @@ async fn produce(run: Run) -> Result<(), String> {
         let spool = spools.join("screen");
         let s = spool.clone();
         spawn("screen", move || {
-            media_capture::capture_screen(&s, Duration::from_secs(every), None).map_err(|e| e.to_string())
+            media_capture::capture_screen(&s, Duration::from_secs(every), None)
+                .map_err(|e| e.to_string())
         });
         bindings.push(Binding {
             source: Box::new(media_capture::source()),
@@ -413,7 +476,8 @@ async fn produce(run: Run) -> Result<(), String> {
         let spool = spools.join("audio");
         let s = spool.clone();
         spawn("audio", move || {
-            media_capture::capture_audio(&s, Duration::from_secs(segment), None).map_err(|e| e.to_string())
+            media_capture::capture_audio(&s, Duration::from_secs(segment), None)
+                .map_err(|e| e.to_string())
         });
         bindings.push(Binding {
             source: Box::new(media_capture::source()),

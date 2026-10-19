@@ -43,9 +43,17 @@ pub async fn run(
         .await
         .map_err(|e| e.to_string())?
         .into_iter()
-        .filter_map(|p| p.get("url").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .filter_map(|p| {
+            p.get("url")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
         .collect();
-    let candidates = if urls.is_empty() { history_urls(ctx).await? } else { urls };
+    let candidates = if urls.is_empty() {
+        history_urls(ctx).await?
+    } else {
+        urls
+    };
     let mut todo: Vec<String> = candidates
         .into_iter()
         .filter(|u| !fetched.contains(u))
@@ -62,13 +70,26 @@ pub async fn run(
         build: option_env!("SINEX_BUILD").unwrap_or("dev"),
         emits: &["page.fetched"],
     };
-    let run = runs::start(&mut ctx.aux, &manifest, host).await.map_err(|e| e.to_string())?;
+    let run = runs::start(&mut ctx.aux, &manifest, host)
+        .await
+        .map_err(|e| e.to_string())?;
     let crawl = Crawl::new(todo, allow, pause, host.to_owned());
     let source = page_crawl::source();
     let sink = Sink(ctx.blobs.clone());
     // Each crawl is its own list, so its binding starts from the beginning.
     let binding = format!("page-crawl@{host}/{}", run.0);
-    let totals = drive(&mut ctx.aux, &ctx.writer, run, &source, &binding, &sink, |c| crawl.poll(c)).await?;
-    runs::end(&mut ctx.aux, run).await.map_err(|e| e.to_string())?;
+    let totals = drive(
+        &mut ctx.aux,
+        &ctx.writer,
+        run,
+        &source,
+        &binding,
+        &sink,
+        |c| crawl.poll(c),
+    )
+    .await?;
+    runs::end(&mut ctx.aux, run)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(totals)
 }

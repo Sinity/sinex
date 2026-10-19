@@ -177,6 +177,28 @@ in
         description = "The session producer's NATS password, readable by the operator's account.";
       };
       hyprland = mkOption { type = types.bool; default = false; };
+      notifications = mkOption { type = types.bool; default = false; description = "Capture desktop notifications."; };
+      players = mkOption { type = types.bool; default = false; description = "Capture media players (MPRIS)."; };
+      clipboard = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Capture the clipboard and primary selection (content marked secret by its owner is not read).";
+      };
+      producers = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Listen on the producer socket for the Neovim and kitty integrations.";
+      };
+      screenEvery = mkOption {
+        type = types.nullOr types.ints.positive;
+        default = null;
+        description = "Seconds between stills of every output; no screen capture when null.";
+      };
+      audioSegment = mkOption {
+        type = types.nullOr types.ints.positive;
+        default = null;
+        description = "Seconds per audio segment of the default source; no audio capture when null.";
+      };
       watch = mkOption {
         type = types.listOf types.str;
         default = [ ];
@@ -370,6 +392,8 @@ in
         # A deploy is verified by checking the running binary, not by a
         # restart on every switch.
         restartIfChanged = false;
+        # Tesseract reads text from screen segments (screen.text).
+        path = [ pkgs.tesseract ];
         serviceConfig = restartPolicy // {
           User = cfg.user;
           Group = cfg.group;
@@ -430,6 +454,8 @@ in
         partOf = cfg.session.wantedBy;
         unitConfig = startLimit // { ConditionUser = cfg.session.user; };
         serviceConfig = restartPolicy;
+        # busctl, wl-paste, grim, pw-record and ffmpeg run as capture children.
+        path = with pkgs; [ systemd wl-clipboard grim pipewire ffmpeg-headless ];
         script = ''
           ${natsUrlScript { user = cfg.session.producer; passwordFile = cfg.session.passwordFile; address = natsListen; }}
           exec ${cfg.package}/bin/sinex-session run \
@@ -440,6 +466,12 @@ in
             --state "$HOME/.local/state/sinex-session" \
             --host ${escapeShellArg cfg.host} \
             ${optionalString cfg.session.hyprland "--hyprland"} \
+            ${optionalString cfg.session.notifications "--notifications"} \
+            ${optionalString cfg.session.players "--players"} \
+            ${optionalString cfg.session.clipboard "--clipboard"} \
+            ${optionalString cfg.session.producers "--producers"} \
+            ${optionalString (cfg.session.screenEvery != null) "--screen-every ${toString cfg.session.screenEvery}"} \
+            ${optionalString (cfg.session.audioSegment != null) "--audio-segment ${toString cfg.session.audioSegment}"} \
             ${concatMapStringsSep " " (d: "--watch ${escapeShellArg d}") cfg.session.watch}
         '';
       };

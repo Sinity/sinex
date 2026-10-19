@@ -24,7 +24,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     class: Class::Guarded,
     parser: "dbus-notifications",
     parser_version: 1,
-    event_types: &["notification.shown", "notification.closed", "notification.action"],
+    event_types: &[
+        "notification.shown",
+        "notification.closed",
+        "notification.action",
+    ],
     framer: crate::drivers::append_file::lines,
 };
 
@@ -70,16 +74,26 @@ impl Parser for NotificationsParser {
     type Carry = ();
     type Payload = Notification;
 
-    fn parse(&self, record: &Map<String, Value>, _: &()) -> Result<(Vec<Notification>, ()), RecordError> {
+    fn parse(
+        &self,
+        record: &Map<String, Value>,
+        _: &(),
+    ) -> Result<(Vec<Notification>, ()), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let m = Message::parse(&bytes).map_err(RecordError::new)?;
         let out = match (m.kind.as_str(), m.member.as_str()) {
             ("method_call", "Notify") => {
                 let a = &m.args;
                 if a.len() != 8 {
-                    return Err(RecordError::new(format!("Notify with {} arguments, expected 8", a.len())));
+                    return Err(RecordError::new(format!(
+                        "Notify with {} arguments, expected 8",
+                        a.len()
+                    )));
                 }
-                let replaces = a[1].as_u64().and_then(|n| u32::try_from(n).ok()).filter(|n| *n != 0);
+                let replaces = a[1]
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .filter(|n| *n != 0);
                 let icon = text(a.get(2));
                 vec![Notification::Shown(NotificationShown {
                     received_at,
@@ -90,10 +104,18 @@ impl Parser for NotificationsParser {
                     body: text(a.get(4)),
                     actions: a[5]
                         .as_array()
-                        .map(|xs| xs.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                        .map(|xs| {
+                            xs.iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_owned)
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     hints: a[6].as_object().cloned().unwrap_or_default(),
-                    expire_timeout_ms: a[7].as_i64().and_then(|n| i32::try_from(n).ok()).unwrap_or(-1),
+                    expire_timeout_ms: a[7]
+                        .as_i64()
+                        .and_then(|n| i32::try_from(n).ok())
+                        .unwrap_or(-1),
                     sender: m.sender,
                 })]
             }
@@ -135,7 +157,11 @@ mod tests {
     use sinex_model::Timestamp;
 
     fn rec(line: &str) -> Map<String, Value> {
-        serde_json::from_slice(&live_stream::frame(Timestamp::from_unix_ns(1_000).unwrap(), line.as_bytes())).unwrap()
+        serde_json::from_slice(&live_stream::frame(
+            Timestamp::from_unix_ns(1_000).unwrap(),
+            line.as_bytes(),
+        ))
+        .unwrap()
     }
 
     fn parse(line: &str) -> Vec<Notification> {
@@ -147,8 +173,13 @@ mod tests {
         let out = parse(
             r#"{"type":"method_call","sender":":1.9","interface":"org.freedesktop.Notifications","member":"Notify","payload":{"type":"susssasa{sv}i","data":["mail",7,"","New mail","from a",["default","Open"],{"urgency":{"type":"y","data":1}},5000]}}"#,
         );
-        let Notification::Shown(s) = &out[0] else { panic!() };
-        assert_eq!((s.app.as_str(), s.summary.as_str(), s.body.as_str()), ("mail", "New mail", "from a"));
+        let Notification::Shown(s) = &out[0] else {
+            panic!()
+        };
+        assert_eq!(
+            (s.app.as_str(), s.summary.as_str(), s.body.as_str()),
+            ("mail", "New mail", "from a")
+        );
         assert_eq!(s.replaces_id, Some(7));
         assert_eq!(s.actions, vec!["default", "Open"]);
         assert_eq!(s.hints["urgency"], 1);
@@ -157,10 +188,18 @@ mod tests {
 
     #[test]
     fn signals_become_closed_and_action() {
-        let closed = parse(r#"{"type":"signal","member":"NotificationClosed","payload":{"type":"uu","data":[12,2]}}"#);
-        assert!(matches!(&closed[0], Notification::Closed(c) if c.notification_id == 12 && c.reason == "dismissed"));
-        let action = parse(r#"{"type":"signal","member":"ActionInvoked","payload":{"type":"us","data":[12,"default"]}}"#);
-        assert!(matches!(&action[0], Notification::Action(a) if a.notification_id == 12 && a.action == "default"));
+        let closed = parse(
+            r#"{"type":"signal","member":"NotificationClosed","payload":{"type":"uu","data":[12,2]}}"#,
+        );
+        assert!(
+            matches!(&closed[0], Notification::Closed(c) if c.notification_id == 12 && c.reason == "dismissed")
+        );
+        let action = parse(
+            r#"{"type":"signal","member":"ActionInvoked","payload":{"type":"us","data":[12,"default"]}}"#,
+        );
+        assert!(
+            matches!(&action[0], Notification::Action(a) if a.notification_id == 12 && a.action == "default")
+        );
     }
 
     #[test]

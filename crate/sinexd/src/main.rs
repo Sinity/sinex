@@ -13,9 +13,9 @@ mod derive;
 mod ingress;
 mod keys;
 mod library;
-mod media_text;
 #[cfg(test)]
 mod library_tests;
+mod media_text;
 mod operate;
 mod publisher;
 mod replay;
@@ -536,16 +536,34 @@ async fn admin(command: Admin) -> Result<(), String> {
             );
             Ok(())
         }
-        Admin::Crawl { at, host, allow, urls, limit, pause } => {
+        Admin::Crawl {
+            at,
+            host,
+            allow,
+            urls,
+            limit,
+            pause,
+        } => {
             let mut ctx = context::Context::open(&at.database, &at.store).await?;
-            let t = crawl::run(&mut ctx, &host, allow, urls, limit, std::time::Duration::from_secs(pause)).await?;
+            let t = crawl::run(
+                &mut ctx,
+                &host,
+                allow,
+                urls,
+                limit,
+                std::time::Duration::from_secs(pause),
+            )
+            .await?;
             println!("crawl  {t}");
             Ok(())
         }
         Admin::MediaText { at, host, limit } => {
             let mut ctx = context::Context::open(&at.database, &at.store).await?;
-            let t = media_text::run(&mut ctx, &host, limit).await?;
-            println!("screen text: {} segments read, {} failed, {:.1}s", t.read, t.failed, t.seconds);
+            let t = media_text::run(&mut ctx.aux, &ctx.blobs, &ctx.writer, &host, limit).await?;
+            println!(
+                "screen text: {} segments read, {} failed, {:.1}s",
+                t.read, t.failed, t.seconds
+            );
             Ok(())
         }
         Admin::Library {

@@ -53,7 +53,12 @@ pub fn types(selection: &str) -> Vec<String> {
         .arg("--list-types")
         .stderr(Stdio::null())
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_owned).collect())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -65,7 +70,9 @@ pub fn frame(selection: &str, types: &[String], content: &[u8]) -> Vec<u8> {
         v["mime"] = json!(chosen(types));
         match std::str::from_utf8(content) {
             Ok(text) => v["text"] = json!(text),
-            Err(_) => v["content_b64"] = json!(base64::engine::general_purpose::STANDARD.encode(content)),
+            Err(_) => {
+                v["content_b64"] = json!(base64::engine::general_purpose::STANDARD.encode(content))
+            }
         }
     }
     serde_json::to_vec(&v).expect("JSON serializes")
@@ -88,7 +95,12 @@ pub fn print_frame(selection: &str) -> std::io::Result<()> {
 /// Spool changes of `selection` until `seconds` pass (or `wl-paste` ends).
 /// `helper` is the command that prints a frame (`sinex-session
 /// clipboard-frame --selection <selection>`).
-pub fn capture(selection: &str, helper: &[OsString], spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
+pub fn capture(
+    selection: &str,
+    helper: &[OsString],
+    spool: &Path,
+    seconds: Option<Duration>,
+) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     let mut command = Command::new("wl-paste");
     if selection == "primary" {
@@ -109,7 +121,8 @@ pub fn capture(selection: &str, helper: &[OsString], spool: &Path, seconds: Opti
             let _ = Command::new("kill").arg(pid.to_string()).status();
         });
     }
-    let n = live_stream::capture_lines(BufReader::new(stdout), &mut writer, Duration::from_secs(1))?;
+    let n =
+        live_stream::capture_lines(BufReader::new(stdout), &mut writer, Duration::from_secs(1))?;
     let _ = child.wait();
     Ok(n)
 }
@@ -121,10 +134,14 @@ impl Parser for ClipboardParser {
     type Carry = ();
     type Payload = ClipboardCopied;
 
-    fn parse(&self, record: &Map<String, Value>, _: &()) -> Result<(Vec<ClipboardCopied>, ()), RecordError> {
+    fn parse(
+        &self,
+        record: &Map<String, Value>,
+        _: &(),
+    ) -> Result<(Vec<ClipboardCopied>, ()), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
-        let f: Map<String, Value> =
-            serde_json::from_slice(&bytes).map_err(|e| RecordError::new(format!("not a clipboard frame: {e}")))?;
+        let f: Map<String, Value> = serde_json::from_slice(&bytes)
+            .map_err(|e| RecordError::new(format!("not a clipboard frame: {e}")))?;
         let secret = f.get("secret").and_then(Value::as_bool).unwrap_or(false);
         let content: Option<Vec<u8>> = match (f.get("text"), f.get("content_b64")) {
             (Some(Value::String(t)), _) => Some(t.as_bytes().to_vec()),
@@ -144,16 +161,27 @@ impl Parser for ClipboardParser {
         Ok((
             vec![ClipboardCopied {
                 received_at,
-                selection: f.get("selection").and_then(Value::as_str).unwrap_or("clipboard").to_owned(),
+                selection: f
+                    .get("selection")
+                    .and_then(Value::as_str)
+                    .unwrap_or("clipboard")
+                    .to_owned(),
                 mime_types: f
                     .get("types")
                     .and_then(Value::as_array)
-                    .map(|xs| xs.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                    .map(|xs| {
+                        xs.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 mime_type,
                 text,
                 bytes: content.as_ref().map_or(0, |c| c.len() as u64),
-                content_hash: content.as_ref().map(|c| blake3::hash(c).to_hex().to_string()),
+                content_hash: content
+                    .as_ref()
+                    .map(|c| blake3::hash(c).to_hex().to_string()),
                 secret,
             }],
             (),
@@ -185,25 +213,38 @@ mod tests {
     use sinex_model::Timestamp;
 
     fn parse(line: &[u8]) -> ClipboardCopied {
-        let rec: Map<String, Value> =
-            serde_json::from_slice(&live_stream::frame(Timestamp::from_unix_ns(1).unwrap(), line)).unwrap();
+        let rec: Map<String, Value> = serde_json::from_slice(&live_stream::frame(
+            Timestamp::from_unix_ns(1).unwrap(),
+            line,
+        ))
+        .unwrap();
         ClipboardParser.parse(&rec, &()).unwrap().0.remove(0)
     }
 
     #[test]
     fn text_is_recorded_with_its_hash() {
-        let types = vec!["text/plain;charset=utf-8".to_owned(), "UTF8_STRING".to_owned()];
+        let types = vec![
+            "text/plain;charset=utf-8".to_owned(),
+            "UTF8_STRING".to_owned(),
+        ];
         let c = parse(&frame("clipboard", &types, "héllo".as_bytes()));
         assert_eq!(c.text.as_deref(), Some("héllo"));
         assert_eq!(c.bytes, 6);
         assert_eq!(c.mime_type.as_deref(), Some("text/plain;charset=utf-8"));
-        assert_eq!(c.content_hash.unwrap(), blake3::hash("héllo".as_bytes()).to_hex().to_string());
+        assert_eq!(
+            c.content_hash.unwrap(),
+            blake3::hash("héllo".as_bytes()).to_hex().to_string()
+        );
         assert!(!c.secret);
     }
 
     #[test]
     fn binary_content_stays_out_of_the_event() {
-        let c = parse(&frame("primary", &["image/png".to_owned()], &[0x89, b'P', 0xff]));
+        let c = parse(&frame(
+            "primary",
+            &["image/png".to_owned()],
+            &[0x89, b'P', 0xff],
+        ));
         assert!(c.text.is_none());
         assert_eq!(c.bytes, 3);
         assert_eq!(c.selection, "primary");
@@ -211,7 +252,11 @@ mod tests {
 
     #[test]
     fn secrets_are_not_read() {
-        let line = frame("clipboard", &["text/plain".to_owned(), SECRET_HINT.to_owned()], b"hunter2");
+        let line = frame(
+            "clipboard",
+            &["text/plain".to_owned(), SECRET_HINT.to_owned()],
+            b"hunter2",
+        );
         assert!(!String::from_utf8_lossy(&line).contains("hunter2"));
         let c = parse(&line);
         assert!(c.secret && c.text.is_none() && c.bytes == 0 && c.content_hash.is_none());

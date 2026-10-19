@@ -39,7 +39,12 @@ const PREFIX: &str = "org.mpris.MediaPlayer2.";
 
 pub struct MprisParser;
 
-fn changed(received_at: sinex_model::Timestamp, player: String, props: &Map<String, Value>, snapshot: bool) -> PlayerChanged {
+fn changed(
+    received_at: sinex_model::Timestamp,
+    player: String,
+    props: &Map<String, Value>,
+    snapshot: bool,
+) -> PlayerChanged {
     let meta = props.get("Metadata").and_then(Value::as_object);
     let s = |k: &str| {
         meta.and_then(|m| m.get(k))
@@ -50,7 +55,10 @@ fn changed(received_at: sinex_model::Timestamp, player: String, props: &Map<Stri
     PlayerChanged {
         received_at,
         player,
-        status: props.get("PlaybackStatus").and_then(Value::as_str).map(str::to_owned),
+        status: props
+            .get("PlaybackStatus")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         title: s("xesam:title"),
         artists: meta
             .and_then(|m| m.get("xesam:artist"))
@@ -65,7 +73,9 @@ fn changed(received_at: sinex_model::Timestamp, player: String, props: &Map<Stri
             .unwrap_or_default(),
         album: s("xesam:album"),
         url: s("xesam:url"),
-        length_us: meta.and_then(|m| m.get("mpris:length")).and_then(Value::as_i64),
+        length_us: meta
+            .and_then(|m| m.get("mpris:length"))
+            .and_then(Value::as_i64),
         snapshot,
         properties: props.clone(),
     }
@@ -84,8 +94,8 @@ impl Parser for MprisParser {
     ) -> Result<(Vec<PlayerChanged>, BTreeMap<String, String>), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let mut owners = owners.clone();
-        let value: Value =
-            serde_json::from_slice(&bytes).map_err(|e| RecordError::new(format!("not JSON: {e}")))?;
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| RecordError::new(format!("not JSON: {e}")))?;
         if let Some(snap) = value.get("snapshot") {
             let name = snap["name"].as_str().unwrap_or_default().to_owned();
             if let Some(owner) = snap["owner"].as_str() {
@@ -97,7 +107,13 @@ impl Parser for MprisParser {
         let m = Message::parse(&bytes).map_err(RecordError::new)?;
         let out = match m.member.as_str() {
             "NameOwnerChanged" => {
-                let s = |i: usize| m.args.get(i).and_then(Value::as_str).unwrap_or_default().to_owned();
+                let s = |i: usize| {
+                    m.args
+                        .get(i)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned()
+                };
                 let (name, old, new) = (s(0), s(1), s(2));
                 if name.starts_with(PREFIX) {
                     if !old.is_empty() {
@@ -110,7 +126,12 @@ impl Parser for MprisParser {
                 Vec::new()
             }
             "PropertiesChanged" if m.args.first().and_then(Value::as_str) == Some(PLAYER) => {
-                let props = m.args.get(1).and_then(Value::as_object).cloned().unwrap_or_default();
+                let props = m
+                    .args
+                    .get(1)
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
                 let player = owners.get(&m.sender).cloned().unwrap_or(m.sender);
                 vec![changed(received_at, player, &props, false)]
             }
@@ -155,7 +176,10 @@ pub fn snapshot() -> Vec<Vec<u8>> {
             )
             .and_then(|v| v.get(0).cloned())
             .unwrap_or(Value::Object(Map::new()));
-            serde_json::to_vec(&json!({"snapshot": {"name": name, "owner": owner, "properties": properties}})).ok()
+            serde_json::to_vec(
+                &json!({"snapshot": {"name": name, "owner": owner, "properties": properties}}),
+            )
+            .ok()
         })
         .collect()
 }
@@ -173,8 +197,11 @@ mod tests {
         let mut carry = BTreeMap::new();
         let mut out = Vec::new();
         for l in lines {
-            let rec: Map<String, Value> =
-                serde_json::from_slice(&live_stream::frame(Timestamp::from_unix_ns(1).unwrap(), l.as_bytes())).unwrap();
+            let rec: Map<String, Value> = serde_json::from_slice(&live_stream::frame(
+                Timestamp::from_unix_ns(1).unwrap(),
+                l.as_bytes(),
+            ))
+            .unwrap();
             let (e, c) = MprisParser.parse(&rec, &carry).unwrap();
             out.extend(e);
             carry = c;
@@ -188,7 +215,11 @@ mod tests {
             r#"{"snapshot":{"name":"org.mpris.MediaPlayer2.spotify","owner":":1.5","properties":{"PlaybackStatus":"Paused","Metadata":{"xesam:title":"Song","xesam:artist":["A"],"mpris:length":200000000}}}}"#,
             r#"{"type":"signal","sender":":1.5","member":"PropertiesChanged","payload":{"type":"sa{sv}as","data":["org.mpris.MediaPlayer2.Player",{"PlaybackStatus":{"type":"s","data":"Playing"}},[]]}}"#,
         ]);
-        assert!(out[0].snapshot && out[0].title.as_deref() == Some("Song") && out[0].artists == vec!["A"]);
+        assert!(
+            out[0].snapshot
+                && out[0].title.as_deref() == Some("Song")
+                && out[0].artists == vec!["A"]
+        );
         assert_eq!(out[1].player, "org.mpris.MediaPlayer2.spotify");
         assert_eq!(out[1].status.as_deref(), Some("Playing"));
         assert!(!out[1].snapshot);

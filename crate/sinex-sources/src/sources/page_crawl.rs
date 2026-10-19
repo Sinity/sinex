@@ -54,7 +54,15 @@ pub fn split(url: &str) -> Option<(String, String, String)> {
     };
     let host = authority.rsplit('@').next()?.split(':').next()?.to_owned();
     let path = path.split('#').next().unwrap_or("/");
-    Some((scheme.to_owned(), host, if path.is_empty() { "/".into() } else { path.to_owned() }))
+    Some((
+        scheme.to_owned(),
+        host,
+        if path.is_empty() {
+            "/".into()
+        } else {
+            path.to_owned()
+        },
+    ))
 }
 
 /// `robots.txt` rules for any agent (`*`) and for `sinex-crawl`: path
@@ -70,7 +78,9 @@ impl Robots {
         let (mut ours, mut in_group, mut seen_rule) = (false, false, false);
         for line in text.lines() {
             let line = line.split('#').next().unwrap_or("").trim();
-            let Some((k, v)) = line.split_once(':') else { continue };
+            let Some((k, v)) = line.split_once(':') else {
+                continue;
+            };
             let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
             match k.as_str() {
                 "user-agent" => {
@@ -158,7 +168,10 @@ impl Crawl {
             .map(|t| self.pause.saturating_sub(t.elapsed()))
             .unwrap_or_default();
         std::thread::sleep(wait);
-        self.last.lock().expect("lock").insert(host.to_owned(), Instant::now());
+        self.last
+            .lock()
+            .expect("lock")
+            .insert(host.to_owned(), Instant::now());
     }
 
     fn robots(&self, scheme: &str, host: &str) -> Robots {
@@ -175,7 +188,10 @@ impl Crawl {
             .and_then(|mut r| r.body_mut().read_to_string().ok())
             .map(|t| Robots::parse(&t))
             .unwrap_or_default();
-        self.robots.lock().expect("lock").insert(host.to_owned(), robots.clone());
+        self.robots
+            .lock()
+            .expect("lock")
+            .insert(host.to_owned(), robots.clone());
         robots
     }
 
@@ -184,12 +200,15 @@ impl Crawl {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
-            serde_json::from_value(cursor.clone()).map_err(|e| DriverError::Cursor(e.to_string()))?
+            serde_json::from_value(cursor.clone())
+                .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
         let mut index = previous.next;
         while let Some(url) = self.urls.get(index) {
             index += 1;
-            let Some((scheme, host, path)) = split(url) else { continue };
+            let Some((scheme, host, path)) = split(url) else {
+                continue;
+            };
             if !allowed(&host, &self.allow) || !self.robots(&scheme, &host).permits(&path) {
                 continue;
             }
@@ -219,8 +238,16 @@ impl Crawl {
                 "media_type": content_type.clone().unwrap_or_else(|| "application/octet-stream".into()),
             });
             let id = MaterialId::new();
-            let part_index = if previous.material.is_some() { previous.part_index + 1 } else { 0 };
-            let next = Cursor { next: index, material: Some(id), part_index };
+            let part_index = if previous.material.is_some() {
+                previous.part_index + 1
+            } else {
+                0
+            };
+            let next = Cursor {
+                next: index,
+                material: Some(id),
+                part_index,
+            };
             let size = body.len() as u64;
             return Ok(Acquired {
                 input: self.input(),
@@ -240,7 +267,9 @@ impl Crawl {
                     previous_part: previous.material,
                     reading_order: crate::drivers::reading_order(&manifest),
                     manifest,
-                    cursor_at: Box::new(move |_| serde_json::to_value(&next).expect("cursor serializes")),
+                    cursor_at: Box::new(move |_| {
+                        serde_json::to_value(&next).expect("cursor serializes")
+                    }),
                     aligned: false,
                     vanished: Vec::new(),
                 }),
@@ -256,7 +285,11 @@ impl Crawl {
             },
             revision: RevisionChange::Same,
             material: None,
-            cursor_unchanged: serde_json::to_value(Cursor { next: index, ..previous }).expect("cursor serializes"),
+            cursor_unchanged: serde_json::to_value(Cursor {
+                next: index,
+                ..previous
+            })
+            .expect("cursor serializes"),
         })
     }
 }
@@ -268,8 +301,16 @@ pub fn title(body: &[u8]) -> Option<String> {
     let start = lower.find("<title")?;
     let open_end = start + lower[start..].find('>')? + 1;
     let close = open_end + lower[open_end..].find("</title")?;
-    let t = text[open_end..close].split_whitespace().collect::<Vec<_>>().join(" ");
-    let t = t.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'");
+    let t = text[open_end..close]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let t = t
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
     (!t.is_empty()).then_some(t)
 }
 
@@ -284,7 +325,12 @@ impl Parser for PageParser {
         Err(RecordError::new("a fetched page is read with its manifest"))
     }
 
-    fn parse_record(&self, body: &&[u8], _: &(), context: &RecordContext<'_>) -> Result<(Vec<PageFetched>, ()), RecordError> {
+    fn parse_record(
+        &self,
+        body: &&[u8],
+        _: &(),
+        context: &RecordContext<'_>,
+    ) -> Result<(Vec<PageFetched>, ()), RecordError> {
         let m = context.manifest;
         let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
         let fetched_at = s("fetched_at_ns")
@@ -299,7 +345,11 @@ impl Parser for PageParser {
                 final_url: s("final_url").unwrap_or_else(|| url.clone()),
                 url,
                 fetched_at,
-                status: m.get("status").and_then(Value::as_u64).and_then(|n| u16::try_from(n).ok()).unwrap_or(0),
+                status: m
+                    .get("status")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| u16::try_from(n).ok())
+                    .unwrap_or(0),
                 content_type,
                 bytes: body.len() as u64,
                 title: if html { title(body) } else { None },
@@ -333,9 +383,16 @@ mod tests {
     fn urls_split_into_scheme_host_and_path() {
         assert_eq!(
             split("https://user@en.wikipedia.org:443/wiki/X?a=1#frag"),
-            Some(("https".into(), "en.wikipedia.org".into(), "/wiki/X?a=1".into()))
+            Some((
+                "https".into(),
+                "en.wikipedia.org".into(),
+                "/wiki/X?a=1".into()
+            ))
         );
-        assert_eq!(split("https://docs.rs"), Some(("https".into(), "docs.rs".into(), "/".into())));
+        assert_eq!(
+            split("https://docs.rs"),
+            Some(("https".into(), "docs.rs".into(), "/".into()))
+        );
         assert_eq!(split("chrome://settings"), None);
     }
 
@@ -352,7 +409,10 @@ mod tests {
 
     #[test]
     fn titles_are_read_from_html() {
-        assert_eq!(title(b"<html><head><TITLE>\n A &amp; B </title></head>"), Some("A & B".into()));
+        assert_eq!(
+            title(b"<html><head><TITLE>\n A &amp; B </title></head>"),
+            Some("A & B".into())
+        );
         assert_eq!(title(b"no title"), None);
     }
 }

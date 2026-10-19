@@ -44,7 +44,11 @@ pub fn default_path() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("SINEX_SESSION_SOCKET") {
         return Some(p.into());
     }
-    Some(Path::new(&std::env::var_os("XDG_RUNTIME_DIR")?).join("sinex").join("session.sock"))
+    Some(
+        Path::new(&std::env::var_os("XDG_RUNTIME_DIR")?)
+            .join("sinex")
+            .join("session.sock"),
+    )
 }
 
 /// Listen on `socket` and spool every line any connection writes, until
@@ -74,7 +78,10 @@ pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::i
                         let body = line.strip_suffix(b"\n").unwrap_or(&line);
                         if !body.is_empty() {
                             let mut w = writer.lock().expect("spool lock");
-                            if w.append(Timestamp::now(), body).and_then(|()| w.sync()).is_ok() {
+                            if w.append(Timestamp::now(), body)
+                                .and_then(|()| w.sync())
+                                .is_ok()
+                            {
                                 count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
@@ -82,7 +89,9 @@ pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::i
                     }
                 });
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50))
+            }
             Err(e) => return Err(e),
         }
     }
@@ -127,10 +136,14 @@ impl Parser for SessionSocketParser {
     type Carry = ();
     type Payload = Produced;
 
-    fn parse(&self, record: &Map<String, Value>, _: &()) -> Result<(Vec<Produced>, ()), RecordError> {
+    fn parse(
+        &self,
+        record: &Map<String, Value>,
+        _: &(),
+    ) -> Result<(Vec<Produced>, ()), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
-        let mut m: Map<String, Value> =
-            serde_json::from_slice(&bytes).map_err(|e| RecordError::new(format!("not a JSON object: {e}")))?;
+        let mut m: Map<String, Value> = serde_json::from_slice(&bytes)
+            .map_err(|e| RecordError::new(format!("not a JSON object: {e}")))?;
         let source = take_str(&mut m, "source").ok_or_else(|| RecordError::new("no `source`"))?;
         let event = take_str(&mut m, "event").ok_or_else(|| RecordError::new("no `event`"))?;
         let out = match source.as_str() {
@@ -174,23 +187,44 @@ mod tests {
     use std::io::Write;
 
     fn parse(line: &str) -> Result<Produced, RecordError> {
-        let rec: Map<String, Value> =
-            serde_json::from_slice(&live_stream::frame(Timestamp::from_unix_ns(1).unwrap(), line.as_bytes())).unwrap();
-        SessionSocketParser.parse(&rec, &()).map(|(mut v, ())| v.remove(0))
+        let rec: Map<String, Value> = serde_json::from_slice(&live_stream::frame(
+            Timestamp::from_unix_ns(1).unwrap(),
+            line.as_bytes(),
+        ))
+        .unwrap();
+        SessionSocketParser
+            .parse(&rec, &())
+            .map(|(mut v, ())| v.remove(0))
     }
 
     #[test]
     fn neovim_and_kitty_lines_become_typed_events() {
         let Produced::Editor(e) = parse(r#"{"source":"neovim","event":"BufWritePost","path":"/a.rs","filetype":"rust","pid":42,"buf":3}"#).unwrap() else { panic!() };
-        assert_eq!((e.event.as_str(), e.path.as_deref(), e.pid), ("BufWritePost", Some("/a.rs"), Some(42)));
+        assert_eq!(
+            (e.event.as_str(), e.path.as_deref(), e.pid),
+            ("BufWritePost", Some("/a.rs"), Some(42))
+        );
         assert_eq!(e.extra["buf"], 3);
-        let Produced::Terminal(t) = parse(r#"{"source":"kitty","event":"cmd_end","window_id":7,"cmdline":"ls","exit_status":0}"#).unwrap() else { panic!() };
-        assert_eq!((t.window_id, t.exit_status, t.cmdline.as_deref()), (Some(7), Some(0), Some("ls")));
+        let Produced::Terminal(t) = parse(
+            r#"{"source":"kitty","event":"cmd_end","window_id":7,"cmdline":"ls","exit_status":0}"#,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            (t.window_id, t.exit_status, t.cmdline.as_deref()),
+            (Some(7), Some(0), Some("ls"))
+        );
     }
 
     #[test]
     fn unknown_producers_fail_by_name() {
-        assert!(parse(r#"{"source":"emacs","event":"x"}"#).unwrap_err().to_string().contains("emacs"));
+        assert!(
+            parse(r#"{"source":"emacs","event":"x"}"#)
+                .unwrap_err()
+                .to_string()
+                .contains("emacs")
+        );
         assert!(parse(r#"{"event":"x"}"#).is_err());
     }
 
@@ -209,7 +243,11 @@ mod tests {
         c.write_all(b"{\"source\":\"kitty\",\"event\":\"focus\"}\n{\"source\":\"neovim\",\"event\":\"BufEnter\"}\n").unwrap();
         drop(c);
         assert_eq!(h.join().unwrap().unwrap(), 2);
-        let m = driver(spool, "h".into()).poll(&Value::Null).unwrap().material.unwrap();
+        let m = driver(spool, "h".into())
+            .poll(&Value::Null)
+            .unwrap()
+            .material
+            .unwrap();
         assert_eq!(m.records.len(), 2);
         let _ = std::fs::remove_dir_all(dir);
     }

@@ -143,6 +143,34 @@ pub async fn run(o: Options) -> Result<(), String> {
         }
     });
 
+    // Screen text follows new screen segments, after commits settle. Without
+    // a local OCR engine there is nothing to run; that is said once.
+    match crate::media_text::engine() {
+        Ok(_) => {
+            let mut text_conn = connect(&o.database).await?;
+            let (mut c, mut s, w, b, host) = (
+                commits.clone(),
+                stop.clone(),
+                handle.clone(),
+                blobs.clone(),
+                o.host.clone(),
+            );
+            tasks.spawn(async move {
+                loop {
+                    tokio::select! {
+                        changed = c.changed() => if changed.is_err() { return ("screen text", Ok(())) },
+                        _ = s.wait_for(|s| *s) => return ("screen text", Ok(())),
+                    }
+                    while tokio::time::timeout(METRICS_QUIET, c.changed()).await.is_ok() {}
+                    if let Err(e) = crate::media_text::run(&mut text_conn, &b, &w, &host, Some(64)).await {
+                        return ("screen text", Err(e));
+                    }
+                }
+            });
+        }
+        Err(reason) => eprintln!("sinexd: screen text off: {reason}"),
+    }
+
     let mut consumers: Vec<Box<dyn Consumer>> = Vec::new();
     for model in commits::read_models() {
         consumers.push(Box::new(ReadModelRunner(model)));

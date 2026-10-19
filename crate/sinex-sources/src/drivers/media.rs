@@ -36,12 +36,16 @@ pub fn complete(dir: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         if name.ends_with(".json") || name.ends_with(".partial") || name.starts_with('.') {
             continue;
         }
         // `<started>-<ended>.<kind>.<ext>`: the stem is everything before the extension.
-        let Some((stem, _ext)) = name.rsplit_once('.') else { continue };
+        let Some((stem, _ext)) = name.rsplit_once('.') else {
+            continue;
+        };
         if dir.join(format!("{stem}.json")).exists() {
             out.push((stem.to_owned(), path));
         }
@@ -55,7 +59,8 @@ impl Media {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
-            serde_json::from_value(cursor.clone()).map_err(|e| DriverError::Cursor(e.to_string()))?
+            serde_json::from_value(cursor.clone())
+                .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
         let io = |e: std::io::Error| DriverError::Io(format!("{}: {e}", self.spool.display()));
         let next = complete(&self.spool)
@@ -77,13 +82,19 @@ impl Media {
             });
         };
         let bytes = std::fs::read(&path).map_err(io)?;
-        let sidecar: Value = serde_json::from_slice(&std::fs::read(self.spool.join(format!("{stem}.json"))).map_err(io)?)
-            .map_err(|e| DriverError::Cursor(format!("segment sidecar {stem}.json: {e}")))?;
+        let sidecar: Value = serde_json::from_slice(
+            &std::fs::read(self.spool.join(format!("{stem}.json"))).map_err(io)?,
+        )
+        .map_err(|e| DriverError::Cursor(format!("segment sidecar {stem}.json: {e}")))?;
         let mut manifest = sidecar;
         manifest["file"] = json!(path.file_name().and_then(|n| n.to_str()));
         manifest["read_at_ns"] = json!(i64::try_from(now.unix_ns()).unwrap_or(i64::MAX));
         let id = MaterialId::new();
-        let part_index = if previous.material.is_some() { previous.part_index + 1 } else { 0 };
+        let part_index = if previous.material.is_some() {
+            previous.part_index + 1
+        } else {
+            0
+        };
         let size = bytes.len() as u64;
         let records = vec![(0, bytes.len())];
         let next_cursor = Cursor {
@@ -109,7 +120,9 @@ impl Media {
                 previous_part: previous.material,
                 reading_order: super::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new(move |_| serde_json::to_value(&next_cursor).expect("cursor serializes")),
+                cursor_at: Box::new(move |_| {
+                    serde_json::to_value(&next_cursor).expect("cursor serializes")
+                }),
                 aligned: false,
                 vanished: Vec::new(),
             }),
@@ -120,7 +133,10 @@ impl Media {
     /// Delete segments up to the committed cursor: their bytes are in the
     /// content store.
     pub fn remove_passed(&self, committed: &Value) -> std::io::Result<usize> {
-        let Ok(Cursor { last: Some(last), .. }) = serde_json::from_value::<Cursor>(committed.clone()) else {
+        let Ok(Cursor {
+            last: Some(last), ..
+        }) = serde_json::from_value::<Cursor>(committed.clone())
+        else {
             return Ok(0);
         };
         let mut n = 0;
@@ -137,7 +153,13 @@ impl Media {
 
 /// Write a finished segment: the sidecar first, the data renamed into place
 /// last. `data` is a file capture already wrote in `dir` (with `.partial`).
-pub fn publish_segment(dir: &Path, partial: &Path, stem: &str, ext: &str, sidecar: &Value) -> std::io::Result<PathBuf> {
+pub fn publish_segment(
+    dir: &Path,
+    partial: &Path,
+    stem: &str,
+    ext: &str,
+    sidecar: &Value,
+) -> std::io::Result<PathBuf> {
     let side = dir.join(format!("{stem}.json"));
     let tmp = dir.join(format!(".{stem}.json.tmp"));
     std::fs::write(&tmp, serde_json::to_vec(sidecar).expect("JSON serializes"))?;
@@ -155,7 +177,10 @@ mod tests {
     fn segments_are_stored_one_per_poll_in_order_and_removed_after() {
         let dir = std::env::temp_dir().join(format!("sinex-media-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
-        for (stem, body) in [("000002-000003.screen", b"bb".as_slice()), ("000001-000002.screen", b"a")] {
+        for (stem, body) in [
+            ("000002-000003.screen", b"bb".as_slice()),
+            ("000001-000002.screen", b"a"),
+        ] {
             let partial = dir.join(format!("{stem}.jpg.partial"));
             std::fs::write(&partial, body).unwrap();
             publish_segment(&dir, &partial, stem, "jpg", &json!({"kind": "screen"})).unwrap();
@@ -164,7 +189,11 @@ mod tests {
         std::fs::write(dir.join("000003-000004.screen.jpg.partial"), b"c").unwrap();
         let media = Media {
             spool: dir.clone(),
-            input: InputRef { kind: "media".into(), locator: "screen".into(), host: "h".into() },
+            input: InputRef {
+                kind: "media".into(),
+                locator: "screen".into(),
+                host: "h".into(),
+            },
         };
         let first = media.poll(&Value::Null).unwrap().material.unwrap();
         assert_eq!(first.bytes, b"a");
@@ -173,7 +202,13 @@ mod tests {
         let second = media.poll(&cursor).unwrap().material.unwrap();
         assert_eq!(second.bytes, b"bb");
         assert_eq!(second.part_index, 1);
-        assert!(media.poll(&(second.cursor_at)(2)).unwrap().material.is_none());
+        assert!(
+            media
+                .poll(&(second.cursor_at)(2))
+                .unwrap()
+                .material
+                .is_none()
+        );
         assert_eq!(media.remove_passed(&cursor).unwrap(), 1);
         assert_eq!(complete(&dir).unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(dir);

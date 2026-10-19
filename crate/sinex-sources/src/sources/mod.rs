@@ -17,6 +17,8 @@ pub mod journald;
 /// The media library: scans of library roots and library requests.
 pub mod library;
 pub mod mail;
+/// Live mail over IMAP, with IDLE and XOAUTH2.
+pub mod mail_imap;
 /// Screen stills and audio segments on the `Media` driver.
 pub mod media_capture;
 pub mod messenger;
@@ -93,6 +95,7 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &session_socket::SPEC,
         &media_capture::SPEC,
         &page_crawl::SPEC,
+        &mail_imap::SPEC,
     ];
     out.extend(sinnix_lake::LANES.iter().map(|l| &l.spec));
     out
