@@ -143,6 +143,7 @@ pub async fn run(o: Options) -> Result<(), String> {
         day_start: o.api.day_start,
         agent_grants: api::agent_grants(&o.api.tokens)
             .map_err(|e| format!("{}: {e}", o.api.tokens.display()))?,
+        unlock: Default::default(),
     };
     let config = api::Config {
         socket: o.api.socket.clone(),

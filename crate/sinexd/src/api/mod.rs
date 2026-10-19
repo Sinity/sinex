@@ -232,7 +232,7 @@ async fn follow(
         Ok(g) => g,
         Err(r) => return r,
     };
-    let caller = state.api.caller(granted);
+    let caller = state.api.caller(granted).await;
     let ctx = state.api.context();
     let bound = match query::bind(&params.query, &ctx) {
         Ok(q) => q,

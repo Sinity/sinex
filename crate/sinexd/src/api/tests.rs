@@ -110,6 +110,7 @@ async fn world() -> World {
         zone: jiff::tz::TimeZone::UTC,
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
         agent_grants: vec![],
+        unlock: Default::default(),
     };
     let (commits, rx) = watch::channel(0u64);
     let tokens = Tokens::new(Some(READ.into()), Some(AGENT.into()), Some(OPERATOR.into()));
@@ -403,4 +404,95 @@ async fn guarded_values_follow_the_token() {
     assert_eq!(body["outcome"], json!("ok"), "{body}");
     let (_, body) = call(&w, Some(READ), json!({"method": "privacy-verify"})).await;
     assert_eq!(body["result"]["below_floor"], json!(0), "{body}");
+}
+
+/// Sealed values: unreadable at rest and while locked, readable to the
+/// operator while unlocked, and gone everywhere once their key is destroyed
+/// (vh0 AC2).
+#[tokio::test]
+async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
+    use sinex_store::sealed;
+    let w = world().await;
+    let identity = sealed::Identity::generate();
+    let key = sealed::new_key().unwrap();
+    let material = MaterialId::new();
+    let mut e = command("gpg --decrypt diary.age", 0);
+    e.origin = Origin::Record {
+        location: RecordLocation {
+            material,
+            anchor: 0,
+        },
+        ordinal: 0,
+    };
+    sealed::seal_event(&mut e, &key).unwrap();
+    {
+        let mut conn = w.reads.acquire().await.unwrap();
+        let wrapped = sealed::wrap(&key, &identity.to_public()).unwrap();
+        sealed::store_key(&mut conn, material, &key.key_ref, &wrapped)
+            .await
+            .unwrap();
+    }
+    w.writer
+        .submit(
+            writer::Priority::Live,
+            Batch {
+                run: RunId::new(),
+                kind: BatchKind::Api {
+                    actor: "test".into(),
+                },
+                records: vec![RecordOutcome::Events {
+                    location: None,
+                    events: vec![e],
+                }],
+                archive: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let stored: String = sqlx::query_scalar!("SELECT payload::text AS \"p!\" FROM core.events")
+        .fetch_one(&w.reads)
+        .await
+        .unwrap();
+    assert!(!stored.contains("diary"), "at rest the value is ciphertext");
+
+    let first = |body: &Value| body["result"]["rows"][0].to_string();
+    let query = json!({"method": "query", "query": "events"});
+    let (_, locked) = call(&w, Some(OPERATOR), query.clone()).await;
+    assert!(!first(&locked).contains("diary"), "locked: {locked}");
+    use age::secrecy::ExposeSecret;
+    let (_, body) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method": "unlock", "identity": identity.to_string().expose_secret(), "minutes": 5}),
+    )
+    .await;
+    assert_eq!(body["outcome"], json!("ok"), "{body}");
+    let (_, open) = call(&w, Some(OPERATOR), query.clone()).await;
+    assert!(first(&open).contains("diary"), "unlocked operator: {open}");
+    let (_, agent) = call(&w, Some(AGENT), query.clone()).await;
+    assert!(
+        !first(&agent).contains("diary"),
+        "the agent never reads sealed: {agent}"
+    );
+    let (status, _) = call(&w, Some(AGENT), json!({"method": "lock"})).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Destroying the key (what excision does) leaves nothing to unseal, even
+    // for an unlocked operator with a fresh session.
+    call(&w, Some(OPERATOR), json!({"method": "lock"})).await;
+    sqlx::query!(
+        "DELETE FROM privacy.material_keys WHERE material_id = $1",
+        material.0
+    )
+    .execute(&w.reads)
+    .await
+    .unwrap();
+    call(
+        &w,
+        Some(OPERATOR),
+        json!({"method": "unlock", "identity": identity.to_string().expose_secret()}),
+    )
+    .await;
+    let (_, shredded) = call(&w, Some(OPERATOR), query).await;
+    assert!(!first(&shredded).contains("diary"), "shredded: {shredded}");
 }

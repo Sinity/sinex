@@ -68,6 +68,92 @@ impl MaterialSink for Sink {
     }
 }
 
+/// The class key's public half, from the file `$SINEX_CLASS_KEY_FILE` (an
+/// age recipient, `age1…`). Sealed sources need it to capture; the daemon
+/// never holds the secret half (spec `privacy.md` §4).
+pub fn class_key() -> Result<Option<sinex_store::sealed::Recipient>, String> {
+    let Some(path) = std::env::var_os("SINEX_CLASS_KEY_FILE") else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("{}: {e}", std::path::Path::new(&path).display()))?;
+    sinex_store::sealed::parse_recipient(&text)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+/// Drivers of a sealed source store a material's bytes through this: each
+/// material gets a fresh data key, its bytes are sealed under it, and the key
+/// waits here until the batch that registers the material is sealed with it.
+pub struct SealingSink {
+    blobs: Blobs,
+    recipient: sinex_store::sealed::Recipient,
+    keys: std::sync::Mutex<std::collections::HashMap<String, sinex_store::sealed::DataKey>>,
+}
+
+impl SealingSink {
+    pub fn new(blobs: Blobs, recipient: sinex_store::sealed::Recipient) -> Self {
+        Self {
+            blobs,
+            recipient,
+            keys: Default::default(),
+        }
+    }
+
+    /// Seal the batches' events with their material's key and record the
+    /// wrapped key before the batches are admitted, so a sealed material row
+    /// never exists without its key.
+    pub async fn seal(
+        &self,
+        aux: &mut PgConnection,
+        batches: &mut [sinex_model::Batch],
+    ) -> Result<(), String> {
+        for batch in batches {
+            let material = match &batch.kind {
+                sinex_model::BatchKind::Source(p) => p.material.clone(),
+                _ => None,
+            };
+            let Some(material) = material else {
+                // No new material: these events cite earlier parts, already
+                // sealed when they were read.
+                continue;
+            };
+            let key = self
+                .keys
+                .lock()
+                .expect("key map")
+                .get(&material.blob)
+                .cloned()
+                .ok_or_else(|| format!("material {}: stored without a data key", material.id))?;
+            let wrapped =
+                sinex_store::sealed::wrap(&key, &self.recipient).map_err(|e| e.to_string())?;
+            sinex_store::sealed::store_key(aux, material.id, &key.key_ref, &wrapped)
+                .await
+                .map_err(|e| e.to_string())?;
+            for record in &mut batch.records {
+                if let sinex_model::RecordOutcome::Events { events, .. } = record {
+                    for e in events {
+                        sinex_store::sealed::seal_event(e, &key).map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl MaterialSink for SealingSink {
+    fn put(&self, bytes: &[u8]) -> Result<String, String> {
+        let key = sinex_store::sealed::new_key().map_err(|e| e.to_string())?;
+        let name = self
+            .blobs
+            .put_sealed(bytes, &key)
+            .map_err(|e| e.to_string())?;
+        self.keys.lock().expect("key map").insert(name.clone(), key);
+        Ok(name)
+    }
+}
+
 /// The stored bytes of the chain ending at the cursor's last material, for
 /// rebuilding a driver's memory after a restart; empty before the first read.
 /// The last material is cut at the cursor's `through`: bytes after it were

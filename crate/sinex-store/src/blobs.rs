@@ -25,6 +25,21 @@ impl Blobs {
         Ok(format!("blake3:{}", hash.hex()))
     }
 
+    /// Store bytes sealed under `key` (the sealed class): encrypted frames
+    /// named by a keyed hash, so the store never confirms a known plaintext.
+    pub fn put_sealed(&self, bytes: &[u8], key: &crate::sealed::DataKey) -> Result<String> {
+        let hash = self.0.put_sealed(std::io::Cursor::new(bytes), 3, key)?;
+        Ok(format!("blake3:{}", hash.hex()))
+    }
+
+    /// Whether the blob named `name` is sealed.
+    pub fn is_sealed(&self, name: &str) -> Result<bool> {
+        Ok(matches!(
+            self.0.kind(&parse(name)?)?,
+            hashed_blobs::Kind::Sealed { .. }
+        ))
+    }
+
     /// Whether the store holds the bytes named `name` (an outside producer
     /// places a material's bytes before registering it).
     pub fn contains(&self, name: &str) -> Result<bool> {

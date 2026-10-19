@@ -342,8 +342,9 @@ async fn a_sealed_material_is_shredded_whole_and_never_in_part() {
     let bytes = b"a\nb\n".to_vec();
     let (m, blob) = material(&mut conn, &store, &bytes).await;
     sqlx::query!(
-        "INSERT INTO privacy.material_keys (material_id, class, wrapped_key) VALUES ($1, 'sealed', '\\x00')",
-        m.0
+        "INSERT INTO privacy.material_keys (material_id, key_ref, class, wrapped_key) VALUES ($1, $2, 'sealed', '\\x00')",
+        m.0,
+        m.0.to_string()
     )
     .execute(&mut conn)
     .await

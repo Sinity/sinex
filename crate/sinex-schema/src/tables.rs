@@ -348,7 +348,15 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   id boolean PRIMARY KEY CHECK (id),
   hash_key bytea NOT NULL CHECK (length(hash_key) = 32)
 )".into(),
-        "CREATE TABLE privacy.material_keys (material_id uuid PRIMARY KEY, class text NOT NULL, wrapped_key bytea NOT NULL)".into(),
+        // A sealed material's data key, wrapped with the class key's public
+        // half; deleting the row is the excision of everything it sealed.
+        "CREATE TABLE privacy.material_keys (
+  material_id uuid PRIMARY KEY,
+  key_ref text NOT NULL UNIQUE,
+  class text NOT NULL,
+  wrapped_key bytea NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+)".into(),
         // Full-text search read model (spec `query.md` §5, `storage.md`
         // §3.11): each event's payload text, normalized (case-folded, NFC,
         // words separated by single spaces), kept uncompressed apart from the

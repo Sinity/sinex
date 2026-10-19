@@ -293,6 +293,30 @@ async fn drive(
     let mut totals = Totals::default();
     let started = Instant::now();
     let private = sinex_protocol::private_mode::PrivateMode::default();
+    // The source's class: its declaration, raised by the operator's floor.
+    // A sealed source seals each material and its events as they are read.
+    let floor = sinex_store::privacy::load(aux, std::iter::once(source.spec().name))
+        .await
+        .map_err(|e| e.to_string())?
+        .floors
+        .get(source.spec().name)
+        .copied()
+        .unwrap_or_default();
+    let sealing = if source.spec().class.max(floor) == sinex_model::Class::Sealed {
+        let recipient = crate::context::class_key()?.ok_or_else(|| {
+            format!(
+                "{}: its class is sealed, but no class key is configured (SINEX_CLASS_KEY_FILE)",
+                source.spec().name
+            )
+        })?;
+        Some(crate::context::SealingSink::new(sink.0.clone(), recipient))
+    } else {
+        None
+    };
+    let material_sink: &dyn drivers::MaterialSink = match &sealing {
+        Some(s) => s,
+        None => sink,
+    };
     loop {
         // Private mode: capture nothing, and say so rather than report a gap.
         if private.on() {
@@ -311,16 +335,19 @@ async fn drive(
             return Err(format!("{binding}: {reason}"));
         }
         let had_material = acquired.material.as_ref().map(|m| m.bytes.len());
-        let batches = drivers::batches(
+        let mut batches = drivers::batches(
             source,
             binding,
             run,
             acquired,
             carry,
-            sink,
+            material_sink,
             Limits::default(),
         )
         .map_err(|e| e.to_string())?;
+        if let Some(s) = &sealing {
+            s.seal(aux, &mut batches).await?;
+        }
         if let Some(bytes) = had_material {
             totals.materials += 1;
             totals.material_bytes += bytes;

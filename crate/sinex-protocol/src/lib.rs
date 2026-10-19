@@ -315,6 +315,27 @@ pub const COMMANDS: &[Command] = &[
         access: Access::Read,
         mcp: true,
     },
+    Command {
+        name: "unlock",
+        summary: "Unlock the sealed class for a while: the operator's sealed values become readable to the operator token.",
+        args: &[
+            pos(
+                "identity",
+                ArgKind::Text,
+                "the age identity file (sinexctl reads it and sends its key)",
+            ),
+            opt("minutes", ArgKind::Integer, "how long (default 480)"),
+        ],
+        access: Access::Operator,
+        mcp: false,
+    },
+    Command {
+        name: "lock",
+        summary: "Lock the sealed class now.",
+        args: &[],
+        access: Access::Operator,
+        mcp: false,
+    },
 ];
 
 pub fn command(name: &str) -> Option<&'static Command> {
@@ -432,6 +453,12 @@ pub enum Request {
     },
     #[serde(rename = "privacy-verify")]
     PrivacyVerify,
+    Unlock {
+        identity: String,
+        #[serde(default)]
+        minutes: Option<u64>,
+    },
+    Lock,
 }
 
 impl Request {
@@ -476,6 +503,8 @@ impl Request {
             Request::PrivacyEnd { .. } => "privacy-end",
             Request::PrivacyClass { .. } => "privacy-class",
             Request::PrivacyVerify => "privacy-verify",
+            Request::Unlock { .. } => "unlock",
+            Request::Lock => "lock",
         }
     }
 
