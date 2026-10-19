@@ -135,6 +135,7 @@ impl Parser for ActivityWatchParser {
         &self,
         row: &Map<String, Value>,
         open: &OpenSpans,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<Activity>, OpenSpans), RecordError> {
         let id = row
             .get("rowid")
@@ -281,6 +282,21 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
         full_pass_secs: 86_400,
     }
 }
+
+/// `--source activitywatch=PATH`: `aw-server-rust`'s database.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "activitywatch",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::rows(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

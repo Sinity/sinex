@@ -250,6 +250,15 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   run_id uuid NOT NULL,
   failed_at timestamptz NOT NULL DEFAULT now()
 )".into(),
+        // Each binding's source and the settings it is read with, so a replay
+        // reads its materials exactly as the capture did.
+        "CREATE TABLE raw.bindings (
+  binding text PRIMARY KEY,
+  source text NOT NULL,
+  input text NOT NULL,
+  settings jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+)".into(),
         "CREATE TABLE raw.positions (
   binding text PRIMARY KEY,
   cursor jsonb NOT NULL,

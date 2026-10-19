@@ -52,6 +52,7 @@ impl Parser for SleepParser {
         &self,
         record: &&[u8],
         carry: &Carry,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<HealthRecord>, Carry), RecordError> {
         let cells = fields::csv_cells(record)?;
         if cells.first().map(String::as_str) == Some("Id") {
@@ -231,6 +232,29 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source sleep-as-android=PATH`: each Sleep as Android export in PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "sleep-as-android",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            false,
+            crate::binding::any,
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

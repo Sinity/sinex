@@ -46,13 +46,7 @@ impl Parser for SamsungParser {
     type Carry = Carry;
     type Payload = HealthRecord;
 
-    fn parse(&self, _: &&[u8], _: &Carry) -> Result<(Vec<HealthRecord>, Carry), RecordError> {
-        Err(RecordError::new(
-            "a Samsung Health row needs its file's name",
-        ))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         record: &&[u8],
         carry: &Carry,
@@ -213,6 +207,29 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source samsung-health=PATH`: each Samsung Health export ZIP under PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "samsung-health",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            true,
+            |p| p.extension().is_some_and(|e| e == "zip"),
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

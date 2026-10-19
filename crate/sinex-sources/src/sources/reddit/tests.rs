@@ -10,7 +10,7 @@ fn read(member: &str, rows: &[&[u8]]) -> Vec<RedditEvent> {
     let mut carry = Carry::default();
     let mut out = vec![];
     for row in rows {
-        let (events, next) = RedditParser.parse_record(row, &carry, &ctx).unwrap();
+        let (events, next) = RedditParser.parse(row, &carry, &ctx).unwrap();
         out.extend(events);
         carry = next;
     }
@@ -72,7 +72,7 @@ fn a_new_member_starts_with_its_header() {
         header: vec!["id".into()],
     };
     let (events, next) = RedditParser
-        .parse_record(&&b"id,permalink,date\n"[..], &carry, &ctx)
+        .parse(&&b"id,permalink,date\n"[..], &carry, &ctx)
         .unwrap();
     assert!(events.is_empty());
     assert_eq!(next.member, "posts.csv");

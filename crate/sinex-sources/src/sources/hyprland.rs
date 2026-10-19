@@ -95,6 +95,7 @@ impl Parser for HyprlandParser {
         &self,
         record: &Map<String, Value>,
         pending: &Option<Pending>,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<Desktop>, Option<Pending>), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let line = String::from_utf8(bytes)
@@ -265,6 +266,39 @@ pub fn capture(socket: &Path, spool: &Path) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     live_stream::capture_lines(BufReader::new(stream), &mut writer, Duration::from_secs(1))
 }
+
+/// `--source hyprland=SPOOL`: Hyprland's event socket, captured into SPOOL.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "hyprland",
+    specs: || vec![&SPEC],
+    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: Some(|b, stop| {
+        let socket = socket_path().ok_or(
+            "no Hyprland instance in this environment (HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset)",
+        )?;
+        let spool = b.input.clone();
+        let reader = std::thread::spawn(move || capture(&socket, &spool));
+        match stop {
+            // Everything read is already in the spool; leaving the reader
+            // mid-wait loses nothing.
+            Some(stop) => {
+                std::thread::sleep(stop);
+                Ok(0)
+            }
+            None => reader
+                .join()
+                .map_err(|_| "capture thread panicked".to_owned())?
+                .map_err(|e| e.to_string()),
+        }
+    }),
+};
 
 #[cfg(test)]
 mod tests;

@@ -15,7 +15,9 @@ fn linked_and_unlinked_actions() {
         r#"Visited <a href="https://example.org/a">A page</a>"#,
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
-    let (out, ()) = MyActivityParser.parse(&c, &()).unwrap();
+    let (out, ()) = MyActivityParser
+        .parse(&c, &(), &crate::RecordContext::none())
+        .unwrap();
     assert_eq!(out[0].verb.as_deref(), Some("Visited"));
     assert_eq!(out[0].title, "A page");
     assert_eq!(out[0].title_url.as_deref(), Some("https://example.org/a"));
@@ -25,7 +27,9 @@ fn linked_and_unlinked_actions() {
         "Downloaded a Takeout archive",
         "Dec 15, 2025, 5:15:21 AM CEST",
     );
-    let (out, ()) = MyActivityParser.parse(&c, &()).unwrap();
+    let (out, ()) = MyActivityParser
+        .parse(&c, &(), &crate::RecordContext::none())
+        .unwrap();
     assert_eq!(out[0].title_url, None);
     assert_eq!(
         out[0].unlinked_text.as_deref(),
@@ -40,7 +44,9 @@ fn watches_keep_unknown_titles_unknown() {
         r#"Watched <a href="https://www.youtube.com/watch?v=abc123">A talk</a><br><a href="https://www.youtube.com/channel/C">Chan</a>"#,
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
-    let (out, ()) = YouTubeParser.parse(&c, &()).unwrap();
+    let (out, ()) = YouTubeParser
+        .parse(&c, &(), &crate::RecordContext::none())
+        .unwrap();
     let YouTubeEvent::Watched(w) = &out[0] else {
         panic!()
     };
@@ -52,7 +58,9 @@ fn watches_keep_unknown_titles_unknown() {
         r#"Watched <a href="https://www.youtube.com/watch?v=gone1">https://www.youtube.com/watch?v=gone1</a>"#,
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
-    let (out, ()) = YouTubeParser.parse(&gone, &()).unwrap();
+    let (out, ()) = YouTubeParser
+        .parse(&gone, &(), &crate::RecordContext::none())
+        .unwrap();
     let YouTubeEvent::Watched(w) = &out[0] else {
         panic!()
     };
@@ -63,7 +71,9 @@ fn watches_keep_unknown_titles_unknown() {
         "Watched a video that has been removed",
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
-    let (out, ()) = YouTubeParser.parse(&removed, &()).unwrap();
+    let (out, ()) = YouTubeParser
+        .parse(&removed, &(), &crate::RecordContext::none())
+        .unwrap();
     let YouTubeEvent::Watched(w) = &out[0] else {
         panic!()
     };

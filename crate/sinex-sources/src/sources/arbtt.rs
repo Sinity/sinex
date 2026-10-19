@@ -55,6 +55,7 @@ impl Parser for ArbttParser {
         &self,
         record: &&[u8],
         previous: &Carry,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<WindowSampled>, Carry), RecordError> {
         let mut r = Reader {
             bytes: record,
@@ -264,6 +265,29 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
         framer: frame,
     }
 }
+
+/// `--source arbtt=PATH`: each ARBTT `capture.log` under PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "arbtt",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            true,
+            |p| p.file_name().is_some_and(|n| n == "capture.log"),
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::appended(
+            driver(b.input.clone(), b.settings.host.clone()),
+            SPEC.framer,
+        ))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

@@ -27,7 +27,9 @@ aGVsbG8=\n\
 
 #[test]
 fn reads_headers_labels_text_and_attachments() {
-    let (m, ()) = MailParser.parse(&MESSAGE, &()).unwrap();
+    let (m, ()) = MailParser
+        .parse(&MESSAGE, &(), &crate::RecordContext::none())
+        .unwrap();
     let m = &m[0];
     assert_eq!(m.message_id, "abc@example.com");
     assert_eq!(m.subject.as_deref(), Some("Zażółć"));
@@ -48,7 +50,11 @@ fn reads_headers_labels_text_and_attachments() {
 #[test]
 fn a_message_without_id_or_date_is_hashed_and_undated() {
     let (m, ()) = MailParser
-        .parse(&&b"Subject: x\n\nbody\n"[..], &())
+        .parse(
+            &&b"Subject: x\n\nbody\n"[..],
+            &(),
+            &crate::RecordContext::none(),
+        )
         .unwrap();
     assert!(m[0].message_id.starts_with("blake3:"));
     assert_eq!(m[0].date, None);

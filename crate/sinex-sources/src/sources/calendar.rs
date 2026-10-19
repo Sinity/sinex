@@ -236,11 +236,7 @@ impl Parser for CalendarParser {
     type Carry = ();
     type Payload = CalendarEvent;
 
-    fn parse(&self, _: &VEvent, _: &()) -> Result<(Vec<CalendarEvent>, ()), RecordError> {
-        Err(RecordError::new("a calendar event needs its file's name"))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         ev: &VEvent,
         _: &(),
@@ -370,6 +366,30 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source calendar=PATH`: each calendar export in PATH. Floating times are
+/// read in the binding's zone, recorded when it is planned.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "calendar",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            &settings.clone().with_zone()?,
+            false,
+            crate::binding::any,
+        ))
+    }),
+    source: |b| Ok(Box::new(source(b.settings.zone()?))),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

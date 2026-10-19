@@ -49,6 +49,7 @@ impl Parser for AtuinParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<CommandExecuted>, ()), RecordError> {
         let text = |name: &str| -> Result<String, RecordError> {
             match row.get(name) {
@@ -128,6 +129,21 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
         full_pass_secs: 3600,
     }
 }
+
+/// `--source atuin=PATH`: Atuin's history database.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "atuin",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::rows(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

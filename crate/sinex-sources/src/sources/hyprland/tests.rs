@@ -15,7 +15,11 @@ fn parse_all(lines: &[&str]) -> Vec<Desktop> {
     let mut out = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let (events, next) = HyprlandParser
-            .parse(&rec(line, 1_000_000_000 + i as i128), &carry)
+            .parse(
+                &rec(line, 1_000_000_000 + i as i128),
+                &carry,
+                &crate::RecordContext::none(),
+            )
             .unwrap();
         out.extend(events);
         carry = next;

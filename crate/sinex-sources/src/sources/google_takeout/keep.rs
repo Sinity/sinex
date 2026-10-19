@@ -47,6 +47,7 @@ impl Parser for KeepParser {
         &self,
         note: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<NoteObserved>, ()), RecordError> {
         let created_at = fields::from_unix_us(fields::int(note, "createdTimestampUsec")?)?;
         let edited_at = note

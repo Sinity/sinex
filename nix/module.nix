@@ -58,6 +58,21 @@ let
       default = spec.class;
       description = "Privacy class of ${spec.name}'s events (architecture §3.5).";
     };
+    kind = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "The kind to read ${spec.name} with when several kinds read it (`sinnix-lake` for a lake lane); the first registered when null.";
+    };
+    zone = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "IANA zone ${spec.name}'s local times were written in; the system zone when null.";
+    };
+    options = mkOption {
+      type = types.attrsOf (types.oneOf [ types.str types.int types.bool (types.listOf types.str) ]);
+      default = { };
+      description = "${spec.name}'s own options (a selection, a capture interval).";
+    };
   };
 in
 {
@@ -273,8 +288,15 @@ in
       environment.systemPackages = [ cfg.package ];
 
       # Bindings from the registry-generated options, for the daemon's sources.
+      # The journald capture's spool is the journald source's input.
       environment.etc."sinex/sources.json".text = builtins.toJSON {
-        sources = filterAttrs (_: s: s.enable) cfg.sources;
+        sources = filterAttrs (_: s: s.enable) (cfg.sources
+          // lib.optionalAttrs cfg.journald.enable {
+            "machine.journald" = cfg.sources."machine.journald" // {
+              enable = true;
+              paths = [ "${cfg.stateDir}/spool/journald" ];
+            };
+          });
         derivations = mapAttrs (_: d: d.enable) cfg.derivations;
       };
 
@@ -425,7 +447,8 @@ in
             ${optionalString (cfg.api.listen != null) "--listen ${escapeShellArg cfg.api.listen}"} \
             --tokens ${cfg.stateDir}/tokens \
             ${optionalString (cfg.zone != null) "--zone ${escapeShellArg cfg.zone}"} \
-            --day-start ${escapeShellArg cfg.dayStart}
+            --day-start ${escapeShellArg cfg.dayStart} \
+            --sources /etc/sinex/sources.json
         '';
       };
 

@@ -102,10 +102,10 @@ impl Target {
     fn backfill(&self, zsh: Option<&Path>, atuin: Option<&Path>) -> String {
         let mut c = self.sinexd(&["backfill", "--host", HOST]);
         if let Some(z) = zsh {
-            c.arg("--zsh").arg(z);
+            c.arg("--source").arg(format!("zsh={}", z.display()));
         }
         if let Some(a) = atuin {
-            c.arg("--atuin").arg(a);
+            c.arg("--source").arg(format!("atuin={}", a.display()));
         }
         finish(&mut c)
     }
@@ -262,14 +262,15 @@ async fn l2_l3_replay_keeps_occurrences_and_one_live_reading() {
     let t = Target::new(&dir);
     let atuin = dir.0.join("history.db");
     atuin_db(&atuin, &(0..30).map(atuin_row).collect::<Vec<_>>());
-    t.backfill(Some(&dir.file("zsh", small_zsh().as_bytes())), Some(&atuin));
+    let zsh = dir.file("zsh", small_zsh().as_bytes());
+    t.backfill(Some(&zsh), Some(&atuin));
     let mut c = t.connect().await;
     let before = live(&mut c).await;
     assert_eq!(before.len(), 70);
     const N: i64 = 3;
     for _ in 0..N {
-        t.admin(&["replay", "--binding", &format!("zsh@{HOST}")]);
-        t.admin(&["replay", "--binding", &format!("atuin@{HOST}")]);
+        t.admin(&["replay", "--binding", &zsh_binding(&zsh)]);
+        t.admin(&["replay", "--binding", &atuin_binding(&atuin)]);
     }
     let after = live(&mut c).await;
     assert_eq!(
@@ -502,7 +503,7 @@ async fn l20_l47_rows_that_change_are_read_to_their_final_values() {
     rows.extend((5_001..=5_100).map(atuin_row));
     atuin_db(&path, &rows);
     t.backfill(None, Some(&path));
-    t.admin(&["replay", "--binding", &format!("atuin@{HOST}")]);
+    t.admin(&["replay", "--binding", &atuin_binding(&path)]);
 
     let mut c = t.connect().await;
     let running = sqlx::query(
@@ -604,7 +605,7 @@ async fn l18_hidden_stays_hidden_across_replay_and_reimport() {
     .unwrap();
     t.admin(&["hide", &id.to_string()]);
     assert_eq!(visible_a3(&mut c).await, 0);
-    t.admin(&["replay", "--binding", &format!("atuin@{HOST}")]);
+    t.admin(&["replay", "--binding", &atuin_binding(&path)]);
     assert_eq!(visible_a3(&mut c).await, 0, "replay brought it back");
     let copy = dir.0.join("b/history.db");
     std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
@@ -612,7 +613,7 @@ async fn l18_hidden_stays_hidden_across_replay_and_reimport() {
     t.backfill(None, Some(&copy));
     assert_eq!(visible_a3(&mut c).await, 0, "re-import brought it back");
     t.admin(&["unhide", &id.to_string()]);
-    t.admin(&["replay", "--binding", &format!("atuin@{HOST}")]);
+    t.admin(&["replay", "--binding", &atuin_binding(&path)]);
     assert_eq!(visible_a3(&mut c).await, 1);
     consistent(&mut c).await;
 }
@@ -632,7 +633,8 @@ async fn l23_dry_runs_change_nothing_and_shared_bytes_survive() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = small_zsh();
-    t.backfill(Some(&dir.file("a/zsh", text.as_bytes())), None);
+    let a = dir.file("a/zsh", text.as_bytes());
+    t.backfill(Some(&a), None);
     t.backfill(Some(&dir.file("b/zsh", text.as_bytes())), None);
     let mut c = t.connect().await;
     let shared: Vec<String> = sqlx::query_scalar("SELECT blob FROM raw.materials")
@@ -641,7 +643,7 @@ async fn l23_dry_runs_change_nothing_and_shared_bytes_survive() {
         .unwrap();
     let before = live(&mut c).await;
     let events = scalar(&mut c, "SELECT count(*) FROM core.events").await;
-    t.admin(&["replay", "--binding", &format!("zsh@{HOST}"), "--compare"]);
+    t.admin(&["replay", "--binding", &zsh_binding(&a), "--compare"]);
     let victim: uuid::Uuid =
         sqlx::query_scalar(
             "SELECT event_id FROM core.live_equivalence WHERE event_type = 'command.imported' ORDER BY event_id LIMIT 1",
@@ -696,7 +698,13 @@ async fn l43_a_second_writer_is_refused() {
         .unwrap();
     assert!(won);
     let out = t
-        .sinexd(&["backfill", "--host", HOST, "--zsh", zsh.to_str().unwrap()])
+        .sinexd(&[
+            "backfill",
+            "--host",
+            HOST,
+            "--source",
+            &format!("zsh={}", zsh.display()),
+        ])
         .output()
         .unwrap();
     assert!(!out.status.success(), "a second writer started");
@@ -926,4 +934,14 @@ async fn l10_every_parent_resolves_and_committed_first() {
     assert_eq!(later, 0, "every parent committed before its child");
     // Parents exist and commit strictly earlier, so following parents always
     // ends, at events without parents: material events (L1).
+}
+
+/// The binding backfill files a zsh history under.
+fn zsh_binding(path: &Path) -> String {
+    format!("terminal.zsh-history:{}@{HOST}", path.display())
+}
+
+/// The binding backfill files an Atuin database under.
+fn atuin_binding(path: &Path) -> String {
+    format!("terminal.atuin-history:{}@{HOST}", path.display())
 }

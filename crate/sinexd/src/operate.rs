@@ -40,9 +40,13 @@ pub async fn excise_with(
         let spans: Vec<(usize, usize)> = if m.whole {
             vec![(0, bytes.len())]
         } else {
-            let source = sources::by_parser(&m.parser, &m.host)
+            // Framing belongs to the source's declaration, whatever the
+            // binding's settings.
+            let spec = sources::specs()
+                .into_iter()
+                .find(|s| s.parser == m.parser)
                 .ok_or_else(|| format!("material {}: no source has parser {}", m.id, m.parser))?;
-            let framed = (source.spec().framer)(&bytes).0;
+            let framed = (spec.framer)(&bytes).0;
             m.anchors
                 .iter()
                 .map(|a| {

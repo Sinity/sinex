@@ -2,6 +2,7 @@
   "sources": [
     {
       "name": "terminal.atuin-history",
+      "kind": "atuin",
       "driver": "SqliteRows",
       "consumer": "command fusion and shell recall",
       "class": "open",
@@ -11,6 +12,7 @@
     },
     {
       "name": "terminal.zsh-history",
+      "kind": "zsh",
       "driver": "AppendFile",
       "consumer": "command fusion and shell recall",
       "class": "open",
@@ -20,6 +22,7 @@
     },
     {
       "name": "desktop.hyprland",
+      "kind": "hyprland",
       "driver": "LiveStream",
       "consumer": "focus intervals, attention and recall",
       "class": "guarded",
@@ -36,6 +39,7 @@
     },
     {
       "name": "machine.journald",
+      "kind": "journald",
       "driver": "LiveStream",
       "consumer": "machine timeline, service health and recall",
       "class": "guarded",
@@ -44,7 +48,18 @@
       ]
     },
     {
+      "name": "machine.file-watch",
+      "kind": "file-watch",
+      "driver": "LiveStream",
+      "consumer": "work episodes, project attribution and recall",
+      "class": "guarded",
+      "eventTypes": [
+        "file.changed"
+      ]
+    },
+    {
       "name": "desktop.activitywatch",
+      "kind": "activitywatch",
       "driver": "SqliteRows",
       "consumer": "attention, presence and recall",
       "class": "guarded",
@@ -57,6 +72,7 @@
     },
     {
       "name": "code.git",
+      "kind": "repository",
       "driver": "ApiCursor",
       "consumer": "work episodes, project attribution and recall",
       "class": "open",
@@ -65,16 +81,8 @@
       ]
     },
     {
-      "name": "machine.file-watch",
-      "driver": "LiveStream",
-      "consumer": "work episodes, project attribution and recall",
-      "class": "guarded",
-      "eventTypes": [
-        "file.changed"
-      ]
-    },
-    {
       "name": "browser.chromium-visits",
+      "kind": "chromium",
       "driver": "SqliteRows",
       "consumer": "browsing recall and the attention stream",
       "class": "open",
@@ -84,6 +92,7 @@
     },
     {
       "name": "browser.chromium-urls",
+      "kind": "chromium",
       "driver": "SqliteRows",
       "consumer": "browsing recall and page titles",
       "class": "open",
@@ -93,6 +102,7 @@
     },
     {
       "name": "browser.takeout-chrome-history",
+      "kind": "takeout-chrome",
       "driver": "ExportArchive",
       "consumer": "browsing recall before live capture",
       "class": "open",
@@ -102,6 +112,7 @@
     },
     {
       "name": "media.spotify-history",
+      "kind": "spotify",
       "driver": "ExportArchive",
       "consumer": "listening history and the attention stream",
       "class": "open",
@@ -111,6 +122,7 @@
     },
     {
       "name": "reading.raindrop",
+      "kind": "raindrop",
       "driver": "ExportArchive",
       "consumer": "saved reading and URL recall",
       "class": "open",
@@ -120,6 +132,7 @@
     },
     {
       "name": "knowledge.notes-vault",
+      "kind": "notes",
       "driver": "DirSnapshot",
       "consumer": "note recall and the library",
       "class": "open",
@@ -129,6 +142,7 @@
     },
     {
       "name": "communication.mbox",
+      "kind": "mbox",
       "driver": "ExportArchive",
       "consumer": "mail recall and correspondence history",
       "class": "open",
@@ -138,6 +152,7 @@
     },
     {
       "name": "communication.maildir",
+      "kind": "maildir",
       "driver": "DirSnapshot",
       "consumer": "mail recall and correspondence history",
       "class": "open",
@@ -146,7 +161,38 @@
       ]
     },
     {
+      "name": "communication.imap",
+      "kind": "imap",
+      "driver": "ApiCursor",
+      "consumer": "mail recall and correspondence history",
+      "class": "open",
+      "eventTypes": [
+        "mail.message"
+      ]
+    },
+    {
+      "name": "communication.outlook",
+      "kind": "outlook",
+      "driver": "ExportArchive",
+      "consumer": "mail recall and correspondence history",
+      "class": "open",
+      "eventTypes": [
+        "mail.message"
+      ]
+    },
+    {
+      "name": "communication.outlook-csv",
+      "kind": "outlook-csv",
+      "driver": "ExportArchive",
+      "consumer": "mail recall and correspondence history",
+      "class": "open",
+      "eventTypes": [
+        "mail.message"
+      ]
+    },
+    {
       "name": "communication.weechat-log",
+      "kind": "weechat",
       "driver": "AppendFile",
       "consumer": "chat recall and correspondence history",
       "class": "open",
@@ -155,7 +201,18 @@
       ]
     },
     {
+      "name": "calendar",
+      "kind": "calendar",
+      "driver": "ExportArchive",
+      "consumer": "planned events beside what happened",
+      "class": "open",
+      "eventTypes": [
+        "calendar.event"
+      ]
+    },
+    {
       "name": "google.my-activity",
+      "kind": "takeout",
       "driver": "ExportArchive",
       "consumer": "searches, visits and app use recorded by the Google account",
       "class": "open",
@@ -165,6 +222,7 @@
     },
     {
       "name": "google.youtube-history",
+      "kind": "takeout",
       "driver": "ExportArchive",
       "consumer": "videos watched and searched for",
       "class": "open",
@@ -175,6 +233,7 @@
     },
     {
       "name": "google.keep",
+      "kind": "takeout",
       "driver": "ExportArchive",
       "consumer": "notes and checklists kept in Keep",
       "class": "open",
@@ -184,6 +243,7 @@
     },
     {
       "name": "google.tasks",
+      "kind": "takeout",
       "driver": "ExportArchive",
       "consumer": "tasks and their completion",
       "class": "open",
@@ -193,6 +253,7 @@
     },
     {
       "name": "google.play-store",
+      "kind": "takeout",
       "driver": "ExportArchive",
       "consumer": "apps installed, bought and reviewed",
       "class": "open",
@@ -202,6 +263,7 @@
     },
     {
       "name": "google.purchases",
+      "kind": "takeout",
       "driver": "ExportArchive",
       "consumer": "orders and reservations",
       "class": "open",
@@ -210,16 +272,28 @@
       ]
     },
     {
-      "name": "calendar",
+      "name": "google.location-history",
+      "kind": "takeout",
       "driver": "ExportArchive",
-      "consumer": "planned events beside what happened",
+      "consumer": "where the operator was",
       "class": "open",
       "eventTypes": [
-        "calendar.event"
+        "location.sample"
+      ]
+    },
+    {
+      "name": "google.fit",
+      "kind": "takeout",
+      "driver": "ExportArchive",
+      "consumer": "steps, activity, heart and location samples Fit recorded",
+      "class": "open",
+      "eventTypes": [
+        "health.record"
       ]
     },
     {
       "name": "reading.goodreads",
+      "kind": "goodreads",
       "driver": "ExportArchive",
       "consumer": "books shelved and read, for long-horizon interest",
       "class": "open",
@@ -229,6 +303,7 @@
     },
     {
       "name": "facebook-messenger-thread",
+      "kind": "messenger",
       "driver": "ExportArchive",
       "consumer": "conversations with people",
       "class": "open",
@@ -238,6 +313,7 @@
     },
     {
       "name": "health.sleep-as-android",
+      "kind": "sleep-as-android",
       "driver": "ExportArchive",
       "consumer": "sleep sessions and their phases",
       "class": "open",
@@ -247,6 +323,7 @@
     },
     {
       "name": "social.wykop",
+      "kind": "wykop",
       "driver": "ExportArchive",
       "consumer": "what the operator wrote and voted on at Wykop",
       "class": "open",
@@ -260,6 +337,7 @@
     },
     {
       "name": "social.reddit",
+      "kind": "reddit",
       "driver": "ExportArchive",
       "consumer": "what the operator wrote, voted on, saved and sent at Reddit",
       "class": "open",
@@ -272,6 +350,7 @@
     },
     {
       "name": "health.samsung-export",
+      "kind": "samsung-health",
       "driver": "ExportArchive",
       "consumer": "sleep, heart, activity and body measurements",
       "class": "open",
@@ -281,6 +360,7 @@
     },
     {
       "name": "phone.samsung-sms",
+      "kind": "samsung-sms",
       "driver": "ExportArchive",
       "consumer": "text messages sent and received",
       "class": "open",
@@ -289,7 +369,50 @@
       ]
     },
     {
+      "name": "account.samsung",
+      "kind": "samsung-account",
+      "driver": "ExportArchive",
+      "consumer": "what the operator's Samsung account kept: health sync, settings, backups",
+      "class": "open",
+      "eventTypes": [
+        "health.record",
+        "account.record"
+      ]
+    },
+    {
+      "name": "desktop.arbtt",
+      "kind": "arbtt",
+      "driver": "AppendFile",
+      "consumer": "which window was in use, sampled every interval",
+      "class": "open",
+      "eventTypes": [
+        "window.sampled"
+      ]
+    },
+    {
+      "name": "terminal.asciinema",
+      "kind": "asciinema",
+      "driver": "AppendFile",
+      "consumer": "what terminals showed and what was typed, replayable",
+      "class": "open",
+      "eventTypes": [
+        "terminal.session",
+        "terminal.output"
+      ]
+    },
+    {
+      "name": "terminal.capture-events",
+      "kind": "asciinema",
+      "driver": "AppendFile",
+      "consumer": "shell commands around a terminal recording",
+      "class": "open",
+      "eventTypes": [
+        "terminal.event"
+      ]
+    },
+    {
       "name": "operator.raw-log",
+      "kind": "raw-log",
       "driver": "AppendFile",
       "consumer": "the operator's quick notes, as primary data",
       "class": "open",
@@ -299,6 +422,7 @@
     },
     {
       "name": "operator.steering",
+      "kind": "steering",
       "driver": "SqliteRows",
       "consumer": "commitments, forecasts and reviews the operator keeps",
       "class": "open",
@@ -308,6 +432,7 @@
     },
     {
       "name": "operator.steering",
+      "kind": "steering",
       "driver": "SqliteRows",
       "consumer": "commitments, forecasts and reviews the operator keeps",
       "class": "open",
@@ -317,15 +442,200 @@
     },
     {
       "name": "operator.steering",
+      "kind": "steering",
       "driver": "SqliteRows",
       "consumer": "commitments, forecasts and reviews the operator keeps",
       "class": "open",
       "eventTypes": [
         "steering.record"
+      ]
+    },
+    {
+      "name": "desktop.clipboard",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "recall, prompt provenance",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "desktop.notification",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "recall, interruption analysis",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "desktop.media",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "listening and attention timeline",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "desktop.a11y",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "what was on screen, recall",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "desktop.idle-inhibitor",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "presence and AFK evidence",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "media.screen",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "screen recall and OCR",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "media.audio",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "audio recall, speech index, device state",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "browser.navigation",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "browsing trails, recall",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "reading.stack",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "reading queue",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "display",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "machine state timeline",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "network.netflow",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "per-minute flow summaries (derived)",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "peripheral",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "battery and audio device state",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "environment.awair",
+      "kind": "sinnix-lake",
+      "driver": "AppendFile",
+      "consumer": "room air, sleep and focus analysis",
+      "class": "open",
+      "eventTypes": [
+        "capture.observed"
+      ]
+    },
+    {
+      "name": "desktop.notifications",
+      "kind": "notifications",
+      "driver": "LiveStream",
+      "consumer": "recall and the day's interruptions",
+      "class": "guarded",
+      "eventTypes": [
+        "notification.shown",
+        "notification.closed",
+        "notification.action"
+      ]
+    },
+    {
+      "name": "media.mpris",
+      "kind": "players",
+      "driver": "LiveStream",
+      "consumer": "listening and watching history, attention",
+      "class": "guarded",
+      "eventTypes": [
+        "player.changed"
+      ]
+    },
+    {
+      "name": "desktop.clipboard",
+      "kind": "sinnix-lake",
+      "driver": "LiveStream",
+      "consumer": "recall: what was copied where",
+      "class": "guarded",
+      "eventTypes": [
+        "clipboard.copied"
+      ]
+    },
+    {
+      "name": "session.producers",
+      "kind": "producers",
+      "driver": "LiveStream",
+      "consumer": "recall: files edited, commands run in the terminal",
+      "class": "guarded",
+      "eventTypes": [
+        "editor.event",
+        "terminal.event"
+      ]
+    },
+    {
+      "name": "session.media",
+      "kind": "media",
+      "driver": "Media",
+      "consumer": "recall: what was on screen and said; screen text and transcripts",
+      "class": "guarded",
+      "eventTypes": [
+        "media.segment"
       ]
     },
     {
       "name": "library.scan",
+      "kind": "library",
       "driver": "DirSnapshot",
       "consumer": "the media library",
       "class": "open",
@@ -335,6 +645,7 @@
     },
     {
       "name": "library.request",
+      "kind": "library",
       "driver": "Operator",
       "consumer": "the media library",
       "class": "open",
@@ -351,186 +662,13 @@
       ]
     },
     {
-      "name": "desktop.notifications",
-      "driver": "LiveStream",
-      "consumer": "recall and the day's interruptions",
-      "class": "guarded",
-      "eventTypes": [
-        "notification.shown",
-        "notification.closed",
-        "notification.action"
-      ]
-    },
-    {
-      "name": "media.mpris",
-      "driver": "LiveStream",
-      "consumer": "listening and watching history, attention",
-      "class": "guarded",
-      "eventTypes": [
-        "player.changed"
-      ]
-    },
-    {
-      "name": "desktop.clipboard",
-      "driver": "LiveStream",
-      "consumer": "recall: what was copied where",
-      "class": "guarded",
-      "eventTypes": [
-        "clipboard.copied"
-      ]
-    },
-    {
-      "name": "session.producers",
-      "driver": "LiveStream",
-      "consumer": "recall: files edited, commands run in the terminal",
-      "class": "guarded",
-      "eventTypes": [
-        "editor.event",
-        "terminal.event"
-      ]
-    },
-    {
-      "name": "session.media",
-      "driver": "Media",
-      "consumer": "recall: what was on screen and said; screen text and transcripts",
-      "class": "guarded",
-      "eventTypes": [
-        "media.segment"
-      ]
-    },
-    {
       "name": "browser.page_crawl",
+      "kind": "page-crawl",
       "driver": "ApiCursor",
       "consumer": "page content for recall and search over what was read",
       "class": "guarded",
       "eventTypes": [
         "page.fetched"
-      ]
-    },
-    {
-      "name": "communication.imap",
-      "driver": "ApiCursor",
-      "consumer": "mail recall and correspondence history",
-      "class": "open",
-      "eventTypes": [
-        "mail.message"
-      ]
-    },
-    {
-      "name": "desktop.clipboard",
-      "driver": "AppendFile",
-      "consumer": "recall, prompt provenance",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "desktop.notification",
-      "driver": "AppendFile",
-      "consumer": "recall, interruption analysis",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "desktop.media",
-      "driver": "AppendFile",
-      "consumer": "listening and attention timeline",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "desktop.a11y",
-      "driver": "AppendFile",
-      "consumer": "what was on screen, recall",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "desktop.idle-inhibitor",
-      "driver": "AppendFile",
-      "consumer": "presence and AFK evidence",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "media.screen",
-      "driver": "AppendFile",
-      "consumer": "screen recall and OCR",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "media.audio",
-      "driver": "AppendFile",
-      "consumer": "audio recall, speech index, device state",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "browser.navigation",
-      "driver": "AppendFile",
-      "consumer": "browsing trails, recall",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "reading.stack",
-      "driver": "AppendFile",
-      "consumer": "reading queue",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "display",
-      "driver": "AppendFile",
-      "consumer": "machine state timeline",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "network.netflow",
-      "driver": "AppendFile",
-      "consumer": "per-minute flow summaries (derived)",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "peripheral",
-      "driver": "AppendFile",
-      "consumer": "battery and audio device state",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
-      ]
-    },
-    {
-      "name": "environment.awair",
-      "driver": "AppendFile",
-      "consumer": "room air, sleep and focus analysis",
-      "class": "open",
-      "eventTypes": [
-        "capture.observed"
       ]
     }
   ],

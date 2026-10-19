@@ -321,11 +321,7 @@ impl Parser for PageParser {
     type Carry = ();
     type Payload = PageFetched;
 
-    fn parse(&self, _: &&[u8], _: &()) -> Result<(Vec<PageFetched>, ()), RecordError> {
-        Err(RecordError::new("a fetched page is read with its manifest"))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         body: &&[u8],
         _: &(),
@@ -365,6 +361,17 @@ pub fn source() -> Declared<PageParser> {
         parser: PageParser,
     }
 }
+
+/// The forward crawl, run by `sinexd admin crawl` over browser history rather
+/// than read from a path.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "page-crawl",
+    specs: || vec![&SPEC],
+    plan: None,
+    source: |_| Ok(Box::new(source())),
+    reader: None,
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

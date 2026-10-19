@@ -85,14 +85,6 @@ impl Parser for VisitParser {
 
     fn parse(
         &self,
-        _: &Map<String, Value>,
-        _: &(),
-    ) -> Result<(Vec<BrowserVisit>, ()), RecordError> {
-        Err(RecordError::new("a Chromium row needs its History path"))
-    }
-
-    fn parse_record(
-        &self,
         row: &Map<String, Value>,
         _: &(),
         context: &RecordContext<'_>,
@@ -135,11 +127,7 @@ impl Parser for UrlParser {
     type Carry = ();
     type Payload = BrowserUrl;
 
-    fn parse(&self, _: &Map<String, Value>, _: &()) -> Result<(Vec<BrowserUrl>, ()), RecordError> {
-        Err(RecordError::new("a Chromium row needs its History path"))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         row: &Map<String, Value>,
         _: &(),
@@ -243,6 +231,39 @@ pub fn profiles(user_data: &Path) -> Vec<(String, PathBuf)> {
     out.sort();
     out
 }
+
+/// `--source chromium=PATH`: every profile under a browser's user-data
+/// directory, its visits and its URLs each a binding.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "chromium",
+    specs: || vec![&VISITS, &URLS],
+    plan: Some(|input, settings| {
+        Ok(profiles(input)
+            .into_iter()
+            .flat_map(|(profile, history)| {
+                [&VISITS, &URLS].map(|spec| {
+                    crate::binding::Binding::of(spec, &history, settings.clone()).named(&profile)
+                })
+            })
+            .collect())
+    }),
+    source: |b| {
+        if b.source == VISITS.name {
+            Ok(Box::new(visits()))
+        } else {
+            Ok(Box::new(urls()))
+        }
+    },
+    reader: Some(|b| {
+        let (input, host) = (b.input.clone(), b.settings.host.clone());
+        Ok(crate::binding::rows(if b.source == VISITS.name {
+            visits_driver(input, host)
+        } else {
+            urls_driver(input, host)
+        }))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

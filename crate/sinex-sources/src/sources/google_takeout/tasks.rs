@@ -48,6 +48,7 @@ impl Parser for TasksParser {
         &self,
         doc: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<TaskRevised>, ()), RecordError> {
         let lists = doc
             .get("items")

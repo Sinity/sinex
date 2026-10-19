@@ -8,7 +8,13 @@ fn notes_lists_and_trash() {
         "userEditedTimestampUsec": 1_739_887_200_000_000i64,
         "listContent": [{"text": "milk", "isChecked": true}, {"text": "eggs", "isChecked": false}],
         "labels": [{"name": "home"}], "textContentHtml": "<p>x</p>"});
-    let (out, ()) = KeepParser.parse(note.as_object().unwrap(), &()).unwrap();
+    let (out, ()) = KeepParser
+        .parse(
+            note.as_object().unwrap(),
+            &(),
+            &crate::RecordContext::none(),
+        )
+        .unwrap();
     let n = &out[0];
     assert_eq!(n.items.len(), 2);
     assert!(n.items[0].checked);
@@ -17,7 +23,11 @@ fn notes_lists_and_trash() {
     assert!(n.extra.contains_key("textContentHtml"));
     assert!(
         KeepParser
-            .parse(json!({"title": "x"}).as_object().unwrap(), &())
+            .parse(
+                json!({"title": "x"}).as_object().unwrap(),
+                &(),
+                &crate::RecordContext::none()
+            )
             .is_err()
     );
 }

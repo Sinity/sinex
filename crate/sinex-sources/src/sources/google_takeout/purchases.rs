@@ -57,6 +57,7 @@ impl Parser for PurchasesParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<PurchaseObserved>, ()), RecordError> {
         // An order file: the object itself is the item.
         if row.contains_key("merchantOrderId") || row.contains_key("lineItem") {

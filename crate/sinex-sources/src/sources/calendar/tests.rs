@@ -13,7 +13,7 @@ fn read(ics: &str) -> CalendarEvent {
     let parser = CalendarParser {
         zone: jiff::tz::TimeZone::UTC,
     };
-    parser.parse_record(&ev, &(), &ctx).unwrap().0.remove(0)
+    parser.parse(&ev, &(), &ctx).unwrap().0.remove(0)
 }
 
 #[test]

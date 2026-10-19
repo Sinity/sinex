@@ -12,7 +12,7 @@ fn points_are_records_of_their_data_source() {
         "startTimeNanos": 1_627_859_880_000_000_000_i64, "endTimeNanos": 1_627_859_940_000_000_000_i64,
         "dataTypeName": "com.google.active_minutes", "modifiedTimeMillis": 1});
     let (out, ()) = FitParser
-        .parse_record(point.as_object().unwrap(), &(), &context)
+        .parse(point.as_object().unwrap(), &(), &context)
         .unwrap();
     let r = &out[0];
     assert_eq!(r.category, "com.google.active_minutes");

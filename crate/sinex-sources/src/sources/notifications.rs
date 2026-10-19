@@ -78,6 +78,7 @@ impl Parser for NotificationsParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<Notification>, ()), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let m = Message::parse(&bytes).map_err(RecordError::new)?;
@@ -150,6 +151,22 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 pub fn capture(spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
     dbus::capture(MATCHES, &[], spool, seconds)
 }
+
+/// `--source notifications=SPOOL`: desktop notifications on the session
+/// bus, captured into SPOOL.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "notifications",
+    specs: || vec![&SPEC],
+    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: Some(|b, stop| capture(&b.input, stop).map_err(|e| e.to_string())),
+};
 
 #[cfg(test)]
 mod tests;

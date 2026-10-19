@@ -2,13 +2,15 @@
 //! rates. The same driver, drain and admission path the daemon uses; only the
 //! scheduling differs (read until caught up, then stop).
 //!
-//! A driver's memory of what it already stored is rebuilt from the stored
-//! materials before the first read, so a second run reads only what changed.
+//! Every `--source KIND=PATH` is planned by its kind into bindings; each
+//! binding is recorded with its settings (so a replay reads it the same way)
+//! and its driver's memory is rebuilt from the materials it stored, so a
+//! second run reads only what changed.
 use crate::context::{Context, Sink, stored_chain};
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
-use sinex_sources::{Limits, Source, drivers};
-use sinex_store::{positions, runs};
+use sinex_sources::{Binding, Kind, Limits, Settings, Source, drivers, sources};
+use sinex_store::{bindings, positions, runs};
 use sqlx::PgConnection;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -16,55 +18,24 @@ use std::time::{Duration, Instant};
 pub struct Options {
     pub database: String,
     pub store: PathBuf,
-    pub atuin: Option<PathBuf>,
-    pub zsh: Option<PathBuf>,
-    /// A Hyprland capture spool (`sinex-session capture hyprland`).
-    pub hyprland_spool: Option<PathBuf>,
-    /// A journald capture spool (`sinexd capture journald`).
-    pub journald_spool: Option<PathBuf>,
-    /// A file-watch capture spool (`sinex-session capture files`).
-    pub file_watch_spool: Option<PathBuf>,
-    /// ActivityWatch's `aw-server-rust` database.
-    pub activitywatch: Option<PathBuf>,
-    /// Local repositories whose commits to read.
-    pub repositories: Vec<PathBuf>,
-    /// Export and directory sources, as `kind=path` (see [`EXPORT_KINDS`]).
+    /// `kind=path`, one per input; see [`sources::kinds`].
     pub sources: Vec<String>,
-    /// The zone WeeChat logs were written in; the system zone when unset.
+    /// The zone sources with local times were written in (IANA name); the
+    /// system zone when unset. Recorded with each binding.
     pub zone: Option<String>,
+    /// A source option as `key=value` (a clipboard spool's `selection`).
+    pub options: Vec<String>,
     pub host: String,
 }
 
-/// The kinds `--source kind=path` accepts. A directory given for a kind that
-/// reads one file is read file by file, each its own binding.
-pub const EXPORT_KINDS: &[&str] = &[
-    "sinnix-lake",
-    "outlook",
-    "outlook-csv",
-    "arbtt",
-    "imap",
-    "samsung-account",
-    "asciinema",
-    "chromium",
-    "takeout-chrome",
-    "spotify",
-    "raindrop",
-    "notes",
-    "mbox",
-    "maildir",
-    "weechat",
-    "takeout",
-    "calendar",
-    "goodreads",
-    "messenger",
-    "sleep-as-android",
-    "wykop",
-    "reddit",
-    "samsung-health",
-    "samsung-sms",
-    "raw-log",
-    "steering",
-];
+/// The kinds `--source KIND=PATH` accepts.
+pub fn kind_names() -> Vec<&'static str> {
+    sources::kinds()
+        .iter()
+        .filter(|k| k.plan.is_some())
+        .map(|k| k.name)
+        .collect()
+}
 
 #[derive(Default)]
 pub(crate) struct Totals {
@@ -119,171 +90,60 @@ impl std::fmt::Display for Totals {
 }
 
 pub async fn run(o: Options) -> Result<(), String> {
+    let mut settings = Settings::new(o.host.clone());
+    settings.zone = o.zone.clone();
+    settings.options = sinex_sources::live::options(&o.options)?;
+    let mut planned: Vec<(&'static Kind, Binding)> = Vec::new();
+    for spec in &o.sources {
+        let (name, path) = spec
+            .split_once('=')
+            .ok_or_else(|| format!("--source {spec}: expected kind=path"))?;
+        let kind = sources::kind(name).ok_or_else(|| {
+            format!(
+                "unknown source kind {name}; one of {}",
+                kind_names().join(", ")
+            )
+        })?;
+        let plan = kind
+            .plan
+            .ok_or_else(|| format!("{name} is not read from a path"))?;
+        for b in plan(&PathBuf::from(path), &settings)? {
+            planned.push((kind, b));
+        }
+    }
     let mut ctx = Context::open(&o.database, &o.store).await?;
     let sink = Sink(ctx.blobs.clone());
+    let emits: Vec<&'static str> = {
+        let mut types: Vec<&'static str> = planned
+            .iter()
+            .filter_map(|(kind, b)| (kind.specs)().into_iter().find(|s| s.parser == b.parser))
+            .flat_map(|s| s.event_types.iter().copied())
+            .collect();
+        types.sort_unstable();
+        types.dedup();
+        types
+    };
     let manifest = runs::Manifest {
         name: "sinexd backfill",
         kind: "source",
         version: env!("CARGO_PKG_VERSION"),
         build: option_env!("SINEX_BUILD").unwrap_or("dev"),
-        emits: &[
-            "command.executed",
-            "command.imported",
-            "window.focused",
-            "window.opened",
-            "window.closed",
-            "window.moved",
-            "window.title_changed",
-            "workspace.switched",
-            "monitor.focused",
-            "desktop.other",
-            "journal.entry",
-            "file.changed",
-            "window.span",
-            "presence.span",
-            "browser.tab_active",
-            "activitywatch.other",
-            "git.commit",
-            "browser.visit",
-            "browser.url",
-            "browser.history_entry",
-            "music.played",
-            "bookmark.saved",
-            "note.document",
-            "mail.message",
-            "chat.message",
-        ],
+        emits: &emits,
     };
     let run = runs::start(&mut ctx.aux, &manifest, &o.host)
         .await
         .map_err(|e| e.to_string())?;
-
-    if let Some(path) = &o.atuin {
-        let source = sinex_sources::sources::atuin::source();
-        let driver = sinex_sources::sources::atuin::driver(path.clone(), o.host.clone());
-        let binding = format!("atuin@{}", o.host);
-        let chain = stored(&mut ctx, &binding).await?;
-        let mut memory =
-            drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(|(_, b)| b.as_slice()));
-        let totals = drive(
-            &mut ctx.aux,
-            &ctx.writer,
-            run,
-            &source,
-            &binding,
-            &sink,
-            |cursor| driver.poll(cursor, &mut memory),
-        )
-        .await?;
-        println!("atuin  {totals}");
+    // Totals per source, in the order sources were first read.
+    let mut per_source: Vec<(String, Totals)> = Vec::new();
+    for (kind, b) in &planned {
+        let totals = read_binding(&mut ctx, run, &sink, kind, b).await?;
+        match per_source.iter_mut().find(|(s, _)| *s == b.source) {
+            Some((_, t)) => t.add(totals),
+            None => per_source.push((b.source.clone(), totals)),
+        }
     }
-    if let Some(path) = &o.zsh {
-        let source = sinex_sources::sources::zsh::source(o.host.clone());
-        let driver = sinex_sources::sources::zsh::driver(path.clone(), o.host.clone());
-        let binding = format!("zsh@{}", o.host);
-        let chain = stored(&mut ctx, &binding).await?;
-        let mut memory = drivers::append_file::AppendMemory::rebuild(
-            chain.iter().map(|(id, b)| (*id, b.as_slice())),
-            sinex_sources::sources::zsh::frame,
-        );
-        let totals = drive(
-            &mut ctx.aux,
-            &ctx.writer,
-            run,
-            &source,
-            &binding,
-            &sink,
-            |cursor| driver.poll(cursor, &mut memory),
-        )
-        .await?;
-        println!("zsh    {totals}");
-    }
-    if let Some(spool) = &o.hyprland_spool {
-        let source = sinex_sources::sources::hyprland::source();
-        let driver = sinex_sources::sources::hyprland::driver(spool.clone(), o.host.clone());
-        let totals = drive(
-            &mut ctx.aux,
-            &ctx.writer,
-            run,
-            &source,
-            &format!("hyprland@{}", o.host),
-            &sink,
-            |cursor| driver.poll(cursor),
-        )
-        .await?;
-        println!("hyprland {totals}");
-    }
-    if let Some(spool) = &o.file_watch_spool {
-        let source = sinex_sources::sources::file_watch::source();
-        let driver = sinex_sources::sources::file_watch::driver(spool.clone(), o.host.clone());
-        let totals = drive(
-            &mut ctx.aux,
-            &ctx.writer,
-            run,
-            &source,
-            &format!("file-watch@{}", o.host),
-            &sink,
-            |cursor| driver.poll(cursor),
-        )
-        .await?;
-        println!("file-watch {totals}");
-    }
-    if let Some(spool) = &o.journald_spool {
-        let source = sinex_sources::sources::journald::source();
-        let driver = sinex_sources::sources::journald::driver(spool.clone(), o.host.clone());
-        let totals = drive(
-            &mut ctx.aux,
-            &ctx.writer,
-            run,
-            &source,
-            &format!("journald@{}", o.host),
-            &sink,
-            |cursor| driver.poll(cursor),
-        )
-        .await?;
-        println!("journald {totals}");
-    }
-    if let Some(path) = &o.activitywatch {
-        let source = sinex_sources::sources::activitywatch::source();
-        let driver = sinex_sources::sources::activitywatch::driver(path.clone(), o.host.clone());
-        let binding = format!("activitywatch@{}", o.host);
-        let chain = stored(&mut ctx, &binding).await?;
-        let mut memory =
-            drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(|(_, b)| b.as_slice()));
-        let totals = drive(
-            &mut ctx.aux,
-            &ctx.writer,
-            run,
-            &source,
-            &binding,
-            &sink,
-            |cursor| driver.poll(cursor, &mut memory),
-        )
-        .await?;
-        println!("activitywatch {totals}");
-    }
-    for path in &o.repositories {
-        let source = sinex_sources::sources::repository::source();
-        let driver = sinex_sources::sources::repository::driver(path.clone(), o.host.clone());
-        let binding = format!("repository:{}@{}", path.display(), o.host);
-        let totals = drive(
-            &mut ctx.aux,
-            &ctx.writer,
-            run,
-            &source,
-            &binding,
-            &sink,
-            |cursor| driver.poll(cursor),
-        )
-        .await?;
-        println!("{} {totals}", path.display());
-    }
-    for spec in &o.sources {
-        let (kind, path) = spec
-            .split_once('=')
-            .ok_or_else(|| format!("--source {spec}: expected kind=path"))?;
-        let totals = export(&mut ctx, run, &sink, kind, PathBuf::from(path), &o).await?;
-        println!("{kind} {totals}");
+    for (source, totals) in &per_source {
+        println!("{source} {totals}");
     }
     runs::end(&mut ctx.aux, run)
         .await
@@ -291,8 +151,51 @@ pub async fn run(o: Options) -> Result<(), String> {
     ctx.close().await
 }
 
+/// Record `b`, rebuild its driver's memory from what it stored, and read it
+/// to the end.
+pub(crate) async fn read_binding(
+    ctx: &mut Context,
+    run: RunId,
+    sink: &Sink,
+    kind: &Kind,
+    b: &Binding,
+) -> Result<Totals, String> {
+    let source = (kind.source)(b)?;
+    let reader_for = kind
+        .reader
+        .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
+    let mut reader = reader_for(b)?;
+    record(&mut ctx.aux, b).await?;
+    reader.remember(&stored(ctx, &b.name).await?);
+    drive(
+        &mut ctx.aux,
+        &ctx.writer,
+        run,
+        source.as_ref(),
+        &b.name,
+        sink,
+        |cursor| reader.poll(cursor),
+    )
+    .await
+}
+
+/// Store `b`'s source, input and settings under its name.
+pub(crate) async fn record(aux: &mut PgConnection, b: &Binding) -> Result<(), String> {
+    bindings::save(
+        aux,
+        &bindings::Stored {
+            binding: b.name.clone(),
+            source: b.source.clone(),
+            input: b.input.display().to_string(),
+            settings: serde_json::to_value(&b.settings).map_err(|e| e.to_string())?,
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// The stored bytes the binding's driver read last, for its memory.
-async fn stored(
+pub(crate) async fn stored(
     ctx: &mut Context,
     binding: &str,
 ) -> Result<Vec<(sinex_model::MaterialId, Vec<u8>)>, String> {
@@ -419,527 +322,4 @@ impl Totals {
         self.admit_time += o.admit_time;
         self.wall += o.wall;
     }
-}
-
-/// The files to read for `path`: itself, or a directory's files in name order
-/// (recursively when `recursive`), keeping those `keep` accepts.
-fn files(
-    path: &std::path::Path,
-    recursive: bool,
-    keep: fn(&std::path::Path) -> bool,
-) -> Vec<PathBuf> {
-    if path.is_file() {
-        return vec![path.to_path_buf()];
-    }
-    let mut out = Vec::new();
-    let mut dirs = vec![path.to_path_buf()];
-    while let Some(dir) = dirs.pop() {
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                if recursive {
-                    dirs.push(p);
-                }
-            } else if keep(&p) {
-                out.push(p);
-            }
-        }
-    }
-    out.sort();
-    out
-}
-
-/// Read one `--source kind=path` to the end: one binding per file, profile or
-/// directory, each driver's memory rebuilt from what it stored before.
-async fn export(
-    ctx: &mut Context,
-    run: RunId,
-    sink: &Sink,
-    kind: &str,
-    path: PathBuf,
-    o: &Options,
-) -> Result<Totals, String> {
-    use sinex_sources::sources::{
-        chromium, mail, notes, raindrop, spotify, takeout_chrome, weechat,
-    };
-    let host = o.host.clone();
-    let mut totals = Totals::default();
-    let binding = |name: &str| format!("{kind}:{name}@{host}");
-    let any = |_: &std::path::Path| true;
-    match kind {
-        // `imap=CONFIG.json`: live mail, the messages new since the last run.
-        "imap" => {
-            use sinex_sources::sources::mail_imap;
-            let config: mail_imap::ImapConfig = serde_json::from_slice(
-                &std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?,
-            )
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-            let name = binding(&format!(
-                "{}@{}/{}",
-                config.username, config.host, config.mailbox
-            ));
-            let imap = mail_imap::ImapMail {
-                config,
-                host: host.clone(),
-            };
-            let source = mail_imap::source();
-            totals.add(
-                drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
-                    imap.poll(c)
-                })
-                .await?,
-            );
-        }
-        "chromium" => {
-            for (profile, history) in chromium::profiles(&path) {
-                for table in ["visits", "urls"] {
-                    let (source, driver): (Box<dyn Source>, _) = if table == "visits" {
-                        (
-                            Box::new(chromium::visits()),
-                            chromium::visits_driver(history.clone(), host.clone()),
-                        )
-                    } else {
-                        (
-                            Box::new(chromium::urls()),
-                            chromium::urls_driver(history.clone(), host.clone()),
-                        )
-                    };
-                    let name = binding(&format!("{profile}/{table}"));
-                    let chain = stored(ctx, &name).await?;
-                    let mut memory = drivers::sqlite_rows::RowMemory::rebuild(
-                        chain.iter().map(|(_, b)| b.as_slice()),
-                    );
-                    totals.add(
-                        drive(
-                            &mut ctx.aux,
-                            &ctx.writer,
-                            run,
-                            source.as_ref(),
-                            &name,
-                            sink,
-                            |c| driver.poll(c, &mut memory),
-                        )
-                        .await?,
-                    );
-                }
-            }
-        }
-        "takeout-chrome" | "spotify" | "raindrop" | "mbox" | "goodreads" | "messenger"
-        | "sleep-as-android" | "wykop" | "reddit" | "samsung-health" | "samsung-sms" => {
-            use sinex_sources::sources::{
-                goodreads, messenger, reddit, samsung_health, samsung_sms, sleep_as_android, wykop,
-            };
-            let keep: fn(&std::path::Path) -> bool = match kind {
-                "wykop" => wykop::is_own,
-                "reddit" | "samsung-health" => |p| p.extension().is_some_and(|e| e == "zip"),
-                "samsung-sms" => |p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("SMS_") && n.ends_with(".csv"))
-                },
-                _ => any,
-            };
-            let recursive = matches!(kind, "samsung-health" | "samsung-sms");
-            for file in files(&path, recursive, keep) {
-                let name = binding(&file.display().to_string());
-                let (source, driver): (Box<dyn Source>, _) = match kind {
-                    "samsung-health" => (
-                        Box::new(samsung_health::source()),
-                        samsung_health::driver(file, host.clone()),
-                    ),
-                    "samsung-sms" => (
-                        Box::new(samsung_sms::source()),
-                        samsung_sms::driver(file, host.clone()),
-                    ),
-                    "wykop" => (Box::new(wykop::source()), wykop::driver(file, host.clone())),
-                    "reddit" => (
-                        Box::new(reddit::source()),
-                        reddit::driver(file, host.clone()),
-                    ),
-                    "goodreads" => (
-                        Box::new(goodreads::source()),
-                        goodreads::driver(file, host.clone()),
-                    ),
-                    "messenger" => (
-                        Box::new(messenger::source()),
-                        messenger::driver(file, host.clone()),
-                    ),
-                    "sleep-as-android" => (
-                        Box::new(sleep_as_android::source()),
-                        sleep_as_android::driver(file, host.clone()),
-                    ),
-                    "takeout-chrome" => (
-                        Box::new(takeout_chrome::source()),
-                        takeout_chrome::driver(file, host.clone()),
-                    ),
-                    "spotify" => (
-                        Box::new(spotify::source()),
-                        spotify::driver(file, host.clone()),
-                    ),
-                    "raindrop" => (
-                        Box::new(raindrop::source()),
-                        raindrop::driver(file, host.clone()),
-                    ),
-                    _ => (
-                        Box::new(mail::mbox_source()),
-                        mail::mbox_driver(file, host.clone()),
-                    ),
-                };
-                totals.add(
-                    drive(
-                        &mut ctx.aux,
-                        &ctx.writer,
-                        run,
-                        source.as_ref(),
-                        &name,
-                        sink,
-                        |c| driver.poll(c),
-                    )
-                    .await?,
-                );
-            }
-        }
-        // Every Takeout product source over each archive, plus the calendars
-        // in it; each source its own binding, so each keeps its own cursor.
-        "takeout" | "calendar" => {
-            use sinex_sources::sources::{calendar, google_takeout as g};
-            let zone = weechat::zone(o.zone.as_deref())?;
-            for file in files(&path, false, any) {
-                let mut readers: Vec<(Box<dyn Source>, drivers::export_archive::ExportArchive)> =
-                    vec![(
-                        Box::new(calendar::source(zone.clone())),
-                        calendar::driver(file.clone(), host.clone()),
-                    )];
-                if kind == "takeout" {
-                    readers.extend([
-                        (
-                            Box::new(g::activity::my_activity()) as Box<dyn Source>,
-                            g::activity::my_activity_driver(file.clone(), host.clone()),
-                        ),
-                        (
-                            Box::new(g::activity::youtube()),
-                            g::activity::youtube_driver(file.clone(), host.clone()),
-                        ),
-                        (
-                            Box::new(g::keep::source()),
-                            g::keep::driver(file.clone(), host.clone()),
-                        ),
-                        (
-                            Box::new(g::tasks::source()),
-                            g::tasks::driver(file.clone(), host.clone()),
-                        ),
-                        (
-                            Box::new(g::purchases::play_store()),
-                            g::purchases::play_store_driver(file.clone(), host.clone()),
-                        ),
-                        (
-                            Box::new(g::purchases::purchases()),
-                            g::purchases::purchases_driver(file.clone(), host.clone()),
-                        ),
-                        (
-                            Box::new(g::location::source()),
-                            g::location::driver(file.clone(), host.clone()),
-                        ),
-                        (
-                            Box::new(g::fit::source()),
-                            g::fit::driver(file.clone(), host.clone()),
-                        ),
-                    ]);
-                }
-                for (source, driver) in readers {
-                    let name = binding(&format!("{}:{}", source.spec().name, file.display()));
-                    let t = drive(
-                        &mut ctx.aux,
-                        &ctx.writer,
-                        run,
-                        source.as_ref(),
-                        &name,
-                        sink,
-                        |c| driver.poll(c),
-                    )
-                    .await?;
-                    println!("  {} {t}", source.spec().name);
-                    totals.add(t);
-                }
-            }
-        }
-        "raw-log" => {
-            use sinex_sources::sources::operator;
-            let source = operator::raw_log(weechat::zone(o.zone.as_deref())?);
-            let driver = operator::raw_log_driver(path.clone(), host.clone());
-            let name = binding(&path.display().to_string());
-            let chain = stored(ctx, &name).await?;
-            let mut memory = drivers::append_file::AppendMemory::rebuild(
-                chain.iter().map(|(id, b)| (*id, b.as_slice())),
-                operator::frame_log,
-            );
-            totals.add(
-                drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
-                    driver.poll(c, &mut memory)
-                })
-                .await?,
-            );
-        }
-        "steering" => {
-            use sinex_sources::sources::operator;
-            for table in ["commitments", "activities", "reviews"] {
-                let source = operator::steering(table).expect("a known table");
-                let driver = operator::steering_driver(path.clone(), host.clone(), table);
-                let name = binding(&format!("{}/{table}", path.display()));
-                let chain = stored(ctx, &name).await?;
-                let mut memory = drivers::sqlite_rows::RowMemory::rebuild(
-                    chain.iter().map(|(_, b)| b.as_slice()),
-                );
-                totals.add(
-                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
-                        driver.poll(c, &mut memory)
-                    })
-                    .await?,
-                );
-            }
-        }
-        "notes" | "maildir" => {
-            let (source, driver): (Box<dyn Source>, _) = if kind == "notes" {
-                (
-                    Box::new(notes::source()),
-                    notes::driver(path.clone(), host.clone()),
-                )
-            } else {
-                (
-                    Box::new(mail::maildir_source()),
-                    mail::maildir_driver(path.clone(), host.clone()),
-                )
-            };
-            // A restart reads the directory again; admission suppresses the
-            // repeats.
-            let mut memory = drivers::dir_snapshot::DirMemory::default();
-            let name = binding(&path.display().to_string());
-            totals.add(
-                drive(
-                    &mut ctx.aux,
-                    &ctx.writer,
-                    run,
-                    source.as_ref(),
-                    &name,
-                    sink,
-                    |c| driver.poll(c, &mut memory),
-                )
-                .await?,
-            );
-        }
-        "weechat" => {
-            let source = weechat::source(weechat::zone(o.zone.as_deref())?);
-            let logs = files(&path, true, |p| {
-                p.extension()
-                    .is_some_and(|e| e == "log" || e == "weechatlog")
-            });
-            for file in logs {
-                let driver = weechat::driver(file.clone(), host.clone());
-                let name = binding(&file.display().to_string());
-                let chain = stored(ctx, &name).await?;
-                let mut memory = drivers::append_file::AppendMemory::rebuild(
-                    chain.iter().map(|(id, b)| (*id, b.as_slice())),
-                    weechat::SPEC.framer,
-                );
-                totals.add(
-                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
-                        driver.poll(c, &mut memory)
-                    })
-                    .await?,
-                );
-            }
-        }
-        "samsung-account" => {
-            use sinex_sources::sources::samsung_cloud;
-            for file in files(&path, true, samsung_cloud::is_table) {
-                let name = binding(&file.display().to_string());
-                let source = samsung_cloud::source();
-                let driver = samsung_cloud::driver(file, host.clone());
-                totals.add(
-                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
-                        driver.poll(c)
-                    })
-                    .await?,
-                );
-            }
-        }
-        "asciinema" => {
-            // Each recording directory: its cast and the capture's events
-            // beside it, each its own binding.
-            use sinex_sources::sources::asciinema;
-            let files_of = files(&path, true, |p| {
-                p.file_name()
-                    .is_some_and(|n| n == "session.cast" || n == "events.jsonl")
-            });
-            for file in files_of {
-                let cast = file.file_name().is_some_and(|n| n == "session.cast");
-                let spec = if cast {
-                    asciinema::CAST
-                } else {
-                    asciinema::EVENTS
-                };
-                let driver = asciinema::driver(file.clone(), host.clone(), &spec);
-                let name = binding(&file.display().to_string());
-                let chain = stored(ctx, &name).await?;
-                let mut memory = drivers::append_file::AppendMemory::rebuild(
-                    chain.iter().map(|(id, b)| (*id, b.as_slice())),
-                    spec.framer,
-                );
-                let source: Box<dyn Source> = if cast {
-                    Box::new(asciinema::cast_source())
-                } else {
-                    Box::new(asciinema::events_source())
-                };
-                totals.add(
-                    drive(
-                        &mut ctx.aux,
-                        &ctx.writer,
-                        run,
-                        source.as_ref(),
-                        &name,
-                        sink,
-                        |c| driver.poll(c, &mut memory),
-                    )
-                    .await?,
-                );
-            }
-        }
-        "arbtt" => {
-            use sinex_sources::sources::arbtt;
-            let logs = files(&path, true, |p| {
-                p.file_name().is_some_and(|n| n == "capture.log")
-            });
-            let source = arbtt::source();
-            for log in logs {
-                let driver = arbtt::driver(log.clone(), host.clone());
-                let name = binding(&log.display().to_string());
-                let chain = stored(ctx, &name).await?;
-                let mut memory = drivers::append_file::AppendMemory::rebuild(
-                    chain.iter().map(|(id, b)| (*id, b.as_slice())),
-                    arbtt::SPEC.framer,
-                );
-                totals.add(
-                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
-                        driver.poll(c, &mut memory)
-                    })
-                    .await?,
-                );
-            }
-        }
-        "outlook" => {
-            // Each `.pst` is staged to mbox files with readpst, then read as
-            // mail; the staging directory goes when the store has the bytes.
-            use sinex_sources::sources::outlook;
-            let stage = std::env::temp_dir().join(format!("sinex-outlook-{}", std::process::id()));
-            let stores = files(&path, true, |p| {
-                p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pst"))
-            });
-            let result = async {
-                for pst in stores {
-                    for mbox in outlook::stage_pst(&pst, &stage)? {
-                        let folder = mbox
-                            .strip_prefix(&stage)
-                            .map(|p| p.display().to_string())
-                            .unwrap_or_default();
-                        let name = binding(&format!("{}#{folder}", pst.display()));
-                        let source = outlook::pst_source();
-                        let driver = outlook::pst_driver(mbox, host.clone());
-                        totals.add(
-                            drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
-                                driver.poll(c)
-                            })
-                            .await?,
-                        );
-                    }
-                }
-                Ok::<(), String>(())
-            }
-            .await;
-            let _ = std::fs::remove_dir_all(&stage);
-            result?;
-        }
-        "outlook-csv" => {
-            use sinex_sources::sources::outlook;
-            let exports = files(&path, true, |p| {
-                p.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"))
-            });
-            for file in exports {
-                let name = binding(&file.display().to_string());
-                let source = outlook::csv_source();
-                let driver = outlook::csv_driver(file, host.clone());
-                totals.add(
-                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
-                        driver.poll(c)
-                    })
-                    .await?,
-                );
-            }
-        }
-        "sinnix-lake" => {
-            // `path` is the lake root (`/realm`); each lane's directories are
-            // its configuration (spec `port-sinnix.md` §3.1).
-            use sinex_sources::sources::sinnix_lake;
-            for lane in sinnix_lake::LANES {
-                let source = sinnix_lake::source(lane);
-                let mut lane_totals = Totals::default();
-                for file in sinnix_lake::day_files(&path, lane) {
-                    let driver = sinnix_lake::driver(file.clone(), host.clone());
-                    let name = binding(&file.display().to_string());
-                    let chain = stored(ctx, &name).await?;
-                    let mut memory = drivers::append_file::AppendMemory::rebuild(
-                        chain.iter().map(|(id, b)| (*id, b.as_slice())),
-                        lane.spec.framer,
-                    );
-                    lane_totals.add(
-                        drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
-                            driver.poll(c, &mut memory)
-                        })
-                        .await?,
-                    );
-                }
-                eprintln!(
-                    "sinnix-lake {}: {} materials, {} bytes, {} events offered, {} admitted, {} repeats, {} failures",
-                    lane.spec.name,
-                    lane_totals.materials,
-                    lane_totals.material_bytes,
-                    lane_totals.events_offered,
-                    lane_totals.admitted,
-                    lane_totals.repeats,
-                    lane_totals.failures,
-                );
-                totals.add(lane_totals);
-            }
-            // Sequence gaps per lane: numbers between the first and last seen
-            // with no record. Facts about Sinnix's capture, not errors here.
-            let gaps = sqlx::query!(
-                r#"SELECT payload->>'lane' AS "lane!", payload->>'host' AS "host!",
-                          count(DISTINCT (payload->>'seq')::bigint) AS "seen!",
-                          min((payload->>'seq')::bigint) AS "first!",
-                          max((payload->>'seq')::bigint) AS "last!"
-                   FROM core.events WHERE event_type = 'capture.observed'
-                   GROUP BY 1, 2 ORDER BY 1, 2"#
-            )
-            .fetch_all(&mut ctx.aux)
-            .await
-            .map_err(|e| e.to_string())?;
-            for g in gaps {
-                eprintln!(
-                    "sinnix-lake gaps {}@{}: {} seen in {}..={}, {} numbers without a record",
-                    g.lane,
-                    g.host,
-                    g.seen,
-                    g.first,
-                    g.last,
-                    (g.last - g.first + 1) - g.seen
-                );
-            }
-        }
-        other => {
-            return Err(format!(
-                "unknown source kind {other}; one of {}",
-                EXPORT_KINDS.join(", ")
-            ));
-        }
-    }
-    Ok(totals)
 }

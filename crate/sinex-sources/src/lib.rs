@@ -9,12 +9,15 @@
 //! failure for that record, record hashes, carried state, and building the
 //! batch with the new cursor. A parser cannot drop or mislabel a record,
 //! because it never sees the bookkeeping.
+pub mod binding;
 pub mod drain;
 pub mod drivers;
+pub mod live;
 pub mod nats;
 pub mod registry;
 pub mod sources;
 
+pub use binding::{Binding, Kind, Reader, Settings};
 pub use drain::{DrainInput, DrainOutput, Limits, RecordContext, drain};
 pub use drivers::{Acquired, DriverError, MaterialSink};
 pub use registry::{Declared, Driver, Framer, Source, SourceSpec};
@@ -89,22 +92,15 @@ pub trait Parser: Send + Sync + 'static {
     /// record changing (a last-seen time).
     const VOLATILE: &'static [&'static str] = &[];
 
+    /// Map one framed record to its events. `context` is the record's
+    /// material: its manifest and, for a material made of several members
+    /// (an archive's member stream, a directory snapshot), the member the
+    /// record is in. Most parsers ignore it; those that need a file's path or
+    /// a member's name read it here.
     fn parse(
         &self,
         record: &Self::Record<'_>,
         carry: &Self::Carry,
+        context: &RecordContext<'_>,
     ) -> Result<(Vec<Self::Payload>, Self::Carry), RecordError>;
-
-    /// `parse` with the record's material context: its manifest and, for a
-    /// material made of several members (an archive's member stream, a
-    /// directory snapshot), the member the record is in. Parsers that need a
-    /// file's path or a member's name override this; the rest use `parse`.
-    fn parse_record(
-        &self,
-        record: &Self::Record<'_>,
-        carry: &Self::Carry,
-        _context: &RecordContext<'_>,
-    ) -> Result<(Vec<Self::Payload>, Self::Carry), RecordError> {
-        self.parse(record, carry)
-    }
 }

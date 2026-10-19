@@ -114,6 +114,7 @@ impl Parser for ScanParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<Acquisition>, ()), RecordError> {
         let d: Described = serde_json::from_value(Value::Object(record.clone()))
             .map_err(|e| RecordError::new(format!("not a library scan line: {e}")))?;
@@ -846,14 +847,6 @@ impl Parser for RequestParser {
 
     fn parse(
         &self,
-        _: &Map<String, Value>,
-        _: &(),
-    ) -> Result<(Vec<LibraryRecord>, ()), RecordError> {
-        Err(RecordError::new("a library request needs its manifest"))
-    }
-
-    fn parse_record(
-        &self,
         record: &Map<String, Value>,
         _: &(),
         context: &RecordContext<'_>,
@@ -943,6 +936,23 @@ pub fn request_material(
         cursor_unchanged: Value::Null,
     }
 }
+
+/// The library's sources: scans of library roots and library requests,
+/// written through `library-add` and the API rather than read from a path.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "library",
+    specs: || vec![&SCAN, &REQUEST],
+    plan: None,
+    source: |b| {
+        if b.source == SCAN.name {
+            Ok(Box::new(scan_source()))
+        } else {
+            Ok(Box::new(request_source()))
+        }
+    },
+    reader: None,
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

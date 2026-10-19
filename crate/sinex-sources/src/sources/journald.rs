@@ -64,6 +64,7 @@ impl Parser for JournaldParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<JournalEntry>, ()), RecordError> {
         let (_, line) = live_stream::received(record).map_err(RecordError::new)?;
         let mut fields: Map<String, Value> = serde_json::from_slice(&line)
@@ -211,6 +212,35 @@ pub fn capture(spool: &Path, follow: bool, start: Start<'_>) -> std::io::Result<
     }
     Ok(count)
 }
+
+/// `--source journald=SPOOL`: the journal, captured into SPOOL. Options:
+/// `since` (a `journalctl --since` expression; the whole journal otherwise)
+/// and `follow`.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "journald",
+    specs: || vec![&SPEC],
+    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: Some(|b, _stop| {
+        let start = match b.settings.option("since") {
+            Some(s) => Start::Since(s),
+            None => Start::Beginning,
+        };
+        let follow = b
+            .settings
+            .options
+            .get("follow")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        capture(&b.input, follow, start).map_err(|e| e.to_string())
+    }),
+};
 
 #[cfg(test)]
 mod tests;

@@ -10,7 +10,10 @@ fn rec(line: &str) -> Map<String, Value> {
 }
 
 fn parse(line: &str) -> Vec<Notification> {
-    NotificationsParser.parse(&rec(line), &()).unwrap().0
+    NotificationsParser
+        .parse(&rec(line), &(), &crate::RecordContext::none())
+        .unwrap()
+        .0
 }
 
 #[test]

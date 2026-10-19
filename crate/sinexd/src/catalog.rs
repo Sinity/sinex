@@ -10,6 +10,7 @@ pub fn catalog() -> Value {
         .map(|s| {
             json!({
                 "name": s.name,
+                "kind": sinex_sources::sources::kind_of(s.name).map(|k| k.name),
                 "driver": format!("{:?}", s.driver),
                 "consumer": s.consumer,
                 "class": s.class,

@@ -103,6 +103,7 @@ impl Parser for ZshParser {
         &self,
         record: &&[u8],
         seen: &Seen,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<CommandImported>, Seen), RecordError> {
         let decoded = unmetafy(record)?;
         let text = std::str::from_utf8(&decoded)
@@ -195,6 +196,21 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
         framer: frame,
     }
 }
+
+/// `--source zsh=PATH`: a zsh history file.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "zsh",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
+    source: |b| Ok(Box::new(source(b.settings.host.clone()))),
+    reader: Some(|b| {
+        Ok(crate::binding::appended(
+            driver(b.input.clone(), b.settings.host.clone()),
+            frame,
+        ))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

@@ -33,6 +33,7 @@ impl Parser for GoodreadsParser {
         &self,
         record: &&[u8],
         header: &Vec<String>,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<BookEvent>, Vec<String>), RecordError> {
         let cells = fields::csv_cells(record)?;
         if header.is_empty() {
@@ -125,6 +126,29 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source goodreads=PATH`: each Goodreads export in PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "goodreads",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            false,
+            crate::binding::any,
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

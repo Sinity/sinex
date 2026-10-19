@@ -17,6 +17,7 @@ mod media_text;
 mod operate;
 mod publisher;
 mod replay;
+mod runner;
 mod writer;
 
 #[cfg(test)]
@@ -65,6 +66,10 @@ enum Command {
         /// When a logical day starts.
         #[arg(long, default_value = "04:00")]
         day_start: String,
+        /// The sources to read continuously (the NixOS module writes
+        /// `/etc/sinex/sources.json`); none when unset.
+        #[arg(long)]
+        sources: Option<PathBuf>,
     },
     /// Publish every committed event not yet on the confirmed stream, then
     /// stop and report the rate. For first publication and measurement; the
@@ -96,44 +101,20 @@ enum Command {
         /// Content store directory.
         #[arg(long)]
         store: PathBuf,
-        #[arg(long)]
-        atuin: Option<PathBuf>,
-        #[arg(long)]
-        zsh: Option<PathBuf>,
-        /// A Hyprland capture spool directory.
-        #[arg(long)]
-        hyprland_spool: Option<PathBuf>,
-        /// A journald capture spool directory.
-        #[arg(long)]
-        journald_spool: Option<PathBuf>,
-        /// A file-watch capture spool directory.
-        #[arg(long)]
-        file_watch_spool: Option<PathBuf>,
-        /// ActivityWatch's `aw-server-rust/sqlite.db`.
-        #[arg(long)]
-        activitywatch: Option<PathBuf>,
-        /// A local repository whose commits to read; repeatable.
-        #[arg(long = "repository")]
-        repositories: Vec<PathBuf>,
-        /// An export or directory source as `kind=path`: chromium (a browser's
-        /// user-data directory), takeout-chrome, spotify, raindrop (a `.csv`
-        /// or `.jsonl` export), mbox (a file or a directory of files), notes,
-        /// maildir (a directory), weechat (a log file or directory), takeout
-        /// (a Google Takeout archive or a directory of them: My Activity,
-        /// YouTube history, Keep, Tasks, Play Store, Purchases, Calendar,
-        /// Location History, Fit), calendar (an `.ics` file, or archives
-        /// holding them), sinnix-lake (the capture lake's root, `/realm`),
-        /// goodreads, messenger, sleep-as-android, wykop, reddit,
-        /// samsung-health, samsung-sms, samsung-account (an extracted Samsung
-        /// account export), outlook (`.pst` stores, staged with readpst),
-        /// outlook-csv, arbtt (a directory holding `capture.log`), asciinema (a
-        /// directory of recordings), raw-log, steering.
+        /// A source as `kind=path`; repeatable. The kinds are every
+        /// registered source's (`sinexd admin catalog` lists them): exports
+        /// and directories (a file, or a directory of them), databases, and
+        /// live sources' spools.
         #[arg(long = "source")]
         sources: Vec<String>,
-        /// The zone WeeChat logs and floating calendar times were written in
-        /// (IANA name); the system zone when unset.
+        /// The zone sources with local times were written in (IANA name);
+        /// the system zone when unset. Recorded with each binding.
         #[arg(long)]
         zone: Option<String>,
+        /// A source option as `key=value` (a clipboard spool's
+        /// `selection=primary`); repeatable.
+        #[arg(long = "option")]
+        options: Vec<String>,
         #[arg(long, default_value = "localhost")]
         host: String,
     },
@@ -287,6 +268,13 @@ enum Admin {
     /// Print every source and derivation as JSON, for the NixOS module's
     /// generated options (`nix/catalog.json`).
     Catalog,
+    /// Sequence gaps in the Sinnix capture lake's lanes: numbers between the
+    /// first and last seen with no record. Facts about Sinnix's capture, not
+    /// errors here.
+    SequenceGaps {
+        #[arg(long)]
+        database: String,
+    },
     /// Print the NATS server `authorization` block: the daemon user with full
     /// access and one user per producer limited to its own subjects. Passwords
     /// are read from files, so they never pass through the Nix store.
@@ -321,6 +309,7 @@ async fn admin(command: Admin) -> Result<(), String> {
             print!("{}", catalog::render());
             Ok(())
         }
+        Admin::SequenceGaps { database } => sequence_gaps(&database).await,
         Admin::NatsAuthorization {
             subjects,
             daemon_user,
@@ -546,6 +535,7 @@ async fn main() -> std::process::ExitCode {
             tokens,
             zone,
             day_start,
+            sources,
         } => match api_options(socket, listen, tokens, zone, &day_start) {
             Ok(api) => {
                 daemon::run(daemon::Options {
@@ -555,6 +545,7 @@ async fn main() -> std::process::ExitCode {
                     subjects,
                     host,
                     api,
+                    sources,
                 })
                 .await
             }
@@ -585,29 +576,17 @@ async fn main() -> std::process::ExitCode {
         Command::Backfill {
             database,
             store,
-            atuin,
-            zsh,
-            hyprland_spool,
-            journald_spool,
-            file_watch_spool,
-            activitywatch,
-            repositories,
             sources,
             zone,
+            options,
             host,
         } => {
             backfill::run(backfill::Options {
                 database,
                 store,
-                atuin,
-                zsh,
-                hyprland_spool,
-                journald_spool,
-                file_watch_spool,
-                activitywatch,
-                repositories,
                 sources,
                 zone,
+                options,
                 host,
             })
             .await
@@ -877,4 +856,34 @@ async fn run_analysis(command: AnalysisCommand) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+async fn sequence_gaps(database: &str) -> Result<(), String> {
+    use sqlx::Connection;
+    let mut c = sqlx::PgConnection::connect(database)
+        .await
+        .map_err(|e| e.to_string())?;
+    let gaps = sqlx::query!(
+        r#"SELECT payload->>'lane' AS "lane!", payload->>'host' AS "host!",
+                  count(DISTINCT (payload->>'seq')::bigint) AS "seen!",
+                  min((payload->>'seq')::bigint) AS "first!",
+                  max((payload->>'seq')::bigint) AS "last!"
+           FROM core.events WHERE event_type = 'capture.observed'
+           GROUP BY 1, 2 ORDER BY 1, 2"#
+    )
+    .fetch_all(&mut c)
+    .await
+    .map_err(|e| e.to_string())?;
+    for g in gaps {
+        println!(
+            "{}@{}: {} seen in {}..={}, {} numbers without a record",
+            g.lane,
+            g.host,
+            g.seen,
+            g.first,
+            g.last,
+            (g.last - g.first + 1) - g.seen
+        );
+    }
+    Ok(())
 }

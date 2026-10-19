@@ -32,6 +32,11 @@ struct Inputs {
 }
 
 impl Inputs {
+    /// The binding backfill files the zsh history under.
+    fn zsh_binding(&self) -> String {
+        format!("terminal.zsh-history:{}@{HOST}", self.zsh.display())
+    }
+
     fn new() -> Self {
         let dir = std::env::temp_dir().join(format!("sinex-crash-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -108,10 +113,10 @@ impl Target {
 
     fn backfill(&self, inputs: &Inputs) -> Command {
         let mut c = self.sinexd(&["backfill", "--host", HOST]);
-        c.arg("--atuin")
-            .arg(&inputs.atuin)
-            .arg("--zsh")
-            .arg(&inputs.zsh);
+        c.arg("--source")
+            .arg(format!("atuin={}", inputs.atuin.display()))
+            .arg("--source")
+            .arg(format!("zsh={}", inputs.zsh.display()));
         c
     }
 
@@ -377,11 +382,11 @@ backfill_steps! {
     // A restart after a committed batch must read the rest of the material
     // again: its bytes are stored, its readings are not.
     backfill_killed_between_zsh_batches:
-        Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding = 'zsh@crash')"),
-        "SELECT 1 FROM raw.positions WHERE binding = 'zsh@crash' FOR UPDATE".to_string();
+        Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash')"),
+        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.zsh-history:%@crash' FOR UPDATE".to_string();
     backfill_killed_between_atuin_batches:
-        Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding = 'atuin@crash')"),
-        "SELECT 1 FROM raw.positions WHERE binding = 'atuin@crash' FOR UPDATE".to_string();
+        Some("SELECT EXISTS (SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash')"),
+        "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash' FOR UPDATE".to_string();
 }
 
 /// Kill a replay at a step; then run it again and compare with an
@@ -391,7 +396,7 @@ async fn replay_survives(lock_sql: &str) {
     let expected = {
         let reference = Target::new(&inputs);
         finish(&mut reference.backfill(&inputs));
-        finish(&mut reference.replay(&["--binding", "zsh@crash"]));
+        finish(&mut reference.replay(&["--binding", &inputs.zsh_binding()]));
         state(&mut reference.connect().await).await
     };
 
@@ -401,7 +406,7 @@ async fn replay_survives(lock_sql: &str) {
     assert_eq!(before.live, expected.live, "replay changes no content");
     kill_at(
         &target,
-        &mut target.replay(&["--binding", "zsh@crash"]),
+        &mut target.replay(&["--binding", &inputs.zsh_binding()]),
         None,
         lock_sql,
     )
@@ -412,7 +417,7 @@ async fn replay_survives(lock_sql: &str) {
         before,
         "a killed chain changed nothing"
     );
-    finish(&mut target.replay(&["--binding", "zsh@crash"]));
+    finish(&mut target.replay(&["--binding", &inputs.zsh_binding()]));
     consistent(&target).await;
     assert_eq!(state(&mut target.connect().await).await, expected);
 }
@@ -507,7 +512,7 @@ async fn excision_survives(lock_sql: &str) {
         scalar(&mut c, "SELECT count(*) FROM core.event_tombstones").await,
         1
     );
-    let blob: String = sqlx::query_scalar("SELECT blob FROM raw.materials m JOIN raw.inputs i ON i.id = m.input_id WHERE i.binding = 'zsh@crash' ORDER BY m.part_index LIMIT 1")
+    let blob: String = sqlx::query_scalar("SELECT blob FROM raw.materials m JOIN raw.inputs i ON i.id = m.input_id WHERE i.binding LIKE 'terminal.zsh-history:%@crash' ORDER BY m.part_index LIMIT 1")
         .fetch_one(&mut c)
         .await
         .unwrap();

@@ -414,5 +414,42 @@ pub fn source() -> Declared<super::mail::MailParser> {
     }
 }
 
+/// `--source imap=CONFIG.json`: live mail from the account CONFIG describes,
+/// the messages new since the last read.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "imap",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        let config = config(input)?;
+        let mut b = crate::binding::Binding::of(&SPEC, input, settings.clone());
+        b.name = format!(
+            "{}:{}@{}/{}@{}",
+            SPEC.name, config.username, config.host, config.mailbox, settings.host
+        );
+        Ok(vec![b])
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(Box::new(ImapReader(ImapMail {
+            config: config(&b.input)?,
+            host: b.settings.host.clone(),
+        })))
+    }),
+    capture: None,
+};
+
+fn config(path: &std::path::Path) -> Result<ImapConfig, String> {
+    serde_json::from_slice(&std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+struct ImapReader(ImapMail);
+
+impl crate::binding::Reader for ImapReader {
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
+        self.0.poll(cursor)
+    }
+}
+
 #[cfg(test)]
 mod tests;

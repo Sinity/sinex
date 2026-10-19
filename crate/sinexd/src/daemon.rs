@@ -14,7 +14,7 @@
 use crate::api::{self, Api};
 use crate::commits::{self, Consumer, ReadModelRunner};
 use crate::keys::Registered;
-use crate::{derive, ingress, publisher, writer};
+use crate::{derive, ingress, publisher, runner, writer};
 use sinex_protocol::Subjects;
 use sinex_store::Blobs;
 use sqlx::{Connection, PgConnection};
@@ -32,6 +32,8 @@ const DRIVER_IDLE: Duration = Duration::from_secs(30);
 /// (new opportunity, such as time passing for a live source, changes cells
 /// without a commit); dirty days are recomputed whenever the driver settles.
 const METRICS_IDLE: Duration = Duration::from_secs(600);
+/// How often the binding runner reads every configured binding again.
+const BINDINGS_EVERY: Duration = Duration::from_secs(5);
 
 pub struct Options {
     pub database: String,
@@ -43,6 +45,8 @@ pub struct Options {
     pub subjects: String,
     pub host: String,
     pub api: ApiOptions,
+    /// The sources configuration (`sources.json`) the binding runner reads.
+    pub sources: Option<PathBuf>,
 }
 
 pub struct ApiOptions {
@@ -185,6 +189,24 @@ pub async fn run(o: Options) -> Result<(), String> {
             .await,
         )
     });
+
+    // The configured sources, read continuously by the binding runner.
+    if let Some(file) = &o.sources {
+        let planned = runner::plan(&runner::Config::load(file)?, &o.host)?;
+        let (aux, b, w, host, s) = (
+            connect(&o.database).await?,
+            blobs.clone(),
+            handle.clone(),
+            o.host.clone(),
+            stop.clone(),
+        );
+        tasks.spawn(async move {
+            (
+                "binding runner",
+                runner::run(aux, b, w, host, planned, BINDINGS_EVERY, s).await,
+            )
+        });
+    }
 
     let ingest = ingress::Ingest::new(
         subjects,

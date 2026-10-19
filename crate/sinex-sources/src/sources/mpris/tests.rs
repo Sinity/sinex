@@ -10,7 +10,9 @@ fn run(lines: &[&str]) -> Vec<PlayerChanged> {
             l.as_bytes(),
         ))
         .unwrap();
-        let (e, c) = MprisParser.parse(&rec, &carry).unwrap();
+        let (e, c) = MprisParser
+            .parse(&rec, &carry, &crate::RecordContext::none())
+            .unwrap();
         out.extend(e);
         carry = c;
     }
