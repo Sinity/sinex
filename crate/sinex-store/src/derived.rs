@@ -357,8 +357,9 @@ pub async fn live_at(conn: &mut PgConnection, locations: &[RecordLocation]) -> R
              e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
              e.record_state, e.class, e.support, e.commit_seq
            FROM unnest($1::uuid[], $2::bigint[]) AS l(material_id, anchor)
-           JOIN core.live_coordinates c ON c.material_id = l.material_id AND c.anchor = l.anchor
-           JOIN core.events e ON e.id = c.event_id
+           JOIN core.events e ON e.material_id = l.material_id AND e.anchor = l.anchor
+           WHERE EXISTS (SELECT 1 FROM core.live_coordinates c WHERE c.event_id = e.id)
+              OR EXISTS (SELECT 1 FROM core.live_equivalence q WHERE q.event_id = e.id)
            ORDER BY e.commit_seq"#,
         &materials,
         &anchors,

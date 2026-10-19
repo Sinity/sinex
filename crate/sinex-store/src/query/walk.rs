@@ -28,10 +28,12 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
             ordinal,
         } => {
             let live = sqlx::query!(
-                r#"SELECT event_id, event_type FROM core.live_coordinates
-                   WHERE material_id = $1 AND anchor = $2
-                   AND ($3::text IS NULL OR event_type = $3)
-                   AND ($4::smallint IS NULL OR ordinal = $4)"#,
+                r#"SELECT e.id AS "event_id!", e.event_type AS "event_type!" FROM core.events e
+                   WHERE e.material_id = $1 AND e.anchor = $2
+                   AND ($3::text IS NULL OR e.event_type = $3)
+                   AND ($4::smallint IS NULL OR e.ordinal = $4)
+                   AND (EXISTS (SELECT 1 FROM core.live_coordinates c WHERE c.event_id = e.id)
+                        OR EXISTS (SELECT 1 FROM core.live_equivalence q WHERE q.event_id = e.id))"#,
                 material,
                 anchor,
                 event_type.as_deref(),

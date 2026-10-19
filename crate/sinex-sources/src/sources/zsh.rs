@@ -1,6 +1,10 @@
 //! zsh extended history (`: <start>:<elapsed>;<command>`), on `AppendFile`.
 //!
-//! The file has no record IDs, so each record location is its own identity.
+//! The file has no record IDs, so a record is identified by host, start
+//! second, command and its occurrence number among identical (start, command)
+//! pairs in file order. The parser carries the counts; a re-read from the
+//! start (a lost position, a replay) begins with no carry and numbers the same
+//! records the same way.
 //! zsh metafies bytes 0x83..0x9f (0x83 then the byte xor 0x20) and continues a
 //! multi-line command with a backslash before the newline. With SHARE_HISTORY
 //! the elapsed field is written as 0 before the command ends, so it is kept as
@@ -17,7 +21,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "command fusion and shell recall",
     class: Class::Open,
     parser: "zsh-extended-history",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["command.imported"],
     framer: frame,
 };
@@ -27,12 +31,79 @@ pub struct ZshParser {
     pub host: String,
 }
 
+/// Occurrences seen per (start second, command). Identical pairs share a start
+/// second, so only starts within a day of the latest are kept: a pair needs a
+/// second record with that exact start, and history lines are written within
+/// minutes of their start. The window decides numbering, never what is kept.
+/// The map is persistent: the drain hands each record the carry and takes a
+/// new one back, so a clone must not copy the map.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Seen {
+    latest: i64,
+    /// Stored as a list: JSON object keys are strings only.
+    #[serde(with = "pairs")]
+    counts: imbl::OrdMap<(i64, String), u32>,
+}
+
+mod pairs {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        m: &imbl::OrdMap<(i64, String), u32>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        m.iter()
+            .map(|((start, command), n)| (start, command, n))
+            .collect::<Vec<_>>()
+            .serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<imbl::OrdMap<(i64, String), u32>, D::Error> {
+        let list = Vec::<(i64, String, u32)>::deserialize(d)?;
+        Ok(list.into_iter().map(|(s, c, n)| ((s, c), n)).collect())
+    }
+}
+
+const SEEN_WINDOW_SECS: i64 = 86_400;
+
+impl Seen {
+    fn next(&self, start: i64, command: &str) -> (u32, Self) {
+        let mut seen = self.clone();
+        let key = (start, command.to_owned());
+        let n = seen.counts.get(&key).copied().unwrap_or(0);
+        seen.counts.insert(key, n + 1);
+        if start > seen.latest {
+            seen.latest = start;
+            // Keys sort by start, so the expired ones are at the front.
+            let floor = start - SEEN_WINDOW_SECS;
+            while let Some(((oldest, _), _)) = seen.counts.get_min() {
+                if *oldest >= floor {
+                    break;
+                }
+                let first = seen
+                    .counts
+                    .get_min()
+                    .map(|(k, _)| k.clone())
+                    .expect("checked");
+                seen.counts.remove(&first);
+            }
+        }
+        (n, seen)
+    }
+}
+
 impl Parser for ZshParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
+    type Carry = Seen;
     type Payload = CommandImported;
 
-    fn parse(&self, record: &&[u8], _: &()) -> Result<(Vec<CommandImported>, ()), RecordError> {
+    fn parse(
+        &self,
+        record: &&[u8],
+        seen: &Seen,
+    ) -> Result<(Vec<CommandImported>, Seen), RecordError> {
         let decoded = unmetafy(record)?;
         let text = std::str::from_utf8(&decoded)
             .map_err(|_| RecordError::new("invalid UTF-8 after zsh unmetafy"))?;
@@ -63,14 +134,17 @@ impl Parser for ZshParser {
         } else {
             command
         };
+        let command = command.replace("\\\n", "\n");
+        let (n, seen) = seen.next(start, &command);
         Ok((
             vec![CommandImported {
-                command: command.replace("\\\n", "\n"),
+                command,
                 hostname: self.host.clone(),
                 started_at,
                 header_elapsed: elapsed,
+                n,
             }],
-            (),
+            seen,
         ))
     }
 }
@@ -131,8 +205,36 @@ mod tests {
 
     fn parse(bytes: &[u8]) -> Result<String, RecordError> {
         ZshParser { host: "h".into() }
-            .parse(&bytes, &())
-            .map(|(p, ())| p[0].command.clone())
+            .parse(&bytes, &Seen::default())
+            .map(|(p, _)| p[0].command.clone())
+    }
+
+    #[test]
+    fn identical_runs_in_one_second_are_numbered_in_file_order() {
+        let parser = ZshParser { host: "h".into() };
+        let lines: [&[u8]; 4] = [
+            b": 10:0;ls\n",
+            b": 10:0;pwd\n",
+            b": 10:0;ls\n",
+            b": 11:0;ls\n",
+        ];
+        let mut seen = Seen::default();
+        let mut ns = Vec::new();
+        for line in lines {
+            let (out, next) = parser.parse(&line, &seen).unwrap();
+            ns.push(out[0].n);
+            seen = next;
+        }
+        assert_eq!(ns, [0, 0, 1, 0]);
+        // A re-read from the start numbers the same records the same way.
+        let mut again = Seen::default();
+        let mut ns2 = Vec::new();
+        for line in lines {
+            let (out, next) = parser.parse(&line, &again).unwrap();
+            ns2.push(out[0].n);
+            again = next;
+        }
+        assert_eq!(ns, ns2);
     }
 
     #[test]

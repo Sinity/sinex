@@ -158,7 +158,9 @@ fn imported(material: MaterialId, anchor: u64, command: &str) -> ProducerEvent {
             "command": command,
             "hostname": "laptop",
             "started_at": "2026-10-18T12:00:00Z",
-            "header_elapsed": 0
+            "header_elapsed": 0,
+            // Distinct per place, so the tests' records stay distinct.
+            "n": anchor
         }),
         location: Some(RecordLocation { material, anchor }),
         ordinal: 0,

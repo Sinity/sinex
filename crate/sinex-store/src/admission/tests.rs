@@ -238,21 +238,24 @@ async fn a_newer_reading_keeps_known_fields_it_leaves_unknown() {
 async fn location_keyed_records_are_one_live_reading_and_never_replaced() {
     let (_db, mut conn) = testdb::fresh().await;
     let material = MaterialId::new();
-    let at = |anchor: u64, command: &str, order: i64| {
+    let at = |anchor: u64, change: &str, order: i64| {
         Event::build(
-            &CommandImported {
-                command: command.into(),
-                hostname: "h".into(),
-                started_at: Timestamp::from_unix_secs(1).unwrap(),
-                header_elapsed: 0,
+            &sinex_model::kinds::machine::FileChanged {
+                received_at: Timestamp::from_unix_secs(1).unwrap(),
+                change: change.into(),
+                path: Some("/p".into()),
+                path_hex: None,
+                to: None,
+                is_dir: None,
+                note: None,
             },
-            "zsh",
+            "file-watch",
             Origin::Record {
                 location: RecordLocation { material, anchor },
                 ordinal: 0,
             },
             ReadingOrder(order),
-            *blake3::hash(command.as_bytes()).as_bytes(),
+            *blake3::hash(change.as_bytes()).as_bytes(),
             Class::Open,
         )
         .unwrap()
@@ -260,7 +263,7 @@ async fn location_keyed_records_are_one_live_reading_and_never_replaced() {
     let out = admit_one(&mut conn, &batch(vec![at(0, "a", 0), at(10, "a", 10)])).await;
     assert_eq!(
         out.admitted, 2,
-        "same command at two locations is two records"
+        "the same change at two locations is two records"
     );
     let again = admit_one(&mut conn, &batch(vec![at(0, "a", 0), at(0, "changed", 5)])).await;
     assert_eq!(again.admitted, 0);
@@ -312,6 +315,7 @@ async fn a_dropped_record_gets_a_removed_reading_once() {
             hostname: "h".into(),
             started_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
             header_elapsed: 0,
+            n: 0,
         },
         "terminal.zsh",
         Origin::Record {
@@ -332,8 +336,8 @@ async fn a_dropped_record_gets_a_removed_reading_once() {
     let out = admit_one(&mut conn, &dropped).await;
     assert_eq!(out.replaced, 1, "{out:?}");
     let state: (String, String) = sqlx::query_as(
-        "SELECT e.record_state, e.payload->>'command' FROM core.live_coordinates c
-         JOIN core.events e ON e.id = c.event_id WHERE c.anchor = 2",
+        "SELECT e.record_state, e.payload->>'command' FROM core.live_equivalence q
+         JOIN core.events e ON e.id = q.event_id WHERE e.anchor = 2",
     )
     .fetch_one(&mut conn)
     .await

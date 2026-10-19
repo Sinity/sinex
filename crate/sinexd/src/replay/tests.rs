@@ -60,7 +60,8 @@ async fn ingest(ctx: &mut Context, path: &Path, memory: &mut AppendMemory) {
 
 async fn live_commands(conn: &mut PgConnection) -> Vec<String> {
     sqlx::query_scalar!(
-        r#"SELECT e.payload->>'command' AS "c!" FROM core.live_coordinates l
+        r#"SELECT e.payload->>'command' AS "c!" FROM (SELECT event_id FROM core.live_coordinates
+             UNION ALL SELECT event_id FROM core.live_equivalence) l
            JOIN core.events e ON e.id = l.event_id ORDER BY (e.payload->>'started_at'), e.id"#
     )
     .fetch_all(&mut *conn)
@@ -69,10 +70,13 @@ async fn live_commands(conn: &mut PgConnection) -> Vec<String> {
 }
 
 async fn live_ids(conn: &mut PgConnection) -> Vec<Uuid> {
-    sqlx::query_scalar!("SELECT event_id FROM core.live_coordinates ORDER BY event_id")
-        .fetch_all(&mut *conn)
-        .await
-        .unwrap()
+    sqlx::query_scalar!(
+        r#"SELECT event_id AS "id!" FROM (SELECT event_id FROM core.live_coordinates
+             UNION ALL SELECT event_id FROM core.live_equivalence) l ORDER BY event_id"#
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap()
 }
 
 fn history(dir: &Path, text: &str) -> PathBuf {

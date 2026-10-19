@@ -315,7 +315,6 @@ async fn l2_l3_replay_keeps_occurrences_and_one_live_reading() {
 /// progress were lost after the batches committed) and deliver everything
 /// again.
 #[tokio::test]
-#[ignore = "sxnext-9zw.19: zsh commands are keyed by location, so a lost position re-admits them"]
 async fn l6_delivering_everything_twice_changes_nothing() {
     let dir = Dir::new();
     let t = Target::new(&dir);
@@ -577,7 +576,11 @@ async fn l34_l48_repeated_commands_are_kept() {
     t.backfill(Some(&dir.file("zsh", text.as_bytes())), None);
     let mut c = t.connect().await;
     assert_eq!(
-        scalar(&mut c, "SELECT count(*) FROM core.live_coordinates").await,
+        scalar(
+            &mut c,
+            "SELECT count(*) FROM core.live_equivalence WHERE event_type = 'command.imported'"
+        )
+        .await,
         500
     );
 }
@@ -640,7 +643,9 @@ async fn l23_dry_runs_change_nothing_and_shared_bytes_survive() {
     let events = scalar(&mut c, "SELECT count(*) FROM core.events").await;
     t.admin(&["replay", "--binding", &format!("zsh@{HOST}"), "--compare"]);
     let victim: uuid::Uuid =
-        sqlx::query_scalar("SELECT event_id FROM core.live_coordinates ORDER BY event_id LIMIT 1")
+        sqlx::query_scalar(
+            "SELECT event_id FROM core.live_equivalence WHERE event_type = 'command.imported' ORDER BY event_id LIMIT 1",
+        )
             .fetch_one(&mut c)
             .await
             .unwrap();

@@ -729,6 +729,7 @@ mod tests {
                 hostname: "h".into(),
                 started_at: Timestamp::from_unix_secs(1).unwrap(),
                 header_elapsed: 0,
+                n: 0,
             },
             "terminal.zsh-history",
             Origin::Record {

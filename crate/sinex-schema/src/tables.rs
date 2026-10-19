@@ -72,6 +72,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   record_hash bytea NOT NULL,
   PRIMARY KEY (source, event_type, equivalence_key)
 )".into(),
+        // Found by event: removal of live readings, and readings at a location.
+        "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)".into(),
+        "CREATE INDEX live_coordinates_event ON core.live_coordinates (event_id)".into(),
         // Hidden and excised occurrences, remembered so neither replay nor
         // re-import brings them back (identity rule 6).
         "CREATE TABLE core.hidden_occurrences (

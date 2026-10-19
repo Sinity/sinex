@@ -361,6 +361,7 @@ pub(crate) mod tests {
                 hostname: "box".into(),
                 started_at: at,
                 header_elapsed: 0,
+                n: 0,
             },
             "terminal.zsh",
             Origin::Record {
