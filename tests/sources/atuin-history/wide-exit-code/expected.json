@@ -1,0 +1,57 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "command.executed",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "5d608f15d6c03664a1a8a380c746987f477005614ceb7bd58f734c01c59fd76c",
+        "state": "Present",
+        "payload": {
+          "native_id": "atuin-id-3",
+          "command": "true",
+          "cwd": "/home/me",
+          "session": "session-1",
+          "hostname": "myhost",
+          "started_at": "2023-11-14T22:13:20Z",
+          "duration_ns": 1000,
+          "exit_code": 9999999999,
+          "deleted_at": null,
+          "author": null,
+          "intent": null,
+          "shell": null,
+          "extra": {
+            "future_column": 3
+          }
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 198,
+    "events": [
+      {
+        "type": "command.executed",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "05a6069075ca7e0ef395e3910c437c2097b703345693e1e1b7fc576e19657bd3",
+        "state": "Present",
+        "payload": {
+          "native_id": "atuin-id-4",
+          "command": "crash",
+          "cwd": "/home/me",
+          "session": "session-1",
+          "hostname": "myhost",
+          "started_at": "2023-11-14T22:13:20Z",
+          "duration_ns": 1000,
+          "exit_code": -11,
+          "deleted_at": null,
+          "author": null,
+          "intent": null,
+          "shell": null
+        }
+      }
+    ]
+  }
+]

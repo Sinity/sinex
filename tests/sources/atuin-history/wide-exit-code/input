@@ -1,0 +1,2 @@
+{"id":"atuin-id-3","timestamp":1700000000000000000,"duration":1000,"exit":9999999999,"command":"true","cwd":"/home/me","session":"session-1","hostname":"myhost","deleted_at":null,"future_column":3}
+{"id":"atuin-id-4","timestamp":1700000000000000000,"duration":1000,"exit":-11,"command":"crash","cwd":"/home/me","session":"session-1","hostname":"myhost","deleted_at":null}

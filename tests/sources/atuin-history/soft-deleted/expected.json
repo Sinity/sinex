@@ -1,0 +1,54 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "command.executed",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "79cc9cff9da40c2c2dac277537e9e548d986e1f4cd12588871e961517dcf1042",
+        "state": "Present",
+        "payload": {
+          "native_id": "atuin-id-1",
+          "command": "ls -la",
+          "cwd": "/home/me",
+          "session": "session-1",
+          "hostname": "myhost",
+          "started_at": "2023-11-14T22:13:20Z",
+          "duration_ns": 1000,
+          "exit_code": 0,
+          "deleted_at": null,
+          "author": null,
+          "intent": null,
+          "shell": null
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 173,
+    "events": [
+      {
+        "type": "command.executed",
+        "ts": "2023-11-14T22:13:21Z",
+        "time": "Intrinsic",
+        "key": "a7a71693a64c1e87af3552d57fa58bd18aac204fe19ed62fc6a06ae0db8829eb",
+        "state": "Removed",
+        "payload": {
+          "native_id": "atuin-id-2",
+          "command": "export SECRET=hunter2",
+          "cwd": "/home/me",
+          "session": "session-1",
+          "hostname": "myhost",
+          "started_at": "2023-11-14T22:13:21Z",
+          "duration_ns": 500,
+          "exit_code": 0,
+          "deleted_at": "2023-11-14T22:13:22Z",
+          "author": null,
+          "intent": null,
+          "shell": null
+        }
+      }
+    ]
+  }
+]

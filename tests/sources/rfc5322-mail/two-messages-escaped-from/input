@@ -1,0 +1,19 @@
+From alice@example.org Mon Jan  1 10:00:00 2024
+Message-ID: <one@example.org>
+From: Alice <alice@example.org>
+To: bob@example.org
+Subject: first
+Date: Mon, 01 Jan 2024 10:00:00 +0000
+
+hello
+>From the start of a quoted line
+
+From bob@example.org Mon Jan  1 11:00:00 2024
+Message-ID: <two@example.org>
+From: Bob <bob@example.org>
+To: alice@example.org
+Subject: Re: first
+Date: Mon, 01 Jan 2024 11:00:00 +0000
+In-Reply-To: <one@example.org>
+
+reply

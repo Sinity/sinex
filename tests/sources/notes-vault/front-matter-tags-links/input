@@ -1,0 +1,7 @@
+---
+title: Weekly review
+id: areas.review.weekly
+tags: [review, "#planning"]
+---
+# Heading is not a tag
+Body with #inline-tag and [[Other Note|alias]] and [[Other Note#part]] and [[Third]].

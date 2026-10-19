@@ -1,0 +1,78 @@
+[
+  {
+    "anchor": 2,
+    "events": [
+      {
+        "type": "music.played",
+        "ts": "2024-06-01T09:56:00Z",
+        "time": "Intrinsic",
+        "key": "f2905fc9521e844e002c1ade26930743ac5912548c7a041283395bcc53164d9a",
+        "state": "Present",
+        "payload": {
+          "started_at": "2024-06-01T09:56:00Z",
+          "ended_at": "2024-06-01T10:00:00Z",
+          "played_ms": 240000,
+          "track_uri": "spotify:track:aaa",
+          "track_name": "Song A",
+          "artist_name": "Artist",
+          "album_name": "Album",
+          "episode_uri": null,
+          "episode_name": null,
+          "show_name": null,
+          "audiobook_title": null,
+          "audiobook_chapter_title": null,
+          "platform": "linux",
+          "conn_country": "PL",
+          "reason_start": "trackdone",
+          "reason_end": "trackdone",
+          "shuffle": false,
+          "skipped": false,
+          "offline": false,
+          "incognito_mode": false,
+          "extra": {
+            "ip_addr": "x",
+            "offline_timestamp": null
+          }
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 491,
+    "events": [
+      {
+        "type": "music.played",
+        "ts": "2024-06-01T10:04:05Z",
+        "time": "Intrinsic",
+        "key": "ffaf01e8ecec52c6223eb11a55d1814fd76768449750c6a4b25c43185ee2b127",
+        "state": "Present",
+        "payload": {
+          "started_at": "2024-06-01T10:04:05Z",
+          "ended_at": "2024-06-01T10:04:10Z",
+          "played_ms": 5000,
+          "track_uri": "spotify:track:bbb",
+          "track_name": "Song B",
+          "artist_name": "Artist",
+          "album_name": "Album",
+          "episode_uri": null,
+          "episode_name": null,
+          "show_name": null,
+          "audiobook_title": null,
+          "audiobook_chapter_title": null,
+          "platform": "linux",
+          "conn_country": "PL",
+          "reason_start": "fwdbtn",
+          "reason_end": "fwdbtn",
+          "shuffle": true,
+          "skipped": true,
+          "offline": false,
+          "incognito_mode": false,
+          "extra": {
+            "ip_addr": "x",
+            "offline_timestamp": null
+          }
+        }
+      }
+    ]
+  }
+]

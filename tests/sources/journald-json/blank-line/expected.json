@@ -1,0 +1,10 @@
+[
+  {
+    "anchor": 0,
+    "failure": "spooled record has no received_ns"
+  },
+  {
+    "anchor": 82,
+    "failure": "spooled record has no received_ns"
+  }
+]

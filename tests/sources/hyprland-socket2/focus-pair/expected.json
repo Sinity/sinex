@@ -1,0 +1,24 @@
+[
+  {
+    "anchor": 0,
+    "events": []
+  },
+  {
+    "anchor": 82,
+    "events": [
+      {
+        "type": "window.focused",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:20Z",
+          "window": "0x123",
+          "class": "kitty",
+          "title": "compile output"
+        }
+      }
+    ]
+  }
+]

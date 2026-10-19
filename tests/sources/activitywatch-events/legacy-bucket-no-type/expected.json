@@ -1,0 +1,44 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "window.span",
+        "ts": "2020-09-13T12:26:40Z",
+        "time": "Intrinsic",
+        "key": "b711b9af7aa4a0878681446ce17ddf72645914216763287c5b57642adae6ebba",
+        "state": "Present",
+        "payload": {
+          "bucket": "aw-watcher-window_oldhost",
+          "span_id": 20,
+          "started_at": "2020-09-13T12:26:40Z",
+          "ended_at": "2020-09-13T12:26:41Z",
+          "app": "emacs",
+          "title": "notes.org",
+          "merged": 1
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 155,
+    "events": [
+      {
+        "type": "activitywatch.other",
+        "ts": "2020-09-13T12:26:40Z",
+        "time": "Intrinsic",
+        "key": "8470874c5e5643322e1c8f2ceef1d656001f7a9d3af50d04a491b3d5f7fbfd24",
+        "state": "Present",
+        "payload": {
+          "bucket": "aw-stopwatch",
+          "row": 21,
+          "started_at": "2020-09-13T12:26:40Z",
+          "ended_at": "2020-09-13T12:26:41Z",
+          "data": {
+            "label": "focus"
+          }
+        }
+      }
+    ]
+  }
+]

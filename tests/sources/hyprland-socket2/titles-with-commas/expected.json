@@ -1,0 +1,43 @@
+[
+  {
+    "anchor": 0,
+    "events": []
+  },
+  {
+    "anchor": 69,
+    "events": [
+      {
+        "type": "window.title_changed",
+        "ts": "2023-11-14T22:13:20.000000001Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:20.000000001Z",
+          "window": "0xabc123",
+          "title": "new title, with a comma"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 164,
+    "events": [
+      {
+        "type": "window.opened",
+        "ts": "2023-11-14T22:13:21Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:21Z",
+          "window": "0xdef",
+          "workspace_id": null,
+          "workspace_name": "1",
+          "class": "dev",
+          "title": "kitty,a, b, c"
+        }
+      }
+    ]
+  }
+]

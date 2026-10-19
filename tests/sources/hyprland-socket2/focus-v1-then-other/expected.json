@@ -1,0 +1,39 @@
+[
+  {
+    "anchor": 0,
+    "events": []
+  },
+  {
+    "anchor": 73,
+    "events": [
+      {
+        "type": "window.focused",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:20Z",
+          "window": null,
+          "class": "kitty",
+          "title": "shell"
+        }
+      },
+      {
+        "type": "window.opened",
+        "ts": "2023-11-14T22:13:21Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:21Z",
+          "window": "0xabc",
+          "workspace_id": null,
+          "workspace_name": "1",
+          "class": "dev",
+          "title": "firefox,docs"
+        }
+      }
+    ]
+  }
+]

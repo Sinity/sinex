@@ -1,0 +1,2 @@
+{"_id":201,"title":"Highlighted","excerpt":"","note":"","link":"https://example.com/a","domain":"example.com","type":"article","tags":["x"],"created":"2024-04-01T10:00:00.000Z","lastUpdate":"2024-04-02T10:00:00.000Z","collection":{"$id":5},"highlights":[{"_id":"h1","text":"quoted passage","note":"my thought","created":"2024-04-01T11:00:00.000Z"}],"important":true,"removed":false}
+{"_id":202,"title":"Trashed","link":"https://example.com/b","created":"2024-04-03T10:00:00.000Z","lastUpdate":"2024-04-04T10:00:00.000Z","collection":{"$id":-99},"removed":true}

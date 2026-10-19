@@ -1,0 +1,21 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "command.imported",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "db25432c949c90dc961347097206a98641a49883c54f923f2417f5f84bd83c6d",
+        "state": "Present",
+        "payload": {
+          "command": "echo zaśółć",
+          "hostname": "golden-host",
+          "started_at": "2023-11-14T22:13:20Z",
+          "header_elapsed": 0,
+          "n": 0
+        }
+      }
+    ]
+  }
+]

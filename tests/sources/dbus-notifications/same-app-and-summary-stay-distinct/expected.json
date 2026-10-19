@@ -1,0 +1,54 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "notification.shown",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:20Z",
+          "app": "mail",
+          "summary": "New mail",
+          "body": "from a",
+          "icon": null,
+          "replaces_id": null,
+          "actions": [],
+          "hints": {
+            "urgency": 1
+          },
+          "expire_timeout_ms": 5000,
+          "sender": ":1.9"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 350,
+    "events": [
+      {
+        "type": "notification.shown",
+        "ts": "2023-11-14T22:14:20Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:14:20Z",
+          "app": "mail",
+          "summary": "New mail",
+          "body": "from b",
+          "icon": null,
+          "replaces_id": null,
+          "actions": [],
+          "hints": {
+            "urgency": 1
+          },
+          "expire_timeout_ms": 5000,
+          "sender": ":1.9"
+        }
+      }
+    ]
+  }
+]

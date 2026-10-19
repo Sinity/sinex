@@ -1,0 +1,10 @@
+[
+  {
+    "anchor": 0,
+    "events": []
+  },
+  {
+    "anchor": 145,
+    "failure": "Notify with 3 arguments, expected 8"
+  }
+]

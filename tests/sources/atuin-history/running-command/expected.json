@@ -1,0 +1,28 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "command.executed",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "18cd3da33180a83cff9786c982cdad35b10cfc91210c0b0cd17132a506d8b4d2",
+        "state": "Present",
+        "payload": {
+          "native_id": "atuin-run",
+          "command": "sleep 100",
+          "cwd": "/",
+          "session": "s",
+          "hostname": "h:u",
+          "started_at": "2023-11-14T22:13:20Z",
+          "duration_ns": null,
+          "exit_code": null,
+          "deleted_at": null,
+          "author": null,
+          "intent": null,
+          "shell": null
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,42 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "window.opened",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:20Z",
+          "window": "0xabc123",
+          "workspace_id": null,
+          "workspace_name": "3",
+          "class": "dev",
+          "title": "firefox,Sinex — docs"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 97,
+    "events": []
+  },
+  {
+    "anchor": 174,
+    "events": [
+      {
+        "type": "window.closed",
+        "ts": "2023-11-14T22:13:22Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:22Z",
+          "window": "0xabc123"
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,45 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "presence.span",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "bb37dae64a95e95d3a66828aa54f36843ceecf80a5aea99b994719b2165b2ab2",
+        "state": "Present",
+        "payload": {
+          "bucket": "aw-watcher-afk_box",
+          "row": 10,
+          "started_at": "2023-11-14T22:13:20Z",
+          "ended_at": "2023-11-14T22:23:20Z",
+          "status": "afk"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 161,
+    "events": [
+      {
+        "type": "browser.tab_active",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "37beadb1ee7b915d4e5805d448cf789621f6bd7bcd78efede80b5345069702a9",
+        "state": "Present",
+        "payload": {
+          "bucket": "aw-watcher-web-chrome_box",
+          "row": 11,
+          "started_at": "2023-11-14T22:13:20Z",
+          "ended_at": "2023-11-14T22:14:20Z",
+          "browser": "chrome",
+          "url": "https://example.org/",
+          "title": "Example",
+          "incognito": false,
+          "audible": true,
+          "tab_count": 12
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,40 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "command.imported",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "bece0846e466c7945d2427833ad321db13ca01dded4a3e96f5502e1abfb8d9fa",
+        "state": "Present",
+        "payload": {
+          "command": "ls -la",
+          "hostname": "golden-host",
+          "started_at": "2023-11-14T22:13:20Z",
+          "header_elapsed": 0,
+          "n": 0
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 22,
+    "events": [
+      {
+        "type": "command.imported",
+        "ts": "2023-11-14T22:13:25Z",
+        "time": "Intrinsic",
+        "key": "5b4015922d25ffd6af20cd33b4ce084d8d72854d3513f80e77c425e14723a657",
+        "state": "Present",
+        "payload": {
+          "command": "cargo build",
+          "hostname": "golden-host",
+          "started_at": "2023-11-14T22:13:25Z",
+          "header_elapsed": 3,
+          "n": 0
+        }
+      }
+    ]
+  }
+]

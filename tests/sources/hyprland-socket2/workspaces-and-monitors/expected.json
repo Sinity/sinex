@@ -1,0 +1,95 @@
+[
+  {
+    "anchor": 0,
+    "events": []
+  },
+  {
+    "anchor": 60,
+    "events": [
+      {
+        "type": "workspace.switched",
+        "ts": "2023-11-14T22:13:20.000000001Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:20.000000001Z",
+          "workspace_id": 4,
+          "workspace_name": "dev"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 126,
+    "events": [
+      {
+        "type": "workspace.switched",
+        "ts": "2023-11-14T22:13:21Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:21Z",
+          "workspace_id": -98,
+          "workspace_name": "special:scratch"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 206,
+    "events": [
+      {
+        "type": "monitor.focused",
+        "ts": "2023-11-14T22:13:22Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:22Z",
+          "monitor": "DP-1",
+          "workspace_name": "dev"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 274,
+    "events": []
+  },
+  {
+    "anchor": 342,
+    "events": [
+      {
+        "type": "desktop.other",
+        "ts": "2023-11-14T22:13:23Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:23Z",
+          "name": "configreloaded",
+          "data": ""
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 406,
+    "events": [
+      {
+        "type": "desktop.other",
+        "ts": "2023-11-14T22:13:24Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:24Z",
+          "name": "",
+          "data": "no separator here"
+        }
+      }
+    ]
+  }
+]

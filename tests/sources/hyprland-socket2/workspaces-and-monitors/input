@@ -1,0 +1,7 @@
+{"received_ns":"1700000000000000000","line":"workspace>>4"}
+{"received_ns":"1700000000000000001","line":"workspacev2>>4,dev"}
+{"received_ns":"1700000001000000000","line":"workspacev2>>-98,special:scratch"}
+{"received_ns":"1700000002000000000","line":"focusedmon>>DP-1,dev"}
+{"received_ns":"1700000002000000001","line":"focusedmonv2>>DP-1,4"}
+{"received_ns":"1700000003000000000","line":"configreloaded>>"}
+{"received_ns":"1700000004000000000","line":"no separator here"}

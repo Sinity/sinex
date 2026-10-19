@@ -1,0 +1,97 @@
+[
+  {
+    "anchor": 0,
+    "events": []
+  },
+  {
+    "anchor": 72,
+    "events": [
+      {
+        "type": "bookmark.saved",
+        "ts": "2024-03-01T12:00:00Z",
+        "time": "Intrinsic",
+        "key": "cf500a110808be6a6c7fd927532a2063e6c696155bb120e8e880a6b8cafad7c0",
+        "state": "Present",
+        "payload": {
+          "service": "raindrop",
+          "native_id": "101",
+          "url": "https://doc.rust-lang.org/book/",
+          "title": "Rust, the book",
+          "note": "a note, with commas",
+          "excerpt": null,
+          "folder": "Reading",
+          "tags": [
+            "rust",
+            "books"
+          ],
+          "created_at": "2024-03-01T12:00:00Z",
+          "updated_at": null,
+          "cover": "https://img.example/c.png",
+          "highlights": null,
+          "favorite": true,
+          "trashed_at": null
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 231,
+    "events": [
+      {
+        "type": "bookmark.saved",
+        "ts": "2024-03-02T08:00:00Z",
+        "time": "Intrinsic",
+        "key": "fbe42573e5cdbe562e2f8dc932b39a551fc4d75c568f0b954ccbe6f6006a3d52",
+        "state": "Present",
+        "payload": {
+          "service": "raindrop",
+          "native_id": "102",
+          "url": "https://example.org/",
+          "title": "No extras",
+          "note": null,
+          "excerpt": null,
+          "folder": "Unsorted",
+          "tags": [],
+          "created_at": "2024-03-02T08:00:00Z",
+          "updated_at": null,
+          "cover": null,
+          "highlights": null,
+          "favorite": false,
+          "trashed_at": null
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 311,
+    "events": [
+      {
+        "type": "bookmark.saved",
+        "ts": "2024-03-03T09:30:00Z",
+        "time": "Intrinsic",
+        "key": "0747ba3a173d4644691a1a71edd00e4c4a131848c3d4aac27a5872e004233ba1",
+        "state": "Present",
+        "payload": {
+          "service": "raindrop",
+          "native_id": "103",
+          "url": "https://example.net/",
+          "title": "Multi\nline title",
+          "note": "line one\nline two",
+          "excerpt": null,
+          "folder": "Reading",
+          "tags": [],
+          "created_at": "2024-03-03T09:30:00Z",
+          "updated_at": null,
+          "cover": null,
+          "highlights": null,
+          "favorite": false,
+          "trashed_at": null
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 418,
+    "failure": "invalid time \"not-a-date\": the 'year' component could not be parsed"
+  }
+]

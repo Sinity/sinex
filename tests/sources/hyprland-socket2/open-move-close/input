@@ -1,0 +1,4 @@
+{"received_ns":"1700000000000000000","line":"openwindow>>0xabc123,3,firefox,Sinex — docs"}
+{"received_ns":"1700000000500000000","line":"movewindow>>0xabc123,browse"}
+{"received_ns":"1700000001000000000","line":"movewindowv2>>0xabc123,2,browse"}
+{"received_ns":"1700000002000000000","line":"closewindow>>0xabc123"}

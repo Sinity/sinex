@@ -1,0 +1,40 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "command.imported",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "f2ae0427c980051c1ff689dabf713b68cb987f4e0c343bd0ff5d1d53d1fb8fb6",
+        "state": "Present",
+        "payload": {
+          "command": "for f in *; do\necho $f\ndone",
+          "hostname": "golden-host",
+          "started_at": "2023-11-14T22:13:20Z",
+          "header_elapsed": 0,
+          "n": 0
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 45,
+    "events": [
+      {
+        "type": "command.imported",
+        "ts": "2023-11-14T22:13:30Z",
+        "time": "Intrinsic",
+        "key": "35159dfbd098cb2650c9b40ea0b824288bfdc00c5bf1f7509c8e36b4287fa106",
+        "state": "Present",
+        "payload": {
+          "command": "ls",
+          "hostname": "golden-host",
+          "started_at": "2023-11-14T22:13:30Z",
+          "header_elapsed": 0,
+          "n": 0
+        }
+      }
+    ]
+  }
+]

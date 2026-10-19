@@ -1,0 +1,22 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "note.document",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "FileMtime",
+        "key": "8163a55d5f4a95838bb0679530b5e20bd631d88294b523344f0c053caf26d443",
+        "state": "Present",
+        "payload": {
+          "vault": "MyVault",
+          "path": "areas/weekly.md",
+          "text": "---\r\ntitle: Weekly review\r\nid: areas.review.weekly\r\ntags: [review, \"#planning\"]\r\n---\r\n# Heading is not a tag\r\nBody with #inline-tag and [[Other Note|alias]] and [[Other Note#part]] and [[Third]].\r\n",
+          "size": 197,
+          "modified_at": "2023-11-14T22:13:20Z",
+          "vanished_at": null
+        }
+      }
+    ]
+  }
+]

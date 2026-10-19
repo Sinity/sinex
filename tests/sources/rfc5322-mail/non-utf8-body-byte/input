@@ -1,0 +1,7 @@
+From x@example.org Thu Jan  4 10:00:00 2024
+Message-ID: <bin@example.org>
+From: x@example.org
+Subject: odd byte
+Date: Thu, 04 Jan 2024 10:00:00 +0000
+
+body with a stray ÿ byte

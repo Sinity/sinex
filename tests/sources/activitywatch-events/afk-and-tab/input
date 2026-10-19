@@ -1,0 +1,2 @@
+{"rowid":10,"bucket":"aw-watcher-afk_box","bucket_type":"afkstatus","starttime":1700000000000000000,"endtime":1700000600000000000,"data":"{\"status\":\"afk\"}"}
+{"rowid":11,"bucket":"aw-watcher-web-chrome_box","bucket_type":"web.tab.current","starttime":1700000000000000000,"endtime":1700000060000000000,"data":"{\"url\":\"https://example.org/\",\"title\":\"Example\",\"incognito\":false,\"audible\":true,\"tabCount\":12}"}

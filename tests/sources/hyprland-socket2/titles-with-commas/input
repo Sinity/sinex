@@ -1,0 +1,3 @@
+{"received_ns":"1700000000000000000","line":"windowtitle>>0xabc123"}
+{"received_ns":"1700000000000000001","line":"windowtitlev2>>0xabc123,new title, with a comma"}
+{"received_ns":"1700000001000000000","line":"openwindow>>0xdef,1,kitty,a, b, c"}

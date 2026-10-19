@@ -1,0 +1,65 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "window.span",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "9972d7d35737b2d7282958838a09f5225d149473bea482d6b35770074cb550f6",
+        "state": "Present",
+        "payload": {
+          "bucket": "aw-watcher-window_box",
+          "span_id": 1,
+          "started_at": "2023-11-14T22:13:20Z",
+          "ended_at": "2023-11-14T22:13:25Z",
+          "app": "kitty",
+          "title": "claude",
+          "merged": 1
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 191,
+    "events": [
+      {
+        "type": "window.span",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "9972d7d35737b2d7282958838a09f5225d149473bea482d6b35770074cb550f6",
+        "state": "Present",
+        "payload": {
+          "bucket": "aw-watcher-window_box",
+          "span_id": 1,
+          "started_at": "2023-11-14T22:13:20Z",
+          "ended_at": "2023-11-14T22:13:30Z",
+          "app": "kitty",
+          "title": "claude",
+          "merged": 2
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 382,
+    "events": [
+      {
+        "type": "window.span",
+        "ts": "2023-11-14T22:13:30Z",
+        "time": "Intrinsic",
+        "key": "d996a1258f1590e2c5ab3488f767256b2a2594c9381078a10b03aaf781b15bda",
+        "state": "Present",
+        "payload": {
+          "bucket": "aw-watcher-window_box",
+          "span_id": 3,
+          "started_at": "2023-11-14T22:13:30Z",
+          "ended_at": "2023-11-14T22:13:32Z",
+          "app": "firefox",
+          "title": "⠋ not a spinner app",
+          "merged": 1
+        }
+      }
+    ]
+  }
+]

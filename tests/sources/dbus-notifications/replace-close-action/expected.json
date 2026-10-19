@@ -1,0 +1,94 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "notification.shown",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:20Z",
+          "app": "chat",
+          "summary": "Alice",
+          "body": "hi",
+          "icon": null,
+          "replaces_id": null,
+          "actions": [
+            "default",
+            "Open"
+          ],
+          "hints": {
+            "urgency": 1
+          },
+          "expire_timeout_ms": -1,
+          "sender": ":1.9"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 361,
+    "events": [
+      {
+        "type": "notification.shown",
+        "ts": "2023-11-14T22:13:21Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:21Z",
+          "app": "chat",
+          "summary": "Alice",
+          "body": "hi again",
+          "icon": null,
+          "replaces_id": 12,
+          "actions": [
+            "default",
+            "Open"
+          ],
+          "hints": {
+            "urgency": 1
+          },
+          "expire_timeout_ms": -1,
+          "sender": ":1.9"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 729,
+    "events": [
+      {
+        "type": "notification.action",
+        "ts": "2023-11-14T22:13:22Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:22Z",
+          "notification_id": 12,
+          "action": "default"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 883,
+    "events": [
+      {
+        "type": "notification.closed",
+        "ts": "2023-11-14T22:13:23Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:23Z",
+          "notification_id": 12,
+          "reason": "dismissed"
+        }
+      }
+    ]
+  }
+]

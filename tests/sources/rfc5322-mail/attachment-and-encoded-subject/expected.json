@@ -1,0 +1,38 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "mail.message",
+        "ts": "2024-01-03T09:00:00Z",
+        "time": "Intrinsic",
+        "key": "d708a3fe88d1e87d5c28c7b2dbc26625687dba680b01ca221a4bad3e7bc7cd9e",
+        "state": "Present",
+        "payload": {
+          "message_id": "att@example.org",
+          "date": "2024-01-03T09:00:00Z",
+          "from": [
+            "x@example.org"
+          ],
+          "to": [],
+          "cc": [],
+          "subject": "Zażółć gęślą jaźń",
+          "in_reply_to": null,
+          "references": [],
+          "labels": [],
+          "thread_id": null,
+          "text": "see attached",
+          "html_only": false,
+          "attachments": [
+            {
+              "filename": "report.pdf",
+              "content_type": "application/pdf",
+              "size": 9
+            }
+          ],
+          "size": 433
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,4 @@
+[
+{"ts":"2023-01-05T08:00:00Z","platform":"android","ms_played":0,"conn_country":"PL","ip_addr":"x","master_metadata_track_name":null,"master_metadata_album_artist_name":null,"master_metadata_album_album_name":null,"spotify_track_uri":null,"episode_name":"Episode 1","episode_show_name":"A Show","spotify_episode_uri":"spotify:episode:eee","reason_start":"clickrow","reason_end":"endplay","shuffle":false,"skipped":null,"offline":true,"offline_timestamp":1672905600,"incognito_mode":false},
+{"ts":"2013-02-12T13:17:05Z","ms_played":269866,"ip_addr":"x","master_metadata_track_name":null,"master_metadata_album_artist_name":null,"master_metadata_album_album_name":null,"spotify_track_uri":null,"episode_name":null,"episode_show_name":null,"spotify_episode_uri":null,"skipped":null,"shuffle":false,"offline_timestamp":null}
+]
