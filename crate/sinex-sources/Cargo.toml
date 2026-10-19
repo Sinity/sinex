@@ -11,6 +11,7 @@ sinex-model.workspace = true
 sinex-protocol.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+base64.workspace = true
 blake3.workspace = true
 thiserror.workspace = true
 time.workspace = true

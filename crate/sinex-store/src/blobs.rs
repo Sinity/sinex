@@ -2,21 +2,97 @@
 //! as seekable zstd. Drivers write a material's bytes here before the batch that
 //! registers it, so bytes always exist before any row refers to them.
 use crate::Result;
-use std::path::Path;
+use std::io::{Read, Seek, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub struct Blobs(Arc<hashed_blobs::Store>);
+pub struct Blobs(Arc<hashed_blobs::Store>, PathBuf);
+
+/// Where a blob sent in chunks stands after one chunk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Received {
+    /// More bytes are expected; this many have arrived.
+    Partial(u64),
+    /// Every byte arrived, matched the name and is stored.
+    Stored,
+}
 
 impl Blobs {
     pub fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)
             .map_err(|e| crate::Error::Invalid(format!("{}: {e}", root.display())))?;
-        Ok(Self(Arc::new(hashed_blobs::Store::open(
-            root,
-            vec![],
-            0o600,
-        )?)))
+        Ok(Self(
+            Arc::new(hashed_blobs::Store::open(root, vec![], 0o600)?),
+            root.join("incoming"),
+        ))
+    }
+
+    /// Take one chunk of the bytes named `name`, from a producer that does not
+    /// share this content store. Chunks arrive in order; a chunk already
+    /// received (a resend) is accepted again without effect. The staged bytes
+    /// are checked against `name` before they are stored, and dropped if they
+    /// do not match.
+    pub fn receive_chunk(
+        &self,
+        name: &str,
+        offset: u64,
+        total: u64,
+        data: &[u8],
+    ) -> Result<Received> {
+        let hash = parse(name)?;
+        if self.0.contains(&hash) {
+            return Ok(Received::Stored);
+        }
+        let invalid = |m: String| crate::Error::Invalid(m);
+        let io = |e: std::io::Error| invalid(format!("staging {name}: {e}"));
+        std::fs::create_dir_all(&self.1).map_err(io)?;
+        let path = self.1.join(hash.hex());
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(&path)
+            .map_err(io)?;
+        let have = file.metadata().map_err(io)?.len();
+        let end = offset + data.len() as u64;
+        if end > total {
+            return Err(invalid(format!(
+                "chunk of {name} ends at {end}, past its total of {total}"
+            )));
+        }
+        if offset > have {
+            return Err(invalid(format!(
+                "chunk of {name} starts at {offset} but {have} bytes have arrived; send chunks in order"
+            )));
+        }
+        if end > have {
+            file.write_all(&data[usize::try_from(have - offset).unwrap_or(0)..])
+                .map_err(io)?;
+        }
+        let have = have.max(end);
+        if have < total {
+            return Ok(Received::Partial(have));
+        }
+        file.sync_all().map_err(io)?;
+        file.rewind().map_err(io)?;
+        let mut hasher = blake3::Hasher::new();
+        std::io::copy(&mut (&file).take(total), &mut hasher).map_err(io)?;
+        if hasher.finalize().as_bytes() != &hash.0 {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+            return Err(invalid(format!(
+                "the {total} bytes sent as {name} do not match that name"
+            )));
+        }
+        file.rewind().map_err(io)?;
+        let stored = self.put_reader((&file).take(total))?;
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        if stored != name {
+            return Err(invalid(format!("stored {name} as {stored}")));
+        }
+        Ok(Received::Stored)
     }
 
     /// Store `bytes` and return their name, `blake3:<hex>`.
@@ -114,6 +190,59 @@ mod tests {
                 .unwrap()
         );
         assert!(blobs.contains("sha256:00").is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn chunks_in_order_are_checked_then_stored() {
+        let dir = std::env::temp_dir().join(format!("sinex-chunks-{}", uuid::Uuid::now_v7()));
+        let blobs = Blobs::open(&dir).unwrap();
+        let bytes: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let name = format!("blake3:{}", blake3::hash(&bytes).to_hex());
+        let total = bytes.len() as u64;
+        assert_eq!(
+            blobs
+                .receive_chunk(&name, 0, total, &bytes[..4_000])
+                .unwrap(),
+            Received::Partial(4_000)
+        );
+        // A resent chunk changes nothing; a chunk out of order is refused.
+        assert_eq!(
+            blobs
+                .receive_chunk(&name, 0, total, &bytes[..4_000])
+                .unwrap(),
+            Received::Partial(4_000)
+        );
+        assert!(
+            blobs
+                .receive_chunk(&name, 8_000, total, &bytes[8_000..])
+                .is_err()
+        );
+        assert!(!blobs.contains(&name).unwrap());
+        assert_eq!(
+            blobs
+                .receive_chunk(&name, 4_000, total, &bytes[4_000..])
+                .unwrap(),
+            Received::Stored
+        );
+        assert_eq!(blobs.read(&name).unwrap(), bytes);
+        assert_eq!(
+            blobs.receive_chunk(&name, 0, total, &bytes[..10]).unwrap(),
+            Received::Stored,
+            "a stored blob takes any chunk as done"
+        );
+
+        // Bytes that do not match their name are dropped, not stored.
+        let wrong = format!("blake3:{}", blake3::hash(b"something else").to_hex());
+        assert!(blobs.receive_chunk(&wrong, 0, 5, b"hello").is_err());
+        assert!(!blobs.contains(&wrong).unwrap());
+        assert_eq!(
+            blobs
+                .receive_chunk(&wrong, 0, 14, b"something else")
+                .unwrap(),
+            Received::Stored,
+            "a failed attempt leaves nothing staged"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

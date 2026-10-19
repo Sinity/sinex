@@ -4,9 +4,9 @@
 //! over the NATS ingress with its own credentials. It has no database.
 //!
 //! The ingress registers a material only once its bytes are in `sinexd`'s
-//! content store. A node that shares that store (a mount) works today; moving
-//! the bytes themselves over the link is the part of the producer protocol
-//! still to build, and the node says so when the store is missing.
+//! content store. A node that mounts that store places them there directly;
+//! with `--upload`, the node keeps its own store and sends each material's
+//! bytes over the link in chunk frames first.
 use clap::Parser;
 use sinex_sources::Source;
 use sinex_sources::drivers::live_stream::LiveStream;
@@ -30,9 +30,13 @@ struct Cli {
     /// This node's producer name, as its credentials allow.
     #[arg(long)]
     producer: String,
-    /// `sinexd`'s content store, as mounted on this host.
+    /// `sinexd`'s content store as mounted on this host, or with `--upload`
+    /// this node's own store.
     #[arg(long)]
     store: PathBuf,
+    /// The store is this node's own: send material bytes over the link.
+    #[arg(long)]
+    upload: bool,
     /// Where spools and positions live.
     #[arg(long)]
     state: PathBuf,
@@ -51,9 +55,9 @@ struct Cli {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    if !cli.store.is_dir() {
+    if !cli.upload && !cli.store.is_dir() {
         eprintln!(
-            "sinex-capture: {} is not sinexd's content store; this node needs the store mounted (sending material bytes over the link is not built yet)",
+            "sinex-capture: {} is not sinexd's content store; mount it, or pass --upload to keep a local store and send the bytes over the link",
             cli.store.display()
         );
         return ExitCode::FAILURE;
@@ -79,6 +83,10 @@ async fn run(cli: Cli) -> Result<(), String> {
     )
     .await
     .map_err(|e| e.to_string())?;
+    if cli.upload {
+        let own = Store::open(&cli.store).map_err(|e| format!("content store: {e}"))?;
+        producer = producer.upload_bytes(own);
+    }
 
     let mut bindings: Vec<(Box<dyn Source>, String, LiveStream)> = Vec::new();
     if cli.journald {
@@ -125,7 +133,10 @@ async fn run(cli: Cli) -> Result<(), String> {
         }
         for (source, binding, driver) in &bindings {
             loop {
-                let position = Position::load(&positions, binding).map_err(|e| e.to_string())?;
+                let position = producer
+                    .position(binding, &positions)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let acquired = driver.poll(&position.cursor).map_err(|e| e.to_string())?;
                 let had_material = acquired.material.is_some();
                 producer
