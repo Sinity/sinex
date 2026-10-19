@@ -724,7 +724,7 @@ async fn export(
                     let name = binding(&file.display().to_string());
                     let chain = stored(ctx, &name).await?;
                     let mut memory = drivers::append_file::AppendMemory::rebuild(
-                        chain.iter().map(Vec::as_slice),
+                        chain.iter().map(|(id, b)| (*id, b.as_slice())),
                         lane.spec.framer,
                     );
                     lane_totals.add(
