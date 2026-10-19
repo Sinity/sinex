@@ -36,7 +36,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "what the operator's Samsung account kept: health sync, settings, backups",
     class: Class::Open,
     parser: "samsung-account-export",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["health.record", "account.record"],
     framer: frame,
 };
@@ -76,6 +76,10 @@ impl Parser for SamsungCloudParser {
         context: &RecordContext<'_>,
     ) -> Result<(Vec<SamsungEvent>, Carry), RecordError> {
         let member = context.path().unwrap_or_default().to_owned();
+        // A blank line between rows is not a row.
+        if record.iter().all(|b| b.is_ascii_whitespace()) {
+            return Ok((vec![], carry.clone()));
+        }
         let cells = fields::csv_cells(record)?;
         if carry.member != member || carry.header.is_empty() {
             return Ok((
@@ -90,6 +94,13 @@ impl Parser for SamsungCloudParser {
         let mut values = Map::new();
         for (name, cell) in carry.header.iter().zip(&cells) {
             if cell.is_empty() {
+                continue;
+            }
+            // JSON text cannot hold NUL; such a cell is kept with its NULs
+            // removed and named, its exact bytes staying in the material.
+            if cell.contains('\0') {
+                values.insert(name.clone(), json_or_typed(&cell.replace('\0', "")));
+                values.insert(format!("{name}__nul_removed"), Value::Bool(true));
                 continue;
             }
             values.insert(name.clone(), json_or_typed(cell));
