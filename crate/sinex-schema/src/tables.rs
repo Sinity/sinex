@@ -177,6 +177,15 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   status text NOT NULL CHECK (status IN ('present', 'quarantined', 'deleting')),
   registered_at timestamptz NOT NULL DEFAULT now()
 )".into(),
+        // Stored bytes an event owns beyond its material (a library file
+        // kept by the scan): excising the event deletes them once nothing
+        // else refers to them. No foreign key into the events hypertable.
+        "CREATE TABLE core.event_blobs (
+  event_id uuid NOT NULL,
+  blob text NOT NULL REFERENCES core.blobs(hash),
+  PRIMARY KEY (event_id, blob)
+)".into(),
+        "CREATE INDEX event_blobs_blob ON core.event_blobs (blob)".into(),
         "CREATE TABLE raw.inputs (
   id uuid PRIMARY KEY,
   binding text NOT NULL,

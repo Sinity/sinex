@@ -41,6 +41,7 @@ fn input(event_type: &str, secs: i64, payload: Value) -> Event {
         record_state: RecordState::Present,
         class: Class::Open,
         support: None,
+        cites: Vec::new(),
     }
 }
 

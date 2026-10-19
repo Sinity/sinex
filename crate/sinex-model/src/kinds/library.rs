@@ -23,7 +23,8 @@ use serde_json::{Map, Value};
     replace = newer,
     time = modified_at,
     quality = file_mtime,
-    removed_when = vanished_at
+    removed_when = vanished_at,
+    cites(field = content, size = size, when = stored)
 )]
 pub struct Acquisition {
     pub host: String,

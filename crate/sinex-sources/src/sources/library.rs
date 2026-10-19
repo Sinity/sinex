@@ -159,6 +159,9 @@ pub struct LibraryScan {
     /// File bytes hashed per poll, so one poll's material stays a sensible size
     /// and progress commits as it goes. A file larger than this is read alone.
     pub bytes_per_poll: u64,
+    /// Scan only this file (a path relative to `root`); the rest of the root
+    /// is neither read nor reported missing.
+    pub only: Option<String>,
 }
 
 /// What a scan knows about a file it already read.
@@ -212,13 +215,28 @@ pub fn skipped(relative: &str) -> bool {
 }
 
 /// Whether `relative` is a metadata sidecar of another file `exists` knows:
-/// `<file>.json` (gallery-dl's `--write-metadata`) or `<file>.txt` (Hydrus
-/// tag sidecars).
-pub fn is_sidecar(relative: &str, exists: impl Fn(&str) -> bool) -> bool {
+/// `<file>.json` (gallery-dl's `--write-metadata`), `<file>.txt` (Hydrus tag
+/// sidecars), or `<stem>.json` beside `<stem>.<ext>` (gallery-dl's
+/// `--write-metadata` with a filename format). `stems` holds the paths of
+/// the other files without their extension.
+pub fn is_sidecar(
+    relative: &str,
+    exists: impl Fn(&str) -> bool,
+    stems: &std::collections::BTreeSet<String>,
+) -> bool {
     [".json", ".txt"]
         .iter()
         .filter_map(|ext| relative.strip_suffix(ext))
-        .any(exists)
+        .any(|base| exists(base) || stems.contains(base))
+}
+
+/// `a/b.jpg` → `a/b`; a path without an extension has no stem here.
+fn stem(relative: &str) -> Option<&str> {
+    let name_at = relative.rfind('/').map_or(0, |i| i + 1);
+    relative[name_at..]
+        .rfind('.')
+        .filter(|&dot| dot > 0)
+        .map(|dot| &relative[..name_at + dot])
 }
 
 impl LibraryScan {
@@ -236,16 +254,27 @@ impl LibraryScan {
         walk(&self.root, &self.root, &mut found)?;
         // Sidecars (`a.jpg.json`, `a.jpg.txt`, `a.json`) describe the file
         // beside them; library import reads them. They are not items.
+        let stems: std::collections::BTreeSet<String> = found
+            .keys()
+            .filter(|p| !p.ends_with(".json") && !p.ends_with(".txt"))
+            .filter_map(|p| stem(p).map(str::to_owned))
+            .collect();
         let sidecars: Vec<String> = found
             .keys()
-            .filter(|p| is_sidecar(p, |other| found.contains_key(other)))
+            .filter(|p| is_sidecar(p, |other| found.contains_key(other), &stems))
             .cloned()
             .collect();
         for s in sidecars {
             found.remove(&s);
         }
+        if let Some(only) = &self.only {
+            found.retain(|path, _| path == only);
+        }
         let mut missing = BTreeMap::new();
         for (path, known) in &memory.files {
+            if self.only.as_ref().is_some_and(|o| o != path) {
+                continue;
+            }
             if !found.contains_key(path) {
                 missing.insert(path.clone(), known.clone());
             }
@@ -982,7 +1011,52 @@ mod tests {
             keep_bytes: true,
             probe: false,
             bytes_per_poll: 1 << 30,
+            only: None,
         }
+    }
+
+    #[test]
+    fn sidecars_named_by_stem_are_not_items() {
+        let root = tmp();
+        std::fs::write(root.join("pic.png"), png(10, 10)).unwrap();
+        std::fs::write(root.join("pic.json"), b"{}").unwrap();
+        std::fs::write(root.join("pic.png.txt"), b"tag").unwrap();
+        std::fs::write(root.join("notes.json"), b"{}").unwrap();
+        let sink = Memory(Default::default());
+        let mut mem = ScanMemory::default();
+        let first = scan(&root).poll(&Value::Null, &mut mem, &sink).unwrap();
+        let mut paths: Vec<String> = read(&first, &ScanParser)
+            .into_iter()
+            .map(|a| a.path.rsplit('/').next().unwrap().to_owned())
+            .collect();
+        paths.sort();
+        // `notes.json` describes no file beside it, so it is an item.
+        assert_eq!(paths, ["notes.json", "pic.png"]);
+    }
+
+    #[test]
+    fn a_single_file_scan_reads_and_misses_nothing_else() {
+        let root = tmp();
+        std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
+        std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
+        let sink = Memory(Default::default());
+        let mut mem = ScanMemory::default();
+        let all = scan(&root).poll(&Value::Null, &mut mem, &sink).unwrap();
+        assert_eq!(read(&all, &ScanParser).len(), 2);
+
+        std::fs::write(root.join("one.png"), png(30, 30)).unwrap();
+        std::fs::write(root.join("three.png"), png(40, 40)).unwrap();
+        let only = LibraryScan {
+            only: Some("one.png".into()),
+            ..scan(&root)
+        };
+        let seen = read(
+            &only.poll(&Value::Null, &mut mem, &sink).unwrap(),
+            &ScanParser,
+        );
+        assert_eq!(seen.len(), 1, "only the named file: {seen:?}");
+        assert!(seen[0].path.ends_with("one.png"));
+        assert!(seen[0].vanished_at.is_none());
     }
 
     #[test]

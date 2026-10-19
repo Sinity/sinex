@@ -78,6 +78,9 @@ pub struct Event {
     pub class: Class,
     /// How strongly each kind of evidence backs a derived event.
     pub support: Option<Value>,
+    /// Stored bytes the payload owns beyond the material (excision deletes
+    /// them with the event). Set at build; not read back from the store.
+    pub cites: Vec<crate::Cited>,
 }
 
 impl Event {
@@ -122,6 +125,7 @@ impl Event {
             record_state: payload.record_state(),
             class,
             support: None,
+            cites: payload.cited_blobs(),
         })
     }
 

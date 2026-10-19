@@ -57,6 +57,17 @@ impl EquivalenceKey {
     }
 }
 
+/// Stored bytes an event's payload names and owns beyond its material: a
+/// library acquisition's file, kept in the content store by the scan. The
+/// event holds the only reference to them, so excising the event deletes the
+/// bytes once no other event or material refers to them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct Cited {
+    /// The content store's name, `blake3:<hex>`.
+    pub blob: String,
+    pub size: u64,
+}
+
 pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// The stored event type, such as `command.executed`.
     const EVENT_TYPE: &'static str;
@@ -76,6 +87,11 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// Whether this reading says the record was removed at the source.
     fn record_state(&self) -> RecordState {
         RecordState::Present
+    }
+
+    /// Stored bytes this reading owns beyond its material (see [`Cited`]).
+    fn cited_blobs(&self) -> Vec<Cited> {
+        Vec::new()
     }
 
     /// The JSON Schema registered for this type and used to validate payloads

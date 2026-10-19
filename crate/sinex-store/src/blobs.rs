@@ -141,6 +141,13 @@ impl Blobs {
         Ok(out)
     }
 
+    /// Stream a blob into `out`, verified against its name as it is read,
+    /// without holding it in memory. Returns the bytes written.
+    pub fn copy_to(&self, name: &str, out: &mut impl std::io::Write) -> Result<u64> {
+        std::io::copy(&mut self.0.read(&parse(name)?)?, out)
+            .map_err(|e| crate::Error::Invalid(format!("read {name}: {e}")))
+    }
+
     /// Delete a blob's file once no row refers to it (spec `storage.md` §5:
     /// rows first, the file after commit). A file already gone is fine.
     pub fn delete(&self, name: &str) -> Result<()> {
