@@ -117,7 +117,8 @@ enum Command {
         /// maildir (a directory), weechat (a log file or directory), takeout
         /// (a Google Takeout archive or a directory of them: My Activity,
         /// YouTube history, Keep, Tasks, Play Store, Purchases, Calendar),
-        /// calendar (an `.ics` file, or archives holding them).
+        /// calendar (an `.ics` file, or archives holding them), sinnix-lake
+        /// (the capture lake's root, `/realm`).
         #[arg(long = "source")]
         sources: Vec<String>,
         /// The zone WeeChat logs and floating calendar times were written in

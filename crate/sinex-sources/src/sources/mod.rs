@@ -19,6 +19,8 @@ pub mod reddit;
 pub mod repository;
 pub mod samsung_health;
 pub mod samsung_sms;
+/// The Sinnix capture lake's envelope lanes (phase 1 of the port).
+pub mod sinnix_lake;
 pub mod sleep_as_android;
 pub mod spotify;
 pub mod takeout_chrome;
@@ -30,7 +32,7 @@ use crate::registry::{Source, SourceSpec};
 
 /// Every source's declaration.
 pub fn specs() -> Vec<&'static SourceSpec> {
-    vec![
+    let mut out = vec![
         &atuin::SPEC,
         &zsh::SPEC,
         &hyprland::SPEC,
@@ -65,7 +67,9 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &operator::STEERING[0],
         &operator::STEERING[1],
         &operator::STEERING[2],
-    ]
+    ];
+    out.extend(sinnix_lake::LANES.iter().map(|l| &l.spec));
+    out
 }
 
 /// The source whose parser read a stored material, as a replay re-reads it
@@ -133,7 +137,10 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         p if p == calendar::SPEC.parser => Some(Box::new(calendar::source(
             weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
         ))),
-        _ => None,
+        p => sinnix_lake::LANES
+            .iter()
+            .find(|l| l.spec.parser == p)
+            .map(|l| Box::new(sinnix_lake::source(l)) as Box<dyn Source>),
     }
 }
 

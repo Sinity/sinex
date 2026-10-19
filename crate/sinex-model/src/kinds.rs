@@ -255,6 +255,7 @@ pub const ALL: &[KindInfo] = &[
     info::<desktop::ActivityWatchOther>(),
     // Machine
     info::<machine::JournalEntry>(),
+    info::<machine::CaptureObserved>(),
     info::<machine::FileChanged>(),
     // Code
     info::<code::GitCommit>(),
