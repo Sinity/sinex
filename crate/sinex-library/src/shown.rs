@@ -1,4 +1,4 @@
-//! Which value is shown (spec `library-records.md` §3). An operator override
+//! Which value is shown for an item's property. An operator override
 //! wins, an explicit empty one included; otherwise the imported value;
 //! otherwise a model's proposal. Two different values at the deciding level
 //! are a conflict; no value at all is unknown. Nothing is ever picked by

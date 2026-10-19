@@ -6,13 +6,13 @@
 //! holds the library's rules: which item an acquisition belongs to, which
 //! value is shown, how comparisons rank, how other applications' curation is
 //! read, and how renditions and handoff work.
-pub mod adopt;
-pub mod db;
 pub mod import;
-pub mod policy;
+pub mod items;
 pub mod rank;
+pub mod reads;
 pub mod render;
+pub mod shown;
 
-pub use adopt::{Owner, adopt, key, mint};
-pub use policy::{Shown, Tag, property, tags};
+pub use items::{acquisition_key, new_id, records_for};
 pub use rank::{Ranked, bradley_terry, next_pair};
+pub use shown::{Shown, Tag, property, tags};

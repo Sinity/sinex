@@ -38,7 +38,7 @@ fn items(r: &[LibraryRecord]) -> Vec<&Item> {
 
 #[test]
 fn a_new_copy_is_a_new_item_with_its_original() {
-    let r = adopt(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
+    let r = records_for(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
     assert_eq!(r.len(), 2);
     let i = items(&r)[0];
     assert_eq!(i.revision, 1);
@@ -51,84 +51,66 @@ fn a_new_copy_is_a_new_item_with_its_original() {
 
 #[test]
 fn equal_bytes_at_an_unrelated_path_are_another_item() {
-    let first = adopt(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
-    let owner = items(&first)[0].clone();
-    let r = adopt(
+    let first = records_for(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
+    let existing = items(&first)[0].clone();
+    let r = records_for(
         &acq("/r/copy.png", "blake3:a"),
-        |k| {
-            (k == "h:/r/a.png").then(|| Owner {
-                item: owner.clone(),
-            })
-        },
+        |k| (k == "h:/r/a.png").then(|| existing.clone()),
         "intake",
         at(),
     );
-    assert_ne!(items(&r)[0].item, owner.item);
+    assert_ne!(items(&r)[0].item, existing.item);
 }
 
 #[test]
 fn a_rename_moves_the_acquisition_and_an_edit_makes_a_revision() {
-    let first = adopt(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
-    let owner = items(&first)[0].clone();
+    let first = records_for(&acq("/r/a.png", "blake3:a"), |_| None, "intake", at());
+    let existing = items(&first)[0].clone();
     let mut moved = acq("/r/b.png", "blake3:a");
     moved.moved_from = Some("/r/a.png".into());
-    let r = adopt(
+    let r = records_for(
         &moved,
-        |k| {
-            (k == "h:/r/a.png").then(|| Owner {
-                item: owner.clone(),
-            })
-        },
+        |k| (k == "h:/r/a.png").then(|| existing.clone()),
         "intake",
         at(),
     );
     let i = items(&r)[0];
-    assert_eq!(i.item, owner.item);
+    assert_eq!(i.item, existing.item);
     assert_eq!(i.acquisitions, ["h:/r/b.png"]);
     assert_eq!(i.revision, 1);
 
     let mut edited = acq("/r/a.png", "blake3:a2");
     edited.previous_content = Some("blake3:a".into());
-    let r = adopt(
+    let r = records_for(
         &edited,
-        |k| {
-            (k == "h:/r/a.png").then(|| Owner {
-                item: owner.clone(),
-            })
-        },
+        |k| (k == "h:/r/a.png").then(|| existing.clone()),
         "intake",
         at(),
     );
     let i = items(&r)[0];
     assert_eq!(
         (i.item.as_str(), i.revision, i.replaces),
-        (owner.item.as_str(), 2, Some(1))
+        (existing.item.as_str(), 2, Some(1))
     );
     assert_eq!(i.content, "blake3:a2");
 
     // Replaced by an unrelated file at the same path: no continuity.
-    let r = adopt(
+    let r = records_for(
         &acq("/r/a.png", "blake3:z"),
-        |k| {
-            (k == "h:/r/a.png").then(|| Owner {
-                item: owner.clone(),
-            })
-        },
+        |k| (k == "h:/r/a.png").then(|| existing.clone()),
         "intake",
         at(),
     );
     let is = items(&r);
-    assert_eq!(is[0].item, owner.item);
+    assert_eq!(is[0].item, existing.item);
     assert!(is[0].acquisitions.is_empty());
-    assert_ne!(is[1].item, owner.item);
+    assert_ne!(is[1].item, existing.item);
 
     // Unchanged and vanished copies change nothing.
     assert!(
-        adopt(
+        records_for(
             &acq("/r/a.png", "blake3:a"),
-            |_| Some(Owner {
-                item: owner.clone()
-            }),
+            |_| Some(existing.clone()),
             "intake",
             at()
         )
@@ -136,5 +118,5 @@ fn a_rename_moves_the_acquisition_and_an_edit_makes_a_revision() {
     );
     let mut gone = acq("/r/a.png", "blake3:a");
     gone.vanished_at = Some(at());
-    assert!(adopt(&gone, |_| None, "intake", at()).is_empty());
+    assert!(records_for(&gone, |_| None, "intake", at()).is_empty());
 }
