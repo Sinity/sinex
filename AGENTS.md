@@ -4,13 +4,13 @@ This is the Rust rewrite of Sinex. The README describes what works today and
 how to run it. The target architecture is
 `/realm/project/sinex/analysis/architecture-20261018/sinex-architecture.md`;
 planned work is in Beads (`bd` from this checkout). The old Sinex is in Git
-history and is still the deployed version.
+history for reference.
 
 ## Structure
 
 The workspace follows the target architecture
 (`/realm/project/sinex/analysis/architecture-20261018/sinex-architecture.md`
-§2); bodies not written yet are `todo!()` naming their section.
+§2).
 
 - `crate/sinex-macros`: the `EventPayload` and `DbCheck` derives.
 - `crate/sinex-model`: identifiers, the three clocks, record locations,

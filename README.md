@@ -7,25 +7,44 @@ questions about all of it. Stored bytes are the record of truth: every event
 points at the byte range it came from, or at the events it was derived from,
 and can be read again when a parser or rule changes.
 
-This branch is the second rewrite, built to the target architecture. The
-foundations are written in full; the rest of the workspace compiles with
-`todo!()` bodies that name the architecture section they implement.
+This is the second rewrite, built to the target architecture. The old Sinex
+is in Git history for reference.
 
 ## What works
 
-- The schema, declared in Rust and applied by `sinex-schema apply`.
-- Admission: one set-based path for every event, with one live reading per
-  record location or equivalence key, newer readings replacing older ones,
-  hide, unhide and excision remembered across re-imports, and events and
-  source progress committed together.
-- The writer task, with live, derived and bulk priorities.
-- The source framework: the parser trait, the drain, and the `AppendFile` and
-  `SqliteRows` drivers, with Atuin and zsh history on them.
-- `sinexd backfill --source KIND=PATH`: read sources to the end through the
-  writer and report counts and rates. Every registered source declares its
-  kind; `sinexd admin catalog` lists them.
-- The binding runner: `sinexd run --sources sources.json` reads every
-  configured binding continuously.
+- **Storage.** The schema is declared in Rust and applied by
+  `sinex-schema apply`. Admission is the one way events are stored: one
+  set-based path with one live reading per record location or equivalence
+  key, newer readings replacing older ones, and events and source progress
+  committed together, through one writer task with live, derived and bulk
+  priorities. Bytes go to a content store named by their BLAKE3 hash.
+- **Sources.** Eight shared drivers (append-only files, SQLite databases,
+  export archives, directory snapshots, live streams, API cursors, media
+  segments, producers over NATS) and about forty sources on them: shell
+  history, browsers, desktop and session capture, mail, chat, calendars,
+  exports from Google, Samsung, Spotify, Reddit and others, git, the journal,
+  file changes, the Sinnix capture lake, and Polylogue's archive.
+  `sinexd backfill --source KIND=PATH` reads sources to the end;
+  `sinexd run --sources sources.json` reads configured bindings continuously;
+  `sinex-session` and `sinex-capture` capture from the desktop session and
+  from other hosts and send over the NATS ingress.
+- **Derivations.** Fused shell commands, shell sessions, state intervals,
+  presence, hourly and daily summaries, and text read from screen stills,
+  recomputed per changed key as inputs arrive.
+- **Removal and replay.** Hide, unhide and excision, remembered across
+  re-imports; replay of stored materials with the current parsers.
+- **Privacy.** Versioned rules applied at admission, privacy classes, the
+  sealed class with unlock sessions, and a private-mode switch.
+- **Reading.** One query language, search, recall, provenance and read-only
+  SQL, through `sinexctl`, the HTTP API and MCP, all generated from one
+  command table. Committed events are published in commit order on a NATS
+  stream.
+- **Analysis.** Metrics per logical day with coverage, registered methods
+  (correlations, trends, change points, deviations), stored results and a
+  daily brief.
+- **Library.** A media library on the same storage: items, renditions, tags,
+  properties, collections, ratings and pairwise ranking.
+- **NixOS module.** `nix/` holds a NixOS module and its VM tests.
 
 ## Build and test
 
