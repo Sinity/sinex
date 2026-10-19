@@ -1,7 +1,8 @@
 //! Wire types (architecture §2, §7.2): one command table for the CLI, the API
 //! methods and the MCP tools, the requests and replies they carry, and the
 //! producer protocol for the NATS ingress. Depends only on `sinex-model` and
-//! serde.
+//! serde; the `cli` feature adds the command-line parsers both `sinexctl` and
+//! `sinexd admin` build from the table.
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -26,6 +27,8 @@ pub enum ArgKind {
     Bool,
     /// The rest of the command line, joined by spaces: a query, words, a time.
     Rest,
+    /// A repeatable option; its values as a list.
+    List,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -55,6 +58,17 @@ const fn pos(name: &'static str, kind: ArgKind, help: &'static str) -> Arg {
         name,
         kind,
         required: true,
+        positional: true,
+        help,
+    }
+}
+
+/// A positional argument that may be left out.
+const fn pos_opt(name: &'static str, kind: ArgKind, help: &'static str) -> Arg {
+    Arg {
+        name,
+        kind,
+        required: false,
         positional: true,
         help,
     }
@@ -163,27 +177,57 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "replay",
-        summary: "Read stored materials again with current parsers and rules; old readings are archived.",
-        args: &[pos(
-            "scope",
-            ArgKind::Rest,
-            "what to replay: a query over materials or events",
-        )],
+        summary: "Read stored materials again with current parsers and rules; old readings are archived. With no scope, every material.",
+        args: &[
+            opt("material", ArgKind::List, "a material to re-read (repeatable)"),
+            opt("binding", ArgKind::Text, "every material of a binding (`atuin@host`)"),
+            opt("event-type", ArgKind::List, "only readings of this event type (repeatable)"),
+            opt("from", ArgKind::Text, "only readings at or after this time (RFC 3339)"),
+            opt("until", ArgKind::Text, "only readings before this time (RFC 3339)"),
+            opt("compare", ArgKind::Bool, "show what the replay would change and keep nothing"),
+            opt("resume", ArgKind::Text, "continue an interrupted replay operation, skipping the chains it finished"),
+            opt("all", ArgKind::Bool, "list every change, not only the first few of each kind"),
+        ],
         access: Access::Agent,
         mcp: false,
     },
     Command {
         name: "recompute",
-        summary: "Recompute a derivation's outputs, optionally into a comparison lane first.",
+        summary: "Recompute a keyed derivation's outputs. With --compare, compute into the comparison lane and show old against new without writing.",
         args: &[
             pos("derivation", ArgKind::Text, "the derivation"),
             opt(
                 "compare",
                 ArgKind::Bool,
-                "write to a comparison lane and show old against new",
+                "compute into the comparison lane and show old against new",
             ),
+            opt("from", ArgKind::Text, "only keys touched by inputs at or after this time (RFC 3339)"),
+            opt("until", ArgKind::Text, "only keys touched by inputs before this time (RFC 3339)"),
+            opt("examples", ArgKind::Integer, "examples of each kind of difference to show (default 5)"),
         ],
         access: Access::Agent,
+        mcp: false,
+    },
+    Command {
+        name: "comparisons",
+        summary: "Comparisons kept by `recompute --compare`, newest first.",
+        args: &[
+            pos_opt("derivation", ArgKind::Text, "only comparisons of this derivation"),
+            opt("limit", ArgKind::Integer, "how many (default 20)"),
+        ],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "crawl",
+        summary: "Fetch pages from stored browser history whose host is on the allow list and that were not fetched yet (`page.fetched`). Nothing is fetched without an allow list.",
+        args: &[
+            opt("allow", ArgKind::List, "a domain whose pages may be fetched, and its subdomains (repeatable)"),
+            opt("url", ArgKind::List, "fetch these URLs instead of the stored history (repeatable)"),
+            opt("limit", ArgKind::Integer, "fetch at most this many pages"),
+            opt("pause", ArgKind::Integer, "seconds between two requests to the same host (default 2)"),
+        ],
+        access: Access::Operator,
         mcp: false,
     },
     Command {
@@ -202,8 +246,12 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "excise",
-        summary: "Permanently delete an event's every reading; it never comes back by any route.",
-        args: &[pos("reference", ArgKind::Reference, "the event")],
+        summary: "Permanently delete an event's every reading, or a whole material and its bytes; it never comes back by any route.",
+        args: &[
+            pos_opt("reference", ArgKind::Reference, "the event"),
+            opt("material", ArgKind::Text, "a whole material instead of one event"),
+            opt("dry-run", ArgKind::Bool, "report exactly what would be removed, and remove nothing"),
+        ],
         access: Access::Operator,
         mcp: false,
     },
@@ -555,6 +603,9 @@ pub fn command(name: &str) -> Option<&'static Command> {
     COMMANDS.iter().find(|c| c.name == name)
 }
 
+#[cfg(feature = "cli")]
+pub mod cli;
+
 /// One call, as the API and MCP carry it. Built from a command's arguments
 /// with [`Request::from_args`], so every surface makes the same request.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -605,12 +656,49 @@ pub enum Request {
         parser: Option<String>,
     },
     Replay {
-        scope: String,
+        #[serde(default)]
+        material: Vec<String>,
+        #[serde(default)]
+        binding: Option<String>,
+        #[serde(default, rename = "event-type")]
+        event_type: Vec<String>,
+        #[serde(default)]
+        from: Option<String>,
+        #[serde(default)]
+        until: Option<String>,
+        #[serde(default)]
+        compare: Option<bool>,
+        #[serde(default)]
+        resume: Option<String>,
+        #[serde(default)]
+        all: Option<bool>,
     },
     Recompute {
         derivation: String,
         #[serde(default)]
         compare: Option<bool>,
+        #[serde(default)]
+        from: Option<String>,
+        #[serde(default)]
+        until: Option<String>,
+        #[serde(default)]
+        examples: Option<u64>,
+    },
+    Comparisons {
+        #[serde(default)]
+        derivation: Option<String>,
+        #[serde(default)]
+        limit: Option<u64>,
+    },
+    Crawl {
+        #[serde(default)]
+        allow: Vec<String>,
+        #[serde(default)]
+        url: Vec<String>,
+        #[serde(default)]
+        limit: Option<u64>,
+        #[serde(default)]
+        pause: Option<u64>,
     },
     Hide {
         reference: String,
@@ -619,7 +707,16 @@ pub enum Request {
         reference: String,
     },
     Excise {
-        reference: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        material: Option<String>,
+        #[serde(
+            default,
+            rename = "dry-run",
+            skip_serializing_if = "Option::is_none"
+        )]
+        dry_run: Option<bool>,
     },
     Same {
         a: String,
@@ -812,6 +909,8 @@ impl Request {
             Request::Stage { .. } => "stage",
             Request::Replay { .. } => "replay",
             Request::Recompute { .. } => "recompute",
+            Request::Comparisons { .. } => "comparisons",
+            Request::Crawl { .. } => "crawl",
             Request::Hide { .. } => "hide",
             Request::Unhide { .. } => "unhide",
             Request::Excise { .. } => "excise",
@@ -886,68 +985,4 @@ pub use nats::{
 };
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn sample(kind: ArgKind) -> Value {
-        match kind {
-            ArgKind::Text | ArgKind::Rest => json!("x"),
-            ArgKind::Reference => json!("sinex:ev/00000000-0000-7000-8000-000000000000"),
-            ArgKind::Integer => json!(5),
-            ArgKind::Bool => json!(true),
-        }
-    }
-
-    #[test]
-    fn the_table_and_the_requests_agree() {
-        for c in COMMANDS {
-            let all: Map<String, Value> = c
-                .args
-                .iter()
-                .map(|a| (a.name.to_string(), sample(a.kind)))
-                .collect();
-            let r = Request::from_args(c.name, all).unwrap_or_else(|e| panic!("{e}"));
-            assert_eq!(r.method(), c.name);
-            assert_eq!(r.access(), c.access);
-            let required: Map<String, Value> = c
-                .args
-                .iter()
-                .filter(|a| a.required)
-                .map(|a| (a.name.to_string(), sample(a.kind)))
-                .collect();
-            Request::from_args(c.name, required).unwrap_or_else(|e| panic!("{e}"));
-        }
-    }
-
-    #[test]
-    fn requests_have_stable_wire_names() {
-        let r = Request::Excise {
-            reference: "sinex:ev/x".into(),
-        };
-        assert_eq!(
-            serde_json::to_value(&r).unwrap(),
-            json!({"method": "excise", "reference": "sinex:ev/x"})
-        );
-        assert_eq!(r.access(), Access::Operator);
-        assert_eq!(Request::Status.access(), Access::Read);
-    }
-
-    #[test]
-    fn missing_and_unknown_arguments_are_refused() {
-        assert!(
-            Request::from_args("show", Map::new())
-                .unwrap_err()
-                .contains("reference")
-        );
-        let mut extra = Map::new();
-        extra.insert("query".into(), json!("tide"));
-        extra.insert("bogus".into(), json!(1));
-        assert!(Request::from_args("query", extra).is_err());
-        assert!(
-            Request::from_args("nope", Map::new())
-                .unwrap_err()
-                .contains("commands:")
-        );
-    }
-}
+mod tests;

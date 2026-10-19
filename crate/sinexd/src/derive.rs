@@ -293,6 +293,48 @@ impl Driver {
         Ok(keys)
     }
 
+    /// A driver for one operation on one keyed derivation: a recompute or a
+    /// comparison asked for through the command table. It registers nothing
+    /// and starts one run, for that derivation.
+    pub async fn operating(
+        mut read: PgConnection,
+        writer: WriterHandle,
+        name: &str,
+        host: &str,
+    ) -> Result<Self, String> {
+        let d = sinex_automata::keyed()
+            .into_iter()
+            .find(|d| d.name() == name)
+            .ok_or_else(|| format!("no keyed derivation {name}"))?;
+        let version = d.version().to_string();
+        let manifest = runs::Manifest {
+            name: d.name(),
+            kind: "derivation",
+            version: &version,
+            build: option_env!("SINEX_BUILD").unwrap_or("dev"),
+            emits: d.output_types(),
+        };
+        let run = runs::start(&mut read, &manifest, host)
+            .await
+            .map_err(|e| e.to_string())?;
+        let runs = BTreeMap::from([(d.name(), run)]);
+        Ok(Self {
+            keyed: vec![d],
+            per_event: Vec::new(),
+            maintained: Vec::new(),
+            last_maintained: None,
+            blobs: None,
+            ranks: BTreeMap::new(),
+            passes: 0,
+            clock: None,
+            civil: Civil::operator_default(),
+            read,
+            writer,
+            runs,
+            counts: BTreeMap::new(),
+        })
+    }
+
     /// The content store per-event derivations read stored bytes from.
     #[must_use]
     pub fn with_blobs(mut self, blobs: Blobs) -> Self {

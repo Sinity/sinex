@@ -286,66 +286,6 @@ enum Admin {
         #[arg(long)]
         database: String,
     },
-    /// Read stored materials again with the current parsers and rules
-    /// (architecture §5.5).
-    Replay {
-        #[command(flatten)]
-        at: Store,
-        /// A material to re-read; repeat for more.
-        #[arg(long = "material")]
-        materials: Vec<uuid::Uuid>,
-        /// Every material of a binding (`atuin@host`).
-        #[arg(long)]
-        binding: Option<String>,
-        /// Only readings of this event type; repeat for more.
-        #[arg(long = "event-type")]
-        event_types: Vec<String>,
-        /// Only readings at or after this time (RFC 3339).
-        #[arg(long, value_parser = timestamp)]
-        from: Option<sinex_model::Timestamp>,
-        /// Only readings before this time (RFC 3339).
-        #[arg(long, value_parser = timestamp)]
-        until: Option<sinex_model::Timestamp>,
-        /// Show what the replay would change and keep nothing.
-        #[arg(long)]
-        compare: bool,
-        /// Continue an interrupted replay, skipping the chains it finished.
-        #[arg(long, conflicts_with_all = ["materials", "binding", "event_types", "from", "until"])]
-        resume: Option<uuid::Uuid>,
-        /// List every change, not only the first few of each kind.
-        #[arg(long)]
-        all: bool,
-    },
-    /// Take a record's readings out of views, counts and re-imports.
-    Hide {
-        #[command(flatten)]
-        at: Store,
-        #[arg(long)]
-        event: uuid::Uuid,
-    },
-    /// Put a hidden record back.
-    Unhide {
-        #[command(flatten)]
-        at: Store,
-        #[arg(long)]
-        event: uuid::Uuid,
-    },
-    /// Permanently delete a record (or a whole material) and its bytes.
-    Excise {
-        #[command(flatten)]
-        at: Store,
-        #[arg(
-            long,
-            required_unless_present = "material",
-            conflicts_with = "material"
-        )]
-        event: Option<uuid::Uuid>,
-        #[arg(long)]
-        material: Option<uuid::Uuid>,
-        /// Report exactly what would be removed, and remove nothing.
-        #[arg(long)]
-        dry_run: bool,
-    },
     /// Print every source and derivation as JSON, for the NixOS module's
     /// generated options (`nix/catalog.json`).
     Catalog,
@@ -363,76 +303,13 @@ enum Admin {
         #[arg(long = "producer")]
         producers: Vec<String>,
     },
-    /// Recompute a keyed derivation's outputs. With `--compare`, compute into
-    /// the comparison lane and show old against new without writing anything.
-    Recompute {
-        #[arg(long)]
-        database: String,
-        derivation: String,
-        #[arg(long)]
-        compare: bool,
-        /// Only keys touched by inputs at or after this time (RFC 3339).
-        #[arg(long, value_parser = timestamp)]
-        from: Option<sinex_model::Timestamp>,
-        /// Only keys touched by inputs before this time (RFC 3339).
-        #[arg(long, value_parser = timestamp)]
-        until: Option<sinex_model::Timestamp>,
-        /// Examples of each kind of difference to show.
-        #[arg(long, default_value_t = 5)]
-        examples: usize,
-        #[arg(long, default_value = "localhost")]
-        host: String,
-    },
-    /// Comparisons kept by `recompute --compare`, newest first.
-    Comparisons {
-        #[arg(long)]
-        database: String,
-        /// Only comparisons of this derivation.
-        derivation: Option<String>,
-        #[arg(long, default_value_t = 20)]
-        limit: i64,
-    },
-    /// Run a media-library command without the daemon (architecture §6.6):
-    /// `library-add PATH`, `library-item ID`, `library-tag ID TAG`, and the
-    /// rest of `sinexctl`'s `library-*` commands. Positional arguments go in
-    /// the command's order; options as `name=value`.
-    Library {
-        #[command(flatten)]
-        at: Store,
-        #[arg(long, default_value = "localhost")]
-        host: String,
-        command: String,
-        args: Vec<String>,
-    },
-    /// Fetch pages from stored browser history whose host is on the allow
-    /// list and that were not fetched yet (`page.fetched`).
-    Crawl {
-        #[command(flatten)]
-        at: Store,
-        #[arg(long, default_value = "localhost")]
-        host: String,
-        /// A domain whose pages may be fetched (and its subdomains); repeatable.
-        /// Nothing is fetched without one.
-        #[arg(long = "allow")]
-        allow: Vec<String>,
-        /// Fetch these URLs instead of the stored history; repeatable.
-        #[arg(long = "url")]
-        urls: Vec<String>,
-        #[arg(long)]
-        limit: Option<usize>,
-        /// Seconds between two requests to the same host.
-        #[arg(long, default_value_t = 2)]
-        pause: u64,
-    },
-}
-
-#[derive(clap::Args)]
-struct Store {
-    #[arg(long)]
-    database: String,
-    /// Content store directory.
-    #[arg(long)]
-    store: PathBuf,
+    /// Any command of the command table (`replay`, `hide`, `excise`,
+    /// `recompute`, `library-add`, `crawl`, …), run locally against the
+    /// database and content store without the daemon, with the operator's
+    /// access: `sinexd admin <command> [arguments] --database URL --store DIR`.
+    /// It is the same code the daemon's API runs.
+    #[command(external_subcommand)]
+    Table(Vec<String>),
 }
 
 fn timestamp(s: &str) -> Result<sinex_model::Timestamp, String> {
@@ -441,63 +318,14 @@ fn timestamp(s: &str) -> Result<sinex_model::Timestamp, String> {
         .map_err(|e| format!("not an RFC 3339 time: {e}"))
 }
 
-/// Who an admin command acts as, for the operation log.
-const ACTOR: &str = "operator";
-
-async fn hide(at: Store, event: sinex_model::EventId, undo: bool) -> Result<(), String> {
-    let ctx = context::Context::open(&at.database, &at.store).await?;
-    let result = operate::hide(&ctx, event, undo, ACTOR).await;
-    ctx.close().await?;
-    result?;
-    println!("{} {event}", if undo { "unhidden" } else { "hidden" });
-    Ok(())
-}
 
 async fn admin(command: Admin) -> Result<(), String> {
-    use sinex_model::{EventId, MaterialId, OperationId};
-    use sinex_store::excision::Target;
     match command {
+        Admin::Table(args) => admin_table(args).await,
         Admin::Schema { database } => sinex_schema::apply_url(&database)
             .await
             .map(|applied| println!("{applied}"))
             .map_err(|e| e.to_string()),
-        Admin::Replay {
-            at,
-            materials,
-            binding,
-            event_types,
-            from,
-            until,
-            compare,
-            resume,
-            all,
-        } => {
-            let mut ctx = context::Context::open(&at.database, &at.store).await?;
-            let report = replay::run(
-                &mut ctx,
-                replay::Options {
-                    scope: replay::Scope {
-                        materials,
-                        binding,
-                        event_types: (!event_types.is_empty()).then_some(event_types),
-                        from,
-                        until,
-                    },
-                    compare,
-                    resume: resume.map(OperationId),
-                    actor: ACTOR.into(),
-                },
-            )
-            .await;
-            ctx.close().await?;
-            let report = report?;
-            if compare {
-                println!("compare only: nothing was changed");
-            }
-            println!("{report}");
-            print!("{}", replay::describe(&report.diff, all));
-            Ok(())
-        }
         Admin::Catalog => {
             print!("{}", catalog::render());
             Ok(())
@@ -535,169 +363,73 @@ async fn admin(command: Admin) -> Result<(), String> {
             );
             Ok(())
         }
-        Admin::Crawl {
-            at,
-            host,
-            allow,
-            urls,
-            limit,
-            pause,
-        } => {
-            let mut ctx = context::Context::open(&at.database, &at.store).await?;
-            let t = crawl::run(
-                &mut ctx,
-                &host,
-                allow,
-                urls,
-                limit,
-                std::time::Duration::from_secs(pause),
-            )
-            .await?;
-            println!("crawl  {t}");
-            Ok(())
-        }
-        Admin::Library {
-            at,
-            host,
-            command,
-            args,
-        } => {
-            let spec = sinex_protocol::command(&command)
-                .filter(|c| c.name.starts_with("library-"))
-                .ok_or_else(|| format!("no library command `{command}`"))?;
-            let mut map = serde_json::Map::new();
-            let mut positional = spec.args.iter().filter(|a| a.positional);
-            for arg in args {
-                let (name, value) = match arg.split_once('=') {
-                    Some((n, v)) if spec.args.iter().any(|a| a.name == n) => {
-                        (n.to_owned(), v.to_owned())
-                    }
-                    _ => {
-                        let a = positional.next().ok_or_else(|| {
-                            format!("`{command}` takes no more positional arguments: {arg}")
-                        })?;
-                        (a.name.to_owned(), arg)
-                    }
-                };
-                let kind = spec.args.iter().find(|a| a.name == name).map(|a| a.kind);
-                let value = match kind {
-                    Some(sinex_protocol::ArgKind::Bool) => serde_json::Value::Bool(value == "true"),
-                    _ => serde_json::Value::String(value),
-                };
-                map.insert(name, value);
-            }
-            let request = sinex_protocol::Request::from_args(&command, map)?;
-            let mut ctx = context::Context::open(&at.database, &at.store).await?;
-            let writer = ctx.writer.clone();
-            let blobs = ctx.blobs.clone();
-            let result =
-                library::dispatch(&mut ctx.aux, Some(&writer), &blobs, &host, request, ACTOR).await;
-            drop(writer);
-            ctx.close().await?;
+    }
+}
+
+/// Run one command-table command locally: the daemon's API, built over a
+/// local writer, called with the operator's access.
+async fn admin_table(args: Vec<String>) -> Result<(), String> {
+    use clap::{Arg, value_parser};
+    let name = args.first().ok_or("admin needs a command")?;
+    let spec = sinex_protocol::command(name).ok_or_else(|| {
+        let names: Vec<&str> = sinex_protocol::COMMANDS.iter().map(|c| c.name).collect();
+        format!("no command `{name}`; commands: {}", names.join(", "))
+    })?;
+    let matches = sinex_protocol::cli::subcommand(spec)
+        .arg(Arg::new("database").long("database").required(true))
+        .arg(
+            Arg::new("store")
+                .long("store")
+                .required(true)
+                .value_parser(value_parser!(PathBuf)),
+        )
+        .arg(Arg::new("host").long("host").default_value("localhost"))
+        .arg(Arg::new("zone").long("zone"))
+        .arg(Arg::new("day-start").long("day-start").default_value("04:00"))
+        .try_get_matches_from(&args)
+        .map_err(|e| e.to_string())?;
+    let request = sinex_protocol::Request::from_args(
+        name,
+        sinex_protocol::cli::arguments(spec, &matches),
+    )?;
+    let database: &String = matches.get_one("database").expect("required");
+    let store: &PathBuf = matches.get_one("store").expect("required");
+    let host: &String = matches.get_one("host").expect("defaulted");
+    let zone = match matches.get_one::<String>("zone") {
+        Some(name) => jiff::tz::TimeZone::get(name).map_err(|e| format!("zone {name}: {e}"))?,
+        None => jiff::tz::TimeZone::system(),
+    };
+    let day_start: &String = matches.get_one("day-start").expect("defaulted");
+    let day_start = sinex_model::query::time::clock(day_start)
+        .ok_or_else(|| format!("day start `{day_start}` is not a clock time like 04:00"))?;
+    let ctx = context::Context::open(database, store).await?;
+    let reads = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect(database)
+        .await
+        .map_err(|e| e.to_string())?;
+    let local = api::Api {
+        reads,
+        writer: Some(ctx.writer.clone()),
+        blobs: ctx.blobs.clone(),
+        zone,
+        day_start,
+        agent_grants: Vec::new(),
+        unlock: Default::default(),
+        host: host.clone(),
+    };
+    let reply = local.call(request, sinex_protocol::Access::Operator).await;
+    drop(local);
+    ctx.close().await?;
+    match reply {
+        sinex_protocol::Reply::Ok { result } => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&result?).expect("JSON values print")
+                serde_json::to_string_pretty(&result).expect("JSON values print")
             );
             Ok(())
         }
-        Admin::Hide { at, event } => hide(at, EventId(event), false).await,
-        Admin::Unhide { at, event } => hide(at, EventId(event), true).await,
-        Admin::Excise {
-            at,
-            event,
-            material,
-            dry_run,
-        } => {
-            let target = match (event, material) {
-                (Some(e), _) => Target::Event(EventId(e)),
-                (None, Some(m)) => Target::Material(MaterialId(m)),
-                (None, None) => unreachable!("clap requires one"),
-            };
-            let mut ctx = context::Context::open(&at.database, &at.store).await?;
-            let result = if dry_run {
-                operate::plan(&mut ctx, target)
-                    .await
-                    .map(|plan| format!("dry run: {}", operate::describe(&plan)))
-            } else {
-                operate::excise(&mut ctx, target, ACTOR).await
-            };
-            ctx.close().await?;
-            println!("{}", result?);
-            Ok(())
-        }
-        Admin::Recompute {
-            database,
-            derivation,
-            compare,
-            from,
-            until,
-            examples,
-            host,
-        } => {
-            let range = (from.is_some() || until.is_some()).then(|| {
-                (
-                    from.unwrap_or(sinex_model::Timestamp(time::OffsetDateTime::UNIX_EPOCH)),
-                    until.unwrap_or_else(sinex_model::Timestamp::now),
-                )
-            });
-            let (mut driver, writer_task) = local_driver(&database, &host, None).await?;
-            let result = if compare {
-                driver
-                    .compare(&derivation, range, examples)
-                    .await
-                    .map(|cmp| cmp.to_string())
-            } else {
-                driver
-                    .recompute_all(&derivation, range)
-                    .await
-                    .map(|n| format!("{derivation}: {n} keys marked for recompute\n"))
-            };
-            driver.end_runs().await?;
-            drop(driver);
-            writer_task.await.map_err(|e| e.to_string())?;
-            print!("{}", result?);
-            Ok(())
-        }
-        Admin::Comparisons {
-            database,
-            derivation,
-            limit,
-        } => {
-            use sqlx::Connection;
-            let mut conn = sqlx::PgConnection::connect(&database)
-                .await
-                .map_err(|e| e.to_string())?;
-            let kept = sinex_store::derived::comparisons(&mut conn, derivation.as_deref(), limit)
-                .await
-                .map_err(|e| e.to_string())?;
-            let show = |t: sinex_model::Timestamp| {
-                t.0.format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default()
-            };
-            for c in kept {
-                let range = match c.range {
-                    Some((from, until)) => format!(
-                        " | inputs {} .. {}",
-                        from.map_or("start".into(), show),
-                        until.map_or("now".into(), show)
-                    ),
-                    None => String::new(),
-                };
-                println!(
-                    "{} {} v{} at {}{range}: keys {} | unchanged {} | added {} | changed {} | removed {}",
-                    c.id,
-                    c.derivation,
-                    c.version,
-                    show(c.made_at),
-                    c.keys,
-                    c.unchanged,
-                    c.added,
-                    c.changed,
-                    c.removed
-                );
-            }
-            Ok(())
-        }
+        sinex_protocol::Reply::Refused { reason, .. } => Err(reason),
     }
 }
 

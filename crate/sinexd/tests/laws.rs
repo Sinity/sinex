@@ -602,7 +602,7 @@ async fn l18_hidden_stays_hidden_across_replay_and_reimport() {
     .fetch_one(&mut c)
     .await
     .unwrap();
-    t.admin(&["hide", "--event", &id.to_string()]);
+    t.admin(&["hide", &id.to_string()]);
     assert_eq!(visible_a3(&mut c).await, 0);
     t.admin(&["replay", "--binding", &format!("atuin@{HOST}")]);
     assert_eq!(visible_a3(&mut c).await, 0, "replay brought it back");
@@ -611,7 +611,7 @@ async fn l18_hidden_stays_hidden_across_replay_and_reimport() {
     std::fs::copy(&path, &copy).unwrap();
     t.backfill(None, Some(&copy));
     assert_eq!(visible_a3(&mut c).await, 0, "re-import brought it back");
-    t.admin(&["unhide", "--event", &id.to_string()]);
+    t.admin(&["unhide", &id.to_string()]);
     t.admin(&["replay", "--binding", &format!("atuin@{HOST}")]);
     assert_eq!(visible_a3(&mut c).await, 1);
     consistent(&mut c).await;
@@ -649,7 +649,7 @@ async fn l23_dry_runs_change_nothing_and_shared_bytes_survive() {
             .fetch_one(&mut c)
             .await
             .unwrap();
-    t.admin(&["excise", "--event", &victim.to_string(), "--dry-run"]);
+    t.admin(&["excise", &victim.to_string(), "--dry-run"]);
     assert_eq!(
         live(&mut c).await,
         before,
@@ -660,7 +660,7 @@ async fn l23_dry_runs_change_nothing_and_shared_bytes_survive() {
         events
     );
 
-    t.admin(&["excise", "--event", &victim.to_string()]);
+    t.admin(&["excise", &victim.to_string()]);
     for blob in shared {
         let still: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE blob = $1")
             .bind(&blob)

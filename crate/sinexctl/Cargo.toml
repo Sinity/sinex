@@ -7,7 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
-sinex-protocol.workspace = true
+sinex-protocol = { workspace = true, features = ["cli"] }
 sinex-offline.workspace = true
 clap.workspace = true
 serde_json.workspace = true

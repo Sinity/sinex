@@ -14,7 +14,7 @@ sinex-sources.workspace = true
 sinex-library.workspace = true
 sinex-automata.workspace = true
 sinex-analysis.workspace = true
-sinex-protocol.workspace = true
+sinex-protocol = { workspace = true, features = ["cli"] }
 serde_json.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["net"] }

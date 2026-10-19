@@ -122,7 +122,7 @@ impl Target {
     }
 
     fn excise(&self, event: &str) -> Command {
-        self.sinexd(&["admin", "excise", "--event", event])
+        self.sinexd(&["admin", "excise", event])
     }
 
     async fn connect(&self) -> PgConnection {
