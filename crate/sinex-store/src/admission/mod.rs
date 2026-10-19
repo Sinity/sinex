@@ -20,8 +20,8 @@
 use crate::{Error, Result, privacy, stage};
 use serde_json::Value;
 use sinex_model::{
-    ArchiveRequest, Batch, BatchKind, Event, EventId, InputId, ObservationId, OperationId,
-    RecordOutcome, ReplayScope, RevisionChange, RevisionId, SourceProgress, Timestamp,
+    ArchiveRequest, Batch, BatchKind, Class, Event, EventId, InputId, ObservationId, OperationId,
+    Origin, RecordOutcome, ReplayScope, RevisionChange, RevisionId, SourceProgress, Timestamp,
 };
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -114,10 +114,47 @@ pub async fn admit(
     // Privacy rules apply once, here; reads never apply a rule again.
     let mut events: Vec<Event> = batch.events().cloned().collect();
     if !events.is_empty() {
+        // A derived event is never below the highest class of its parents
+        // (spec `privacy.md` §4), so derivation cannot launder a class away.
+        let parents: Vec<Uuid> = events
+            .iter()
+            .filter_map(|e| match &e.origin {
+                Origin::Derived { parents } => Some(parents.iter().map(|p| p.0)),
+                Origin::Record { .. } => None,
+            })
+            .flatten()
+            .collect();
+        if !parents.is_empty() {
+            let classes: std::collections::HashMap<Uuid, Class> = sqlx::query!(
+                "SELECT id, class FROM core.events WHERE id = ANY($1)",
+                &parents
+            )
+            .fetch_all(&mut *conn)
+            .await?
+            .into_iter()
+            .map(|r| Ok((r.id, privacy::parse_class(&r.class)?)))
+            .collect::<Result<_>>()?;
+            for event in &mut events {
+                if let Origin::Derived { parents } = &event.origin {
+                    for p in parents {
+                        if let Some(&c) = classes.get(&p.0) {
+                            event.class = event.class.max(c);
+                        }
+                    }
+                }
+            }
+        }
         let rules = privacy::load(conn, events.iter().map(|e| e.source.as_str())).await?;
         for event in &mut events {
-            privacy::apply(&rules, event)?;
+            rules.apply(event)?;
         }
+        sqlx::query!(
+            "UPDATE core.runs SET privacy_rules_seq = $2 WHERE id = $1 AND privacy_rules_seq IS DISTINCT FROM $2",
+            batch.run.0,
+            rules.seq
+        )
+        .execute(&mut *conn)
+        .await?;
     }
 
     if !events.is_empty() {
@@ -945,3 +982,6 @@ pub(crate) async fn remove_live(conn: &mut PgConnection, ids: &[Uuid]) -> Result
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod privacy_tests;

@@ -50,6 +50,7 @@ impl Tokens {
         })
     }
 
+    #[cfg(test)]
     pub fn new(read: Option<String>, agent: Option<String>, operator: Option<String>) -> Self {
         Self {
             read,
@@ -74,6 +75,35 @@ impl Tokens {
             None
         }
     }
+}
+
+/// The classes the operator granted the agent token, from `agent.grants` in
+/// the tokens directory (one class per line or comma-separated). Only
+/// `guarded` can be granted: the agent token never reads sealed data (spec
+/// `privacy.md` §4), so a `sealed` line is refused rather than ignored.
+pub fn agent_grants(dir: &Path) -> std::io::Result<Vec<sinex_model::Class>> {
+    let text = match std::fs::read_to_string(dir.join("agent.grants")) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut out = Vec::new();
+    for word in text
+        .split([',', '\n'])
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+    {
+        match word {
+            "guarded" => out.push(sinex_model::Class::Guarded),
+            "open" => {}
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "agent.grants: `{other}` cannot be granted to the agent token (only `guarded`)"
+                )));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Compare without stopping at the first difference.
@@ -158,7 +188,7 @@ async fn call(
     Json(request): Json<Request>,
 ) -> Response {
     match authorize(&state, &headers, request.access()) {
-        Ok(granted) => Json(state.api.call(request, actor(granted)).await).into_response(),
+        Ok(granted) => Json(state.api.call(request, granted).await).into_response(),
         Err(r) => r,
     }
 }
@@ -198,9 +228,11 @@ async fn follow(
     headers: HeaderMap,
     UrlQuery(params): UrlQuery<FollowParams>,
 ) -> Response {
-    if let Err(r) = authorize(&state, &headers, Access::Read) {
-        return r;
-    }
+    let granted = match authorize(&state, &headers, Access::Read) {
+        Ok(g) => g,
+        Err(r) => return r,
+    };
+    let caller = state.api.caller(granted);
     let ctx = state.api.context();
     let bound = match query::bind(&params.query, &ctx) {
         Ok(q) => q,
@@ -287,7 +319,7 @@ async fn follow(
                 cursor: None,
             };
             loop {
-                let Ok(mut conn) = api.reads.acquire().await else {
+                let Ok(mut conn) = api.acquire(&caller).await else {
                     return;
                 };
                 let answer = match sinex_store::query::run(

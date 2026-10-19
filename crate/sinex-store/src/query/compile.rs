@@ -387,7 +387,8 @@ impl<'c> Compiler<'c> {
 
     fn words(&self, cols: &Cols, w: &Words) -> Result<Frag> {
         let id = Self::id_of(cols)?;
-        let mut out = Frag::text("EXISTS (SELECT 1 FROM core.search_text s WHERE s.event_id = ");
+        let mut out =
+            Frag::text("EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ");
         out.append(id).push(" AND ");
         if w.prefix {
             let mut pattern = String::from("(^| )");
@@ -550,7 +551,7 @@ impl<'c> Compiler<'c> {
         f.param(V::String(Some(words.join(" "))))
             .push(Self::template(
                 cols,
-                ")) FROM core.search_text s WHERE s.event_id = {t}.id)",
+                ")) FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
             ));
         f
     }
@@ -559,7 +560,7 @@ impl<'c> Compiler<'c> {
         let mut f = Frag::text("(SELECT ts_headline('simple', s.text, plainto_tsquery('simple', ");
         f.param(V::String(Some(words.join(" ")))).push(Self::template(
             cols,
-            "), 'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') FROM core.search_text s WHERE s.event_id = {t}.id)",
+            "), 'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
         ));
         f
     }

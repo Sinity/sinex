@@ -292,7 +292,15 @@ async fn drive(
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
     let started = Instant::now();
+    let private = sinex_protocol::private_mode::PrivateMode::default();
     loop {
+        // Private mode: capture nothing, and say so rather than report a gap.
+        if private.on() {
+            return Err(format!(
+                "private mode is on ({}); nothing was read",
+                private.path().display()
+            ));
+        }
         let (cursor, carry) = positions::load(aux, binding)
             .await
             .map_err(|e| e.to_string())?

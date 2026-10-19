@@ -43,7 +43,8 @@ pub struct Options {
 pub struct ApiOptions {
     pub socket: PathBuf,
     pub listen: Option<std::net::SocketAddr>,
-    /// Directory holding `read.token`, `agent.token` and `operator.token`.
+    /// Directory holding `read.token`, `agent.token` and `operator.token`,
+    /// and optionally `agent.grants` (classes the agent token may read).
     pub tokens: PathBuf,
     pub zone: jiff::tz::TimeZone,
     pub day_start: jiff::civil::Time,
@@ -140,6 +141,8 @@ pub async fn run(o: Options) -> Result<(), String> {
         blobs: blobs.clone(),
         zone: o.api.zone.clone(),
         day_start: o.api.day_start,
+        agent_grants: api::agent_grants(&o.api.tokens)
+            .map_err(|e| format!("{}: {e}", o.api.tokens.display()))?,
     };
     let config = api::Config {
         socket: o.api.socket.clone(),

@@ -116,7 +116,13 @@ async fn run(cli: Cli) -> Result<(), String> {
     if bindings.is_empty() {
         return Err("nothing to capture: pass --journald and/or --watch".into());
     }
+    let private = sinex_protocol::private_mode::PrivateMode::default();
     loop {
+        // Private mode: capture nothing until it is off again.
+        if private.on() {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        }
         for (source, binding, driver) in &bindings {
             loop {
                 let position = Position::load(&positions, binding).map_err(|e| e.to_string())?;

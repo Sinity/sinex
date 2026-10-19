@@ -3748,9 +3748,11 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "devkit",
+ "getrandom 0.3.4",
  "hashed-blobs",
  "jiff",
  "proptest",
+ "regex",
  "sea-query",
  "serde",
  "serde_json",

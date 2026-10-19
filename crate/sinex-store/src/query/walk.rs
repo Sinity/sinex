@@ -111,7 +111,7 @@ pub async fn show(conn: &mut PgConnection, reference: &Reference) -> Result<Json
                THEN 'sinex:occ/' || e.material_id || '/' || e.anchor || '/' || e.event_type || '/' || e.ordinal
                ELSE 'sinex:ev/' || e.id END,
              'payload', e.payload) AS "row!"
-           FROM core.events e
+           FROM core.visible_events e
            LEFT JOIN audit.archived a ON a.event_id = e.id
            LEFT JOIN core.runs r ON r.id = e.run_id
            LEFT JOIN raw.materials m ON m.id = e.material_id
@@ -137,9 +137,9 @@ pub(crate) async fn walk(
                      'id', e.id, 'kind', e.event_type, 'source', e.source, 'when', e.ts_orig,
                      'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
                      'material', e.material_id, 'anchor', e.anchor, 'payload', e.payload) AS "row!"
-                   FROM core.events c
+                   FROM core.visible_events c
                    CROSS JOIN LATERAL unnest(c.parents) AS p(id)
-                   JOIN core.events e ON e.id = p.id
+                   JOIN core.visible_events e ON e.id = p.id
                    LEFT JOIN audit.archived a ON a.event_id = e.id
                    WHERE c.id = $1
                    ORDER BY e.ts_orig NULLS LAST, e.id"#,
@@ -151,9 +151,9 @@ pub(crate) async fn walk(
         Walk::Descendants => {
             sqlx::query_scalar!(
                 r#"WITH RECURSIVE d(id, depth) AS (
-                     SELECT e.id, 1 FROM core.events e WHERE e.parents @> ARRAY[$1::uuid]
+                     SELECT e.id, 1 FROM core.visible_events e WHERE e.parents @> ARRAY[$1::uuid]
                      UNION
-                     SELECT e.id, d.depth + 1 FROM d JOIN core.events e ON e.parents @> ARRAY[d.id]
+                     SELECT e.id, d.depth + 1 FROM d JOIN core.visible_events e ON e.parents @> ARRAY[d.id]
                      WHERE d.depth < $2
                    ), first AS (SELECT id, min(depth) AS depth FROM d GROUP BY id)
                    SELECT jsonb_build_object(
@@ -162,7 +162,7 @@ pub(crate) async fn walk(
                      'state', CASE WHEN a.event_id IS NULL THEN 'live' ELSE 'archived' END,
                      'depth_bound_reached', f.depth >= $2,
                      'payload', e.payload) AS "row!"
-                   FROM first f JOIN core.events e ON e.id = f.id
+                   FROM first f JOIN core.visible_events e ON e.id = f.id
                    LEFT JOIN audit.archived a ON a.event_id = e.id
                    ORDER BY f.depth, e.ts_orig NULLS LAST, e.id"#,
                 id,
@@ -177,7 +177,7 @@ pub(crate) async fn walk(
                      SELECT $1::uuid, 0
                      UNION
                      SELECT p.id, up.depth + 1 FROM up
-                     JOIN core.events e ON e.id = up.id
+                     JOIN core.visible_events e ON e.id = up.id
                      CROSS JOIN LATERAL unnest(e.parents) AS p(id)
                      WHERE up.depth < $2
                    ), first AS (SELECT id, min(depth) AS depth FROM up GROUP BY id)
@@ -194,7 +194,7 @@ pub(crate) async fn walk(
                      'run', e.run_id, 'producer', r.name,
                      'depth_bound_reached', f.depth >= $2,
                      'payload', e.payload) AS "row!"
-                   FROM first f JOIN core.events e ON e.id = f.id
+                   FROM first f JOIN core.visible_events e ON e.id = f.id
                    LEFT JOIN audit.archived a ON a.event_id = e.id
                    LEFT JOIN raw.materials m ON m.id = e.material_id
                    LEFT JOIN core.runs r ON r.id = e.run_id

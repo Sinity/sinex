@@ -472,7 +472,7 @@ async fn read_only_sql_reads_and_cannot_write() {
     world(&mut conn).await;
     let rows = read_sql::run(
         &mut conn,
-        "SELECT event_type, count(*) AS n FROM core.events GROUP BY 1 ORDER BY 1;",
+        "SELECT event_type, count(*) AS n FROM core.visible_events GROUP BY 1 ORDER BY 1;",
     )
     .await
     .unwrap();
@@ -482,7 +482,7 @@ async fn read_only_sql_reads_and_cannot_write() {
         .unwrap_err();
     assert!(!e.to_string().is_empty());
     assert_eq!(
-        read_sql::run(&mut conn, "SELECT count(*) AS n FROM core.events")
+        read_sql::run(&mut conn, "SELECT count(*) AS n FROM core.visible_events")
             .await
             .unwrap()[0],
         json!({"n": 10})

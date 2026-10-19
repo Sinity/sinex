@@ -10,8 +10,8 @@ use sinex_model::query::Unit;
 /// The `FROM` clause of a unit, with `{t}` (and `{a}`) for its aliases.
 pub(crate) fn from(unit: Unit) -> &'static str {
     match unit {
-        Unit::Events => "core.events {t}",
-        Unit::Archive => "core.events {t} JOIN audit.archived {a} ON {a}.event_id = {t}.id",
+        Unit::Events => "core.visible_events {t}",
+        Unit::Archive => "core.visible_events {t} JOIN audit.archived {a} ON {a}.event_id = {t}.id",
         Unit::Materials => {
             "raw.materials {t} LEFT JOIN raw.inputs {t}_i ON {t}_i.id = {t}.input_id \
              LEFT JOIN raw.revisions {t}_v ON {t}_v.id = {t}.revision_id"
@@ -69,7 +69,7 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
             "parents" => "{t}.parents",
             "producer" => "(SELECT r.name FROM core.runs r WHERE r.id = {t}.run_id)",
             "run" => "{t}.run_id",
-            "text" => "(SELECT s.text FROM core.search_text s WHERE s.event_id = {t}.id)",
+            "text" => "(SELECT s.text FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
             "key" => "{t}.equivalence_key",
             "class" => "{t}.class",
             "state" => "{t}.record_state",

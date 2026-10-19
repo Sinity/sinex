@@ -6,7 +6,8 @@ use crate::writer::{Priority, WriterHandle};
 use serde_json::{Value, json};
 use sinex_model::query::{self, Context, QueryError};
 use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, OperationId, RunId};
-use sinex_protocol::{DATA_NOTICE, Reply, Request};
+use sinex_protocol::{Access, DATA_NOTICE, Reply, Request};
+use sinex_store::privacy;
 use sinex_store::query::{Answer, Page};
 use sqlx::PgPool;
 
@@ -19,7 +20,20 @@ pub struct Api {
     pub blobs: sinex_store::Blobs,
     pub zone: jiff::tz::TimeZone,
     pub day_start: jiff::civil::Time,
+    /// Classes the agent token is granted besides `open` (`guarded` only by
+    /// the operator's explicit grant; never `sealed`).
+    pub agent_grants: Vec<sinex_model::Class>,
 }
+
+/// Who is calling: the actor recorded on writes and the classes whose values
+/// they may read.
+#[derive(Clone, Debug)]
+pub struct Caller {
+    pub actor: &'static str,
+    pub grants: String,
+}
+
+type Conn = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
 fn refused(reason: impl Into<String>) -> Reply {
     Reply::Refused {
@@ -45,13 +59,50 @@ fn data(result: Value) -> Reply {
 }
 
 impl Api {
+    /// The caller for a token's access. The operator token holds `guarded`;
+    /// the agent token what the operator granted it; the read token nothing.
+    pub fn caller(&self, access: Access) -> Caller {
+        let (actor, grants): (&'static str, Vec<&str>) = match access {
+            Access::Read => ("reader", vec![]),
+            Access::Agent => (
+                "agent",
+                self.agent_grants
+                    .iter()
+                    .filter(|c| **c == sinex_model::Class::Guarded)
+                    .map(|_| "guarded")
+                    .collect(),
+            ),
+            Access::Operator => ("operator", vec!["guarded"]),
+        };
+        Caller {
+            actor,
+            grants: grants.join(","),
+        }
+    }
+
+    /// A read connection that sees only what `caller` may (the visibility
+    /// views read `sinex.grants`).
+    pub async fn acquire(&self, caller: &Caller) -> Result<Conn, sqlx::Error> {
+        let mut conn = self.reads.acquire().await?;
+        sqlx::query_scalar!(
+            "SELECT set_config('sinex.grants', $1, false)",
+            caller.grants
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        Ok(conn)
+    }
+
     pub fn context(&self) -> Context {
         Context::new(jiff::Timestamp::now(), self.zone.clone(), self.day_start)
     }
 
-    pub async fn call(&self, request: Request, actor: &str) -> Reply {
+    pub async fn call(&self, request: Request, access: Access) -> Reply {
+        let caller = self.caller(access);
+        let actor = caller.actor;
+        let caller = &caller;
         match request {
-            Request::Status => match self.status().await {
+            Request::Status => match self.status(caller).await {
                 Ok(v) => Reply::Ok { result: v },
                 Err(e) => refused(e.to_string()),
             },
@@ -59,13 +110,17 @@ impl Api {
                 query,
                 page,
                 cursor,
-            } => self.query(&query, Page { size: page, cursor }).await,
+            } => {
+                self.query(caller, &query, Page { size: page, cursor })
+                    .await
+            }
             Request::Search {
                 words,
                 page,
                 cursor,
             } => {
                 self.query(
+                    caller,
                     &format!("events where {words}"),
                     Page { size: page, cursor },
                 )
@@ -80,18 +135,22 @@ impl Api {
                     Some(a) if !a.is_empty() => format!("recall {a}"),
                     _ => "recall".to_string(),
                 };
-                self.query(&text, Page { size: page, cursor }).await
+                self.query(caller, &text, Page { size: page, cursor }).await
             }
             Request::Trace {
                 reference,
                 page,
                 cursor,
             } => {
-                self.query(&format!("trace {reference}"), Page { size: page, cursor })
-                    .await
+                self.query(
+                    caller,
+                    &format!("trace {reference}"),
+                    Page { size: page, cursor },
+                )
+                .await
             }
             Request::Sql { sql } => {
-                let mut conn = match self.reads.acquire().await {
+                let mut conn = match self.acquire(caller).await {
                     Ok(c) => c,
                     Err(e) => return refused(e.to_string()),
                 };
@@ -105,7 +164,7 @@ impl Api {
                     Ok(r) => r,
                     Err(e) => return query_refusal(&reference, e),
                 };
-                let mut conn = match self.reads.acquire().await {
+                let mut conn = match self.acquire(caller).await {
                     Ok(c) => c,
                     Err(e) => return refused(e.to_string()),
                 };
@@ -115,18 +174,18 @@ impl Api {
                 }
             }
             Request::Hide { reference } => {
-                self.archive(&reference, actor, |target, operation| {
+                self.archive(caller, &reference, actor, |target, operation| {
                     ArchiveRequest::Hide { target, operation }
                 })
                 .await
             }
             Request::Unhide { reference } => {
-                self.archive(&reference, actor, |target, operation| {
+                self.archive(caller, &reference, actor, |target, operation| {
                     ArchiveRequest::Unhide { target, operation }
                 })
                 .await
             }
-            Request::Excise { reference } => self.excise(&reference, actor).await,
+            Request::Excise { reference } => self.excise(caller, &reference, actor).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
             Request::Stage { .. } => not_built(
                 "stage needs the staging path of the source framework, which this daemon does not run yet (architecture §5.4)",
@@ -143,16 +202,123 @@ impl Api {
             Request::Mark { .. } => not_built(
                 "moment marks need the operator.mark event type, not registered yet (architecture §7.2)",
             ),
+            Request::PrivacyRules { history } => {
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                match privacy::list_rules(&mut conn, history.unwrap_or(false)).await {
+                    Ok(rows) => Reply::Ok {
+                        result: json!({ "total": rows.len(), "rules": rows }),
+                    },
+                    Err(e) => refused(e.to_string()),
+                }
+            }
+            Request::PrivacyRule {
+                name,
+                source,
+                event_type,
+                field,
+                matcher,
+                pattern,
+                class,
+                action,
+            } => {
+                let class = match privacy::parse_class(class.as_deref().unwrap_or("open")) {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                let action = match privacy::Action::parse(action.as_deref().unwrap_or("mask")) {
+                    Ok(a) => a,
+                    Err(e) => return refused(e.to_string()),
+                };
+                let rule = privacy::NewRule {
+                    name,
+                    source,
+                    event_type,
+                    field,
+                    matcher: matcher.unwrap_or_else(|| "all".into()),
+                    matcher_arg: pattern,
+                    class,
+                    action,
+                    author: actor.to_string(),
+                };
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                match privacy::add_rule(&mut conn, &rule).await {
+                    Ok(seq) => Reply::Ok {
+                        result: json!({ "rule": rule.name, "seq": seq,
+                            "applies": "to new readings; replay the source to apply it to stored readings" }),
+                    },
+                    Err(e) => refused(e.to_string()),
+                }
+            }
+            Request::PrivacyEnd { name } => {
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                match privacy::end_rule(&mut conn, &name, actor).await {
+                    Ok(seq) => Reply::Ok {
+                        result: json!({ "rule": name, "ended": true, "seq": seq }),
+                    },
+                    Err(e) => refused(e.to_string()),
+                }
+            }
+            Request::PrivacyClass { source, class } => {
+                let class = match privacy::parse_class(&class) {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                if actor != "operator" {
+                    let current =
+                        match privacy::load(&mut conn, std::iter::once(source.as_str())).await {
+                            Ok(set) => set.floors.get(&source).copied().unwrap_or_default(),
+                            Err(e) => return refused(e.to_string()),
+                        };
+                    if class < current {
+                        return refused(format!(
+                            "{source}'s floor is {}; lowering it weakens protection, which only the operator token may do",
+                            privacy::class_name(current)
+                        ));
+                    }
+                }
+                match privacy::set_source_class(&mut conn, &source, class, actor).await {
+                    Ok(seq) => Reply::Ok {
+                        result: json!({ "source": source, "class": privacy::class_name(class), "seq": seq,
+                            "applies": "to new readings; replay the source to raise stored readings" }),
+                    },
+                    Err(e) => refused(e.to_string()),
+                }
+            }
+            Request::PrivacyVerify => {
+                let mut conn = match self.acquire(caller).await {
+                    Ok(c) => c,
+                    Err(e) => return refused(e.to_string()),
+                };
+                match privacy::verify_classes(&mut conn).await {
+                    Ok(v) => Reply::Ok {
+                        result: serde_json::to_value(v).expect("verification serializes"),
+                    },
+                    Err(e) => refused(e.to_string()),
+                }
+            }
         }
     }
 
-    async fn query(&self, text: &str, page: Page) -> Reply {
+    async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
         let ctx = self.context();
         let bound = match query::bind(text, &ctx) {
             Ok(q) => q,
             Err(e) => return query_refusal(text, e),
         };
-        let mut conn = match self.reads.acquire().await {
+        let mut conn = match self.acquire(caller).await {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
         };
@@ -165,6 +331,7 @@ impl Api {
     /// Hide, unhide or excise the event a citation names, through the writer.
     async fn archive(
         &self,
+        caller: &Caller,
         reference: &str,
         actor: &str,
         request: impl FnOnce(EventId, OperationId) -> ArchiveRequest,
@@ -177,7 +344,7 @@ impl Api {
             Err(e) => return query_refusal(reference, e),
         };
         let id = {
-            let mut conn = match self.reads.acquire().await {
+            let mut conn = match self.acquire(caller).await {
                 Ok(c) => c,
                 Err(e) => return refused(e.to_string()),
             };
@@ -204,7 +371,7 @@ impl Api {
     }
 
     /// Excise the record a citation names, with its bytes (architecture §3.4).
-    async fn excise(&self, reference: &str, actor: &str) -> Reply {
+    async fn excise(&self, caller: &Caller, reference: &str, actor: &str) -> Reply {
         let Some(writer) = &self.writer else {
             return refused("this daemon has no writer; writes go through `sinexd run`");
         };
@@ -212,7 +379,7 @@ impl Api {
             Ok(r) => r,
             Err(e) => return query_refusal(reference, e),
         };
-        let mut conn = match self.reads.acquire().await {
+        let mut conn = match self.acquire(caller).await {
             Ok(c) => c,
             Err(e) => return refused(e.to_string()),
         };
@@ -229,8 +396,8 @@ impl Api {
         }
     }
 
-    async fn status(&self) -> Result<Value, sqlx::Error> {
-        let mut conn = self.reads.acquire().await?;
+    async fn status(&self, caller: &Caller) -> Result<Value, sqlx::Error> {
+        let mut conn = self.acquire(caller).await?;
         let row = sqlx::query!(
             r#"SELECT
                  (SELECT value FROM core.counters WHERE name = 'commit_seq') AS "commit_seq!",
@@ -243,6 +410,7 @@ impl Api {
         drop(conn);
         let sources = match self
             .query(
+                caller,
                 "sources sort binding",
                 Page {
                     size: Some(1000),

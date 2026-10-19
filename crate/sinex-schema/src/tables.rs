@@ -257,7 +257,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   name text NOT NULL,
   host text NOT NULL,
   started_at timestamptz NOT NULL DEFAULT now(),
-  ended_at timestamptz
+  ended_at timestamptz,
+  -- The newest privacy rule row in force when the run's events were admitted.
+  privacy_rules_seq bigint
 )".into(),
         "CREATE TABLE core.operations (
   id uuid PRIMARY KEY,
@@ -313,14 +315,39 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   since timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (derivation, key)
 )".into(),
+        // Privacy rules (spec `privacy.md` §1 rule 2): insert-only. A change is
+        // a new row with the same name; a removal is a row with `ended`. The
+        // newest row per name is in force; `seq` orders the history, and each
+        // admitted run records the newest `seq` it was admitted under.
         format!("CREATE TABLE privacy.rules (
-  id uuid PRIMARY KEY,
+  seq bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id uuid NOT NULL UNIQUE,
+  name text NOT NULL,
   source text NOT NULL,
   event_type text,
-  field text,
+  field text CHECK (field IS NULL OR field LIKE '/%'),
+  matcher text NOT NULL CHECK (matcher IN ('all', 'pattern', 'terms', 'luhn', 'iban')),
+  matcher_arg text,
   class text NOT NULL {class},
-  action text NOT NULL CHECK (action IN ('classify', 'mask', 'drop_field'))
+  action text NOT NULL CHECK (action IN ('classify', 'mask', 'hash', 'drop_field')),
+  author text NOT NULL,
+  written_at timestamptz NOT NULL DEFAULT now(),
+  ended boolean NOT NULL DEFAULT false
 )", class = c.class),
+        "CREATE INDEX rules_name ON privacy.rules (name, seq DESC)".into(),
+        // A source's class floor, set by the operator; newest row wins.
+        format!("CREATE TABLE privacy.source_classes (
+  seq bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  source text NOT NULL,
+  class text NOT NULL {class},
+  author text NOT NULL,
+  written_at timestamptz NOT NULL DEFAULT now()
+)", class = c.class),
+        // The key that makes hashed values join without revealing them.
+        "CREATE TABLE privacy.settings (
+  id boolean PRIMARY KEY CHECK (id),
+  hash_key bytea NOT NULL CHECK (length(hash_key) = 32)
+)".into(),
         "CREATE TABLE privacy.material_keys (material_id uuid PRIMARY KEY, class text NOT NULL, wrapped_key bytea NOT NULL)".into(),
         // Full-text search read model (spec `query.md` §5, `storage.md`
         // §3.11): each event's payload text, normalized (case-folded, NFC,

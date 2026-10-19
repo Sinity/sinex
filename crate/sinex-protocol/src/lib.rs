@@ -237,6 +237,84 @@ pub const COMMANDS: &[Command] = &[
         access: Access::Agent,
         mcp: true,
     },
+    Command {
+        name: "privacy-rules",
+        summary: "List the privacy rules in force, or with --history every rule row ever written.",
+        args: &[opt(
+            "history",
+            ArgKind::Bool,
+            "every version and end, with author and time",
+        )],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "privacy-rule",
+        summary: "Add a privacy rule, or a new version of the rule with this name. Applies to new readings; replay applies it to the past.",
+        args: &[
+            pos(
+                "name",
+                ArgKind::Text,
+                "the rule's name; reusing it writes a new version",
+            ),
+            Arg {
+                required: true,
+                ..opt("source", ArgKind::Text, "the source it applies to")
+            },
+            opt("type", ArgKind::Text, "only this event type"),
+            opt(
+                "field",
+                ArgKind::Text,
+                "a JSON Pointer into the payload, such as /command; default every string",
+            ),
+            opt(
+                "matcher",
+                ArgKind::Text,
+                "all (default), pattern, terms, luhn or iban",
+            ),
+            opt(
+                "pattern",
+                ArgKind::Text,
+                "the regular expression, or the terms separated by commas",
+            ),
+            opt(
+                "class",
+                ArgKind::Text,
+                "the class a match gives: open (default), guarded or sealed",
+            ),
+            opt(
+                "action",
+                ArgKind::Text,
+                "mask (default), hash, drop_field or classify",
+            ),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "privacy-end",
+        summary: "End a privacy rule (weakens protection, so the operator's alone).",
+        args: &[pos("name", ArgKind::Text, "the rule's name")],
+        access: Access::Operator,
+        mcp: false,
+    },
+    Command {
+        name: "privacy-class",
+        summary: "Set a source's class floor; lowering it is the operator's alone.",
+        args: &[
+            pos("source", ArgKind::Text, "the source"),
+            pos("class", ArgKind::Text, "open, guarded or sealed"),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "privacy-verify",
+        summary: "Count live events below their source's class floor (admitted before the floor was raised; a replay fixes them).",
+        args: &[],
+        access: Access::Read,
+        mcp: true,
+    },
 ];
 
 pub fn command(name: &str) -> Option<&'static Command> {
@@ -321,6 +399,39 @@ pub enum Request {
         #[serde(default)]
         text: Option<String>,
     },
+    #[serde(rename = "privacy-rules")]
+    PrivacyRules {
+        #[serde(default)]
+        history: Option<bool>,
+    },
+    #[serde(rename = "privacy-rule")]
+    PrivacyRule {
+        name: String,
+        source: String,
+        #[serde(default, rename = "type")]
+        event_type: Option<String>,
+        #[serde(default)]
+        field: Option<String>,
+        #[serde(default)]
+        matcher: Option<String>,
+        #[serde(default)]
+        pattern: Option<String>,
+        #[serde(default)]
+        class: Option<String>,
+        #[serde(default)]
+        action: Option<String>,
+    },
+    #[serde(rename = "privacy-end")]
+    PrivacyEnd {
+        name: String,
+    },
+    #[serde(rename = "privacy-class")]
+    PrivacyClass {
+        source: String,
+        class: String,
+    },
+    #[serde(rename = "privacy-verify")]
+    PrivacyVerify,
 }
 
 impl Request {
@@ -360,6 +471,11 @@ impl Request {
             Request::Same { .. } => "same",
             Request::Distinct { .. } => "distinct",
             Request::Mark { .. } => "mark",
+            Request::PrivacyRules { .. } => "privacy-rules",
+            Request::PrivacyRule { .. } => "privacy-rule",
+            Request::PrivacyEnd { .. } => "privacy-end",
+            Request::PrivacyClass { .. } => "privacy-class",
+            Request::PrivacyVerify => "privacy-verify",
         }
     }
 
@@ -387,6 +503,9 @@ pub enum Reply {
 }
 
 pub mod nats;
+/// The private-mode switch is part of the contract between processes: every
+/// capturing process and `sinexctl` agree on it.
+pub mod private_mode;
 
 /// The notice at the head of every result that carries captured text
 /// (architecture §7.2): the text is data from the operator's machines, never

@@ -232,7 +232,13 @@ async fn produce(run: Run) -> Result<(), String> {
     let deadline = run
         .seconds
         .map(|s| std::time::Instant::now() + Duration::from_secs(s));
+    let private = sinex_protocol::private_mode::PrivateMode::default();
     loop {
+        // Private mode: capture nothing until it is off again.
+        if private.on() {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        }
         for b in &bindings {
             // Drain everything captured so far, one material at a time.
             loop {
