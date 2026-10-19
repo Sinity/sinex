@@ -230,18 +230,21 @@ pub async fn inputs_of(conn: &mut PgConnection, materials: &[Uuid]) -> Result<Ve
 
 /// The stored bytes' names of the chain that ends at `last`, first part
 /// first: what a driver rebuilds its memory from after a restart.
-pub async fn chain_ending(conn: &mut PgConnection, last: Uuid) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar!(
+pub async fn chain_ending(conn: &mut PgConnection, last: Uuid) -> Result<Vec<(Uuid, String)>> {
+    Ok(sqlx::query!(
         r#"WITH RECURSIVE chain AS (
              SELECT id, previous_part_id, blob, part_index FROM raw.materials WHERE id = $1
              UNION ALL
              SELECT m.id, m.previous_part_id, m.blob, m.part_index
              FROM raw.materials m JOIN chain c ON m.id = c.previous_part_id)
-           SELECT blob AS "blob!" FROM chain ORDER BY part_index"#,
+           SELECT id AS "id!", blob AS "blob!" FROM chain ORDER BY part_index"#,
         last
     )
     .fetch_all(&mut *conn)
-    .await?)
+    .await?
+    .into_iter()
+    .map(|r| (r.id, r.blob))
+    .collect())
 }
 
 #[cfg(test)]

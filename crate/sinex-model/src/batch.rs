@@ -162,6 +162,10 @@ pub enum ArchiveRequest {
         scope: ReplayScope,
         operation: OperationId,
     },
+    /// The source no longer holds the records at these locations (a rewritten
+    /// file without record IDs dropped them). Each live reading there gets a
+    /// newer reading in state removed, through the ordinary identity rules.
+    RemovedAtSource { locations: Vec<RecordLocation> },
 }
 
 /// Which live readings a replay re-reads: those read from `materials`,

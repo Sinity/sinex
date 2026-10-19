@@ -35,7 +35,9 @@ pub enum WriteError {
     Stopped,
 }
 
-/// One replay chain: its batches run in one transaction.
+/// One replay chain: its batches run in one transaction, admitted as they
+/// arrive, so only a few are held at a time. A batch arriving as an error
+/// (the chain could not be read) rolls the chain back.
 pub struct ReplayChain {
     pub operation: OperationId,
     pub actor: String,
@@ -44,7 +46,7 @@ pub struct ReplayChain {
     pub root: uuid::Uuid,
     /// Roll back after reading the difference: the comparison lane.
     pub compare: bool,
-    pub batches: Vec<Batch>,
+    pub batches: tokio::sync::mpsc::Receiver<Result<Batch, String>>,
 }
 
 /// An excision, planned and with its replacement bytes already stored.
@@ -191,7 +193,7 @@ pub async fn run_notifying(
             Work::Admit(batch) => admit(&mut connection, &batch, keys.as_ref())
                 .await
                 .map(Done::Admitted),
-            Work::Replay(chain) => replay_chain(&mut connection, &chain, keys.as_ref())
+            Work::Replay(mut chain) => replay_chain(&mut connection, &mut chain, keys.as_ref())
                 .await
                 .map(|(o, d)| Done::Replayed(o, d)),
             Work::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
@@ -227,7 +229,7 @@ async fn admit(
 
 async fn replay_chain(
     connection: &mut PgConnection,
-    chain: &ReplayChain,
+    chain: &mut ReplayChain,
     keys: &dyn DirtyKeys,
 ) -> Result<(Vec<Outcome>, Diff), WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
@@ -235,10 +237,11 @@ async fn replay_chain(
     replay::begin(&mut tx, chain.operation, &chain.actor, &chain.scope)
         .await
         .map_err(|e| refuse(&e))?;
-    let mut outcomes = Vec::with_capacity(chain.batches.len());
-    for batch in &chain.batches {
+    let mut outcomes = Vec::new();
+    while let Some(batch) = chain.batches.recv().await {
+        let batch = batch.map_err(|e| refuse(&e))?;
         outcomes.push(
-            sinex_store::admit(&mut tx, batch, keys)
+            sinex_store::admit(&mut tx, &batch, keys)
                 .await
                 .map_err(|e| refuse(&e))?,
         );
@@ -280,12 +283,9 @@ async fn excise(
     .await
     .map_err(|e| refuse(&e))?;
     tx.commit().await.map_err(|e| refuse(&e))?;
-    let files_left = applied
-        .delete_after_commit
-        .iter()
-        .filter(|name| e.blobs.delete(name).is_err())
-        .cloned()
-        .collect();
+    let (_, files_left) = excision::finish_deletions(connection, &e.blobs)
+        .await
+        .map_err(|e| refuse(&e))?;
     Ok(Excised {
         applied,
         files_left,

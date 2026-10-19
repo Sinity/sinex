@@ -350,6 +350,15 @@ enum Admin {
         #[arg(long, default_value = "localhost")]
         host: String,
     },
+    /// Comparisons kept by `recompute --compare`, newest first.
+    Comparisons {
+        #[arg(long)]
+        database: String,
+        /// Only comparisons of this derivation.
+        derivation: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+    },
 }
 
 #[derive(clap::Args)]
@@ -480,6 +489,46 @@ async fn admin(command: Admin) -> Result<(), String> {
             drop(driver);
             writer_task.await.map_err(|e| e.to_string())?;
             print!("{}", result?);
+            Ok(())
+        }
+        Admin::Comparisons {
+            database,
+            derivation,
+            limit,
+        } => {
+            use sqlx::Connection;
+            let mut conn = sqlx::PgConnection::connect(&database)
+                .await
+                .map_err(|e| e.to_string())?;
+            let kept = sinex_store::derived::comparisons(&mut conn, derivation.as_deref(), limit)
+                .await
+                .map_err(|e| e.to_string())?;
+            let show = |t: sinex_model::Timestamp| {
+                t.0.format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default()
+            };
+            for c in kept {
+                let range = match c.range {
+                    Some((from, until)) => format!(
+                        " | inputs {} .. {}",
+                        from.map_or("start".into(), show),
+                        until.map_or("now".into(), show)
+                    ),
+                    None => String::new(),
+                };
+                println!(
+                    "{} {} v{} at {}{range}: keys {} | unchanged {} | added {} | changed {} | removed {}",
+                    c.id,
+                    c.derivation,
+                    c.version,
+                    show(c.made_at),
+                    c.keys,
+                    c.unchanged,
+                    c.added,
+                    c.changed,
+                    c.removed
+                );
+            }
             Ok(())
         }
     }

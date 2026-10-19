@@ -1,7 +1,8 @@
 //! Reads for the derivation driver (architecture §6.2): the live events a key
 //! reads, the keys waiting to be recomputed, and committed events in commit
 //! order. Writes go through admission (`DerivedScope`), never from here,
-//! except the registry rows written at daemon start.
+//! except the registry rows written at daemon start and the comparisons a
+//! recompute command keeps.
 use crate::Result;
 use serde_json::Value;
 use sinex_model::{
@@ -342,6 +343,34 @@ pub async fn after_seq(
     Ok(out)
 }
 
+/// The live readings at these record locations, of any event type and output
+/// number.
+pub async fn live_at(conn: &mut PgConnection, locations: &[RecordLocation]) -> Result<Vec<Event>> {
+    let materials: Vec<Uuid> = locations.iter().map(|l| l.material.0).collect();
+    let anchors: Vec<i64> = locations
+        .iter()
+        .map(|l| i64::try_from(l.anchor).unwrap_or(i64::MAX))
+        .collect();
+    let rows = sqlx::query!(
+        r#"SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.ordinal, e.parents,
+             e.ts_orig, e.ts_quality, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
+             e.record_state, e.class, e.support, e.commit_seq
+           FROM unnest($1::uuid[], $2::bigint[]) AS l(material_id, anchor)
+           JOIN core.live_coordinates c ON c.material_id = l.material_id AND c.anchor = l.anchor
+           JOIN core.events e ON e.id = c.event_id
+           ORDER BY e.commit_seq"#,
+        &materials,
+        &anchors,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(committed!(r).event);
+    }
+    Ok(out)
+}
+
 /// The highest commit sequence so far.
 pub async fn head(conn: &mut PgConnection) -> Result<i64> {
     Ok(
@@ -375,14 +404,18 @@ pub async fn dirty(
         .collect())
 }
 
-/// Keys of `derivation` waiting on evidence outside their window.
-pub async fn waiting(conn: &mut PgConnection, derivation: &str) -> Result<Vec<Value>> {
-    Ok(sqlx::query_scalar!(
-        "SELECT key FROM derivation.waiting WHERE derivation = $1 ORDER BY since",
+/// Keys of `derivation` waiting on evidence outside their window, with when
+/// each started waiting.
+pub async fn waiting(conn: &mut PgConnection, derivation: &str) -> Result<Vec<(Value, Timestamp)>> {
+    Ok(sqlx::query!(
+        "SELECT key, since FROM derivation.waiting WHERE derivation = $1 ORDER BY since",
         derivation
     )
     .fetch_all(&mut *conn)
-    .await?)
+    .await?
+    .into_iter()
+    .map(|r| (r.key, Timestamp(r.since)))
+    .collect())
 }
 
 /// The live outputs a key last produced.
@@ -428,6 +461,83 @@ pub async fn reset_position(conn: &mut PgConnection, derivation: &str) -> Result
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// A stored comparison: what a recompute of `derivation` at `version` would
+/// change.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoredComparison {
+    pub id: i64,
+    pub derivation: String,
+    pub version: i32,
+    pub range: Option<(Option<Timestamp>, Option<Timestamp>)>,
+    pub made_at: Timestamp,
+    pub keys: i64,
+    pub unchanged: i64,
+    pub added: i64,
+    pub changed: i64,
+    pub removed: i64,
+    pub examples: Value,
+}
+
+/// Keep a comparison (the comparison lane, architecture §6.3). Comparisons
+/// are operations records, not events; they are written by the command that
+/// made them.
+pub async fn store_comparison(conn: &mut PgConnection, c: &StoredComparison) -> Result<i64> {
+    let (from, until) = c.range.unwrap_or((None, None));
+    Ok(sqlx::query_scalar!(
+        r#"INSERT INTO derivation.comparisons
+             (derivation, version, range_from, range_until, keys, unchanged, added, changed, removed, examples)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id"#,
+        c.derivation,
+        c.version,
+        from.map(|t| t.0),
+        until.map(|t| t.0),
+        c.keys,
+        c.unchanged,
+        c.added,
+        c.changed,
+        c.removed,
+        c.examples,
+    )
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+/// Stored comparisons, newest first, optionally of one derivation.
+pub async fn comparisons(
+    conn: &mut PgConnection,
+    derivation: Option<&str>,
+    limit: i64,
+) -> Result<Vec<StoredComparison>> {
+    let rows = sqlx::query!(
+        r#"SELECT id, derivation, version, range_from, range_until, made_at, keys, unchanged,
+             added, changed, removed, examples
+           FROM derivation.comparisons
+           WHERE $1::text IS NULL OR derivation = $1
+           ORDER BY id DESC LIMIT $2"#,
+        derivation,
+        limit,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| StoredComparison {
+            id: r.id,
+            derivation: r.derivation,
+            version: r.version,
+            range: (r.range_from.is_some() || r.range_until.is_some())
+                .then(|| (r.range_from.map(Timestamp), r.range_until.map(Timestamp))),
+            made_at: Timestamp(r.made_at),
+            keys: r.keys,
+            unchanged: r.unchanged,
+            added: r.added,
+            changed: r.changed,
+            removed: r.removed,
+            examples: r.examples,
+        })
+        .collect())
 }
 
 /// A derivation as the registry records it.

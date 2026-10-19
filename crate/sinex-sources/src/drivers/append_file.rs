@@ -8,11 +8,13 @@
 //! file) is aligned against the previous revision: records whose bytes the
 //! previous revision already held were read before, and only the others are
 //! read as new. The file has no record IDs, so without this every record
-//! would come back as a new event at a new location.
+//! would come back as a new event at a new location. Records the previous
+//! revision held and the rewrite dropped are reported by where they were read,
+//! and become removed-at-source readings.
 use super::{Acquired, DriverError, NewMaterial, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange};
+use sinex_model::{InputRef, MaterialId, ObservationFacts, RecordLocation, RevisionChange};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
@@ -45,47 +47,62 @@ pub struct Cursor {
     pub through: usize,
 }
 
-/// The records of the current revision, by content hash, counted: what a
-/// rewrite is aligned against. Kept for the life of the source task and
-/// rebuilt from the stored materials after a restart ([`AppendMemory::rebuild`]).
+/// The records of the current revision, by content hash, with where each
+/// occurrence was read: what a rewrite is aligned against. Kept for the life
+/// of the source task and rebuilt from the stored materials after a restart
+/// ([`AppendMemory::rebuild`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppendMemory {
-    counts: HashMap<[u8; 32], u32>,
+    records: HashMap<[u8; 32], Vec<RecordLocation>>,
 }
 
 impl AppendMemory {
     /// The memory after reading `materials` (the current revision's parts, in
     /// order) with `framer`.
-    pub fn rebuild<'a>(materials: impl IntoIterator<Item = &'a [u8]>, framer: Framer) -> Self {
+    pub fn rebuild<'a>(
+        materials: impl IntoIterator<Item = (MaterialId, &'a [u8])>,
+        framer: Framer,
+    ) -> Self {
         let mut memory = Self::default();
-        for bytes in materials {
+        for (material, bytes) in materials {
             for (s, e) in framer(bytes).0 {
-                memory.insert(&bytes[s..e]);
+                memory.insert(&bytes[s..e], material, s);
             }
         }
         memory
     }
 
-    fn insert(&mut self, record: &[u8]) {
-        *self
-            .counts
+    fn insert(&mut self, record: &[u8], material: MaterialId, anchor: usize) {
+        self.records
             .entry(*blake3::hash(record).as_bytes())
-            .or_default() += 1;
+            .or_default()
+            .push(RecordLocation {
+                material,
+                anchor: anchor as u64,
+            });
     }
 
     /// Whether an equal record was held, consuming one occurrence of it.
     fn take(&mut self, record: &[u8]) -> bool {
-        match self.counts.get_mut(blake3::hash(record).as_bytes()) {
-            Some(n) if *n > 0 => {
-                *n -= 1;
+        match self.records.get_mut(blake3::hash(record).as_bytes()) {
+            Some(held) if !held.is_empty() => {
+                held.remove(0);
                 true
             }
             _ => false,
         }
     }
 
+    /// Where the records still held were read: after a rewrite is aligned,
+    /// the ones it dropped.
+    fn remaining(self) -> Vec<RecordLocation> {
+        let mut out: Vec<RecordLocation> = self.records.into_values().flatten().collect();
+        out.sort_by_key(|l| (l.material, l.anchor));
+        out
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.counts.is_empty()
+        self.records.values().all(Vec::is_empty)
     }
 }
 
@@ -197,7 +214,8 @@ impl AppendFile {
         // against what the previous revision held; then the memory becomes
         // the new revision's records.
         let restarted_records = start == 0 && !cursor.is_null();
-        let (records, aligned) = if restarted_records {
+        let id = MaterialId::new();
+        let (records, aligned, vanished) = if restarted_records {
             let mut previous = std::mem::take(memory);
             let aligning = !previous.is_empty();
             let mut fresh = Vec::new();
@@ -205,16 +223,15 @@ impl AppendFile {
                 if !previous.take(&data[s..e]) {
                     fresh.push((s, e));
                 }
-                memory.insert(&data[s..e]);
+                memory.insert(&data[s..e], id, s);
             }
-            (fresh, aligning)
+            (fresh, aligning, previous.remaining())
         } else {
             for &(s, e) in &records {
-                memory.insert(&data[s..e]);
+                memory.insert(&data[s..e], id, s);
             }
-            (records, false)
+            (records, false, Vec::new())
         };
-        let id = MaterialId::new();
         let part_index = if base.material.is_some() {
             base.part_index + 1
         } else {
@@ -275,6 +292,7 @@ impl AppendFile {
                 manifest,
                 cursor_at: Box::new(cursor_at),
                 aligned,
+                vanished,
             }),
             cursor_unchanged: Value::Null,
         })
@@ -402,7 +420,7 @@ mod tests {
         // zsh expired the duplicate "b" and appended "dd": a rewrite.
         std::fs::write(&path, b"a\nc\ndd\n").unwrap();
         // A restart in between: the memory is rebuilt from the stored bytes.
-        let mut rebuilt = AppendMemory::rebuild([m.bytes.as_slice()], lines);
+        let mut rebuilt = AppendMemory::rebuild([(m.id, m.bytes.as_slice())], lines);
         assert_eq!(rebuilt, memory);
         let again = d.poll(&cursor, &mut rebuilt).unwrap();
         assert_eq!(again.revision, RevisionChange::Rewritten);
@@ -410,6 +428,14 @@ mod tests {
         let n = again.material.as_ref().unwrap();
         assert!(n.aligned);
         assert_eq!(n.part_index, 0, "a rewrite starts a new chain");
+        assert_eq!(
+            n.vanished,
+            vec![RecordLocation {
+                material: m.id,
+                anchor: 2
+            }],
+            "the dropped \"b\" is reported where it was read"
+        );
         assert_eq!(n.manifest["records"], json!([[4, 7]]));
         assert_eq!(
             crate::drivers::stored_records(&n.manifest, &n.bytes, lines),

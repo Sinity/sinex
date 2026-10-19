@@ -13,6 +13,18 @@
 //! - **Per-event derivations:** read committed events after their position, in
 //!   commit order, and commit the new position with their outputs.
 //!
+//! Derivations run in the order their inputs and outputs give: a derivation
+//! whose inputs another one produces runs after it, so a daily summary is
+//! computed once the commands it counts have been fused, not again for every
+//! intermediate state. A pass works on the lowest rank that has work; one pass
+//! in [`FAIR_EVERY`] works every rank, so a busy upstream cannot keep a
+//! downstream derivation from running.
+//!
+//! A key waiting on evidence outside its window stops waiting once it has
+//! waited [`WAITING_HORIZON`] (a systemd unit that never stops would otherwise
+//! be recomputed forever); its last outputs stand, and a later input in its
+//! window still dirties it as usual.
+//!
 //! The driver wakes on `wake`, which the daemon signals after every commit, and
 //! also looks for work every so often, for keys that settle with time.
 use crate::writer::{Priority, WriterHandle};
@@ -34,6 +46,10 @@ const DIRTY_PER_PASS: i64 = 512;
 const EVENTS_PER_PASS: i64 = 2_000;
 /// Keys marked dirty per recompute request.
 const KEYS_PER_REQUEST: usize = 5_000;
+/// One pass in this many works every rank, not only the lowest with work.
+pub const FAIR_EVERY: u32 = 8;
+/// A key that has waited this long stops waiting.
+pub const WAITING_HORIZON: time::Duration = time::Duration::days(14);
 
 /// Counts for one derivation.
 #[derive(Clone, Debug, Default)]
@@ -70,6 +86,13 @@ impl std::fmt::Display for Counts {
 pub struct Driver {
     keyed: Vec<Box<dyn AnyKeyed>>,
     per_event: Vec<Box<dyn AnyPerEvent>>,
+    /// Rank of each keyed and per-event derivation, by name: 0 for those
+    /// reading only captured events, one more than the highest rank of any
+    /// derivation producing an input.
+    ranks: BTreeMap<&'static str, u32>,
+    passes: u32,
+    /// The time derivations see; the current time unless a test sets it.
+    pub(crate) clock: Option<Timestamp>,
     civil: Civil,
     read: PgConnection,
     writer: WriterHandle,
@@ -156,9 +179,13 @@ impl Driver {
                 .map_err(|e| e.to_string())?;
             runs.insert(name, run);
         }
+        let ranks = ranks(&catalog);
         let mut driver = Self {
             keyed,
             per_event,
+            ranks,
+            passes: 0,
+            clock: None,
             civil: Civil::operator_default(),
             read,
             writer,
@@ -179,7 +206,7 @@ impl Driver {
 
     fn env(&self) -> Env {
         Env {
-            now: Timestamp::now(),
+            now: self.clock.unwrap_or_else(Timestamp::now),
             civil: self.civil.clone(),
             settings: Value::Null,
         }
@@ -302,10 +329,14 @@ impl Driver {
         index: usize,
         key: Value,
         dirty_seq: i64,
+        give_up: bool,
         env: &Env,
     ) -> Result<(), String> {
         let name = self.keyed[index].name();
-        let computed = self.compute_key(index, &key, env).await?;
+        let mut computed = self.compute_key(index, &key, env).await?;
+        if give_up {
+            computed.waiting = false;
+        }
         let head = derived::head(&mut self.read)
             .await
             .map_err(|e| e.to_string())?;
@@ -348,41 +379,73 @@ impl Driver {
         Ok(())
     }
 
-    /// One pass: dirty keys, then waiting keys of the derivations that ran,
-    /// then per-event derivations. Returns how much work it did.
+    /// One pass over the lowest rank with work (every rank, one pass in
+    /// [`FAIR_EVERY`]): its dirty keys, then the waiting keys of the
+    /// derivations that ran, then its per-event derivations. Returns how much
+    /// work it did.
     pub async fn pass(&mut self) -> Result<usize, String> {
         let env = self.env();
-        let names: Vec<String> = self.keyed.iter().map(|d| d.name().to_owned()).collect();
-        let dirty = derived::dirty(&mut self.read, &names, DIRTY_PER_PASS)
-            .await
-            .map_err(|e| e.to_string())?;
+        self.passes = self.passes.wrapping_add(1);
+        let every_rank = self.passes % FAIR_EVERY == 0;
+        let mut levels: Vec<u32> = self.ranks.values().copied().collect();
+        levels.sort_unstable();
+        levels.dedup();
         let mut work = 0;
-        let mut touched: BTreeMap<usize, HashSet<String>> = BTreeMap::new();
-        for k in dirty {
-            let Some(index) = self.keyed.iter().position(|d| d.name() == k.derivation) else {
-                continue;
-            };
-            touched.entry(index).or_default().insert(k.key.to_string());
-            self.settle_key(index, k.key, k.last_dirty_seq, &env)
-                .await?;
-            work += 1;
+        for level in levels {
+            work += self.rank_pass(level, &env).await?;
+            if work > 0 && !every_rank {
+                break;
+            }
         }
-        for (index, done) in touched {
-            let name = self.keyed[index].name();
-            let waiting = derived::waiting(&mut self.read, name)
+        Ok(work)
+    }
+
+    fn rank_of(&self, name: &str) -> u32 {
+        self.ranks.get(name).copied().unwrap_or(0)
+    }
+
+    async fn rank_pass(&mut self, level: u32, env: &Env) -> Result<usize, String> {
+        let names: Vec<String> = self
+            .keyed
+            .iter()
+            .filter(|d| self.rank_of(d.name()) == level)
+            .map(|d| d.name().to_owned())
+            .collect();
+        let mut work = 0;
+        if !names.is_empty() {
+            let dirty = derived::dirty(&mut self.read, &names, DIRTY_PER_PASS)
                 .await
                 .map_err(|e| e.to_string())?;
-            for key in waiting {
-                if done.contains(&key.to_string()) {
+            let mut touched: BTreeMap<usize, HashSet<String>> = BTreeMap::new();
+            for k in dirty {
+                let Some(index) = self.keyed.iter().position(|d| d.name() == k.derivation) else {
                     continue;
-                }
-                // Not a dirty mark: clear nothing, only refresh the outputs.
-                self.settle_key(index, key, 0, &env).await?;
+                };
+                touched.entry(index).or_default().insert(k.key.to_string());
+                self.settle_key(index, k.key, k.last_dirty_seq, false, env)
+                    .await?;
                 work += 1;
+            }
+            for (index, done) in touched {
+                let name = self.keyed[index].name();
+                let waiting = derived::waiting(&mut self.read, name)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                for (key, since) in waiting {
+                    if done.contains(&key.to_string()) {
+                        continue;
+                    }
+                    let give_up = since.0 < env.now.0 - WAITING_HORIZON;
+                    // Not a dirty mark: clear nothing, only refresh the outputs.
+                    self.settle_key(index, key, 0, give_up, env).await?;
+                    work += 1;
+                }
             }
         }
         for index in 0..self.per_event.len() {
-            work += self.per_event_pass(index, &env).await?;
+            if self.rank_of(self.per_event[index].name()) == level {
+                work += self.per_event_pass(index, env).await?;
+            }
         }
         Ok(work)
     }
@@ -484,6 +547,7 @@ impl Driver {
             keys: keys.len(),
             ..Comparison::default()
         };
+        let version = self.keyed[index].version();
         for key in keys {
             let new = self.compute_key(index, &key, &env).await?.outputs;
             let old = derived::outputs(&mut self.read, name, &key)
@@ -514,8 +578,69 @@ impl Driver {
                 }
             }
         }
+        let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+        cmp.id = Some(
+            derived::store_comparison(
+                &mut self.read,
+                &derived::StoredComparison {
+                    id: 0,
+                    derivation: name.to_owned(),
+                    version: i32::try_from(version).unwrap_or(i32::MAX),
+                    range: range.map(|(from, until)| (Some(from), Some(until))),
+                    made_at: Timestamp::now(),
+                    keys: count(cmp.keys),
+                    unchanged: count(cmp.same),
+                    added: count(cmp.added),
+                    changed: count(cmp.changed),
+                    removed: count(cmp.removed),
+                    examples: serde_json::json!(
+                        cmp.examples
+                            .iter()
+                            .map(|(kind, key, old, new)| serde_json::json!({
+                                "kind": format!("{kind:?}").to_lowercase(),
+                                "key": key,
+                                "old": old,
+                                "new": new,
+                            }))
+                            .collect::<Vec<_>>()
+                    ),
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())?,
+        );
         Ok(cmp)
     }
+}
+
+/// Each derivation's rank: 0 when no derivation produces any of its inputs,
+/// otherwise one more than the highest rank among those that do. A cycle
+/// (which no catalog should have) settles at the catalog's size.
+fn ranks(catalog: &[Registered]) -> BTreeMap<&'static str, u32> {
+    let limit = u32::try_from(catalog.len()).unwrap_or(u32::MAX);
+    let mut rank: BTreeMap<&str, u32> = catalog.iter().map(|d| (d.name.as_str(), 0)).collect();
+    for _ in 0..catalog.len() {
+        let mut changed = false;
+        for d in catalog {
+            let upstream = catalog
+                .iter()
+                .filter(|u| u.name != d.name && u.outputs.iter().any(|o| d.inputs.contains(o)))
+                .map(|u| rank[u.name.as_str()] + 1)
+                .max()
+                .unwrap_or(0)
+                .min(limit);
+            if upstream > rank[d.name.as_str()] {
+                rank.insert(d.name.as_str(), upstream);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    rank.into_iter()
+        .map(|(name, r)| (derived::static_type(name), r))
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -528,6 +653,8 @@ pub enum Kind {
 /// What a recompute would change.
 #[derive(Debug, Default)]
 pub struct Comparison {
+    /// The stored comparison's ID.
+    pub id: Option<i64>,
     pub keys: usize,
     pub same: usize,
     pub added: usize,
@@ -565,6 +692,9 @@ impl Comparison {
 
 impl std::fmt::Display for Comparison {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(id) = self.id {
+            writeln!(f, "comparison {id}")?;
+        }
         writeln!(
             f,
             "keys {} | outputs unchanged {} | added {} | changed {} | removed {}",
