@@ -1,0 +1,10 @@
+[
+  {
+    "anchor": 0,
+    "failure": "invalid zsh start time"
+  },
+  {
+    "anchor": 21,
+    "failure": "invalid extended zsh header"
+  }
+]

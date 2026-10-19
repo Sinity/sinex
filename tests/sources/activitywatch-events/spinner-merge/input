@@ -1,0 +1,3 @@
+{"rowid":1,"bucket":"aw-watcher-window_box","bucket_type":"currentwindow","starttime":1700000000000000000,"endtime":1700000005000000000,"data":"{\"app\":\"kitty\",\"title\":\"⠋ claude\"}"}
+{"rowid":2,"bucket":"aw-watcher-window_box","bucket_type":"currentwindow","starttime":1700000005000000000,"endtime":1700000010000000000,"data":"{\"app\":\"kitty\",\"title\":\"⠙ claude\"}"}
+{"rowid":3,"bucket":"aw-watcher-window_box","bucket_type":"currentwindow","starttime":1700000010000000000,"endtime":1700000012000000000,"data":"{\"app\":\"firefox\",\"title\":\"⠋ not a spinner app\"}"}

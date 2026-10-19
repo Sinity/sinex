@@ -1,0 +1,32 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "mail.message",
+        "ts": "2024-01-04T10:00:00Z",
+        "time": "Intrinsic",
+        "key": "e1d12acb856ef506b90e2a5a2b95a6029f7a3eb15b2bd1b777049380a3ed0a36",
+        "state": "Present",
+        "payload": {
+          "message_id": "bin@example.org",
+          "date": "2024-01-04T10:00:00Z",
+          "from": [
+            "x@example.org"
+          ],
+          "to": [],
+          "cc": [],
+          "subject": "odd byte",
+          "in_reply_to": null,
+          "references": [],
+          "labels": [],
+          "thread_id": null,
+          "text": "body with a stray ÿ byte\n",
+          "html_only": false,
+          "attachments": [],
+          "size": 132
+        }
+      }
+    ]
+  }
+]

@@ -67,6 +67,9 @@ impl Parser for JournaldParser {
         _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<JournalEntry>, ()), RecordError> {
         let (_, line) = live_stream::received(record).map_err(RecordError::new)?;
+        if line.iter().all(u8::is_ascii_whitespace) {
+            return Ok((vec![], ()));
+        }
         let mut fields: Map<String, Value> = serde_json::from_slice(&line)
             .map_err(|e| RecordError::new(format!("journal entry is not a JSON object: {e}")))?;
         let cursor = match fields.remove("__CURSOR") {

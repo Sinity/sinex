@@ -1,0 +1,32 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "mail.message",
+        "ts": "2024-01-02T10:00:00Z",
+        "time": "Intrinsic",
+        "key": "e62a2f6c46f13920c5e0e4c9d55f07140c282e9918d3ae8824adfb5a992dd88d",
+        "state": "Present",
+        "payload": {
+          "message_id": "blake3:1d6f2a5360d66cb434513c54e04460b65d18338033885033a6ef4b18995bd7fc",
+          "date": "2024-01-02T10:00:00Z",
+          "from": [
+            "x@example.org"
+          ],
+          "to": [],
+          "cc": [],
+          "subject": "no id",
+          "in_reply_to": null,
+          "references": [],
+          "labels": [],
+          "thread_id": null,
+          "text": "body\n",
+          "html_only": false,
+          "attachments": [],
+          "size": 79
+        }
+      }
+    ]
+  }
+]

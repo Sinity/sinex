@@ -1,0 +1,79 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "bookmark.saved",
+        "ts": "2024-04-01T10:00:00Z",
+        "time": "Intrinsic",
+        "key": "3d4b2136d72262ebdb7b698ac62173ea3f05d97da93c5b418d7954b3ffb79b90",
+        "state": "Present",
+        "payload": {
+          "service": "raindrop",
+          "native_id": "201",
+          "url": "https://example.com/a",
+          "title": "Highlighted",
+          "note": null,
+          "excerpt": null,
+          "folder": null,
+          "tags": [
+            "x"
+          ],
+          "created_at": "2024-04-01T10:00:00Z",
+          "updated_at": "2024-04-02T10:00:00Z",
+          "cover": null,
+          "highlights": [
+            {
+              "_id": "h1",
+              "text": "quoted passage",
+              "note": "my thought",
+              "created": "2024-04-01T11:00:00.000Z"
+            }
+          ],
+          "favorite": true,
+          "trashed_at": null,
+          "extra": {
+            "domain": "example.com",
+            "type": "article",
+            "collection": {
+              "$id": 5
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 383,
+    "events": [
+      {
+        "type": "bookmark.saved",
+        "ts": "2024-04-03T10:00:00Z",
+        "time": "Intrinsic",
+        "key": "2cf587dc185ba26fbfb3f784a8c2fe2c6230b9efd8a8b670e1911ee4b3a3a725",
+        "state": "Removed",
+        "payload": {
+          "service": "raindrop",
+          "native_id": "202",
+          "url": "https://example.com/b",
+          "title": "Trashed",
+          "note": null,
+          "excerpt": null,
+          "folder": null,
+          "tags": [],
+          "created_at": "2024-04-03T10:00:00Z",
+          "updated_at": "2024-04-04T10:00:00Z",
+          "cover": null,
+          "highlights": null,
+          "favorite": null,
+          "trashed_at": "2024-04-04T10:00:00Z",
+          "extra": {
+            "collection": {
+              "$id": -99
+            }
+          }
+        }
+      }
+    ]
+  }
+]

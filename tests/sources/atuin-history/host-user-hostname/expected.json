@@ -1,0 +1,28 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "command.executed",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "79cc9cff9da40c2c2dac277537e9e548d986e1f4cd12588871e961517dcf1042",
+        "state": "Present",
+        "payload": {
+          "native_id": "atuin-id-1",
+          "command": "ls -la",
+          "cwd": "/home/me",
+          "session": "session-1",
+          "hostname": "myhost:myuser",
+          "started_at": "2023-11-14T22:13:20Z",
+          "duration_ns": 1000,
+          "exit_code": 0,
+          "deleted_at": null,
+          "author": null,
+          "intent": null,
+          "shell": null
+        }
+      }
+    ]
+  }
+]

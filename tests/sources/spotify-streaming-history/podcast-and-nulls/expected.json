@@ -1,0 +1,78 @@
+[
+  {
+    "anchor": 2,
+    "events": [
+      {
+        "type": "music.played",
+        "ts": "2023-01-05T08:00:00Z",
+        "time": "Intrinsic",
+        "key": "c9b32a30dc4d1e58b00fe10450a20cacad5e8160662a54b4d1f2774e4b8a8ba4",
+        "state": "Present",
+        "payload": {
+          "started_at": "2023-01-05T08:00:00Z",
+          "ended_at": "2023-01-05T08:00:00Z",
+          "played_ms": 0,
+          "track_uri": null,
+          "track_name": null,
+          "artist_name": null,
+          "album_name": null,
+          "episode_uri": "spotify:episode:eee",
+          "episode_name": "Episode 1",
+          "show_name": "A Show",
+          "audiobook_title": null,
+          "audiobook_chapter_title": null,
+          "platform": "android",
+          "conn_country": "PL",
+          "reason_start": "clickrow",
+          "reason_end": "endplay",
+          "shuffle": false,
+          "skipped": null,
+          "offline": true,
+          "incognito_mode": false,
+          "extra": {
+            "ip_addr": "x",
+            "offline_timestamp": 1672905600
+          }
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 491,
+    "events": [
+      {
+        "type": "music.played",
+        "ts": "2013-02-12T13:12:35.134Z",
+        "time": "Intrinsic",
+        "key": "fa1dce73741c958f3aa6add169bf1a6a5bcead22d02ba6b8027eef2ab410f7f0",
+        "state": "Present",
+        "payload": {
+          "started_at": "2013-02-12T13:12:35.134Z",
+          "ended_at": "2013-02-12T13:17:05Z",
+          "played_ms": 269866,
+          "track_uri": null,
+          "track_name": null,
+          "artist_name": null,
+          "album_name": null,
+          "episode_uri": null,
+          "episode_name": null,
+          "show_name": null,
+          "audiobook_title": null,
+          "audiobook_chapter_title": null,
+          "platform": null,
+          "conn_country": null,
+          "reason_start": null,
+          "reason_end": null,
+          "shuffle": false,
+          "skipped": null,
+          "offline": null,
+          "incognito_mode": null,
+          "extra": {
+            "ip_addr": "x",
+            "offline_timestamp": null
+          }
+        }
+      }
+    ]
+  }
+]

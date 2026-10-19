@@ -1,0 +1,29 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "journal.entry",
+        "ts": "2026-08-10T17:38:43.889206Z",
+        "time": "Intrinsic",
+        "key": "6d80347f2f638c8e7757f3bad05a6ce1143f8713c9e3bc3dc543e57d3812d101",
+        "state": "Present",
+        "payload": {
+          "cursor": "s=78f8;i=4b92dca",
+          "logged_at": "2026-08-10T17:38:43.889206Z",
+          "boot_id": null,
+          "hostname": null,
+          "message": "[2026][\u001b[33mWARN\u001b[0m] lock failed",
+          "priority": 6,
+          "unit": "user@1000.service",
+          "user_unit": null,
+          "identifier": "aw-server",
+          "pid": null,
+          "uid": null,
+          "command": null,
+          "transport": null
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,46 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "browser.url",
+        "ts": "2024-01-17T21:20:00Z",
+        "time": "Intrinsic",
+        "key": "19fe6f2fc52a60c85d82d3e1244b337566fb877d6d4db1fbf4dbb7b6687ba6a7",
+        "state": "Present",
+        "payload": {
+          "profile": "input",
+          "url_id": 7,
+          "url": "https://example.org/",
+          "title": "Example",
+          "visit_count": 3,
+          "typed_count": 1,
+          "last_visited_at": "2024-01-17T21:20:00Z",
+          "hidden": false
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 135,
+    "events": [
+      {
+        "type": "browser.url",
+        "ts": null,
+        "time": "Unknown",
+        "key": "f2ac1be8b52c6c62fade25a18d6124261275c6be869940d90e348681b36d235e",
+        "state": "Present",
+        "payload": {
+          "profile": "input",
+          "url_id": 8,
+          "url": "chrome-extension://abc/page.html",
+          "title": null,
+          "visit_count": 0,
+          "typed_count": 0,
+          "last_visited_at": null,
+          "hidden": true
+        }
+      }
+    ]
+  }
+]

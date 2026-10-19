@@ -1,0 +1,3 @@
+{"received_ns":"1700000000000000000","line":"{\"__CURSOR\":\"s=a;i=1\",\"__REALTIME_TIMESTAMP\":\"1700000000000000\",\"MESSAGE\":\"one\"}"}
+{"received_ns":"1700000000000000001","line":""}
+{"received_ns":"1700000000000000002","line":"{\"__CURSOR\":\"s=a;i=2\",\"__REALTIME_TIMESTAMP\":\"1700000000000001\",\"MESSAGE\":\"two\"}"}

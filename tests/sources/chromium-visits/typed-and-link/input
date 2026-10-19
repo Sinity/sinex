@@ -1,0 +1,2 @@
+{"rowid": 101, "id": 101, "url": 7, "_url": "https://example.org/", "_title": "Example", "visit_time": 13350000000000000, "from_visit": 0, "transition": 805306369, "visit_duration": 42000000, "segment_id": 3, "incremented_omnibox_typed_score": 1}
+{"rowid": 102, "id": 102, "url": 8, "_url": "https://example.org/next", "_title": "Next", "visit_time": 13350000060000000, "from_visit": 101, "transition": 805306368, "visit_duration": 0}

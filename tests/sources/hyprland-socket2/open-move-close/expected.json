@@ -1,0 +1,60 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "window.opened",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:20Z",
+          "window": "0xabc123",
+          "workspace_id": null,
+          "workspace_name": "3",
+          "class": "firefox",
+          "title": "Sinex — docs"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 93,
+    "events": []
+  },
+  {
+    "anchor": 168,
+    "events": [
+      {
+        "type": "window.moved",
+        "ts": "2023-11-14T22:13:21Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:21Z",
+          "window": "0xabc123",
+          "workspace_id": 2,
+          "workspace_name": "browse"
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 247,
+    "events": [
+      {
+        "type": "window.closed",
+        "ts": "2023-11-14T22:13:22Z",
+        "time": "Captured",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "received_at": "2023-11-14T22:13:22Z",
+          "window": "0xabc123"
+        }
+      }
+    ]
+  }
+]

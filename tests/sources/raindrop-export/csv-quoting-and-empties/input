@@ -1,0 +1,7 @@
+id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
+101,"Rust, the book","a note, with commas","",https://doc.rust-lang.org/book/,Reading,"rust, books",2024-03-01T12:00:00.000Z,https://img.example/c.png,"",true
+102,No extras,,,https://example.org/,Unsorted,,2024-03-02T08:00:00.000Z,,,false
+103,"Multi
+line title","line one
+line two",,https://example.net/,Reading,,2024-03-03T09:30:00.000Z,,,false
+104,Bad time,,,https://bad.example/,Unsorted,,not-a-date,,,false

@@ -1,0 +1,66 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "mail.message",
+        "ts": "2024-01-01T10:00:00Z",
+        "time": "Intrinsic",
+        "key": "099afb09a62d71cc03eb3485dfae538cd6c0f12e32657c2bca419a1cdb5c2d0c",
+        "state": "Present",
+        "payload": {
+          "message_id": "one@example.org",
+          "date": "2024-01-01T10:00:00Z",
+          "from": [
+            "Alice <alice@example.org>"
+          ],
+          "to": [
+            "bob@example.org"
+          ],
+          "cc": [],
+          "subject": "first",
+          "in_reply_to": null,
+          "references": [],
+          "labels": [],
+          "thread_id": null,
+          "text": "hello\nFrom the start of a quoted line\n\n",
+          "html_only": false,
+          "attachments": [],
+          "size": 175
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 224,
+    "events": [
+      {
+        "type": "mail.message",
+        "ts": "2024-01-01T11:00:00Z",
+        "time": "Intrinsic",
+        "key": "e4fc6c555cccbc68bba8306aeaf2084bd8681f04cc920b78d0a8a48073503fe0",
+        "state": "Present",
+        "payload": {
+          "message_id": "two@example.org",
+          "date": "2024-01-01T11:00:00Z",
+          "from": [
+            "Bob <bob@example.org>"
+          ],
+          "to": [
+            "alice@example.org"
+          ],
+          "cc": [],
+          "subject": "Re: first",
+          "in_reply_to": "one@example.org",
+          "references": [],
+          "labels": [],
+          "thread_id": null,
+          "text": "reply\n",
+          "html_only": false,
+          "attachments": [],
+          "size": 175
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,70 @@
+[
+  {
+    "anchor": 2,
+    "events": [
+      {
+        "type": "music.played",
+        "ts": "2024-03-01T09:00:00Z",
+        "time": "Intrinsic",
+        "key": "d52110e8cc33d2d9ea43207fde5e14ebbc644ea1e588cea2800a5539ff373bfe",
+        "state": "Present",
+        "payload": {
+          "started_at": "2024-03-01T09:00:00Z",
+          "ended_at": "2024-03-01T09:03:00Z",
+          "played_ms": 180000,
+          "track_uri": null,
+          "track_name": "Song",
+          "artist_name": "Artist",
+          "album_name": null,
+          "episode_uri": null,
+          "episode_name": null,
+          "show_name": null,
+          "audiobook_title": null,
+          "audiobook_chapter_title": null,
+          "platform": null,
+          "conn_country": null,
+          "reason_start": null,
+          "reason_end": null,
+          "shuffle": null,
+          "skipped": null,
+          "offline": null,
+          "incognito_mode": null
+        }
+      }
+    ]
+  },
+  {
+    "anchor": 93,
+    "events": [
+      {
+        "type": "music.played",
+        "ts": "2024-03-01T09:05:00Z",
+        "time": "Intrinsic",
+        "key": "dd28d5defab3fcf8f88981338bb90a4ca03d7d17a68403ea0c199f5dba27b682",
+        "state": "Present",
+        "payload": {
+          "started_at": "2024-03-01T09:05:00Z",
+          "ended_at": "2024-03-01T09:05:00Z",
+          "played_ms": 0,
+          "track_uri": null,
+          "track_name": "Unknown Track",
+          "artist_name": "Unknown Artist",
+          "album_name": null,
+          "episode_uri": null,
+          "episode_name": null,
+          "show_name": null,
+          "audiobook_title": null,
+          "audiobook_chapter_title": null,
+          "platform": null,
+          "conn_country": null,
+          "reason_start": null,
+          "reason_end": null,
+          "shuffle": null,
+          "skipped": null,
+          "offline": null,
+          "incognito_mode": null
+        }
+      }
+    ]
+  }
+]

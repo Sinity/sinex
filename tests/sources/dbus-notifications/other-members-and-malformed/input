@@ -1,0 +1,2 @@
+{"received_ns":"1700000000000000000","line":"{\"type\":\"method_call\",\"member\":\"GetCapabilities\",\"payload\":{\"type\":\"\",\"data\":[]}}"}
+{"received_ns":"1700000001000000000","line":"{\"type\":\"method_call\",\"member\":\"Notify\",\"payload\":{\"type\":\"sus\",\"data\":[\"x\",0,\"\"]}}"}

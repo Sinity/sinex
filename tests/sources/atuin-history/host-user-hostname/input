@@ -1,0 +1,1 @@
+{"id":"atuin-id-1","timestamp":1700000000000000000,"duration":1000,"exit":0,"command":"ls -la","cwd":"/home/me","session":"session-1","hostname":"myhost:myuser","deleted_at":null}

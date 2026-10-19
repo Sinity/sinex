@@ -1,0 +1,29 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "journal.entry",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "8fb09d53ac082ea6e480b1564f844853bcaea799d3ee9a891cb5bfa9630e388f",
+        "state": "Present",
+        "payload": {
+          "cursor": "s=feedback;i=1",
+          "logged_at": "2023-11-14T22:13:20Z",
+          "boot_id": null,
+          "hostname": null,
+          "message": "source catalog exported",
+          "priority": null,
+          "unit": "sinexd.service",
+          "user_unit": null,
+          "identifier": "sinexd",
+          "pid": null,
+          "uid": null,
+          "command": null,
+          "transport": null
+        }
+      }
+    ]
+  }
+]

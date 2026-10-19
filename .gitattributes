@@ -52,3 +52,4 @@ secret/ export-ignore
 # ── Merge strategies ─────────────────────────────────────────────────
 Cargo.lock merge=ours
 flake.lock merge=ours
+tests/sources/** -text

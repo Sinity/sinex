@@ -1,0 +1,24 @@
+[
+  {
+    "anchor": 0,
+    "events": [
+      {
+        "type": "browser.visit",
+        "ts": "2024-01-17T21:22:00Z",
+        "time": "Intrinsic",
+        "key": "793e89d9d4050b9f754d6502f55b00efb6d180509010d5a1ed30a6380da15d80",
+        "state": "Present",
+        "payload": {
+          "profile": "input",
+          "visit_id": 103,
+          "url": null,
+          "title": null,
+          "visited_at": "2024-01-17T21:22:00Z",
+          "from_visit": null,
+          "transition": 1,
+          "duration_us": null
+        }
+      }
+    ]
+  }
+]
