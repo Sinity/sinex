@@ -22,13 +22,16 @@
 //! frames Sinex recorded (`mn8u`).
 use crate::writer::{Priority, WriteError, WriterHandle};
 use async_nats::jetstream::{self, AckKind, consumer, stream};
+use base64::Engine;
 use futures::StreamExt;
 use serde_json::Value;
 use sinex_model::{
     Batch, BatchKind, EventId, IngressFrame, MaterialRef, ObservationFacts, Origin, ReadingOrder,
     RecordOutcome, RevisionChange, RunId, SourceProgress, Timestamp, kinds,
 };
-use sinex_protocol::{Acknowledgment, Have, Ingress, MaterialFrame, ProducerEvent, Subjects};
+use sinex_protocol::{
+    Acknowledgment, Have, Ingress, MaterialFrame, ProducerEvent, ProducerFailure, Subjects,
+};
 use sinex_store::committed::{self, StoredFrame};
 use sinex_store::{Blobs, runs};
 use sqlx::PgConnection;
@@ -130,12 +133,25 @@ impl Ingest {
             return Ok(acknowledgment(stored));
         }
         let run = self.run(producer).await?;
-        let checked = match &frame {
-            Ingress::Material { material, .. } => self.material(producer, material),
-            Ingress::Events { events, .. } => self
-                .events(producer, events)
+        let checked = match self.unwrap(frame) {
+            Err(check) => Err(check),
+            Ok(Ingress::Material { material, .. }) => self.material(producer, &material),
+            Ok(Ingress::Events {
+                events, failures, ..
+            }) => self
+                .events(producer, &events, &failures)
                 .await
                 .map(|records| (None, records)),
+            Ok(Ingress::Chunk {
+                blob,
+                offset,
+                total,
+                data,
+                ..
+            }) => self
+                .chunk(&blob, offset, total, &data)
+                .map(|()| (None, vec![])),
+            Ok(Ingress::Indirect { .. }) => unreachable!("unwrap replaces indirect frames"),
         };
         let batch = match checked {
             Ok((progress, records)) => Batch {
@@ -227,6 +243,44 @@ impl Ingest {
         Ok(run)
     }
 
+    /// An indirect frame stands for the frame stored as its bytes; every other
+    /// frame stands for itself.
+    fn unwrap(&self, frame: Ingress) -> Result<Ingress, Check> {
+        let Ingress::Indirect { blob, .. } = frame else {
+            return Ok(frame);
+        };
+        let present = self
+            .blobs
+            .contains(&blob)
+            .map_err(|e| Check::Refused(e.to_string()))?;
+        if !present {
+            return Err(Check::Refused(format!(
+                "the frame stored as {blob} is not in the content store; place or send its bytes first"
+            )));
+        }
+        let bytes = self
+            .blobs
+            .read(&blob)
+            .map_err(|e| Check::Unavailable(e.to_string()))?;
+        match serde_json::from_slice::<Ingress>(&bytes) {
+            Ok(inner @ (Ingress::Material { .. } | Ingress::Events { .. })) => Ok(inner),
+            Ok(_) => Err(Check::Refused(format!(
+                "{blob} holds a chunk or indirect frame; only material and events frames are stored"
+            ))),
+            Err(error) => Err(Check::Refused(format!("{blob} is not a frame: {error}"))),
+        }
+    }
+
+    fn chunk(&self, blob: &str, offset: u64, total: u64, data: &str) -> Result<(), Check> {
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| Check::Refused(format!("chunk data is not base64: {e}")))?;
+        self.blobs
+            .receive_chunk(blob, offset, total, &data)
+            .map(drop)
+            .map_err(|e| Check::Refused(e.to_string()))
+    }
+
     fn material(
         &self,
         producer: &str,
@@ -274,11 +328,13 @@ impl Ingest {
         &mut self,
         producer: &str,
         events: &[ProducerEvent],
+        failures: &[ProducerFailure],
     ) -> Result<Vec<RecordOutcome>, Check> {
         // Every cited material must be registered first.
         let mut cited: Vec<Uuid> = events
             .iter()
             .filter_map(|e| e.location.map(|l| l.material.0))
+            .chain(failures.iter().map(|f| f.location.material.0))
             .collect();
         cited.sort_unstable();
         cited.dedup();
@@ -343,6 +399,10 @@ impl Ingest {
                 events: vec![event],
             });
         }
+        records.extend(failures.iter().map(|f| RecordOutcome::Failure {
+            location: f.location,
+            reason: f.reason.clone(),
+        }));
         Ok(records)
     }
 }

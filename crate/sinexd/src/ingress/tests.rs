@@ -180,6 +180,7 @@ async fn materials_then_events_are_admitted_and_acknowledged_once() {
     let events = Ingress::Events {
         frame: "e1".into(),
         events: vec![imported(material, 0, "ls"), imported(material, 18, "pwd")],
+        failures: vec![],
     };
     let ack = h.send("kitty", &events).await;
     assert_eq!(ack.refusal, None, "{ack:?}");
@@ -199,6 +200,7 @@ async fn materials_then_events_are_admitted_and_acknowledged_once() {
     let resent = Ingress::Events {
         frame: "e2".into(),
         events: vec![imported(material, 0, "ls")],
+        failures: vec![],
     };
     let ack2 = h.send("kitty", &resent).await;
     assert_eq!(ack2.admitted, vec![]);
@@ -247,6 +249,7 @@ async fn polylogue_units_are_admitted_once_by_archive_and_position() {
     let first = Ingress::Events {
         frame: "rows:a1:1".into(),
         events: vec![unit(1)],
+        failures: vec![],
     };
     let ack = h.send("polylogue", &first).await;
     assert_eq!(ack.refusal, None, "{ack:?}");
@@ -254,11 +257,13 @@ async fn polylogue_units_are_admitted_once_by_archive_and_position() {
     let again = Ingress::Events {
         frame: "rows:a1:1-again".into(),
         events: vec![unit(1)],
+        failures: vec![],
     };
     assert_eq!(h.send("polylogue", &again).await.outcome["repeats"], 1);
     let next = Ingress::Events {
         frame: "rows:a1:2".into(),
         events: vec![unit(2)],
+        failures: vec![],
     };
     assert_eq!(h.send("polylogue", &next).await.outcome["admitted"], 1);
     let have = h
@@ -301,6 +306,7 @@ async fn invalid_frames_are_refused_and_recorded() {
                 &Ingress::Events {
                     frame: name.into(),
                     events: vec![event],
+                    failures: vec![],
                 },
             )
             .await;
@@ -315,7 +321,7 @@ async fn invalid_frames_are_refused_and_recorded() {
             blob: format!("blake3:{}", blake3::hash(b"absent").to_hex()),
             ..match h.material_frame("unused", b"y").1 {
                 Ingress::Material { material, .. } => *material,
-                Ingress::Events { .. } => unreachable!(),
+                _ => unreachable!(),
             }
         }),
     };
@@ -399,6 +405,7 @@ async fn ingress_events_reach_the_confirmed_stream() {
         &Ingress::Events {
             frame: "e1".into(),
             events: vec![imported(material, 0, "ls")],
+            failures: vec![],
         },
     )
     .await;
@@ -422,4 +429,101 @@ async fn ingress_events_reach_the_confirmed_stream() {
     assert_eq!(event.source, "kitty");
     assert_eq!(event.payload.unwrap()["command"], "ls");
     let _ = &h.nats;
+}
+
+#[tokio::test]
+async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded() {
+    use base64::Engine;
+    let h = Harness::start().await;
+    // A producer on another host: its bytes are not in this content store.
+    let bytes: Vec<u8> = b": 1760788800:0;ls\n: 1760788801:0;pwd\n".repeat(50);
+    let blob = format!("blake3:{}", blake3::hash(&bytes).to_hex());
+    let total = bytes.len() as u64;
+    let chunk = |attempt: &str, offset: usize, end: usize| Ingress::Chunk {
+        frame: format!("{blob}/{attempt}/{offset}"),
+        blob: blob.clone(),
+        offset: offset as u64,
+        total,
+        data: base64::engine::general_purpose::STANDARD.encode(&bytes[offset..end]),
+    };
+    // Out of order is refused and recorded; in order is accepted.
+    let ack = h.send("node", &chunk("a", 1_000, bytes.len())).await;
+    assert!(ack.refusal.unwrap().contains("in order"));
+    for (offset, end) in [(0, 1_000), (1_000, bytes.len())] {
+        let ack = h.send("node", &chunk("b", offset, end)).await;
+        assert_eq!(ack.refusal, None, "{ack:?}");
+    }
+    assert!(h.blobs.contains(&blob).unwrap());
+
+    let id = MaterialId::new();
+    let mut frame = h.material_frame("m-up", b"unused").1;
+    if let Ingress::Material { material, .. } = &mut frame {
+        material.id = id;
+        material.blob = blob.clone();
+        material.length = total;
+    }
+    let ack = h.send("node", &frame).await;
+    assert_eq!(ack.refusal, None, "{ack:?}");
+
+    let ack = h
+        .send(
+            "node",
+            &Ingress::Events {
+                frame: "e-up".into(),
+                events: vec![imported(id, 0, "ls")],
+                failures: vec![ProducerFailure {
+                    location: RecordLocation {
+                        material: id,
+                        anchor: 18,
+                    },
+                    reason: "unreadable".into(),
+                }],
+            },
+        )
+        .await;
+    assert_eq!(ack.refusal, None, "{ack:?}");
+    assert_eq!(ack.admitted.len(), 1);
+    assert_eq!(
+        h.count("SELECT count(*) FROM raw.failures WHERE reason = 'unreadable'")
+            .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
+    let h = Harness::start().await;
+    let (material, frame) = h.material_frame("m1", b"ls\n");
+    h.send("kitty", &frame).await;
+    let inner = Ingress::Events {
+        frame: "inner-name-ignored".into(),
+        events: vec![imported(material, 0, "ls")],
+        failures: vec![],
+    };
+    let blob = h.blobs.put(&serde_json::to_vec(&inner).unwrap()).unwrap();
+    let outer = Ingress::Indirect {
+        frame: "e-big".into(),
+        blob: blob.clone(),
+    };
+    let ack = h.send("kitty", &outer).await;
+    assert_eq!(ack.refusal, None, "{ack:?}");
+    assert_eq!(ack.frame, "e-big");
+    assert_eq!(ack.admitted.len(), 1);
+    // Bytes not in the store, or a stored chunk frame, are refused.
+    let missing = Ingress::Indirect {
+        frame: "e-missing".into(),
+        blob: format!("blake3:{}", blake3::hash(b"absent").to_hex()),
+    };
+    assert!(h.send("kitty", &missing).await.refusal.is_some());
+    let nested = h.blobs.put(&serde_json::to_vec(&outer).unwrap()).unwrap();
+    let ack = h
+        .send(
+            "kitty",
+            &Ingress::Indirect {
+                frame: "e-nested".into(),
+                blob: nested,
+            },
+        )
+        .await;
+    assert!(ack.refusal.unwrap().contains("only material and events"));
 }

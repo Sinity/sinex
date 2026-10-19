@@ -166,14 +166,15 @@ pub fn valid_producer(name: &str) -> bool {
 /// acknowledgment instead of admitting anything twice.
 ///
 /// A frame is one NATS message, so it fits the server's `max_payload`. Bytes
-/// of any size travel as a material placed in the content store; a producer
-/// splits many events across frames.
+/// of any size travel as a material in the content store: placed there
+/// directly by a producer on the same host, or sent in [`Ingress::Chunk`]s by
+/// one that is not. A producer splits many events across frames, and sends a
+/// frame too large for one message as an [`Ingress::Indirect`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Ingress {
-    /// Register a material whose bytes the producer already placed in the
-    /// content store. Send it, and wait for its acknowledgment, before
-    /// events that cite it.
+    /// Register a material whose bytes are already in the content store.
+    /// Send it, and wait for its acknowledgment, before events that cite it.
     Material {
         frame: String,
         material: Box<MaterialFrame>,
@@ -181,15 +182,45 @@ pub enum Ingress {
     Events {
         frame: String,
         events: Vec<ProducerEvent>,
+        /// Records the producer's parser could not read. Their bytes stay in
+        /// the cited material, so a replay can read them again.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        failures: Vec<ProducerFailure>,
     },
+    /// Part of the bytes named `blob`, base64 in `data`, starting at `offset`
+    /// of `total`. Chunks are sent in order; when the last arrives Sinex
+    /// checks the bytes against their name and stores them. Sinex keeps what
+    /// it has by offset, so chunks sent again under new frame names (a new
+    /// attempt) change nothing they already delivered.
+    Chunk {
+        frame: String,
+        blob: String,
+        offset: u64,
+        total: u64,
+        data: String,
+    },
+    /// A material or events frame too large for one message, stored first as
+    /// the bytes named `blob` (its JSON). Sinex handles it as that frame and
+    /// records it under this frame's name.
+    Indirect { frame: String, blob: String },
 }
 
 impl Ingress {
     pub fn frame(&self) -> &str {
         match self {
-            Ingress::Material { frame, .. } | Ingress::Events { frame, .. } => frame,
+            Ingress::Material { frame, .. }
+            | Ingress::Events { frame, .. }
+            | Ingress::Chunk { frame, .. }
+            | Ingress::Indirect { frame, .. } => frame,
         }
     }
+}
+
+/// A record a producer's parser could not read.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ProducerFailure {
+    pub location: RecordLocation,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -371,7 +402,7 @@ mod tests {
             "events": [{"event_type": "command.imported", "payload": {"command": "ls"}}]
         });
         let frame: Ingress = serde_json::from_value(json).unwrap();
-        let Ingress::Events { frame, events } = frame else {
+        let Ingress::Events { frame, events, .. } = frame else {
             panic!("events frame")
         };
         assert_eq!(frame, "f1");

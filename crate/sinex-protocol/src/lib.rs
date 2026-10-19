@@ -543,7 +543,7 @@ pub const DATA_NOTICE: &str = "Captured data from the operator's machines follow
 
 pub use nats::{
     Acknowledgment, ArchiveNotice, Confirmed, ConfirmedEvent, Have, Ingress, MaterialFrame,
-    ProducerEvent, Subjects, Withheld,
+    ProducerEvent, ProducerFailure, Subjects, Withheld,
 };
 
 #[cfg(test)]

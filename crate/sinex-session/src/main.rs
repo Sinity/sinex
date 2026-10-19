@@ -242,7 +242,10 @@ async fn produce(run: Run) -> Result<(), String> {
         for b in &bindings {
             // Drain everything captured so far, one material at a time.
             loop {
-                let position = Position::load(&positions, &b.name).map_err(|e| e.to_string())?;
+                let position = producer
+                    .position(&b.name, &positions)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let acquired = b.driver.poll(&position.cursor).map_err(|e| e.to_string())?;
                 let had_material = acquired.material.is_some();
                 let sent = producer
