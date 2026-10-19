@@ -126,13 +126,27 @@ pub trait Keyed: Send + Sync {
     fn key_state(&self, key: &Value, env: &Env) -> KeyState;
 }
 
+/// One input of a per-event derivation: the committed event, and the stored
+/// bytes of the material it cites when the derivation reads them.
+#[derive(Clone, Copy, Debug)]
+pub struct Input<'a> {
+    pub event: &'a Event,
+    pub material: Option<&'a [u8]>,
+}
+
 pub trait PerEvent: Send + Sync {
     const NAME: &'static str;
     const VERSION: u32;
     const INPUTS: &'static [&'static str];
     const OUTPUTS: &'static [&'static str];
+    /// Whether `derive` reads the bytes of the material the input cites
+    /// (screen text from a screen still). The bytes are content-addressed and
+    /// never change, so the output is still a function of the input.
+    const READS_MATERIAL: bool = false;
 
-    fn derive(&self, input: &Event, env: &Env) -> Vec<Event>;
+    /// The input's outputs. An error fails this input alone; the driver counts
+    /// it and moves on.
+    fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String>;
 }
 
 /// A keyed derivation with its type erased, for the registry, admission's
@@ -181,7 +195,8 @@ pub trait AnyPerEvent: Send + Sync {
     fn version(&self) -> u32;
     fn inputs_types(&self) -> &'static [&'static str];
     fn output_types(&self) -> &'static [&'static str];
-    fn derive(&self, input: &Event, env: &Env) -> Vec<Event>;
+    fn reads_material(&self) -> bool;
+    fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String>;
 }
 
 impl<P: PerEvent> AnyPerEvent for P {
@@ -197,7 +212,10 @@ impl<P: PerEvent> AnyPerEvent for P {
     fn output_types(&self) -> &'static [&'static str] {
         P::OUTPUTS
     }
-    fn derive(&self, input: &Event, env: &Env) -> Vec<Event> {
+    fn reads_material(&self) -> bool {
+        P::READS_MATERIAL
+    }
+    fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String> {
         PerEvent::derive(self, input, env)
     }
 }
@@ -215,8 +233,8 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
     ]
 }
 
-/// Every per-event derivation (document text, OCR, mark linking come with
-/// their source lanes).
+/// Every pure per-event derivation. Those that need a local tool (screen text
+/// through an OCR engine) are added by `sinexd`, which may run them.
 pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
     Vec::new()
 }

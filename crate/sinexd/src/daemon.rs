@@ -28,11 +28,10 @@ use tokio::task::JoinSet;
 /// keys whose outputs wait on evidence outside their window settle with time.
 const DRIVER_IDLE: Duration = Duration::from_secs(30);
 
-/// Metric values are recomputed at least this often (new opportunity, such
-/// as time passing for a live source, changes cells without a commit) and
-/// after commits have been quiet for `METRICS_QUIET`.
+/// The trailing days of metric values are recomputed at least this often
+/// (new opportunity, such as time passing for a live source, changes cells
+/// without a commit); dirty days are recomputed whenever the driver settles.
 const METRICS_IDLE: Duration = Duration::from_secs(600);
-const METRICS_QUIET: Duration = Duration::from_secs(30);
 
 pub struct Options {
     pub database: String,
@@ -101,14 +100,22 @@ pub async fn run(o: Options) -> Result<(), String> {
         ("writer", Ok(()))
     });
 
+    // Every derivation runs in the driver: events from keyed and per-event
+    // derivations (screen text included), then the maintained metric values.
     let driver = derive::Driver::start(
         connect(&o.database).await?,
         handle.clone(),
         sinex_automata::keyed(),
-        sinex_automata::per_event(),
+        derive::per_event(),
         &o.host,
     )
-    .await?;
+    .await?
+    .with_blobs(blobs.clone())
+    .with_maintained(vec![Box::new(crate::analysis::MetricValues::new(
+        crate::analysis::Settings::operator_default(),
+        2,
+        METRICS_IDLE,
+    ))]);
     let wake = Arc::new(Notify::new());
     let (w, mut c) = (wake.clone(), commits.clone());
     tasks.spawn(async move {
@@ -122,54 +129,6 @@ pub async fn run(o: Options) -> Result<(), String> {
             } => ("automaton driver wake", Ok(())),
         }
     });
-
-    // Metric values follow their inputs: after commits settle, recompute the
-    // days admission marked dirty and the most recent ones.
-    let mut metrics_conn = connect(&o.database).await?;
-    let (mut c, mut s) = (commits.clone(), stop.clone());
-    tasks.spawn(async move {
-        let settings = crate::analysis::Settings::operator_default();
-        loop {
-            tokio::select! {
-                changed = c.changed() => if changed.is_err() { return ("metric maintenance", Ok(())) },
-                _ = tokio::time::sleep(METRICS_IDLE) => {}
-                _ = s.wait_for(|s| *s) => return ("metric maintenance", Ok(())),
-            }
-            // Let a burst of commits (an import) finish before recomputing.
-            while tokio::time::timeout(METRICS_QUIET, c.changed()).await.is_ok() {}
-            if let Err(e) = crate::analysis::maintain(&mut metrics_conn, &settings, 2).await {
-                return ("metric maintenance", Err(e));
-            }
-        }
-    });
-
-    // Screen text follows new screen segments, after commits settle. Without
-    // a local OCR engine there is nothing to run; that is said once.
-    match crate::media_text::engine() {
-        Ok(_) => {
-            let mut text_conn = connect(&o.database).await?;
-            let (mut c, mut s, w, b, host) = (
-                commits.clone(),
-                stop.clone(),
-                handle.clone(),
-                blobs.clone(),
-                o.host.clone(),
-            );
-            tasks.spawn(async move {
-                loop {
-                    tokio::select! {
-                        changed = c.changed() => if changed.is_err() { return ("screen text", Ok(())) },
-                        _ = s.wait_for(|s| *s) => return ("screen text", Ok(())),
-                    }
-                    while tokio::time::timeout(METRICS_QUIET, c.changed()).await.is_ok() {}
-                    if let Err(e) = crate::media_text::run(&mut text_conn, &b, &w, &host, Some(64)).await {
-                        return ("screen text", Err(e));
-                    }
-                }
-            });
-        }
-        Err(reason) => eprintln!("sinexd: screen text off: {reason}"),
-    }
 
     let mut consumers: Vec<Box<dyn Consumer>> = Vec::new();
     for model in commits::read_models() {

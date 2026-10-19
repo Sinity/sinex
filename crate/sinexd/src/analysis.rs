@@ -409,6 +409,52 @@ pub async fn maintain(
     Ok(n)
 }
 
+/// Metric values as a maintained derivation of the driver: the days
+/// admission marked dirty whenever it runs, plus the trailing `recent_days`
+/// every `recent_every` (a poll that found nothing new still changes a day's
+/// observation state).
+pub struct MetricValues {
+    pub settings: Settings,
+    pub recent_days: i64,
+    pub recent_every: std::time::Duration,
+    last_recent: Option<std::time::Instant>,
+}
+
+impl MetricValues {
+    pub fn new(settings: Settings, recent_days: i64, recent_every: std::time::Duration) -> Self {
+        Self {
+            settings,
+            recent_days,
+            recent_every,
+            last_recent: None,
+        }
+    }
+}
+
+impl crate::derive::Maintained for MetricValues {
+    fn name(&self) -> &'static str {
+        "metric values"
+    }
+
+    fn maintain<'a>(
+        &'a mut self,
+        conn: &'a mut PgConnection,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize, String>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let due = self
+                .last_recent
+                .is_none_or(|t| t.elapsed() >= self.recent_every);
+            let recent = if due { self.recent_days } else { 0 };
+            let n = maintain(conn, &self.settings, recent).await?;
+            if due {
+                self.last_recent = Some(std::time::Instant::now());
+            }
+            Ok(n)
+        })
+    }
+}
+
 /// A shipped recipe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum Recipe {
