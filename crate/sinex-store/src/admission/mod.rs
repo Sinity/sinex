@@ -91,9 +91,9 @@ pub async fn admit(
     keys: &dyn DirtyKeys,
 ) -> Result<Outcome> {
     let mut outcome = Outcome::default();
-    // Live readings a repeat or older reading left in place: for a derived
-    // batch they are still the key's outputs.
-    let mut kept: Vec<Uuid> = Vec::new();
+    // The live reading each offered event ends as: itself when admitted, the
+    // reading it repeats when suppressed. A derived batch's keys own these.
+    let mut resolved: Vec<Option<Uuid>> = Vec::new();
 
     match &batch.kind {
         BatchKind::Source(progress) => register_source(conn, progress).await?,
@@ -196,7 +196,10 @@ pub async fn admit(
                    row_number() OVER (
                      PARTITION BY st.source, st.event_type,
                        coalesce(st.equivalence_key, st.material_id::text || ':' || st.anchor || ':' || st.ordinal)
-                     ORDER BY st.reading_order DESC, st.ord DESC) AS rank
+                     -- Equal reading orders with different content: the
+                     -- greater content hash wins, here and against the live
+                     -- reading below, so arrival never decides.
+                     ORDER BY st.reading_order DESC, st.record_hash DESC, st.ord DESC) AS rank
                  FROM core.admission_stage st)
                SELECT s.ord AS "ord!",
                  CASE
@@ -208,9 +211,11 @@ pub async fn admit(
                    -- reading of the same content: it replaces even where
                    -- repeats are suppressed.
                    WHEN s.record_state = 'removed'
-                     AND s.reading_order > coalesce(le.reading_order, lc.reading_order) THEN 'newer'
+                     AND (s.reading_order, s.record_hash)
+                       > (coalesce(le.reading_order, lc.reading_order), coalesce(le.record_hash, lc.record_hash)) THEN 'newer'
                    WHEN s.replace_rule = 'suppress_repeat' THEN 'repeat'
-                   WHEN s.reading_order > coalesce(le.reading_order, lc.reading_order) THEN 'newer'
+                   WHEN (s.reading_order, s.record_hash)
+                       > (coalesce(le.reading_order, lc.reading_order), coalesce(le.record_hash, lc.record_hash)) THEN 'newer'
                    ELSE 'older'
                  END AS "state!",
                  coalesce(le.event_id, lc.event_id) AS live_id
@@ -236,6 +241,7 @@ pub async fn admit(
         .fetch_all(&mut *conn)
         .await?;
 
+        resolved = vec![None; events.len()];
         let mut admit_ords: Vec<i32> = Vec::new();
         let mut replaced: Vec<(i32, Uuid)> = Vec::new();
         for row in rows {
@@ -248,19 +254,24 @@ pub async fn admit(
                 "superseded" => State::Superseded,
                 other => return Err(Error::Invalid(format!("unknown admission state {other}"))),
             };
+            let at = usize::try_from(row.ord).expect("ord is an index");
             match state {
-                State::New => admit_ords.push(row.ord),
+                State::New => {
+                    admit_ords.push(row.ord);
+                    resolved[at] = Some(events[at].id.0);
+                }
                 State::Newer => {
                     admit_ords.push(row.ord);
+                    resolved[at] = Some(events[at].id.0);
                     replaced.push((row.ord, row.live_id.expect("newer has a live reading")));
                 }
                 State::Repeat => {
                     outcome.repeats += 1;
-                    kept.extend(row.live_id);
+                    resolved[at] = row.live_id;
                 }
                 State::Older => {
                     outcome.older += 1;
-                    kept.extend(row.live_id);
+                    resolved[at] = row.live_id;
                 }
                 State::Hidden => outcome.hidden += 1,
                 State::Superseded => outcome.superseded += 1,
@@ -397,7 +408,7 @@ pub async fn admit(
 
     if let BatchKind::Derived { derivation, scope } = &batch.kind {
         outcome.dirty_keys +=
-            settle_derived(conn, derivation, scope, &outcome.admitted_ids, &kept, keys).await?;
+            settle_derived(conn, derivation, scope, batch, &resolved, keys).await?;
     }
 
     let failures: Vec<(Uuid, i64, &str)> = batch
@@ -709,21 +720,26 @@ async fn register_source(conn: &mut PgConnection, p: &SourceProgress) -> Result<
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DerivedScope {
-    /// A keyed derivation's complete outputs for one key, computed after its
-    /// dirty mark reached `dirty_seq`. Outputs the key produced before and no
-    /// longer produces are archived; the dirty mark clears unless the key was
-    /// dirtied again since.
-    Key {
-        key: Value,
-        dirty_seq: i64,
-        /// Some output still waits for evidence outside the key's window.
-        waiting: bool,
-    },
+    /// A keyed derivation's complete outputs for several keys, one batch
+    /// record per key in the same order. Outputs a key produced before and no
+    /// longer produces are archived; each dirty mark clears unless the key
+    /// was dirtied again since.
+    Keys { keys: Vec<KeyScope> },
     /// A per-event derivation's outputs for committed events up to `position`.
     Position { position: i64 },
     /// Recompute these keys (a version change, `sinexctl recompute`). Carries
     /// no events; the keys are marked dirty like admission marks them.
     Recompute { keys: Vec<Value> },
+}
+
+/// One key of a [`DerivedScope::Keys`] batch.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KeyScope {
+    pub key: Value,
+    /// The dirty mark the computation saw; a later mark survives.
+    pub dirty_seq: i64,
+    /// Some output still waits for evidence outside the key's window.
+    pub waiting: bool,
 }
 
 impl DerivedScope {
@@ -732,14 +748,15 @@ impl DerivedScope {
     }
 }
 
-/// Settle a derived batch: replace the key's output set, clear its dirty
-/// mark, record whether it waits; or advance a per-event position.
+/// Settle a derived batch: replace each key's output set, clear its dirty
+/// mark, record whether it waits; or advance a per-event position. Set-based
+/// over the batch's keys, so a batch of many keys costs a few statements.
 async fn settle_derived(
     conn: &mut PgConnection,
     derivation: &str,
     scope: &Value,
-    admitted: &[EventId],
-    kept: &[Uuid],
+    batch: &Batch,
+    resolved: &[Option<Uuid>],
     keys: &dyn DirtyKeys,
 ) -> Result<usize> {
     let scope: DerivedScope = serde_json::from_value(scope.clone())
@@ -764,24 +781,38 @@ async fn settle_derived(
             .await?;
             Ok(0)
         }
-        DerivedScope::Key {
-            key,
-            dirty_seq,
-            waiting,
-        } => {
-            let live: Vec<Uuid> = admitted
-                .iter()
-                .map(|e| e.0)
-                .chain(kept.iter().copied())
-                .collect();
+        DerivedScope::Keys { keys: scoped } => {
+            if scoped.len() != batch.records.len() {
+                return Err(Error::Invalid(format!(
+                    "derived batch: {} keys for {} records",
+                    scoped.len(),
+                    batch.records.len()
+                )));
+            }
+            // Each record's events, by their place in the batch, belong to
+            // its key; the live reading each ended as is that key's output.
+            let (mut out_keys, mut out_ids) = (Vec::new(), Vec::new());
+            let mut at = 0usize;
+            for (record, scope) in batch.records.iter().zip(&scoped) {
+                let n = match record {
+                    RecordOutcome::Events { events, .. } => events.len(),
+                    RecordOutcome::Failure { .. } => 0,
+                };
+                for live in resolved.get(at..at + n).unwrap_or(&[]).iter().flatten() {
+                    out_keys.push(scope.key.clone());
+                    out_ids.push(*live);
+                }
+                at += n;
+            }
+            let all_keys: Vec<Value> = scoped.iter().map(|s| s.key.clone()).collect();
             // Previous outputs not produced again and still live go to the archive.
             let gone = sqlx::query_scalar!(
                 r#"SELECT o.event_id AS "event_id!" FROM derivation.outputs o
-                   WHERE o.derivation = $1 AND o.key = $2 AND NOT (o.event_id = ANY($3))
+                   WHERE o.derivation = $1 AND o.key = ANY($2) AND NOT (o.event_id = ANY($3))
                    AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = o.event_id)"#,
                 derivation,
-                key,
-                &live,
+                &all_keys,
+                &out_ids,
             )
             .fetch_all(&mut *conn)
             .await?;
@@ -804,46 +835,50 @@ async fn settle_derived(
                 remove_live(conn, &gone).await?;
             }
             sqlx::query!(
-                "DELETE FROM derivation.outputs WHERE derivation = $1 AND key = $2",
+                "DELETE FROM derivation.outputs WHERE derivation = $1 AND key = ANY($2)",
                 derivation,
-                key,
+                &all_keys,
             )
             .execute(&mut *conn)
             .await?;
             sqlx::query!(
                 r#"INSERT INTO derivation.outputs (derivation, key, event_id)
-                   SELECT $1, $2, id FROM unnest($3::uuid[]) AS id ON CONFLICT DO NOTHING"#,
+                   SELECT $1, k, id FROM unnest($2::jsonb[], $3::uuid[]) AS o(k, id) ON CONFLICT DO NOTHING"#,
                 derivation,
-                key,
-                &live,
+                &out_keys,
+                &out_ids,
+            )
+            .execute(&mut *conn)
+            .await?;
+            let seqs: Vec<i64> = scoped.iter().map(|s| s.dirty_seq).collect();
+            sqlx::query!(
+                r#"DELETE FROM derivation.dirty d USING unnest($2::jsonb[], $3::bigint[]) AS s(k, seq)
+                   WHERE d.derivation = $1 AND d.key = s.k AND d.last_dirty_seq <= s.seq"#,
+                derivation,
+                &all_keys,
+                &seqs,
+            )
+            .execute(&mut *conn)
+            .await?;
+            let (waiting, settled): (Vec<&KeyScope>, Vec<&KeyScope>) =
+                scoped.iter().partition(|s| s.waiting);
+            let waiting: Vec<Value> = waiting.into_iter().map(|s| s.key.clone()).collect();
+            let settled: Vec<Value> = settled.into_iter().map(|s| s.key.clone()).collect();
+            sqlx::query!(
+                r#"INSERT INTO derivation.waiting (derivation, key)
+                   SELECT $1, k FROM unnest($2::jsonb[]) AS k ON CONFLICT DO NOTHING"#,
+                derivation,
+                &waiting,
             )
             .execute(&mut *conn)
             .await?;
             sqlx::query!(
-                "DELETE FROM derivation.dirty WHERE derivation = $1 AND key = $2 AND last_dirty_seq <= $3",
+                "DELETE FROM derivation.waiting WHERE derivation = $1 AND key = ANY($2)",
                 derivation,
-                key,
-                dirty_seq,
+                &settled,
             )
             .execute(&mut *conn)
             .await?;
-            if waiting {
-                sqlx::query!(
-                    "INSERT INTO derivation.waiting (derivation, key) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                    derivation,
-                    key,
-                )
-                .execute(&mut *conn)
-                .await?;
-            } else {
-                sqlx::query!(
-                    "DELETE FROM derivation.waiting WHERE derivation = $1 AND key = $2",
-                    derivation,
-                    key,
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
             Ok(dirty)
         }
     }

@@ -41,7 +41,7 @@ use sinex_model::civil::Civil;
 use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, Timestamp};
 use sinex_store::blobs::Blobs;
 use sinex_store::derived::{self, Match, Nearest, Registered, Window};
-use sinex_store::{DerivedScope, media, runs};
+use sinex_store::{DerivedScope, KeyScope, media, runs};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
@@ -54,6 +54,15 @@ use tokio::sync::Notify;
 const DIRTY_PER_PASS: i64 = 512;
 /// Committed events a per-event derivation reads per pass.
 const EVENTS_PER_PASS: i64 = 2_000;
+/// Keys settled per writer batch: one transaction for many keys, so a
+/// derivation's write cost is per batch, not per key.
+const KEYS_PER_BATCH: usize = 256;
+/// Outputs per writer batch, whatever the number of keys.
+const OUTPUTS_PER_BATCH: usize = 20_000;
+/// A key to settle: the key, the dirty mark it was computed for (0 when it
+/// is a waiting key being refreshed), and whether it stops waiting.
+type KeyWork = (Value, i64, bool);
+
 /// Keys marked dirty per recompute request.
 const KEYS_PER_REQUEST: usize = 5_000;
 /// One pass in this many works every rank, not only the lowest with work.
@@ -428,44 +437,75 @@ impl Driver {
         Ok(computed)
     }
 
-    /// Recompute one key and submit its complete output set.
-    async fn settle_key(
+    /// Recompute these keys of one derivation and submit their complete
+    /// output sets, several keys per writer batch.
+    async fn settle_keys(
         &mut self,
         index: usize,
-        key: Value,
-        dirty_seq: i64,
-        give_up: bool,
+        work: Vec<KeyWork>,
         env: &Env,
     ) -> Result<(), String> {
-        let name = self.keyed[index].name();
-        let mut computed = self.compute_key(index, &key, env).await?;
-        if give_up {
-            computed.waiting = false;
+        let mut scopes: Vec<KeyScope> = Vec::new();
+        let mut records: Vec<RecordOutcome> = Vec::new();
+        let mut outputs = 0usize;
+        let total = work.len();
+        for (i, (key, dirty_seq, give_up)) in work.into_iter().enumerate() {
+            let mut computed = self.compute_key(index, &key, env).await?;
+            if give_up {
+                computed.waiting = false;
+            }
+            outputs += computed.outputs.len();
+            scopes.push(KeyScope {
+                key,
+                dirty_seq,
+                waiting: computed.waiting,
+            });
+            records.push(RecordOutcome::Events {
+                location: None,
+                events: computed.outputs,
+            });
+            let last = i + 1 == total;
+            if last || scopes.len() >= KEYS_PER_BATCH || outputs >= OUTPUTS_PER_BATCH {
+                self.submit_keys(
+                    index,
+                    std::mem::take(&mut scopes),
+                    std::mem::take(&mut records),
+                )
+                .await?;
+                outputs = 0;
+            }
         }
+        Ok(())
+    }
+
+    async fn submit_keys(
+        &mut self,
+        index: usize,
+        scopes: Vec<KeyScope>,
+        mut records: Vec<RecordOutcome>,
+    ) -> Result<(), String> {
+        let name = self.keyed[index].name();
         let head = derived::head(&mut self.read)
             .await
             .map_err(|e| e.to_string())?;
-        let mut outputs = computed.outputs;
-        for e in &mut outputs {
-            // A recompute is a newer reading than any before it.
-            e.reading_order = ReadingOrder(head);
+        let mut n = 0;
+        for record in &mut records {
+            if let RecordOutcome::Events { events, .. } = record {
+                n += events.len();
+                for e in events {
+                    // A recompute is a newer reading than any before it.
+                    e.reading_order = ReadingOrder(head);
+                }
+            }
         }
-        let n = outputs.len();
+        let keys = scopes.len();
         let batch = Batch {
             run: self.run_of(name)?,
             kind: BatchKind::Derived {
                 derivation: name.to_owned(),
-                scope: DerivedScope::Key {
-                    key,
-                    dirty_seq,
-                    waiting: computed.waiting,
-                }
-                .to_value(),
+                scope: DerivedScope::Keys { keys: scopes }.to_value(),
             },
-            records: vec![RecordOutcome::Events {
-                location: None,
-                events: outputs,
-            }],
+            records,
             archive: vec![],
         };
         let t = Instant::now();
@@ -476,7 +516,7 @@ impl Driver {
             .map_err(|e| format!("{name}: {e}"))?;
         let c = self.counts.entry(name).or_default();
         c.write += t.elapsed();
-        c.keys += 1;
+        c.keys += keys;
         c.outputs += n;
         c.admitted += out.admitted;
         c.repeats += out.repeats;
@@ -521,17 +561,17 @@ impl Driver {
             let dirty = derived::dirty(&mut self.read, &names, DIRTY_PER_PASS)
                 .await
                 .map_err(|e| e.to_string())?;
-            let mut touched: BTreeMap<usize, HashSet<String>> = BTreeMap::new();
+            let mut touched: BTreeMap<usize, (HashSet<String>, Vec<KeyWork>)> = BTreeMap::new();
             for k in dirty {
                 let Some(index) = self.keyed.iter().position(|d| d.name() == k.derivation) else {
                     continue;
                 };
-                touched.entry(index).or_default().insert(k.key.to_string());
-                self.settle_key(index, k.key, k.last_dirty_seq, false, env)
-                    .await?;
+                let entry = touched.entry(index).or_default();
+                entry.0.insert(k.key.to_string());
+                entry.1.push((k.key, k.last_dirty_seq, false));
                 work += 1;
             }
-            for (index, done) in touched {
+            for (index, (done, mut keys)) in touched {
                 let name = self.keyed[index].name();
                 let waiting = derived::waiting(&mut self.read, name)
                     .await
@@ -542,9 +582,10 @@ impl Driver {
                     }
                     let give_up = since.0 < env.now.0 - WAITING_HORIZON;
                     // Not a dirty mark: clear nothing, only refresh the outputs.
-                    self.settle_key(index, key, 0, give_up, env).await?;
+                    keys.push((key, 0, give_up));
                     work += 1;
                 }
+                self.settle_keys(index, keys, env).await?;
             }
         }
         for index in 0..self.per_event.len() {

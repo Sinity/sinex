@@ -23,7 +23,7 @@ pub mod runs;
 pub mod sealed;
 mod stage;
 
-pub use admission::{DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, admit};
+pub use admission::{DerivedScope, DirtyKeys, KeyInput, KeyScope, NoDerivations, Outcome, admit};
 pub use blobs::{Blobs, Received};
 pub use hashed_blobs::Verified;
 /// The connection the store's reads take, for crates that call them without

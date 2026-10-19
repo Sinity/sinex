@@ -81,25 +81,32 @@ async fn live(conn: &mut PgConnection, source: &str) -> BTreeMap<String, String>
     .collect()
 }
 
-/// The admission rules, written plainly, as the oracle.
+/// The content hash `keyed` gives a reading.
+fn content_hash(c: u8) -> [u8; 32] {
+    *blake3::hash(format!("cmd-{c}").as_bytes()).as_bytes()
+}
+
+/// The admission rules, written plainly, as the oracle: per key, the reading
+/// with the greatest (reading order, content hash) wins, within a batch and
+/// against the live reading; equal content is a repeat.
 fn model(batches: &[Vec<(u8, u8, i64)>]) -> BTreeMap<String, (u8, i64)> {
     let mut live: BTreeMap<String, (u8, i64)> = BTreeMap::new();
     for b in batches {
-        let mut best: BTreeMap<u8, (usize, u8, i64)> = BTreeMap::new();
-        for (i, (k, c, o)) in b.iter().enumerate() {
-            let e = best.entry(*k).or_insert((i, *c, *o));
-            if (*o, i) >= (e.2, e.0) {
-                *e = (i, *c, *o);
+        let mut best: BTreeMap<u8, (u8, i64)> = BTreeMap::new();
+        for (k, c, o) in b {
+            let e = best.entry(*k).or_insert((*c, *o));
+            if (*o, content_hash(*c)) > (e.1, content_hash(e.0)) {
+                *e = (*c, *o);
             }
         }
-        for (k, (_, c, o)) in best {
+        for (k, (c, o)) in best {
             let key = format!("k{k}");
             match live.get(&key) {
                 None => {
                     live.insert(key, (c, o));
                 }
                 Some((lc, _)) if *lc == c => {}
-                Some((_, lo)) if o > *lo => {
+                Some((lc, lo)) if (o, content_hash(c)) > (*lo, content_hash(*lc)) => {
                     live.insert(key, (c, o));
                 }
                 Some(_) => {}
@@ -155,6 +162,52 @@ async fn newer_replaces_older_suppresses_one_live_per_key() {
             },
         )
         .unwrap();
+}
+
+/// Ties on reading order are decided by content, never by arrival: the same
+/// readings admitted one batch each in either order, or together in either
+/// order, leave the same live readings (sxnext-9zw.24).
+#[tokio::test]
+async fn equal_reading_orders_are_decided_by_content_not_arrival() {
+    let (_db, mut conn) = testdb::fresh().await;
+    let readings = [(0u8, 1u8, 5i64), (0, 2, 5), (1, 0, 3), (1, 2, 3), (1, 1, 3)];
+    let mut outcomes = Vec::new();
+    for (n, plan) in [
+        "separate",
+        "separate-reversed",
+        "together",
+        "together-reversed",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let source = format!("tie-{n}");
+        let mut ordered: Vec<_> = readings.to_vec();
+        if plan.ends_with("reversed") {
+            ordered.reverse();
+        }
+        let events: Vec<Event> = ordered
+            .iter()
+            .map(|(k, c, o)| keyed(&source, *k, *c, *o))
+            .collect();
+        if plan.starts_with("separate") {
+            for e in events {
+                admit_one(&mut conn, &batch(vec![e])).await;
+            }
+        } else {
+            admit_one(&mut conn, &batch(events)).await;
+        }
+        outcomes.push(live(&mut conn, &source).await);
+    }
+    assert!(
+        outcomes.windows(2).all(|w| w[0] == w[1]),
+        "arrival decided a tie: {outcomes:#?}"
+    );
+    let want: BTreeMap<String, String> = model(&[readings.to_vec()])
+        .into_iter()
+        .map(|(k, (c, _))| (k, format!("cmd-{c}")))
+        .collect();
+    assert_eq!(outcomes[0], want);
 }
 
 #[tokio::test]
