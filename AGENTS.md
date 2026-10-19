@@ -1,9 +1,10 @@
 # Repository Guidelines
 
 This is the Rust rewrite of Sinex. The README describes what works today and
-how to run it; `docs/` has a note per implemented feature. The design
-lives in the spec repository (`/realm/inbox/spec/sinex-spec/`). The old Sinex
-is in Git history and is still the deployed version.
+how to run it. The target architecture is
+`/realm/project/sinex/analysis/architecture-20261018/sinex-architecture.md`;
+planned work is in Beads (`bd` from this checkout). The old Sinex is in Git
+history and is still the deployed version.
 
 ## Structure
 
@@ -20,7 +21,8 @@ The workspace follows the target architecture
 - `crate/sinex-store`: admission (the only way events are stored), materials,
   positions, privacy rules, runs, queries. Knows no source by name.
 - `crate/sinex-sources`: the parser trait, the drain, shared drivers
-  (`AppendFile`, `SqliteRows`, others to come) and one module per source.
+  (append-only file, SQLite rows, export archive, directory snapshot, live
+  stream, API cursor, producer, media) and one module per source.
 - `crate/sinex-automata`, `crate/sinex-analysis`: derivations and analysis as
   pure code.
 - `crate/sinex-library`: the media library.
@@ -68,8 +70,9 @@ Optimize for fast integration.
 - Rust, four-space indent, `rustfmt`.
 - Comments state constraints and reasons, briefly. No status, history or spec
   narration in code; Git and Beads hold those.
-- Unit tests sit with the code (`#[cfg(test)]` modules, or `<module>/tests.rs`
-  when long). A test that needs PostgreSQL calls `devkit::pg::test_database()`
+- Tests live in their own files, never inline: a module's unit tests in
+  `<module>/tests.rs` declared with `#[cfg(test)] mod tests;`, integration
+  tests under the crate's `tests/`. A test that needs PostgreSQL calls `devkit::pg::test_database()`
   for its own copy of the schema template; tests run in parallel under
   `xtask test`. CLI and MCP behavior is tested through the public commands,
   not by widening visibility.
