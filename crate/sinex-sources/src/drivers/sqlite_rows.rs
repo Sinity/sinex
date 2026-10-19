@@ -71,6 +71,10 @@ pub struct Cursor {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowMemory {
     hashes: HashMap<i64, [u8; 32]>,
+    /// Whether this process has polled since the memory was made: the first
+    /// poll after a start is a full pass even when the hashes were rebuilt,
+    /// so an update made while Sinex was down is seen (law L20).
+    polled: bool,
 }
 
 impl RowMemory {
@@ -129,7 +133,7 @@ impl SqliteRows {
         };
         let now = Timestamp::now();
         let now_ns = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
-        let full = memory.hashes.is_empty()
+        let full = !memory.polled
             || now_ns.saturating_sub(previous.last_full_pass_ns)
                 >= self.full_pass_secs.saturating_mul(1_000_000_000);
 
@@ -237,6 +241,9 @@ impl SqliteRows {
         }
         drop(stmt);
         connection.execute_batch("COMMIT").ok();
+        if full {
+            memory.polled = true;
+        }
 
         let last_full = if full {
             now_ns
@@ -461,9 +468,12 @@ mod tests {
 
         // A new process: the memory comes back from the stored part.
         let mut rebuilt = RowMemory::rebuild([m.bytes.as_slice()]);
-        assert_eq!(rebuilt, memory);
+        assert_eq!(rebuilt.hashes, memory.hashes);
         let again = d.poll(&cursor, &mut rebuilt).unwrap();
-        assert!(again.material.is_none(), "no full pass, no new part");
+        assert!(
+            again.material.is_none(),
+            "the start-up full pass finds every row already stored: no new part"
+        );
 
         // The open row settles: read by rowid, though it no longer matches.
         Connection::open(&path)
@@ -474,6 +484,43 @@ mod tests {
         assert_eq!(lines(&settled)[0]["n"], json!(7));
         let s = settled.material.as_ref().unwrap();
         assert_eq!((s.cursor_at)(s.bytes.len())["open"], Value::Null);
+    }
+
+    /// L20: a finished row changed while Sinex was down (Atuin's soft
+    /// delete) is read on the first poll after the restart, though the
+    /// rebuilt memory is not empty and the row is outside the open window.
+    #[test]
+    fn a_row_changed_while_down_is_read_after_the_restart() {
+        let path = db();
+        let d = driver(path.clone());
+        let mut memory = RowMemory::default();
+        let first = d.poll(&Value::Null, &mut memory).unwrap();
+        let m = first.material.as_ref().unwrap();
+        let cursor = (m.cursor_at)(m.bytes.len());
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("UPDATE t SET n = 9 WHERE id = 'a'")
+            .unwrap();
+        let mut rebuilt = RowMemory::rebuild([m.bytes.as_slice()]);
+        let after = d.poll(&cursor, &mut rebuilt).unwrap();
+        let rows = lines(&after);
+        assert_eq!(rows.len(), 1, "only the changed row");
+        assert_eq!(
+            (rows[0]["id"].clone(), rows[0]["n"].clone()),
+            (json!("a"), json!(9))
+        );
+        let quiet = d
+            .poll(
+                &after
+                    .material
+                    .as_ref()
+                    .map_or(after.cursor_unchanged.clone(), |m| {
+                        (m.cursor_at)(m.bytes.len())
+                    }),
+                &mut rebuilt,
+            )
+            .unwrap();
+        assert!(quiet.material.is_none(), "later polls are not full passes");
     }
 
     #[test]
