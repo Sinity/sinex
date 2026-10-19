@@ -211,6 +211,70 @@ async fn materials_then_events_are_admitted_and_acknowledged_once() {
     assert!(h.have("phone", &["e1"]).await.is_empty());
 }
 
+/// Polylogue's side of the boundary (architecture §9): a unit of an
+/// archive's rows arrives as a record-batch material and one `polylogue.rows`
+/// event at its start. Sinex keys units by archive and position, so a unit
+/// sent again in a new frame is a repeat, and the next position is a new
+/// unit. Polylogue's own rebuild proof drives the same frames through a real
+/// `sinexd` (polylogue `crates/sinex/tests/proof.rs`).
+#[tokio::test]
+async fn polylogue_units_are_admitted_once_by_archive_and_position() {
+    let h = Harness::start().await;
+    let rows = b"{\"table\":\"note\",\"row\":{\"id\":\"n1\",\"local_seq\":4}}\n";
+    let (batch, frame) = h.material_frame("batch:a1:1", rows);
+    assert_eq!(h.send("polylogue", &frame).await.refusal, None);
+    let unit = |position: u64| ProducerEvent {
+        event_type: "polylogue.rows".into(),
+        payload: json!({
+            "archive": "a1",
+            "position": position,
+            "local_seq": 4,
+            "unit": "note",
+            "key": "n1",
+            "batch": format!("blake3:{}", blake3::hash(rows).to_hex()),
+            "rows": 1,
+            "blobs": []
+        }),
+        location: Some(RecordLocation {
+            material: batch,
+            anchor: 0,
+        }),
+        ordinal: 0,
+        parents: vec![],
+        reading_order: position as i64,
+        class: sinex_model::Class::Open,
+    };
+    let first = Ingress::Events {
+        frame: "rows:a1:1".into(),
+        events: vec![unit(1)],
+    };
+    let ack = h.send("polylogue", &first).await;
+    assert_eq!(ack.refusal, None, "{ack:?}");
+    assert_eq!(ack.outcome["admitted"], 1);
+    let again = Ingress::Events {
+        frame: "rows:a1:1-again".into(),
+        events: vec![unit(1)],
+    };
+    assert_eq!(h.send("polylogue", &again).await.outcome["repeats"], 1);
+    let next = Ingress::Events {
+        frame: "rows:a1:2".into(),
+        events: vec![unit(2)],
+    };
+    assert_eq!(h.send("polylogue", &next).await.outcome["admitted"], 1);
+    let have = h
+        .have(
+            "polylogue",
+            &["batch:a1:1", "rows:a1:1", "rows:a1:2", "rows:a1:3"],
+        )
+        .await;
+    assert_eq!(have.len(), 3, "the unsent position is missing");
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.events WHERE event_type = 'polylogue.rows'")
+            .await,
+        2
+    );
+}
+
 #[tokio::test]
 async fn invalid_frames_are_refused_and_recorded() {
     let h = Harness::start().await;
