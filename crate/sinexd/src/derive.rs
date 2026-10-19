@@ -11,7 +11,14 @@
 //!   outputs wait on evidence outside their window are recomputed whenever
 //!   their derivation runs again.
 //! - **Per-event derivations:** read committed events after their position, in
-//!   commit order, and commit the new position with their outputs.
+//!   commit order, and commit the new position with their outputs. One that
+//!   reads stored bytes (screen text from a screen still) gets the bytes of
+//!   the material its input cites; an input that fails is counted and passed.
+//! - **Maintained tables:** derivations whose outputs are store rows rather
+//!   than events (analysis metric values), on the same dirty keys. They run
+//!   once the event derivations have settled, at most every
+//!   [`MAINTAIN_QUIET`] while the daemon runs, so an import's burst of
+//!   commits is maintained once rather than per commit.
 //!
 //! Derivations run in the order their inputs and outputs give: a derivation
 //! whose inputs another one produces runs after it, so a daily summary is
@@ -29,13 +36,16 @@
 //! also looks for work every so often, for keys that settle with time.
 use crate::writer::{Priority, WriterHandle};
 use serde_json::Value;
-use sinex_automata::{AnyKeyed, AnyPerEvent, Env, InputQuery, KeyView, Neighbour};
+use sinex_automata::{AnyKeyed, AnyPerEvent, Env, Input, InputQuery, KeyView, Neighbour};
 use sinex_model::civil::Civil;
 use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, Timestamp};
+use sinex_store::blobs::Blobs;
 use sinex_store::derived::{self, Match, Nearest, Registered, Window};
-use sinex_store::{DerivedScope, runs};
+use sinex_store::{DerivedScope, media, runs};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
@@ -48,6 +58,9 @@ const EVENTS_PER_PASS: i64 = 2_000;
 const KEYS_PER_REQUEST: usize = 5_000;
 /// One pass in this many works every rank, not only the lowest with work.
 pub const FAIR_EVERY: u32 = 8;
+/// While the daemon runs, maintained tables are brought up to date at most
+/// this often.
+pub const MAINTAIN_QUIET: Duration = Duration::from_secs(30);
 /// A key that has waited this long stops waiting.
 pub const WAITING_HORIZON: time::Duration = time::Duration::days(14);
 
@@ -60,6 +73,9 @@ pub struct Counts {
     pub admitted: usize,
     pub repeats: usize,
     pub replaced: usize,
+    /// Inputs a per-event derivation could not derive (their outputs are
+    /// missing until a new version reads them again).
+    pub failed: usize,
     pub compute: Duration,
     pub read: Duration,
     pub write: Duration,
@@ -69,13 +85,14 @@ impl std::fmt::Display for Counts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "keys {} | inputs read {} | outputs {} | admitted {} | repeats {} | replaced {} | read {:.2}s | compute {:.2}s | write {:.2}s",
+            "keys {} | inputs read {} | outputs {} | admitted {} | repeats {} | replaced {} | failed {} | read {:.2}s | compute {:.2}s | write {:.2}s",
             self.keys,
             self.inputs,
             self.outputs,
             self.admitted,
             self.repeats,
             self.replaced,
+            self.failed,
             self.read.as_secs_f64(),
             self.compute.as_secs_f64(),
             self.write.as_secs_f64(),
@@ -83,9 +100,25 @@ impl std::fmt::Display for Counts {
     }
 }
 
+/// A derivation that keeps store rows (not events) equal to a function of its
+/// inputs, driven by dirty keys admission marks under its own names.
+pub trait Maintained: Send {
+    fn name(&self) -> &'static str;
+    /// Bring the rows up to date: the dirty keys, plus whatever the
+    /// derivation refreshes with time. Returns how much it recomputed.
+    fn maintain<'a>(
+        &'a mut self,
+        conn: &'a mut PgConnection,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + 'a>>;
+}
+
 pub struct Driver {
     keyed: Vec<Box<dyn AnyKeyed>>,
     per_event: Vec<Box<dyn AnyPerEvent>>,
+    maintained: Vec<Box<dyn Maintained>>,
+    last_maintained: Option<Instant>,
+    /// The content store, for per-event derivations that read stored bytes.
+    blobs: Option<Blobs>,
     /// Rank of each keyed and per-event derivation, by name: 0 for those
     /// reading only captured events, one more than the highest rank of any
     /// derivation producing an input.
@@ -183,6 +216,9 @@ impl Driver {
         let mut driver = Self {
             keyed,
             per_event,
+            maintained: Vec::new(),
+            last_maintained: None,
+            blobs: None,
             ranks,
             passes: 0,
             clock: None,
@@ -255,6 +291,33 @@ impl Driver {
             }
         }
         Ok(keys)
+    }
+
+    /// The content store per-event derivations read stored bytes from.
+    #[must_use]
+    pub fn with_blobs(mut self, blobs: Blobs) -> Self {
+        self.blobs = Some(blobs);
+        self
+    }
+
+    /// Derivations that maintain store rows, run once the others settle.
+    #[must_use]
+    pub fn with_maintained(mut self, maintained: Vec<Box<dyn Maintained>>) -> Self {
+        self.maintained = maintained;
+        self
+    }
+
+    /// Run every maintained derivation. Returns how much they recomputed.
+    pub async fn maintain(&mut self) -> Result<usize, String> {
+        let mut work = 0;
+        for m in &mut self.maintained {
+            work += m
+                .maintain(&mut self.read)
+                .await
+                .map_err(|e| format!("{}: {e}", m.name()))?;
+        }
+        self.last_maintained = Some(Instant::now());
+        Ok(work)
     }
 
     /// Mark every key of `name` dirty, through the writer.
@@ -464,13 +527,50 @@ impl Driver {
         let Some(last) = events.last().map(|c| c.commit_seq) else {
             return Ok(0);
         };
+        let reads_material = self.per_event[index].reads_material();
         let mut outputs = Vec::new();
+        let mut failed = 0;
         for c in &events {
-            for mut e in self.per_event[index].derive(&c.event, env) {
-                // A new derivation version reads every input again; its
-                // outputs must be newer readings than the old version's.
-                e.reading_order = ReadingOrder((version << 40) | c.commit_seq);
-                outputs.push(e);
+            let material = if reads_material {
+                match self.material_of(&c.event).await {
+                    Ok(bytes) => Some(bytes),
+                    Err(reason) => {
+                        eprintln!("{name}: event {}: {reason}", c.event.id);
+                        failed += 1;
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+            let input = Input {
+                event: &c.event,
+                material: material.as_deref(),
+            };
+            let d = &self.per_event[index];
+            // A derivation that runs a local tool (OCR) blocks for a while;
+            // keep it off the runtime's other tasks where the runtime allows.
+            let derived = if reads_material
+                && tokio::runtime::Handle::current().runtime_flavor()
+                    == tokio::runtime::RuntimeFlavor::MultiThread
+            {
+                tokio::task::block_in_place(|| d.derive(input, env))
+            } else {
+                d.derive(input, env)
+            };
+            match derived {
+                Ok(derived) => {
+                    for mut e in derived {
+                        // A new derivation version reads every input again; its
+                        // outputs must be newer readings than the old version's.
+                        e.reading_order = ReadingOrder((version << 40) | c.commit_seq);
+                        outputs.push(e);
+                    }
+                }
+                Err(reason) => {
+                    eprintln!("{name}: event {}: {reason}", c.event.id);
+                    failed += 1;
+                }
             }
         }
         let n = outputs.len();
@@ -493,15 +593,34 @@ impl Driver {
             .map_err(|e| format!("{name}: {e}"))?;
         let c = self.counts.entry(name).or_default();
         c.inputs += events.len();
+        c.failed += failed;
         c.outputs += n;
         c.admitted += out.admitted;
         c.repeats += out.repeats;
         Ok(events.len())
     }
 
-    /// Run passes until one does no work.
+    /// The stored bytes of the material `event` cites.
+    async fn material_of(&mut self, event: &Event) -> Result<Vec<u8>, String> {
+        let sinex_model::Origin::Record { location, .. } = &event.origin else {
+            return Err("a derived event cites no material".into());
+        };
+        let blobs = self
+            .blobs
+            .as_ref()
+            .ok_or("no content store was given to the driver")?;
+        let blob = media::material_blob(&mut self.read, location.material)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("its material is not stored")?;
+        blobs.read(&blob).map_err(|e| e.to_string())
+    }
+
+    /// Run passes until one does no work, then bring maintained tables up to
+    /// date.
     pub async fn settle(&mut self) -> Result<(), String> {
         while self.pass().await? > 0 {}
+        self.maintain().await?;
         Ok(())
     }
 
@@ -510,6 +629,12 @@ impl Driver {
     pub async fn run(mut self, wake: Arc<Notify>, idle: Duration) -> Result<(), String> {
         loop {
             if self.pass().await? == 0 {
+                let due = self
+                    .last_maintained
+                    .is_none_or(|t| t.elapsed() >= MAINTAIN_QUIET);
+                if !self.maintained.is_empty() && due && self.maintain().await? > 0 {
+                    continue;
+                }
                 tokio::select! {
                     () = wake.notified() => {}
                     () = tokio::time::sleep(idle) => {}
@@ -716,3 +841,14 @@ impl std::fmt::Display for Comparison {
 #[cfg(test)]
 #[path = "derive_tests.rs"]
 mod tests;
+
+/// Every per-event derivation `sinexd` runs: the pure ones, plus screen text
+/// when a local OCR engine is installed (said once when it is not).
+pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
+    let mut all = sinex_automata::per_event();
+    match crate::media_text::engine() {
+        Ok(engine) => all.push(Box::new(crate::media_text::ScreenText { engine })),
+        Err(reason) => eprintln!("sinexd: screen text off: {reason}"),
+    }
+    all
+}

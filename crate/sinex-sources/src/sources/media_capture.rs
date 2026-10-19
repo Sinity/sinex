@@ -4,7 +4,7 @@
 //! source (`pw-record`, 16 kHz mono, encoded to Opus with `ffmpeg` when it is
 //! present). Each segment is one stored material and one `media.segment`
 //! event; reading text from screens and speech from audio are derivations
-//! over those events (`sinexd admin media-text`).
+//! over those events (the `screen-text` derivation in `sinexd`).
 //!
 //! Private mode stops capture: nothing is recorded while it is on.
 use crate::drivers::media::{self, Media};

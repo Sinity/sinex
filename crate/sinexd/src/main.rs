@@ -140,10 +140,15 @@ enum Command {
         host: String,
     },
     /// Run every derivation until nothing is dirty, through the writer, and
-    /// report counts and rates. The daemon's driver, run to completion.
+    /// report counts and rates. The daemon's driver, run to completion,
+    /// including the maintained metric values.
     Derive {
         #[arg(long)]
         database: String,
+        /// Content store directory, for derivations that read stored bytes
+        /// (screen text); without it they count their inputs as failed.
+        #[arg(long)]
+        store: Option<PathBuf>,
         #[arg(long, default_value = "localhost")]
         host: String,
     },
@@ -419,17 +424,6 @@ enum Admin {
         #[arg(long, default_value_t = 2)]
         pause: u64,
     },
-    /// Read text from screen segments not yet read (`screen.text`) with the
-    /// local OCR engine.
-    MediaText {
-        #[command(flatten)]
-        at: Store,
-        #[arg(long, default_value = "localhost")]
-        host: String,
-        /// Read at most this many segments.
-        #[arg(long)]
-        limit: Option<u64>,
-    },
 }
 
 #[derive(clap::Args)]
@@ -562,15 +556,6 @@ async fn admin(command: Admin) -> Result<(), String> {
             println!("crawl  {t}");
             Ok(())
         }
-        Admin::MediaText { at, host, limit } => {
-            let mut ctx = context::Context::open(&at.database, &at.store).await?;
-            let t = media_text::run(&mut ctx.aux, &ctx.blobs, &ctx.writer, &host, limit).await?;
-            println!(
-                "screen text: {} segments read, {} failed, {:.1}s",
-                t.read, t.failed, t.seconds
-            );
-            Ok(())
-        }
         Admin::Library {
             at,
             host,
@@ -655,7 +640,7 @@ async fn admin(command: Admin) -> Result<(), String> {
                     until.unwrap_or_else(sinex_model::Timestamp::now),
                 )
             });
-            let (mut driver, writer_task) = local_driver(&database, &host).await?;
+            let (mut driver, writer_task) = local_driver(&database, &host, None).await?;
             let result = if compare {
                 driver
                     .compare(&derivation, range, examples)
@@ -716,10 +701,12 @@ async fn admin(command: Admin) -> Result<(), String> {
     }
 }
 
-/// A writer and a derivation driver for a one-shot command.
+/// A writer and a derivation driver for a one-shot command, with the content
+/// store when `store` names one.
 async fn local_driver(
     database: &str,
     host: &str,
+    store: Option<&std::path::Path>,
 ) -> Result<(derive::Driver, tokio::task::JoinHandle<()>), String> {
     use sqlx::Connection;
     sinex_schema::apply_url(database)
@@ -738,19 +725,28 @@ async fn local_driver(
     let read = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| e.to_string())?;
-    let driver = derive::Driver::start(
+    let mut driver = derive::Driver::start(
         read,
         handle,
         sinex_automata::keyed(),
-        sinex_automata::per_event(),
+        derive::per_event(),
         host,
     )
     .await?;
+    if let Some(store) = store {
+        driver =
+            driver.with_blobs(sinex_store::blobs::Blobs::open(store).map_err(|e| e.to_string())?);
+    }
     Ok((driver, task))
 }
 
-async fn run_derive(database: String, host: String) -> Result<(), String> {
-    let (mut driver, writer_task) = local_driver(&database, &host).await?;
+async fn run_derive(database: String, store: Option<PathBuf>, host: String) -> Result<(), String> {
+    let (driver, writer_task) = local_driver(&database, &host, store.as_deref()).await?;
+    let mut driver = driver.with_maintained(vec![Box::new(analysis::MetricValues::new(
+        analysis::Settings::operator_default(),
+        2,
+        std::time::Duration::ZERO,
+    ))]);
     let started = std::time::Instant::now();
     driver.settle().await?;
     let wall = started.elapsed();
@@ -891,7 +887,11 @@ async fn main() -> std::process::ExitCode {
             })
             .await
         }
-        Command::Derive { database, host } => run_derive(database, host).await,
+        Command::Derive {
+            database,
+            store,
+            host,
+        } => run_derive(database, store, host).await,
         Command::Analysis { command } => run_analysis(command).await,
     };
     match result {

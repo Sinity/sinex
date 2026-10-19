@@ -495,9 +495,10 @@ impl sinex_automata::PerEvent for Echo {
     const INPUTS: &'static [&'static str] = &["command.imported"];
     const OUTPUTS: &'static [&'static str] = &["command.fused"];
 
-    fn derive(&self, input: &Event, _: &Env) -> Vec<Event> {
+    fn derive(&self, input: sinex_automata::Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
+        let input = input.event;
         let c: CommandImported = input.payload_as().unwrap();
-        vec![sinex_automata::output::derived(
+        Ok(vec![sinex_automata::output::derived(
             &CommandFused {
                 record: sinex_automata::output::record_identity(input),
                 command: c.command.to_uppercase(),
@@ -511,7 +512,7 @@ impl sinex_automata::PerEvent for Echo {
             },
             "test.echo",
             [input],
-        )]
+        )])
     }
 }
 
