@@ -8,7 +8,7 @@ fn parse(line: &str) -> Result<Produced, RecordError> {
     ))
     .unwrap();
     SessionSocketParser
-        .parse(&rec, &())
+        .parse(&rec, &(), &crate::RecordContext::none())
         .map(|(mut v, ())| v.remove(0))
 }
 

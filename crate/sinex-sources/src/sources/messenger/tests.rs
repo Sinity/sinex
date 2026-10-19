@@ -9,7 +9,7 @@ fn gdpr_threads_key_by_participants() {
         {"senderName": "B", "timestamp": 1_723_462_266_668i64, "type": "media", "isUnsent": true,
          "media": [{"uri": "media/a.webp"}]}]});
     let (out, ()) = MessengerParser
-        .parse(doc.as_object().unwrap(), &())
+        .parse(doc.as_object().unwrap(), &(), &crate::RecordContext::none())
         .unwrap();
     assert_eq!(out.len(), 2);
     assert_eq!(out[0].thread, "A|B");
@@ -26,7 +26,7 @@ fn legacy_threads_are_repaired() {
         "timestamp_ms": 1_500_000_000_000i64, "content": "za\u{00c5}\u{00bc}\u{00c3}\u{00b3}\u{00c5}\u{0082}\u{00c4}\u{0087}",
         "type": "Generic", "photos": [{"uri": "messages/photos/p.jpg"}]}]});
     let (out, ()) = MessengerParser
-        .parse(doc.as_object().unwrap(), &())
+        .parse(doc.as_object().unwrap(), &(), &crate::RecordContext::none())
         .unwrap();
     assert_eq!(out[0].sender, "Michał");
     assert_eq!(out[0].text.as_deref(), Some("zażółć"));

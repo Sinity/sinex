@@ -188,7 +188,7 @@ pub async fn run(
             continue;
         }
         let chain: Vec<Stored> = chain[..=last].iter().map(|m| (*m).clone()).collect();
-        let parsers = sources_of(&mut ctx.aux, &chain).await?;
+        let parsers = sources_of(aux, &chain).await?;
         // The chain is read on a blocking thread while the writer admits its
         // batches as they come, a few at a time.
         let (sender, batches) = tokio::sync::mpsc::channel(READ_AHEAD);

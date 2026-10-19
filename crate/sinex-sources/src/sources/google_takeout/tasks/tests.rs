@@ -9,7 +9,9 @@ fn tasks_in_lists() {
             "task_type": "PERSONAL_TASK"},
             {"id": "T2", "title": "", "status": "needsAction", "deleted": true,
              "updated": "2019-06-14T10:00:00Z"}]}]});
-    let (out, ()) = TasksParser.parse(doc.as_object().unwrap(), &()).unwrap();
+    let (out, ()) = TasksParser
+        .parse(doc.as_object().unwrap(), &(), &crate::RecordContext::none())
+        .unwrap();
     assert_eq!(out.len(), 2);
     assert_eq!(out[0].list_title.as_deref(), Some("Mine"));
     assert!(out[0].completed_at.is_some());

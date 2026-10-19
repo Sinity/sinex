@@ -10,9 +10,7 @@ fn run(path: &str, rows: &[&[u8]]) -> Vec<SamsungEvent> {
     let mut carry = Carry::default();
     let mut out = Vec::new();
     for row in rows {
-        let (events, next) = SamsungCloudParser
-            .parse(row, &carry, &context)
-            .unwrap();
+        let (events, next) = SamsungCloudParser.parse(row, &carry, &context).unwrap();
         out.extend(events);
         carry = next;
     }

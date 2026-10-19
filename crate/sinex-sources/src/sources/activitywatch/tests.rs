@@ -35,7 +35,9 @@ fn run(rows: &[Map<String, Value>]) -> (Vec<Activity>, OpenSpans) {
     let mut carry = OpenSpans::default();
     let mut out = Vec::new();
     for r in rows {
-        let (e, next) = ActivityWatchParser.parse(r, &carry).unwrap();
+        let (e, next) = ActivityWatchParser
+            .parse(r, &carry, &crate::RecordContext::none())
+            .unwrap();
         out.extend(e);
         carry = next;
     }
@@ -86,7 +88,11 @@ fn spinner_ticks_become_one_span() {
 fn a_heartbeat_extending_the_last_row_extends_its_span() {
     let (_, carry) = run(&[win(1, 0, 2, "kitty", "a"), win(2, 2, 4, "kitty", "a")]);
     let (out, _) = ActivityWatchParser
-        .parse(&win(2, 2, 9, "kitty", "a"), &carry)
+        .parse(
+            &win(2, 2, 9, "kitty", "a"),
+            &carry,
+            &crate::RecordContext::none(),
+        )
         .unwrap();
     assert_eq!(spans(&out), vec![(1, "a".into(), 9, 2)]);
 }
@@ -103,7 +109,9 @@ fn reading_history_again_reproduces_the_same_spans() {
     let mut c = carry;
     let mut again = Vec::new();
     for r in &rows {
-        let (e, next) = ActivityWatchParser.parse(r, &c).unwrap();
+        let (e, next) = ActivityWatchParser
+            .parse(r, &c, &crate::RecordContext::none())
+            .unwrap();
         again.extend(e);
         c = next;
     }
@@ -149,7 +157,7 @@ fn rfc3339_times_from_the_python_server_are_read() {
     r.insert("starttime".into(), json!("2026-01-01T00:00:00Z"));
     r.insert("endtime".into(), json!("2026-01-01T00:00:05.5Z"));
     let (out, _) = ActivityWatchParser
-        .parse(&r, &OpenSpans::default())
+        .parse(&r, &OpenSpans::default(), &crate::RecordContext::none())
         .unwrap();
     assert!(
         matches!(&out[0], Activity::Window(w) if w.ended_at.unix_ns() - w.started_at.unix_ns() == 5_500_000_000)

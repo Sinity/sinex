@@ -26,6 +26,7 @@ fn known_fields_are_typed_and_the_rest_kept() {
                 "CODE_FILE": "src/core/job.c",
             })),
             &(),
+            &crate::RecordContext::none(),
         )
         .unwrap();
     let e = &out[0];
@@ -45,11 +46,16 @@ fn byte_array_messages_decode_when_utf8_and_stay_raw_otherwise() {
         .parse(
             &rec(json!({"__CURSOR": "c", "MESSAGE": [27, 91, 49, 109, 104, 105]})),
             &(),
+            &crate::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(out[0].message.as_deref(), Some("\u{1b}[1mhi"));
     let (out, ()) = JournaldParser
-        .parse(&rec(json!({"__CURSOR": "c", "MESSAGE": [255, 0]})), &())
+        .parse(
+            &rec(json!({"__CURSOR": "c", "MESSAGE": [255, 0]})),
+            &(),
+            &crate::RecordContext::none(),
+        )
         .unwrap();
     assert_eq!(out[0].message, None);
     assert_eq!(out[0].fields.get("MESSAGE"), Some(&json!([255, 0])));
@@ -61,6 +67,7 @@ fn a_missing_or_malformed_time_stays_unknown() {
         .parse(
             &rec(json!({"__CURSOR": "c", "__REALTIME_TIMESTAMP": "soon"})),
             &(),
+            &crate::RecordContext::none(),
         )
         .unwrap();
     assert_eq!(out[0].logged_at, None);
@@ -74,7 +81,11 @@ fn a_missing_or_malformed_time_stays_unknown() {
 fn an_entry_without_a_cursor_is_a_failure_not_a_guess() {
     assert!(
         JournaldParser
-            .parse(&rec(json!({"MESSAGE": "x"})), &())
+            .parse(
+                &rec(json!({"MESSAGE": "x"})),
+                &(),
+                &crate::RecordContext::none()
+            )
             .is_err()
     );
 }

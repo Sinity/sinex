@@ -70,9 +70,7 @@ fn visits_carry_their_url_and_unknown_times_stay_unknown() {
 fn urls_read_counts_and_never_visited_is_unknown() {
     let path = history();
     let (rows, manifest) = rows(&urls_driver(path, "h".into()));
-    let (b, ()) = UrlParser
-        .parse(&rows[1], &(), &context(&manifest))
-        .unwrap();
+    let (b, ()) = UrlParser.parse(&rows[1], &(), &context(&manifest)).unwrap();
     assert_eq!(b[0].last_visited_at, None);
     assert_eq!(b[0].title, None);
     assert!(b[0].hidden);

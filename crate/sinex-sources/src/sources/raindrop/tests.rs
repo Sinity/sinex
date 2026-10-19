@@ -6,13 +6,14 @@ fn csv_header_is_carried_then_rows_read() {
     let (none, header) = RaindropParser
         .parse(
             &&b"\xef\xbb\xbfid,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite\n"[..],
-            &vec![],
-        )
+            &vec![], &crate::RecordContext::none())
         .unwrap();
     assert!(none.is_empty());
     assert_eq!(header[0], "id");
     let row = b"1302755715,\"Save, the World\",,In theory,https://a/,Unsorted,\"ai, ea\",2025-08-17T13:19:33.851Z,,,false\n";
-    let (p, _) = RaindropParser.parse(&&row[..], &header).unwrap();
+    let (p, _) = RaindropParser
+        .parse(&&row[..], &header, &crate::RecordContext::none())
+        .unwrap();
     assert_eq!(p[0].native_id, "1302755715");
     assert_eq!(p[0].title.as_deref(), Some("Save, the World"));
     assert_eq!(p[0].tags, vec!["ai", "ea"]);
@@ -28,7 +29,11 @@ fn api_lines_and_the_trash() {
         "domain": "a"});
     let line = format!("{row}\n");
     let (p, carried) = RaindropParser
-        .parse(&line.as_bytes(), &vec!["id".into()])
+        .parse(
+            &line.as_bytes(),
+            &vec!["id".into()],
+            &crate::RecordContext::none(),
+        )
         .unwrap();
     assert_eq!(
         carried,
@@ -45,7 +50,9 @@ fn api_lines_and_the_trash() {
     let mut trashed = row.as_object().unwrap().clone();
     trashed.insert("collection".into(), json!({"$id": -99}));
     let line = format!("{}\n", Value::Object(trashed));
-    let (p, _) = RaindropParser.parse(&line.as_bytes(), &vec![]).unwrap();
+    let (p, _) = RaindropParser
+        .parse(&line.as_bytes(), &vec![], &crate::RecordContext::none())
+        .unwrap();
     assert!(p[0].trashed_at.is_some());
     assert_eq!(
         sinex_model::EventPayload::record_state(&p[0]),

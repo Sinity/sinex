@@ -18,7 +18,9 @@ fn reads_the_envelope_under_the_catalog_source() {
     let p = EnvelopeParser {
         lane: lane("desktop.clipboard").unwrap(),
     };
-    let (out, ()) = p.parse(&line("primary", 7), &()).unwrap();
+    let (out, ()) = p
+        .parse(&line("primary", 7), &(), &crate::RecordContext::none())
+        .unwrap();
     assert_eq!(out[0].lane, "primary");
     assert_eq!(out[0].seq, 7);
     assert_eq!(out[0].payload, json!({"app": "kitty"}));
@@ -33,13 +35,16 @@ fn unbound_lanes_and_bad_envelopes_fail() {
     let p = EnvelopeParser {
         lane: lane("desktop.clipboard").unwrap(),
     };
-    assert!(p.parse(&line("mpris", 1), &()).is_err());
+    assert!(
+        p.parse(&line("mpris", 1), &(), &crate::RecordContext::none())
+            .is_err()
+    );
     let mut bad = line("clipboard", 1);
     bad.insert("schema".into(), json!("other"));
-    assert!(p.parse(&bad, &()).is_err());
+    assert!(p.parse(&bad, &(), &crate::RecordContext::none()).is_err());
     bad = line("clipboard", 1);
     bad.remove("seq");
-    assert!(p.parse(&bad, &()).is_err());
+    assert!(p.parse(&bad, &(), &crate::RecordContext::none()).is_err());
 }
 
 #[test]
@@ -47,8 +52,16 @@ fn firehoses_emit_nothing_but_still_validate() {
     let p = EnvelopeParser {
         lane: lane("network.netflow").unwrap(),
     };
-    assert!(p.parse(&line("netflow", 1), &()).unwrap().0.is_empty());
-    assert!(p.parse(&line("mpris", 1), &()).is_err());
+    assert!(
+        p.parse(&line("netflow", 1), &(), &crate::RecordContext::none())
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    assert!(
+        p.parse(&line("mpris", 1), &(), &crate::RecordContext::none())
+            .is_err()
+    );
 }
 
 #[test]

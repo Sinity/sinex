@@ -49,7 +49,11 @@ fn only_newly_reachable_commits_are_read() {
             .unwrap()
             .contains(&json!("refs/heads/main"))
     );
-    let parsed = GitParser.parse(newest, &()).unwrap().0.remove(0);
+    let parsed = GitParser
+        .parse(newest, &(), &crate::RecordContext::none())
+        .unwrap()
+        .0
+        .remove(0);
     assert_eq!(
         parsed.parents,
         vec![read[1]["commit"].as_str().unwrap().to_owned()]

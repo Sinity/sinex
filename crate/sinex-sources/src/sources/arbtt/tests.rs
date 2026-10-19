@@ -61,7 +61,9 @@ fn samples_decode_with_back_references_and_utc_times() {
     assert_eq!(records.len(), 2);
     assert_eq!(covered, file.len());
     let (a, b) = records[0];
-    let (out, carry) = ArbttParser.parse(&&file[a..b], &vec![]).unwrap();
+    let (out, carry) = ArbttParser
+        .parse(&&file[a..b], &vec![], &crate::RecordContext::none())
+        .unwrap();
     let s = &out[0];
     assert_eq!(
         s.sampled_at.unix_ns(),
@@ -72,7 +74,9 @@ fn samples_decode_with_back_references_and_utc_times() {
     assert_eq!(s.active_title.as_deref(), Some("Ustawienia – Zażółć"));
     assert_eq!(s.desktop, None);
     let (a, b) = records[1];
-    let (out, _) = ArbttParser.parse(&&file[a..b], &carry).unwrap();
+    let (out, _) = ArbttParser
+        .parse(&&file[a..b], &carry, &crate::RecordContext::none())
+        .unwrap();
     assert_eq!(out[0].active_program.as_deref(), Some("app.exe"));
     assert_eq!(out[0].windows.len(), 1);
 }
@@ -86,5 +90,9 @@ fn a_cut_sample_waits_and_a_bad_reference_fails() {
     assert!(records.is_empty());
     assert_eq!(covered, MAGIC.len());
     let one = sample(&[(true, vec![9], literal("p"))], literal(""));
-    assert!(ArbttParser.parse(&one.as_slice(), &vec![]).is_err());
+    assert!(
+        ArbttParser
+            .parse(&one.as_slice(), &vec![], &crate::RecordContext::none())
+            .is_err()
+    );
 }

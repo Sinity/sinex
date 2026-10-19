@@ -5,7 +5,7 @@ use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
 
 fn parse(bytes: &[u8]) -> Result<String, RecordError> {
     ZshParser { host: "h".into() }
-        .parse(&bytes, &Seen::default())
+        .parse(&bytes, &Seen::default(), &crate::RecordContext::none())
         .map(|(p, _)| p[0].command.clone())
 }
 
@@ -21,7 +21,9 @@ fn identical_runs_in_one_second_are_numbered_in_file_order() {
     let mut seen = Seen::default();
     let mut ns = Vec::new();
     for line in lines {
-        let (out, next) = parser.parse(&line, &seen).unwrap();
+        let (out, next) = parser
+            .parse(&line, &seen, &crate::RecordContext::none())
+            .unwrap();
         ns.push(out[0].n);
         seen = next;
     }
@@ -30,7 +32,9 @@ fn identical_runs_in_one_second_are_numbered_in_file_order() {
     let mut again = Seen::default();
     let mut ns2 = Vec::new();
     for line in lines {
-        let (out, next) = parser.parse(&line, &again).unwrap();
+        let (out, next) = parser
+            .parse(&line, &again, &crate::RecordContext::none())
+            .unwrap();
         ns2.push(out[0].n);
         again = next;
     }

@@ -3,7 +3,7 @@ use serde_json::json;
 
 fn one(v: Value) -> PurchaseObserved {
     PurchasesParser
-        .parse(v.as_object().unwrap(), &())
+        .parse(v.as_object().unwrap(), &(), &crate::RecordContext::none())
         .unwrap()
         .0
         .remove(0)
