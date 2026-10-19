@@ -227,18 +227,6 @@ pub async fn set_consumer_position(
     Ok(())
 }
 
-/// A per-event derivation's saved position, written by admission with its
-/// outputs.
-pub async fn derivation_position(conn: &mut PgConnection, derivation: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar!(
-        "SELECT commit_seq FROM derivation.positions WHERE derivation = $1",
-        derivation
-    )
-    .fetch_optional(&mut *conn)
-    .await?
-    .unwrap_or(0))
-}
-
 /// What Sinex recorded for one ingress frame.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredFrame {

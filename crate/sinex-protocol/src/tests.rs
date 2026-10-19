@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
 fn sample(kind: ArgKind) -> Value {
     match kind {
