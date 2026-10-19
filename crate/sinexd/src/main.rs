@@ -13,8 +13,6 @@ mod derive;
 mod ingress;
 mod keys;
 mod library;
-#[cfg(test)]
-mod library_tests;
 mod media_text;
 mod operate;
 mod publisher;

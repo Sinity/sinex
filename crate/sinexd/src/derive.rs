@@ -881,7 +881,6 @@ impl std::fmt::Display for Comparison {
 }
 
 #[cfg(test)]
-#[path = "derive_tests.rs"]
 mod tests;
 
 /// Every per-event derivation `sinexd` runs: the pure ones, plus screen text
