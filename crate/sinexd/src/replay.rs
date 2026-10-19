@@ -396,25 +396,31 @@ fn read_chain_into(
         let bytes = blobs.read(&m.blob).map_err(|e| e.to_string())?;
         let records = drivers::stored_records(&m.manifest, &bytes, source.spec().framer);
         let order = drivers::reading_order(&m.manifest);
+        // Chunks are drained one at a time, so a material's events are never
+        // all in memory at once. A material out of scope is still read for
+        // the carry it passes on.
         let chunks = source
-            .drain(DrainInput {
+            .drainer(DrainInput {
                 source: source.spec().name,
                 class: source.spec().class,
                 material: MaterialId(m.id),
                 bytes: &bytes,
                 records: &records,
-                carry,
+                carry: carry.clone(),
                 reading_order: &*order,
                 limits: Limits::default(),
                 manifest: &m.manifest,
             })
             .map_err(|e| format!("material {}: {e}", m.id))?;
-        carry = chunks.last().map_or(Value::Null, |c| c.carry.clone());
-        if !in_scope.contains(&m.id) {
-            continue;
+        let scoped = in_scope.contains(&m.id);
+        if scoped {
+            report.materials += 1;
         }
-        report.materials += 1;
         for chunk in chunks {
+            carry = chunk.carry.clone();
+            if !scoped {
+                continue;
+            }
             let records: Vec<RecordOutcome> = chunk
                 .outcomes
                 .into_iter()

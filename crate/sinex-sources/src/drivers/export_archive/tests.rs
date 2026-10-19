@@ -211,12 +211,13 @@ fn a_zip_is_read_in_parts_of_whole_members_covering_every_record() {
             "a part holds whole members up to the size"
         );
         // Only the first part stores the archive itself; later parts
-        // store their decoded stream, read as plain.
+        // store their decoded stream and say so.
+        assert_eq!(m.manifest["container"], json!("zip"));
         if parts == 1 {
             assert_eq!(m.stored_file.as_deref(), Some(path.as_path()));
         } else {
             assert!(m.stored_file.is_none());
-            assert_eq!(m.manifest["container"], json!("plain"));
+            assert_eq!(m.manifest["stream"], json!("decoded"));
         }
         read.extend(records(&a));
         cursor = (m.cursor_at)(m.bytes.len());

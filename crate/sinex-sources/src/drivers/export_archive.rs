@@ -300,8 +300,9 @@ impl ExportArchive {
         });
         if read.members.is_some() && read.stored_file.is_none() {
             // A later part of an archive stores its decoded member stream,
-            // so it is read as a plain stream of the listed members.
-            manifest["container"] = json!(Container::Plain);
+            // not the archive. It keeps the archive's container, so replay
+            // treats it as it treats the first part.
+            manifest["stream"] = json!("decoded");
         }
         if let Some(members) = read.members {
             manifest["members"] = Value::Array(members);
@@ -453,6 +454,10 @@ struct Part {
     next_member: usize,
 }
 
+/// What [`visit_members`] calls for each selected member.
+pub type MemberVisitor<'a> =
+    dyn FnMut(usize, String, &mut dyn Read) -> Result<bool, DriverError> + 'a;
+
 /// Visit the selected members of an export, in archive order, numbered from
 /// 0 among the selected. `visit` gets each member's number, path and a reader
 /// of its decoded bytes; it reads what it wants (a skipped member is never
@@ -462,7 +467,7 @@ pub fn visit_members(
     path: &std::path::Path,
     container: Container,
     select: fn(&str) -> bool,
-    visit: &mut dyn FnMut(usize, String, &mut dyn Read) -> Result<bool, DriverError>,
+    visit: &mut MemberVisitor<'_>,
 ) -> Result<(), DriverError> {
     let file = std::fs::File::open(path).map_err(io)?;
     match container {
