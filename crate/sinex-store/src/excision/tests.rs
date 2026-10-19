@@ -4,7 +4,7 @@
 use super::*;
 use crate::admission::{NoDerivations, admit};
 use crate::{Blobs, testdb};
-use sinex_model::kinds::{CommandExecuted, CommandFused, CommandImported};
+use sinex_model::kinds::{CommandExecuted, CommandFused};
 use sinex_model::{
     Batch, BatchKind, Class, Event, Origin, ReadingOrder, RecordLocation, RecordOutcome, RunId,
     Timestamp,
@@ -98,11 +98,15 @@ fn keyed(material: MaterialId, bytes: &[u8], anchor: usize, key: &str, order: i6
 fn keyless(material: MaterialId, bytes: &[u8], anchor: usize) -> Event {
     let raw = line_at(bytes, anchor);
     Event::build(
-        &CommandImported {
-            command: String::from_utf8_lossy(raw).trim().into(),
-            hostname: "h".into(),
-            started_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
-            header_elapsed: 0,
+        // A location-keyed type: the record's place is its identity.
+        &sinex_model::kinds::machine::FileChanged {
+            received_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
+            change: String::from_utf8_lossy(raw).trim().into(),
+            path: None,
+            path_hex: None,
+            to: None,
+            is_dir: None,
+            note: None,
         },
         "z",
         Origin::Record {

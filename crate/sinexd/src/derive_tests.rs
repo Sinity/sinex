@@ -60,6 +60,7 @@ fn zsh(command: &str, secs: i64, anchor: u64) -> Event {
             hostname: "box".into(),
             started_at: at(secs),
             header_elapsed: 0,
+            n: 0,
         },
         "terminal.zsh",
         location(anchor),

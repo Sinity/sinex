@@ -55,13 +55,14 @@ pub struct CommandExecuted {
     pub extra: Map<String, Value>,
 }
 
-/// A command from a zsh extended history file. The file has no record IDs and
-/// is only ever appended to, so each record location is its own identity and a
-/// later reading of the same location is a repeat.
+/// A command from a zsh extended history file. The file has no record IDs, so
+/// a record is identified by host, start second, command and its occurrence
+/// number among identical pairs; a later reading of it, wherever it is read
+/// from, is a repeat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(
     type = "command.imported",
-    key = location,
+    key = ["hostname", "started_at", "command", "n"],
     replace = repeat,
     time = started_at,
     quality = intrinsic
@@ -73,6 +74,12 @@ pub struct CommandImported {
     /// The elapsed seconds field as written. With SHARE_HISTORY zsh writes 0
     /// before the command ends, so this is not a duration.
     pub header_elapsed: i64,
+    /// Which occurrence this is among records with the same start second and
+    /// command, in file order (the same command run twice in one second is
+    /// two runs). With host, start and command it identifies the record
+    /// wherever it is read from, so a re-read from the start (a lost position,
+    /// re-staged bytes) is a repeat, not a new command.
+    pub n: u32,
 }
 
 /// One command run, combined from every source that saw it (Atuin, zsh,
@@ -360,7 +367,11 @@ mod tests {
         assert_eq!(CommandExecuted::EVENT_TYPE, "command.executed");
         assert_eq!(CommandExecuted::KEY, KeyKind::Fields(&["native_id"]));
         assert_eq!(CommandExecuted::REPLACE, ReplaceRule::ReplaceWhenNewer);
-        assert_eq!(CommandImported::KEY, KeyKind::Location);
+        assert_eq!(
+            CommandImported::KEY,
+            KeyKind::Fields(&["hostname", "started_at", "command", "n"])
+        );
+        assert_eq!(machine::FileChanged::KEY, KeyKind::Location);
         assert_eq!(CommandImported::REPLACE, ReplaceRule::SuppressRepeat);
         let a = atuin(false);
         assert_eq!(a.ts_orig().quality, TimeQuality::Intrinsic);

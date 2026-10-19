@@ -27,6 +27,7 @@ zip = { version = "2", default-features = false, features = ["deflate", "bzip2"]
 tar = "0.4"
 flate2 = "1"
 csv = "1"
+imbl = "5"
 mailparse = "0.16"
 encoding_rs = "0.8"
 jiff = { version = "0.2", features = ["tzdb-bundle-always"] }

@@ -205,6 +205,7 @@ mod tests {
                 hostname: "h".into(),
                 started_at: Timestamp::from_unix_secs(1_700_000_000 + anchor as i64).unwrap(),
                 header_elapsed: 0,
+                n: 0,
             },
             "zsh",
             Origin::Record {
@@ -386,7 +387,7 @@ mod tests {
         assert_eq!(page.events.len(), 1);
         assert_eq!(
             page.events[0].payload,
-            json!({"command": "keep", "hostname": "h", "started_at": "2023-11-14T22:13:21Z", "header_elapsed": 0})
+            json!({"command": "keep", "hostname": "h", "started_at": "2023-11-14T22:13:21Z", "header_elapsed": 0, "n": 0})
         );
         let event = page.events[0].to_event().unwrap().unwrap();
         assert_eq!(event.event_type, "command.imported");

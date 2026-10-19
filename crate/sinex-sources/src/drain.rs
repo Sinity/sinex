@@ -94,6 +94,7 @@ pub fn drain<P: Parser>(
         serde_json::from_value(input.carry.clone())
             .map_err(|e| RecordError::new(format!("stored parser carry does not decode: {e}")))?
     };
+    let mut chunk_carry = carry.clone();
     let mut chunks = Vec::new();
     let mut current = DrainOutput {
         outcomes: Vec::new(),
@@ -181,6 +182,10 @@ pub fn drain<P: Parser>(
             && (current.events + n > input.limits.max_events
                 || bytes_in_chunk + size > input.limits.max_bytes);
         if full {
+            // The closed chunk ends at the previous record; its carry is the
+            // state after that record. Serialized once per chunk, not per
+            // record, so a growing carry costs nothing per record.
+            current.carry = serde_json::to_value(&chunk_carry).expect("carry serializes");
             chunks.push(std::mem::replace(
                 &mut current,
                 DrainOutput {
@@ -199,13 +204,11 @@ pub fn drain<P: Parser>(
         current.events += n;
         current.outcomes.push(outcome);
         current.end = end;
-        current.carry = serde_json::to_value(&carry).expect("carry serializes");
+        chunk_carry = carry.clone();
         bytes_in_chunk += size;
     }
     if !current.outcomes.is_empty() || chunks.is_empty() {
-        if current.outcomes.is_empty() {
-            current.carry = serde_json::to_value(&carry).expect("carry serializes");
-        }
+        current.carry = serde_json::to_value(&carry).expect("carry serializes");
         chunks.push(current);
     }
     Ok(chunks)
@@ -278,6 +281,7 @@ mod tests {
                 hostname: "h".into(),
                 started_at: Timestamp::from_unix_secs(i64::from(*carry)).unwrap(),
                 header_elapsed: 0,
+                n: 0,
             };
             Ok((vec![payload], carry + 1))
         }
