@@ -55,6 +55,8 @@ pub const EXPORT_KINDS: &[&str] = &[
     "reddit",
     "samsung-health",
     "samsung-sms",
+    "raw-log",
+    "steering",
 ];
 
 #[derive(Default)]
@@ -612,6 +614,40 @@ async fn export(
                     println!("  {} {t}", source.spec().name);
                     totals.add(t);
                 }
+            }
+        }
+        "raw-log" => {
+            use sinex_sources::sources::operator;
+            let source = operator::raw_log(weechat::zone(o.zone.as_deref())?);
+            let driver = operator::raw_log_driver(path.clone(), host.clone());
+            let name = binding(&path.display().to_string());
+            let chain = stored(ctx, &name).await?;
+            let mut memory = drivers::append_file::AppendMemory::rebuild(
+                chain.iter().map(Vec::as_slice),
+                operator::frame_log,
+            );
+            totals.add(
+                drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                    driver.poll(c, &mut memory)
+                })
+                .await?,
+            );
+        }
+        "steering" => {
+            use sinex_sources::sources::operator;
+            for table in ["commitments", "activities", "reviews"] {
+                let source = operator::steering(table).expect("a known table");
+                let driver = operator::steering_driver(path.clone(), host.clone(), table);
+                let name = binding(&format!("{}/{table}", path.display()));
+                let chain = stored(ctx, &name).await?;
+                let mut memory =
+                    drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(Vec::as_slice));
+                totals.add(
+                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                        driver.poll(c, &mut memory)
+                    })
+                    .await?,
+                );
             }
         }
         "notes" | "maildir" => {

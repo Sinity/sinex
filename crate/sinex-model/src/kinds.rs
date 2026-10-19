@@ -13,6 +13,7 @@ pub mod health;
 pub mod machine;
 pub mod media;
 pub mod polylogue;
+pub mod operator;
 pub mod social;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -285,6 +286,8 @@ pub const ALL: &[KindInfo] = &[
     info::<health::HealthRecord>(),
     info::<social::PostPublished>(),
     info::<social::VoteCast>(),
+    info::<operator::LogEntry>(),
+    info::<operator::SteeringRecord>(),
 ];
 
 /// The registered type named `event_type`, for code that holds a type name

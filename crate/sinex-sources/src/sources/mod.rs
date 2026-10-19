@@ -11,6 +11,7 @@ pub mod hyprland;
 pub mod journald;
 pub mod mail;
 pub mod messenger;
+pub mod operator;
 pub mod notes;
 pub mod raindrop;
 pub mod reddit;
@@ -60,6 +61,10 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &reddit::SPEC,
         &samsung_health::SPEC,
         &samsung_sms::SPEC,
+        &operator::RAW_LOG,
+        &operator::STEERING[0],
+        &operator::STEERING[1],
+        &operator::STEERING[2],
     ]
 }
 
@@ -113,6 +118,17 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         p if p == reddit::SPEC.parser => Some(Box::new(reddit::source())),
         p if p == samsung_health::SPEC.parser => Some(Box::new(samsung_health::source())),
         p if p == samsung_sms::SPEC.parser => Some(Box::new(samsung_sms::source())),
+        p if p == operator::RAW_LOG.parser => Some(Box::new(operator::raw_log(
+            weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
+        ))),
+        p if p.starts_with("steering-") => {
+            let table = p.trim_start_matches("steering-");
+            ["commitments", "activities", "reviews"]
+                .into_iter()
+                .find(|t| *t == table)
+                .and_then(operator::steering)
+                .map(|s| Box::new(s) as Box<dyn Source>)
+        }
         // Like WeeChat, floating times are read in this system's zone.
         p if p == calendar::SPEC.parser => Some(Box::new(calendar::source(
             weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
