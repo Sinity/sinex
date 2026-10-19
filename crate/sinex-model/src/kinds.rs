@@ -10,6 +10,7 @@ pub mod communication;
 pub mod desktop;
 pub mod machine;
 pub mod media;
+pub mod polylogue;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -266,6 +267,8 @@ pub const ALL: &[KindInfo] = &[
     info::<media::NoteDocument>(),
     info::<communication::ChatMessage>(),
     info::<communication::MailMessage>(),
+    // Polylogue's archive in primary mode
+    info::<polylogue::PolylogueRows>(),
 ];
 
 /// The registered type named `event_type`, for code that holds a type name
