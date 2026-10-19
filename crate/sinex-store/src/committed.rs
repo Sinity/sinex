@@ -148,6 +148,7 @@ impl Committed {
             record_state: from_db::<RecordState>(&self.record_state)?,
             class: from_db::<Class>(&self.class)?,
             support: None,
+            cites: Vec::new(),
         }))
     }
 }

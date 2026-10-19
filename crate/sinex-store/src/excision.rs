@@ -12,7 +12,10 @@
 //! - a tombstone (identity and time, no payload) remains for each event, the
 //!   record's key or location goes into `core.hidden_occurrences` as `excise`,
 //!   which nothing undoes, and its record hash into `core.excised_digests`, so
-//!   neither a replay nor re-staging the same bytes brings it back.
+//!   neither a replay nor re-staging the same bytes brings it back;
+//! - stored bytes the excised events own beyond their materials (a library
+//!   file the scan kept, `core.event_blobs`) are deleted once no other event
+//!   or material refers to them.
 //!
 //! Planning reads; the writer applies the plan in one transaction, checking
 //! that the readings it removes are still exactly the planned ones, and
@@ -67,6 +70,8 @@ pub struct Applied {
     pub events: usize,
     pub materials_rewritten: usize,
     pub keys_destroyed: usize,
+    /// Stored bytes the excised events owned that nothing else refers to.
+    pub blobs_deleted: usize,
     pub dirty_keys: usize,
     /// Blob files no row refers to any more; the writer deletes them after
     /// commit.
@@ -326,6 +331,28 @@ pub async fn apply(
         .await?;
     applied.events = usize::try_from(deleted.rows_affected()).unwrap_or(usize::MAX);
 
+    // Bytes the excised events owned: gone with them unless something else
+    // (another event, a material, a revision) still refers to them.
+    let cited: Vec<String> = sqlx::query_scalar!(
+        "DELETE FROM core.event_blobs WHERE event_id = ANY($1) RETURNING blob",
+        &ids
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let cited: BTreeSet<String> = cited.into_iter().collect();
+    for blob in cited {
+        if unreferenced(conn, &blob).await? {
+            sqlx::query!(
+                "UPDATE core.blobs SET status = 'deleting' WHERE hash = $1",
+                blob
+            )
+            .execute(&mut *conn)
+            .await?;
+            applied.blobs_deleted += 1;
+            applied.delete_after_commit.push(blob);
+        }
+    }
+
     for m in &plan.materials {
         if m.sealed {
             let gone = sqlx::query!(
@@ -369,14 +396,7 @@ pub async fn apply(
         applied.materials_rewritten += 1;
         // The old bytes go once nothing refers to them; deduplication may
         // share a blob with a material outside the excision.
-        let unreferenced = sqlx::query_scalar!(
-            r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1)
-                 AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = $1) AS "gone!""#,
-            m.blob
-        )
-        .fetch_one(&mut *conn)
-        .await?;
-        if unreferenced && m.blob != rewrite.blob {
+        if m.blob != rewrite.blob && unreferenced(conn, &m.blob).await? {
             sqlx::query!(
                 "UPDATE core.blobs SET status = 'deleting' WHERE hash = $1",
                 m.blob
@@ -387,6 +407,18 @@ pub async fn apply(
         }
     }
     Ok(applied)
+}
+
+/// Whether no material, revision extent or event refers to `blob` any more.
+async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1)
+             AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = $1)
+             AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1) AS "gone!""#,
+        blob
+    )
+    .fetch_one(&mut *conn)
+    .await?)
 }
 
 /// Delete the files of blobs left `deleting`, then their rows: after an
@@ -401,7 +433,8 @@ pub async fn finish_deletions(
     let pending = sqlx::query_scalar!(
         r#"SELECT hash FROM core.blobs b WHERE status = 'deleting'
              AND NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = b.hash)
-             AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = b.hash)"#
+             AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = b.hash)
+             AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = b.hash)"#
     )
     .fetch_all(&mut *conn)
     .await?;

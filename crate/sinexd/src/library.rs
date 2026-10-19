@@ -84,14 +84,23 @@ impl Lib<'_> {
 
     /// Scan a library root, admit what changed, and make or continue items.
     pub async fn add(&self, conn: &mut PgConnection, path: &Path, reference: bool) -> R<Value> {
-        let root =
+        let given =
             std::fs::canonicalize(path).map_err(|err| format!("{}: {err}", path.display()))?;
-        if !root.is_dir() {
-            return Err(format!(
-                "{}: library-add takes a folder; add the folder that holds it",
-                root.display()
-            ));
-        }
+        // A single file is scanned within its folder, alone: nothing else in
+        // the folder is read or reported missing.
+        let (root, only) = if given.is_dir() {
+            (given, None)
+        } else {
+            let parent = given
+                .parent()
+                .ok_or_else(|| format!("{}: no folder holds it", given.display()))?
+                .to_path_buf();
+            let name = given
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .ok_or_else(|| format!("{}: not a file name", given.display()))?;
+            (parent, Some(name))
+        };
         let root_text = root.display().to_string();
         // Seed the scan's memory from what is already admitted, so a second
         // add of the same root hashes only what changed.
@@ -128,6 +137,7 @@ impl Lib<'_> {
             keep_bytes: !reference,
             probe: true,
             bytes_per_poll: 1 << 30,
+            only,
         });
         let mut memory = Some(memory);
         let (mut files, mut seen) = (0usize, 0usize);
@@ -579,12 +589,15 @@ impl Lib<'_> {
                     "no verified copy of {content} on disk, and its bytes are not stored (indexed by reference)"
                 ));
             }
-            let bytes = blobs.read(&content).map_err(e)?;
             if let Some(dir) = target.parent() {
                 std::fs::create_dir_all(dir).map_err(e)?;
             }
+            // Streamed: a long video is never held in memory.
             let tmp = target.with_extension("partial");
-            std::fs::write(&tmp, &bytes).map_err(e)?;
+            let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp).map_err(e)?);
+            blobs.copy_to(&content, &mut file).map_err(e)?;
+            std::io::Write::flush(&mut file).map_err(e)?;
+            drop(file);
             std::fs::rename(&tmp, &target).map_err(e)?;
             Ok((target, false))
         })

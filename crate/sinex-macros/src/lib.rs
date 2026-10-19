@@ -11,6 +11,7 @@
 //!     quality = intrinsic,         // TimeQuality variant, snake_case
 //!     removed_when = deleted_at,   // optional `Option<_>` field: Some means removed at source
 //!     keep_known = ["title"],      // optional fields a newer reading does not erase
+//!     cites(field = content, size = size, when = stored), // optional: stored bytes the event owns
 //! )]
 //! ```
 //!
@@ -74,6 +75,7 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let mut quality: Option<Ident> = None;
     let mut removed_when: Option<Ident> = None;
     let mut keep_known: Vec<LitStr> = Vec::new();
+    let mut cites: Option<(Ident, Ident, Option<Ident>)> = None;
     for attr in input.attrs.iter().filter(|a| a.path().is_ident("event")) {
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("type") {
@@ -109,6 +111,23 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                 syn::bracketed!(content in value);
                 let list = content.parse_terminated(|p| p.parse::<LitStr>(), syn::Token![,])?;
                 keep_known = list.into_iter().collect();
+            } else if meta.path.is_ident("cites") {
+                let (mut field, mut size, mut when) = (None, None, None);
+                meta.parse_nested_meta(|inner| {
+                    if inner.path.is_ident("field") {
+                        field = Some(inner.value()?.parse::<Ident>()?);
+                    } else if inner.path.is_ident("size") {
+                        size = Some(inner.value()?.parse::<Ident>()?);
+                    } else if inner.path.is_ident("when") {
+                        when = Some(inner.value()?.parse::<Ident>()?);
+                    } else {
+                        return Err(inner.error("cites takes `field`, `size` and optional `when`"));
+                    }
+                    Ok(())
+                })?;
+                let field = field.ok_or_else(|| meta.error("cites needs `field`"))?;
+                let size = size.ok_or_else(|| meta.error("cites needs `size`"))?;
+                cites = Some((field, size, when));
             } else {
                 return Err(meta.error("unknown event attribute"));
             }
@@ -174,6 +193,30 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
         }
     });
 
+    let cites_tokens = match &cites {
+        None => None,
+        Some((field, size, when)) => {
+            field_type(field)?;
+            field_type(size)?;
+            let guard = match when {
+                Some(w) => {
+                    field_type(w)?;
+                    quote!(if !self.#w { return ::std::vec::Vec::new(); })
+                }
+                None => quote!(),
+            };
+            Some(quote! {
+                fn cited_blobs(&self) -> ::std::vec::Vec<::sinex_model::Cited> {
+                    #guard
+                    ::std::vec![::sinex_model::Cited {
+                        blob: self.#field.clone(),
+                        size: self.#size,
+                    }]
+                }
+            })
+        }
+    };
+
     Ok(quote! {
         impl ::sinex_model::EventPayload for #name {
             const EVENT_TYPE: &'static str = #event_type;
@@ -186,6 +229,8 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
             }
 
             #removed_tokens
+
+            #cites_tokens
 
             fn payload_schema() -> ::sinex_model::__private::serde_json::Value {
                 ::sinex_model::__private::serde_json::to_value(

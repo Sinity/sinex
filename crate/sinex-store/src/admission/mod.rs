@@ -389,6 +389,7 @@ pub async fn admit(
                 dirty.extend(keys.keys(&input));
             }
             outcome.dirty_keys += mark_dirty(conn, dirty, last).await?;
+            record_citations(conn, &events, &admit_ords).await?;
             let admitted: Vec<Uuid> = outcome.admitted_ids.iter().map(|id| id.0).collect();
             crate::analysis::mark_stale(conn, &admitted, last).await?;
         }
@@ -519,6 +520,43 @@ async fn archive_replay_scope(
 
 /// The producer's persisted acknowledgment of one ingress frame, written with
 /// its events (architecture §4.3, `mn8u`).
+/// Register the stored bytes admitted events own beyond their materials, so
+/// excision can find and delete them (`core.event_blobs`).
+async fn record_citations(conn: &mut PgConnection, events: &[Event], ords: &[i32]) -> Result<()> {
+    let (mut ids, mut blobs, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
+    for ord in ords {
+        let event = &events[usize::try_from(*ord).expect("ord is non-negative")];
+        for c in &event.cites {
+            ids.push(event.id.0);
+            blobs.push(c.blob.clone());
+            sizes.push(
+                i64::try_from(c.size).map_err(|_| Error::Invalid("blob size beyond i64".into()))?,
+            );
+        }
+    }
+    if ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query!(
+        r#"INSERT INTO core.blobs (hash, size, status)
+           SELECT DISTINCT ON (b) b, s, 'present' FROM unnest($1::text[], $2::bigint[]) AS c(b, s)
+           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
+        &blobs,
+        &sizes,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        r#"INSERT INTO core.event_blobs (event_id, blob)
+           SELECT * FROM unnest($1::uuid[], $2::text[]) ON CONFLICT DO NOTHING"#,
+        &ids,
+        &blobs,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 async fn record_frame(
     conn: &mut PgConnection,
     frame: &sinex_model::IngressFrame,

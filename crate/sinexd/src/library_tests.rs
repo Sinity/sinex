@@ -440,3 +440,81 @@ async fn the_library_end_to_end() {
     };
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
+
+/// The live library acquisition at `path`: its event and the bytes it names.
+async fn acquisition(conn: &mut PgConnection, path: &Path) -> (uuid::Uuid, String) {
+    let row: (uuid::Uuid, String) = sqlx::query_as(
+        "SELECT e.id, e.payload->>'content' FROM core.events e
+         JOIN core.live_equivalence l ON l.event_id = e.id
+         WHERE e.event_type = 'library.acquisition' AND e.payload->>'path' = $1",
+    )
+    .bind(path.display().to_string())
+    .fetch_one(conn)
+    .await
+    .unwrap();
+    row
+}
+
+async fn blob_row(conn: &mut PgConnection, blob: &str) -> bool {
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM core.blobs WHERE hash = $1)")
+        .bind(blob)
+        .fetch_one(conn)
+        .await
+        .unwrap()
+}
+
+/// Excising a library file deletes the media bytes the scan kept, unless
+/// another file (an unrelated copy at another path) still names them.
+#[tokio::test]
+async fn excision_deletes_the_stored_media_bytes() {
+    let mut w = world().await;
+    let (a, b, c) = (
+        w.root.join("a.png"),
+        w.root.join("sub/b.png"),
+        w.root.join("c.png"),
+    );
+    image(&a, "red");
+    std::fs::copy(&a, &b).unwrap();
+    image(&c, "blue");
+    w.ok(Request::LibraryAdd {
+        path: w.root.display().to_string(),
+        reference: None,
+    })
+    .await;
+
+    let (c_event, c_bytes) = acquisition(&mut w.conn, &c).await;
+    assert!(
+        w.blobs.contains(&c_bytes).unwrap(),
+        "the scan kept c's bytes"
+    );
+    assert!(blob_row(&mut w.conn, &c_bytes).await);
+    crate::operate::excise_with(
+        &mut w.conn,
+        &w.blobs.clone(),
+        &w.writer,
+        sinex_store::excision::Target::Event(sinex_model::EventId(c_event)),
+        "operator",
+    )
+    .await
+    .unwrap();
+    assert!(
+        !w.blobs.contains(&c_bytes).unwrap(),
+        "c's media bytes are gone"
+    );
+    assert!(!blob_row(&mut w.conn, &c_bytes).await);
+
+    let (a_event, a_bytes) = acquisition(&mut w.conn, &a).await;
+    crate::operate::excise_with(
+        &mut w.conn,
+        &w.blobs.clone(),
+        &w.writer,
+        sinex_store::excision::Target::Event(sinex_model::EventId(a_event)),
+        "operator",
+    )
+    .await
+    .unwrap();
+    assert!(
+        w.blobs.contains(&a_bytes).unwrap(),
+        "b names the same bytes, so they stay"
+    );
+}

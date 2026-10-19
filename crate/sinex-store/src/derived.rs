@@ -135,6 +135,7 @@ fn event_from_row(
         record_state: text_enum::<RecordState>(record_state, "record state")?,
         class: text_enum::<Class>(class, "class")?,
         support,
+        cites: Vec::new(),
     })
 }
 
