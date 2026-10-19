@@ -519,5 +519,4 @@ impl Keyed for IntervalLift {
 }
 
 #[cfg(test)]
-#[path = "interval_tests.rs"]
 mod tests;

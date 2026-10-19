@@ -1066,3 +1066,6 @@ pub async fn dispatch(
         _ => unreachable!("only library requests reach here"),
     }
 }
+
+#[cfg(test)]
+mod tests;
