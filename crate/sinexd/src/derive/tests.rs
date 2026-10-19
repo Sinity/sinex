@@ -402,14 +402,19 @@ async fn a_key_dirtied_again_stays_dirty() {
         run: RunId::new(),
         kind: BatchKind::Derived {
             derivation: "command.fusion".into(),
-            scope: DerivedScope::Key {
-                key: key.clone(),
-                dirty_seq: 0,
-                waiting: false,
+            scope: DerivedScope::Keys {
+                keys: vec![sinex_store::KeyScope {
+                    key: key.clone(),
+                    dirty_seq: 0,
+                    waiting: false,
+                }],
             }
             .to_value(),
         },
-        records: vec![],
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events: vec![],
+        }],
         archive: vec![],
     };
     w.handle.submit(Priority::Derived, batch).await.unwrap();
