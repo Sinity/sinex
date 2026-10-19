@@ -1,5 +1,6 @@
 //! Development commands: `check`, `test`, `db`, `boundaries`, plus devkit's
 //! `status`, `history` and `changed`.
+mod bench;
 mod boundaries;
 mod database;
 
@@ -26,6 +27,9 @@ enum Cli {
     Db(devkit::cli::db::Db),
     /// Check the workspace dependency graph.
     Boundaries { dir: Option<PathBuf> },
+    /// Backfill and derivation on a frozen sample of the real inputs.
+    #[command(subcommand)]
+    Bench(bench::Bench),
     #[command(flatten)]
     Shared(devkit::cli::Command),
 }
@@ -64,6 +68,7 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Cli::Bench(command) => bench::execute(command),
         Cli::Shared(command) => devkit::cli::execute("sinex", command),
     }
 }

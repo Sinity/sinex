@@ -26,6 +26,9 @@ pub struct Options {
     /// A source option as `key=value` (a clipboard spool's `selection`).
     pub options: Vec<String>,
     pub host: String,
+    /// Print one JSON object (per-source totals, peak memory) instead of
+    /// lines.
+    pub json: bool,
 }
 
 /// The kinds `--source KIND=PATH` accepts.
@@ -142,8 +145,19 @@ pub async fn run(o: Options) -> Result<(), String> {
             None => per_source.push((b.source.clone(), totals)),
         }
     }
-    for (source, totals) in &per_source {
-        println!("{source} {totals}");
+    if o.json {
+        let sources: serde_json::Map<String, serde_json::Value> = per_source
+            .iter()
+            .map(|(s, t)| (s.clone(), t.to_json()))
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({"sources": sources, "peak_rss_mb": crate::peak_rss_mb()})
+        );
+    } else {
+        for (source, totals) in &per_source {
+            println!("{source} {totals}");
+        }
     }
     runs::end(&mut ctx.aux, run)
         .await
@@ -305,6 +319,30 @@ pub(crate) async fn drive(
 }
 
 impl Totals {
+    fn to_json(&self) -> serde_json::Value {
+        let per_s = |n: usize, d: Duration| n as f64 / d.as_secs_f64().max(1e-9);
+        serde_json::json!({
+            "polls": self.polls,
+            "materials": self.materials,
+            "material_bytes": self.material_bytes,
+            "batches": self.batches,
+            "events_offered": self.events_offered,
+            "admitted": self.admitted,
+            "repeats": self.repeats,
+            "replaced": self.replaced,
+            "older": self.older,
+            "hidden": self.hidden,
+            "superseded": self.superseded,
+            "failures": self.failures,
+            "dirty_keys": self.dirty_keys,
+            "wall_s": self.wall.as_secs_f64(),
+            "admission_s": self.admit_time.as_secs_f64(),
+            "admission_events_per_s": per_s(self.events_offered, self.admit_time),
+            "events_per_s": per_s(self.events_offered, self.wall),
+            "mb_per_s": self.material_bytes as f64 / 1e6 / self.wall.as_secs_f64().max(1e-9),
+        })
+    }
+
     fn add(&mut self, o: Totals) {
         self.polls += o.polls;
         self.materials += o.materials;

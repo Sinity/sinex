@@ -90,6 +90,24 @@ pub struct Counts {
     pub write: Duration,
 }
 
+impl Counts {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "keys": self.keys,
+            "inputs": self.inputs,
+            "outputs": self.outputs,
+            "admitted": self.admitted,
+            "repeats": self.repeats,
+            "replaced": self.replaced,
+            "failed": self.failed,
+            "read_s": self.read.as_secs_f64(),
+            "compute_s": self.compute.as_secs_f64(),
+            "write_s": self.write.as_secs_f64(),
+            "outputs_per_write_s": self.outputs as f64 / self.write.as_secs_f64().max(1e-9),
+        })
+    }
+}
+
 impl std::fmt::Display for Counts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
