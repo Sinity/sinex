@@ -226,6 +226,63 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
     Ok(out)
 }
 
+/// [`read_window`] for many windows, in their order. Windows with the same
+/// types and filter and no neighbours, whose ranges touch or lie within one
+/// window length of each other, are read with one query over their combined
+/// range and split by time: one round trip for a run of adjacent keys
+/// (hours, days) instead of one per key. Each slice is exactly what its own
+/// query returns.
+pub async fn read_windows(
+    conn: &mut PgConnection,
+    windows: &[Window],
+) -> Result<Vec<Vec<Committed>>> {
+    let mut out: Vec<Option<Vec<Committed>>> = vec![None; windows.len()];
+    let mut plain: Vec<usize> = Vec::new();
+    for (i, w) in windows.iter().enumerate() {
+        if w.before.is_empty() && w.after.is_empty() {
+            plain.push(i);
+        } else {
+            out[i] = Some(read_window(conn, w).await?);
+        }
+    }
+    // Group by filter, then chain by start.
+    plain.sort_by(|&a, &b| {
+        let (wa, wb) = (&windows[a], &windows[b]);
+        (format!("{:?}{:?}", wa.event_types, wa.matching), wa.start)
+            .cmp(&(format!("{:?}{:?}", wb.event_types, wb.matching), wb.start))
+    });
+    let mut at = 0;
+    while at < plain.len() {
+        let first = &windows[plain[at]];
+        let (mut end, mut len) = (first.end, first.end - first.start);
+        let mut upto = at + 1;
+        while upto < plain.len() {
+            let w = &windows[plain[upto]];
+            let same = w.event_types == first.event_types && w.matching == first.matching;
+            if !same || w.start > end + len {
+                break;
+            }
+            end = end.max(w.end);
+            len = len.max(w.end - w.start);
+            upto += 1;
+        }
+        let union = Window {
+            start: first.start,
+            end,
+            ..first.clone()
+        };
+        let rows = read_window(conn, &union).await?;
+        for &i in &plain[at..upto] {
+            let w = &windows[i];
+            let from = rows.partition_point(|c| c.event.ts_orig.at.is_some_and(|t| t.0 < w.start));
+            let to = rows.partition_point(|c| c.event.ts_orig.at.is_some_and(|t| t.0 < w.end));
+            out[i] = Some(rows[from..to].to_vec());
+        }
+        at = upto;
+    }
+    Ok(out.into_iter().map(Option::unwrap_or_default).collect())
+}
+
 async fn nearest(
     conn: &mut PgConnection,
     w: &Window,
