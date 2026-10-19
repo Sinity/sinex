@@ -179,14 +179,46 @@ pub const COMMANDS: &[Command] = &[
         name: "replay",
         summary: "Read stored materials again with current parsers and rules; old readings are archived. With no scope, every material.",
         args: &[
-            opt("material", ArgKind::List, "a material to re-read (repeatable)"),
-            opt("binding", ArgKind::Text, "every material of a binding (`atuin@host`)"),
-            opt("event-type", ArgKind::List, "only readings of this event type (repeatable)"),
-            opt("from", ArgKind::Text, "only readings at or after this time (RFC 3339)"),
-            opt("until", ArgKind::Text, "only readings before this time (RFC 3339)"),
-            opt("compare", ArgKind::Bool, "show what the replay would change and keep nothing"),
-            opt("resume", ArgKind::Text, "continue an interrupted replay operation, skipping the chains it finished"),
-            opt("all", ArgKind::Bool, "list every change, not only the first few of each kind"),
+            opt(
+                "material",
+                ArgKind::List,
+                "a material to re-read (repeatable)",
+            ),
+            opt(
+                "binding",
+                ArgKind::Text,
+                "every material of a binding (`atuin@host`)",
+            ),
+            opt(
+                "event-type",
+                ArgKind::List,
+                "only readings of this event type (repeatable)",
+            ),
+            opt(
+                "from",
+                ArgKind::Text,
+                "only readings at or after this time (RFC 3339)",
+            ),
+            opt(
+                "until",
+                ArgKind::Text,
+                "only readings before this time (RFC 3339)",
+            ),
+            opt(
+                "compare",
+                ArgKind::Bool,
+                "show what the replay would change and keep nothing",
+            ),
+            opt(
+                "resume",
+                ArgKind::Text,
+                "continue an interrupted replay operation, skipping the chains it finished",
+            ),
+            opt(
+                "all",
+                ArgKind::Bool,
+                "list every change, not only the first few of each kind",
+            ),
         ],
         access: Access::Agent,
         mcp: false,
@@ -201,9 +233,21 @@ pub const COMMANDS: &[Command] = &[
                 ArgKind::Bool,
                 "compute into the comparison lane and show old against new",
             ),
-            opt("from", ArgKind::Text, "only keys touched by inputs at or after this time (RFC 3339)"),
-            opt("until", ArgKind::Text, "only keys touched by inputs before this time (RFC 3339)"),
-            opt("examples", ArgKind::Integer, "examples of each kind of difference to show (default 5)"),
+            opt(
+                "from",
+                ArgKind::Text,
+                "only keys touched by inputs at or after this time (RFC 3339)",
+            ),
+            opt(
+                "until",
+                ArgKind::Text,
+                "only keys touched by inputs before this time (RFC 3339)",
+            ),
+            opt(
+                "examples",
+                ArgKind::Integer,
+                "examples of each kind of difference to show (default 5)",
+            ),
         ],
         access: Access::Agent,
         mcp: false,
@@ -212,7 +256,11 @@ pub const COMMANDS: &[Command] = &[
         name: "comparisons",
         summary: "Comparisons kept by `recompute --compare`, newest first.",
         args: &[
-            pos_opt("derivation", ArgKind::Text, "only comparisons of this derivation"),
+            pos_opt(
+                "derivation",
+                ArgKind::Text,
+                "only comparisons of this derivation",
+            ),
             opt("limit", ArgKind::Integer, "how many (default 20)"),
         ],
         access: Access::Read,
@@ -222,10 +270,22 @@ pub const COMMANDS: &[Command] = &[
         name: "crawl",
         summary: "Fetch pages from stored browser history whose host is on the allow list and that were not fetched yet (`page.fetched`). Nothing is fetched without an allow list.",
         args: &[
-            opt("allow", ArgKind::List, "a domain whose pages may be fetched, and its subdomains (repeatable)"),
-            opt("url", ArgKind::List, "fetch these URLs instead of the stored history (repeatable)"),
+            opt(
+                "allow",
+                ArgKind::List,
+                "a domain whose pages may be fetched, and its subdomains (repeatable)",
+            ),
+            opt(
+                "url",
+                ArgKind::List,
+                "fetch these URLs instead of the stored history (repeatable)",
+            ),
             opt("limit", ArgKind::Integer, "fetch at most this many pages"),
-            opt("pause", ArgKind::Integer, "seconds between two requests to the same host (default 2)"),
+            opt(
+                "pause",
+                ArgKind::Integer,
+                "seconds between two requests to the same host (default 2)",
+            ),
         ],
         access: Access::Operator,
         mcp: false,
@@ -249,8 +309,16 @@ pub const COMMANDS: &[Command] = &[
         summary: "Permanently delete an event's every reading, or a whole material and its bytes; it never comes back by any route.",
         args: &[
             pos_opt("reference", ArgKind::Reference, "the event"),
-            opt("material", ArgKind::Text, "a whole material instead of one event"),
-            opt("dry-run", ArgKind::Bool, "report exactly what would be removed, and remove nothing"),
+            opt(
+                "material",
+                ArgKind::Text,
+                "a whole material instead of one event",
+            ),
+            opt(
+                "dry-run",
+                ArgKind::Bool,
+                "report exactly what would be removed, and remove nothing",
+            ),
         ],
         access: Access::Operator,
         mcp: false,
@@ -711,11 +779,7 @@ pub enum Request {
         reference: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         material: Option<String>,
-        #[serde(
-            default,
-            rename = "dry-run",
-            skip_serializing_if = "Option::is_none"
-        )]
+        #[serde(default, rename = "dry-run", skip_serializing_if = "Option::is_none")]
         dry_run: Option<bool>,
     },
     Same {

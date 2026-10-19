@@ -85,18 +85,10 @@ pub async fn run(
     let sink = Sink(blobs.clone());
     // Each crawl is its own list, so its binding starts from the beginning.
     let binding = format!("page-crawl@{host}/{}", run.0);
-    let totals = drive(
-        aux,
-        writer,
-        run,
-        &source,
-        &binding,
-        &sink,
-        |c| crawl.poll(c),
-    )
+    let totals = drive(aux, writer, run, &source, &binding, &sink, |c| {
+        crawl.poll(c)
+    })
     .await?;
-    runs::end(aux, run)
-        .await
-        .map_err(|e| e.to_string())?;
+    runs::end(aux, run).await.map_err(|e| e.to_string())?;
     Ok(totals)
 }

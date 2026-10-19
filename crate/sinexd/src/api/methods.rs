@@ -323,7 +323,9 @@ impl Api {
                     Ok(crate::replay::Scope {
                         materials: material
                             .iter()
-                            .map(|m| uuid::Uuid::parse_str(m).map_err(|e| format!("material {m}: {e}")))
+                            .map(|m| {
+                                uuid::Uuid::parse_str(m).map_err(|e| format!("material {m}: {e}"))
+                            })
                             .collect::<Result<_, _>>()?,
                         binding,
                         event_types: (!event_type.is_empty()).then_some(event_type),
@@ -360,7 +362,10 @@ impl Api {
                 until,
                 examples,
             } => {
-                let range = match (from.as_deref().map(timestamp).transpose(), until.as_deref().map(timestamp).transpose()) {
+                let range = match (
+                    from.as_deref().map(timestamp).transpose(),
+                    until.as_deref().map(timestamp).transpose(),
+                ) {
                     (Ok(None), Ok(None)) => None,
                     (Ok(f), Ok(u)) => Some((
                         f.unwrap_or(sinex_model::Timestamp(time::OffsetDateTime::UNIX_EPOCH)),
@@ -383,7 +388,9 @@ impl Api {
                     Err(e) => return refused(e.to_string()),
                 };
                 let limit = i64::try_from(limit.unwrap_or(20)).unwrap_or(i64::MAX);
-                match sinex_store::derived::comparisons(&mut conn, derivation.as_deref(), limit).await {
+                match sinex_store::derived::comparisons(&mut conn, derivation.as_deref(), limit)
+                    .await
+                {
                     Ok(kept) => {
                         let rows: Vec<Value> = kept
                             .into_iter()
@@ -416,7 +423,10 @@ impl Api {
                 url,
                 limit,
                 pause,
-            } => self.crawl(caller, allow, url, limit, pause.unwrap_or(2)).await,
+            } => {
+                self.crawl(caller, allow, url, limit, pause.unwrap_or(2))
+                    .await
+            }
             Request::AnalysisCatalog
             | Request::AnalysisRun { .. }
             | Request::AnalysisShow { .. }
@@ -842,7 +852,9 @@ impl Api {
             Err(e) => return refused(e.to_string()),
         };
         let mut driver =
-            match crate::derive::Driver::operating(conn, writer.clone(), derivation, &self.host).await {
+            match crate::derive::Driver::operating(conn, writer.clone(), derivation, &self.host)
+                .await
+            {
                 Ok(d) => d,
                 Err(e) => return refused(e),
             };

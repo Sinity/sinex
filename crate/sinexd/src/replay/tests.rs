@@ -133,9 +133,14 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
     let ids_before = live_ids(&mut f.ctx.aux).await;
     assert_eq!(before, vec!["ls", "echo a\nb", "make"]);
 
-    let compared = run(&mut f.ctx.aux, &f.ctx.blobs, &f.ctx.writer, options(whole_binding(), true))
-        .await
-        .unwrap();
+    let compared = run(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), true),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (
             compared.chains,
@@ -158,9 +163,14 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
         .unwrap();
     assert_eq!(ops, 0);
 
-    let applied = run(&mut f.ctx.aux, &f.ctx.blobs, &f.ctx.writer, options(whole_binding(), false))
-        .await
-        .unwrap();
+    let applied = run(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), false),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (applied.archived, applied.admitted, applied.diff.unchanged),
         (3, 3, 3)
@@ -252,9 +262,14 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
         vec!["a", "b", "a", "c"],
         "only the new command was read from the rewrite"
     );
-    let report = run(&mut f.ctx.aux, &f.ctx.blobs, &f.ctx.writer, options(whole_binding(), true))
-        .await
-        .unwrap();
+    let report = run(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), true),
+    )
+    .await
+    .unwrap();
     assert_eq!(report.chains, 2, "the first revision and the rewrite");
     assert_eq!(
         (
@@ -299,9 +314,14 @@ async fn an_excised_record_stays_out_of_a_replay() {
     assert!(!bytes.windows(6).any(|w| w == b"secret"));
     assert_eq!(bytes.len(), ": 1:0;ls\n: 2:0;cat secret\n: 3:0;pwd\n".len());
 
-    let report = run(&mut f.ctx.aux, &f.ctx.blobs, &f.ctx.writer, options(whole_binding(), false))
-        .await
-        .unwrap();
+    let report = run(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
+        options(whole_binding(), false),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (report.archived, report.admitted, report.failures),
         (2, 2, 0)

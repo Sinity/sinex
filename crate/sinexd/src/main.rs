@@ -312,7 +312,6 @@ enum Admin {
     Table(Vec<String>),
 }
 
-
 async fn admin(command: Admin) -> Result<(), String> {
     match command {
         Admin::Table(args) => admin_table(args).await,
@@ -379,13 +378,15 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         )
         .arg(Arg::new("host").long("host").default_value("localhost"))
         .arg(Arg::new("zone").long("zone"))
-        .arg(Arg::new("day-start").long("day-start").default_value("04:00"))
+        .arg(
+            Arg::new("day-start")
+                .long("day-start")
+                .default_value("04:00"),
+        )
         .try_get_matches_from(&args)
         .map_err(|e| e.to_string())?;
-    let request = sinex_protocol::Request::from_args(
-        name,
-        sinex_protocol::cli::arguments(spec, &matches),
-    )?;
+    let request =
+        sinex_protocol::Request::from_args(name, sinex_protocol::cli::arguments(spec, &matches))?;
     let database: &String = matches.get_one("database").expect("required");
     let store: &PathBuf = matches.get_one("store").expect("required");
     let host: &String = matches.get_one("host").expect("defaulted");

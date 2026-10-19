@@ -19,8 +19,8 @@ use sinex_model::{
     Timestamp,
 };
 use sinex_sources::{DrainInput, Limits, drivers, sources};
-use sinex_store::replay::{self, Change, Diff, Stored};
 use sinex_store::Blobs;
+use sinex_store::replay::{self, Change, Diff, Stored};
 use sqlx::PgConnection;
 use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
