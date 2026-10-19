@@ -35,6 +35,7 @@ pub mod raindrop;
 pub mod reddit;
 /// Commits in local repositories (`code.git`).
 pub mod repository;
+pub mod samsung_cloud;
 pub mod samsung_health;
 pub mod samsung_sms;
 /// The session producer socket: Neovim and kitty integrations.

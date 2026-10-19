@@ -43,6 +43,7 @@ pub const EXPORT_KINDS: &[&str] = &[
     "outlook-csv",
     "arbtt",
     "imap",
+    "samsung-account",
     "chromium",
     "takeout-chrome",
     "spotify",
@@ -634,6 +635,14 @@ async fn export(
                             Box::new(g::purchases::purchases()),
                             g::purchases::purchases_driver(file.clone(), host.clone()),
                         ),
+                        (
+                            Box::new(g::location::source()),
+                            g::location::driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::fit::source()),
+                            g::fit::driver(file.clone(), host.clone()),
+                        ),
                     ]);
                 }
                 for (source, driver) in readers {
@@ -734,6 +743,20 @@ async fn export(
                 totals.add(
                     drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
                         driver.poll(c, &mut memory)
+                    })
+                    .await?,
+                );
+            }
+        }
+        "samsung-account" => {
+            use sinex_sources::sources::samsung_cloud;
+            for file in files(&path, true, samsung_cloud::is_table) {
+                let name = binding(&file.display().to_string());
+                let source = samsung_cloud::source();
+                let driver = samsung_cloud::driver(file, host.clone());
+                totals.add(
+                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                        driver.poll(c)
                     })
                     .await?,
                 );

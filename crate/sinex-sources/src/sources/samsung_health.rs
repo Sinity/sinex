@@ -144,7 +144,7 @@ fn category_of(type_line: &str) -> String {
 
 /// A number where the cell is one, text otherwise. A zero-padded cell
 /// (`0042`) is an identifier and stays text.
-fn typed(cell: &str) -> Value {
+pub(crate) fn typed(cell: &str) -> Value {
     let digits = cell.trim_start_matches('-');
     let padded = digits.len() > 1 && digits.starts_with('0') && !digits.starts_with("0.");
     if !padded {

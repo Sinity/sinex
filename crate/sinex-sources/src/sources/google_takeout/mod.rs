@@ -3,6 +3,8 @@
 //! `takeout_chrome`, mail is `mail`, calendars are `calendar`.
 pub mod activity;
 pub mod cells;
+pub mod fit;
 pub mod keep;
+pub mod location;
 pub mod purchases;
 pub mod tasks;
