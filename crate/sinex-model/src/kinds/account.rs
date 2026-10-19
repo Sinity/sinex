@@ -49,15 +49,19 @@ pub struct ActionRecorded {
     key = ["service", "video_id", "watched_at"],
     replace = newer,
     time = watched_at,
-    quality = intrinsic
+    quality = intrinsic,
+    keep_known = ["title", "channel", "channel_url"]
 )]
 pub struct VideoWatched {
     pub service: String,
-    pub video_id: String,
+    /// `None` when the entry links no video: a removed video Google lists
+    /// without a link, or a link to something other than a video.
+    pub video_id: Option<String>,
     pub watched_at: Timestamp,
-    pub url: String,
+    pub url: Option<String>,
     /// `None` when the export names no title: the video is gone and Google
-    /// writes `Watched <url>`.
+    /// writes `Watched <url>`. A later export that drops a title an earlier
+    /// one had does not erase it (`keep_known`).
     pub title: Option<String>,
     pub channel: Option<String>,
     pub channel_url: Option<String>,

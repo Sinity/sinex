@@ -1,0 +1,238 @@
+//! Outlook mail exports: `.pst` stores and the CSV exports Outlook writes in
+//! the system's ANSI code page (Windows-1250 on a Polish system).
+//!
+//! No maintained Rust reader understands PST, so a store is staged first:
+//! `readpst` (libpst) converts each folder to an mbox file, and those files are
+//! read like any mbox export, as the source `communication.outlook`. The
+//! converted mbox is what Sinex stores and replays; its material path names the
+//! PST and the folder it came from. The PST stays where the operator keeps it.
+//!
+//! The CSV export carries no message ID and no date, only the people,
+//! subject, body and a few Outlook fields. Each row is one message identified
+//! by a hash of its decoded cells; the same message in the PST is a separate
+//! record, combined by fusion if at all (architecture §3.3 rule 5).
+use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use crate::registry::{Declared, Driver, SourceSpec};
+use crate::sources::{fields, mail};
+use crate::{Parser, RecordError};
+use sinex_model::Class;
+use sinex_model::kinds::communication::MailMessage;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+pub const PST: SourceSpec = SourceSpec {
+    name: "communication.outlook",
+    driver: Driver::ExportArchive,
+    consumer: "mail recall and correspondence history",
+    class: Class::Open,
+    parser: "rfc5322-mail",
+    parser_version: 1,
+    event_types: &["mail.message"],
+    framer: crate::drivers::export_archive::frame_mbox,
+};
+
+pub const CSV: SourceSpec = SourceSpec {
+    name: "communication.outlook-csv",
+    driver: Driver::ExportArchive,
+    consumer: "mail recall and correspondence history",
+    class: Class::Open,
+    parser: "outlook-csv",
+    parser_version: 1,
+    event_types: &["mail.message"],
+    framer: frame_csv,
+};
+
+pub fn pst_source() -> Declared<mail::MailParser> {
+    Declared {
+        spec: PST,
+        parser: mail::MailParser,
+    }
+}
+
+/// Convert `pst` into one mbox file per folder under `out`, returning them in
+/// a stable order. The files are named `<pst stem>/<folder path>.mbox`.
+pub fn stage_pst(pst: &Path, out: &Path) -> Result<Vec<PathBuf>, String> {
+    let stem = pst
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| format!("{}: no file name", pst.display()))?;
+    let dir = out.join(stem);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // -r: one directory per folder; -8: UTF-8 output; -q: quiet; -b: no
+    // RTF bodies (the plain and HTML bodies are kept).
+    let status = Command::new("readpst")
+        .args(["-r", "-8", "-q", "-b", "-o"])
+        .arg(&dir)
+        .arg(pst)
+        .status()
+        .map_err(|e| format!("readpst (libpst) is needed to read {}: {e}", pst.display()))?;
+    if !status.success() {
+        return Err(format!("readpst failed on {}: {status}", pst.display()));
+    }
+    let mut found = Vec::new();
+    collect_mbox(&dir, &dir, &mut found)?;
+    found.sort();
+    Ok(found)
+}
+
+/// readpst writes each folder's messages to a file named `mbox`; rename it to
+/// `<folder>.mbox` so the material path names the folder.
+fn collect_mbox(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for entry in entries {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.is_dir() {
+            collect_mbox(root, &path, out)?;
+        } else if path.file_name().is_some_and(|n| n == "mbox") {
+            let folder = path.parent().unwrap_or(root);
+            let named = folder.with_extension("mbox");
+            let named = if folder == root {
+                root.join("root.mbox")
+            } else {
+                named
+            };
+            std::fs::rename(&path, &named).map_err(|e| format!("{}: {e}", named.display()))?;
+            out.push(named);
+        }
+    }
+    Ok(())
+}
+
+pub fn pst_driver(mbox: PathBuf, host: String) -> ExportArchive {
+    mail::mbox_driver(mbox, host)
+}
+
+pub struct CsvParser;
+
+/// The header row's cells, decoded.
+type Header = Vec<String>;
+
+impl Parser for CsvParser {
+    type Record<'a> = &'a [u8];
+    type Carry = Header;
+    type Payload = MailMessage;
+
+    fn parse(
+        &self,
+        record: &&[u8],
+        header: &Header,
+    ) -> Result<(Vec<MailMessage>, Header), RecordError> {
+        let (decoded, _, _) = encoding_rs::WINDOWS_1250.decode(record);
+        let cells = fields::csv_cells(decoded.as_bytes())?;
+        if cells.first().map(String::as_str) == Some("Temat") {
+            return Ok((vec![], cells));
+        }
+        if header.is_empty() {
+            return Err(RecordError::new("a message row before the header row"));
+        }
+        let column = |name: &str| {
+            header
+                .iter()
+                .position(|h| h == name)
+                .and_then(|i| cells.get(i))
+                .map(|c| c.trim())
+                .filter(|c| !c.is_empty())
+        };
+        let people = |kind: &str| -> Vec<String> {
+            let names = column(&format!("{kind}: (imię/nazwisko)"));
+            let addresses = column(&format!("{kind}: (adres)"));
+            let names: Vec<&str> = names.map(|n| n.split(';').collect()).unwrap_or_default();
+            let addresses: Vec<&str> = addresses
+                .map(|a| a.split(';').collect())
+                .unwrap_or_default();
+            (0..names.len().max(addresses.len()))
+                .map(|i| {
+                    let n = names.get(i).map(|s| s.trim()).unwrap_or("");
+                    let a = addresses.get(i).map(|s| s.trim()).unwrap_or("");
+                    match (n.is_empty(), a.is_empty()) {
+                        (false, false) if n != a => format!("{n} <{a}>"),
+                        (_, false) => a.to_owned(),
+                        _ => n.to_owned(),
+                    }
+                })
+                .filter(|p| !p.is_empty())
+                .collect()
+        };
+        let mut cc = people("DW");
+        cc.extend(people("UDW"));
+        let labels = column("Kategorie")
+            .map(|c| c.split(';').map(|l| l.trim().to_owned()).collect())
+            .unwrap_or_default();
+        Ok((
+            vec![MailMessage {
+                message_id: format!(
+                    "blake3:{}",
+                    blake3::hash(cells.join("\u{1f}").as_bytes()).to_hex()
+                ),
+                date: None,
+                from: people("Od"),
+                to: people("Do"),
+                cc,
+                subject: column("Temat").map(str::to_owned),
+                in_reply_to: None,
+                references: vec![],
+                labels,
+                thread_id: None,
+                text: column("Treść").map(str::to_owned),
+                html_only: false,
+                attachments: vec![],
+                size: record.len() as u64,
+            }],
+            header.clone(),
+        ))
+    }
+}
+
+pub fn csv_source() -> Declared<CsvParser> {
+    Declared {
+        spec: CSV,
+        parser: CsvParser,
+    }
+}
+
+pub fn frame_csv(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
+    Framing::Csv.frame(bytes, true)
+}
+
+pub fn csv_driver(path: PathBuf, host: String) -> ExportArchive {
+    ExportArchive {
+        path,
+        host,
+        select: |m| m.to_ascii_lowercase().ends_with(".csv"),
+        framing: Framing::Csv,
+        part_bytes: PART_BYTES,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cp1250(s: &str) -> Vec<u8> {
+        encoding_rs::WINDOWS_1250.encode(s).0.into_owned()
+    }
+
+    #[test]
+    fn csv_rows_are_windows_1250_with_polish_headers() {
+        let header = cp1250(
+            "\"Temat\",\"Treść\",\"Od: (imię/nazwisko)\",\"Od: (adres)\",\"Od: (rodzaj)\",\"Do: (imię/nazwisko)\",\"Do: (adres)\",\"Do: (rodzaj)\",\"DW: (imię/nazwisko)\",\"DW: (adres)\",\"DW: (rodzaj)\",\"Kategorie\"\n",
+        );
+        let (_, h) = CsvParser.parse(&header.as_slice(), &vec![]).unwrap();
+        let row = cp1250(
+            "\"Studia, umowa\",\"Zażółć\nlinia\",\"Jan Kowalski\",\"jan@x.pl\",\"SMTP\",\"Anna\",\"anna@y.pl\",\"SMTP\",\"\",\"\",\"\",\"Praca\"\n",
+        );
+        let (out, _) = CsvParser.parse(&row.as_slice(), &h).unwrap();
+        let m = &out[0];
+        assert_eq!(m.subject.as_deref(), Some("Studia, umowa"));
+        assert_eq!(m.text.as_deref(), Some("Zażółć\nlinia"));
+        assert_eq!(m.from, vec!["Jan Kowalski <jan@x.pl>"]);
+        assert_eq!(m.to, vec!["Anna <anna@y.pl>"]);
+        assert_eq!(m.labels, vec!["Praca"]);
+        assert_eq!(m.date, None);
+        assert!(m.message_id.starts_with("blake3:"));
+        assert!(CsvParser.parse(&row.as_slice(), &vec![]).is_err());
+    }
+}

@@ -24,7 +24,7 @@ pub const RAW_LOG: SourceSpec = SourceSpec {
     consumer: "the operator's quick notes, as primary data",
     class: Class::Open,
     parser: "operator-raw-log",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["operator.log.entry"],
     framer: frame_log,
 };
@@ -73,6 +73,20 @@ impl Parser for RawLogParser {
         let (stamp, body) = rest
             .split_once("**")
             .ok_or_else(|| RecordError::new("entry without a closing ** after its time"))?;
+        // A heading that is a label, not a time: the entry is kept, its time
+        // unknown.
+        if let Some(label) = stamp.trim().strip_suffix(':').filter(|l| !l.is_empty())
+            && !label.starts_with(|c: char| c.is_ascii_digit())
+        {
+            return Ok((
+                vec![LogEntry {
+                    written_at: None,
+                    label: Some(label.to_owned()),
+                    text: body.trim().to_owned(),
+                }],
+                (),
+            ));
+        }
         let civil = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", stamp.trim())
             .map_err(|e| RecordError::new(format!("entry time {stamp:?}: {e}")))?;
         let zoned = self
@@ -84,7 +98,8 @@ impl Parser for RawLogParser {
             .map_err(|_| RecordError::new("time out of range"))?;
         Ok((
             vec![LogEntry {
-                written_at,
+                written_at: Some(written_at),
+                label: None,
                 text: body.trim().to_owned(),
             }],
             (),
@@ -207,8 +222,12 @@ mod tests {
         assert_eq!(out[0].text, "another one\n  continued here");
         assert_eq!(
             out[0].written_at,
-            fields::rfc3339("2025-04-15T21:34:10Z").unwrap()
+            fields::rfc3339("2025-04-15T21:34:10Z").ok()
         );
+        let (out, ()) = p.parse(&&b"- **SPECIAL:** [[note]].\n"[..], &()).unwrap();
+        assert_eq!(out[0].written_at, None);
+        assert_eq!(out[0].label.as_deref(), Some("SPECIAL"));
+        assert_eq!(out[0].text, "[[note]].");
     }
 
     #[test]

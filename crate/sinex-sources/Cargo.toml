@@ -28,6 +28,7 @@ tar = "0.4"
 flate2 = "1"
 csv = "1"
 mailparse = "0.16"
+encoding_rs = "0.8"
 jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 sha2 = "0.10"
 md-5 = "0.10"

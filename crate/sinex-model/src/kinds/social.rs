@@ -61,3 +61,50 @@ pub struct VoteCast {
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
 }
+
+/// A notification an online community sent the operator (Wykop: a new entry
+/// or link under a tag the operator observes). The service's notification ID
+/// is the identity; a later reading that marks it read is newer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "notification.received",
+    key = ["service", "native_id"],
+    replace = newer,
+    time = created_at,
+    quality = intrinsic
+)]
+pub struct NotificationReceived {
+    pub service: String,
+    pub native_id: String,
+    /// The service's notification type (`new_entry_with_observed_tag`).
+    pub kind: String,
+    pub created_at: Option<Timestamp>,
+    pub read: Option<bool>,
+    /// What it points at, as `entry:<id>` or `link:<id>`.
+    pub target: Option<String>,
+    pub target_url: Option<String>,
+    /// Who caused it.
+    pub actor: Option<String>,
+    /// The tag or channel it came through.
+    pub channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
+
+/// One entry of an account setting the operator keeps at a service, such as a
+/// blocked user, tag or domain. The setting and its value are the identity;
+/// exports give no time the operator set it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "account.setting",
+    key = ["service", "setting", "value"],
+    replace = newer
+)]
+pub struct AccountSetting {
+    pub service: String,
+    /// `blacklist/users`, `blacklist/tags`, `blacklist/domains`.
+    pub setting: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}

@@ -9,6 +9,10 @@
 //! `GMT-02:00`), so the offset is derived from `From` and `Id`, rounded to a
 //! quarter hour, and recorded. `-1` in `Snore`, `Noise`, `Cycles` and
 //! `DeepSleep` means absent.
+//!
+//! A session row can be followed by a row whose first 13 cells are empty: the
+//! session's sound-level (noise) samples, not aligned to the header's times.
+//! It becomes a `sleep-noise` record of the session before it.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use crate::registry::{Declared, Driver, SourceSpec};
 use crate::sources::fields;
@@ -24,28 +28,45 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "sleep sessions and their phases",
     class: Class::Open,
     parser: "sleep-as-android",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["health.record"],
     framer: frame,
 };
 
 pub struct SleepParser;
 
+/// The header row of the current session, and the last session read under it
+/// (its ID and span), which a following noise row belongs to.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct Carry {
+    header: Vec<String>,
+    session: Option<(i64, Timestamp, Option<Timestamp>, i32)>,
+}
+
 impl Parser for SleepParser {
     type Record<'a> = &'a [u8];
-    /// The header row of the current session.
-    type Carry = Vec<String>;
+    type Carry = Carry;
     type Payload = HealthRecord;
 
     fn parse(
         &self,
         record: &&[u8],
-        header: &Vec<String>,
-    ) -> Result<(Vec<HealthRecord>, Vec<String>), RecordError> {
+        carry: &Carry,
+    ) -> Result<(Vec<HealthRecord>, Carry), RecordError> {
         let cells = fields::csv_cells(record)?;
         if cells.first().map(String::as_str) == Some("Id") {
-            return Ok((vec![], cells));
+            return Ok((
+                vec![],
+                Carry {
+                    header: cells,
+                    session: None,
+                },
+            ));
         }
+        if cells.len() > 13 && cells[..13].iter().all(|c| c.trim().is_empty()) {
+            return noise(&cells, carry);
+        }
+        let header = &carry.header;
         if header.len() < 15 {
             return Err(RecordError::new("a session row before its header row"));
         }
@@ -113,9 +134,47 @@ impl Parser for SleepParser {
                 values,
                 events,
             }],
-            header.clone(),
+            Carry {
+                header: header.clone(),
+                session: Some((id_ms, start, end, (offset_secs / 60) as i32)),
+            },
         ))
     }
+}
+
+/// The noise samples row after a session.
+fn noise(cells: &[String], carry: &Carry) -> Result<(Vec<HealthRecord>, Carry), RecordError> {
+    let (id_ms, start, end, offset) = carry
+        .session
+        .ok_or_else(|| RecordError::new("a noise row without a session before it"))?;
+    let samples: Vec<Value> = cells[13..]
+        .iter()
+        .map(|c| c.trim())
+        .filter(|c| !c.is_empty())
+        .map(|c| {
+            c.parse::<f64>()
+                .map(|v| json!(v))
+                .map_err(|_| RecordError::new(format!("noise sample {c:?} is not a number")))
+        })
+        .collect::<Result<_, _>>()?;
+    let mut values = Map::new();
+    values.insert("noise".into(), Value::Array(samples));
+    Ok((
+        vec![HealthRecord {
+            provider: "sleep-as-android".into(),
+            category: "sleep-noise".into(),
+            native_id: format!("{id_ms}:noise"),
+            start: Some(start),
+            end,
+            offset_minutes: Some(offset),
+            values,
+            events: vec![],
+        }],
+        Carry {
+            header: carry.header.clone(),
+            session: None,
+        },
+    ))
 }
 
 /// `D. M. YYYY HH:MM[:SS]` read as if it were UTC.
@@ -181,7 +240,7 @@ mod tests {
 
     #[test]
     fn derives_the_offset_from_from_and_id_and_drops_sentinels() {
-        let (_, header) = SleepParser.parse(&HEADER, &vec![]).unwrap();
+        let (_, header) = SleepParser.parse(&HEADER, &Carry::default()).unwrap();
         // 2025-10-05 02:49 UTC, written as 04:49 local: +2 h, whatever Tz says.
         let row = b"\"1759632540000\",\"GMT-02:00\",\"05. 10. 2025 4:49\",\"05. 10. 2025 6:53\",\"05. 10. 2025 6:53\",\"2.070\",\"0.0\",\" #cloud\",\"10008\",\"-1\",\"-1.0\",\"3\",\"0.48\",\"-40\",\"\",\"LIGHT_START-1759632540000\",\"HR-1759632900000-88.0\"\n";
         let (out, _) = SleepParser.parse(&&row[..], &header).unwrap();
@@ -200,6 +259,26 @@ mod tests {
 
     #[test]
     fn a_row_without_its_header_is_an_error() {
-        assert!(SleepParser.parse(&&b"\"1\",\"x\"\n"[..], &vec![]).is_err());
+        assert!(
+            SleepParser
+                .parse(&&b"\"1\",\"x\"\n"[..], &Carry::default())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_noise_row_belongs_to_the_session_before_it() {
+        let (_, header) = SleepParser.parse(&HEADER, &Carry::default()).unwrap();
+        let row = b"\"1759632540000\",\"GMT-02:00\",\"05. 10. 2025 4:49\",\"05. 10. 2025 6:53\",\"05. 10. 2025 6:53\",\"2.070\",\"0.0\",\"\",\"10008\",\"-1\",\"-1.0\",\"3\",\"0.48\",\"-40\",\"\",\"\",\"\"\n";
+        let (_, after) = SleepParser.parse(&&row[..], &header).unwrap();
+        let noise = b",,,,,,,,,,,,,\"20643.4\",\"287.5\"\n";
+        let (out, after) = SleepParser.parse(&&noise[..], &after).unwrap();
+        assert_eq!(out[0].category, "sleep-noise");
+        assert_eq!(out[0].native_id, "1759632540000:noise");
+        assert_eq!(out[0].values["noise"], json!([20643.4, 287.5]));
+        assert!(
+            SleepParser.parse(&&noise[..], &after).is_err(),
+            "only one per session"
+        );
     }
 }

@@ -16,7 +16,12 @@ use serde_json::{Map, Value};
     quality = intrinsic
 )]
 pub struct LogEntry {
-    pub written_at: Timestamp,
+    /// Unknown for an entry headed by a label instead of a time
+    /// (`**SPECIAL:**`).
+    pub written_at: Option<Timestamp>,
+    /// The bold heading when it is a label, not a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// The entry's text, continuation lines included.
     pub text: String,
 }

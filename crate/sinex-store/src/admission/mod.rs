@@ -267,6 +267,32 @@ pub async fn admit(
             }
         }
 
+        // A newer reading keeps the replaced reading's value for the fields
+        // its type declares `keep_known` when it leaves them unknown.
+        for (ord, live) in &replaced {
+            let event_type = &events[usize::try_from(*ord).expect("ord is an index")].event_type;
+            let keep = sinex_model::kinds::find(event_type).map_or(&[][..], |k| k.keep_known);
+            if keep.is_empty() {
+                continue;
+            }
+            let keep: Vec<String> = keep.iter().map(|f| (*f).to_owned()).collect();
+            sqlx::query!(
+                r#"UPDATE core.admission_stage st
+                   SET payload = st.payload || coalesce((
+                     SELECT jsonb_object_agg(f, e.payload->f)
+                     FROM unnest($3::text[]) f
+                     WHERE coalesce(st.payload->f, 'null'::jsonb) = 'null'::jsonb
+                       AND coalesce(e.payload->f, 'null'::jsonb) <> 'null'::jsonb), '{}'::jsonb)
+                   FROM core.events e
+                   WHERE st.ord = $1 AND e.id = $2"#,
+                ord,
+                live,
+                &keep,
+            )
+            .execute(&mut *conn)
+            .await?;
+        }
+
         if !admit_ords.is_empty() {
             let n = i64::try_from(admit_ords.len()).expect("count fits i64");
             let last = sqlx::query_scalar!(

@@ -196,6 +196,8 @@ pub struct KindInfo {
     pub event_type: &'static str,
     pub key: crate::KeyKind,
     pub replace: crate::ReplaceRule,
+    /// See [`crate::EventPayload::KEEP_KNOWN`].
+    pub keep_known: &'static [&'static str],
     pub json_schema: fn() -> Value,
     /// Build an event of this type from a JSON payload, as arriving over the
     /// NATS ingress: the payload is decoded into the Rust type first, so the
@@ -218,6 +220,7 @@ const fn info<P: EventPayload>() -> KindInfo {
         event_type: P::EVENT_TYPE,
         key: P::KEY,
         replace: P::REPLACE,
+        keep_known: P::KEEP_KNOWN,
         json_schema: P::payload_schema,
         build: build_from_json::<P>,
     }
@@ -289,6 +292,8 @@ pub const ALL: &[KindInfo] = &[
     info::<health::HealthRecord>(),
     info::<social::PostPublished>(),
     info::<social::VoteCast>(),
+    info::<social::NotificationReceived>(),
+    info::<social::AccountSetting>(),
     info::<operator::LogEntry>(),
     info::<operator::SteeringRecord>(),
     // Library
