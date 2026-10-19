@@ -42,8 +42,9 @@ fn render(outcome: &RecordOutcome) -> Value {
 }
 
 fn run_case(parser: &str, dir: &Path) -> Value {
-    let source = sinex_sources::sources::by_parser(parser, HOST)
+    let binding = sinex_sources::sources::binding_for_parser(parser, HOST)
         .unwrap_or_else(|| panic!("no source reads with parser {parser}"));
+    let source = sinex_sources::sources::source_for(&binding).expect("source");
     let bytes = std::fs::read(dir.join("input")).expect("case input");
     let manifest: Value = match std::fs::read(dir.join("manifest.json")) {
         Ok(raw) => serde_json::from_slice(&raw).expect("manifest.json is JSON"),

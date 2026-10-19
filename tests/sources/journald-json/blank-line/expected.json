@@ -1,10 +1,60 @@
 [
   {
     "anchor": 0,
-    "failure": "spooled record has no received_ns"
+    "events": [
+      {
+        "type": "journal.entry",
+        "ts": "2023-11-14T22:13:20Z",
+        "time": "Intrinsic",
+        "key": "63576a472425e29ad67cc2766bd1b9d1f10c75999e03b57a24219068675452d8",
+        "state": "Present",
+        "payload": {
+          "cursor": "s=a;i=1",
+          "logged_at": "2023-11-14T22:13:20Z",
+          "boot_id": null,
+          "hostname": null,
+          "message": "one",
+          "priority": null,
+          "unit": null,
+          "user_unit": null,
+          "identifier": null,
+          "pid": null,
+          "uid": null,
+          "command": null,
+          "transport": null
+        }
+      }
+    ]
   },
   {
-    "anchor": 82,
-    "failure": "spooled record has no received_ns"
+    "anchor": 140,
+    "events": []
+  },
+  {
+    "anchor": 188,
+    "events": [
+      {
+        "type": "journal.entry",
+        "ts": "2023-11-14T22:13:20.000001Z",
+        "time": "Intrinsic",
+        "key": "6fb74e2e7a46f2b0276cd41c4ce52be02cba74b5c4dc7b8d6c6d53e76ec2810e",
+        "state": "Present",
+        "payload": {
+          "cursor": "s=a;i=2",
+          "logged_at": "2023-11-14T22:13:20.000001Z",
+          "boot_id": null,
+          "hostname": null,
+          "message": "two",
+          "priority": null,
+          "unit": null,
+          "user_unit": null,
+          "identifier": null,
+          "pid": null,
+          "uid": null,
+          "command": null,
+          "transport": null
+        }
+      }
+    ]
   }
 ]

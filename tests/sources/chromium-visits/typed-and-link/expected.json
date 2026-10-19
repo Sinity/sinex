@@ -11,8 +11,8 @@
         "payload": {
           "profile": "input",
           "visit_id": 101,
-          "url": null,
-          "title": null,
+          "url": "https://example.org/",
+          "title": "Example",
           "visited_at": "2024-01-17T21:20:00Z",
           "from_visit": null,
           "transition": 805306369,
@@ -26,7 +26,7 @@
     ]
   },
   {
-    "anchor": 165,
+    "anchor": 247,
     "events": [
       {
         "type": "browser.visit",
@@ -37,8 +37,8 @@
         "payload": {
           "profile": "input",
           "visit_id": 102,
-          "url": null,
-          "title": null,
+          "url": "https://example.org/next",
+          "title": "Next",
           "visited_at": "2024-01-17T21:21:00Z",
           "from_visit": 101,
           "transition": 805306368,

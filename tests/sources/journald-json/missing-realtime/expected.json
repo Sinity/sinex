@@ -1,6 +1,29 @@
 [
   {
     "anchor": 0,
-    "failure": "spooled record has no received_ns"
+    "events": [
+      {
+        "type": "journal.entry",
+        "ts": null,
+        "time": "Unknown",
+        "key": "006c86f8f0b5b5c0741edc3a1adf73d0e9a604b8dc41880fc150f79d0d0eae3f",
+        "state": "Present",
+        "payload": {
+          "cursor": "s=abc;i=1",
+          "logged_at": null,
+          "boot_id": null,
+          "hostname": null,
+          "message": "entry missing its realtime timestamp",
+          "priority": null,
+          "unit": null,
+          "user_unit": null,
+          "identifier": null,
+          "pid": null,
+          "uid": null,
+          "command": null,
+          "transport": null
+        }
+      }
+    ]
   }
 ]

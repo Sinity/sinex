@@ -30,8 +30,8 @@
           "window": "0xabc",
           "workspace_id": null,
           "workspace_name": "1",
-          "class": "dev",
-          "title": "firefox,docs"
+          "class": "firefox",
+          "title": "docs"
         }
       }
     ]
