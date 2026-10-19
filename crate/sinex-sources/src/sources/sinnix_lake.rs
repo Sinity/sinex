@@ -165,7 +165,11 @@ pub const LANES: &[Lane] = &[
             "sinnix-lake:peripheral",
             "battery and audio device state",
         ),
-        dirs: &["device/sinnix-prime/peripheral"],
+        dirs: &[
+            "device/sinnix-prime/peripheral/bt-audio",
+            "device/sinnix-prime/peripheral/bt-battery",
+            "device/sinnix-prime/peripheral/logitech",
+        ],
         lanes: &["bt-audio", "bt-battery", "logitech"],
         firehose: false,
     },
