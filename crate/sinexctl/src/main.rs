@@ -285,7 +285,19 @@ async fn main() -> ExitCode {
         };
     }
     let spec = sinex_protocol::command(&name).expect("subcommands come from the table");
-    let args = arguments(spec, &sub);
+    let mut args = arguments(spec, &sub);
+    // `unlock` names the identity file; its key goes to the daemon over the
+    // owner-only socket and is held in memory for the session only.
+    if name == "unlock"
+        && let Some(Value::String(path)) = args.get("identity").cloned()
+    {
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                args.insert("identity".into(), Value::String(text));
+            }
+            Err(e) => return fail(1, format!("{path}: {e}")),
+        }
+    }
     if name == "follow" {
         let query = args
             .get("query")

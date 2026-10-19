@@ -283,12 +283,24 @@ impl RuleSet {
         )
     }
 
-    /// Apply the class floor and every matching rule to `event`. Sealed data is
-    /// refused until the sealing path exists.
+    /// Apply the class floor and every matching rule to `event`.
     pub fn apply(&self, event: &mut Event) -> Result<Applied> {
         let mut applied = Applied::default();
         if let Some(&floor) = self.floors.get(&event.source) {
             event.class = event.class.max(floor);
+        }
+        // A sealed payload is unreadable here by design: rules ran where it
+        // was sealed, or never could. An event whose class is sealed must
+        // arrive sealed; anything else fails closed.
+        if crate::sealed::is_sealed(&event.payload) {
+            event.class = Class::Sealed;
+            return Ok(applied);
+        }
+        if event.class == Class::Sealed {
+            return Err(Error::Unsealed(format!(
+                "{} event from {}",
+                event.event_type, event.source
+            )));
         }
         let source = event.source.clone();
         let event_type = event.event_type;
@@ -310,7 +322,10 @@ impl RuleSet {
             event.equivalence_key = Some(EquivalenceKey(self.keyed(&key.0)));
         }
         if event.class == Class::Sealed {
-            return Err(Error::SealedNotBuilt);
+            return Err(Error::Unsealed(format!(
+                "{} event from {}",
+                event.event_type, event.source
+            )));
         }
         Ok(applied)
     }
@@ -831,12 +846,22 @@ mod tests {
     }
 
     #[test]
-    fn sealed_is_refused_until_built() {
+    fn an_unsealed_event_of_a_sealed_class_fails_closed() {
         let mut e = event("ls");
         let r = rule(None, Matcher::All, Class::Sealed, Action::Classify);
         assert!(matches!(
             set(vec![r]).apply(&mut e),
-            Err(Error::SealedNotBuilt)
+            Err(Error::Unsealed(_))
         ));
+        let mut sealed = event("ls");
+        let key = crate::sealed::new_key().unwrap();
+        crate::sealed::seal_event(&mut sealed, &key).unwrap();
+        let mask = rule(None, Matcher::All, Class::Open, Action::Mask);
+        let before = sealed.payload.clone();
+        set(vec![mask]).apply(&mut sealed).unwrap();
+        assert_eq!(
+            sealed.payload, before,
+            "rules never rewrite a sealed payload"
+        );
     }
 }

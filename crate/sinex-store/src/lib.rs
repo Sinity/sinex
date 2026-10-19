@@ -17,6 +17,7 @@ pub mod query;
 pub mod read_models;
 pub mod replay;
 pub mod runs;
+pub mod sealed;
 mod stage;
 
 pub use admission::{DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, admit};
@@ -31,8 +32,10 @@ pub enum Error {
     Blob(#[from] hashed_blobs::Error),
     #[error("{0}")]
     Invalid(String),
-    #[error("sealed data needs the encryption path, which is not built yet (architecture §3.5)")]
-    SealedNotBuilt,
+    #[error(
+        "{0}: its class is sealed, so it must be sealed where its material is stored; it arrived unsealed"
+    )]
+    Unsealed(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

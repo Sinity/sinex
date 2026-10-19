@@ -23,6 +23,16 @@ pub struct Api {
     /// Classes the agent token is granted besides `open` (`guarded` only by
     /// the operator's explicit grant; never `sealed`).
     pub agent_grants: Vec<sinex_model::Class>,
+    /// The sealed class's unlock session, shared by every call.
+    pub unlock: std::sync::Arc<tokio::sync::Mutex<Option<Unlocked>>>,
+}
+
+/// An unlock session (spec `privacy.md` §4): the operator's identity until it
+/// expires, and the data keys it has unwrapped.
+pub struct Unlocked {
+    identity: sinex_store::sealed::Identity,
+    until: std::time::Instant,
+    keys: std::collections::HashMap<String, [u8; 32]>,
 }
 
 /// Who is calling: the actor recorded on writes and the classes whose values
@@ -49,19 +59,48 @@ fn not_built(reason: impl Into<String>) -> Reply {
     }
 }
 
-/// A result carrying captured text: masked, with the data notice first.
+/// A result carrying captured text, with the data notice first. Masking
+/// happens once, in `call`, for every result.
 fn data(result: Value) -> Reply {
     let mut out = json!({ "notice": DATA_NOTICE });
-    if let (Some(o), Value::Object(r)) = (out.as_object_mut(), mask_json(result)) {
+    if let (Some(o), Value::Object(r)) = (out.as_object_mut(), result) {
         o.extend(r);
     }
     Reply::Ok { result: out }
 }
 
+fn collect_sealed(value: &Value, out: &mut Vec<String>) {
+    if let Some(r) = sinex_store::sealed::key_ref(value) {
+        out.push(r.to_string());
+        return;
+    }
+    match value {
+        Value::Array(items) => items.iter().for_each(|v| collect_sealed(v, out)),
+        Value::Object(map) => map.values().for_each(|v| collect_sealed(v, out)),
+        _ => {}
+    }
+}
+
+fn unseal_in(value: &mut Value, keys: &std::collections::HashMap<String, [u8; 32]>) {
+    if let Some(r) = sinex_store::sealed::key_ref(value) {
+        if let Some(key) = keys.get(r)
+            && let Ok(plain) = sinex_store::sealed::unseal_payload(value, key)
+        {
+            *value = plain;
+        }
+        return;
+    }
+    match value {
+        Value::Array(items) => items.iter_mut().for_each(|v| unseal_in(v, keys)),
+        Value::Object(map) => map.values_mut().for_each(|v| unseal_in(v, keys)),
+        _ => {}
+    }
+}
+
 impl Api {
     /// The caller for a token's access. The operator token holds `guarded`;
     /// the agent token what the operator granted it; the read token nothing.
-    pub fn caller(&self, access: Access) -> Caller {
+    pub async fn caller(&self, access: Access) -> Caller {
         let (actor, grants): (&'static str, Vec<&str>) = match access {
             Access::Read => ("reader", vec![]),
             Access::Agent => (
@@ -72,7 +111,20 @@ impl Api {
                     .map(|_| "guarded")
                     .collect(),
             ),
-            Access::Operator => ("operator", vec!["guarded"]),
+            Access::Operator => {
+                let mut session = self.unlock.lock().await;
+                if session
+                    .as_ref()
+                    .is_some_and(|s| s.until <= std::time::Instant::now())
+                {
+                    *session = None;
+                }
+                if session.is_some() {
+                    ("operator", vec!["guarded", "sealed"])
+                } else {
+                    ("operator", vec!["guarded"])
+                }
+            }
         };
         Caller {
             actor,
@@ -98,9 +150,58 @@ impl Api {
     }
 
     pub async fn call(&self, request: Request, access: Access) -> Reply {
-        let caller = self.caller(access);
+        let caller = self.caller(access).await;
+        let reply = self.dispatch(request, &caller).await;
+        // Sealed values are unsealed for a caller holding the class, then
+        // every string is masked on its way out (unsealing comes first, so the
+        // masker never sees ciphertext).
+        match reply {
+            Reply::Ok { mut result } => {
+                if caller.grants.split(',').any(|g| g == "sealed")
+                    && let Err(e) = self.unseal(&mut result).await
+                {
+                    return refused(e);
+                }
+                Reply::Ok {
+                    result: mask_json(result),
+                }
+            }
+            refusal => refusal,
+        }
+    }
+
+    /// Replace every sealed payload in `value` with its plaintext, unwrapping
+    /// each data key once per session. An excised key leaves the value sealed.
+    async fn unseal(&self, value: &mut Value) -> Result<(), String> {
+        let mut refs = Vec::new();
+        collect_sealed(value, &mut refs);
+        if refs.is_empty() {
+            return Ok(());
+        }
+        let mut session = self.unlock.lock().await;
+        let Some(s) = session.as_mut() else {
+            return Ok(());
+        };
+        let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
+        for r in refs {
+            if s.keys.contains_key(&r) {
+                continue;
+            }
+            if let Some(wrapped) = sinex_store::sealed::wrapped_key(&mut conn, &r)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                let key = sinex_store::sealed::unwrap(&wrapped, &s.identity)
+                    .map_err(|e| e.to_string())?;
+                s.keys.insert(r, key);
+            }
+        }
+        unseal_in(value, &s.keys);
+        Ok(())
+    }
+
+    async fn dispatch(&self, request: Request, caller: &Caller) -> Reply {
         let actor = caller.actor;
-        let caller = &caller;
         match request {
             Request::Status => match self.status(caller).await {
                 Ok(v) => Reply::Ok { result: v },
@@ -295,6 +396,27 @@ impl Api {
                             "applies": "to new readings; replay the source to raise stored readings" }),
                     },
                     Err(e) => refused(e.to_string()),
+                }
+            }
+            Request::Unlock { identity, minutes } => {
+                let identity = match sinex_store::sealed::parse_identity(&identity) {
+                    Ok(i) => i,
+                    Err(e) => return refused(e.to_string()),
+                };
+                let minutes = minutes.unwrap_or(480);
+                *self.unlock.lock().await = Some(Unlocked {
+                    identity,
+                    until: std::time::Instant::now() + std::time::Duration::from_secs(minutes * 60),
+                    keys: Default::default(),
+                });
+                Reply::Ok {
+                    result: json!({ "unlocked": "sealed", "minutes": minutes }),
+                }
+            }
+            Request::Lock => {
+                let was = self.unlock.lock().await.take().is_some();
+                Reply::Ok {
+                    result: json!({ "locked": "sealed", "was_unlocked": was }),
                 }
             }
             Request::PrivacyVerify => {

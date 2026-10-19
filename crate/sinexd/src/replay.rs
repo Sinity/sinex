@@ -255,6 +255,14 @@ fn read_chain(
                 m.id
             ));
         }
+        // A sealed material needs the class unlocked to be read; replay does
+        // not unlock, so it is deferred and named rather than read blind.
+        if ctx.blobs.is_sealed(&m.blob).map_err(|e| e.to_string())? {
+            return Err(format!(
+                "material {}: sealed; replaying it needs the sealed class unlocked, which replay does not do yet (deferred)",
+                m.id
+            ));
+        }
         let bytes = ctx.blobs.read(&m.blob).map_err(|e| e.to_string())?;
         let records = drivers::stored_records(&m.manifest, &bytes, source.spec().framer);
         let order = drivers::reading_order(&m.manifest);
