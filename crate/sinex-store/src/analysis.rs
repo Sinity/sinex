@@ -21,16 +21,20 @@ pub struct EventRow {
 }
 
 /// The live events of `relation` with a known time in `[from, to)`, as of a
-/// commit position.
+/// commit position, with only the payload `fields` a metric reads (a journal
+/// entry's payload holds every journal field; a count of errors needs one).
 pub async fn relation_rows(
     conn: &mut PgConnection,
     relation: &str,
     from: OffsetDateTime,
     to: OffsetDateTime,
     as_of: i64,
+    fields: &[String],
 ) -> Result<Vec<EventRow>> {
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.source, e.ts_orig AS "ts_orig!", e.payload
+        r#"SELECT e.id, e.source, e.ts_orig AS "ts_orig!",
+                  (SELECT coalesce(jsonb_object_agg(k, e.payload -> k), '{}'::jsonb)
+                   FROM unnest($5::text[]) AS k WHERE e.payload ? k) AS "payload!"
            FROM core.events e
            WHERE e.event_type = $1 AND e.ts_orig >= $2 AND e.ts_orig < $3 AND e.commit_seq <= $4
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id AND a.archived_seq <= $4)"#,
@@ -38,6 +42,7 @@ pub async fn relation_rows(
         from,
         to,
         as_of,
+        fields,
     )
     .fetch_all(&mut *conn)
     .await?;
