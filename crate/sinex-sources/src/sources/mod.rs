@@ -1,6 +1,7 @@
 //! Every source, one module per family, registered in one list.
 pub mod activitywatch;
 pub mod arbtt;
+pub mod asciinema;
 pub mod atuin;
 pub mod calendar;
 pub mod chromium;
@@ -35,6 +36,7 @@ pub mod raindrop;
 pub mod reddit;
 /// Commits in local repositories (`code.git`).
 pub mod repository;
+pub mod samsung_cloud;
 pub mod samsung_health;
 pub mod samsung_sms;
 /// The session producer socket: Neovim and kitty integrations.

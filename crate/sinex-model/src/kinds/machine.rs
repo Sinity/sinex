@@ -73,3 +73,29 @@ pub struct CaptureObserved {
     /// The raw file the record describes (a frame, an audio segment), if any.
     pub raw_ref: Option<String>,
 }
+
+/// A terminal recording's session (asciinema): its start, size, command and
+/// environment, from the recording's header. The recording's place is its
+/// identity.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "terminal.session", key = location, replace = repeat, time = started_at, quality = intrinsic)]
+pub struct TerminalSession {
+    pub session: String,
+    pub started_at: Option<Timestamp>,
+    pub cols: Option<i64>,
+    pub rows: Option<i64>,
+    pub command: Option<String>,
+    /// The header as recorded (terminal type, theme, environment).
+    pub header: Value,
+}
+
+/// One event of a terminal recording: output written (`o`), input typed
+/// (`i`), a resize (`r`), a marker (`m`) or the exit (`x`), at its time.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "terminal.output", key = location, replace = repeat, time = at, quality = intrinsic)]
+pub struct TerminalOutput {
+    pub session: String,
+    pub at: Timestamp,
+    pub code: String,
+    pub data: String,
+}

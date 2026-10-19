@@ -122,9 +122,14 @@ enum Command {
         /// or `.jsonl` export), mbox (a file or a directory of files), notes,
         /// maildir (a directory), weechat (a log file or directory), takeout
         /// (a Google Takeout archive or a directory of them: My Activity,
-        /// YouTube history, Keep, Tasks, Play Store, Purchases, Calendar),
-        /// calendar (an `.ics` file, or archives holding them), sinnix-lake
-        /// (the capture lake's root, `/realm`).
+        /// YouTube history, Keep, Tasks, Play Store, Purchases, Calendar,
+        /// Location History, Fit), calendar (an `.ics` file, or archives
+        /// holding them), sinnix-lake (the capture lake's root, `/realm`),
+        /// goodreads, messenger, sleep-as-android, wykop, reddit,
+        /// samsung-health, samsung-sms, samsung-account (an extracted Samsung
+        /// account export), outlook (`.pst` stores, staged with readpst),
+        /// outlook-csv, arbtt (a directory holding `capture.log`), asciinema (a
+        /// directory of recordings), raw-log, steering.
         #[arg(long = "source")]
         sources: Vec<String>,
         /// The zone WeeChat logs and floating calendar times were written in

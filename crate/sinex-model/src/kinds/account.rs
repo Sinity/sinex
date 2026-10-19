@@ -221,3 +221,54 @@ pub struct CalendarEvent {
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
 }
+
+/// One row of an account data export that no more specific type describes (a
+/// Samsung account export's alarms, settings and backups): the service, the
+/// table and every column as the export wrote it, a JSON column decoded. The
+/// row's own ID column is the identity, or a hash of the row without one.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "account.record",
+    key = ["service", "table", "native_id"],
+    replace = newer,
+    time = at,
+    quality = intrinsic
+)]
+pub struct AccountRecord {
+    pub service: String,
+    pub table: String,
+    pub native_id: String,
+    /// The row's own time (creation, or the export's timestamp column).
+    pub at: Option<Timestamp>,
+    pub values: Map<String, Value>,
+}
+
+/// A location fix an account recorded (Google Location History): where the
+/// device was, how sure it was, and what it thought the operator was doing.
+/// The device and the instant identify it across exports.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "location.sample",
+    key = ["provider", "device", "at"],
+    replace = newer,
+    time = at,
+    quality = intrinsic
+)]
+pub struct LocationSample {
+    pub provider: String,
+    /// The export's device tag; `None` in older exports, which carry none.
+    pub device: Option<String>,
+    pub at: Timestamp,
+    pub latitude: f64,
+    pub longitude: f64,
+    /// Meters, as the provider reported it.
+    pub accuracy_m: Option<f64>,
+    pub altitude_m: Option<f64>,
+    pub velocity_mps: Option<f64>,
+    pub heading_deg: Option<f64>,
+    /// Activity guesses with their confidences, as exported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<Value>,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra: Map<String, Value>,
+}
