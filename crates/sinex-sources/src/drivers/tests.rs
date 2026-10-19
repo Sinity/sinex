@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Declared, Driver, Parser, RecordError, SourceSpec};
+use crate::{DeclaredSource, Driver, Parser, RecordError, SourceSpec};
 use sinex_model::event_types::CommandImported;
 use sinex_model::{Class, Timestamp};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -55,7 +55,7 @@ fn lines(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 /// number of batches whatever the material's size.
 #[test]
 fn batches_are_drained_lazily() {
-    let source = Declared {
+    let source = DeclaredSource {
         spec: SourceSpec {
             name: "test.counting",
             driver: Driver::AppendFile,
@@ -138,13 +138,13 @@ fn peak_rss() -> usize {
 
 /// A 64 MiB file read in 4 MiB parts and drained end to end peaks well under
 /// its size, and barely higher after the last part than after the first: memory
-/// holds a part (and its window source), the driver's bounded memory and one
+/// holds a part (and its window source), the driver's bounded state and one
 /// batch, not the file and not a part's events (about 95k here, some 250 MiB
 /// if collected). nextest runs each test in its own process, so the peak is
 /// this test's.
 #[test]
 fn backfill_of_a_large_file_peaks_well_under_its_size() {
-    use super::append_file::{AppendFile, AppendMemory};
+    use super::append_file::{AppendFile, AppendState};
     use std::io::Write;
     let dir = std::env::temp_dir().join(format!("sinex-rss-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -161,7 +161,7 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
             i += 1;
         }
     }
-    let source = Declared {
+    let source = DeclaredSource {
         spec: SourceSpec {
             name: "test.counting",
             driver: Driver::AppendFile,
@@ -180,12 +180,12 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
         framer: lines,
     };
     let before = peak_rss();
-    let mut memory = AppendMemory::default();
+    let mut state = AppendState::default();
     let mut cursor = Value::Null;
     let mut events = 0;
     let mut after_first = None;
     loop {
-        let acquired = driver.poll_in_parts(&cursor, &mut memory, 4 << 20).unwrap();
+        let acquired = driver.poll_in_parts(&cursor, &mut state, 4 << 20).unwrap();
         if acquired.material.is_none() {
             break;
         }

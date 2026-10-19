@@ -10,7 +10,7 @@ use crate::writer::WriterHandle;
 use serde::Deserialize;
 use serde_json::Value;
 use sinex_model::RunId;
-use sinex_sources::{Binding, Kind, Reader, Settings, Source, sources};
+use sinex_sources::{Binding, InputKind, Reader, Settings, Source, sources};
 use sinex_store::{Blobs, positions, runs};
 use sqlx::PgConnection;
 use std::collections::BTreeMap;
@@ -55,14 +55,14 @@ impl Config {
 
 /// The bindings `config` enables on `host`: each enabled source planned by
 /// its kind from each of its paths, keeping the bindings of that source.
-pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static Kind, Binding)>, String> {
+pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputKind, Binding)>, String> {
     let mut out = Vec::new();
     for (name, source) in config.sources.iter().filter(|(_, s)| s.enable) {
         let kind = match &source.kind {
-            Some(k) => sources::kind(k)
+            Some(k) => sources::input_kind(k)
                 .filter(|k| k.reads(name))
                 .ok_or_else(|| format!("{name}: kind {k} does not read it"))?,
-            None => sources::kind_of(name).ok_or_else(|| format!("{name}: no such source"))?,
+            None => sources::input_kind_of(name).ok_or_else(|| format!("{name}: no such source"))?,
         };
         let plan = kind
             .plan
@@ -85,7 +85,7 @@ pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static Kind, Binding)>
 }
 
 /// One binding being read: its parser, its driver, and whether its driver's
-/// memory has been rebuilt yet.
+/// state has been rebuilt yet.
 struct Bound {
     binding: Binding,
     source: Box<dyn Source>,
@@ -99,7 +99,7 @@ pub async fn run(
     blobs: Blobs,
     writer: WriterHandle,
     host: String,
-    planned: Vec<(&'static Kind, Binding)>,
+    planned: Vec<(&'static InputKind, Binding)>,
     interval: Duration,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), String> {

@@ -17,7 +17,7 @@ pub enum Driver {
     Producer,
     /// Records written through the API by the operator or an agent, stored as
     /// the request's own bytes (library requests).
-    Operator,
+    ApiRequest,
 }
 
 /// Frames complete records in `bytes`: their ranges, and how many bytes they
@@ -40,7 +40,7 @@ pub struct SourceSpec {
 }
 
 /// A declared source: its spec and its parser.
-pub struct Declared<P> {
+pub struct DeclaredSource<P> {
     pub spec: SourceSpec,
     pub parser: P,
 }
@@ -60,7 +60,7 @@ pub trait Source: Send + Sync {
     }
 }
 
-impl<P: Parser> Source for Declared<P> {
+impl<P: Parser> Source for DeclaredSource<P> {
     fn spec(&self) -> &SourceSpec {
         &self.spec
     }

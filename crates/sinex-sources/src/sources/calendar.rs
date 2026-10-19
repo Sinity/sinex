@@ -8,7 +8,7 @@
 //! export was written, so it is left out of the event and of the record hash,
 //! or every export would revise every event.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordContext, RecordError, RecordShape};
 use serde_json::{Map, Value};
 use sinex_model::event_types::account::CalendarEvent;
@@ -342,8 +342,8 @@ fn add_duration(start: Timestamp, raw: &str) -> Result<Timestamp, RecordError> {
     Timestamp::from_unix_ns(start.unix_ns() + delta).map_err(|_| bad())
 }
 
-pub fn source(zone: jiff::tz::TimeZone) -> Declared<CalendarParser> {
-    Declared {
+pub fn source(zone: jiff::tz::TimeZone) -> DeclaredSource<CalendarParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: CalendarParser { zone },
     }
@@ -369,7 +369,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 
 /// `--source calendar=PATH`: each calendar export in PATH. Floating times are
 /// read in the binding's zone, recorded when it is planned.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "calendar",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
@@ -383,7 +383,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |b| Ok(Box::new(source(b.settings.zone()?))),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

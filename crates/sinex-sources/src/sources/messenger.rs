@@ -9,7 +9,7 @@
 //! File names carry an ordinal that changes between exports, so a thread is
 //! its sorted participants and a message is the thread, time and sender.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -151,8 +151,8 @@ pub fn repair(s: &str) -> String {
     s.to_owned()
 }
 
-pub fn source() -> Declared<MessengerParser> {
-    Declared {
+pub fn source() -> DeclaredSource<MessengerParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: MessengerParser,
     }
@@ -177,7 +177,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--source messenger=PATH`: each Messenger export in PATH.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "messenger",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
@@ -191,7 +191,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

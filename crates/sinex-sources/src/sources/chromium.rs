@@ -11,7 +11,7 @@
 use super::fields;
 use crate::drain::RecordContext;
 use crate::drivers::sqlite_rows::SqliteRows;
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
@@ -153,15 +153,15 @@ impl Parser for UrlParser {
     }
 }
 
-pub fn visits() -> Declared<VisitParser> {
-    Declared {
+pub fn visits() -> DeclaredSource<VisitParser> {
+    DeclaredSource {
         spec: VISITS,
         parser: VisitParser,
     }
 }
 
-pub fn urls() -> Declared<UrlParser> {
-    Declared {
+pub fn urls() -> DeclaredSource<UrlParser> {
+    DeclaredSource {
         spec: URLS,
         parser: UrlParser,
     }
@@ -234,7 +234,7 @@ pub fn profiles(user_data: &Path) -> Vec<(String, PathBuf)> {
 
 /// `--source chromium=PATH`: every profile under a browser's user-data
 /// directory, its visits and its URLs each a binding.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "chromium",
     specs: || vec![&VISITS, &URLS],
     plan: Some(|input, settings| {

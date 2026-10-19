@@ -1,13 +1,13 @@
 //! Bindings (architecture §5.4): one instance of a source on one input, with
-//! the settings it was read with. A source module declares a [`Kind`]: how to
+//! the settings it was read with. A source module declares a [`InputKind`]: how to
 //! find its inputs, how to build its parser and its driver for one binding,
 //! and, for live sources, how to capture into a spool. Backfill, the daemon's
 //! binding runner, `sinex-session`, replay and the NixOS catalog all work from
 //! the kinds, so adding a source touches only its own module (and one line in
 //! the registry list).
-use crate::drivers::append_file::{AppendFile, AppendMemory};
-use crate::drivers::dir_snapshot::{DirMemory, DirSnapshot};
-use crate::drivers::sqlite_rows::{RowMemory, SqliteRows};
+use crate::drivers::append_file::{AppendFile, AppendState};
+use crate::drivers::dir_snapshot::{DirState, DirSnapshot};
+use crate::drivers::sqlite_rows::{RowState, SqliteRows};
 use crate::drivers::{Acquired, DriverError};
 use crate::registry::{Framer, Source, SourceSpec};
 use serde::{Deserialize, Serialize};
@@ -118,7 +118,7 @@ impl Binding {
 }
 
 /// How a binding is read. Drivers that remember what they stored have that
-/// memory rebuilt from the stored materials before the first poll, so a
+/// state rebuilt from the stored materials before the first poll, so a
 /// restart reads only what changed.
 pub trait Reader: Send {
     fn remember(&mut self, _stored: &[(MaterialId, Vec<u8>)]) {}
@@ -143,7 +143,7 @@ pub type Capture = fn(&Binding, Option<Duration>) -> Result<u64, String>;
 
 /// A kind of input and the sources that read it: what `--source KIND=PATH`,
 /// `sources.json` and `sinex-session` name.
-pub struct Kind {
+pub struct InputKind {
     pub name: &'static str,
     pub specs: fn() -> Vec<&'static SourceSpec>,
     /// `None` for sources written only through another path (the API's
@@ -155,7 +155,7 @@ pub struct Kind {
     pub capture: Option<Capture>,
 }
 
-impl Kind {
+impl InputKind {
     /// Whether this kind reads `spec_name`.
     pub fn reads(&self, spec_name: &str) -> bool {
         (self.specs)().iter().any(|s| s.name == spec_name)
@@ -211,18 +211,18 @@ pub fn files(path: &Path, recursive: bool, keep: fn(&Path) -> bool) -> Vec<PathB
     out
 }
 
-/// A driver with no memory of its own: exports, spools, API cursors.
-pub struct Plain<D>(pub D);
+/// A driver with no state of its own: exports, spools, API cursors.
+pub struct Stateless<D>(pub D);
 
 /// The polls a memoryless driver offers.
-pub trait PollOnly: Send {
+pub trait StatelessDriver: Send {
     fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError>;
     fn remove_passed_files(&self, _committed: &Value) -> Result<usize, DriverError> {
         Ok(0)
     }
 }
 
-impl<D: PollOnly> Reader for Plain<D> {
+impl<D: StatelessDriver> Reader for Stateless<D> {
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         self.0.poll_once(cursor)
     }
@@ -233,28 +233,17 @@ impl<D: PollOnly> Reader for Plain<D> {
 }
 
 /// A box of `driver` as a [`Reader`].
-pub fn plain<D: PollOnly + 'static>(driver: D) -> Box<dyn Reader> {
-    Box::new(Plain(driver))
+pub fn plain<D: StatelessDriver + 'static>(driver: D) -> Box<dyn Reader> {
+    Box::new(Stateless(driver))
 }
 
-impl PollOnly for crate::drivers::export_archive::ExportArchive {
+impl StatelessDriver for crate::drivers::export_archive::ExportArchive {
     fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
         self.poll(cursor)
     }
 }
 
-impl PollOnly for crate::drivers::live_stream::LiveStream {
-    fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.poll(cursor)
-    }
-
-    fn remove_passed_files(&self, committed: &Value) -> Result<usize, DriverError> {
-        self.remove_passed(committed)
-            .map_err(|e| DriverError::Io(e.to_string()))
-    }
-}
-
-impl PollOnly for crate::drivers::media::Media {
+impl StatelessDriver for crate::drivers::live_stream::LiveStream {
     fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
         self.poll(cursor)
     }
@@ -265,7 +254,18 @@ impl PollOnly for crate::drivers::media::Media {
     }
 }
 
-impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> PollOnly
+impl StatelessDriver for crate::drivers::media::Media {
+    fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
+        self.poll(cursor)
+    }
+
+    fn remove_passed_files(&self, committed: &Value) -> Result<usize, DriverError> {
+        self.remove_passed(committed)
+            .map_err(|e| DriverError::Io(e.to_string()))
+    }
+}
+
+impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> StatelessDriver
     for crate::drivers::api_cursor::ApiCursor<A>
 {
     fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
@@ -273,55 +273,55 @@ impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> PollOnly
     }
 }
 
-/// An append-only file read with a memory of the records it stored, so a
+/// An append-only file read with state about the records it stored, so a
 /// rewrite is aligned rather than read again.
 pub struct Appended {
     driver: AppendFile,
     framer: Framer,
-    memory: AppendMemory,
+    state: AppendState,
 }
 
 pub fn appended(driver: AppendFile, framer: Framer) -> Box<dyn Reader> {
     Box::new(Appended {
         driver,
         framer,
-        memory: AppendMemory::default(),
+        state: AppendState::default(),
     })
 }
 
 impl Reader for Appended {
     fn remember(&mut self, stored: &[(MaterialId, Vec<u8>)]) {
-        self.memory = AppendMemory::rebuild(
+        self.state = AppendState::rebuild(
             stored.iter().map(|(id, b)| (*id, b.as_slice())),
             self.framer,
         );
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.driver.poll(cursor, &mut self.memory)
+        self.driver.poll(cursor, &mut self.state)
     }
 }
 
-/// A SQLite table read with a memory of rows that can still change.
+/// A SQLite table read with state about rows that can still change.
 pub struct Rows {
     driver: SqliteRows,
-    memory: RowMemory,
+    state: RowState,
 }
 
 pub fn rows(driver: SqliteRows) -> Box<dyn Reader> {
     Box::new(Rows {
         driver,
-        memory: RowMemory::default(),
+        state: RowState::default(),
     })
 }
 
 impl Reader for Rows {
     fn remember(&mut self, stored: &[(MaterialId, Vec<u8>)]) {
-        self.memory = RowMemory::rebuild(stored.iter().map(|(_, b)| b.as_slice()));
+        self.state = RowState::rebuild(stored.iter().map(|(_, b)| b.as_slice()));
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.driver.poll(cursor, &mut self.memory)
+        self.driver.poll(cursor, &mut self.state)
     }
 }
 
@@ -329,19 +329,19 @@ impl Reader for Rows {
 /// admission suppresses the repeats.
 pub struct Walked {
     driver: DirSnapshot,
-    memory: DirMemory,
+    state: DirState,
 }
 
 pub fn walked(driver: DirSnapshot) -> Box<dyn Reader> {
     Box::new(Walked {
         driver,
-        memory: DirMemory::default(),
+        state: DirState::default(),
     })
 }
 
 impl Reader for Walked {
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.driver.poll(cursor, &mut self.memory)
+        self.driver.poll(cursor, &mut self.state)
     }
 }
 

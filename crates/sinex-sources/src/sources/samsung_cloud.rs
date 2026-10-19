@@ -19,7 +19,7 @@
 //! privacy class is the operator's call (`zpa`) before anything is stored;
 //! SMS is read by `communication.samsung-sms`.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::sources::samsung_health::typed;
 use crate::{Parser, RecordContext, RecordError};
@@ -233,8 +233,8 @@ pub fn is_table(path: &Path) -> bool {
     csv && !s.contains("Samsung Pass") && !s.contains("/SMS/")
 }
 
-pub fn source() -> Declared<SamsungCloudParser> {
-    Declared {
+pub fn source() -> DeclaredSource<SamsungCloudParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: SamsungCloudParser,
     }
@@ -255,7 +255,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--source samsung-account=PATH`: each table of a Samsung account export under PATH.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "samsung-account",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
@@ -265,7 +265,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

@@ -17,7 +17,7 @@
 //! daemon fills from the authenticated caller, never from the lines.
 use crate::drain::RecordContext;
 use crate::drivers::{Acquired, DriverError, MaterialSink, NewMaterial, file_facts};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -45,7 +45,7 @@ pub const SCAN: SourceSpec = SourceSpec {
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "library.request",
-    driver: Driver::Operator,
+    driver: Driver::ApiRequest,
     consumer: "the media library",
     class: Class::Open,
     parser: "library-request",
@@ -142,8 +142,8 @@ impl Parser for ScanParser {
     }
 }
 
-pub fn scan_source() -> Declared<ScanParser> {
-    Declared {
+pub fn scan_source() -> DeclaredSource<ScanParser> {
+    DeclaredSource {
         spec: SCAN,
         parser: ScanParser,
     }
@@ -178,11 +178,11 @@ pub struct Known {
 /// A file the walk found changed: relative path, size, mtime, device, inode.
 type Pending = (String, u64, i128, Option<u64>, Option<u64>);
 
-/// The scan's memory: the files read, by path, and the work left from the
+/// The scan's state: the files read, by path, and the work left from the
 /// current walk. Seeded from the live acquisitions after a restart, so a
 /// restart does not hash the whole library again.
 #[derive(Default)]
-pub struct ScanMemory {
+pub struct ScanState {
     pub files: HashMap<String, Known>,
     queue: VecDeque<Pending>,
     /// Paths missing from the current walk, with the file identity they had.
@@ -190,7 +190,7 @@ pub struct ScanMemory {
     walk_pending: bool,
 }
 
-impl ScanMemory {
+impl ScanState {
     pub fn seed(files: impl IntoIterator<Item = (String, Known)>) -> Self {
         Self {
             files: files.into_iter().collect(),
@@ -250,7 +250,7 @@ impl LibraryScan {
     }
 
     /// Walk the root and queue what changed; note what is missing.
-    fn walk(&self, memory: &mut ScanMemory) -> Result<(), DriverError> {
+    fn walk(&self, state: &mut ScanState) -> Result<(), DriverError> {
         let mut found = BTreeMap::new();
         walk(&self.root, &self.root, &mut found)?;
         // Sidecars (`a.jpg.json`, `a.jpg.txt`, `a.json`) describe the file
@@ -272,7 +272,7 @@ impl LibraryScan {
             found.retain(|path, _| path == only);
         }
         let mut missing = BTreeMap::new();
-        for (path, known) in &memory.files {
+        for (path, known) in &state.files {
             if self.only.as_ref().is_some_and(|o| o != path) {
                 continue;
             }
@@ -281,16 +281,16 @@ impl LibraryScan {
             }
         }
         for (path, (size, mtime, dev, ino)) in found {
-            let unchanged = memory
+            let unchanged = state
                 .files
                 .get(&path)
                 .is_some_and(|k| k.size == size && k.mtime_ns == mtime);
             if !unchanged {
-                memory.queue.push_back((path, size, mtime, dev, ino));
+                state.queue.push_back((path, size, mtime, dev, ino));
             }
         }
-        memory.missing = missing;
-        memory.walk_pending = true;
+        state.missing = missing;
+        state.walk_pending = true;
         Ok(())
     }
 
@@ -298,7 +298,7 @@ impl LibraryScan {
     pub fn poll(
         &self,
         cursor: &Value,
-        memory: &mut ScanMemory,
+        state: &mut ScanState,
         sink: &dyn MaterialSink,
     ) -> Result<Acquired, DriverError> {
         let previous: ScanCursor = if cursor.is_null() {
@@ -324,8 +324,8 @@ impl LibraryScan {
                 });
             }
         };
-        if !memory.walk_pending {
-            self.walk(memory)?;
+        if !state.walk_pending {
+            self.walk(state)?;
         }
         let now = Timestamp::now();
         let root = self.root.display().to_string();
@@ -333,11 +333,11 @@ impl LibraryScan {
         let mut records = Vec::new();
         let mut moved_away: Vec<(String, Known)> = Vec::new();
         let mut budget = 0u64;
-        while let Some((relative, size, mtime, dev, ino)) = memory.queue.front().cloned() {
+        while let Some((relative, size, mtime, dev, ino)) = state.queue.front().cloned() {
             if budget > 0 && budget + size > self.bytes_per_poll {
                 break;
             }
-            memory.queue.pop_front();
+            state.queue.pop_front();
             budget += size.max(1);
             let full = self.root.join(&relative);
             let digests = match digest(&full) {
@@ -357,10 +357,10 @@ impl LibraryScan {
             } else {
                 false
             };
-            let before = memory.files.get(&relative).cloned();
+            let before = state.files.get(&relative).cloned();
             // Moved: a missing path held this very file (device and inode)
             // with these bytes.
-            let moved_from = memory
+            let moved_from = state
                 .missing
                 .iter()
                 .find(|(_, k)| {
@@ -370,10 +370,10 @@ impl LibraryScan {
             if let Some(old) = &moved_from {
                 // The old path is gone; its line comes after this one's, so
                 // whoever reads the move sees the new path first.
-                if let Some(known) = memory.missing.remove(old) {
+                if let Some(known) = state.missing.remove(old) {
                     moved_away.push((old.clone(), known));
                 }
-                memory.files.remove(old);
+                state.files.remove(old);
             }
             let previous_content = before
                 .as_ref()
@@ -381,7 +381,7 @@ impl LibraryScan {
                 .map(|k| k.content.clone());
             if before.as_ref().is_some_and(|k| k.content == content) {
                 // Touched, not changed.
-                memory.files.insert(
+                state.files.insert(
                     relative.clone(),
                     Known {
                         size,
@@ -425,7 +425,7 @@ impl LibraryScan {
                 vanished_at_ns: None,
             };
             push_line(&mut lines, &mut records, &line);
-            memory.files.insert(
+            state.files.insert(
                 relative,
                 Known {
                     size,
@@ -436,17 +436,17 @@ impl LibraryScan {
                 },
             );
         }
-        let walk_done = memory.queue.is_empty();
+        let walk_done = state.queue.is_empty();
         let mut gone: Vec<(String, Known)> = moved_away;
         if walk_done {
             // Whatever is still missing after the walk's files were read was
             // not moved: it vanished.
-            gone.extend(std::mem::take(&mut memory.missing));
-            memory.walk_pending = false;
+            gone.extend(std::mem::take(&mut state.missing));
+            state.walk_pending = false;
         }
         {
             for (relative, known) in gone {
-                memory.files.remove(&relative);
+                state.files.remove(&relative);
                 let line = Described {
                     host: self.host.clone(),
                     root: root.clone(),
@@ -526,8 +526,8 @@ impl LibraryScan {
 
     /// Poll until a walk completes, returning every material along the way.
     /// Callers that admit as they go use `poll` directly.
-    pub fn pending(&self, memory: &ScanMemory) -> usize {
-        memory.queue.len()
+    pub fn pending(&self, state: &ScanState) -> usize {
+        state.queue.len()
     }
 }
 
@@ -889,8 +889,8 @@ impl Parser for RequestParser {
     }
 }
 
-pub fn request_source() -> Declared<RequestParser> {
-    Declared {
+pub fn request_source() -> DeclaredSource<RequestParser> {
+    DeclaredSource {
         spec: REQUEST,
         parser: RequestParser,
     }
@@ -939,7 +939,7 @@ pub fn request_material(
 
 /// The library's sources: scans of library roots and library requests,
 /// written through `library-add` and the API rather than read from a path.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "library",
     specs: || vec![&SCAN, &REQUEST],
     plan: None,

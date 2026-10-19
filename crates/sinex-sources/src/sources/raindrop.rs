@@ -6,7 +6,7 @@
 //! the same bookmarks, and the newest export's reading is the live one.
 use super::fields;
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
@@ -199,8 +199,8 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     }
 }
 
-pub fn source() -> Declared<RaindropParser> {
-    Declared {
+pub fn source() -> DeclaredSource<RaindropParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: RaindropParser,
     }
@@ -223,7 +223,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--source raindrop=PATH`: each Raindrop export in PATH.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "raindrop",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
@@ -237,7 +237,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

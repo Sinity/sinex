@@ -11,7 +11,7 @@
 //! offset at the record. Companion `jsons/` files (binned samples) are kept in
 //! the material, not read here.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
@@ -182,8 +182,8 @@ fn offset(raw: &str) -> Option<i32> {
     Some(sign * (h * 60 + m))
 }
 
-pub fn source() -> Declared<SamsungParser> {
-    Declared {
+pub fn source() -> DeclaredSource<SamsungParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: SamsungParser,
     }
@@ -209,7 +209,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--source samsung-health=PATH`: each Samsung Health export ZIP under PATH.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "samsung-health",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
@@ -223,7 +223,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

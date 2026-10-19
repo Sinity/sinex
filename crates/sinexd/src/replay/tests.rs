@@ -2,7 +2,7 @@
 use super::*;
 use crate::context::{Context, Sink};
 use crate::writer::Priority;
-use sinex_sources::drivers::append_file::AppendMemory;
+use sinex_sources::drivers::append_file::AppendState;
 use sinex_sources::sources::zsh;
 use sinex_store::positions;
 use sqlx::PgConnection;
@@ -47,7 +47,7 @@ async fn fixture() -> Fixture {
 }
 
 /// Read `path` through the zsh driver to the end, as backfill does.
-async fn ingest(ctx: &mut Context, path: &Path, memory: &mut AppendMemory) {
+async fn ingest(ctx: &mut Context, path: &Path, state: &mut AppendState) {
     let source = zsh::source("h".into());
     let driver = zsh::driver(path.to_owned(), "h".into());
     let sink = Sink(ctx.blobs.clone());
@@ -56,7 +56,7 @@ async fn ingest(ctx: &mut Context, path: &Path, memory: &mut AppendMemory) {
             .await
             .unwrap()
             .unwrap_or((Value::Null, Value::Null));
-        let acquired = driver.poll(&cursor, memory).unwrap();
+        let acquired = driver.poll(&cursor, state).unwrap();
         let more = acquired.material.is_some();
         for batch in drivers::batches(
             &source,
@@ -125,10 +125,10 @@ fn options(scope: Scope, compare: bool) -> Options {
 async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
     let mut f = fixture().await;
     let path = history(&f.dir, ": 1:0;ls\n: 2:0;echo a\\\nb\n");
-    let mut memory = AppendMemory::default();
-    ingest(&mut f.ctx, &path, &mut memory).await;
+    let mut state = AppendState::default();
+    ingest(&mut f.ctx, &path, &mut state).await;
     std::fs::write(&path, ": 1:0;ls\n: 2:0;echo a\\\nb\n: 3:0;make\n").unwrap();
-    ingest(&mut f.ctx, &path, &mut memory).await;
+    ingest(&mut f.ctx, &path, &mut state).await;
     let before = live_commands(&mut f.ctx.aux).await;
     let ids_before = live_ids(&mut f.ctx.aux).await;
     assert_eq!(before, vec!["ls", "echo a\nb", "make"]);
@@ -209,7 +209,7 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
 async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden() {
     let mut f = fixture().await;
     let path = history(&f.dir, ": 100:0;one\n: 200:0;two\n: 300:0;three\n");
-    ingest(&mut f.ctx, &path, &mut AppendMemory::default()).await;
+    ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
     let two: Uuid =
         sqlx::query_scalar!(r#"SELECT id FROM core.events WHERE payload->>'command' = 'two'"#)
             .fetch_one(&mut f.ctx.aux)
@@ -240,11 +240,11 @@ async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden() {
 async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
     let mut f = fixture().await;
     let path = history(&f.dir, ": 1:0;a\n: 2:0;b\n: 3:0;a\n");
-    let mut memory = AppendMemory::default();
-    ingest(&mut f.ctx, &path, &mut memory).await;
+    let mut state = AppendState::default();
+    ingest(&mut f.ctx, &path, &mut state).await;
     // zsh expires the older duplicate and appends a new command.
     std::fs::write(&path, ": 2:0;b\n: 3:0;a\n: 4:0;c\n").unwrap();
-    // The driver restarts: its memory comes back from the stored bytes.
+    // The driver restarts: its state comes back from the stored bytes.
     let cursor = positions::load(&mut f.ctx.aux, "zsh@h")
         .await
         .unwrap()
@@ -254,8 +254,8 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
         .await
         .unwrap();
     let mut rebuilt =
-        AppendMemory::rebuild(chain.iter().map(|(id, b)| (*id, b.as_slice())), zsh::frame);
-    assert_eq!(rebuilt, memory);
+        AppendState::rebuild(chain.iter().map(|(id, b)| (*id, b.as_slice())), zsh::frame);
+    assert_eq!(rebuilt, state);
     ingest(&mut f.ctx, &path, &mut rebuilt).await;
     assert_eq!(
         live_commands(&mut f.ctx.aux).await,
@@ -286,7 +286,7 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
 async fn an_excised_record_stays_out_of_a_replay() {
     let mut f = fixture().await;
     let path = history(&f.dir, ": 1:0;ls\n: 2:0;cat secret\n: 3:0;pwd\n");
-    ingest(&mut f.ctx, &path, &mut AppendMemory::default()).await;
+    ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
     let secret: Uuid = sqlx::query_scalar!(
         r#"SELECT id FROM core.events WHERE payload->>'command' = 'cat secret'"#
     )

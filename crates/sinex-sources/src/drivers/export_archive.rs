@@ -88,7 +88,7 @@ impl Framing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Container {
-    Plain,
+    Stateless,
     Gzip,
     Zip,
     Tar,
@@ -225,8 +225,8 @@ impl ExportArchive {
             RevisionChange::Replaced
         };
         let read = match container {
-            Container::Plain if self.framing.streamable() => self.read_part(&base, size)?,
-            Container::Plain => self.read_whole()?,
+            Container::Stateless if self.framing.streamable() => self.read_part(&base, size)?,
+            Container::Stateless => self.read_whole()?,
             _ => self.read_archive(container, base.member)?,
         };
         let Some(read) = read else {
@@ -471,7 +471,7 @@ pub fn visit_members(
 ) -> Result<(), DriverError> {
     let file = std::fs::File::open(path).map_err(io)?;
     match container {
-        Container::Plain => {
+        Container::Stateless => {
             let name = file_name(path);
             let mut reader = std::io::BufReader::new(file);
             visit(0, name, &mut reader)?;
@@ -570,7 +570,7 @@ pub fn sniff(path: &std::path::Path) -> Result<Container, DriverError> {
             Container::Gzip
         });
     }
-    Ok(Container::Plain)
+    Ok(Container::Stateless)
 }
 
 fn is_tar(head: &[u8]) -> bool {

@@ -13,7 +13,7 @@
 //! connection noise: those are journal entries like any other, and filtering
 //! them belongs in views, not in capture.
 use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::machine::JournalEntry;
@@ -105,8 +105,8 @@ impl Parser for JournaldParser {
     }
 }
 
-pub fn source() -> Declared<JournaldParser> {
-    Declared {
+pub fn source() -> DeclaredSource<JournaldParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: JournaldParser,
     }
@@ -219,13 +219,13 @@ pub fn capture(spool: &Path, follow: bool, start: Start<'_>) -> std::io::Result<
 /// `--source journald=SPOOL`: the journal, captured into SPOOL. Options:
 /// `since` (a `journalctl --since` expression; the whole journal otherwise)
 /// and `follow`.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "journald",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

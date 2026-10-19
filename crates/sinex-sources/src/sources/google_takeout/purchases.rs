@@ -4,7 +4,7 @@
 //! item's own field (Lynchpin unwrapped only `orderHistory`, so most rows had
 //! no time); its identity is the provider's ID where there is one.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -151,15 +151,15 @@ fn observed(
     }
 }
 
-pub fn play_store() -> Declared<PurchasesParser> {
-    Declared {
+pub fn play_store() -> DeclaredSource<PurchasesParser> {
+    DeclaredSource {
         spec: PLAY_STORE,
         parser: PurchasesParser,
     }
 }
 
-pub fn purchases() -> Declared<PurchasesParser> {
-    Declared {
+pub fn purchases() -> DeclaredSource<PurchasesParser> {
+    DeclaredSource {
         spec: PURCHASES,
         parser: PurchasesParser,
     }

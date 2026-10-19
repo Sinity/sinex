@@ -1,5 +1,5 @@
 use super::*;
-use crate::drivers::dir_snapshot::{DirMemory, vanished_marker};
+use crate::drivers::dir_snapshot::{DirState, vanished_marker};
 use crate::{DrainInput, Limits, drain};
 use sinex_model::{MaterialId, ReadingOrder, RecordOutcome};
 
@@ -10,7 +10,7 @@ fn notes_and_their_removal() {
     std::fs::write(root.join("a.md"), "# A\n").unwrap();
     std::fs::write(root.join(".obsidian/app.json"), "{}").unwrap();
     let d = driver(root.clone(), "h".into());
-    let mut memory = DirMemory::default();
+    let mut state = DirState::default();
     let parser = NotesParser;
     let run = |a: &crate::drivers::Acquired| {
         let m = a.material.as_ref().unwrap();
@@ -37,13 +37,13 @@ fn notes_and_their_removal() {
             })
             .collect::<Vec<_>>()
     };
-    let first = run(&d.poll(&Value::Null, &mut memory).unwrap());
+    let first = run(&d.poll(&Value::Null, &mut state).unwrap());
     assert_eq!(first.len(), 1, ".obsidian is not a note");
     assert_eq!(first[0]["path"], "a.md");
     assert_eq!(first[0]["text"], "# A\n");
     assert!(first[0]["modified_at"].is_string());
     std::fs::remove_file(root.join("a.md")).unwrap();
-    let second = run(&d.poll(&Value::Null, &mut memory).unwrap());
+    let second = run(&d.poll(&Value::Null, &mut state).unwrap());
     assert_eq!(second[0]["path"], "a.md");
     assert!(second[0]["vanished_at"].is_string());
     assert!(second[0]["text"].is_null());

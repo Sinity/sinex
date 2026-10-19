@@ -22,7 +22,7 @@
 //! Times are UTC: Lynchpin's materialized view read them as local time and is
 //! two hours late in summer.
 use crate::drivers::append_file::AppendFile;
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use sinex_model::event_types::desktop::{SampledWindow, WindowSampled};
 use sinex_model::{Class, Timestamp};
@@ -251,8 +251,8 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     (records, pos)
 }
 
-pub fn source() -> Declared<ArbttParser> {
-    Declared {
+pub fn source() -> DeclaredSource<ArbttParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: ArbttParser,
     }
@@ -267,7 +267,7 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 }
 
 /// `--source arbtt=PATH`: each ARBTT `capture.log` under PATH.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "arbtt",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

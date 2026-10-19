@@ -5,7 +5,7 @@
 //! 10⁷. A later Takeout restates the same fixes, which admission recognizes by
 //! device and instant.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -91,8 +91,8 @@ impl Parser for LocationParser {
     }
 }
 
-pub fn source() -> Declared<LocationParser> {
-    Declared {
+pub fn source() -> DeclaredSource<LocationParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: LocationParser,
     }

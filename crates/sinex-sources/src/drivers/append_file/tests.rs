@@ -24,15 +24,15 @@ fn a_cursor_between_two_batches_reads_on_though_the_file_is_unchanged() {
         host: "h".into(),
         framer: lines,
     };
-    let first = d.poll(&Value::Null, &mut AppendMemory::default()).unwrap();
+    let first = d.poll(&Value::Null, &mut AppendState::default()).unwrap();
     let m = first.material.unwrap();
     // The first batch (one record) committed; the process died before the next.
     let between = (m.cursor_at)(2);
     let after = (m.cursor_at)(m.bytes.len());
-    let again = d.poll(&between, &mut AppendMemory::default()).unwrap();
+    let again = d.poll(&between, &mut AppendState::default()).unwrap();
     assert_eq!(records(&again), vec!["b\n", "c\n"]);
     assert!(
-        d.poll(&after, &mut AppendMemory::default())
+        d.poll(&after, &mut AppendState::default())
             .unwrap()
             .material
             .is_none(),
@@ -49,15 +49,15 @@ fn appends_read_only_new_complete_records() {
         host: "h".into(),
         framer: lines,
     };
-    let mut memory = AppendMemory::default();
-    let first = d.poll(&Value::Null, &mut memory).unwrap();
+    let mut state = AppendState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
     assert_eq!(records(&first), vec!["a\n", "b\n"]);
     let m = first.material.as_ref().unwrap();
     let cursor = (m.cursor_at)(m.bytes.len());
     assert_eq!(cursor["offset"], json!(4));
 
     // Unchanged stat: nothing read.
-    let same = d.poll(&cursor, &mut memory).unwrap();
+    let same = d.poll(&cursor, &mut state).unwrap();
     assert!(same.material.is_none() && !same.observation.changed);
 
     std::fs::OpenOptions::new()
@@ -66,7 +66,7 @@ fn appends_read_only_new_complete_records() {
         .unwrap()
         .write_all(b"ial\nc\n")
         .unwrap();
-    let next = d.poll(&cursor, &mut memory).unwrap();
+    let next = d.poll(&cursor, &mut state).unwrap();
     assert_eq!(next.revision, RevisionChange::Appended);
     assert_eq!(records(&next), vec!["partial\n", "c\n"]);
     let n = next.material.as_ref().unwrap();
@@ -85,16 +85,16 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
         host: "h".into(),
         framer: lines,
     };
-    let mut memory = AppendMemory::default();
-    let first = d.poll(&Value::Null, &mut memory).unwrap();
+    let mut state = AppendState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.unwrap();
     let cursor = (m.cursor_at)(m.bytes.len());
 
     // zsh expired the duplicate "b" and appended "dd": a rewrite.
     std::fs::write(&path, b"a\nc\ndd\n").unwrap();
-    // A restart in between: the memory is rebuilt from the stored bytes.
-    let mut rebuilt = AppendMemory::rebuild([(m.id, m.bytes.as_slice())], lines);
-    assert_eq!(rebuilt, memory);
+    // A restart in between: the state is rebuilt from the stored bytes.
+    let mut rebuilt = AppendState::rebuild([(m.id, m.bytes.as_slice())], lines);
+    assert_eq!(rebuilt, state);
     let again = d.poll(&cursor, &mut rebuilt).unwrap();
     assert_eq!(again.revision, RevisionChange::Rewritten);
     assert_eq!(records(&again), vec!["dd\n"]);
@@ -129,12 +129,12 @@ fn rewritten_prefix_is_read_again_as_a_new_revision() {
         host: "h".into(),
         framer: lines,
     };
-    let mut memory = AppendMemory::default();
-    let first = d.poll(&Value::Null, &mut memory).unwrap();
+    let mut state = AppendState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.unwrap();
     let cursor = (m.cursor_at)(m.bytes.len());
     std::fs::write(&path, b"x\ny\nz\n").unwrap();
-    let again = d.poll(&cursor, &mut memory).unwrap();
+    let again = d.poll(&cursor, &mut state).unwrap();
     assert_eq!(again.revision, RevisionChange::Rewritten);
     assert_eq!(records(&again), vec!["x\n", "y\n", "z\n"]);
     assert_eq!(again.material.unwrap().part_index, 0);
@@ -147,7 +147,7 @@ fn missing_file_is_unavailable_not_empty() {
         host: "h".into(),
         framer: lines,
     };
-    let a = d.poll(&Value::Null, &mut AppendMemory::default()).unwrap();
+    let a = d.poll(&Value::Null, &mut AppendState::default()).unwrap();
     assert!(a.observation.unavailable.is_some());
     assert!(a.material.is_none());
 }
@@ -170,12 +170,12 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
         host: "h".into(),
         framer: lines,
     };
-    let mut memory = AppendMemory::default();
+    let mut state = AppendState::default();
     let mut cursor = Value::Null;
     let mut read = Vec::new();
     let mut polls = 0;
     loop {
-        let a = d.poll_in_parts(&cursor, &mut memory, PART_SIZE).unwrap();
+        let a = d.poll_in_parts(&cursor, &mut state, PART_SIZE).unwrap();
         let Some(m) = &a.material else { break };
         polls += 1;
         assert!(
@@ -191,7 +191,7 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
 
 #[test]
 fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
-    let mut memory = AppendMemory::default();
+    let mut state = AppendState::default();
     let mut first = None;
     for m in 0..100 {
         let id = MaterialId::new();
@@ -199,37 +199,37 @@ fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
         for i in 0..10 {
             let mut r = vec![b'r'; 1000];
             r.extend_from_slice(format!("{m}-{i}\n").as_bytes());
-            memory.insert(&r, id, i * 1010);
+            state.insert(&r, id, i * 1010);
         }
     }
     // 1000 records of ~1 KB: held by bytes, the newest only.
-    assert!(memory.bytes <= MEMORY_TAIL, "{} bytes kept", memory.bytes);
-    assert!(memory.bytes + 1010 > MEMORY_TAIL);
+    assert!(state.bytes <= STATE_TAIL, "{} bytes kept", state.bytes);
+    assert!(state.bytes + 1010 > STATE_TAIL);
     let first = first.unwrap();
     assert!(
-        memory
+        state
             .records
             .values()
             .flatten()
             .all(|l| l.material != first),
         "the oldest records are gone"
     );
-    let held: usize = memory.records.values().map(Vec::len).sum();
-    assert_eq!(held, memory.order.len());
+    let held: usize = state.records.values().map(Vec::len).sum();
+    assert_eq!(held, state.order.len());
 }
 
 #[test]
 fn short_records_are_bounded_by_count_within_one_material() {
-    let mut memory = AppendMemory::default();
+    let mut state = AppendState::default();
     let id = MaterialId::new();
     for i in 0..1000 {
-        memory.insert(format!("{i}\n").as_bytes(), id, i * 4);
+        state.insert(format!("{i}\n").as_bytes(), id, i * 4);
     }
     // 1000 records of 2-4 bytes in one material: far under the byte tail,
     // held by count.
-    assert_eq!(memory.order.len(), MEMORY_RECORDS);
-    let held: usize = memory.records.values().map(Vec::len).sum();
-    assert_eq!(held, MEMORY_RECORDS);
-    assert!(memory.take(b"999\n"), "the newest record is held");
-    assert!(!memory.take(b"0\n"), "the oldest is not");
+    assert_eq!(state.order.len(), STATE_RECORDS);
+    let held: usize = state.records.values().map(Vec::len).sum();
+    assert_eq!(held, STATE_RECORDS);
+    assert!(state.take(b"999\n"), "the newest record is held");
+    assert!(!state.take(b"0\n"), "the oldest is not");
 }

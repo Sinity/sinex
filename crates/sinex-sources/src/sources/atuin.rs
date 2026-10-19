@@ -5,7 +5,7 @@
 //! is the equivalence key, so an update is a newer reading of the same record.
 //! Running commands store -1 for duration and exit; those are unknown, not -1.
 use crate::drivers::sqlite_rows::SqliteRows;
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::{Class, Timestamp, event_types::CommandExecuted};
@@ -101,8 +101,8 @@ impl Parser for AtuinParser {
     }
 }
 
-pub fn source() -> Declared<AtuinParser> {
-    Declared {
+pub fn source() -> DeclaredSource<AtuinParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: AtuinParser,
     }
@@ -131,7 +131,7 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
 }
 
 /// `--source atuin=PATH`: Atuin's history database.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "atuin",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),

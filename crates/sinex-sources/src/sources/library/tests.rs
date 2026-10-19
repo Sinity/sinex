@@ -3,8 +3,8 @@ use crate::{DrainInput, Limits, drain};
 use sinex_model::event_types::library::{Level, Target};
 use sinex_model::{RecordOutcome, RecordState};
 
-struct Memory(std::sync::Mutex<HashMap<String, Vec<u8>>>);
-impl MaterialSink for Memory {
+struct MemorySink(std::sync::Mutex<HashMap<String, Vec<u8>>>);
+impl MaterialSink for MemorySink {
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         let name = format!("blake3:{}", blake3::hash(bytes).to_hex());
         self.0.lock().unwrap().insert(name.clone(), bytes.to_vec());
@@ -74,8 +74,8 @@ fn sidecars_named_by_stem_are_not_items() {
     std::fs::write(root.join("pic.json"), b"{}").unwrap();
     std::fs::write(root.join("pic.png.txt"), b"tag").unwrap();
     std::fs::write(root.join("notes.json"), b"{}").unwrap();
-    let sink = Memory(Default::default());
-    let mut mem = ScanMemory::default();
+    let sink = MemorySink(Default::default());
+    let mut mem = ScanState::default();
     let first = scan(&root).poll(&Value::Null, &mut mem, &sink).unwrap();
     let mut paths: Vec<String> = read(&first, &ScanParser)
         .into_iter()
@@ -91,8 +91,8 @@ fn a_single_file_scan_reads_and_misses_nothing_else() {
     let root = tmp();
     std::fs::write(root.join("one.png"), png(10, 10)).unwrap();
     std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
-    let sink = Memory(Default::default());
-    let mut mem = ScanMemory::default();
+    let sink = MemorySink(Default::default());
+    let mut mem = ScanState::default();
     let all = scan(&root).poll(&Value::Null, &mut mem, &sink).unwrap();
     assert_eq!(read(&all, &ScanParser).len(), 2);
 
@@ -118,9 +118,9 @@ fn scan_describes_stores_and_follows_renames_edits_and_removals() {
     std::fs::write(root.join("a/one.png"), png(640, 480)).unwrap();
     std::fs::write(root.join("two.bin"), b"\0\x01\x02 not media").unwrap();
     std::fs::write(root.join(".hidden"), b"x").unwrap();
-    let sink = Memory(Default::default());
+    let sink = MemorySink(Default::default());
     let s = scan(&root);
-    let mut mem = ScanMemory::default();
+    let mut mem = ScanState::default();
     let parser = ScanParser;
 
     let first = s.poll(&Value::Null, &mut mem, &sink).unwrap();

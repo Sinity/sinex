@@ -10,7 +10,7 @@
 //! title and `activewindowv2` the address, so the first is carried until the
 //! second arrives and they become one `window.focused`.
 use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -229,8 +229,8 @@ fn pending_time(p: &Pending) -> Option<Timestamp> {
         .and_then(|ns| Timestamp::from_unix_ns(ns).ok())
 }
 
-pub fn source() -> Declared<HyprlandParser> {
-    Declared {
+pub fn source() -> DeclaredSource<HyprlandParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: HyprlandParser,
     }
@@ -268,13 +268,13 @@ pub fn capture(socket: &Path, spool: &Path) -> std::io::Result<u64> {
 }
 
 /// `--source hyprland=SPOOL`: Hyprland's event socket, captured into SPOOL.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "hyprland",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

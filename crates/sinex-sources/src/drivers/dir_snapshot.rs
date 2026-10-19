@@ -11,7 +11,7 @@
 //! not seen now are recorded as vanished: a member holding a short marker line,
 //! so each has its own record location and the parser reads the removal.
 //!
-//! The memory of what was read lives for the source task. After a restart the
+//! The state of what was read lives for the source task. After a restart the
 //! first walk reads everything again and admission suppresses the repeats.
 use super::{Acquired, DriverError, NewMaterial, file_facts};
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ pub struct Cursor {
 
 /// What was already read, by relative path: size, modification time, hash.
 #[derive(Default)]
-pub struct DirMemory {
+pub struct DirState {
     files: HashMap<String, (u64, i128, [u8; 32])>,
 }
 
@@ -59,7 +59,7 @@ impl DirSnapshot {
         }
     }
 
-    pub fn poll(&self, cursor: &Value, memory: &mut DirMemory) -> Result<Acquired, DriverError> {
+    pub fn poll(&self, cursor: &Value, state: &mut DirState) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -95,7 +95,7 @@ impl DirSnapshot {
         let mut seen = HashSet::new();
         for (relative, (size, mtime)) in &found {
             seen.insert(relative.clone());
-            if let Some((s, m, _)) = memory.files.get(relative)
+            if let Some((s, m, _)) = state.files.get(relative)
                 && *s == *size
                 && *m == *mtime
             {
@@ -112,11 +112,11 @@ impl DirSnapshot {
                 Err(_) => continue,
             };
             let hash = *blake3::hash(&data).as_bytes();
-            let same = memory
+            let same = state
                 .files
                 .get(relative)
                 .is_some_and(|(_, _, h)| *h == hash);
-            memory.files.insert(relative.clone(), (*size, *mtime, hash));
+            state.files.insert(relative.clone(), (*size, *mtime, hash));
             if same {
                 continue;
             }
@@ -131,7 +131,7 @@ impl DirSnapshot {
             bytes.extend_from_slice(&data);
         }
         if complete {
-            let mut gone: Vec<String> = memory
+            let mut gone: Vec<String> = state
                 .files
                 .keys()
                 .filter(|p| !seen.contains(*p))
@@ -139,7 +139,7 @@ impl DirSnapshot {
                 .collect();
             gone.sort();
             for relative in gone {
-                memory.files.remove(&relative);
+                state.files.remove(&relative);
                 let marker = vanished_marker(&relative);
                 let offset = bytes.len();
                 members.push(json!({

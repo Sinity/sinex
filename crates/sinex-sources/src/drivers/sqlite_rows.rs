@@ -13,7 +13,7 @@
 //!
 //! What the driver already stored survives a restart: the rows still open
 //! travel in the cursor, and the row hashes are rebuilt from the stored parts
-//! ([`RowMemory::rebuild`]), so a restart does not read and store every row
+//! ([`RowState::rebuild`]), so a restart does not read and store every row
 //! again.
 use super::{Acquired, DriverError, NewMaterial, file_facts};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
@@ -59,40 +59,40 @@ pub struct Cursor {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open: Vec<i64>,
     /// How many bytes of `material` the stored readings cover; a restart
-    /// rebuilds the row memory from those bytes only.
+    /// rebuilds the row state from those bytes only.
     #[serde(default)]
     pub through: usize,
 }
 
 /// What this driver already stored: the hash of each row's stored line, by
 /// rowid. Kept for the life of the source task and rebuilt from the stored
-/// parts after a restart. An empty memory (no stored parts yet) triggers a
+/// parts after a restart. An empty state (no stored parts yet) triggers a
 /// full pass, whose repeats admission suppresses.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct RowMemory {
+pub struct RowState {
     hashes: HashMap<i64, [u8; 32]>,
-    /// Whether this process has polled since the memory was made: the first
+    /// Whether this process has polled since the state was made: the first
     /// poll after a start is a full pass even when the hashes were rebuilt,
     /// so an update made while Sinex was down is seen (law L20).
     polled: bool,
 }
 
-impl RowMemory {
-    /// The memory after the stored rows parts `materials`, in order: the
+impl RowState {
+    /// The state after the stored rows parts `materials`, in order: the
     /// last stored line of each row wins.
     pub fn rebuild<'a>(materials: impl IntoIterator<Item = &'a [u8]>) -> Self {
-        let mut memory = Self::default();
+        let mut state = Self::default();
         for bytes in materials {
             for line in bytes.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
                 let Ok(row) = serde_json::from_slice::<Map<String, Value>>(line) else {
                     continue;
                 };
                 if let Some(rowid) = row.get("_rowid").and_then(Value::as_i64) {
-                    memory.hashes.insert(rowid, *blake3::hash(line).as_bytes());
+                    state.hashes.insert(rowid, *blake3::hash(line).as_bytes());
                 }
             }
         }
-        memory
+        state
     }
 
     pub fn is_empty(&self) -> bool {
@@ -109,7 +109,7 @@ impl SqliteRows {
         }
     }
 
-    pub fn poll(&self, cursor: &Value, memory: &mut RowMemory) -> Result<Acquired, DriverError> {
+    pub fn poll(&self, cursor: &Value, state: &mut RowState) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -133,7 +133,7 @@ impl SqliteRows {
         };
         let now = Timestamp::now();
         let now_ns = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
-        let full = !memory.polled
+        let full = !state.polled
             || now_ns.saturating_sub(previous.last_full_pass_ns)
                 >= self.full_pass_secs.saturating_mul(1_000_000_000);
 
@@ -228,10 +228,10 @@ impl SqliteRows {
                 }
                 let line = Value::Object(object).to_string();
                 let hash = *blake3::hash(line.as_bytes()).as_bytes();
-                if memory.hashes.get(&rowid) == Some(&hash) {
+                if state.hashes.get(&rowid) == Some(&hash) {
                     continue;
                 }
-                memory.hashes.insert(rowid, hash);
+                state.hashes.insert(rowid, hash);
                 let start = bytes.len();
                 bytes.extend_from_slice(line.as_bytes());
                 bytes.push(b'\n');
@@ -242,7 +242,7 @@ impl SqliteRows {
         drop(stmt);
         connection.execute_batch("COMMIT").ok();
         if full {
-            memory.polled = true;
+            state.polled = true;
         }
 
         let last_full = if full {

@@ -50,13 +50,13 @@ pub mod weechat;
 pub mod wykop;
 pub mod zsh;
 
-use crate::binding::{Binding, Kind, Settings};
+use crate::binding::{Binding, InputKind, Settings};
 use crate::registry::{Source, SourceSpec};
 
 /// Every kind of input and the sources that read it: the one list the
 /// catalog, backfill, the binding runner, `sinex-session` and replay all
 /// work from.
-pub fn kinds() -> &'static [&'static Kind] {
+pub fn input_kinds() -> &'static [&'static InputKind] {
     &[
         &atuin::KIND,
         &zsh::KIND,
@@ -104,7 +104,7 @@ pub fn kinds() -> &'static [&'static Kind] {
 /// Every source's declaration, each once.
 pub fn specs() -> Vec<&'static SourceSpec> {
     let mut out: Vec<&'static SourceSpec> = Vec::new();
-    for kind in kinds() {
+    for kind in input_kinds() {
         for spec in (kind.specs)() {
             if !out
                 .iter()
@@ -118,8 +118,8 @@ pub fn specs() -> Vec<&'static SourceSpec> {
 }
 
 /// The kind named `name` (`--source NAME=PATH`).
-pub fn kind(name: &str) -> Option<&'static Kind> {
-    kinds().iter().copied().find(|k| k.name == name)
+pub fn input_kind(name: &str) -> Option<&'static InputKind> {
+    input_kinds().iter().copied().find(|k| k.name == name)
 }
 
 /// The kind that reads the source `spec_name`.
@@ -127,16 +127,16 @@ pub fn kind(name: &str) -> Option<&'static Kind> {
 /// Several kinds can read one source name (the live clipboard and its lake
 /// lane); this is the first registered, and a configuration names the kind
 /// to choose another.
-pub fn kind_of(spec_name: &str) -> Option<&'static Kind> {
-    kinds().iter().copied().find(|k| k.reads(spec_name))
+pub fn input_kind_of(spec_name: &str) -> Option<&'static InputKind> {
+    input_kinds().iter().copied().find(|k| k.reads(spec_name))
 }
 
 /// The kind reading the source `name` with `parser`. Neither is unique
 /// alone: a name is shared by one source read two ways (the live clipboard
 /// and its lake lane), a parser by sources of one format (mbox, Maildir and
 /// Outlook mail).
-pub fn kind_of_spec(name: &str, parser: &str) -> Option<&'static Kind> {
-    kinds().iter().copied().find(|k| {
+pub fn input_kind_of_source(name: &str, parser: &str) -> Option<&'static InputKind> {
+    input_kinds().iter().copied().find(|k| {
         (k.specs)()
             .iter()
             .any(|s| s.name == name && s.parser == parser)
@@ -150,7 +150,7 @@ pub fn spec(spec_name: &str) -> Option<&'static SourceSpec> {
 
 /// The parser of `binding`, built with the settings it was read with.
 pub fn source_for(binding: &Binding) -> Result<Box<dyn Source>, String> {
-    let kind = kind_of_spec(&binding.source, &binding.parser).ok_or_else(|| {
+    let kind = input_kind_of_source(&binding.source, &binding.parser).ok_or_else(|| {
         format!(
             "{} with {}: no registered source",
             binding.source, binding.parser

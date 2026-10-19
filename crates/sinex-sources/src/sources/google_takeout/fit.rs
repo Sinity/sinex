@@ -4,7 +4,7 @@
 //! `dataTypeName`. The file (the data source) and the point's start and end
 //! identify it. `fitValue` is kept as exported, one entry per field.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordContext, RecordError};
 use serde_json::{Map, Value};
@@ -84,8 +84,8 @@ impl Parser for FitParser {
     }
 }
 
-pub fn source() -> Declared<FitParser> {
-    Declared {
+pub fn source() -> DeclaredSource<FitParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: FitParser,
     }

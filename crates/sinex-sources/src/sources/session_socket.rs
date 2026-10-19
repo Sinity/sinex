@@ -8,7 +8,7 @@
 //! A line names its producer in `source` (`neovim`, `kitty`) and its
 //! happening in `event`; the rest are fields of that producer.
 use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::session::{EditorEvent, TerminalEvent};
@@ -175,8 +175,8 @@ impl Parser for SessionSocketParser {
     }
 }
 
-pub fn source() -> Declared<SessionSocketParser> {
-    Declared {
+pub fn source() -> DeclaredSource<SessionSocketParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: SessionSocketParser,
     }
@@ -185,13 +185,13 @@ pub fn source() -> Declared<SessionSocketParser> {
 /// `--source producers=SPOOL`: lines the editor and terminal integrations
 /// write to the producer socket (the `socket` option, or the default path),
 /// captured into SPOOL.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "producers",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

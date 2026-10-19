@@ -8,7 +8,7 @@
 //! not read yet.
 use crate::drain::RecordContext;
 use crate::drivers::dir_snapshot::DirSnapshot;
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::Value;
 use sinex_model::event_types::media::NoteDocument;
@@ -84,8 +84,8 @@ impl Parser for NotesParser {
     }
 }
 
-pub fn source() -> Declared<NotesParser> {
-    Declared {
+pub fn source() -> DeclaredSource<NotesParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: NotesParser,
     }
@@ -108,7 +108,7 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 /// `--source notes=PATH`: the note vault at PATH, walked as one directory.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "notes",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),

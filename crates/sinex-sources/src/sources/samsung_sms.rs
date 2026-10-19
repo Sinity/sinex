@@ -4,7 +4,7 @@
 //! body, type`: 1 received, 2 sent, 3 draft). Drafts are kept, marked as
 //! such.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -88,8 +88,8 @@ impl Parser for SmsParser {
     }
 }
 
-pub fn source() -> Declared<SmsParser> {
-    Declared {
+pub fn source() -> DeclaredSource<SmsParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: SmsParser,
     }
@@ -113,7 +113,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--source samsung-sms=PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "samsung-sms",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
@@ -131,7 +131,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

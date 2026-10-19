@@ -8,7 +8,7 @@
 //! (with a mode prefix such as `@`), ` *` for an action, `-->` for a join,
 //! `<--` for a part or quit, `--` for notices and other client lines.
 use crate::drivers::append_file::AppendFile;
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use sinex_model::event_types::communication::{ChatLineKind, ChatMessage};
 use sinex_model::{Class, Timestamp};
@@ -132,8 +132,8 @@ impl WeeChatParser {
     }
 }
 
-pub fn source(zone: jiff::tz::TimeZone) -> Declared<WeeChatParser> {
-    Declared {
+pub fn source(zone: jiff::tz::TimeZone) -> DeclaredSource<WeeChatParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: WeeChatParser { zone },
     }
@@ -158,7 +158,7 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 
 /// `--source weechat=PATH`: each WeeChat log under PATH, read in the
 /// binding's zone (WeeChat writes local times), recorded when it is planned.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "weechat",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

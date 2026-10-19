@@ -13,7 +13,7 @@
 //! Every `*_created_at` is zoneless and is Warsaw local time, as Wykop's own
 //! frontend reads it (the predecessor read it as UTC, an hour or two early).
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -442,8 +442,8 @@ fn warsaw(raw: &str) -> Result<Timestamp, RecordError> {
         .map_err(|_| RecordError::new("time out of range"))
 }
 
-pub fn source() -> Declared<WykopParser> {
-    Declared {
+pub fn source() -> DeclaredSource<WykopParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: WykopParser,
     }
@@ -471,7 +471,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--source wykop=PATH`: each of the account's own Wykop export files in PATH.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "wykop",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
@@ -481,7 +481,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

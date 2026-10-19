@@ -8,7 +8,7 @@
 //!
 //! Private mode stops capture: nothing is recorded while it is on.
 use crate::drivers::media::{self, Media};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordContext, RecordError};
 use serde_json::{Value, json};
 use sinex_model::event_types::session::MediaSegment;
@@ -77,8 +77,8 @@ impl Parser for MediaParser {
     }
 }
 
-pub fn source() -> Declared<MediaParser> {
-    Declared {
+pub fn source() -> DeclaredSource<MediaParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: MediaParser,
     }
@@ -277,7 +277,7 @@ fn media(b: &crate::binding::Binding) -> Result<&'static str, String> {
 /// `--source media=SPOOL`: screen stills (option `kind: screen`, every
 /// `every` seconds, 60 by default) or audio segments (`kind: audio`,
 /// `segment` seconds each, 300 by default), captured into SPOOL.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "media",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| {
@@ -287,7 +287,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
             media(b)?,

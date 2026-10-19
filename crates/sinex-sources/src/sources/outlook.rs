@@ -12,7 +12,7 @@
 //! by a hash of its decoded cells; the same message in the PST is a separate
 //! record, combined by fusion if at all (architecture §3.3 rule 5).
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::{fields, mail};
 use crate::{Parser, RecordError};
 use sinex_model::Class;
@@ -42,8 +42,8 @@ pub const CSV: SourceSpec = SourceSpec {
     framer: frame_csv,
 };
 
-pub fn pst_source() -> Declared<mail::MailParser> {
-    Declared {
+pub fn pst_source() -> DeclaredSource<mail::MailParser> {
+    DeclaredSource {
         spec: PST,
         parser: mail::MailParser,
     }
@@ -187,8 +187,8 @@ impl Parser for CsvParser {
     }
 }
 
-pub fn csv_source() -> Declared<CsvParser> {
-    Declared {
+pub fn csv_source() -> DeclaredSource<CsvParser> {
+    DeclaredSource {
         spec: CSV,
         parser: CsvParser,
     }
@@ -216,7 +216,7 @@ fn staging() -> PathBuf {
 
 /// `--source outlook=PATH`: each `.pst` under PATH, converted with `readpst`
 /// to one mbox per folder, each folder its own binding.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "outlook",
     specs: || vec![&PST],
     plan: Some(|input, settings| {
@@ -233,7 +233,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(pst_source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(pst_driver(
+        Ok(crate::binding::stateless(pst_driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))
@@ -242,7 +242,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
 };
 
 /// `--source outlook-csv=PATH`: each Outlook CSV export under PATH.
-pub const CSV_KIND: crate::binding::Kind = crate::binding::Kind {
+pub const CSV_KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "outlook-csv",
     specs: || vec![&CSV],
     plan: Some(|input, settings| {
@@ -252,7 +252,7 @@ pub const CSV_KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(csv_source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(csv_driver(
+        Ok(crate::binding::stateless(csv_driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

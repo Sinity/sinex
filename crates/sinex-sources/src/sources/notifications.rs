@@ -8,7 +8,7 @@
 //! but not its own; closing and actions are recorded by id.
 use super::dbus::{self, Message};
 use crate::drivers::live_stream::{self, LiveStream};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
@@ -139,8 +139,8 @@ impl Parser for NotificationsParser {
     }
 }
 
-pub fn source() -> Declared<NotificationsParser> {
-    Declared {
+pub fn source() -> DeclaredSource<NotificationsParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: NotificationsParser,
     }
@@ -156,13 +156,13 @@ pub fn capture(spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> 
 
 /// `--source notifications=SPOOL`: desktop notifications on the session
 /// bus, captured into SPOOL.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "notifications",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

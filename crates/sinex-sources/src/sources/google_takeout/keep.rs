@@ -3,7 +3,7 @@
 //! identity; a later edit is a newer reading, and a trashed note is removed at
 //! the source.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -110,8 +110,8 @@ impl Parser for KeepParser {
     }
 }
 
-pub fn source() -> Declared<KeepParser> {
-    Declared {
+pub fn source() -> DeclaredSource<KeepParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: KeepParser,
     }

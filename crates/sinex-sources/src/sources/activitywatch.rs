@@ -18,7 +18,7 @@
 //!
 //! The correction parameters live in [`CORRECTIONS`], one declaration.
 use crate::drivers::sqlite_rows::SqliteRows;
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -256,8 +256,8 @@ impl Parser for ActivityWatchParser {
     }
 }
 
-pub fn source() -> Declared<ActivityWatchParser> {
-    Declared {
+pub fn source() -> DeclaredSource<ActivityWatchParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: ActivityWatchParser,
     }
@@ -286,7 +286,7 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
 }
 
 /// `--source activitywatch=PATH`: `aw-server-rust`'s database.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "activitywatch",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),

@@ -10,7 +10,7 @@
 //! 5: network flows) are stored as material and emit no events; their
 //! per-minute summaries are a derivation.
 use crate::drivers::append_file::{AppendFile, lines};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::machine::CaptureObserved;
@@ -268,8 +268,8 @@ pub fn lane(name: &str) -> Option<&'static Lane> {
     LANES.iter().find(|l| l.spec.name == name)
 }
 
-pub fn source(lane: &'static Lane) -> Declared<EnvelopeParser> {
-    Declared {
+pub fn source(lane: &'static Lane) -> DeclaredSource<EnvelopeParser> {
+    DeclaredSource {
         spec: lane.spec.clone(),
         parser: EnvelopeParser { lane },
     }
@@ -320,7 +320,7 @@ fn lane_of(b: &crate::binding::Binding) -> Result<&'static Lane, String> {
 
 /// `--source sinnix-lake=ROOT`: every lane's day files under the lake root
 /// (`/realm`); each lane's directories are its configuration.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "sinnix-lake",
     specs: || LANES.iter().map(|l| &l.spec).collect(),
     plan: Some(|input, settings| {

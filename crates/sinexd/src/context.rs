@@ -157,10 +157,10 @@ impl MaterialSink for SealingSink {
 }
 
 /// The stored bytes of the chain ending at the cursor's last material, for
-/// rebuilding a driver's memory after a restart; empty before the first read.
+/// rebuilding a driver state after a restart; empty before the first read.
 /// Only the chain's tail is read, newest material first, until it covers
-/// `sinex_sources::drivers::append_file::MEMORY_TAIL` bytes, so a restart
-/// costs bounded memory whatever the chain's length; the driver's memory
+/// `sinex_sources::drivers::append_file::STATE_TAIL` bytes, so a restart
+/// costs bounded memory whatever the chain's length; the driver state
 /// holds no more than that tail either. The last material is cut at the
 /// cursor's `through`: bytes after it were stored but their readings never
 /// committed, so the driver must read them again.
@@ -183,7 +183,7 @@ pub async fn stored_chain(
         .get("through")
         .and_then(serde_json::Value::as_u64)
         .map(|t| usize::try_from(t).unwrap_or(usize::MAX));
-    let budget = sinex_sources::drivers::append_file::MEMORY_TAIL;
+    let budget = sinex_sources::drivers::append_file::STATE_TAIL;
     let mut chain = Vec::new();
     let mut covered = 0usize;
     for (i, (id, name)) in names.iter().enumerate().rev() {

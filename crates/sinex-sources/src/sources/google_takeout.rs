@@ -10,7 +10,7 @@ pub mod purchases;
 pub mod tasks;
 
 use crate::Source;
-use crate::binding::{Binding, Kind, Reader, plain};
+use crate::binding::{Binding, InputKind, Reader, stateless};
 use crate::drivers::export_archive::ExportArchive;
 use crate::registry::SourceSpec;
 use std::path::PathBuf;
@@ -64,7 +64,7 @@ fn product(b: &Binding) -> Result<&'static Product, String> {
 /// `--source takeout=PATH`: every product of each Takeout archive in PATH,
 /// plus the calendars in it; each product its own binding, so each keeps its
 /// own cursor.
-pub const KIND: Kind = Kind {
+pub const KIND: InputKind = InputKind {
     name: "takeout",
     specs: || PRODUCTS.iter().map(|p| p.0).collect(),
     plan: Some(|input, settings| {
@@ -90,7 +90,7 @@ pub const KIND: Kind = Kind {
         if b.source == super::calendar::SPEC.name {
             return (super::calendar::KIND.reader.expect("calendar reads"))(b);
         }
-        Ok(plain((product(b)?.2)(
+        Ok(stateless((product(b)?.2)(
             b.input.clone(),
             b.settings.host.clone(),
         )))

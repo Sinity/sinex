@@ -34,12 +34,12 @@ impl Library<'_> {
             (parent, Some(name))
         };
         let root_text = root.display().to_string();
-        // Seed the scan's memory from what is already admitted, so a second
+        // Seed the scan's state from what is already admitted, so a second
         // add of the same root hashes only what changed.
         let known = reads::acquisitions(conn, self.host, &root_text)
             .await
             .map_err(e)?;
-        let memory = library_source::ScanMemory::seed(
+        let state = library_source::ScanState::seed(
             known
                 .iter()
                 .filter(|a| a.vanished_at.is_none())
@@ -73,11 +73,11 @@ impl Library<'_> {
             bytes_per_poll: 1 << 30,
             only,
         });
-        let mut memory = Some(memory);
+        let mut state = Some(state);
         let (mut files, mut seen) = (0usize, 0usize);
         loop {
             let s = scan.clone();
-            let mut m = memory.take().expect("memory is returned each poll");
+            let mut m = state.take().expect("state is returned each poll");
             let c = cursor.clone();
             let sink = Sink(self.blobs.clone());
             let b = binding.clone();
@@ -106,7 +106,7 @@ impl Library<'_> {
             })
             .await
             .map_err(e)?;
-            memory = Some(m);
+            state = Some(m);
             let (next, batches) = out.map_err(e)?;
             for b in batches {
                 let o = self.writer.submit(Priority::Bulk, b).await.map_err(e)?;

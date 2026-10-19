@@ -10,7 +10,7 @@
 //! the elapsed field is written as 0 before the command ends, so it is kept as
 //! written and never read as a duration.
 use crate::drivers::append_file::AppendFile;
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use sinex_model::{Class, Timestamp, event_types::CommandImported};
 use std::path::PathBuf;
@@ -182,8 +182,8 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     (out, start)
 }
 
-pub fn source(host: String) -> Declared<ZshParser> {
-    Declared {
+pub fn source(host: String) -> DeclaredSource<ZshParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: ZshParser { host },
     }
@@ -198,7 +198,7 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 }
 
 /// `--source zsh=PATH`: a zsh history file.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "zsh",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),

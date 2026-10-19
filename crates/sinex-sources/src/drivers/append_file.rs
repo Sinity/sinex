@@ -44,35 +44,35 @@ pub struct Cursor {
     pub material: Option<MaterialId>,
     pub part_index: u32,
     /// How many bytes of `material` the stored readings cover. A restart
-    /// rebuilds the driver's memory from those bytes only: the rest of the
+    /// rebuilds the driver's state from those bytes only: the rest of the
     /// material may never have been admitted.
     #[serde(default)]
     pub through: usize,
 }
 
-/// How much of the current revision the memory keeps: its newest records, at
+/// How much of the current revision the state keeps: its newest records, at
 /// most this many record bytes and this many records (a record costs about
 /// 100 bytes of memory whatever its length, so short lines are bounded by
 /// count). A rewrite is aligned against that tail; a record older than it
 /// that a rewrite drops is not recognized as read before (rewrites such as a
 /// shell's duplicate expiry touch recent history), and one it keeps is read
-/// again as a repeat. Bounds the memory and a restart's rebuild alike.
+/// again as a repeat. Bounds the state and a restart's rebuild alike.
 #[cfg(not(test))]
-pub const MEMORY_TAIL: usize = 16 << 20;
+pub const STATE_TAIL: usize = 16 << 20;
 #[cfg(test)]
-pub const MEMORY_TAIL: usize = 4096;
+pub const STATE_TAIL: usize = 4096;
 #[cfg(not(test))]
-pub const MEMORY_RECORDS: usize = 200_000;
+pub const STATE_RECORDS: usize = 200_000;
 #[cfg(test)]
-pub const MEMORY_RECORDS: usize = 40;
+pub const STATE_RECORDS: usize = 40;
 
 /// The records of the current revision's tail, by content hash, with where
 /// each occurrence was read: what a rewrite is aligned against. Kept for the
 /// life of the source task and rebuilt from the stored materials after a
-/// restart ([`AppendMemory::rebuild`]); bounded by [`MEMORY_TAIL`] and
-/// [`MEMORY_RECORDS`].
+/// restart ([`AppendState::rebuild`]); bounded by [`STATE_TAIL`] and
+/// [`STATE_RECORDS`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AppendMemory {
+pub struct AppendState {
     records: HashMap<[u8; 32], Vec<RecordLocation>>,
     /// Every held record in reading order, with its length, so the oldest
     /// is dropped first when the tail grows past a bound.
@@ -80,20 +80,20 @@ pub struct AppendMemory {
     bytes: usize,
 }
 
-impl AppendMemory {
-    /// The memory after reading `materials` (the current revision's parts, in
+impl AppendState {
+    /// The state after reading `materials` (the current revision's parts, in
     /// order) with `framer`.
     pub fn rebuild<'a>(
         materials: impl IntoIterator<Item = (MaterialId, &'a [u8])>,
         framer: Framer,
     ) -> Self {
-        let mut memory = Self::default();
+        let mut state = Self::default();
         for (material, bytes) in materials {
             for (s, e) in framer(bytes).0 {
-                memory.insert(&bytes[s..e], material, s);
+                state.insert(&bytes[s..e], material, s);
             }
         }
-        memory
+        state
     }
 
     fn insert(&mut self, record: &[u8], material: MaterialId, anchor: usize) {
@@ -105,8 +105,8 @@ impl AppendMemory {
         self.records.entry(hash).or_default().push(location);
         self.order.push_back((hash, location, record.len()));
         self.bytes += record.len();
-        while self.order.len() > MEMORY_RECORDS
-            || (self.bytes > MEMORY_TAIL && self.order.len() > 1)
+        while self.order.len() > STATE_RECORDS
+            || (self.bytes > STATE_TAIL && self.order.len() > 1)
         {
             let (hash, location, n) = self.order.pop_front().expect("not empty");
             self.bytes -= n;
@@ -154,15 +154,15 @@ impl AppendFile {
         }
     }
 
-    pub fn poll(&self, cursor: &Value, memory: &mut AppendMemory) -> Result<Acquired, DriverError> {
-        self.poll_in_parts(cursor, memory, PART)
+    pub fn poll(&self, cursor: &Value, state: &mut AppendState) -> Result<Acquired, DriverError> {
+        self.poll_in_parts(cursor, state, PART)
     }
 
     /// [`poll`](Self::poll) reading at most `part` bytes past the cursor.
     pub fn poll_in_parts(
         &self,
         cursor: &Value,
-        memory: &mut AppendMemory,
+        state: &mut AppendState,
         part: u64,
     ) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
@@ -226,7 +226,7 @@ impl AppendFile {
         file.seek(SeekFrom::Start(start))
             .map_err(|e| DriverError::Io(e.to_string()))?;
         // Read in parts of at most PART bytes, ending on a record boundary,
-        // so a file of any size is read in bounded memory. A record longer
+        // so a file of any size is read in bounded state. A record longer
         // than a part grows the read until it completes; no record is
         // refused. A rewrite is read whole: aligning it against the previous
         // revision needs every record to tell which ones vanished.
@@ -282,24 +282,24 @@ impl AppendFile {
         }
         data.truncate(consumed);
         // A restart from the beginning (rewritten or truncated) is aligned
-        // against what the previous revision held; then the memory becomes
+        // against what the previous revision held; then the state becomes
         // the new revision's records.
         let restarted_records = start == 0 && !cursor.is_null();
         let id = MaterialId::new();
         let (records, aligned, vanished) = if restarted_records {
-            let mut previous = std::mem::take(memory);
+            let mut previous = std::mem::take(state);
             let aligning = !previous.is_empty();
             let mut fresh = Vec::new();
             for &(s, e) in &records {
                 if !previous.take(&data[s..e]) {
                     fresh.push((s, e));
                 }
-                memory.insert(&data[s..e], id, s);
+                state.insert(&data[s..e], id, s);
             }
             (fresh, aligning, previous.remaining())
         } else {
             for &(s, e) in &records {
-                memory.insert(&data[s..e], id, s);
+                state.insert(&data[s..e], id, s);
             }
             (records, false, Vec::new())
         };

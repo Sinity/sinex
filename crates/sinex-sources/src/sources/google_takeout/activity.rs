@@ -8,7 +8,7 @@
 //! history gives `video.watched` and `video.searched`.
 use super::cells::{CELL, Cell};
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use sinex_model::Class;
 use sinex_model::event_types::account::{ActionRecorded, VideoSearched, VideoWatched};
@@ -179,15 +179,15 @@ pub fn video_id(url: &str) -> Option<String> {
     id.filter(|i| !i.is_empty())
 }
 
-pub fn my_activity() -> Declared<MyActivityParser> {
-    Declared {
+pub fn my_activity() -> DeclaredSource<MyActivityParser> {
+    DeclaredSource {
         spec: MY_ACTIVITY,
         parser: MyActivityParser,
     }
 }
 
-pub fn youtube() -> Declared<YouTubeParser> {
-    Declared {
+pub fn youtube() -> DeclaredSource<YouTubeParser> {
+    DeclaredSource {
         spec: YOUTUBE,
         parser: YouTubeParser,
     }

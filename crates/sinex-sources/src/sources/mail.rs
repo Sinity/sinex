@@ -17,7 +17,7 @@
 use crate::drain::RecordContext;
 use crate::drivers::dir_snapshot::DirSnapshot;
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use mailparse::{MailHeaderMap, ParsedMail};
 use sinex_model::event_types::communication::{MailAttachment, MailMessage};
@@ -214,15 +214,15 @@ fn mbox_unescape(raw: &[u8]) -> Vec<u8> {
     out
 }
 
-pub fn mbox_source() -> Declared<MailParser> {
-    Declared {
+pub fn mbox_source() -> DeclaredSource<MailParser> {
+    DeclaredSource {
         spec: MBOX,
         parser: MailParser,
     }
 }
 
-pub fn maildir_source() -> Declared<MailParser> {
-    Declared {
+pub fn maildir_source() -> DeclaredSource<MailParser> {
+    DeclaredSource {
         spec: MAILDIR,
         parser: MailParser,
     }
@@ -253,7 +253,7 @@ pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 /// `--source mbox=PATH`: each mbox file in PATH.
-pub const MBOX_KIND: crate::binding::Kind = crate::binding::Kind {
+pub const MBOX_KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "mbox",
     specs: || vec![&MBOX],
     plan: Some(|input, settings| {
@@ -267,7 +267,7 @@ pub const MBOX_KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(mbox_source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(mbox_driver(
+        Ok(crate::binding::stateless(mbox_driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))
@@ -276,7 +276,7 @@ pub const MBOX_KIND: crate::binding::Kind = crate::binding::Kind {
 };
 
 /// `--source maildir=PATH`: the Maildir at PATH, walked as one directory.
-pub const MAILDIR_KIND: crate::binding::Kind = crate::binding::Kind {
+pub const MAILDIR_KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "maildir",
     specs: || vec![&MAILDIR],
     plan: Some(|input, settings| Ok(crate::binding::single(&MAILDIR, input, settings))),

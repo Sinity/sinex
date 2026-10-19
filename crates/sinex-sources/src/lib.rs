@@ -17,10 +17,10 @@ pub mod nats;
 pub mod registry;
 pub mod sources;
 
-pub use binding::{Binding, Kind, Reader, Settings};
+pub use binding::{Binding, InputKind, Reader, Settings};
 pub use drain::{DrainInput, DrainOutput, Drainer, Limits, RecordContext, drain};
 pub use drivers::{Acquired, DriverError, MaterialSink};
-pub use registry::{Declared, Driver, Framer, Source, SourceSpec};
+pub use registry::{DeclaredSource, Driver, Framer, Source, SourceSpec};
 
 use serde::{Serialize, de::DeserializeOwned};
 use sinex_model::Payloads;

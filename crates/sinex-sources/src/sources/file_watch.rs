@@ -13,7 +13,7 @@
 //! is the directory-snapshot driver's job (it must also check that a symlink
 //! inside a root does not lead outside it, `kv6l`).
 use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use notify::event::{
     AccessKind, AccessMode, CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode,
@@ -273,8 +273,8 @@ impl Parser for FileWatchParser {
     }
 }
 
-pub fn source() -> Declared<FileWatchParser> {
-    Declared {
+pub fn source() -> DeclaredSource<FileWatchParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: FileWatchParser,
     }
@@ -293,13 +293,13 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 
 /// `--source file-watch=SPOOL`: changes under the directories in the
 /// `roots` option (and not under `skip` names), captured into SPOOL.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "file-watch",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

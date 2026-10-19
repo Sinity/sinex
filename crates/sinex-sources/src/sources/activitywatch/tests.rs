@@ -1,5 +1,5 @@
 use super::*;
-use crate::drivers::sqlite_rows::RowMemory;
+use crate::drivers::sqlite_rows::RowState;
 use serde_json::json;
 
 fn row(
@@ -179,8 +179,8 @@ fn the_driver_reads_the_join_and_sees_heartbeat_growth() {
     ))
     .unwrap();
     let d = driver(path.clone(), "h".into());
-    let mut memory = RowMemory::default();
-    let first = d.poll(&Value::Null, &mut memory).unwrap();
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
     let cursor = (m.cursor_at)(m.bytes.len());
     let r: Map<String, Value> =
@@ -191,7 +191,7 @@ fn the_driver_reads_the_join_and_sees_heartbeat_growth() {
         now + 5_000_000_000
     ))
     .unwrap();
-    let next = d.poll(&cursor, &mut memory).unwrap();
+    let next = d.poll(&cursor, &mut state).unwrap();
     assert_eq!(
         next.material.unwrap().records.len(),
         1,

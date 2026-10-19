@@ -9,7 +9,7 @@
 //! `page.fetched`. A failed fetch is a fact too: it is stored with status 0
 //! and the error, so the page is not silently missing.
 use crate::drivers::{Acquired, DriverError, NewMaterial};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -355,8 +355,8 @@ impl Parser for PageParser {
     }
 }
 
-pub fn source() -> Declared<PageParser> {
-    Declared {
+pub fn source() -> DeclaredSource<PageParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: PageParser,
     }
@@ -364,7 +364,7 @@ pub fn source() -> Declared<PageParser> {
 
 /// The forward crawl, run by `sinexd admin crawl` over browser history rather
 /// than read from a path.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "page-crawl",
     specs: || vec![&SPEC],
     plan: None,

@@ -4,12 +4,12 @@
 //!
 //! Every `--source KIND=PATH` is planned by its kind into bindings; each
 //! binding is recorded with its settings (so a replay reads it the same way)
-//! and its driver's memory is rebuilt from the materials it stored, so a
+//! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
 use crate::context::{Context, Sink, stored_chain};
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
-use sinex_sources::{Binding, Kind, Limits, Settings, Source, drivers, sources};
+use sinex_sources::{Binding, InputKind, Limits, Settings, Source, drivers, sources};
 use sinex_store::{bindings, positions, runs};
 use sqlx::PgConnection;
 use std::path::PathBuf;
@@ -33,7 +33,7 @@ pub struct Options {
 
 /// The kinds `--source KIND=PATH` accepts.
 pub fn kind_names() -> Vec<&'static str> {
-    sources::kinds()
+    sources::input_kinds()
         .iter()
         .filter(|k| k.plan.is_some())
         .map(|k| k.name)
@@ -96,12 +96,12 @@ pub async fn run(o: Options) -> Result<(), String> {
     let mut settings = Settings::new(o.host.clone());
     settings.zone = o.zone.clone();
     settings.options = sinex_sources::live::options(&o.options)?;
-    let mut planned: Vec<(&'static Kind, Binding)> = Vec::new();
+    let mut planned: Vec<(&'static InputKind, Binding)> = Vec::new();
     for spec in &o.sources {
         let (name, path) = spec
             .split_once('=')
             .ok_or_else(|| format!("--source {spec}: expected kind=path"))?;
-        let kind = sources::kind(name).ok_or_else(|| {
+        let kind = sources::input_kind(name).ok_or_else(|| {
             format!(
                 "unknown source kind {name}; one of {}",
                 kind_names().join(", ")
@@ -165,13 +165,13 @@ pub async fn run(o: Options) -> Result<(), String> {
     ctx.close().await
 }
 
-/// Record `b`, rebuild its driver's memory from what it stored, and read it
+/// Record `b`, rebuild its driver state from what it stored, and read it
 /// to the end.
 pub(crate) async fn read_binding(
     ctx: &mut Context,
     run: RunId,
     sink: &Sink,
-    kind: &Kind,
+    kind: &InputKind,
     b: &Binding,
 ) -> Result<Totals, String> {
     let source = (kind.source)(b)?;
@@ -208,7 +208,7 @@ pub(crate) async fn record(aux: &mut PgConnection, b: &Binding) -> Result<(), St
     .map_err(|e| e.to_string())
 }
 
-/// The stored bytes the binding's driver read last, for its memory.
+/// The stored bytes the binding's driver read last, for its state.
 pub(crate) async fn stored(
     ctx: &mut Context,
     binding: &str,

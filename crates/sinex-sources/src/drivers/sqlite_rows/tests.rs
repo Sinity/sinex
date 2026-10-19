@@ -33,8 +33,8 @@ fn lines(a: &Acquired) -> Vec<Value> {
 fn reads_rows_then_only_new_and_changed_ones() {
     let path = db();
     let d = driver(path.clone());
-    let mut memory = RowMemory::default();
-    let first = d.poll(&Value::Null, &mut memory).unwrap();
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
     let rows = lines(&first);
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0]["b"], json!({"blob_hex": "00ff"}));
@@ -45,7 +45,7 @@ fn reads_rows_then_only_new_and_changed_ones() {
     let c = Connection::open(&path).unwrap();
     c.execute_batch("UPDATE t SET n = 0 WHERE id = 'b'; INSERT INTO t VALUES ('c', 5, NULL);")
         .unwrap();
-    let next = d.poll(&cursor, &mut memory).unwrap();
+    let next = d.poll(&cursor, &mut state).unwrap();
     let rows = lines(&next);
     assert_eq!(
         rows.iter().map(|r| r["id"].clone()).collect::<Vec<_>>(),
@@ -58,8 +58,8 @@ fn reads_rows_then_only_new_and_changed_ones() {
 fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     let path = db();
     let d = driver(path.clone());
-    let mut memory = RowMemory::default();
-    let first = d.poll(&Value::Null, &mut memory).unwrap();
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
     let cursor = (m.cursor_at)(m.bytes.len());
     assert_eq!(
@@ -69,9 +69,9 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     );
     assert!(m.manifest["read_at_ns"].as_i64().is_some());
 
-    // A new process: the memory comes back from the stored part.
-    let mut rebuilt = RowMemory::rebuild([m.bytes.as_slice()]);
-    assert_eq!(rebuilt.hashes, memory.hashes);
+    // A new process: the state comes back from the stored part.
+    let mut rebuilt = RowState::rebuild([m.bytes.as_slice()]);
+    assert_eq!(rebuilt.hashes, state.hashes);
     let again = d.poll(&cursor, &mut rebuilt).unwrap();
     assert!(
         again.material.is_none(),
@@ -91,20 +91,20 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
 
 /// L20: a finished row changed while Sinex was down (Atuin's soft
 /// delete) is read on the first poll after the restart, though the
-/// rebuilt memory is not empty and the row is outside the open window.
+/// rebuilt state is not empty and the row is outside the open window.
 #[test]
 fn a_row_changed_while_down_is_read_after_the_restart() {
     let path = db();
     let d = driver(path.clone());
-    let mut memory = RowMemory::default();
-    let first = d.poll(&Value::Null, &mut memory).unwrap();
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
     let cursor = (m.cursor_at)(m.bytes.len());
     Connection::open(&path)
         .unwrap()
         .execute_batch("UPDATE t SET n = 9 WHERE id = 'a'")
         .unwrap();
-    let mut rebuilt = RowMemory::rebuild([m.bytes.as_slice()]);
+    let mut rebuilt = RowState::rebuild([m.bytes.as_slice()]);
     let after = d.poll(&cursor, &mut rebuilt).unwrap();
     let rows = lines(&after);
     assert_eq!(rows.len(), 1, "only the changed row");
@@ -130,8 +130,8 @@ fn a_row_changed_while_down_is_read_after_the_restart() {
 fn reading_orders_only_grow() {
     let path = db();
     let d = driver(path.clone());
-    let mut memory = RowMemory::default();
-    let first = d.poll(&Value::Null, &mut memory).unwrap();
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
     let (a, b) = (
         (m.reading_order)(m.records[0].0),
@@ -143,7 +143,7 @@ fn reading_orders_only_grow() {
     c.execute_batch("UPDATE t SET n = 7 WHERE id = 'a';")
         .unwrap();
     // A full pass reads every row again; force one by forgetting.
-    let next = d.poll(&cursor, &mut RowMemory::default()).unwrap();
+    let next = d.poll(&cursor, &mut RowState::default()).unwrap();
     let n = next.material.as_ref().unwrap();
     assert!(
         (n.reading_order)(0) > b,
@@ -159,7 +159,7 @@ fn a_locked_database_is_read_from_a_verified_copy() {
         .execute_batch("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; UPDATE t SET n = n;")
         .unwrap();
     let a = driver(path)
-        .poll(&Value::Null, &mut RowMemory::default())
+        .poll(&Value::Null, &mut RowState::default())
         .unwrap();
     assert!(
         a.observation.unavailable.is_none(),
@@ -176,7 +176,7 @@ fn a_locked_database_is_read_from_a_verified_copy() {
 fn missing_column_is_named() {
     let mut d = driver(db());
     d.required = &["id", "nope"];
-    let a = d.poll(&Value::Null, &mut RowMemory::default()).unwrap();
+    let a = d.poll(&Value::Null, &mut RowState::default()).unwrap();
     assert_eq!(
         a.observation.unavailable.as_deref(),
         Some("table t has no column nope")

@@ -11,7 +11,7 @@
 //! `{"received_ns": "<ns>", "line": "<text>"}`, or `"line_hex"` when the
 //! captured bytes are not UTF-8, so the stored material keeps exactly what
 //! arrived.
-use super::append_file::{AppendFile, AppendMemory, lines};
+use super::append_file::{AppendFile, AppendState, lines};
 use super::{Acquired, DriverError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -282,7 +282,7 @@ impl LiveStream {
                 framer: lines,
             };
             // A spool only grows, so there is no rewrite to align against.
-            let mut acquired = file.poll(&state.inner, &mut AppendMemory::default())?;
+            let mut acquired = file.poll(&state.inner, &mut AppendState::default())?;
             acquired.input = self.input.clone();
             if let Some(material) = &mut acquired.material {
                 let inner_part = material.part_index;

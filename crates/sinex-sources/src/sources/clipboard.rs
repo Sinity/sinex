@@ -7,7 +7,7 @@
 //! (password managers do); its content is then not read, only that a secret
 //! was copied.
 use crate::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use base64::Engine;
 use serde_json::{Map, Value, json};
@@ -190,8 +190,8 @@ impl Parser for ClipboardParser {
     }
 }
 
-pub fn source() -> Declared<ClipboardParser> {
-    Declared {
+pub fn source() -> DeclaredSource<ClipboardParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: ClipboardParser,
     }
@@ -220,7 +220,7 @@ fn selection(b: &crate::binding::Binding) -> &'static str {
 /// `--source clipboard=SPOOL`: the clipboard (or, with the option
 /// `selection: primary`, the primary selection), captured into SPOOL. The
 /// frame printer is this program's own `clipboard-frame` command.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "clipboard",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| {
@@ -234,7 +234,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
             selection(b),

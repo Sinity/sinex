@@ -229,7 +229,7 @@ pub async fn inputs_of(conn: &mut PgConnection, materials: &[Uuid]) -> Result<Ve
 }
 
 /// The stored bytes' names of the chain that ends at `last`, first part
-/// first: what a driver rebuilds its memory from after a restart.
+/// first: what a driver rebuilds its state from after a restart.
 pub async fn chain_ending(conn: &mut PgConnection, last: Uuid) -> Result<Vec<(Uuid, String)>> {
     Ok(sqlx::query!(
         r#"WITH RECURSIVE chain AS (

@@ -3,7 +3,7 @@
 //! `Browser History` array. Times are microseconds since the Unix epoch.
 use super::fields;
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::Class;
@@ -56,8 +56,8 @@ impl Parser for TakeoutChromeParser {
     }
 }
 
-pub fn source() -> Declared<TakeoutChromeParser> {
-    Declared {
+pub fn source() -> DeclaredSource<TakeoutChromeParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: TakeoutChromeParser,
     }
@@ -83,7 +83,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--source takeout-chrome=PATH`: each Takeout Chrome history in PATH.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "takeout-chrome",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
@@ -97,7 +97,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

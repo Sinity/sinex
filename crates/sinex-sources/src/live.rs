@@ -3,7 +3,7 @@
 //! thread, and one loop produces what the spools hold to `sinexd` over the
 //! NATS ingress. Both programs build their sources from the registry's kinds
 //! and share this loop.
-use crate::binding::{Binding, Kind, Reader, Settings};
+use crate::binding::{Binding, InputKind, Reader, Settings};
 use crate::drivers::producer::{Position, Producer, Store};
 use crate::{Source, sources};
 use serde_json::Value;
@@ -23,8 +23,8 @@ pub fn binding(
     spool: &Path,
     host: &str,
     options: Value,
-) -> Result<(&'static Kind, Binding), String> {
-    let k = sources::kind(kind)
+) -> Result<(&'static InputKind, Binding), String> {
+    let k = sources::input_kind(kind)
         .filter(|k| k.capture.is_some())
         .ok_or_else(|| format!("{kind}: not a live source"))?;
     let settings = Settings {

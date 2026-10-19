@@ -1,5 +1,5 @@
 use super::*;
-use crate::drivers::sqlite_rows::RowMemory;
+use crate::drivers::sqlite_rows::RowState;
 use crate::sources::fields::WEBKIT_EPOCH_OFFSET_US;
 use rusqlite::Connection;
 use serde_json::json;
@@ -26,7 +26,7 @@ fn history() -> PathBuf {
 }
 
 fn rows(d: &SqliteRows) -> (Vec<Map<String, Value>>, Value) {
-    let a = d.poll(&Value::Null, &mut RowMemory::default()).unwrap();
+    let a = d.poll(&Value::Null, &mut RowState::default()).unwrap();
     let m = a.material.unwrap();
     let rows = m
         .records

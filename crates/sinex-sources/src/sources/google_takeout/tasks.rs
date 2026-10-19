@@ -3,7 +3,7 @@
 //! its tasks. A task is identified by its ID; a later export with a newer
 //! `updated` is a newer reading, and a deleted task is removed at the source.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -108,8 +108,8 @@ impl Parser for TasksParser {
     }
 }
 
-pub fn source() -> Declared<TasksParser> {
-    Declared {
+pub fn source() -> DeclaredSource<TasksParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: TasksParser,
     }

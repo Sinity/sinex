@@ -8,7 +8,7 @@
 //! unique to well-known names forward.
 use super::dbus::{self, Message};
 use crate::drivers::live_stream::{self, LiveStream};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value, json};
 use sinex_model::Class;
@@ -143,8 +143,8 @@ impl Parser for MprisParser {
     }
 }
 
-pub fn source() -> Declared<MprisParser> {
-    Declared {
+pub fn source() -> DeclaredSource<MprisParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: MprisParser,
     }
@@ -190,13 +190,13 @@ pub fn capture(spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> 
 }
 
 /// `--source players=SPOOL`: media players (MPRIS), captured into SPOOL.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "players",
     specs: || vec![&SPEC],
     plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

@@ -5,7 +5,7 @@
 //! account metadata files stay in the material, unread. Exports are
 //! cumulative, so an older one adds only older readings of the same items.
 use crate::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
@@ -233,8 +233,8 @@ fn utc(raw: &str) -> Result<sinex_model::Timestamp, RecordError> {
         .map_err(|_| RecordError::new("time out of range"))
 }
 
-pub fn source() -> Declared<RedditParser> {
-    Declared {
+pub fn source() -> DeclaredSource<RedditParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: RedditParser,
     }
@@ -260,7 +260,7 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `--source reddit=PATH`: each Reddit export ZIP in PATH.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "reddit",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {
@@ -274,7 +274,7 @@ pub const KIND: crate::binding::Kind = crate::binding::Kind {
     }),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

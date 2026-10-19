@@ -6,7 +6,7 @@
 //! back, a branch recreated) is a repeat.
 use crate::drivers::DriverError;
 use crate::drivers::api_cursor::{Api, ApiCursor, Page};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -45,8 +45,8 @@ impl Parser for GitParser {
     }
 }
 
-pub fn source() -> Declared<GitParser> {
-    Declared {
+pub fn source() -> DeclaredSource<GitParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: GitParser,
     }
@@ -168,13 +168,13 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Repository> {
 }
 
 /// `--source repository=PATH`: a local repository's commits.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "repository",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
     source: |_| Ok(Box::new(source())),
     reader: Some(|b| {
-        Ok(crate::binding::plain(driver(
+        Ok(crate::binding::stateless(driver(
             b.input.clone(),
             b.settings.host.clone(),
         )))

@@ -17,7 +17,7 @@
 //! commands live mail needs (LOGIN or AUTHENTICATE XOAUTH2, SELECT, UID
 //! FETCH, IDLE, LOGOUT) over TLS (rustls) or, for tests, plain TCP.
 use crate::drivers::{Acquired, DriverError, NewMaterial};
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -54,7 +54,7 @@ pub struct ImapConfig {
     pub token_file: Option<PathBuf>,
     #[serde(default = "default_mailbox")]
     pub mailbox: String,
-    /// Implicit TLS (port 993). Plain TCP only for tests on loopback.
+    /// Implicit TLS (port 993). Stateless TCP only for tests on loopback.
     #[serde(default = "yes")]
     pub tls: bool,
     /// Messages per material.
@@ -407,8 +407,8 @@ impl ImapMail {
     }
 }
 
-pub fn source() -> Declared<super::mail::MailParser> {
-    Declared {
+pub fn source() -> DeclaredSource<super::mail::MailParser> {
+    DeclaredSource {
         spec: SPEC,
         parser: super::mail::MailParser,
     }
@@ -416,7 +416,7 @@ pub fn source() -> Declared<super::mail::MailParser> {
 
 /// `--source imap=CONFIG.json`: live mail from the account CONFIG describes,
 /// the messages new since the last read.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "imap",
     specs: || vec![&SPEC],
     plan: Some(|input, settings| {

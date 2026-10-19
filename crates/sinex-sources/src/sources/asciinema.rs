@@ -21,7 +21,7 @@
 //! is kept. `session.json` restates the header and the capture's own fields;
 //! it is not read.
 use crate::drivers::append_file::AppendFile;
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordContext, RecordError};
 use serde::{Deserialize, Serialize};
@@ -357,15 +357,15 @@ pub fn complete_lines(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     crate::drivers::export_archive::Framing::Lines.frame(bytes, false)
 }
 
-pub fn cast_source() -> Declared<CastParser> {
-    Declared {
+pub fn cast_source() -> DeclaredSource<CastParser> {
+    DeclaredSource {
         spec: CAST,
         parser: CastParser,
     }
 }
 
-pub fn events_source() -> Declared<EventsParser> {
-    Declared {
+pub fn events_source() -> DeclaredSource<EventsParser> {
+    DeclaredSource {
         spec: EVENTS,
         parser: EventsParser,
     }
@@ -381,7 +381,7 @@ pub fn driver(path: PathBuf, host: String, spec: &SourceSpec) -> AppendFile {
 
 /// `--source asciinema=PATH`: each recording directory under PATH, its cast
 /// and the capture's events beside it.
-pub const KIND: crate::binding::Kind = crate::binding::Kind {
+pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "asciinema",
     specs: || vec![&CAST, &EVENTS],
     plan: Some(|input, settings| {

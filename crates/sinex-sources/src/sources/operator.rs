@@ -10,7 +10,7 @@
 //! compares them all.
 use crate::drivers::append_file::AppendFile;
 use crate::drivers::sqlite_rows::SqliteRows;
-use crate::registry::{Declared, Driver, SourceSpec};
+use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::sources::fields;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
@@ -120,8 +120,8 @@ impl Parser for RawLogParser {
     }
 }
 
-pub fn raw_log(zone: jiff::tz::TimeZone) -> Declared<RawLogParser> {
-    Declared {
+pub fn raw_log(zone: jiff::tz::TimeZone) -> DeclaredSource<RawLogParser> {
+    DeclaredSource {
         spec: RAW_LOG,
         parser: RawLogParser { zone },
     }
@@ -195,9 +195,9 @@ impl Parser for SteeringParser {
     }
 }
 
-pub fn steering(table: &'static str) -> Option<Declared<SteeringParser>> {
+pub fn steering(table: &'static str) -> Option<DeclaredSource<SteeringParser>> {
     let spec = STEERING.iter().find(|s| s.parser.ends_with(table))?.clone();
-    Some(Declared {
+    Some(DeclaredSource {
         spec,
         parser: SteeringParser { table },
     })
@@ -218,7 +218,7 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
 
 /// `--source raw-log=PATH`: the operator's raw log, read in the binding's
 /// zone, recorded when it is planned.
-pub const RAW_LOG_KIND: crate::binding::Kind = crate::binding::Kind {
+pub const RAW_LOG_KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "raw-log",
     specs: || vec![&RAW_LOG],
     plan: Some(|input, settings| {
@@ -247,7 +247,7 @@ fn steering_table(b: &crate::binding::Binding) -> Result<&'static str, String> {
 }
 
 /// `--source steering=PATH`: the steering store's three tables.
-pub const STEERING_KIND: crate::binding::Kind = crate::binding::Kind {
+pub const STEERING_KIND: crate::binding::InputKind = crate::binding::InputKind {
     name: "steering",
     specs: || STEERING.iter().collect(),
     plan: Some(|input, settings| {
