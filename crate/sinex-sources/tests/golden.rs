@@ -86,7 +86,10 @@ fn golden_cases() {
     parsers.sort_by_key(|e| e.file_name());
     for parser in parsers {
         let name = parser.file_name().to_string_lossy().into_owned();
-        let mut cases: Vec<_> = std::fs::read_dir(parser.path()).unwrap().flatten().collect();
+        let mut cases: Vec<_> = std::fs::read_dir(parser.path())
+            .unwrap()
+            .flatten()
+            .collect();
         cases.sort_by_key(|e| e.file_name());
         for case in cases {
             let dir = case.path();
@@ -113,5 +116,10 @@ fn golden_cases() {
             }
         }
     }
-    assert!(failures.is_empty(), "{} of {ran} golden cases differ:\n{}", failures.len(), failures.join("\n\n"));
+    assert!(
+        failures.is_empty(),
+        "{} of {ran} golden cases differ:\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
 }
