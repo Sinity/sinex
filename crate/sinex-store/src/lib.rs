@@ -12,6 +12,7 @@ pub mod committed;
 pub mod derived;
 pub mod diagnostics;
 pub mod excision;
+pub mod payloads;
 pub mod positions;
 pub mod privacy;
 pub mod query;
@@ -24,6 +25,9 @@ mod stage;
 pub use admission::{DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, admit};
 pub use blobs::{Blobs, Received};
 pub use hashed_blobs::Verified;
+/// The connection the store's reads take, for crates that call them without
+/// depending on the database driver.
+pub use sqlx::PgConnection as Connection;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

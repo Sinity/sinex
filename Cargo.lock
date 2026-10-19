@@ -4057,9 +4057,15 @@ dependencies = [
 name = "sinex-library"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "devkit",
  "serde",
+ "serde_json",
  "sinex-model",
  "sinex-store",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -4150,11 +4156,13 @@ dependencies = [
  "hashed-blobs",
  "jiff",
  "mailparse",
+ "md-5",
  "notify",
  "proptest",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sinex-model",
  "sinex-protocol",
  "tar",
@@ -4228,6 +4236,7 @@ dependencies = [
  "serde_json",
  "sinex-analysis",
  "sinex-automata",
+ "sinex-library",
  "sinex-model",
  "sinex-protocol",
  "sinex-schema",

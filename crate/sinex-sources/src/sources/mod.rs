@@ -9,6 +9,8 @@ pub mod goodreads;
 pub mod google_takeout;
 pub mod hyprland;
 pub mod journald;
+/// The media library: scans of library roots and library requests.
+pub mod library;
 pub mod mail;
 pub mod messenger;
 pub mod notes;
@@ -67,6 +69,8 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &operator::STEERING[0],
         &operator::STEERING[1],
         &operator::STEERING[2],
+        &library::SCAN,
+        &library::REQUEST,
     ];
     out.extend(sinnix_lake::LANES.iter().map(|l| &l.spec));
     out
@@ -137,6 +141,8 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         p if p == calendar::SPEC.parser => Some(Box::new(calendar::source(
             weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
         ))),
+        p if p == library::SCAN.parser => Some(Box::new(library::scan_source())),
+        p if p == library::REQUEST.parser => Some(Box::new(library::request_source())),
         p => sinnix_lake::LANES
             .iter()
             .find(|l| l.spec.parser == p)

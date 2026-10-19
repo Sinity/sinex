@@ -11,6 +11,7 @@ sinex-model.workspace = true
 sinex-schema.workspace = true
 sinex-store.workspace = true
 sinex-sources.workspace = true
+sinex-library.workspace = true
 sinex-automata.workspace = true
 sinex-analysis.workspace = true
 sinex-protocol.workspace = true

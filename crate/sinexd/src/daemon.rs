@@ -180,6 +180,7 @@ pub async fn run(o: Options) -> Result<(), String> {
         agent_grants: api::agent_grants(&o.api.tokens)
             .map_err(|e| format!("{}: {e}", o.api.tokens.display()))?,
         unlock: Default::default(),
+        host: o.host.clone(),
     };
     let config = api::Config {
         socket: o.api.socket.clone(),

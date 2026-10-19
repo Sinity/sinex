@@ -322,6 +322,32 @@
       ]
     },
     {
+      "name": "library.scan",
+      "driver": "DirSnapshot",
+      "consumer": "the media library",
+      "class": "open",
+      "eventTypes": [
+        "library.acquisition"
+      ]
+    },
+    {
+      "name": "library.request",
+      "driver": "Operator",
+      "consumer": "the media library",
+      "class": "open",
+      "eventTypes": [
+        "library.item",
+        "library.rendition",
+        "library.assignment",
+        "library.collection",
+        "library.entry",
+        "library.rating",
+        "library.comparison",
+        "library.view",
+        "library.dismissal"
+      ]
+    },
+    {
       "name": "desktop.clipboard",
       "driver": "AppendFile",
       "consumer": "recall, prompt provenance",
@@ -498,6 +524,20 @@
       ],
       "outputs": [
         "activity.summary"
+      ]
+    },
+    {
+      "name": "presence.intervals",
+      "kind": "keyed",
+      "inputs": [
+        "presence.span",
+        "command.executed",
+        "command.imported",
+        "window.focused",
+        "workspace.switched"
+      ],
+      "outputs": [
+        "presence.interval"
       ]
     }
   ]

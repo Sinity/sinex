@@ -10,6 +10,7 @@ pub mod code;
 pub mod communication;
 pub mod desktop;
 pub mod health;
+pub mod library;
 pub mod machine;
 pub mod media;
 pub mod operator;
@@ -290,6 +291,17 @@ pub const ALL: &[KindInfo] = &[
     info::<social::VoteCast>(),
     info::<operator::LogEntry>(),
     info::<operator::SteeringRecord>(),
+    // Library
+    info::<library::Acquisition>(),
+    info::<library::Item>(),
+    info::<library::Rendition>(),
+    info::<library::Assignment>(),
+    info::<library::Collection>(),
+    info::<library::Entry>(),
+    info::<library::Rating>(),
+    info::<library::Comparison>(),
+    info::<library::View>(),
+    info::<library::Dismissal>(),
 ];
 
 /// The registered type named `event_type`, for code that holds a type name

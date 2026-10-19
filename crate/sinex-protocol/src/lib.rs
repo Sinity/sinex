@@ -384,6 +384,171 @@ pub const COMMANDS: &[Command] = &[
         access: Access::Read,
         mcp: true,
     },
+    // The media library (architecture §6.6).
+    Command {
+        name: "library-add",
+        summary: "Add a folder or file to the media library: store its bytes, describe it, and make or continue items.",
+        args: &[
+            pos(
+                "path",
+                ArgKind::Text,
+                "the file or folder (read recursively)",
+            ),
+            opt(
+                "reference",
+                ArgKind::Bool,
+                "index by reference only: describe and hash, but do not store the bytes",
+            ),
+        ],
+        access: Access::Agent,
+        mcp: false,
+    },
+    Command {
+        name: "library-item",
+        summary: "One library item: its revisions, renditions, copies on disk, shown tags and properties, ratings, views and collections.",
+        args: &[pos("item", ArgKind::Text, "the item ID")],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "library-tag",
+        summary: "Tag an item (namespace:tag). `-tag` removes an imported tag; the operator's value wins over imports and proposals.",
+        args: &[
+            pos("item", ArgKind::Text, "the item ID"),
+            pos("tag", ArgKind::Text, "the tag, e.g. place:croatia"),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "library-untag",
+        summary: "Withdraw your own assignments of a tag to an item.",
+        args: &[
+            pos("item", ArgKind::Text, "the item ID"),
+            pos("tag", ArgKind::Text, "the tag"),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "library-set",
+        summary: "Set a single-choice property of an item, or set it to empty; replaces your earlier value.",
+        args: &[
+            pos("item", ArgKind::Text, "the item ID"),
+            pos("field", ArgKind::Text, "the property, e.g. medium"),
+            opt("value", ArgKind::Text, "the value; omit with --empty"),
+            opt(
+                "empty",
+                ArgKind::Bool,
+                "set to empty, which stops imported and proposed values showing",
+            ),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "library-collect",
+        summary: "Add an item to the end of a collection, creating the collection if needed.",
+        args: &[
+            pos("collection", ArgKind::Text, "the collection's name"),
+            pos("item", ArgKind::Text, "the item ID"),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "library-uncollect",
+        summary: "Remove an item's entries from a collection (withdrawn, still inspectable).",
+        args: &[
+            pos("collection", ArgKind::Text, "the collection's name"),
+            pos("item", ArgKind::Text, "the item ID"),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "library-collection",
+        summary: "A collection's entries in order, or every collection when no name is given.",
+        args: &[Arg {
+            required: false,
+            ..pos("collection", ArgKind::Text, "the collection's name")
+        }],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "library-rate",
+        summary: "Rate an item on a scale (default: stars out of 5).",
+        args: &[
+            pos("item", ArgKind::Text, "the item ID"),
+            pos("value", ArgKind::Text, "the rating, a number"),
+            opt("scale", ArgKind::Text, "the scale's name (default stars)"),
+            opt("of", ArgKind::Text, "the top of the scale (default 5)"),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "library-compare",
+        summary: "Record that one item is better than another on a scale; rankings are fitted from every comparison.",
+        args: &[
+            pos("winner", ArgKind::Text, "the better item"),
+            pos("loser", ArgKind::Text, "the worse item"),
+            opt("scale", ArgKind::Text, "the scale's name (default overall)"),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "library-rank",
+        summary: "Items ranked by pairwise comparisons on a scale, with the pair worth comparing next.",
+        args: &[opt(
+            "scale",
+            ArgKind::Text,
+            "the scale's name (default overall)",
+        )],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "library-open",
+        summary: "Where to open an item's bytes: a verified copy on disk, or the stored bytes written out.",
+        args: &[
+            pos("item", ArgKind::Text, "the item ID"),
+            opt(
+                "rendition",
+                ArgKind::Text,
+                "a rendition ID instead of the original",
+            ),
+        ],
+        access: Access::Read,
+        mcp: false,
+    },
+    Command {
+        name: "library-viewed",
+        summary: "Record that an item was viewed or played, and for how long.",
+        args: &[
+            pos("item", ArgKind::Text, "the item ID"),
+            opt("seconds", ArgKind::Text, "how long it was open"),
+            opt("player", ArgKind::Text, "the program it was opened with"),
+        ],
+        access: Access::Agent,
+        mcp: false,
+    },
+    Command {
+        name: "library-preview",
+        summary: "Make a preview rendition of an item (a still of a video, a small image).",
+        args: &[pos("item", ArgKind::Text, "the item ID")],
+        access: Access::Agent,
+        mcp: false,
+    },
+    Command {
+        name: "library-import",
+        summary: "Import tags and metadata from sidecar files beside a folder's media (gallery-dl JSON, Hydrus tag text).",
+        args: &[pos("path", ArgKind::Text, "the file or folder")],
+        access: Access::Agent,
+        mcp: false,
+    },
 ];
 
 pub fn command(name: &str) -> Option<&'static Command> {
@@ -527,6 +692,93 @@ pub enum Request {
         #[serde(default)]
         budget: Option<u64>,
     },
+    #[serde(rename = "library-add")]
+    LibraryAdd {
+        path: String,
+        #[serde(default)]
+        reference: Option<bool>,
+    },
+    #[serde(rename = "library-item")]
+    LibraryItem {
+        item: String,
+    },
+    #[serde(rename = "library-tag")]
+    LibraryTag {
+        item: String,
+        tag: String,
+    },
+    #[serde(rename = "library-untag")]
+    LibraryUntag {
+        item: String,
+        tag: String,
+    },
+    #[serde(rename = "library-set")]
+    LibrarySet {
+        item: String,
+        field: String,
+        #[serde(default)]
+        value: Option<String>,
+        #[serde(default)]
+        empty: Option<bool>,
+    },
+    #[serde(rename = "library-collect")]
+    LibraryCollect {
+        collection: String,
+        item: String,
+    },
+    #[serde(rename = "library-uncollect")]
+    LibraryUncollect {
+        collection: String,
+        item: String,
+    },
+    #[serde(rename = "library-collection")]
+    LibraryCollection {
+        #[serde(default)]
+        collection: Option<String>,
+    },
+    #[serde(rename = "library-rate")]
+    LibraryRate {
+        item: String,
+        value: String,
+        #[serde(default)]
+        scale: Option<String>,
+        #[serde(default)]
+        of: Option<String>,
+    },
+    #[serde(rename = "library-compare")]
+    LibraryCompare {
+        winner: String,
+        loser: String,
+        #[serde(default)]
+        scale: Option<String>,
+    },
+    #[serde(rename = "library-rank")]
+    LibraryRank {
+        #[serde(default)]
+        scale: Option<String>,
+    },
+    #[serde(rename = "library-open")]
+    LibraryOpen {
+        item: String,
+        #[serde(default)]
+        rendition: Option<String>,
+    },
+    #[serde(rename = "library-viewed")]
+    LibraryViewed {
+        item: String,
+        #[serde(default)]
+        seconds: Option<String>,
+        #[serde(default)]
+        player: Option<String>,
+    },
+    #[serde(rename = "library-preview")]
+    LibraryPreview {
+        item: String,
+    },
+    #[serde(rename = "library-import")]
+    LibraryImport {
+        path: String,
+    },
 }
 
 impl Request {
@@ -577,6 +829,21 @@ impl Request {
             Request::AnalysisRun { .. } => "analysis-run",
             Request::AnalysisShow { .. } => "analysis-show",
             Request::Brief { .. } => "brief",
+            Request::LibraryAdd { .. } => "library-add",
+            Request::LibraryItem { .. } => "library-item",
+            Request::LibraryTag { .. } => "library-tag",
+            Request::LibraryUntag { .. } => "library-untag",
+            Request::LibrarySet { .. } => "library-set",
+            Request::LibraryCollect { .. } => "library-collect",
+            Request::LibraryUncollect { .. } => "library-uncollect",
+            Request::LibraryCollection { .. } => "library-collection",
+            Request::LibraryRate { .. } => "library-rate",
+            Request::LibraryCompare { .. } => "library-compare",
+            Request::LibraryRank { .. } => "library-rank",
+            Request::LibraryOpen { .. } => "library-open",
+            Request::LibraryViewed { .. } => "library-viewed",
+            Request::LibraryPreview { .. } => "library-preview",
+            Request::LibraryImport { .. } => "library-import",
         }
     }
 

@@ -29,6 +29,8 @@ flate2 = "1"
 csv = "1"
 mailparse = "0.16"
 jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
+sha2 = "0.10"
+md-5 = "0.10"
 
 [dev-dependencies]
 proptest.workspace = true

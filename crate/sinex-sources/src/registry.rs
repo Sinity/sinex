@@ -15,6 +15,9 @@ pub enum Driver {
     DirSnapshot,
     Media,
     Producer,
+    /// Records written through the API by the operator or an agent, stored as
+    /// the request's own bytes (library requests).
+    Operator,
 }
 
 /// Frames complete records in `bytes`: their ranges, and how many bytes they

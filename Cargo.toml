@@ -88,3 +88,10 @@ debug = "line-tables-only"
 
 [profile.dev.package.blake3]
 opt-level = 3
+
+# The library scan hashes every file with SHA-256 and MD5 as well.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.md-5]
+opt-level = 3
