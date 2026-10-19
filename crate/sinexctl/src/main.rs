@@ -103,6 +103,15 @@ fn cli() -> Command {
     }
     app.subcommand(Command::new("mcp").about("Serve the MCP tools on stdin and stdout"))
         .subcommand(
+            Command::new("private")
+                .about("Private mode: while on, no source captures anything")
+                .arg(
+                    Arg::new("state")
+                        .value_parser(["on", "off", "status"])
+                        .default_value("status"),
+                ),
+        )
+        .subcommand(
             Command::new("doctor")
                 .about("Diagnose Sinex without the daemon: database, schema, content store, search index")
                 .arg(Arg::new("database").long("database").required(true))
@@ -228,6 +237,28 @@ async fn main() -> ExitCode {
                 }
                 Err(e) => fail(1, e),
             };
+        }
+        "private" => {
+            let mode = sinex_protocol::private_mode::PrivateMode::default();
+            let state = sub
+                .get_one::<String>("state")
+                .map_or("status", String::as_str);
+            if state != "status"
+                && let Err(e) = mode.set(state == "on")
+            {
+                return fail(1, format!("{}: {e}", mode.path().display()));
+            }
+            let on = mode.on();
+            if json {
+                print_json(&serde_json::json!({ "private_mode": on, "switch": mode.path() }));
+            } else {
+                println!(
+                    "private mode is {} ({})",
+                    if on { "on: nothing is captured" } else { "off" },
+                    mode.path().display()
+                );
+            }
+            return ExitCode::SUCCESS;
         }
         "status" if sub.get_flag("offline") => {
             let Some(database) = sub.get_one::<String>("database") else {

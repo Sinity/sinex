@@ -18,6 +18,8 @@ uuid.workspace = true
 time.workspace = true
 thiserror.workspace = true
 blake3.workspace = true
+regex.workspace = true
+getrandom.workspace = true
 sea-query.workspace = true
 jiff.workspace = true
 

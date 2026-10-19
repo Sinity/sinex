@@ -109,6 +109,7 @@ async fn world() -> World {
         blobs: sinex_store::Blobs::open(&store).unwrap(),
         zone: jiff::tz::TimeZone::UTC,
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
+        agent_grants: vec![],
     };
     let (commits, rx) = watch::channel(0u64);
     let tokens = Tokens::new(Some(READ.into()), Some(AGENT.into()), Some(OPERATOR.into()));
@@ -273,7 +274,7 @@ async fn sql_reads_as_the_reader_role() {
     let (_, body) = call(
         &w,
         Some(READ),
-        json!({"method": "sql", "sql": "SELECT count(*) AS n FROM core.events"}),
+        json!({"method": "sql", "sql": "SELECT count(*) AS n FROM core.visible_events"}),
     )
     .await;
     assert_eq!(body["result"]["rows"], json!([{"n": 1}]), "{body}");
@@ -318,4 +319,88 @@ async fn follow_streams_new_matching_events_once() {
     read_until(&mut body, &mut seen, "cargo build").await;
     assert!(!seen.contains("\"before\""));
     assert_eq!(seen.matches("cargo build").count(), 1);
+}
+
+#[tokio::test]
+async fn guarded_values_follow_the_token() {
+    let w = world().await;
+    // An agent may raise a floor.
+    let (_, body) = call(
+        &w,
+        Some(AGENT),
+        json!({"method": "privacy-class", "source": "terminal.atuin", "class": "guarded"}),
+    )
+    .await;
+    assert_eq!(body["outcome"], json!("ok"), "{body}");
+    admit(&w, &["ssh vault.internal"], 0).await;
+    let rows = |body: &Value| body["result"]["rows"][0].to_string();
+
+    let (_, read) = call(
+        &w,
+        Some(READ),
+        json!({"method": "query", "query": "events"}),
+    )
+    .await;
+    assert_eq!(read["result"]["total"], json!(1), "{read}");
+    assert!(
+        !rows(&read).contains("vault"),
+        "read token sees a guarded value: {read}"
+    );
+    let (_, agent) = call(
+        &w,
+        Some(AGENT),
+        json!({"method": "query", "query": "events"}),
+    )
+    .await;
+    assert!(
+        !rows(&agent).contains("vault"),
+        "agent without a grant: {agent}"
+    );
+    let (_, op) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method": "query", "query": "events"}),
+    )
+    .await;
+    assert!(
+        rows(&op).contains("vault"),
+        "the operator token holds guarded: {op}"
+    );
+    let (_, s) = call(
+        &w,
+        Some(READ),
+        json!({"method": "search", "words": "vault"}),
+    )
+    .await;
+    assert_eq!(
+        s["result"]["total"],
+        json!(0),
+        "search must not match withheld text: {s}"
+    );
+
+    // Lowering a floor weakens protection: the operator's alone.
+    let (_, body) = call(
+        &w,
+        Some(AGENT),
+        json!({"method": "privacy-class", "source": "terminal.atuin", "class": "open"}),
+    )
+    .await;
+    assert_eq!(body["outcome"], json!("refused"), "{body}");
+    let (status, _) = call(
+        &w,
+        Some(AGENT),
+        json!({"method": "privacy-end", "name": "x"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (_, body) = call(
+        &w,
+        Some(AGENT),
+        json!({"method": "privacy-rule", "name": "pw", "source": "terminal.atuin",
+               "matcher": "pattern", "pattern": "PW=\\S+"}),
+    )
+    .await;
+    assert_eq!(body["outcome"], json!("ok"), "{body}");
+    let (_, body) = call(&w, Some(READ), json!({"method": "privacy-verify"})).await;
+    assert_eq!(body["result"]["below_floor"], json!(0), "{body}");
 }

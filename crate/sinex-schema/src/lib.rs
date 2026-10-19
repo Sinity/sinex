@@ -69,6 +69,7 @@ pub fn declarations() -> Vec<String> {
     }
     statements.extend(tables::tables(&Checks::from_model()));
     statements.extend(tables::after_tables());
+    statements.extend(visibility());
     statements.extend(kind_views());
     statements.extend(grants());
     statements
@@ -105,6 +106,35 @@ impl Checks {
     }
 }
 
+/// What a caller may read (architecture §3.5; spec `privacy.md` §4). The
+/// API sets `sinex.grants` on its read connection to the classes the caller's
+/// token holds (`guarded`, and `sealed` while unlocked); an `open` event is
+/// visible to every caller. Every read path goes through these views, so a
+/// guarded value never leaves Sinex for a caller without the grant: the event,
+/// its type and time stay visible, its payload and equivalence key do not.
+fn visibility() -> Vec<String> {
+    vec![
+        "CREATE FUNCTION core.class_visible(class text) RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT class = 'open'
+      OR class = ANY (string_to_array(coalesce(current_setting('sinex.grants', true), ''), ','))
+$$"
+        .to_string(),
+        "CREATE VIEW core.visible_events AS SELECT
+  e.id, e.event_type, e.source, e.run_id, e.material_id, e.anchor, e.ordinal, e.parents,
+  e.ts_orig, e.ts_quality, e.ts_coided, e.ts_persisted, e.commit_seq,
+  CASE WHEN core.class_visible(e.class) THEN e.payload
+       ELSE jsonb_build_object('withheld', e.class) END AS payload,
+  CASE WHEN core.class_visible(e.class) THEN e.equivalence_key END AS equivalence_key,
+  e.reading_order, e.record_hash, e.record_state, e.class, e.support
+FROM core.events e"
+            .to_string(),
+        "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv
+FROM core.search_text s JOIN core.events e ON e.id = s.event_id
+WHERE core.class_visible(e.class)"
+            .to_string(),
+    ]
+}
+
 /// One view per event type with the payload's top-level fields as columns, for
 /// read-only SQL (architecture §3.6, `kinds.<kind>`).
 fn kind_views() -> Vec<String> {
@@ -125,7 +155,7 @@ fn kind_views() -> Vec<String> {
             }
         }
         out.push(format!(
-            "CREATE VIEW kinds.{} AS SELECT {} FROM core.events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
+            "CREATE VIEW kinds.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
             quote_ident(&kind.event_type.replace('.', "_")),
             columns.join(", "),
             kind.event_type
@@ -176,6 +206,11 @@ fn grants() -> Vec<String> {
             "GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO sinex_writer"
         ));
     }
+    // Read-only SQL sees events only through the visibility views.
+    out.push(
+        "REVOKE SELECT ON core.events, reflection.events, core.search_text FROM sinex_reader"
+            .to_string(),
+    );
     out
 }
 
