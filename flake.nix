@@ -43,7 +43,7 @@
         cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "sinex-session" "-p" "sinex-capture" "-p" "xtask" ];
         doCheck = true;
         # Database tests need devkit's server; they run under `xtask test`.
-        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-automata" ];
+        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-derivations" ];
       };
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };

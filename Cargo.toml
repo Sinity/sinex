@@ -1,20 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-    "crate/sinex-macros",
-    "crate/sinex-model",
-    "crate/sinex-protocol",
-    "crate/sinex-schema",
-    "crate/sinex-store",
-    "crate/sinex-sources",
-    "crate/sinex-automata",
-    "crate/sinex-analysis",
-    "crate/sinex-library",
-    "crate/sinexd",
-    "crate/sinex-session",
-    "crate/sinex-capture",
-    "crate/sinexctl",
-    "crate/sinex-offline",
+    "crates/sinex-macros",
+    "crates/sinex-model",
+    "crates/sinex-protocol",
+    "crates/sinex-schema",
+    "crates/sinex-store",
+    "crates/sinex-sources",
+    "crates/sinex-derivations",
+    "crates/sinex-analysis",
+    "crates/sinex-library",
+    "crates/sinexd",
+    "crates/sinex-session",
+    "crates/sinex-capture",
+    "crates/sinexctl",
+    "crates/sinex-diagnostics",
     "xtask",
 ]
 
@@ -64,16 +64,16 @@ devkit = { git = "https://github.com/Sinity/polylogue-sinex-common", tag = "v0.5
 async-nats = "0.47"
 jsonschema = { version = "0.42", default-features = false }
 futures = "0.3"
-sinex-macros = { path = "crate/sinex-macros" }
-sinex-model = { path = "crate/sinex-model" }
-sinex-protocol = { path = "crate/sinex-protocol" }
-sinex-schema = { path = "crate/sinex-schema" }
-sinex-store = { path = "crate/sinex-store" }
-sinex-sources = { path = "crate/sinex-sources" }
-sinex-automata = { path = "crate/sinex-automata" }
-sinex-analysis = { path = "crate/sinex-analysis" }
-sinex-library = { path = "crate/sinex-library" }
-sinex-offline = { path = "crate/sinex-offline" }
+sinex-macros = { path = "crates/sinex-macros" }
+sinex-model = { path = "crates/sinex-model" }
+sinex-protocol = { path = "crates/sinex-protocol" }
+sinex-schema = { path = "crates/sinex-schema" }
+sinex-store = { path = "crates/sinex-store" }
+sinex-sources = { path = "crates/sinex-sources" }
+sinex-derivations = { path = "crates/sinex-derivations" }
+sinex-analysis = { path = "crates/sinex-analysis" }
+sinex-library = { path = "crates/sinex-library" }
+sinex-diagnostics = { path = "crates/sinex-diagnostics" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

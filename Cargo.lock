@@ -4082,7 +4082,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-automata"
+name = "sinex-capture"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde_json",
+ "sinex-model",
+ "sinex-protocol",
+ "sinex-sources",
+ "tokio",
+]
+
+[[package]]
+name = "sinex-derivations"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -4094,14 +4106,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-capture"
+name = "sinex-diagnostics"
 version = "0.1.0"
 dependencies = [
- "clap",
  "serde_json",
  "sinex-model",
- "sinex-protocol",
- "sinex-sources",
+ "sinex-schema",
+ "sinex-store",
+ "time",
  "tokio",
 ]
 
@@ -4146,18 +4158,6 @@ dependencies = [
  "unicode-normalization",
  "unicode-segmentation",
  "uuid",
-]
-
-[[package]]
-name = "sinex-offline"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "sinex-model",
- "sinex-schema",
- "sinex-store",
- "time",
- "tokio",
 ]
 
 [[package]]
@@ -4269,7 +4269,7 @@ dependencies = [
  "jiff",
  "rmcp",
  "serde_json",
- "sinex-offline",
+ "sinex-diagnostics",
  "sinex-protocol",
  "tokio",
 ]
@@ -4294,7 +4294,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-analysis",
- "sinex-automata",
+ "sinex-derivations",
  "sinex-library",
  "sinex-model",
  "sinex-protocol",

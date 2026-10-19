@@ -20,8 +20,8 @@ pub fn cluster_options() -> ClusterOptions {
     }
 }
 
-/// The schema is declared in `crate/sinex-schema`, with its CHECK lists and
-/// typed views generated from `crate/sinex-model`; the server version is part
+/// The schema is declared in `crates/sinex-schema`, with its CHECK lists and
+/// typed views generated from `crates/sinex-model`; the server version is part
 /// of its identity because it decides the catalog.
 pub fn schema_hash(root: &Path) -> Result<String> {
     let version = Command::new("postgres")
@@ -31,9 +31,9 @@ pub fn schema_hash(root: &Path) -> Result<String> {
         .map_err(|e| format!("postgres --version: {e}"))?;
     Ok(devkit::pg::schema_hash(
         &[
-            root.join("crate/sinex-schema/src"),
-            root.join("crate/sinex-model/src"),
-            root.join("crate/sinex-macros/src"),
+            root.join("crates/sinex-schema/src"),
+            root.join("crates/sinex-model/src"),
+            root.join("crates/sinex-macros/src"),
         ],
         &[&version],
     )?)
