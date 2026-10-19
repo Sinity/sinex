@@ -12,6 +12,7 @@ sinex-protocol.workspace = true
 sinex-sources.workspace = true
 clap.workspace = true
 tokio.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

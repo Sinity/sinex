@@ -12,6 +12,7 @@ pub mod committed;
 pub mod derived;
 pub mod diagnostics;
 pub mod excision;
+pub mod media;
 pub mod payloads;
 pub mod positions;
 pub mod privacy;

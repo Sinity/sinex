@@ -37,7 +37,7 @@ pub struct NotificationShown {
 #[event(type = "notification.closed", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct NotificationClosed {
     pub received_at: Timestamp,
-    pub id: u32,
+    pub notification_id: u32,
     /// `expired`, `dismissed`, `closed` (by the sender) or `undefined`.
     pub reason: String,
 }
@@ -47,7 +47,7 @@ pub struct NotificationClosed {
 #[event(type = "notification.action", key = location, replace = repeat, time = received_at, quality = captured)]
 pub struct NotificationAction {
     pub received_at: Timestamp,
-    pub id: u32,
+    pub notification_id: u32,
     pub action: String,
 }
 

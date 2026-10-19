@@ -26,7 +26,7 @@ local function send(line)
   local path = socket_path()
   if not path then return end
   if not chan then
-    local ok, c = pcall(vim.fn.sockconnect, "pipe", path, {})
+    local ok, c = pcall(vim.fn.sockconnect, "pipe", path, vim.empty_dict())
     if not ok or c == 0 then return end
     chan = c
   end

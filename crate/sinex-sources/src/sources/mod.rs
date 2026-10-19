@@ -27,6 +27,8 @@ pub mod notes;
 pub mod notifications;
 pub mod operator;
 pub mod outlook;
+/// The forward crawl of browser-history pages, opt-in per domain.
+pub mod page_crawl;
 pub mod raindrop;
 pub mod reddit;
 /// Commits in local repositories (`code.git`).
@@ -90,6 +92,7 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &clipboard::SPEC,
         &session_socket::SPEC,
         &media_capture::SPEC,
+        &page_crawl::SPEC,
     ];
     out.extend(sinnix_lake::LANES.iter().map(|l| &l.spec));
     out
@@ -167,6 +170,7 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         p if p == clipboard::SPEC.parser => Some(Box::new(clipboard::source())),
         p if p == session_socket::SPEC.parser => Some(Box::new(session_socket::source())),
         p if p == media_capture::SPEC.parser => Some(Box::new(media_capture::source())),
+        p if p == page_crawl::SPEC.parser => Some(Box::new(page_crawl::source())),
         p => sinnix_lake::LANES
             .iter()
             .find(|l| l.spec.parser == p)

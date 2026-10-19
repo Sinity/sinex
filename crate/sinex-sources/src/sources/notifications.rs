@@ -99,12 +99,12 @@ impl Parser for NotificationsParser {
             }
             ("signal", "NotificationClosed") => vec![Notification::Closed(NotificationClosed {
                 received_at,
-                id: id(m.args.first())?,
+                notification_id: id(m.args.first())?,
                 reason: closed_reason(m.args.get(1).and_then(Value::as_u64).unwrap_or(4)).into(),
             })],
             ("signal", "ActionInvoked") => vec![Notification::Action(NotificationAction {
                 received_at,
-                id: id(m.args.first())?,
+                notification_id: id(m.args.first())?,
                 action: text(m.args.get(1)),
             })],
             // Other traffic the rules let through: read, nothing to record.
@@ -158,9 +158,9 @@ mod tests {
     #[test]
     fn signals_become_closed_and_action() {
         let closed = parse(r#"{"type":"signal","member":"NotificationClosed","payload":{"type":"uu","data":[12,2]}}"#);
-        assert!(matches!(&closed[0], Notification::Closed(c) if c.id == 12 && c.reason == "dismissed"));
+        assert!(matches!(&closed[0], Notification::Closed(c) if c.notification_id == 12 && c.reason == "dismissed"));
         let action = parse(r#"{"type":"signal","member":"ActionInvoked","payload":{"type":"us","data":[12,"default"]}}"#);
-        assert!(matches!(&action[0], Notification::Action(a) if a.id == 12 && a.action == "default"));
+        assert!(matches!(&action[0], Notification::Action(a) if a.notification_id == 12 && a.action == "default"));
     }
 
     #[test]

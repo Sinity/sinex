@@ -64,7 +64,7 @@ pub const EXPORT_KINDS: &[&str] = &[
 ];
 
 #[derive(Default)]
-struct Totals {
+pub(crate) struct Totals {
     polls: usize,
     materials: usize,
     material_bytes: usize,
@@ -301,7 +301,7 @@ async fn stored(
     stored_chain(&mut ctx.aux, &ctx.blobs, &cursor).await
 }
 
-async fn drive(
+pub(crate) async fn drive(
     aux: &mut PgConnection,
     handle: &writer::WriterHandle,
     run: RunId,
