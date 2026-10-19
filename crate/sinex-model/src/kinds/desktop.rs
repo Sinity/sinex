@@ -114,6 +114,30 @@ pub struct PresenceSpan {
     pub status: String,
 }
 
+/// Whether the operator was at the machine over an interval, judged from
+/// ActivityWatch's AFK watcher and corroborating input (`y0o3.13`, defect 2).
+/// The watcher misses idle transitions under load, so a long not-afk stretch
+/// with no input is `uncertain`, never silently `present`. Derived per
+/// logical day by the presence derivation; the reported spans stay as read.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "presence.interval", key = ["day", "started_at"], replace = newer, time = started_at, quality = intrinsic)]
+pub struct PresenceInterval {
+    /// The logical day this interval was computed for (intervals are cut at
+    /// day boundaries).
+    pub day: String,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    /// `present`, `absent` or `uncertain`.
+    pub state: String,
+    /// Present, but with less input than the dense threshold: a real but
+    /// quiet stretch (reading, a call), not an artifact.
+    pub sparse: bool,
+    /// ActivityWatch's status for the span (`afk`, `not-afk`).
+    pub reported: String,
+    /// Corroborating input events inside the interval.
+    pub evidence: u32,
+}
+
 /// An ActivityWatch event from a watcher Sinex has no type for yet, kept whole.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(type = "activitywatch.other", key = ["bucket", "row"], replace = newer, time = started_at, quality = intrinsic)]

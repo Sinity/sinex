@@ -17,6 +17,7 @@ use sinex_model::{Event, EventId, Timestamp};
 pub mod fusion;
 pub mod interval;
 pub mod output;
+pub mod presence;
 pub mod session;
 pub mod summary;
 
@@ -210,6 +211,7 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
         Box::new(interval::IntervalLift),
         Box::new(summary::HourlySummary),
         Box::new(summary::DailySummary),
+        Box::new(presence::Presence),
     ]
 }
 

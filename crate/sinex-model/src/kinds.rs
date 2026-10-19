@@ -251,6 +251,7 @@ pub const ALL: &[KindInfo] = &[
     info::<desktop::DesktopOther>(),
     info::<desktop::WindowSpan>(),
     info::<desktop::PresenceSpan>(),
+    info::<desktop::PresenceInterval>(),
     info::<desktop::BrowserTabActive>(),
     info::<desktop::ActivityWatchOther>(),
     // Machine
