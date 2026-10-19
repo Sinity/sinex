@@ -283,6 +283,11 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
     Ok(Applied::Created { version: VERSION })
 }
 
+/// The PostgreSQL schemas Sinex owns, in creation order.
+pub fn schemas() -> &'static [&'static str] {
+    tables::SCHEMAS
+}
+
 /// A comparable description of the database's tables, columns, constraints and
 /// indexes in Sinex's schemas: what the fresh-versus-changes test compares.
 pub async fn catalog(connection: &mut PgConnection) -> Result<Vec<String>, Error> {

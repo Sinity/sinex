@@ -165,6 +165,36 @@ pub fn channels() -> (WriterHandle, Queues) {
     )
 }
 
+/// The session advisory lock only the writer holds, per database.
+const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254; // "sinexWRT"
+
+/// Claim `connection` as the database's one writer (architecture §4; law
+/// L43). A session advisory lock, so it lasts exactly as long as the
+/// connection: a killed writer frees it, a second one is refused.
+///
+/// A writer that was just killed holds the lock until the server notices its
+/// backend is gone, so a restart waits up to [`CLAIM_WAIT`] before refusing.
+pub async fn claim(connection: &mut PgConnection) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + CLAIM_WAIT;
+    loop {
+        let won: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(WRITER_LOCK)
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(|e| format!("database: {e}"))?;
+        if won {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("another sinexd writer is running against this database".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// How long a starting writer waits for a previous writer's lock to go.
+const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Run the writer until every handle is dropped. A failed batch is rolled back
 /// and refused; the writer continues with the next. If the connection is lost
 /// it reconnects to `url` before the next batch.
@@ -202,8 +232,14 @@ pub async fn run_notifying(
         };
         if let Err(WriteError::Refused(_)) = &result
             && connection.ping().await.is_err()
-            && let Ok(fresh) = PgConnection::connect(&url).await
+            && let Ok(mut fresh) = PgConnection::connect(&url).await
         {
+            // The lock went with the lost connection; without it this
+            // process is no longer the writer.
+            if let Err(e) = claim(&mut fresh).await {
+                let _ = job.reply.send(Err(WriteError::Refused(e)));
+                return;
+            }
             connection = fresh;
         }
         if result.is_ok() {
@@ -392,5 +428,69 @@ mod tests {
         );
         drop(handle);
         writer.await.unwrap();
+    }
+
+    /// L12. No silent loss under backpressure: with the writer stalled, far
+    /// more batches than the queues hold are handed over; producers wait
+    /// rather than drop, and once the writer runs each is admitted once.
+    #[tokio::test]
+    async fn a_stalled_writer_makes_producers_wait_and_loses_nothing() {
+        let (_db, url, connection) = crate::testdb::fresh().await;
+        let (handle, queues) = channels();
+        let n = DEPTH * 10;
+        let waits: Vec<_> = (0..n)
+            .map(|i| {
+                let h = handle.clone();
+                tokio::spawn(async move { h.submit(Priority::Bulk, batch(&format!("b{i}"))).await })
+            })
+            .collect();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(
+            waits.iter().all(|w| !w.is_finished()),
+            "nothing completes while the writer is stalled"
+        );
+        let writer = tokio::spawn(run(
+            url,
+            connection,
+            queues,
+            Arc::new(sinex_store::NoDerivations),
+        ));
+        let mut seqs = std::collections::BTreeSet::new();
+        for w in waits {
+            let out = w.await.unwrap().unwrap();
+            assert_eq!(out.admitted, 1);
+            assert!(
+                seqs.insert(out.commit_seq.unwrap().0),
+                "one commit_seq per batch"
+            );
+        }
+        assert_eq!(seqs.len(), n);
+        drop(handle);
+        writer.await.unwrap();
+    }
+
+    /// L43. One writer per database: a second claim is refused while the
+    /// first connection lives, and granted once it is gone.
+    #[tokio::test]
+    async fn only_one_connection_can_claim_the_writer() {
+        let (_db, url, mut first) = crate::testdb::fresh().await;
+        claim(&mut first).await.unwrap();
+        let mut second = PgConnection::connect(&url).await.unwrap();
+        assert!(claim(&mut second).await.is_err());
+        first.close().await.unwrap();
+        // The server frees the lock when the backend exits, a moment after
+        // the client closes.
+        let mut freed = false;
+        for _ in 0..100 {
+            if claim(&mut second).await.is_ok() {
+                freed = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(
+            freed,
+            "the lock is free once the first writer's connection is gone"
+        );
     }
 }
