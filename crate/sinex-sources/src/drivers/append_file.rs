@@ -21,6 +21,12 @@ use std::path::PathBuf;
 
 /// Bytes before the offset whose hash proves the prefix is unchanged.
 const WINDOW: u64 = 4096;
+/// The most bytes one poll reads past its cursor (more only for a single
+/// record longer than this): a file of any size is read in bounded parts.
+#[cfg(not(test))]
+pub const PART: u64 = 64 << 20;
+#[cfg(test)]
+pub const PART: u64 = 4096;
 
 pub use crate::registry::Framer;
 
@@ -47,13 +53,27 @@ pub struct Cursor {
     pub through: usize,
 }
 
-/// The records of the current revision, by content hash, with where each
-/// occurrence was read: what a rewrite is aligned against. Kept for the life
-/// of the source task and rebuilt from the stored materials after a restart
-/// ([`AppendMemory::rebuild`]).
+/// How many record bytes of the current revision the memory keeps: the
+/// newest materials covering at least this much. A rewrite is aligned against
+/// that tail; a record older than it that a rewrite drops is not recognized
+/// as read before (rewrites such as a shell's duplicate expiry touch recent
+/// history). Bounds the memory and a restart's rebuild alike.
+#[cfg(not(test))]
+pub const MEMORY_TAIL: usize = 256 << 20;
+#[cfg(test)]
+pub const MEMORY_TAIL: usize = 4096;
+
+/// The records of the current revision's tail, by content hash, with where
+/// each occurrence was read: what a rewrite is aligned against. Kept for the
+/// life of the source task and rebuilt from the stored materials after a
+/// restart ([`AppendMemory::rebuild`]); bounded by [`MEMORY_TAIL`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppendMemory {
     records: HashMap<[u8; 32], Vec<RecordLocation>>,
+    /// Materials in reading order, with their records' hashes and bytes, so
+    /// the oldest can be dropped when the tail grows past the bound.
+    order: std::collections::VecDeque<(MaterialId, Vec<[u8; 32]>, usize)>,
+    bytes: usize,
 }
 
 impl AppendMemory {
@@ -73,13 +93,36 @@ impl AppendMemory {
     }
 
     fn insert(&mut self, record: &[u8], material: MaterialId, anchor: usize) {
-        self.records
-            .entry(*blake3::hash(record).as_bytes())
-            .or_default()
-            .push(RecordLocation {
-                material,
-                anchor: anchor as u64,
-            });
+        let hash = *blake3::hash(record).as_bytes();
+        self.records.entry(hash).or_default().push(RecordLocation {
+            material,
+            anchor: anchor as u64,
+        });
+        match self.order.back_mut() {
+            Some((m, hashes, n)) if *m == material => {
+                hashes.push(hash);
+                *n += record.len();
+            }
+            _ => self.order.push_back((material, vec![hash], record.len())),
+        }
+        self.bytes += record.len();
+        // Drop whole old materials while the rest still covers the tail.
+        while self.order.len() > 1 {
+            let oldest = self.order.front().map_or(0, |(_, _, n)| *n);
+            if self.bytes - oldest < MEMORY_TAIL {
+                break;
+            }
+            let (old, hashes, n) = self.order.pop_front().expect("checked");
+            for h in hashes {
+                if let Some(held) = self.records.get_mut(&h) {
+                    held.retain(|l| l.material != old);
+                    if held.is_empty() {
+                        self.records.remove(&h);
+                    }
+                }
+            }
+            self.bytes -= n;
+        }
     }
 
     /// Whether an equal record was held, consuming one occurrence of it.
@@ -176,12 +219,34 @@ impl AppendFile {
         };
         file.seek(SeekFrom::Start(start))
             .map_err(|e| DriverError::Io(e.to_string()))?;
-        let mut data = Vec::with_capacity((size - start) as usize);
-        (&mut file)
-            .take(size - start)
-            .read_to_end(&mut data)
-            .map_err(|e| DriverError::Io(e.to_string()))?;
-        let (records, consumed) = (self.framer)(&data);
+        // Read in parts of at most PART bytes, ending on a record boundary,
+        // so a file of any size is read in bounded memory. A record longer
+        // than a part grows the read until it completes; no record is
+        // refused. A rewrite is read whole: aligning it against the previous
+        // revision needs every record to tell which ones vanished.
+        let restart = start == 0 && !cursor.is_null();
+        let available = size - start;
+        let mut want = if restart {
+            available
+        } else {
+            available.min(PART)
+        };
+        let mut data = Vec::new();
+        let (records, consumed) = loop {
+            data.clear();
+            file.seek(SeekFrom::Start(start))
+                .map_err(|e| DriverError::Io(e.to_string()))?;
+            (&mut file)
+                .take(want)
+                .read_to_end(&mut data)
+                .map_err(|e| DriverError::Io(e.to_string()))?;
+            let framed = (self.framer)(&data);
+            if framed.1 > 0 || want >= available {
+                break framed;
+            }
+            want = (want * 2).min(available);
+        };
+        let read_to_end = start + consumed as u64 == size || want >= available;
         let restarted = start == 0 && !cursor.is_null();
         let base = Cursor {
             offset: start,
@@ -252,18 +317,29 @@ impl AppendFile {
                 .read_to_end(&mut head)
                 .map_err(|e| DriverError::Io(e.to_string()))?;
         }
+        // Parts are capped at PART bytes, so this copy is bounded. Each call
+        // hashes only the WINDOW bytes before `end`, never the whole prefix.
         let tail_source = bytes.clone();
+        let material_len = bytes.len();
         let cursor_at = move |end: usize| -> Value {
-            let mut joined = head.clone();
-            joined.extend_from_slice(&tail_source[..end]);
-            let w = &joined[joined.len().saturating_sub(WINDOW as usize)..];
+            let window = WINDOW as usize;
+            let mut w = Vec::with_capacity(window);
+            if end < window {
+                w.extend_from_slice(&head[head.len().saturating_sub(window - end)..]);
+            }
+            w.extend_from_slice(&tail_source[end.saturating_sub(window)..end]);
+            let w = w.as_slice();
             serde_json::to_value(Cursor {
                 offset: start + end as u64,
                 // Only a cursor that covers everything this poll read may
                 // skip an unchanged file. One left between two batches of the
                 // same read has records after it, so it records no file size
                 // and the next poll reads on from its offset.
-                size: if end == tail_source.len() { size } else { 0 },
+                size: if end == material_len && read_to_end {
+                    size
+                } else {
+                    0
+                },
                 mtime_ns: mtime,
                 inode,
                 window: blake3::hash(w).to_hex().to_string(),

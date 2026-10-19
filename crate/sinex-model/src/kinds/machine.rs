@@ -89,13 +89,25 @@ pub struct TerminalSession {
     pub header: Value,
 }
 
-/// One event of a terminal recording: output written (`o`), input typed
-/// (`i`), a resize (`r`), a marker (`m`) or the exit (`x`), at its time.
+/// A span of a terminal recording: consecutive cast events (output, input,
+/// markers) up to a size bound, a resize or the exit, as plain text with
+/// escape sequences removed. The cast stays whole as the material, and the
+/// span's record is its exact byte range there, so the original stream is
+/// replayable from the material; per-event detail is a read over it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "terminal.output", key = location, replace = repeat, time = at, quality = intrinsic)]
+#[event(type = "terminal.output", key = location, replace = repeat, time = started_at, quality = intrinsic)]
 pub struct TerminalOutput {
     pub session: String,
-    pub at: Timestamp,
-    pub code: String,
-    pub data: String,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    /// Cast events in the span.
+    pub events: u32,
+    /// What was written to the terminal (`o` events), escape sequences
+    /// removed.
+    pub output: String,
+    /// What was typed (`i` events), when the recording kept input.
+    pub input: String,
+    /// The last resize (`r`) or the exit status (`x`) the span ends with.
+    pub resize: Option<String>,
+    pub exit: Option<String>,
 }

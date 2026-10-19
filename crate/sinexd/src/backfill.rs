@@ -274,8 +274,9 @@ pub(crate) async fn drive(
         if let Some(reason) = &acquired.observation.unavailable {
             return Err(format!("{binding}: {reason}"));
         }
-        let had_material = acquired.material.as_ref().map(|m| m.bytes.len());
-        let mut batches = drivers::batches(
+        // Batches are submitted as they are drained, so memory holds one
+        // batch at a time, never a whole material's events.
+        let prepared = drivers::prepare(
             source,
             binding,
             run,
@@ -285,14 +286,17 @@ pub(crate) async fn drive(
             Limits::default(),
         )
         .map_err(|e| e.to_string())?;
-        if let Some(s) = &sealing {
-            s.seal(aux, &mut batches).await?;
-        }
+        let had_material = prepared.material_len();
         if let Some(bytes) = had_material {
             totals.materials += 1;
             totals.material_bytes += bytes;
         }
-        for batch in batches {
+        for batch in prepared.batches().map_err(|e| e.to_string())? {
+            let mut one = [batch];
+            if let Some(s) = &sealing {
+                s.seal(aux, &mut one).await?;
+            }
+            let [batch] = one;
             totals.batches += 1;
             totals.events_offered += batch.event_count();
             let t = Instant::now();

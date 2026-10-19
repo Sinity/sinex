@@ -8,7 +8,7 @@ use crate::{DrainInput, Limits, Source};
 use serde_json::Value;
 use sinex_model::{
     Batch, BatchKind, InputRef, MaterialId, MaterialRef, ObservationFacts, ReadingOrder,
-    RecordOutcome, RevisionChange, RunId, SourceProgress,
+    RevisionChange, RunId, SourceProgress,
 };
 
 pub mod api_cursor;
@@ -88,7 +88,9 @@ pub struct NewMaterial {
 /// Turn one poll into admission batches. The material's bytes go to the
 /// content store first; the first batch registers the material, and every
 /// batch carries the cursor and carry after its last record, so a crash
-/// between batches resumes exactly.
+/// between batches resumes exactly. Collects [`Prepared::batches`]; a caller
+/// that submits as it goes uses [`prepare`] and the iterator, so memory holds
+/// one batch rather than a whole material's events.
 pub fn batches(
     source: &dyn Source,
     binding: &str,
@@ -98,124 +100,187 @@ pub fn batches(
     sink: &dyn MaterialSink,
     limits: Limits,
 ) -> Result<Vec<Batch>, DriverError> {
+    let prepared = prepare(source, binding, run, acquired, carry, sink, limits)?;
+    Ok(prepared.batches()?.collect())
+}
+
+/// One poll with its material stored, ready to be drained into batches.
+pub struct Prepared<'s> {
+    source: &'s dyn Source,
+    binding: String,
+    run: RunId,
+    input: InputRef,
+    observation: ObservationFacts,
+    revision: RevisionChange,
+    cursor_unchanged: Value,
+    carry: Value,
+    limits: Limits,
+    material: Option<(NewMaterial, MaterialRef)>,
+}
+
+/// Store the poll's material (if any) and return it ready to drain.
+pub fn prepare<'s>(
+    source: &'s dyn Source,
+    binding: &str,
+    run: RunId,
+    acquired: Acquired,
+    carry: Value,
+    sink: &dyn MaterialSink,
+    limits: Limits,
+) -> Result<Prepared<'s>, DriverError> {
     let spec = source.spec();
-    let progress = |material: Option<MaterialRef>,
-                    cursor: Value,
-                    carry: Value,
-                    observation: ObservationFacts,
-                    revision| {
+    let material = match acquired.material {
+        None => None,
+        Some(m) => {
+            let (blob, length) = match &m.stored_file {
+                Some(path) => {
+                    let length = std::fs::metadata(path)
+                        .map_err(|e| DriverError::Io(format!("{}: {e}", path.display())))?
+                        .len();
+                    (sink.put_file(path).map_err(DriverError::Store)?, length)
+                }
+                None => (
+                    sink.put(&m.bytes).map_err(DriverError::Store)?,
+                    m.bytes.len() as u64,
+                ),
+            };
+            let reference = MaterialRef {
+                id: m.id,
+                input: None,
+                blob,
+                length,
+                part_index: m.part_index,
+                previous_part: m.previous_part,
+                parser: spec.parser.to_owned(),
+                parser_version: spec.parser_version,
+                manifest: m.manifest.clone(),
+            };
+            Some((m, reference))
+        }
+    };
+    Ok(Prepared {
+        source,
+        binding: binding.to_owned(),
+        run,
+        input: acquired.input,
+        observation: acquired.observation,
+        revision: acquired.revision,
+        cursor_unchanged: acquired.cursor_unchanged,
+        carry,
+        limits,
+        material,
+    })
+}
+
+impl Prepared<'_> {
+    /// The material's bytes, if the poll produced one.
+    pub fn material_len(&self) -> Option<usize> {
+        self.material.as_ref().map(|(m, _)| m.bytes.len())
+    }
+
+    fn progress(
+        &self,
+        material: Option<MaterialRef>,
+        cursor: Value,
+        carry: Value,
+        observation: ObservationFacts,
+        revision: RevisionChange,
+    ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
-            binding: binding.to_owned(),
-            input: acquired.input.clone(),
+            binding: self.binding.clone(),
+            input: self.input.clone(),
             observation,
             revision,
             material,
             cursor,
             carry,
         }))
-    };
-    let Some(m) = acquired.material else {
-        return Ok(vec![Batch {
-            run,
-            kind: progress(
-                None,
-                acquired.cursor_unchanged,
-                carry,
-                acquired.observation,
-                acquired.revision,
-            ),
-            records: vec![],
-            archive: vec![],
-        }]);
-    };
-    let (blob, length) = match &m.stored_file {
-        Some(path) => {
-            let length = std::fs::metadata(path)
-                .map_err(|e| DriverError::Io(format!("{}: {e}", path.display())))?
-                .len();
-            (sink.put_file(path).map_err(DriverError::Store)?, length)
-        }
-        None => (
-            sink.put(&m.bytes).map_err(DriverError::Store)?,
-            m.bytes.len() as u64,
-        ),
-    };
-    let material = MaterialRef {
-        id: m.id,
-        input: None,
-        blob,
-        length,
-        part_index: m.part_index,
-        previous_part: m.previous_part,
-        parser: spec.parser.to_owned(),
-        parser_version: spec.parser_version,
-        manifest: m.manifest.clone(),
-    };
-    let limits = if m.aligned {
-        Limits {
-            max_events: usize::MAX,
-            max_bytes: usize::MAX,
-        }
-    } else {
-        limits
-    };
-    let chunks = source
-        .drain(DrainInput {
-            source: spec.name,
-            class: spec.class,
-            material: m.id,
-            bytes: &m.bytes,
-            records: &m.records,
-            carry,
-            reading_order: &*m.reading_order,
-            limits,
-            manifest: &m.manifest,
-        })
-        .map_err(|e| DriverError::Carry(e.0))?;
-    let mut out = Vec::with_capacity(chunks.len());
-    let mut first = true;
-    let count = chunks.len();
-    for (i, chunk) in chunks.into_iter().enumerate() {
-        // After the last chunk the whole material is read, records skipped as
-        // already read included.
-        let end = if i + 1 == count {
-            m.bytes.len()
-        } else {
-            chunk.end
-        };
-        let (observation, revision) = if first {
-            (acquired.observation.clone(), acquired.revision)
-        } else {
-            (
-                ObservationFacts {
-                    changed: false,
-                    ..acquired.observation.clone()
-                },
-                RevisionChange::Same,
-            )
-        };
-        let records: Vec<RecordOutcome> = chunk.outcomes;
-        out.push(Batch {
-            run,
-            kind: progress(
-                first.then(|| material.clone()),
-                (m.cursor_at)(end),
-                chunk.carry,
-                observation,
-                revision,
-            ),
-            records,
-            archive: if first && !m.vanished.is_empty() {
-                vec![sinex_model::ArchiveRequest::RemovedAtSource {
-                    locations: m.vanished.clone(),
-                }]
-            } else {
-                vec![]
-            },
-        });
-        first = false;
     }
-    Ok(out)
+
+    /// The admission batches, produced one at a time as they are taken.
+    pub fn batches(&self) -> Result<Box<dyn Iterator<Item = Batch> + Send + '_>, DriverError> {
+        let Some((m, material)) = &self.material else {
+            let batch = Batch {
+                run: self.run,
+                kind: self.progress(
+                    None,
+                    self.cursor_unchanged.clone(),
+                    self.carry.clone(),
+                    self.observation.clone(),
+                    self.revision,
+                ),
+                records: vec![],
+                archive: vec![],
+            };
+            return Ok(Box::new(std::iter::once(batch)));
+        };
+        let spec = self.source.spec();
+        let limits = if m.aligned {
+            Limits {
+                max_events: usize::MAX,
+                max_bytes: usize::MAX,
+            }
+        } else {
+            self.limits
+        };
+        let mut chunks = self
+            .source
+            .drainer(DrainInput {
+                source: spec.name,
+                class: spec.class,
+                material: m.id,
+                bytes: &m.bytes,
+                records: &m.records,
+                carry: self.carry.clone(),
+                reading_order: &*m.reading_order,
+                limits,
+                manifest: &m.manifest,
+            })
+            .map_err(|e| DriverError::Carry(e.0))?
+            .peekable();
+        let mut first = true;
+        Ok(Box::new(std::iter::from_fn(move || {
+            let chunk = chunks.next()?;
+            // After the last chunk the whole material is read, records
+            // skipped as already read included.
+            let end = if chunks.peek().is_none() {
+                m.bytes.len()
+            } else {
+                chunk.end
+            };
+            let (observation, revision) = if first {
+                (self.observation.clone(), self.revision)
+            } else {
+                (
+                    ObservationFacts {
+                        changed: false,
+                        ..self.observation.clone()
+                    },
+                    RevisionChange::Same,
+                )
+            };
+            let batch = Batch {
+                run: self.run,
+                kind: self.progress(
+                    first.then(|| material.clone()),
+                    (m.cursor_at)(end),
+                    chunk.carry,
+                    observation,
+                    revision,
+                ),
+                records: chunk.outcomes,
+                archive: if first && !m.vanished.is_empty() {
+                    vec![sinex_model::ArchiveRequest::RemovedAtSource {
+                        locations: m.vanished.clone(),
+                    }]
+                } else {
+                    vec![]
+                },
+            };
+            first = false;
+            Some(batch)
+        })))
+    }
 }
 
 /// Which of two readings of a record is newer, as the material's manifest
@@ -270,3 +335,6 @@ pub fn file_facts(path: &std::path::Path) -> std::io::Result<ObservationFacts> {
         unavailable: None,
     })
 }
+
+#[cfg(test)]
+mod tests;

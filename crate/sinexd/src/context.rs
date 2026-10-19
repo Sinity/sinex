@@ -158,9 +158,12 @@ impl MaterialSink for SealingSink {
 
 /// The stored bytes of the chain ending at the cursor's last material, for
 /// rebuilding a driver's memory after a restart; empty before the first read.
-/// The last material is cut at the cursor's `through`: bytes after it were
-/// stored but their readings never committed, so the driver must read them
-/// again.
+/// Only the chain's tail is read, newest material first, until it covers
+/// `sinex_sources::drivers::append_file::MEMORY_TAIL` bytes, so a restart
+/// costs bounded memory whatever the chain's length; the driver's memory
+/// holds no more than that tail either. The last material is cut at the
+/// cursor's `through`: bytes after it were stored but their readings never
+/// committed, so the driver must read them again.
 pub async fn stored_chain(
     aux: &mut PgConnection,
     blobs: &Blobs,
@@ -176,20 +179,26 @@ pub async fn stored_chain(
     let names = sinex_store::replay::chain_ending(aux, last)
         .await
         .map_err(|e| e.to_string())?;
-    let mut chain: Vec<(MaterialId, Vec<u8>)> = names
-        .iter()
-        .map(|(id, n)| {
-            blobs
-                .read(n)
-                .map(|bytes| (MaterialId(*id), bytes))
-                .map_err(|e| e.to_string())
-        })
-        .collect::<Result<_, _>>()?;
-    if let (Some((_, last)), Some(through)) = (
-        chain.last_mut(),
-        cursor.get("through").and_then(serde_json::Value::as_u64),
-    ) {
-        last.truncate(usize::try_from(through).unwrap_or(usize::MAX));
+    let through = cursor
+        .get("through")
+        .and_then(serde_json::Value::as_u64)
+        .map(|t| usize::try_from(t).unwrap_or(usize::MAX));
+    let budget = sinex_sources::drivers::append_file::MEMORY_TAIL;
+    let mut chain = Vec::new();
+    let mut covered = 0usize;
+    for (i, (id, name)) in names.iter().enumerate().rev() {
+        let mut bytes = blobs.read(name).map_err(|e| e.to_string())?;
+        if i + 1 == names.len()
+            && let Some(through) = through
+        {
+            bytes.truncate(through);
+        }
+        covered += bytes.len();
+        chain.push((MaterialId(*id), bytes));
+        if covered >= budget {
+            break;
+        }
     }
+    chain.reverse();
     Ok(chain)
 }

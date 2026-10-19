@@ -151,3 +151,75 @@ fn missing_file_is_unavailable_not_empty() {
     assert!(a.observation.unavailable.is_some());
     assert!(a.material.is_none());
 }
+
+#[test]
+fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
+    let path = temp("h");
+    let mut text = String::new();
+    for i in 0..5000 {
+        text.push_str(&format!("record-{i:05}\n"));
+    }
+    // One record longer than a part is read whole, never refused.
+    text.push_str(&format!("{}\n", "y".repeat(3 * PART as usize)));
+    std::fs::write(&path, text.as_bytes()).unwrap();
+    let d = AppendFile {
+        path: path.clone(),
+        host: "h".into(),
+        framer: lines,
+    };
+    let mut memory = AppendMemory::default();
+    let mut cursor = Value::Null;
+    let mut read = Vec::new();
+    let mut polls = 0;
+    loop {
+        let a = d.poll(&cursor, &mut memory).unwrap();
+        let Some(m) = &a.material else { break };
+        polls += 1;
+        assert!(
+            m.bytes.len() as u64 <= PART || m.records.len() == 1,
+            "a part holds at most PART bytes unless one record is longer"
+        );
+        read.extend(records(&a));
+        cursor = (m.cursor_at)(m.bytes.len());
+    }
+    assert!(polls > 10, "read in parts, not at once ({polls})");
+    assert_eq!(read.concat(), text);
+}
+
+#[test]
+fn the_memory_keeps_a_bounded_tail_of_whole_materials() {
+    let mut memory = AppendMemory::default();
+    let record = [b'r'; 100];
+    let mut first = None;
+    for m in 0..100 {
+        let id = MaterialId::new();
+        first.get_or_insert(id);
+        for i in 0..10 {
+            let mut r = record.to_vec();
+            r.extend_from_slice(format!("{m}-{i}\n").as_bytes());
+            memory.insert(&r, id, i * 110);
+        }
+    }
+    // 100 materials of ~1 KB each: only the newest few are kept.
+    assert!(
+        memory.bytes < MEMORY_TAIL + 2_000,
+        "{} bytes kept",
+        memory.bytes
+    );
+    assert!(memory.bytes >= MEMORY_TAIL);
+    assert!(memory.order.len() < 10);
+    let first = first.unwrap();
+    assert!(
+        memory
+            .records
+            .values()
+            .flatten()
+            .all(|l| l.material != first),
+        "the oldest material's records are gone"
+    );
+    let held: usize = memory.records.values().map(Vec::len).sum();
+    assert_eq!(
+        held,
+        memory.order.iter().map(|(_, h, _)| h.len()).sum::<usize>()
+    );
+}
