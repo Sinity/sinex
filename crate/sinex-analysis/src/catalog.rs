@@ -16,6 +16,8 @@ const SPOTIFY: &[&str] = &["media.spotify-history"];
 const GIT: &[&str] = &["code.git"];
 const JOURNALD: &[&str] = &["machine.journald"];
 const CHROMIUM: &[&str] = &["browser.chromium-visits"];
+const IRC: &[&str] = &["communication.weechat-log"];
+const MAIL: &[&str] = &["communication.mbox", "communication.maildir"];
 
 const EXIT_KNOWN: Predicate = Predicate::Present { field: "exit_code" };
 const EXIT_FAILED: Predicate = Predicate::All {
@@ -30,6 +32,10 @@ const EXIT_FAILED: Predicate = Predicate::All {
 const NOT_AFK: Predicate = Predicate::Eq {
     field: "status",
     value: Lit::Str("not-afk"),
+};
+const SAID: Predicate = Predicate::OneOf {
+    field: "kind",
+    values: &["message", "action"],
 };
 /// syslog priorities 0-3: emergency, alert, critical, error.
 const JOURNAL_ERROR: Predicate = Predicate::Le {
@@ -191,6 +197,40 @@ pub const WEB_VISITS: MetricDef = MetricDef {
     )
 };
 
+pub const GIT_REPOSITORIES: MetricDef = MetricDef {
+    opportunity: OpportunityRule::Sources(GIT),
+    ..day(
+        "git.repositories",
+        "Repositories committed to",
+        "git.commit",
+        AggLaw::Distinct {
+            field: "repository",
+        },
+    )
+};
+
+pub const CHAT_LINES: MetricDef = MetricDef {
+    filter: Some(SAID),
+    opportunity: OpportunityRule::Sources(IRC),
+    dimensions: &["buffer"],
+    ..day(
+        "chat.lines",
+        "Chat lines said (messages and actions)",
+        "chat.message",
+        AggLaw::Count,
+    )
+};
+
+pub const MAIL_MESSAGES: MetricDef = MetricDef {
+    opportunity: OpportunityRule::AnyOf(MAIL),
+    ..day(
+        "mail.messages",
+        "Mail messages",
+        "mail.message",
+        AggLaw::Count,
+    )
+};
+
 /// Every shipped metric.
 pub const METRICS: &[MetricDef] = &[
     SHELL_COMMANDS,
@@ -202,6 +242,9 @@ pub const METRICS: &[MetricDef] = &[
     MUSIC_SECONDS,
     MUSIC_PLAYS,
     GIT_COMMITS,
+    GIT_REPOSITORIES,
+    CHAT_LINES,
+    MAIL_MESSAGES,
     JOURNAL_ERRORS,
     WEB_VISITS,
 ];
@@ -221,7 +264,10 @@ pub fn completeness(source: &str) -> Completeness {
         "terminal.atuin-history"
         | "terminal.zsh-history"
         | "code.git"
-        | "browser.chromium-visits" => Completeness::Sample,
+        | "browser.chromium-visits"
+        | "communication.weechat-log"
+        | "communication.mbox"
+        | "communication.maildir" => Completeness::Sample,
         _ => Completeness::Unknown,
     }
 }

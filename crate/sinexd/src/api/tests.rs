@@ -496,3 +496,65 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
     let (_, shredded) = call(&w, Some(OPERATOR), query).await;
     assert!(!first(&shredded).contains("diary"), "shredded: {shredded}");
 }
+
+#[tokio::test]
+async fn analysis_calls_run_store_and_brief_through_the_api() {
+    let w = world().await;
+    let (status, body) = call(&w, Some(READ), json!({"method": "analysis-catalog"})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["result"]["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == "shell.commands")
+    );
+
+    let run = json!({"method": "analysis-run", "recipe": "deviations", "from": "2026-09-01", "to": "2026-09-30"});
+    let (status, _) = call(&w, Some(READ), run.clone()).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "running stores a product: agent access"
+    );
+    let (status, body) = call(&w, Some(AGENT), run).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["result"]["result"].as_str().unwrap().to_owned();
+    let (status, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "analysis-show", "result": id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["result"]["status"], "not_estimable",
+        "nothing observed: an answer, not a number"
+    );
+
+    let (status, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "brief", "day": "2026-09-14"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let text = body["result"]["text"].as_str().unwrap();
+    assert!(
+        text.contains("## Data quality") && text.contains("days 04:00 UTC"),
+        "{text}"
+    );
+
+    let (_, body) = call(
+        &w,
+        Some(AGENT),
+        json!({"method": "analysis-run", "recipe": "astrology", "from": "2026-09-01", "to": "2026-09-02"}),
+    )
+    .await;
+    assert!(
+        body["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("no recipe astrology")
+    );
+}

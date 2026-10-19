@@ -49,6 +49,21 @@ impl Settings {
         })
     }
 
+    /// The API's day setting. A zone without an IANA name (a bare offset)
+    /// cannot be stored as a setting, so it is refused rather than guessed.
+    pub fn from_api(
+        zone: &jiff::tz::TimeZone,
+        day_start: jiff::civil::Time,
+    ) -> Result<Self, String> {
+        let name = zone
+            .iana_name()
+            .ok_or("the daemon's zone has no IANA name; start it with --zone")?;
+        Self::new(
+            name,
+            &format!("{:02}:{:02}", day_start.hour(), day_start.minute()),
+        )
+    }
+
     pub fn operator_default() -> Self {
         Self::new("Europe/Warsaw", "04:00").expect("the operator's default day setting is valid")
     }
