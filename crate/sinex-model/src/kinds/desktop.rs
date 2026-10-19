@@ -164,3 +164,28 @@ pub struct BrowserTabActive {
     pub audible: Option<bool>,
     pub tab_count: Option<i64>,
 }
+
+/// One sample of a window-sampling tracker (arbtt): every open window, which
+/// one was active, and how long input had been idle, taken every `rate_ms`.
+/// The sample's place in the log is its identity.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(type = "window.sampled", key = location, replace = repeat, time = sampled_at, quality = intrinsic)]
+pub struct WindowSampled {
+    pub sampled_at: Timestamp,
+    /// The sampling interval the tracker recorded.
+    pub rate_ms: i64,
+    /// Milliseconds since the last keyboard or mouse input.
+    pub idle_ms: i64,
+    /// The active window's title and program, when one was active.
+    pub active_title: Option<String>,
+    pub active_program: Option<String>,
+    pub desktop: Option<String>,
+    pub windows: Vec<SampledWindow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SampledWindow {
+    pub active: bool,
+    pub title: String,
+    pub program: String,
+}
