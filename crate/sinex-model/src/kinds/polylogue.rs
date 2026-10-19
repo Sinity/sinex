@@ -10,18 +10,19 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// One unit of a Polylogue archive's rows. The archive's write counter at the
-/// unit (`local_seq`) and at the unit published before it (`prev_local_seq`,
-/// 0 for the first) let Sinex tell a gap from a missing unit: everything up
-/// to the largest `local_seq` whose chain of `prev_local_seq` reaches 0 is
-/// held whole.
+/// One unit of a Polylogue archive's rows. Units are numbered 1, 2, 3… in
+/// the archive's write order (`local_seq`, the write counter, then unit kind
+/// and key, since one write can store several units). The archive only
+/// appends to that order, so a unit's position never changes, and Sinex
+/// holds the archive whole up to the first missing position.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "polylogue.rows", key = ["archive", "local_seq"], replace = repeat)]
+#[event(type = "polylogue.rows", key = ["archive", "position"], replace = repeat)]
 pub struct PolylogueRows {
     /// The archive's identity (a UUID), so two archives never collide.
     pub archive: String,
+    pub position: u64,
+    /// The archive's write counter at the unit.
     pub local_seq: i64,
-    pub prev_local_seq: i64,
     /// `revision`, `note`, `excision`, `setting` or `delivery`.
     pub unit: String,
     /// The unit's own key: `<input>/<number>` for a revision, the row ID
@@ -43,7 +44,7 @@ mod tests {
     use crate::{EventPayload, KeyKind, ReplaceRule};
 
     #[test]
-    fn a_unit_is_keyed_by_archive_and_write_counter_and_never_replaced() {
+    fn a_unit_is_keyed_by_archive_and_position_and_never_replaced() {
         assert_eq!(PolylogueRows::EVENT_TYPE, "polylogue.rows");
         assert!(matches!(
             PolylogueRows::REPLACE,
@@ -51,6 +52,6 @@ mod tests {
         ));
         assert!(matches!(PolylogueRows::KEY, KeyKind::Fields(_)));
         let schema = PolylogueRows::payload_schema();
-        assert!(schema.to_string().contains("prev_local_seq"));
+        assert!(schema.to_string().contains("position"));
     }
 }
