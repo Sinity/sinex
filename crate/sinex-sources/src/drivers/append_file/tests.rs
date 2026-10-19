@@ -152,6 +152,9 @@ fn missing_file_is_unavailable_not_empty() {
     assert!(a.material.is_none());
 }
 
+/// A small part, so a small file spans many.
+const PART_SIZE: u64 = 4096;
+
 #[test]
 fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
     let path = temp("h");
@@ -160,7 +163,7 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
         text.push_str(&format!("record-{i:05}\n"));
     }
     // One record longer than a part is read whole, never refused.
-    text.push_str(&format!("{}\n", "y".repeat(3 * PART as usize)));
+    text.push_str(&format!("{}\n", "y".repeat(3 * PART_SIZE as usize)));
     std::fs::write(&path, text.as_bytes()).unwrap();
     let d = AppendFile {
         path: path.clone(),
@@ -172,12 +175,12 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
     let mut read = Vec::new();
     let mut polls = 0;
     loop {
-        let a = d.poll(&cursor, &mut memory).unwrap();
+        let a = d.poll_in_parts(&cursor, &mut memory, PART_SIZE).unwrap();
         let Some(m) = &a.material else { break };
         polls += 1;
         assert!(
-            m.bytes.len() as u64 <= PART || m.records.len() == 1,
-            "a part holds at most PART bytes unless one record is longer"
+            m.bytes.len() as u64 <= PART_SIZE || m.records.len() == 1,
+            "a part holds at most PART_SIZE bytes unless one record is longer"
         );
         read.extend(records(&a));
         cursor = (m.cursor_at)(m.bytes.len());
@@ -187,27 +190,21 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
 }
 
 #[test]
-fn the_memory_keeps_a_bounded_tail_of_whole_materials() {
+fn the_memory_keeps_a_bounded_tail_of_the_newest_records() {
     let mut memory = AppendMemory::default();
-    let record = [b'r'; 100];
     let mut first = None;
     for m in 0..100 {
         let id = MaterialId::new();
         first.get_or_insert(id);
         for i in 0..10 {
-            let mut r = record.to_vec();
+            let mut r = vec![b'r'; 1000];
             r.extend_from_slice(format!("{m}-{i}\n").as_bytes());
-            memory.insert(&r, id, i * 110);
+            memory.insert(&r, id, i * 1010);
         }
     }
-    // 100 materials of ~1 KB each: only the newest few are kept.
-    assert!(
-        memory.bytes < MEMORY_TAIL + 2_000,
-        "{} bytes kept",
-        memory.bytes
-    );
-    assert!(memory.bytes >= MEMORY_TAIL);
-    assert!(memory.order.len() < 10);
+    // 1000 records of ~1 KB: held by bytes, the newest only.
+    assert!(memory.bytes <= MEMORY_TAIL, "{} bytes kept", memory.bytes);
+    assert!(memory.bytes + 1010 > MEMORY_TAIL);
     let first = first.unwrap();
     assert!(
         memory
@@ -215,11 +212,24 @@ fn the_memory_keeps_a_bounded_tail_of_whole_materials() {
             .values()
             .flatten()
             .all(|l| l.material != first),
-        "the oldest material's records are gone"
+        "the oldest records are gone"
     );
     let held: usize = memory.records.values().map(Vec::len).sum();
-    assert_eq!(
-        held,
-        memory.order.iter().map(|(_, h, _)| h.len()).sum::<usize>()
-    );
+    assert_eq!(held, memory.order.len());
+}
+
+#[test]
+fn short_records_are_bounded_by_count_within_one_material() {
+    let mut memory = AppendMemory::default();
+    let id = MaterialId::new();
+    for i in 0..1000 {
+        memory.insert(format!("{i}\n").as_bytes(), id, i * 4);
+    }
+    // 1000 records of 2-4 bytes in one material: far under the byte tail,
+    // held by count.
+    assert_eq!(memory.order.len(), MEMORY_RECORDS);
+    let held: usize = memory.records.values().map(Vec::len).sum();
+    assert_eq!(held, MEMORY_RECORDS);
+    assert!(memory.take(b"999\n"), "the newest record is held");
+    assert!(!memory.take(b"0\n"), "the oldest is not");
 }

@@ -236,14 +236,17 @@ impl Prepared<'_> {
                 limits,
                 manifest: &m.manifest,
             })
-            .map_err(|e| DriverError::Carry(e.0))?
-            .peekable();
+            .map_err(|e| DriverError::Carry(e.0))?;
+        // Only the last chunk ends at the last record's end. Told this way,
+        // not by peeking, so the next chunk is not built before this one is
+        // taken.
+        let last_end = m.records.last().map_or(0, |r| r.1);
         let mut first = true;
         Ok(Box::new(std::iter::from_fn(move || {
             let chunk = chunks.next()?;
             // After the last chunk the whole material is read, records
             // skipped as already read included.
-            let end = if chunks.peek().is_none() {
+            let end = if chunk.end >= last_end {
                 m.bytes.len()
             } else {
                 chunk.end

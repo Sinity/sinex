@@ -23,10 +23,7 @@ use std::path::PathBuf;
 const WINDOW: u64 = 4096;
 /// The most bytes one poll reads past its cursor (more only for a single
 /// record longer than this): a file of any size is read in bounded parts.
-#[cfg(not(test))]
 pub const PART: u64 = 64 << 20;
-#[cfg(test)]
-pub const PART: u64 = 4096;
 
 pub use crate::registry::Framer;
 
@@ -53,26 +50,33 @@ pub struct Cursor {
     pub through: usize,
 }
 
-/// How many record bytes of the current revision the memory keeps: the
-/// newest materials covering at least this much. A rewrite is aligned against
-/// that tail; a record older than it that a rewrite drops is not recognized
-/// as read before (rewrites such as a shell's duplicate expiry touch recent
-/// history). Bounds the memory and a restart's rebuild alike.
+/// How much of the current revision the memory keeps: its newest records, at
+/// most this many record bytes and this many records (a record costs about
+/// 100 bytes of memory whatever its length, so short lines are bounded by
+/// count). A rewrite is aligned against that tail; a record older than it
+/// that a rewrite drops is not recognized as read before (rewrites such as a
+/// shell's duplicate expiry touch recent history), and one it keeps is read
+/// again as a repeat. Bounds the memory and a restart's rebuild alike.
 #[cfg(not(test))]
-pub const MEMORY_TAIL: usize = 256 << 20;
+pub const MEMORY_TAIL: usize = 16 << 20;
 #[cfg(test)]
 pub const MEMORY_TAIL: usize = 4096;
+#[cfg(not(test))]
+pub const MEMORY_RECORDS: usize = 200_000;
+#[cfg(test)]
+pub const MEMORY_RECORDS: usize = 40;
 
 /// The records of the current revision's tail, by content hash, with where
 /// each occurrence was read: what a rewrite is aligned against. Kept for the
 /// life of the source task and rebuilt from the stored materials after a
-/// restart ([`AppendMemory::rebuild`]); bounded by [`MEMORY_TAIL`].
+/// restart ([`AppendMemory::rebuild`]); bounded by [`MEMORY_TAIL`] and
+/// [`MEMORY_RECORDS`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppendMemory {
     records: HashMap<[u8; 32], Vec<RecordLocation>>,
-    /// Materials in reading order, with their records' hashes and bytes, so
-    /// the oldest can be dropped when the tail grows past the bound.
-    order: std::collections::VecDeque<(MaterialId, Vec<[u8; 32]>, usize)>,
+    /// Every held record in reading order, with its length, so the oldest
+    /// is dropped first when the tail grows past a bound.
+    order: std::collections::VecDeque<([u8; 32], RecordLocation, usize)>,
     bytes: usize,
 }
 
@@ -94,34 +98,26 @@ impl AppendMemory {
 
     fn insert(&mut self, record: &[u8], material: MaterialId, anchor: usize) {
         let hash = *blake3::hash(record).as_bytes();
-        self.records.entry(hash).or_default().push(RecordLocation {
+        let location = RecordLocation {
             material,
             anchor: anchor as u64,
-        });
-        match self.order.back_mut() {
-            Some((m, hashes, n)) if *m == material => {
-                hashes.push(hash);
-                *n += record.len();
-            }
-            _ => self.order.push_back((material, vec![hash], record.len())),
-        }
+        };
+        self.records.entry(hash).or_default().push(location);
+        self.order.push_back((hash, location, record.len()));
         self.bytes += record.len();
-        // Drop whole old materials while the rest still covers the tail.
-        while self.order.len() > 1 {
-            let oldest = self.order.front().map_or(0, |(_, _, n)| *n);
-            if self.bytes - oldest < MEMORY_TAIL {
-                break;
-            }
-            let (old, hashes, n) = self.order.pop_front().expect("checked");
-            for h in hashes {
-                if let Some(held) = self.records.get_mut(&h) {
-                    held.retain(|l| l.material != old);
-                    if held.is_empty() {
-                        self.records.remove(&h);
-                    }
+        while self.order.len() > MEMORY_RECORDS
+            || (self.bytes > MEMORY_TAIL && self.order.len() > 1)
+        {
+            let (hash, location, n) = self.order.pop_front().expect("not empty");
+            self.bytes -= n;
+            if let Some(held) = self.records.get_mut(&hash) {
+                if let Some(i) = held.iter().position(|l| *l == location) {
+                    held.remove(i);
+                }
+                if held.is_empty() {
+                    self.records.remove(&hash);
                 }
             }
-            self.bytes -= n;
         }
     }
 
@@ -159,6 +155,16 @@ impl AppendFile {
     }
 
     pub fn poll(&self, cursor: &Value, memory: &mut AppendMemory) -> Result<Acquired, DriverError> {
+        self.poll_in_parts(cursor, memory, PART)
+    }
+
+    /// [`poll`](Self::poll) reading at most `part` bytes past the cursor.
+    pub fn poll_in_parts(
+        &self,
+        cursor: &Value,
+        memory: &mut AppendMemory,
+        part: u64,
+    ) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -229,7 +235,7 @@ impl AppendFile {
         let mut want = if restart {
             available
         } else {
-            available.min(PART)
+            available.min(part.max(1))
         };
         let mut data = Vec::new();
         let (records, consumed) = loop {
