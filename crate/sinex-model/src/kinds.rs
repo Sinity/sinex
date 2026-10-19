@@ -15,6 +15,7 @@ pub mod machine;
 pub mod media;
 pub mod operator;
 pub mod polylogue;
+pub mod session;
 pub mod social;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -253,6 +254,17 @@ pub const ALL: &[KindInfo] = &[
     info::<desktop::WorkspaceSwitched>(),
     info::<desktop::MonitorFocused>(),
     info::<desktop::DesktopOther>(),
+    // Session
+    info::<session::NotificationShown>(),
+    info::<session::NotificationClosed>(),
+    info::<session::NotificationAction>(),
+    info::<session::ClipboardCopied>(),
+    info::<session::PlayerChanged>(),
+    info::<session::EditorEvent>(),
+    info::<session::TerminalEvent>(),
+    info::<session::MediaSegment>(),
+    info::<session::ScreenText>(),
+    info::<session::PageFetched>(),
     info::<desktop::WindowSpan>(),
     info::<desktop::PresenceSpan>(),
     info::<desktop::PresenceInterval>(),

@@ -18,7 +18,7 @@ pub mod export_archive;
 pub mod live_stream;
 pub mod producer;
 pub mod sqlite_rows;
-pub mod todo;
+pub mod media;
 
 /// Where drivers put a material's bytes: the content store. Implemented by the
 /// daemon over `sinex-store`'s `Blobs`, so this crate does no database IO.

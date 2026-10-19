@@ -1,0 +1,208 @@
+//! Media players (MPRIS) on the session bus: each player's `PropertiesChanged`
+//! on `org.mpris.MediaPlayer2.Player`, and the bus's `NameOwnerChanged` for
+//! player names so a change can be attributed to the player that sent it.
+//!
+//! A signal names its sender only by unique bus name. Capture therefore first
+//! writes one snapshot line per player present (its well-known name, owner and
+//! current properties), then spools signals; the parser carries the map from
+//! unique to well-known names forward.
+use super::dbus::{self, Message};
+use crate::drivers::live_stream::{self, LiveStream};
+use crate::registry::{Declared, Driver, SourceSpec};
+use crate::{Parser, RecordError};
+use serde_json::{Map, Value, json};
+use sinex_model::Class;
+use sinex_model::kinds::session::PlayerChanged;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+pub const SPEC: SourceSpec = SourceSpec {
+    name: "media.mpris",
+    driver: Driver::LiveStream,
+    consumer: "listening and watching history, attention",
+    // Titles and URLs of what is playing.
+    class: Class::Guarded,
+    parser: "dbus-mpris",
+    parser_version: 1,
+    event_types: &["player.changed"],
+    framer: crate::drivers::append_file::lines,
+};
+
+pub const MATCHES: &[&str] = &[
+    "type=signal,interface=org.freedesktop.DBus.Properties,member=PropertiesChanged,path=/org/mpris/MediaPlayer2",
+    "type=signal,sender=org.freedesktop.DBus,member=NameOwnerChanged,arg0namespace=org.mpris.MediaPlayer2",
+];
+
+const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
+const PREFIX: &str = "org.mpris.MediaPlayer2.";
+
+pub struct MprisParser;
+
+fn changed(received_at: sinex_model::Timestamp, player: String, props: &Map<String, Value>, snapshot: bool) -> PlayerChanged {
+    let meta = props.get("Metadata").and_then(Value::as_object);
+    let s = |k: &str| {
+        meta.and_then(|m| m.get(k))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    PlayerChanged {
+        received_at,
+        player,
+        status: props.get("PlaybackStatus").and_then(Value::as_str).map(str::to_owned),
+        title: s("xesam:title"),
+        artists: meta
+            .and_then(|m| m.get("xesam:artist"))
+            .and_then(Value::as_array)
+            .map(|xs| {
+                xs.iter()
+                    .filter_map(Value::as_str)
+                    .filter(|a| !a.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        album: s("xesam:album"),
+        url: s("xesam:url"),
+        length_us: meta.and_then(|m| m.get("mpris:length")).and_then(Value::as_i64),
+        snapshot,
+        properties: props.clone(),
+    }
+}
+
+impl Parser for MprisParser {
+    type Record<'a> = Map<String, Value>;
+    /// Unique bus name to the player's well-known name.
+    type Carry = BTreeMap<String, String>;
+    type Payload = PlayerChanged;
+
+    fn parse(
+        &self,
+        record: &Map<String, Value>,
+        owners: &BTreeMap<String, String>,
+    ) -> Result<(Vec<PlayerChanged>, BTreeMap<String, String>), RecordError> {
+        let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
+        let mut owners = owners.clone();
+        let value: Value =
+            serde_json::from_slice(&bytes).map_err(|e| RecordError::new(format!("not JSON: {e}")))?;
+        if let Some(snap) = value.get("snapshot") {
+            let name = snap["name"].as_str().unwrap_or_default().to_owned();
+            if let Some(owner) = snap["owner"].as_str() {
+                owners.insert(owner.to_owned(), name.clone());
+            }
+            let props = snap["properties"].as_object().cloned().unwrap_or_default();
+            return Ok((vec![changed(received_at, name, &props, true)], owners));
+        }
+        let m = Message::parse(&bytes).map_err(RecordError::new)?;
+        let out = match m.member.as_str() {
+            "NameOwnerChanged" => {
+                let s = |i: usize| m.args.get(i).and_then(Value::as_str).unwrap_or_default().to_owned();
+                let (name, old, new) = (s(0), s(1), s(2));
+                if name.starts_with(PREFIX) {
+                    if !old.is_empty() {
+                        owners.remove(&old);
+                    }
+                    if !new.is_empty() {
+                        owners.insert(new, name);
+                    }
+                }
+                Vec::new()
+            }
+            "PropertiesChanged" if m.args.first().and_then(Value::as_str) == Some(PLAYER) => {
+                let props = m.args.get(1).and_then(Value::as_object).cloned().unwrap_or_default();
+                let player = owners.get(&m.sender).cloned().unwrap_or(m.sender);
+                vec![changed(received_at, player, &props, false)]
+            }
+            // The root interface's properties (identity, fullscreen…).
+            _ => Vec::new(),
+        };
+        Ok((out, owners))
+    }
+}
+
+pub fn source() -> Declared<MprisParser> {
+    Declared {
+        spec: SPEC,
+        parser: MprisParser,
+    }
+}
+
+pub fn driver(spool: PathBuf, host: String) -> LiveStream {
+    dbus::driver(spool, host, "dbus:session:org.mpris.MediaPlayer2")
+}
+
+/// One snapshot line per player on the bus now.
+pub fn snapshot() -> Vec<Vec<u8>> {
+    dbus::names()
+        .into_iter()
+        .filter(|n| n.starts_with(PREFIX))
+        .filter_map(|name| {
+            let owner = dbus::call(
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                "org.freedesktop.DBus",
+                "GetNameOwner",
+                &["s", &name],
+            )
+            .and_then(|v| v.get(0).and_then(Value::as_str).map(str::to_owned))?;
+            let properties = dbus::call(
+                &name,
+                "/org/mpris/MediaPlayer2",
+                "org.freedesktop.DBus.Properties",
+                "GetAll",
+                &["s", PLAYER],
+            )
+            .and_then(|v| v.get(0).cloned())
+            .unwrap_or(Value::Object(Map::new()));
+            serde_json::to_vec(&json!({"snapshot": {"name": name, "owner": owner, "properties": properties}})).ok()
+        })
+        .collect()
+}
+
+pub fn capture(spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
+    dbus::capture(MATCHES, &snapshot(), spool, seconds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_model::Timestamp;
+
+    fn run(lines: &[&str]) -> Vec<PlayerChanged> {
+        let mut carry = BTreeMap::new();
+        let mut out = Vec::new();
+        for l in lines {
+            let rec: Map<String, Value> =
+                serde_json::from_slice(&live_stream::frame(Timestamp::from_unix_ns(1).unwrap(), l.as_bytes())).unwrap();
+            let (e, c) = MprisParser.parse(&rec, &carry).unwrap();
+            out.extend(e);
+            carry = c;
+        }
+        out
+    }
+
+    #[test]
+    fn snapshot_names_the_sender_of_later_changes() {
+        let out = run(&[
+            r#"{"snapshot":{"name":"org.mpris.MediaPlayer2.spotify","owner":":1.5","properties":{"PlaybackStatus":"Paused","Metadata":{"xesam:title":"Song","xesam:artist":["A"],"mpris:length":200000000}}}}"#,
+            r#"{"type":"signal","sender":":1.5","member":"PropertiesChanged","payload":{"type":"sa{sv}as","data":["org.mpris.MediaPlayer2.Player",{"PlaybackStatus":{"type":"s","data":"Playing"}},[]]}}"#,
+        ]);
+        assert!(out[0].snapshot && out[0].title.as_deref() == Some("Song") && out[0].artists == vec!["A"]);
+        assert_eq!(out[1].player, "org.mpris.MediaPlayer2.spotify");
+        assert_eq!(out[1].status.as_deref(), Some("Playing"));
+        assert!(!out[1].snapshot);
+    }
+
+    #[test]
+    fn owner_changes_follow_players_that_appear_later() {
+        let out = run(&[
+            r#"{"type":"signal","member":"NameOwnerChanged","payload":{"type":"sss","data":["org.mpris.MediaPlayer2.mpv","",":1.9"]}}"#,
+            r#"{"type":"signal","sender":":1.9","member":"PropertiesChanged","payload":{"type":"sa{sv}as","data":["org.mpris.MediaPlayer2.Player",{"Metadata":{"type":"a{sv}","data":{"xesam:url":{"type":"s","data":"file:///x.mkv"}}}},[]]}}"#,
+            r#"{"type":"signal","sender":":1.9","member":"PropertiesChanged","payload":{"type":"sa{sv}as","data":["org.mpris.MediaPlayer2",{"Fullscreen":{"type":"b","data":true}},[]]}}"#,
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].player, "org.mpris.MediaPlayer2.mpv");
+        assert_eq!(out[0].url.as_deref(), Some("file:///x.mkv"));
+    }
+}
