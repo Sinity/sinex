@@ -464,7 +464,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   request bytea NOT NULL REFERENCES analysis.requests(id),
   status text NOT NULL CHECK (status IN ('estimated', 'not_estimable', 'failed')),
   reason text,
-  readsets jsonb NOT NULL,
+  inputs_read jsonb NOT NULL,
   tables jsonb,
   diagnostics jsonb NOT NULL,
   output_hash bytea NOT NULL CHECK (length(output_hash) = 32),

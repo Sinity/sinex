@@ -6,7 +6,7 @@ fn metric_ids_are_unique_and_rules_name_known_sources() {
     ids.sort_unstable();
     ids.dedup();
     assert_eq!(ids.len(), METRICS.len());
-    for s in opportunity_sources() {
+    for s in coverage_sources() {
         assert_ne!(
             completeness(s),
             Completeness::Unknown,

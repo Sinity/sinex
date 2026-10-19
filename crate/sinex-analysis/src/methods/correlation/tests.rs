@@ -38,7 +38,7 @@ fn missing_units_are_excluded_by_reason_never_zero_filled() {
     let mut x = observed(&(0..14).map(f64::from).collect::<Vec<_>>());
     let y = observed(&(0..14).map(|v| f64::from(v * v)).collect::<Vec<_>>());
     x[3].cell = Cell::Missing {
-        reason: Missing::NoOpportunity,
+        reason: Missing::NoCoverage,
     };
     x[4].cell = Cell::Partial {
         value: 1.0,
@@ -46,7 +46,7 @@ fn missing_units_are_excluded_by_reason_never_zero_filled() {
     };
     let res = LaggedCorrelation::run(&params(0), &input(x, y)).unwrap();
     assert_eq!(res.n, 12);
-    assert_eq!(res.n_excluded.0[&Exclusion::NoOpportunity], 1);
+    assert_eq!(res.n_excluded.0[&Exclusion::NoCoverage], 1);
     assert_eq!(res.n_excluded.0[&Exclusion::Partial], 1);
     assert_eq!(res.diagnostics["series_breaks"], 1);
 }

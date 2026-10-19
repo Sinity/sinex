@@ -1,37 +1,16 @@
-//! Panels: units by metrics, each cell with its observation state (spec
-//! `analysis.md` §3, §4.4). A unit is observed when the opportunity of the
-//! metric's sources covers it, partial when it covers part, and missing with
+//! Panels: a table of units (logical days or clock hours) by metrics, each
+//! cell with its observation state. A unit is observed when the coverage of
+//! the metric's sources spans it, partial when it spans part, and missing with
 //! its reason otherwise; a zero is only ever a measured zero.
 use crate::cell::{Cell, Missing};
-use crate::metric::{Aggregate, MetricDef, OpportunityRule, Row, UnitGrain, aggregate};
+use crate::coverage::{Completeness, Coverage};
+use crate::metric::{Aggregate, CoverageRule, MetricDef, Row, UnitGrain, aggregate};
 use crate::span::{MICROS_PER_SECOND, Span, SpanSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::Timestamp;
 use sinex_model::civil::{Civil, CivilError};
 use std::collections::{BTreeMap, BTreeSet};
-
-/// How much of what a source records it sees in its opportunity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Completeness {
-    /// Everything of this kind (a shell history for commands typed on that host).
-    Complete,
-    /// A subset (one browser profile, not all browsing).
-    Sample,
-    /// Whether the source saw the whole span is unknown.
-    Unknown,
-}
-
-/// One stretch in which a source could have recorded what it records.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Opportunity {
-    pub source: String,
-    pub span: Span,
-    pub completeness: Completeness,
-    /// Where the bounds came from (run lifetime, poll, export records).
-    pub basis: String,
-}
 
 /// One unit: a logical day or a clock hour.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -85,9 +64,9 @@ pub fn units(civil: &Civil, grain: UnitGrain, from: Span) -> Result<Vec<Unit>, C
     Ok(out)
 }
 
-/// The opportunity a metric's rule gives, and whether any of it is of unknown
-/// completeness (which makes recorded rows lower bounds).
-pub fn opportunity_for(rule: &OpportunityRule, rows: &[Opportunity]) -> (SpanSet, bool) {
+/// The spans a metric's coverage rule gives, and whether any of the coverage
+/// is of unknown completeness (which makes recorded rows lower bounds).
+pub fn covered_spans(rule: &CoverageRule, rows: &[Coverage]) -> (SpanSet, bool) {
     let per_source = |src: &str, known: bool| {
         SpanSet::from_spans(
             rows.iter()
@@ -100,10 +79,10 @@ pub fn opportunity_for(rule: &OpportunityRule, rows: &[Opportunity]) -> (SpanSet
         .iter()
         .any(|s| !per_source(s, false).is_empty());
     let set = match rule {
-        OpportunityRule::AnyOf(sources) => sources
+        CoverageRule::AnyOf(sources) => sources
             .iter()
             .fold(SpanSet::default(), |acc, s| acc.union(&per_source(s, true))),
-        OpportunityRule::Sources(sources) => {
+        CoverageRule::Sources(sources) => {
             let mut it = sources.iter();
             match it.next() {
                 None => SpanSet::default(),
@@ -136,23 +115,23 @@ pub struct PanelCell {
 const OBSERVED_FRACTION: f64 = 0.999;
 
 /// The cells of one metric over `units`, from the metric's rows, the
-/// opportunity relation and the recorded gaps. One total cell per unit, plus
+/// coverage of its sources and the recorded gaps. One total cell per unit, plus
 /// one per value of each declared dimension.
 pub fn compute(
     def: &MetricDef,
     units: &[Unit],
     rows: &[Row<'_>],
-    opportunity: &[Opportunity],
+    coverage: &[Coverage],
     gaps: &SpanSet,
 ) -> Vec<PanelCell> {
-    let (opp, unknown_coverage) = opportunity_for(&def.opportunity, opportunity);
+    let (spans, unknown_coverage) = covered_spans(&def.coverage, coverage);
     let rows: Vec<&Row<'_>> = rows
         .iter()
         .filter(|r| r.payload.is_object() && def.row_matches(r))
         .collect();
     let mut out = Vec::new();
     for unit in units {
-        let covered = opp.clip(unit.span).subtract(gaps);
+        let covered = spans.clip(unit.span).subtract(gaps);
         let gap = gaps.clip(unit.span);
         let fraction = covered.len() as f64 / unit.span.len().max(1) as f64;
         let allocated: Vec<(Row<'_>, Span)> = rows
@@ -170,7 +149,7 @@ pub fn compute(
                         reason: Missing::CoverageUnknown,
                     },
                     _ => Cell::Missing {
-                        reason: Missing::NoOpportunity,
+                        reason: Missing::NoCoverage,
                     },
                 };
             }

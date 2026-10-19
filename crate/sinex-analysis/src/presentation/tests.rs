@@ -48,7 +48,7 @@ fn the_budget_drops_whole_findings_and_says_so() {
         absent: None,
     }];
     let p = compile(ctx(), sections, 40);
-    // The supported finding ranks first; the qualified one does not fit
+    // The supported finding ranks first; the caveated one does not fit
     // and is dropped whole, caveat included.
     assert_eq!(p.sections[0].lines, ["- Thing (m) on d: 2"]);
     assert_eq!(p.sections[0].dropped, 1);

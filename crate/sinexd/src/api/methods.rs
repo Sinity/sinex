@@ -429,6 +429,9 @@ impl Api {
             }
             Request::AnalysisCatalog
             | Request::AnalysisRun { .. }
+            | Request::AnalysisPanel { .. }
+            | Request::AnalysisWhy { .. }
+            | Request::AnalysisResults { .. }
             | Request::AnalysisShow { .. }
             | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
@@ -663,10 +666,9 @@ impl Api {
         }
     }
 
-    /// Excise the record a citation names, with its bytes (architecture §3.4).
-    /// The analysis layer's four calls (spec `analysis.md` §13.3). Results
-    /// carry their status, as-of position, caveats and citations; findings
-    /// are rendered from their slots, so every surface reads the same text.
+    /// The analysis calls. Results carry their status, as-of position, caveats
+    /// and citations; findings are rendered from their slots, so every surface
+    /// reads the same text.
     async fn analysis(&self, caller: &Caller, request: Request) -> Reply {
         use crate::analysis::{self, Recipe};
         if let Request::AnalysisCatalog = request {
@@ -674,7 +676,7 @@ impl Api {
                 .iter()
                 .map(|m| {
                     json!({"id": m.id, "version": m.version, "description": m.description,
-                           "relation": m.relation, "sources": m.opportunity.sources(),
+                           "relation": m.relation, "sources": m.coverage.sources(),
                            "dimensions": m.dimensions, "role": m.role})
                 })
                 .collect();
@@ -702,16 +704,20 @@ impl Api {
                     from,
                     to,
                     standing,
+                    partial,
                 } => {
-                    let recipe = match recipe.as_str() {
-                        "correlations" => Recipe::Correlations,
-                        "trends" => Recipe::Trends,
-                        "deviations" => Recipe::Deviations,
-                        other => {
-                            return Err(format!(
-                                "no recipe {other}; recipes: correlations, trends, deviations"
-                            ));
-                        }
+                    let recipe = Recipe::parse(&recipe)?;
+                    let min_observed_fraction = partial
+                        .map(|p| {
+                            p.parse::<f64>()
+                                .ok()
+                                .filter(|f| (0.0..=1.0).contains(f))
+                                .ok_or_else(|| format!("`{p}` is not a fraction from 0 to 1"))
+                        })
+                        .transpose()?;
+                    let eligibility = sinex_analysis::Eligibility {
+                        min_observed_fraction,
+                        admit_recorded: false,
                     };
                     let run = analysis::run(
                         &mut conn,
@@ -719,14 +725,64 @@ impl Api {
                         recipe,
                         analysis::parse_day(&from)?,
                         analysis::parse_day(&to)?,
-                        sinex_analysis::Eligibility::default(),
+                        eligibility,
                         standing.unwrap_or(false),
                     )
                     .await?;
                     Ok(json!({
                         "result": run.result.id, "state": run.result.state, "reused": run.reused,
+                        "tables": run.tables,
                         "findings": run.findings.iter().map(|f| json!({"text": f.markdown(), "finding": f})).collect::<Vec<_>>(),
                     }))
+                }
+                Request::AnalysisPanel {
+                    from,
+                    to,
+                    metric,
+                    by,
+                } => {
+                    let defs = metric_defs(&metric.unwrap_or_default())?;
+                    let (from, to) = (analysis::parse_day(&from)?, analysis::parse_day(&to)?);
+                    let as_of = sinex_store::analysis::head(&mut conn)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let mut sources: Vec<&str> = defs
+                        .iter()
+                        .flat_map(|d| d.coverage.sources().iter().copied())
+                        .collect();
+                    sources.sort_unstable();
+                    sources.dedup();
+                    let coverage = analysis::coverage(&mut conn, &sources, as_of).await?;
+                    let range = settings.day_span(from, to)?;
+                    let p = analysis::panel(&mut conn, &settings, &defs, range, as_of, &coverage)
+                        .await?;
+                    Ok(json!({
+                        "text": analysis::table(&p, &defs, by.as_deref()),
+                        "as_of": as_of, "day_setting": settings.label,
+                        "coverage": coverage, "cells": p.cells,
+                    }))
+                }
+                Request::AnalysisWhy { metric, day } => {
+                    let def = metric_defs(&[metric])?[0];
+                    let text =
+                        analysis::why_not(&mut conn, &settings, def, analysis::parse_day(&day)?)
+                            .await?;
+                    Ok(json!({ "text": text }))
+                }
+                Request::AnalysisResults { limit } => {
+                    let limit = limit.map_or(20, |l| i64::try_from(l).unwrap_or(i64::MAX));
+                    let rows = sinex_store::analysis::recent_results(&mut conn, None, limit)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let results: Vec<Value> = rows
+                        .into_iter()
+                        .map(|(id, recipe, status, state, at)| {
+                            json!({"result": id, "recipe": recipe, "status": status,
+                                   "state": state,
+                                   "created_at": at.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()})
+                        })
+                        .collect();
+                    Ok(json!({ "results": results }))
                 }
                 Request::AnalysisShow { result } => {
                     let id: uuid::Uuid = result
@@ -745,7 +801,7 @@ impl Api {
                     Ok(json!({
                         "result": view.id, "recipe": view.recipe, "as_of": view.as_of,
                         "status": view.status, "reason": view.reason, "state": view.state,
-                        "state_reason": view.state_reason, "readsets": view.readsets,
+                        "state_reason": view.state_reason, "inputs_read": view.inputs_read,
                         "tables": view.tables, "findings": findings,
                     }))
                 }
@@ -771,6 +827,7 @@ impl Api {
         }
     }
 
+    /// Excise the record a citation names, with its bytes.
     async fn excise(
         &self,
         caller: &Caller,
@@ -949,6 +1006,24 @@ impl Api {
             "sources": sources,
         }))
     }
+}
+
+/// The metrics named by `ids`, or every shipped metric when none is named.
+fn metric_defs(ids: &[String]) -> Result<Vec<&'static sinex_analysis::MetricDef>, String> {
+    if ids.is_empty() {
+        return Ok(sinex_analysis::catalog::METRICS.iter().collect());
+    }
+    ids.iter()
+        .map(|id| {
+            sinex_analysis::catalog::metric(id).ok_or_else(|| {
+                let known: Vec<&str> = sinex_analysis::catalog::METRICS
+                    .iter()
+                    .map(|m| m.id)
+                    .collect();
+                format!("no metric {id}; known: {}", known.join(", "))
+            })
+        })
+        .collect()
 }
 
 fn query_refusal(text: &str, e: QueryError) -> Reply {

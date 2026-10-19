@@ -215,20 +215,20 @@ pub enum Allocation {
     AssignToEnd,
 }
 
-/// Which sources' observation opportunity makes a unit observed.
+/// Which sources must cover a unit for it to count as observed.
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(tag = "rule", content = "sources", rename_all = "snake_case")]
-pub enum OpportunityRule {
+pub enum CoverageRule {
     /// Every listed source must have been observing (intersection).
     Sources(&'static [&'static str]),
     /// Any listed source suffices (union): for fused kinds.
     AnyOf(&'static [&'static str]),
 }
 
-impl OpportunityRule {
+impl CoverageRule {
     pub fn sources(&self) -> &'static [&'static str] {
         match *self {
-            OpportunityRule::Sources(s) | OpportunityRule::AnyOf(s) => s,
+            CoverageRule::Sources(s) | CoverageRule::AnyOf(s) => s,
         }
     }
 }
@@ -246,7 +246,7 @@ pub struct MetricDef {
     pub law: AggLaw,
     pub interval: Option<IntervalShape>,
     pub allocation: Allocation,
-    pub opportunity: OpportunityRule,
+    pub coverage: CoverageRule,
     /// Payload fields a panel may break the metric down by.
     pub dimensions: &'static [&'static str],
     pub role: SourceRole,

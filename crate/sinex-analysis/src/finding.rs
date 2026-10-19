@@ -27,7 +27,7 @@ pub enum Support {
     Unknown,
 }
 
-/// A typed qualification that travels with its claim.
+/// A typed caveat that travels with its claim.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Caveat {
@@ -111,24 +111,25 @@ pub enum Template {
         to: String,
         units: u64,
     },
-    /// What a source could observe of a unit (data quality first, `analysis.md` §12.1).
+    /// How much of a unit a source covered (data quality comes first in a brief).
     Coverage {
         source: String,
         unit: String,
         observed_fraction: f64,
         completeness: String,
-        basis: String,
+        bounded_by: String,
     },
 }
 
-/// Separate checks, never one green tick (`a4w.2`).
+/// Separate checks, never one green tick: a reader sees which check a
+/// finding passed and which it did not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Check {
     Passed,
     Failed,
     /// Coverage short of what the claim needs; the claim carries a caveat.
-    Qualified,
+    Caveated,
     /// Deterministic templates pass semantics by construction.
     ByConstruction,
 }
@@ -278,14 +279,14 @@ impl Finding {
                 unit,
                 observed_fraction,
                 completeness,
-                basis,
+                bounded_by,
             } => {
                 let seen = if *observed_fraction <= 0.0 {
                     "not observed".to_owned()
                 } else {
                     format!("{:.0}% observed", observed_fraction * 100.0)
                 };
-                format!("{source} on {unit}: {seen} ({completeness}; {basis})")
+                format!("{source} on {unit}: {seen} ({completeness}; {bounded_by})")
             }
         };
         for c in &self.caveats {
@@ -350,7 +351,7 @@ pub fn from_cell(
                     .unwrap_or_default(),
             },
             Support::Unknown,
-            Check::Qualified,
+            Check::Caveated,
         ),
         other => {
             let value = *other.value().expect("non-missing cells have values");
@@ -361,11 +362,11 @@ pub fn from_cell(
                     caveats.push(Caveat::PartialCoverage {
                         observed_fraction: *observed_fraction,
                     });
-                    Check::Qualified
+                    Check::Caveated
                 }
                 Cell::Recorded { .. } => {
                     caveats.push(Caveat::LowerBound);
-                    Check::Qualified
+                    Check::Caveated
                 }
                 _ => Check::Passed,
             };
@@ -452,7 +453,7 @@ pub fn from_correlation(
             references: Check::Passed,
             calculation: Check::Passed,
             coverage: if result.n_excluded.total() > 0 {
-                Check::Qualified
+                Check::Caveated
             } else {
                 Check::Passed
             },

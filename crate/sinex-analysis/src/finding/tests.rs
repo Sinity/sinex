@@ -25,7 +25,7 @@ fn cell(c: Cell<f64>) -> PanelCell {
 fn a_missing_day_is_rendered_as_unknown_never_zero() {
     let f = from_cell(
         &cell(Cell::Missing {
-            reason: Missing::NoOpportunity,
+            reason: Missing::NoCoverage,
         }),
         "Commands run",
         &["zsh"],
@@ -33,7 +33,7 @@ fn a_missing_day_is_rendered_as_unknown_never_zero() {
     );
     assert_eq!(
         f.markdown(),
-        "shell.commands on 2026-09-14 is not known: no opportunity"
+        "shell.commands on 2026-09-14 is not known: no coverage"
     );
     assert_eq!(f.status, Support::Unknown);
 }
@@ -53,7 +53,7 @@ fn caveats_render_with_their_claim() {
         f.markdown(),
         "Commands run (shell.commands) on 2026-09-14: 6 [the day is not over] [only 83% of the unit was observed] [on atuin, zsh]"
     );
-    assert_eq!(f.checks.coverage, Check::Qualified);
+    assert_eq!(f.checks.coverage, Check::Caveated);
     let rec = from_cell(
         &cell(Cell::Recorded { value: 3.0 }),
         "Commands run",

@@ -285,7 +285,7 @@ pub struct NewResult {
     pub started_at: OffsetDateTime,
     pub status: &'static str,
     pub reason: Option<String>,
-    pub readsets: Value,
+    pub inputs_read: Value,
     pub tables: Value,
     pub diagnostics: Value,
     pub output_hash: [u8; 32],
@@ -359,14 +359,14 @@ pub async fn store_result(conn: &mut PgConnection, r: &NewResult) -> Result<Stor
     .await?;
     let id = Uuid::now_v7();
     sqlx::query!(
-        r#"INSERT INTO analysis.results (id, attempt, request, status, reason, readsets, tables, diagnostics, output_hash)
+        r#"INSERT INTO analysis.results (id, attempt, request, status, reason, inputs_read, tables, diagnostics, output_hash)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         id,
         attempt,
         &r.request_id[..],
         r.status,
         r.reason,
-        r.readsets,
+        r.inputs_read,
         r.tables,
         r.diagnostics,
         &r.output_hash[..],
@@ -458,7 +458,7 @@ pub struct ResultView {
     pub reason: Option<String>,
     pub state: String,
     pub state_reason: Option<String>,
-    pub readsets: Value,
+    pub inputs_read: Value,
     pub tables: Option<Value>,
     pub diagnostics: Value,
     pub created_at: OffsetDateTime,
@@ -468,7 +468,7 @@ pub struct ResultView {
 pub async fn result(conn: &mut PgConnection, id: Uuid) -> Result<Option<ResultView>> {
     let Some(row) = sqlx::query!(
         r#"SELECT r.id, q.body, q.recipe, q.as_of, r.status, r.reason, s.state, s.reason AS state_reason,
-                  r.readsets, r.tables, r.diagnostics, r.created_at
+                  r.inputs_read, r.tables, r.diagnostics, r.created_at
            FROM analysis.results r
            JOIN analysis.requests q ON q.id = r.request
            JOIN analysis.result_status s ON s.result = r.id
@@ -497,7 +497,7 @@ pub async fn result(conn: &mut PgConnection, id: Uuid) -> Result<Option<ResultVi
         reason: row.reason,
         state: row.state,
         state_reason: row.state_reason,
-        readsets: row.readsets,
+        inputs_read: row.inputs_read,
         tables: row.tables,
         diagnostics: row.diagnostics,
         created_at: row.created_at,

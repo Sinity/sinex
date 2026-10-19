@@ -31,7 +31,7 @@ fn sen_slope_is_per_calendar_unit_and_holes_refuse() {
 
     let mut holed = observed(&x);
     holed[5].cell = Cell::Missing {
-        reason: Missing::NoOpportunity,
+        reason: Missing::NoCoverage,
     };
     input.series.insert("m".into(), holed);
     let e = Trend::run(&p, &input).unwrap_err();

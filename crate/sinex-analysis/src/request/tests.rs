@@ -7,7 +7,7 @@ fn request() -> Request {
         recipe_version: 1,
         params: json!({"metrics": ["shell.commands"], "b": 1, "a": 2.5}),
         methods: vec![],
-        plans: vec![Plan {
+        plans: vec![ReadPlan {
             relation: "command.fused".into(),
             from: "2026-09-14T02:00:00Z".into(),
             to: "2026-09-16T02:00:00Z".into(),
@@ -43,12 +43,12 @@ fn identity_depends_on_content_not_on_key_order() {
 }
 
 #[test]
-fn readset_digest_ignores_row_order_and_counts_empty_reads() {
+fn inputs_read_digest_ignores_row_order_and_counts_empty_reads() {
     let plan = &request().plans[0];
-    let r1 = Readset::new(plan, 7, vec!["b".into(), "a".into()], vec![]);
-    let r2 = Readset::new(plan, 7, vec!["a".into(), "b".into()], vec![]);
+    let r1 = InputsRead::new(plan, 7, vec!["b".into(), "a".into()], vec![]);
+    let r2 = InputsRead::new(plan, 7, vec!["a".into(), "b".into()], vec![]);
     assert_eq!(r1, r2);
-    let empty = Readset::new(plan, 7, vec![], vec![]);
+    let empty = InputsRead::new(plan, 7, vec![], vec![]);
     assert_eq!(empty.rows, 0);
     assert_ne!(empty.digest, r1.digest);
 }
