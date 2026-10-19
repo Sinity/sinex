@@ -117,6 +117,9 @@ enum Command {
         options: Vec<String>,
         #[arg(long, default_value = "localhost")]
         host: String,
+        /// One JSON object: totals per source and peak memory.
+        #[arg(long)]
+        json: bool,
     },
     /// Run every derivation until nothing is dirty, through the writer, and
     /// report counts and rates. The daemon's driver, run to completion,
@@ -130,6 +133,9 @@ enum Command {
         store: Option<PathBuf>,
         #[arg(long, default_value = "localhost")]
         host: String,
+        /// One JSON object: counts per derivation and peak memory.
+        #[arg(long)]
+        json: bool,
     },
     /// The analysis layer: metric panels, recipes, results and briefs
     /// (architecture §6.5).
@@ -454,7 +460,12 @@ async fn local_driver(
     Ok((driver, task))
 }
 
-async fn run_derive(database: String, store: Option<PathBuf>, host: String) -> Result<(), String> {
+async fn run_derive(
+    database: String,
+    store: Option<PathBuf>,
+    host: String,
+    json: bool,
+) -> Result<(), String> {
     let (driver, writer_task) = local_driver(&database, &host, store.as_deref()).await?;
     let mut driver = driver.with_maintained(vec![Box::new(analysis::MetricValues::new(
         analysis::Settings::operator_default(),
@@ -464,19 +475,43 @@ async fn run_derive(database: String, store: Option<PathBuf>, host: String) -> R
     let started = std::time::Instant::now();
     driver.settle().await?;
     let wall = started.elapsed();
-    for (name, counts) in &driver.counts {
-        println!("{name:18} {counts}");
-    }
     let outputs: usize = driver.counts.values().map(|c| c.outputs).sum();
     let inputs: usize = driver.counts.values().map(|c| c.inputs).sum();
-    println!(
-        "wall {:.2}s | inputs read {inputs} | outputs {outputs} | {:.0} outputs/s",
-        wall.as_secs_f64(),
-        outputs as f64 / wall.as_secs_f64().max(1e-9)
-    );
+    let rate = outputs as f64 / wall.as_secs_f64().max(1e-9);
+    if json {
+        let per: serde_json::Map<String, serde_json::Value> = driver
+            .counts
+            .iter()
+            .map(|(name, c)| (name.to_string(), c.to_json()))
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({"derivations": per, "wall_s": wall.as_secs_f64(),
+                "inputs": inputs, "outputs": outputs, "outputs_per_s": rate,
+                "peak_rss_mb": peak_rss_mb()})
+        );
+    } else {
+        for (name, counts) in &driver.counts {
+            println!("{name:18} {counts}");
+        }
+        println!(
+            "wall {:.2}s | inputs read {inputs} | outputs {outputs} | {rate:.0} outputs/s",
+            wall.as_secs_f64(),
+        );
+    }
     driver.end_runs().await?;
     drop(driver);
     writer_task.await.map_err(|e| e.to_string())
+}
+
+/// This process's peak resident memory (VmHWM), in MB.
+pub(crate) fn peak_rss_mb() -> Option<f64> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("VmHWM:"))
+        .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<f64>().ok())
+        .map(|kb| kb / 1024.0)
 }
 
 async fn publish(database: &str, nats: &str, subjects: &str) -> Result<(), String> {
@@ -580,6 +615,7 @@ async fn main() -> std::process::ExitCode {
             zone,
             options,
             host,
+            json,
         } => {
             backfill::run(backfill::Options {
                 database,
@@ -588,6 +624,7 @@ async fn main() -> std::process::ExitCode {
                 zone,
                 options,
                 host,
+                json,
             })
             .await
         }
@@ -595,7 +632,8 @@ async fn main() -> std::process::ExitCode {
             database,
             store,
             host,
-        } => run_derive(database, store, host).await,
+            json,
+        } => run_derive(database, store, host, json).await,
         Command::Analysis { command } => run_analysis(command).await,
     };
     match result {
