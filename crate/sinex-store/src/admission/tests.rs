@@ -10,6 +10,7 @@ use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, OperationId, Origin, ReadingOrder,
     RecordLocation, RunId,
 };
+use sinex_model::{RecordOutcome, RevisionChange, SourceProgress, Timestamp};
 use sqlx::Connection;
 use std::collections::BTreeMap;
 
@@ -495,3 +496,5 @@ async fn admitted_and_archived_readings_mark_dirty_keys() {
     .unwrap();
     assert_eq!(n, 1, "both events fall on the same day");
 }
+
+mod privacy;

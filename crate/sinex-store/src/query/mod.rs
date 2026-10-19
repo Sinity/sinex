@@ -336,10 +336,5 @@ fn collect_aliases(q: &Query, out: &mut Vec<&'static sinex_model::query::Alias>)
     }
 }
 
-/// For tests and tools: the SQL a query compiles to.
-pub fn explain(query: &Query, ctx: &Context, seq: i64) -> Result<String> {
-    Ok(Compiler::new(ctx, seq).compile(query)?.answer.render().0)
-}
-
 #[cfg(test)]
 pub(crate) mod tests;

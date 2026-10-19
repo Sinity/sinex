@@ -16,6 +16,15 @@ use sinex_model::MaterialId;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// The zone named `name` (an IANA name such as `Europe/Warsaw`), or this
+/// system's zone.
+pub fn zone(name: Option<&str>) -> Result<jiff::tz::TimeZone, String> {
+    match name {
+        Some(name) => jiff::tz::TimeZone::get(name).map_err(|e| format!("zone {name}: {e}")),
+        None => Ok(jiff::tz::TimeZone::system()),
+    }
+}
+
 /// What a binding was read with. Stored with the binding, so a replay reads
 /// its materials exactly as the capture did (no guessed zones).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,7 +51,7 @@ impl Settings {
     /// The zone to read local times in: the configured one, or the system's,
     /// resolved to its IANA name so it can be stored.
     pub fn with_zone(mut self) -> Result<Self, String> {
-        let zone = crate::sources::weechat::zone(self.zone.as_deref())?;
+        let zone = zone(self.zone.as_deref())?;
         self.zone = Some(
             zone.iana_name()
                 .ok_or("the system time zone has no IANA name; pass --zone")?
@@ -54,7 +63,7 @@ impl Settings {
     /// The resolved zone; UTC only when none was ever recorded.
     pub fn zone(&self) -> Result<jiff::tz::TimeZone, String> {
         match &self.zone {
-            Some(name) => crate::sources::weechat::zone(Some(name)),
+            Some(name) => zone(Some(name)),
             None => Ok(jiff::tz::TimeZone::UTC),
         }
     }

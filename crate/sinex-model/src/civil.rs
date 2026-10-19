@@ -135,11 +135,6 @@ impl Civil {
             .map_err(|_| CivilError::OutOfRange(day.to_string()))?;
         self.day_start(next)
     }
-
-    /// The local wall-clock hour of `t` (0–23), for hour-of-day statistics.
-    pub fn local_hour(&self, t: Timestamp) -> Result<i8, CivilError> {
-        Ok(Self::instant(t)?.to_zoned(self.zone.clone()).hour())
-    }
 }
 
 #[cfg(test)]

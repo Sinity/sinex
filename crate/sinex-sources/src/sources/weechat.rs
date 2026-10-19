@@ -132,15 +132,6 @@ impl WeeChatParser {
     }
 }
 
-/// The zone named `name` (an IANA name such as `Europe/Warsaw`), or this
-/// system's zone.
-pub fn zone(name: Option<&str>) -> Result<jiff::tz::TimeZone, String> {
-    match name {
-        Some(name) => jiff::tz::TimeZone::get(name).map_err(|e| format!("zone {name}: {e}")),
-        None => Ok(jiff::tz::TimeZone::system()),
-    }
-}
-
 pub fn source(zone: jiff::tz::TimeZone) -> Declared<WeeChatParser> {
     Declared {
         spec: SPEC,
