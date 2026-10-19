@@ -238,7 +238,7 @@ impl Producer {
         if !sinex_protocol::nats::valid_producer(name) {
             return Err(Error::Nats(format!("invalid producer name {name:?}")));
         }
-        let client = async_nats::connect(url).await.map_err(nats)?;
+        let client = crate::nats::connect(url).await.map_err(Error::Nats)?;
         let acks = client.subscribe(subjects.ack(name)).await.map_err(nats)?;
         let max_message = client.server_info().max_payload;
         Ok(Self {

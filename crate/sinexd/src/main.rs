@@ -4,6 +4,7 @@
 mod analysis;
 mod api;
 mod backfill;
+mod catalog;
 mod commits;
 mod context;
 mod daemon;
@@ -330,6 +331,23 @@ enum Admin {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Print every source and derivation as JSON, for the NixOS module's
+    /// generated options (`nix/catalog.json`).
+    Catalog,
+    /// Print the NATS server `authorization` block: the daemon user with full
+    /// access and one user per producer limited to its own subjects. Passwords
+    /// are read from files, so they never pass through the Nix store.
+    NatsAuthorization {
+        #[arg(long, default_value = "sinex")]
+        subjects: String,
+        #[arg(long, default_value = "sinexd")]
+        daemon_user: String,
+        #[arg(long)]
+        daemon_password_file: PathBuf,
+        /// `name=password-file`; repeatable.
+        #[arg(long = "producer")]
+        producers: Vec<String>,
+    },
     /// Recompute a keyed derivation's outputs. With `--compare`, compute into
     /// the comparison lane and show old against new without writing anything.
     Recompute {
@@ -431,6 +449,43 @@ async fn admin(command: Admin) -> Result<(), String> {
             }
             println!("{report}");
             print!("{}", replay::describe(&report.diff, all));
+            Ok(())
+        }
+        Admin::Catalog => {
+            print!("{}", catalog::render());
+            Ok(())
+        }
+        Admin::NatsAuthorization {
+            subjects,
+            daemon_user,
+            daemon_password_file,
+            producers,
+        } => {
+            let secret = |path: &std::path::Path| {
+                std::fs::read_to_string(path)
+                    .map(|s| s.trim_end().to_owned())
+                    .map_err(|e| format!("{}: {e}", path.display()))
+            };
+            let daemon_password = secret(&daemon_password_file)?;
+            let mut users = Vec::new();
+            for producer in producers {
+                let (name, file) = producer
+                    .split_once('=')
+                    .ok_or_else(|| format!("--producer {producer}: expected name=password-file"))?;
+                if !sinex_protocol::nats::valid_producer(name) {
+                    return Err(format!("--producer {name}: not a valid producer name"));
+                }
+                users.push((name.to_owned(), secret(std::path::Path::new(file))?));
+            }
+            let users: Vec<(&str, &str)> = users
+                .iter()
+                .map(|(n, p)| (n.as_str(), p.as_str()))
+                .collect();
+            println!(
+                "{}",
+                sinex_protocol::Subjects::new(subjects)
+                    .authorization((&daemon_user, &daemon_password), &users)
+            );
             Ok(())
         }
         Admin::Hide { at, event } => hide(at, EventId(event), false).await,
@@ -592,9 +647,7 @@ async fn publish(database: &str, nats: &str, subjects: &str) -> Result<(), Strin
     let mut conn = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| format!("database: {e}"))?;
-    let client = async_nats::connect(nats)
-        .await
-        .map_err(|e| format!("NATS at {nats}: {e}"))?;
+    let client = sinex_sources::nats::connect(nats).await?;
     let js = publisher::context(client);
     let report = publisher::drain(&mut conn, &js, &sinex_protocol::Subjects::new(subjects)).await?;
     println!("{report}");
