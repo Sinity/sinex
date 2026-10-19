@@ -1,0 +1,255 @@
+//! Requests, readsets and result status (spec `analysis.md` §7). A request
+//! holds everything that determines a computation, frozen before it runs; its
+//! identity is a keyed BLAKE3 hash of its canonical bytes, so the same
+//! question at the same commit position is the same request, and the second
+//! asking returns the first's result.
+use crate::panel::Completeness;
+use crate::span::Span;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Intent {
+    /// Fixed after (or without) seeing outcomes; findings over it say so.
+    Exploratory,
+    /// Family and method fixed in a request recorded before the outcome
+    /// period ended.
+    Registered,
+}
+
+/// One read plan: a relation over a time range, read at the request's
+/// commit position.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Plan {
+    pub relation: String,
+    /// RFC 3339 bounds of the half-open range.
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Request {
+    pub recipe: String,
+    pub recipe_version: u32,
+    pub params: Value,
+    /// `(method id, version)` of every method the recipe calls.
+    pub methods: Vec<(String, u32)>,
+    pub plans: Vec<Plan>,
+    /// The commit position every plan is read at.
+    pub as_of: i64,
+    /// The day setting the units were computed under (`analysis.md` §4.3).
+    pub day_setting: String,
+    /// The full hypothesis family, fixed before results are seen.
+    pub family: Option<Vec<Value>>,
+    pub intent: Intent,
+}
+
+impl Request {
+    /// `blake3::derive_key("sinex analysis request v1", canonical bytes)`.
+    pub fn id(&self) -> [u8; 32] {
+        let value = serde_json::to_value(self).expect("requests serialize");
+        blake3::derive_key("sinex analysis request v1", canonical(&value).as_bytes())
+    }
+
+    pub fn id_hex(&self) -> String {
+        hex(&self.id())
+    }
+}
+
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// RFC 8785-style canonical JSON: object keys sorted by UTF-16 code units,
+/// no whitespace, and every number written as a string, so an integer and a
+/// float that print alike never hash differently by type. Non-finite floats
+/// cannot occur in `serde_json` values.
+pub fn canonical(v: &Value) -> String {
+    let mut out = String::new();
+    write_canonical(v, &mut out);
+    out
+}
+
+fn write_canonical(v: &Value, out: &mut String) {
+    match v {
+        Value::Null => out.push_str("null"),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Number(n) => out.push_str(&Value::String(n.to_string()).to_string()),
+        Value::String(s) => out.push_str(&Value::String(s.clone()).to_string()),
+        Value::Array(a) => {
+            out.push('[');
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_canonical(x, out);
+            }
+            out.push(']');
+        }
+        Value::Object(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+            out.push('{');
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&Value::String(k.clone()).to_string());
+                out.push(':');
+                write_canonical(&m[k], out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+/// The exact input of one computation: which rows a plan selected at a commit
+/// position, and the opportunity it relied on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Readset {
+    /// Hex BLAKE3 of the canonical plan.
+    pub plan: String,
+    pub as_of: i64,
+    pub rows: u64,
+    /// Hex BLAKE3 over the sorted identities of every row read.
+    pub digest: String,
+    pub coverage: Vec<Coverage>,
+    /// The cells read, for plans over maintained metric values (which keep no
+    /// history, so re-evaluation could differ).
+    pub membership: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Coverage {
+    pub source: String,
+    pub span: Span,
+    pub completeness: Completeness,
+}
+
+impl Readset {
+    /// A readset from the plan and the identities of the rows it read.
+    pub fn new(plan: &Plan, as_of: i64, mut row_ids: Vec<String>, coverage: Vec<Coverage>) -> Self {
+        row_ids.sort_unstable();
+        let mut h = blake3::Hasher::new();
+        for id in &row_ids {
+            h.update(id.as_bytes());
+            h.update(&[0]);
+        }
+        let plan_value = serde_json::to_value(plan).expect("plans serialize");
+        Self {
+            plan: hex(blake3::hash(canonical(&plan_value).as_bytes()).as_bytes()),
+            as_of,
+            rows: row_ids.len() as u64,
+            digest: hex(h.finalize().as_bytes()),
+            coverage,
+            membership: None,
+        }
+    }
+}
+
+/// What a result's dependency is: a relation over a time range. The writer
+/// marks every current result stale whose dependency overlaps a change.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Dependency {
+    pub relation: String,
+    pub span: Span,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultStatus {
+    Current,
+    Stale,
+    Superseded,
+    Withdrawn,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    Estimated,
+    NotEstimable,
+    Failed,
+}
+
+/// The output hash of a result: BLAKE3 over its canonical tables.
+pub fn output_hash(tables: &Value) -> [u8; 32] {
+    *blake3::hash(canonical(tables).as_bytes()).as_bytes()
+}
+
+/// Sort the keys of every object in a value, for stored output that compares
+/// equal across runs.
+pub fn sorted(v: Value) -> Value {
+    match v {
+        Value::Object(m) => {
+            let mut keys: Vec<_> = m.into_iter().collect();
+            keys.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(
+                keys.into_iter()
+                    .map(|(k, v)| (k, sorted(v)))
+                    .collect::<Map<_, _>>(),
+            )
+        }
+        Value::Array(a) => Value::Array(a.into_iter().map(sorted).collect()),
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn request() -> Request {
+        Request {
+            recipe: "day_panel".into(),
+            recipe_version: 1,
+            params: json!({"metrics": ["shell.commands"], "b": 1, "a": 2.5}),
+            methods: vec![],
+            plans: vec![Plan {
+                relation: "command.fused".into(),
+                from: "2026-09-14T02:00:00Z".into(),
+                to: "2026-09-16T02:00:00Z".into(),
+            }],
+            as_of: 42,
+            day_setting: "04:00 Europe/Warsaw".into(),
+            family: None,
+            intent: Intent::Exploratory,
+        }
+    }
+
+    #[test]
+    fn canonical_bytes_sort_keys_and_stringify_numbers() {
+        assert_eq!(
+            canonical(&json!({"b": 1, "a": [2.5, null, "x"]})),
+            r#"{"a":["2.5",null,"x"],"b":"1"}"#
+        );
+    }
+
+    #[test]
+    fn identity_depends_on_content_not_on_key_order() {
+        let a = request();
+        let mut b = request();
+        b.params = json!({"a": 2.5, "b": 1, "metrics": ["shell.commands"]});
+        assert_eq!(a.id(), b.id());
+        let mut c = request();
+        c.as_of = 43;
+        assert_ne!(a.id(), c.id());
+        // An integer and a float are different values.
+        let mut d = request();
+        d.params = json!({"metrics": ["shell.commands"], "b": 1.0, "a": 2.5});
+        assert_ne!(a.id(), d.id());
+    }
+
+    #[test]
+    fn readset_digest_ignores_row_order_and_counts_empty_reads() {
+        let plan = &request().plans[0];
+        let r1 = Readset::new(plan, 7, vec!["b".into(), "a".into()], vec![]);
+        let r2 = Readset::new(plan, 7, vec!["a".into(), "b".into()], vec![]);
+        assert_eq!(r1, r2);
+        let empty = Readset::new(plan, 7, vec![], vec![]);
+        assert_eq!(empty.rows, 0);
+        assert_ne!(empty.digest, r1.digest);
+    }
+}
