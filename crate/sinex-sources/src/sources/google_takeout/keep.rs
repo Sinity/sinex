@@ -43,7 +43,11 @@ impl Parser for KeepParser {
     type Carry = ();
     type Payload = NoteObserved;
 
-    fn parse(&self, note: &Map<String, Value>, _: &()) -> Result<(Vec<NoteObserved>, ()), RecordError> {
+    fn parse(
+        &self,
+        note: &Map<String, Value>,
+        _: &(),
+    ) -> Result<(Vec<NoteObserved>, ()), RecordError> {
         let created_at = fields::from_unix_us(fields::int(note, "createdTimestampUsec")?)?;
         let edited_at = note
             .get("userEditedTimestampUsec")
@@ -57,7 +61,11 @@ impl Parser for KeepParser {
                 items
                     .iter()
                     .map(|i| NoteItem {
-                        text: i.get("text").and_then(Value::as_str).unwrap_or("").to_owned(),
+                        text: i
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
                         checked: i.get("isChecked").and_then(Value::as_bool).unwrap_or(false),
                     })
                     .collect()
@@ -86,7 +94,11 @@ impl Parser for KeepParser {
                 color: fields::optional_text(note, "color"),
                 pinned: fields::optional_bool(note, "isPinned"),
                 archived: fields::optional_bool(note, "isArchived"),
-                trashed_at: if trashed { edited_at.or(Some(created_at)) } else { None },
+                trashed_at: if trashed {
+                    edited_at.or(Some(created_at))
+                } else {
+                    None
+                },
                 attachments: names("attachments", "filePath"),
                 // `textContentHtml` restates `textContent`; it is kept here,
                 // with any field this parser does not know.
@@ -141,6 +153,10 @@ mod tests {
         assert_eq!(n.labels, vec!["home"]);
         assert_eq!(n.trashed_at, n.edited_at);
         assert!(n.extra.contains_key("textContentHtml"));
-        assert!(KeepParser.parse(json!({"title": "x"}).as_object().unwrap(), &()).is_err());
+        assert!(
+            KeepParser
+                .parse(json!({"title": "x"}).as_object().unwrap(), &())
+                .is_err()
+        );
     }
 }

@@ -137,7 +137,11 @@ impl Parser for SteeringParser {
     type Carry = ();
     type Payload = SteeringRecord;
 
-    fn parse(&self, row: &Map<String, Value>, _: &()) -> Result<(Vec<SteeringRecord>, ()), RecordError> {
+    fn parse(
+        &self,
+        row: &Map<String, Value>,
+        _: &(),
+    ) -> Result<(Vec<SteeringRecord>, ()), RecordError> {
         let id = fields::text(row, "id")?;
         let time_field = match self.table {
             "commitments" => Some("created_at"),
@@ -195,11 +199,16 @@ mod tests {
         let (records, covered) = frame_log(LOG);
         assert_eq!(records.len(), 3);
         assert_eq!(covered, LOG.len());
-        let p = RawLogParser { zone: jiff::tz::TimeZone::get("Europe/Warsaw").unwrap() };
+        let p = RawLogParser {
+            zone: jiff::tz::TimeZone::get("Europe/Warsaw").unwrap(),
+        };
         let (a, b) = records[1];
         let (out, ()) = p.parse(&&LOG[a..b], &()).unwrap();
         assert_eq!(out[0].text, "another one\n  continued here");
-        assert_eq!(out[0].written_at, fields::rfc3339("2025-04-15T21:34:10Z").unwrap());
+        assert_eq!(
+            out[0].written_at,
+            fields::rfc3339("2025-04-15T21:34:10Z").unwrap()
+        );
     }
 
     #[test]
@@ -212,7 +221,9 @@ mod tests {
 
     #[test]
     fn steering_rows_take_their_tables_time() {
-        let p = SteeringParser { table: "commitments" };
+        let p = SteeringParser {
+            table: "commitments",
+        };
         let row = json!({"rowid": 1, "id": "c1", "text": "x", "created_at": "2026-10-12T08:00:00+02:00",
             "status": "open", "forecast_p": 0.7});
         let (out, ()) = p.parse(row.as_object().unwrap(), &()).unwrap();

@@ -11,8 +11,8 @@ pub mod hyprland;
 pub mod journald;
 pub mod mail;
 pub mod messenger;
-pub mod operator;
 pub mod notes;
+pub mod operator;
 pub mod raindrop;
 pub mod reddit;
 /// Commits in local repositories (`code.git`).

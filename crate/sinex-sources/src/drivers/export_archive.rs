@@ -690,7 +690,10 @@ mod tests {
         assert_eq!(covered, bytes.len());
         let (records, covered) = Framing::Delimited(b"<c>").frame(b"<head>no cells", false);
         assert!(records.is_empty());
-        assert_eq!(covered, 11, "a delimiter could still start in the last bytes");
+        assert_eq!(
+            covered, 11,
+            "a delimiter could still start in the last bytes"
+        );
     }
 
     fn dir() -> PathBuf {

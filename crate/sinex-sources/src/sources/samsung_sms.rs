@@ -69,7 +69,11 @@ impl Parser for SmsParser {
                 thread: format!("sms:{address}"),
                 thread_name: text("thread_id").map(|t| format!("thread {t}")),
                 participants: vec![address.clone()],
-                sender: if kind == "received" { address } else { "me".into() },
+                sender: if kind == "received" {
+                    address
+                } else {
+                    "me".into()
+                },
                 sent_at: fields::from_unix_ms(ms)?,
                 text: text("body"),
                 kind: Some(kind.into()),
@@ -114,7 +118,10 @@ mod tests {
     #[test]
     fn double_encoded_values() {
         let (_, header) = SmsParser
-            .parse(&&b"\xef\xbb\xbfITEM_DATA,FILE_LIST,TIMESTAMP,SIZE,VALUE,CREATETIME,KEY\n"[..], &vec![])
+            .parse(
+                &&b"\xef\xbb\xbfITEM_DATA,FILE_LIST,TIMESTAMP,SIZE,VALUE,CREATETIME,KEY\n"[..],
+                &vec![],
+            )
             .unwrap();
         let row = br#""",,1659525740863,723,"""{\""_id\"":\""639\"",\""thread_id\"":\""59\"",\""address\"":\""4860\"",\""date\"":\""1659525740863\"",\""type\"":\""1\"",\""body\"":\""Hi\\n\""}""",1,k
 "#;

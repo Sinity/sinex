@@ -127,10 +127,7 @@ impl Parser for YouTubeParser {
         } else if first.text.starts_with("Searched for") {
             let (url, query) = match first.links.first() {
                 Some((u, q)) => (Some(u.clone()), q.clone()),
-                None => (
-                    None,
-                    first.text["Searched for".len()..].trim().to_owned(),
-                ),
+                None => (None, first.text["Searched for".len()..].trim().to_owned()),
             };
             Ok((
                 vec![YouTubeEvent::Searched(VideoSearched {
@@ -235,10 +232,17 @@ mod tests {
         assert_eq!(out[0].title, "A page");
         assert_eq!(out[0].title_url.as_deref(), Some("https://example.org/a"));
         assert_eq!(out[0].unlinked_text, None);
-        let c = cell("Takeout", "Downloaded a Takeout archive", "Dec 15, 2025, 5:15:21 AM CEST");
+        let c = cell(
+            "Takeout",
+            "Downloaded a Takeout archive",
+            "Dec 15, 2025, 5:15:21 AM CEST",
+        );
         let (out, ()) = MyActivityParser.parse(&c, &()).unwrap();
         assert_eq!(out[0].title_url, None);
-        assert_eq!(out[0].unlinked_text.as_deref(), Some("Downloaded a Takeout archive"));
+        assert_eq!(
+            out[0].unlinked_text.as_deref(),
+            Some("Downloaded a Takeout archive")
+        );
     }
 
     #[test]
@@ -249,7 +253,9 @@ mod tests {
             "Aug 26, 2026, 9:34:44 PM CEST",
         );
         let (out, ()) = YouTubeParser.parse(&c, &()).unwrap();
-        let YouTubeEvent::Watched(w) = &out[0] else { panic!() };
+        let YouTubeEvent::Watched(w) = &out[0] else {
+            panic!()
+        };
         assert_eq!(w.video_id, "abc123");
         assert_eq!(w.title.as_deref(), Some("A talk"));
         assert_eq!(w.channel.as_deref(), Some("Chan"));
@@ -259,26 +265,38 @@ mod tests {
             "Aug 26, 2026, 9:34:44 PM CEST",
         );
         let (out, ()) = YouTubeParser.parse(&gone, &()).unwrap();
-        let YouTubeEvent::Watched(w) = &out[0] else { panic!() };
+        let YouTubeEvent::Watched(w) = &out[0] else {
+            panic!()
+        };
         assert_eq!(w.title, None);
         assert_eq!(w.channel, None);
     }
 
     #[test]
     fn video_ids_from_every_url_form() {
-        assert_eq!(video_id("https://www.youtube.com/watch?v=x1&t=3").as_deref(), Some("x1"));
+        assert_eq!(
+            video_id("https://www.youtube.com/watch?v=x1&t=3").as_deref(),
+            Some("x1")
+        );
         assert_eq!(video_id("https://youtu.be/x2?t=1").as_deref(), Some("x2"));
-        assert_eq!(video_id("https://youtube.com/shorts/x3").as_deref(), Some("x3"));
+        assert_eq!(
+            video_id("https://youtube.com/shorts/x3").as_deref(),
+            Some("x3")
+        );
         assert_eq!(video_id("https://example.org/"), None);
     }
 
     #[test]
     fn selects_members() {
-        assert!(select_my_activity("Takeout/My Activity/Search/MyActivity.html"));
+        assert!(select_my_activity(
+            "Takeout/My Activity/Search/MyActivity.html"
+        ));
         assert!(!select_my_activity("Takeout/My Activity/Assistant/x.mp3"));
         assert!(select_youtube(
             "Takeout/YouTube and YouTube Music/history/watch-history.html"
         ));
-        assert!(!select_youtube("Takeout/YouTube/my-comments/my-comments.html"));
+        assert!(!select_youtube(
+            "Takeout/YouTube/my-comments/my-comments.html"
+        ));
     }
 }

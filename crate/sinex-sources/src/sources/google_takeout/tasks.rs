@@ -44,7 +44,11 @@ impl Parser for TasksParser {
     type Carry = ();
     type Payload = TaskRevised;
 
-    fn parse(&self, doc: &Map<String, Value>, _: &()) -> Result<(Vec<TaskRevised>, ()), RecordError> {
+    fn parse(
+        &self,
+        doc: &Map<String, Value>,
+        _: &(),
+    ) -> Result<(Vec<TaskRevised>, ()), RecordError> {
         let lists = doc
             .get("items")
             .and_then(Value::as_array)
@@ -56,7 +60,12 @@ impl Parser for TasksParser {
                 .ok_or_else(|| RecordError::new("a task list is not an object"))?;
             let list_id = fields::text(list, "id")?;
             let list_title = fields::optional_text(list, "title");
-            for task in list.get("items").and_then(Value::as_array).into_iter().flatten() {
+            for task in list
+                .get("items")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 let task = task
                     .as_object()
                     .ok_or_else(|| RecordError::new("a task is not an object"))?;

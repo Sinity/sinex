@@ -22,7 +22,12 @@ pub const SPEC: SourceSpec = SourceSpec {
     class: Class::Open,
     parser: "reddit-gdpr",
     parser_version: 1,
-    event_types: &["post.published", "vote.cast", "bookmark.saved", "conversation.message"],
+    event_types: &[
+        "post.published",
+        "vote.cast",
+        "bookmark.saved",
+        "conversation.message",
+    ],
     framer: frame,
 };
 
@@ -93,7 +98,8 @@ impl Parser for RedditParser {
                 .filter(|v| !v.is_empty())
                 .cloned()
         };
-        let need = |name: &str| get(name).ok_or_else(|| RecordError::new(format!("{member}: no {name}")));
+        let need =
+            |name: &str| get(name).ok_or_else(|| RecordError::new(format!("{member}: no {name}")));
         let time = |name: &str| get(name).map(|t| utc(&t)).transpose();
         let service = || "reddit".to_owned();
         let event = match member.as_str() {
@@ -107,21 +113,35 @@ impl Parser for RedditParser {
                     title: get("title"),
                     body: get("body"),
                     url: get("permalink"),
-                    parent: if comment { get("parent").or_else(|| get("link")) } else { None },
+                    parent: if comment {
+                        get("parent").or_else(|| get("link"))
+                    } else {
+                        None
+                    },
                     community: get("subreddit"),
                     tags: vec![],
                     score: None,
-                    extra: [("gildings", get("gildings")), ("link", get("link")), ("url", get("url")), ("media", get("media"))]
-                        .into_iter()
-                        .filter_map(|(k, v)| v.map(|v| (k.to_owned(), serde_json::Value::String(v))))
-                        .collect(),
+                    extra: [
+                        ("gildings", get("gildings")),
+                        ("link", get("link")),
+                        ("url", get("url")),
+                        ("media", get("media")),
+                    ]
+                    .into_iter()
+                    .filter_map(|(k, v)| v.map(|v| (k.to_owned(), serde_json::Value::String(v))))
+                    .collect(),
                 })
             }
             "comment_votes.csv" | "post_votes.csv" => {
                 let direction = need("direction")?;
                 RedditEvent::Vote(VoteCast {
                     service: service(),
-                    target_kind: if member.starts_with("comment") { "comment" } else { "post" }.into(),
+                    target_kind: if member.starts_with("comment") {
+                        "comment"
+                    } else {
+                        "post"
+                    }
+                    .into(),
                     target_id: need("id")?,
                     // `none` is a vote taken back; the export gives no time.
                     withdrawn_at: (direction == "none")
@@ -137,7 +157,11 @@ impl Parser for RedditParser {
                 })
             }
             "saved_comments.csv" | "saved_posts.csv" => {
-                let kind = if member.starts_with("saved_comments") { "comment" } else { "post" };
+                let kind = if member.starts_with("saved_comments") {
+                    "comment"
+                } else {
+                    "post"
+                };
                 RedditEvent::Saved(BookmarkSaved {
                     service: "reddit".into(),
                     native_id: format!("{kind}:{}", need("id")?),
@@ -168,7 +192,8 @@ impl Parser for RedditParser {
                     thread_name: get("subject"),
                     participants,
                     sender: from,
-                    sent_at: time("date")?.ok_or_else(|| RecordError::new("message without a date"))?,
+                    sent_at: time("date")?
+                        .ok_or_else(|| RecordError::new("message without a date"))?,
                     text: get("body"),
                     kind: Some("message".into()),
                     media: vec![],
@@ -185,7 +210,8 @@ impl Parser for RedditParser {
                 thread_name: get("channel_name"),
                 participants: vec![],
                 sender: get("username").unwrap_or_default(),
-                sent_at: time("created_at")?.ok_or_else(|| RecordError::new("chat without a time"))?,
+                sent_at: time("created_at")?
+                    .ok_or_else(|| RecordError::new("chat without a time"))?,
                 text: get("message"),
                 kind: get("conversation_type"),
                 media: vec![],
@@ -244,7 +270,10 @@ mod tests {
 
     fn read(member: &str, rows: &[&[u8]]) -> Vec<RedditEvent> {
         let manifest = json!({"path": member});
-        let ctx = RecordContext { manifest: &manifest, member: None };
+        let ctx = RecordContext {
+            manifest: &manifest,
+            member: None,
+        };
         let mut carry = Carry::default();
         let mut out = vec![];
         for row in rows {
@@ -261,21 +290,39 @@ mod tests {
             b"id,permalink,date,ip,subreddit,gildings,link,parent,body,media\n",
             b"ck1,https://r/x/ck1/,2014-08-27 00:59:46 UTC,1.2.3.4,Futurology,0,https://r/x/,t3_x,hello,\n",
         ]);
-        let RedditEvent::Post(p) = &c[0] else { panic!() };
+        let RedditEvent::Post(p) = &c[0] else {
+            panic!()
+        };
         assert_eq!(p.kind, "comment");
         assert_eq!(p.community.as_deref(), Some("Futurology"));
         assert_eq!(p.created_at, fields::rfc3339("2014-08-27T00:59:46Z").ok());
-        assert!(!serde_json::to_string(p).unwrap().contains("1.2.3.4"), "ip dropped");
-        let v = read("post_votes.csv", &[b"id,permalink,direction\n", b"11a,https://r/p/,none\n"]);
-        let RedditEvent::Vote(v) = &v[0] else { panic!() };
+        assert!(
+            !serde_json::to_string(p).unwrap().contains("1.2.3.4"),
+            "ip dropped"
+        );
+        let v = read(
+            "post_votes.csv",
+            &[b"id,permalink,direction\n", b"11a,https://r/p/,none\n"],
+        );
+        let RedditEvent::Vote(v) = &v[0] else {
+            panic!()
+        };
         assert!(v.withdrawn_at.is_some());
-        let s = read("saved_posts.csv", &[b"id,permalink\n", b"1cc,https://r/s/\n"]);
+        let s = read(
+            "saved_posts.csv",
+            &[b"id,permalink\n", b"1cc,https://r/s/\n"],
+        );
         assert!(matches!(&s[0], RedditEvent::Saved(b) if b.native_id == "post:1cc"));
-        let m = read("messages_archive.csv", &[
-            b"id,permalink,thread_id,date,ip,from,to,subject,body\n",
-            b"4s6,https://r/m,t4_4s5,2016-01-16 13:03:57 UTC,,/u/Sinity,/u/other,re: hi,text\n",
-        ]);
-        let RedditEvent::Message(m) = &m[0] else { panic!() };
+        let m = read(
+            "messages_archive.csv",
+            &[
+                b"id,permalink,thread_id,date,ip,from,to,subject,body\n",
+                b"4s6,https://r/m,t4_4s5,2016-01-16 13:03:57 UTC,,/u/Sinity,/u/other,re: hi,text\n",
+            ],
+        );
+        let RedditEvent::Message(m) = &m[0] else {
+            panic!()
+        };
         assert_eq!(m.thread, "t4_4s5");
         assert_eq!(m.sender, "/u/Sinity");
     }
@@ -283,8 +330,14 @@ mod tests {
     #[test]
     fn a_new_member_starts_with_its_header() {
         let manifest = json!({"path": "posts.csv"});
-        let ctx = RecordContext { manifest: &manifest, member: None };
-        let carry = Carry { member: "comments.csv".into(), header: vec!["id".into()] };
+        let ctx = RecordContext {
+            manifest: &manifest,
+            member: None,
+        };
+        let carry = Carry {
+            member: "comments.csv".into(),
+            header: vec!["id".into()],
+        };
         let (events, next) = RedditParser
             .parse_record(&&b"id,permalink,date\n"[..], &carry, &ctx)
             .unwrap();

@@ -83,7 +83,10 @@ impl Parser for SleepParser {
         values.insert("cycles".into(), json!(present(cell(11))));
         values.insert("deep_sleep".into(), json!(present(cell(12))));
         values.insert("len_adjust".into(), json!(num(cell(13))));
-        values.insert("geo".into(), json!(Some(cell(14)).filter(|g| !g.is_empty())));
+        values.insert(
+            "geo".into(),
+            json!(Some(cell(14)).filter(|g| !g.is_empty())),
+        );
         let mut events = Vec::new();
         let mut actigraphy = Vec::new();
         for (i, raw) in cells.iter().enumerate().skip(15) {
@@ -131,7 +134,9 @@ fn naive(raw: &str) -> Result<Timestamp, RecordError> {
     let month = time::Month::try_from(month as u8).map_err(|_| bad())?;
     let date = time::Date::from_calendar_date(year, month, day as u8).map_err(|_| bad())?;
     let time = time::Time::from_hms(h, m, s).map_err(|_| bad())?;
-    Ok(Timestamp(time::PrimitiveDateTime::new(date, time).assume_utc()))
+    Ok(Timestamp(
+        time::PrimitiveDateTime::new(date, time).assume_utc(),
+    ))
 }
 
 /// `LIGHT_START-1759646940000` or `HR-1759647300000-88.0`.

@@ -161,11 +161,17 @@ type Moment = (Timestamp, String, bool);
 impl CalendarParser {
     fn moment(&self, prop: &Prop) -> Result<Moment, RecordError> {
         let raw = prop.value.trim();
-        let date_only = prop.param("VALUE") == Some("DATE") || (raw.len() == 8 && !raw.contains('T'));
+        let date_only =
+            prop.param("VALUE") == Some("DATE") || (raw.len() == 8 && !raw.contains('T'));
         let (civil, zone, label) = if date_only {
-            let d: jiff::civil::Date = jiff::civil::Date::strptime("%Y%m%d", raw)
-                .map_err(|e| RecordError::new(format!("{}: invalid date {raw:?}: {e}", prop.name)))?;
-            (d.to_datetime(jiff::civil::Time::midnight()), self.zone.clone(), "date".to_owned())
+            let d: jiff::civil::Date = jiff::civil::Date::strptime("%Y%m%d", raw).map_err(|e| {
+                RecordError::new(format!("{}: invalid date {raw:?}: {e}", prop.name))
+            })?;
+            (
+                d.to_datetime(jiff::civil::Time::midnight()),
+                self.zone.clone(),
+                "date".to_owned(),
+            )
         } else {
             let (body, utc) = match raw.strip_suffix('Z') {
                 Some(b) => (b, true),
@@ -264,7 +270,11 @@ impl Parser for CalendarParser {
         let status = text("STATUS");
         let last_modified = self.stamp(get("LAST-MODIFIED"))?;
         let mut extra = Map::new();
-        for p in ev.props.iter().filter(|p| !KNOWN.contains(&p.name.as_str())) {
+        for p in ev
+            .props
+            .iter()
+            .filter(|p| !KNOWN.contains(&p.name.as_str()))
+        {
             let entry = extra
                 .entry(p.name.clone())
                 .or_insert_with(|| Value::Array(vec![]));
@@ -371,8 +381,13 @@ mod tests {
     fn read(ics: &str) -> CalendarEvent {
         let ev = <VEvent as RecordShape>::decode(ics.as_bytes()).unwrap();
         let manifest = json!({"path": "Takeout/Calendar/me@example.org.ics"});
-        let ctx = RecordContext { manifest: &manifest, member: None };
-        let parser = CalendarParser { zone: jiff::tz::TimeZone::UTC };
+        let ctx = RecordContext {
+            manifest: &manifest,
+            member: None,
+        };
+        let parser = CalendarParser {
+            zone: jiff::tz::TimeZone::UTC,
+        };
         parser.parse_record(&ev, &(), &ctx).unwrap().0.remove(0)
     }
 
@@ -382,14 +397,27 @@ mod tests {
         assert_eq!(e.calendar, "me@example.org");
         assert_eq!(e.uid, "a1@google.com");
         assert_eq!(e.zone, "Europe/Warsaw");
-        assert_eq!(e.start, Timestamp::from_unix_secs(1_296_223_200).ok(), "15:00 CET is 14:00 UTC");
-        assert_eq!(e.end.unwrap().unix_ns() - e.start.unwrap().unix_ns(), 3_600_000_000_000);
-        assert_eq!(e.rrule.as_deref(), Some("FREQ=WEEKLY;COUNT=100;BYDAY=SU,FR"));
+        assert_eq!(
+            e.start,
+            Timestamp::from_unix_secs(1_296_223_200).ok(),
+            "15:00 CET is 14:00 UTC"
+        );
+        assert_eq!(
+            e.end.unwrap().unix_ns() - e.start.unwrap().unix_ns(),
+            3_600_000_000_000
+        );
+        assert_eq!(
+            e.rrule.as_deref(),
+            Some("FREQ=WEEKLY;COUNT=100;BYDAY=SU,FR")
+        );
         assert_eq!(e.description.as_deref(), Some("line one\nline, two"));
         assert_eq!(e.attendees, vec!["mailto:a@example.org"]);
         assert_eq!(e.created_at, None, "year 1 is Google's placeholder");
         assert!(e.extra.contains_key("X-GOOGLE-CONFERENCE"));
-        assert!(!e.extra.contains_key("ACTION"), "the alarm is not the event's own");
+        assert!(
+            !e.extra.contains_key("ACTION"),
+            "the alarm is not the event's own"
+        );
         assert!(!e.extra.contains_key("DTSTAMP"));
     }
 
@@ -399,7 +427,10 @@ mod tests {
         let e = read(ics);
         assert!(e.all_day);
         assert_eq!(e.zone, "date");
-        assert_eq!(e.end.unwrap().unix_ns() - e.start.unwrap().unix_ns(), 86_400_000_000_000);
+        assert_eq!(
+            e.end.unwrap().unix_ns() - e.start.unwrap().unix_ns(),
+            86_400_000_000_000
+        );
         assert!(e.cancelled_at.is_some());
         let floating = read("BEGIN:VEVENT\nUID:f\nDTSTART:20240301T090000\nEND:VEVENT\n");
         assert_eq!(floating.zone, "floating");
@@ -416,7 +447,10 @@ mod tests {
 
     #[test]
     fn frames_one_record_per_event() {
-        let doc = format!("BEGIN:VCALENDAR\nX-WR-CALNAME:Me\n{ICS}{}", ICS.replace("a1@", "a2@"));
+        let doc = format!(
+            "BEGIN:VCALENDAR\nX-WR-CALNAME:Me\n{ICS}{}",
+            ICS.replace("a1@", "a2@")
+        );
         let (records, _) = frame(doc.as_bytes());
         assert_eq!(records.len(), 2);
     }

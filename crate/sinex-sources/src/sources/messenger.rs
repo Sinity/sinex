@@ -35,7 +35,11 @@ impl Parser for MessengerParser {
     type Carry = ();
     type Payload = ConversationMessage;
 
-    fn parse(&self, doc: &Map<String, Value>, _: &()) -> Result<(Vec<ConversationMessage>, ()), RecordError> {
+    fn parse(
+        &self,
+        doc: &Map<String, Value>,
+        _: &(),
+    ) -> Result<(Vec<ConversationMessage>, ()), RecordError> {
         let messages = doc
             .get("messages")
             .and_then(Value::as_array)
@@ -90,7 +94,15 @@ impl Parser for MessengerParser {
                 .and_then(Value::as_bool)
                 == Some(true);
             let mut media = Vec::new();
-            for key in ["media", "photos", "videos", "audio_files", "files", "gifs", "sticker"] {
+            for key in [
+                "media",
+                "photos",
+                "videos",
+                "audio_files",
+                "files",
+                "gifs",
+                "sticker",
+            ] {
                 let items = match m.get(key) {
                     Some(Value::Array(a)) => a.clone(),
                     Some(one @ Value::Object(_)) => vec![one.clone()],
@@ -175,7 +187,9 @@ mod tests {
              "isUnsent": false, "media": [], "reactions": [{"reaction": "x", "actor": "B"}]},
             {"senderName": "B", "timestamp": 1_723_462_266_668i64, "type": "media", "isUnsent": true,
              "media": [{"uri": "media/a.webp"}]}]});
-        let (out, ()) = MessengerParser.parse(doc.as_object().unwrap(), &()).unwrap();
+        let (out, ()) = MessengerParser
+            .parse(doc.as_object().unwrap(), &())
+            .unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].thread, "A|B");
         assert_eq!(out[0].reactions.len(), 1);
@@ -190,7 +204,9 @@ mod tests {
             "title": "B", "messages": [{"sender_name": "Micha\u{00c5}\u{0082}",
             "timestamp_ms": 1_500_000_000_000i64, "content": "za\u{00c5}\u{00bc}\u{00c3}\u{00b3}\u{00c5}\u{0082}\u{00c4}\u{0087}",
             "type": "Generic", "photos": [{"uri": "messages/photos/p.jpg"}]}]});
-        let (out, ()) = MessengerParser.parse(doc.as_object().unwrap(), &()).unwrap();
+        let (out, ()) = MessengerParser
+            .parse(doc.as_object().unwrap(), &())
+            .unwrap();
         assert_eq!(out[0].sender, "Michał");
         assert_eq!(out[0].text.as_deref(), Some("zażółć"));
         assert_eq!(out[0].thread, "B|Michał");

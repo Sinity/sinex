@@ -49,8 +49,14 @@ impl Parser for GoodreadsParser {
         let int = |name: &str| get(name).and_then(|v| v.parse::<i64>().ok());
         let book_id = get("Book Id").ok_or_else(|| RecordError::new("row without a Book Id"))?;
         let title = get("Title").ok_or_else(|| RecordError::new("row without a Title"))?;
-        let added = get("Date Added").map(|d| fields::day(&d)).transpose()?.flatten();
-        let read = get("Date Read").map(|d| fields::day(&d)).transpose()?.flatten();
+        let added = get("Date Added")
+            .map(|d| fields::day(&d))
+            .transpose()?
+            .flatten();
+        let read = get("Date Read")
+            .map(|d| fields::day(&d))
+            .transpose()?
+            .flatten();
         let event = |action: &str, at| BookEvent {
             service: "goodreads".into(),
             book_id: book_id.clone(),
@@ -69,7 +75,12 @@ impl Parser for GoodreadsParser {
             year_published: int("Year Published"),
             original_year: int("Original Publication Year"),
             shelves: get("Bookshelves")
-                .map(|s| s.split(',').map(|x| x.trim().to_owned()).filter(|x| !x.is_empty()).collect())
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim().to_owned())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default(),
             exclusive_shelf: get("Exclusive Shelf"),
             review: get("My Review"),

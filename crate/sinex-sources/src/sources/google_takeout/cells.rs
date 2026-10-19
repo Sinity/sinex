@@ -112,7 +112,9 @@ fn line(raw: &str) -> Line {
         let after = &rest[i + 9..];
         let Some(q) = after.find('"') else { break };
         let href = decode(&after[..q]);
-        let Some(gt) = after[q..].find('>') else { break };
+        let Some(gt) = after[q..].find('>') else {
+            break;
+        };
         let inner_start = q + gt + 1;
         let close = after[inner_start..]
             .find("</a>")
@@ -300,7 +302,10 @@ mod tests {
                 "a & b".to_owned()
             )]
         );
-        assert_eq!(c.at, crate::sources::fields::rfc3339("2026-08-26T19:34:44Z").unwrap());
+        assert_eq!(
+            c.at,
+            crate::sources::fields::rfc3339("2026-08-26T19:34:44Z").unwrap()
+        );
         assert_eq!(c.zone_label, "CEST");
         assert_eq!(c.section("Products"), vec!["Search"]);
         assert_eq!(c.section("Locations").len(), 1);
@@ -308,7 +313,10 @@ mod tests {
 
     #[test]
     fn one_moment_in_two_zones_hashes_the_same() {
-        let utc = SEARCH.replace("Aug 26, 2026, 9:34:44 PM CEST", "Aug 26, 2026, 7:34:44 PM UTC");
+        let utc = SEARCH.replace(
+            "Aug 26, 2026, 9:34:44 PM CEST",
+            "Aug 26, 2026, 7:34:44 PM UTC",
+        );
         assert_eq!(
             <Cell as RecordShape>::hash(SEARCH.as_bytes(), &[]),
             <Cell as RecordShape>::hash(utc.as_bytes(), &[])
@@ -322,11 +330,19 @@ mod tests {
 
     #[test]
     fn times_with_narrow_spaces_noon_and_midnight() {
-        let (t, z) = time("Dec 15, 2025, 12:05:21\u{202f}AM CET").unwrap().unwrap();
+        let (t, z) = time("Dec 15, 2025, 12:05:21\u{202f}AM CET")
+            .unwrap()
+            .unwrap();
         assert_eq!(z, "CET");
-        assert_eq!(t, crate::sources::fields::rfc3339("2025-12-14T23:05:21Z").unwrap());
+        assert_eq!(
+            t,
+            crate::sources::fields::rfc3339("2025-12-14T23:05:21Z").unwrap()
+        );
         let (t, _) = time("Aug 7, 2019, 12:34:48 PM UTC").unwrap().unwrap();
-        assert_eq!(t, crate::sources::fields::rfc3339("2019-08-07T12:34:48Z").unwrap());
+        assert_eq!(
+            t,
+            crate::sources::fields::rfc3339("2019-08-07T12:34:48Z").unwrap()
+        );
         assert!(time("Searched for Aug 7, 2019").is_none());
         assert!(time("Aug 7, 2019, 4:34:48 PM XYZT").unwrap().is_err());
     }

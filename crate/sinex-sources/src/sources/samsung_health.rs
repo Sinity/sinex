@@ -47,7 +47,9 @@ impl Parser for SamsungParser {
     type Payload = HealthRecord;
 
     fn parse(&self, _: &&[u8], _: &Carry) -> Result<(Vec<HealthRecord>, Carry), RecordError> {
-        Err(RecordError::new("a Samsung Health row needs its file's name"))
+        Err(RecordError::new(
+            "a Samsung Health row needs its file's name",
+        ))
     }
 
     fn parse_record(
@@ -96,16 +98,25 @@ impl Parser for SamsungParser {
             .get("datauuid")
             .and_then(Value::as_str)
             .map(str::to_owned)
-            .ok_or_else(|| RecordError::new(format!("{} row without a datauuid", carry.category)))?;
+            .ok_or_else(|| {
+                RecordError::new(format!("{} row without a datauuid", carry.category))
+            })?;
         let time = |name: &str| -> Result<Option<Timestamp>, RecordError> {
-            values.get(name).and_then(Value::as_str).map(utc).transpose()
+            values
+                .get(name)
+                .and_then(Value::as_str)
+                .map(utc)
+                .transpose()
         };
         let start = match time("start_time")? {
             Some(t) => Some(t),
             None => time("day_time")?.or(time("create_time")?),
         };
         let end = time("end_time")?;
-        let offset_minutes = values.get("time_offset").and_then(Value::as_str).and_then(offset);
+        let offset_minutes = values
+            .get("time_offset")
+            .and_then(Value::as_str)
+            .and_then(offset);
         Ok((
             vec![HealthRecord {
                 provider: "samsung-health".into(),
@@ -210,28 +221,50 @@ mod tests {
     #[test]
     fn type_line_header_and_rows() {
         let manifest = json!({"path": "com.samsung.health.hrv.20260807162074.csv"});
-        let ctx = RecordContext { manifest: &manifest, member: None };
+        let ctx = RecordContext {
+            manifest: &manifest,
+            member: None,
+        };
         let (_, c) = SamsungParser
-            .parse_record(&&b"\xef\xbb\xbfcom.samsung.health.hrv,7006003,1\n"[..], &Carry::default(), &ctx)
+            .parse_record(
+                &&b"\xef\xbb\xbfcom.samsung.health.hrv,7006003,1\n"[..],
+                &Carry::default(),
+                &ctx,
+            )
             .unwrap();
         assert_eq!(c.category, "hrv");
         let (_, c) = SamsungParser
-            .parse_record(&&b"com.samsung.health.hrv.start_time,time_offset,datauuid,end_time,score\n"[..], &c, &ctx)
+            .parse_record(
+                &&b"com.samsung.health.hrv.start_time,time_offset,datauuid,end_time,score\n"[..],
+                &c,
+                &ctx,
+            )
             .unwrap();
         assert_eq!(c.header[0], "start_time");
         let (out, _) = SamsungParser
-            .parse_record(&&b"2025-05-21 04:00:00.000,UTC+0200,a291,2025-05-21 05:00:00.000,7\n"[..], &c, &ctx)
+            .parse_record(
+                &&b"2025-05-21 04:00:00.000,UTC+0200,a291,2025-05-21 05:00:00.000,7\n"[..],
+                &c,
+                &ctx,
+            )
             .unwrap();
         let r = &out[0];
         assert_eq!(r.native_id, "a291");
-        assert_eq!(r.start, fields::rfc3339("2025-05-21T04:00:00Z").ok(), "the text is UTC");
+        assert_eq!(
+            r.start,
+            fields::rfc3339("2025-05-21T04:00:00Z").ok(),
+            "the text is UTC"
+        );
         assert_eq!(r.offset_minutes, Some(120));
         assert_eq!(r.values["score"], json!(7));
     }
 
     #[test]
     fn categories_and_values() {
-        assert_eq!(category_of("com.samsung.shealth.tracker.heart_rate"), "tracker.heart_rate");
+        assert_eq!(
+            category_of("com.samsung.shealth.tracker.heart_rate"),
+            "tracker.heart_rate"
+        );
         assert_eq!(typed("12"), json!(12));
         assert_eq!(typed("0.5"), json!(0.5));
         assert_eq!(typed("gOU20c3N2O"), json!("gOU20c3N2O"));

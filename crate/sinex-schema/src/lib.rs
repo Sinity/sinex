@@ -321,7 +321,14 @@ mod tests {
     /// kind's view, and so the whole schema, fail to apply.
     #[test]
     fn no_payload_field_shadows_an_event_column() {
-        let reserved = ["id", "source", "ts_orig", "ts_quality", "ts_coided", "record_state"];
+        let reserved = [
+            "id",
+            "source",
+            "ts_orig",
+            "ts_quality",
+            "ts_coided",
+            "record_state",
+        ];
         for kind in kinds::ALL {
             let schema = (kind.json_schema)();
             let props = schema.get("properties").and_then(|p| p.as_object());

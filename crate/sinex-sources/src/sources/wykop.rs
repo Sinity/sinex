@@ -37,10 +37,28 @@ sinex_model::payload_enum! {
 /// Fields read into the events; scrape bookkeeping (`page`, `platform`,
 /// `username`) is dropped, anything else is kept.
 const KNOWN: &[&str] = &[
-    "kind", "page", "platform", "username", "entry_id", "entry_url", "entry_created_at",
-    "entry_author", "entry_content", "entry_tags", "votes_score", "comment_id",
-    "comment_content", "comment_created_at", "comment_rating", "comment_url", "link_id",
-    "link_title", "link_url", "link_created_at", "link_tags", "link_slug",
+    "kind",
+    "page",
+    "platform",
+    "username",
+    "entry_id",
+    "entry_url",
+    "entry_created_at",
+    "entry_author",
+    "entry_content",
+    "entry_tags",
+    "votes_score",
+    "comment_id",
+    "comment_content",
+    "comment_created_at",
+    "comment_rating",
+    "comment_url",
+    "link_id",
+    "link_title",
+    "link_url",
+    "link_created_at",
+    "link_tags",
+    "link_slug",
 ];
 
 pub struct WykopParser;
@@ -50,7 +68,11 @@ impl Parser for WykopParser {
     type Carry = ();
     type Payload = WykopEvent;
 
-    fn parse(&self, row: &Map<String, Value>, _: &()) -> Result<(Vec<WykopEvent>, ()), RecordError> {
+    fn parse(
+        &self,
+        row: &Map<String, Value>,
+        _: &(),
+    ) -> Result<(Vec<WykopEvent>, ()), RecordError> {
         let kind = fields::text(row, "kind")?;
         let id = |name: &str| -> Result<String, RecordError> {
             match row.get(name) {
@@ -59,11 +81,19 @@ impl Parser for WykopParser {
                 other => Err(RecordError::new(format!("{name} missing: {other:?}"))),
             }
         };
-        let at = |name: &str| fields::optional_text(row, name).map(|t| warsaw(&t)).transpose();
+        let at = |name: &str| {
+            fields::optional_text(row, name)
+                .map(|t| warsaw(&t))
+                .transpose()
+        };
         let tags = |name: &str| -> Vec<String> {
             row.get(name)
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_owned)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.as_str().map(str::to_owned))
+                        .collect()
+                })
                 .unwrap_or_default()
         };
         let text = |name: &str| fields::optional_text(row, name);
@@ -160,7 +190,11 @@ impl Parser for WykopParser {
             "link_wykopane" | "link_zakopane" => vote(
                 "link",
                 id("link_id")?,
-                if kind == "link_wykopane" { "up" } else { "down" },
+                if kind == "link_wykopane" {
+                    "up"
+                } else {
+                    "down"
+                },
                 at("link_created_at")?,
                 text("link_title"),
                 text("link_url"),
@@ -199,9 +233,9 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 
 /// The operator's own activity files; the observer feeds are other people's.
 pub fn is_own(path: &std::path::Path) -> bool {
-    path.file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with("wykop_") && n.ends_with(".jsonl") && !n.contains("observed"))
+    path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+        n.starts_with("wykop_") && n.ends_with(".jsonl") && !n.contains("observed")
+    })
 }
 
 pub fn driver(path: PathBuf, host: String) -> ExportArchive {
@@ -220,14 +254,21 @@ mod tests {
     use serde_json::json;
 
     fn one(v: Value) -> WykopEvent {
-        WykopParser.parse(v.as_object().unwrap(), &()).unwrap().0.remove(0)
+        WykopParser
+            .parse(v.as_object().unwrap(), &())
+            .unwrap()
+            .0
+            .remove(0)
     }
 
     #[test]
     fn entries_are_warsaw_time_not_utc() {
         let WykopEvent::Post(p) = one(json!({"kind": "entry", "entry_id": 76315507,
             "entry_created_at": "2024-05-18 06:53:25", "entry_content": "x #tag",
-            "entry_tags": ["tag"], "votes_score": 0, "page": 1, "platform": "wykop"})) else { panic!() };
+            "entry_tags": ["tag"], "votes_score": 0, "page": 1, "platform": "wykop"}))
+        else {
+            panic!()
+        };
         // 06:53:25 CEST is 04:53:25 UTC.
         assert_eq!(p.created_at, fields::rfc3339("2024-05-18T04:53:25Z").ok());
         assert_eq!(p.native_id, "76315507");
@@ -238,10 +279,21 @@ mod tests {
     #[test]
     fn votes_have_no_time_of_their_own() {
         let WykopEvent::Vote(v) = one(json!({"kind": "link_zakopane", "link_id": 7,
-            "link_created_at": "2024-01-08 17:14:47", "link_title": "t"})) else { panic!() };
+            "link_created_at": "2024-01-08 17:14:47", "link_title": "t"}))
+        else {
+            panic!()
+        };
         assert_eq!(v.direction, "down");
         assert_eq!(v.cast_at, None);
-        assert_eq!(v.target_created_at, fields::rfc3339("2024-01-08T16:14:47Z").ok(), "CET in winter");
-        assert!(WykopParser.parse(json!({"kind": "nope"}).as_object().unwrap(), &()).is_err());
+        assert_eq!(
+            v.target_created_at,
+            fields::rfc3339("2024-01-08T16:14:47Z").ok(),
+            "CET in winter"
+        );
+        assert!(
+            WykopParser
+                .parse(json!({"kind": "nope"}).as_object().unwrap(), &())
+                .is_err()
+        );
     }
 }

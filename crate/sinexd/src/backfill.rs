@@ -516,7 +516,10 @@ async fn export(
                         samsung_sms::driver(file, host.clone()),
                     ),
                     "wykop" => (Box::new(wykop::source()), wykop::driver(file, host.clone())),
-                    "reddit" => (Box::new(reddit::source()), reddit::driver(file, host.clone())),
+                    "reddit" => (
+                        Box::new(reddit::source()),
+                        reddit::driver(file, host.clone()),
+                    ),
                     "goodreads" => (
                         Box::new(goodreads::source()),
                         goodreads::driver(file, host.clone()),
