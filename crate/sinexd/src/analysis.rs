@@ -194,6 +194,14 @@ pub async fn panel(
     let mut cells = Vec::new();
     let mut readsets = Vec::new();
     let mut fetched: BTreeMap<(&str, bool), Vec<store::EventRow>> = BTreeMap::new();
+    // Each relation is read once, with the fields every metric over it needs.
+    let mut fields: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for def in metrics {
+        let f = fields.entry(def.relation).or_default();
+        f.extend(def.fields().into_iter().map(str::to_owned));
+        f.sort_unstable();
+        f.dedup();
+    }
     for def in metrics {
         // An interval that started the day before can still reach into the range.
         let lookback = if def.interval.is_some() {
@@ -209,6 +217,7 @@ pub async fn panel(
                 odt(span.start - lookback),
                 odt(span.end),
                 as_of,
+                &fields[def.relation],
             )
             .await
             .map_err(|e| e.to_string())?;

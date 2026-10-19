@@ -128,7 +128,7 @@ pub const FOCUS_SECONDS: MetricDef = MetricDef {
     dimensions: &["app"],
     ..day(
         "focus.seconds",
-        "Time with a focused window",
+        "Time some window had focus, time away from the machine included",
         "window.span",
         AggLaw::UnionDuration,
     )
@@ -345,6 +345,14 @@ mod tests {
                 "{s} has no declared completeness"
             );
         }
+    }
+
+    #[test]
+    fn metrics_read_only_the_fields_they_need() {
+        assert_eq!(JOURNAL_ERRORS.fields(), ["priority", "unit"]);
+        assert_eq!(SHELL_FAILED_RATIO.fields(), ["exit_code"]);
+        assert_eq!(FOCUS_SECONDS.fields(), ["app", "ended_at"]);
+        assert!(SHELL_COMMANDS.fields() == ["host"]);
     }
 
     #[test]

@@ -66,6 +66,24 @@ pub enum Predicate {
 }
 
 impl Predicate {
+    /// The payload fields the predicate reads.
+    pub fn fields(&self, out: &mut Vec<&'static str>) {
+        match *self {
+            Predicate::Eq { field, .. }
+            | Predicate::Ne { field, .. }
+            | Predicate::Lt { field, .. }
+            | Predicate::Le { field, .. }
+            | Predicate::Gt { field, .. }
+            | Predicate::Ge { field, .. }
+            | Predicate::OneOf { field, .. }
+            | Predicate::Present { field } => out.push(field),
+            Predicate::Not { pred } => pred.fields(out),
+            Predicate::All { preds } | Predicate::Any { preds } => {
+                preds.iter().for_each(|p| p.fields(out))
+            }
+        }
+    }
+
     pub fn matches(&self, payload: &Value) -> bool {
         let num = |f: &str| payload.get(f).and_then(Value::as_f64);
         match *self {
@@ -297,6 +315,47 @@ impl MetricDef {
                 }
             }
         }
+    }
+
+    /// Every payload field the metric reads: its filter, law, interval end and
+    /// breakdowns. A store reads only these, so a metric over a wide relation
+    /// (journal entries) never holds whole payloads.
+    pub fn fields(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if let Some(f) = &self.filter {
+            f.fields(&mut out);
+        }
+        let mut term = |t: Term| match t {
+            Term::Count { filter } => {
+                if let Some(f) = filter {
+                    f.fields(&mut out)
+                }
+            }
+            Term::Sum { field } => out.push(field),
+        };
+        match self.law {
+            AggLaw::Count | AggLaw::UnionDuration => {}
+            AggLaw::Ratio { num, den } => {
+                term(num);
+                term(den);
+            }
+            AggLaw::SumDisjoint { field, .. }
+            | AggLaw::Mean { field }
+            | AggLaw::Min { field }
+            | AggLaw::Max { field }
+            | AggLaw::Quantile { field, .. }
+            | AggLaw::Distinct { field } => out.push(field),
+        }
+        match self.interval {
+            Some(IntervalShape::EndField { field }) | Some(IntervalShape::Length { field, .. }) => {
+                out.push(field)
+            }
+            None => {}
+        }
+        out.extend_from_slice(self.dimensions);
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     pub fn row_matches(&self, row: &Row<'_>) -> bool {
