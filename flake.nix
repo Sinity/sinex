@@ -22,6 +22,9 @@
           allowBuiltinFetchGit = true;
         };
         nativeBuildInputs = [ postgres ];
+        # sinex-sources tests start a throwaway NATS server and make git
+        # repositories.
+        nativeCheckInputs = [ pkgs.nats-server pkgs.git ];
         preBuild = ''
           cargo run --offline --locked -p xtask -- boundaries
           export PGDATA=$(mktemp -d)
@@ -37,13 +40,21 @@
           cargo build --offline --locked -p sinex-schema --target-dir target --target ${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}
           target/${rustPkgs.stdenv.hostPlatform.rust.rustcTarget}/debug/sinex-schema apply "$DATABASE_URL"
         '';
-        cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "xtask" ];
+        cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "sinex-session" "-p" "sinex-capture" "-p" "xtask" ];
         doCheck = true;
         # Database tests need devkit's server; they run under `xtask test`.
         cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-automata" ];
       };
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };
+      nixosModules.default = import ./nix/module.nix self;
+      # VM tests: the deployed stack, a satellite capture node, the restore
+      # drill (architecture §10, §11). Built on demand, not by `package`.
+      checks.${system} = {
+        vm-stack = pkgs.testers.runNixOSTest (import ./nix/tests/stack.nix self);
+        vm-topology = pkgs.testers.runNixOSTest (import ./nix/tests/topology.nix self);
+        vm-restore = pkgs.testers.runNixOSTest (import ./nix/tests/restore.nix self);
+      };
       devShells.${system}.default = pkgs.mkShell {
         packages = [ rustPkgs.cargo pkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config ];
         shellHook = "export CARGO_TARGET_DIR=\"$PWD/target\"";

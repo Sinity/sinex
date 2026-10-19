@@ -67,9 +67,7 @@ pub async fn run(o: Options) -> Result<(), String> {
     let blobs = Blobs::open(&o.store).map_err(|e| e.to_string())?;
     let tokens =
         api::Tokens::load(&o.api.tokens).map_err(|e| format!("{}: {e}", o.api.tokens.display()))?;
-    let client = async_nats::connect(&o.nats)
-        .await
-        .map_err(|e| format!("NATS at {}: {e}", o.nats))?;
+    let client = sinex_sources::nats::connect(&o.nats).await?;
     let js = publisher::context(client.clone());
 
     let (stop_tx, stop) = watch::channel(false);

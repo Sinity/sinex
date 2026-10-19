@@ -11,6 +11,7 @@
 //! because it never sees the bookkeeping.
 pub mod drain;
 pub mod drivers;
+pub mod nats;
 pub mod registry;
 pub mod sources;
 
