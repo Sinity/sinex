@@ -1,7 +1,7 @@
 //! The media library end to end, against a real database and the real
 //! writer: intake, curation, the selection policy, ranking, handoff,
 //! previews, imports, and item continuity across renames and edits.
-use crate::library::{Lib, dispatch};
+use crate::library::{Library, dispatch};
 use crate::writer;
 use serde_json::{Value, json};
 use sinex_protocol::Request;
@@ -60,12 +60,12 @@ impl World {
     }
 
     async fn item_at(&mut self, path: &Path) -> String {
-        let key = sinex_library::key("h", &path.display().to_string());
-        let owners = sinex_library::db::owners(&mut self.conn, &[key])
+        let key = sinex_library::acquisition_key("h", &path.display().to_string());
+        let holders = sinex_library::reads::items_at(&mut self.conn, &[key])
             .await
             .unwrap();
-        assert_eq!(owners.len(), 1, "one item adopts {}", path.display());
-        owners[0].item.clone()
+        assert_eq!(holders.len(), 1, "one item holds {}", path.display());
+        holders[0].item.clone()
     }
 }
 
@@ -428,12 +428,12 @@ async fn the_library_end_to_end() {
     })
     .await;
     let item = w.item_at(&other.join("big.bin")).await;
-    let it = sinex_library::db::item(&mut w.conn, &item)
+    let it = sinex_library::reads::item(&mut w.conn, &item)
         .await
         .unwrap()
         .unwrap();
     assert!(!w.blobs.contains(&it.content).unwrap());
-    let _ = Lib {
+    let _ = Library {
         writer: &w.writer,
         blobs: &w.blobs,
         host: "h",

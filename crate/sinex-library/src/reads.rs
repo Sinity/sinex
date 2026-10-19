@@ -29,8 +29,9 @@ fn decode<T: DeserializeOwned>(kind: &'static str, rows: Vec<serde_json::Value>)
 const ITEM: &str = "library.item";
 const ACQUISITION: &str = "library.acquisition";
 
-/// Live items adopting any of `keys` (`host:path`), present (not withdrawn).
-pub async fn owners(conn: &mut Conn, keys: &[String]) -> Result<Vec<Item>> {
+/// Live items holding any of the acquisition `keys` (`host:path`), present
+/// (not withdrawn).
+pub async fn items_at(conn: &mut Conn, keys: &[String]) -> Result<Vec<Item>> {
     let rows =
         payloads::live_containing(conn, ITEM, &["acquisitions"], keys, State::Present).await?;
     decode(ITEM, rows)

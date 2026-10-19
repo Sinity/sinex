@@ -82,7 +82,7 @@ pub struct Item {
     /// The original rendition's bytes, `blake3:<hex>`.
     pub content: String,
     pub media_type: String,
-    /// Acquisitions the item adopts, as `host:path`.
+    /// Acquisitions that belong to the item, as `host:path`.
     pub acquisitions: Vec<String>,
     /// A human label; the file name at intake when nothing better is known.
     pub label: Option<String>,
