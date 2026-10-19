@@ -43,13 +43,7 @@ impl Parser for NotesParser {
     type Carry = ();
     type Payload = NoteDocument;
 
-    fn parse(&self, _: &&[u8], _: &()) -> Result<(Vec<NoteDocument>, ()), RecordError> {
-        Err(RecordError::new(
-            "a note needs its directory snapshot member",
-        ))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         record: &&[u8],
         _: &(),
@@ -112,6 +106,21 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
         part_bytes: 64 << 20,
     }
 }
+
+/// `--source notes=PATH`: the note vault at PATH, walked as one directory.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "notes",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::walked(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

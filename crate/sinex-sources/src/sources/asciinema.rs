@@ -72,11 +72,7 @@ impl Parser for CastParser {
     type Carry = Carry;
     type Payload = CastEvent;
 
-    fn parse(&self, _: &&[u8], _: &Carry) -> Result<(Vec<CastEvent>, Carry), RecordError> {
-        Err(RecordError::new("a cast line needs its file's path"))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         record: &&[u8],
         carry: &Carry,
@@ -192,14 +188,6 @@ impl Parser for EventsParser {
 
     fn parse(
         &self,
-        _: &Map<String, Value>,
-        _: &(),
-    ) -> Result<(Vec<TerminalEvent>, ()), RecordError> {
-        Err(RecordError::new("a capture event needs its file's path"))
-    }
-
-    fn parse_record(
-        &self,
         row: &Map<String, Value>,
         _: &(),
         context: &RecordContext<'_>,
@@ -255,6 +243,44 @@ pub fn driver(path: PathBuf, host: String, spec: &SourceSpec) -> AppendFile {
         framer: spec.framer,
     }
 }
+
+/// `--source asciinema=PATH`: each recording directory under PATH, its cast
+/// and the capture's events beside it.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "asciinema",
+    specs: || vec![&CAST, &EVENTS],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::files(input, true, |p| {
+            p.file_name()
+                .is_some_and(|n| n == "session.cast" || n == "events.jsonl")
+        })
+        .into_iter()
+        .map(|f| {
+            let spec = if f.file_name().is_some_and(|n| n == "session.cast") {
+                &CAST
+            } else {
+                &EVENTS
+            };
+            crate::binding::Binding::of(spec, &f, settings.clone())
+        })
+        .collect())
+    }),
+    source: |b| {
+        if b.source == CAST.name {
+            Ok(Box::new(cast_source()))
+        } else {
+            Ok(Box::new(events_source()))
+        }
+    },
+    reader: Some(|b| {
+        let spec = if b.source == CAST.name { CAST } else { EVENTS };
+        Ok(crate::binding::appended(
+            driver(b.input.clone(), b.settings.host.clone(), &spec),
+            spec.framer,
+        ))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

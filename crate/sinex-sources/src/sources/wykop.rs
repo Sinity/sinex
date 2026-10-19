@@ -88,6 +88,7 @@ impl Parser for WykopParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<WykopEvent>, ()), RecordError> {
         let kind = fields::text(row, "kind")?;
         let id = |name: &str| -> Result<String, RecordError> {
@@ -466,6 +467,25 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source wykop=PATH`: each of the account's own Wykop export files in PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "wykop",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC, input, settings, false, is_own,
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

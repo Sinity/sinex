@@ -10,7 +10,7 @@ impl Parser for Lines {
     fn parse(
         &self,
         record: &&[u8],
-        carry: &u32,
+        carry: &u32, _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<CommandImported>, u32), RecordError> {
         let text = std::str::from_utf8(record)
             .map_err(|_| RecordError::new("utf8"))?

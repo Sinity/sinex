@@ -48,6 +48,7 @@ impl Parser for LocationParser {
         &self,
         fix: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<LocationSample>, ()), RecordError> {
         let at = match fix.get("timestampMs") {
             Some(Value::String(ms)) => fields::from_unix_ms(

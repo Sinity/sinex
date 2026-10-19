@@ -11,7 +11,7 @@ fn run(lines: &[&str]) -> Vec<CastEvent> {
     let mut out = Vec::new();
     for line in lines {
         let (events, next) = CastParser
-            .parse_record(&line.as_bytes(), &carry, &context)
+            .parse(&line.as_bytes(), &carry, &context)
             .unwrap();
         out.extend(events);
         carry = next;

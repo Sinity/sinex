@@ -21,8 +21,11 @@ foundations are written in full; the rest of the workspace compiles with
 - The writer task, with live, derived and bulk priorities.
 - The source framework: the parser trait, the drain, and the `AppendFile` and
   `SqliteRows` drivers, with Atuin and zsh history on them.
-- `sinexd backfill`: read sources to the end through the writer and report
-  counts and rates.
+- `sinexd backfill --source KIND=PATH`: read sources to the end through the
+  writer and report counts and rates. Every registered source declares its
+  kind; `sinexd admin catalog` lists them.
+- The binding runner: `sinexd run --sources sources.json` reads every
+  configured binding continuously.
 
 ## Build and test
 
@@ -35,6 +38,6 @@ nix develop --command cargo run -p xtask -- db ensure   # the schema database's 
 A first import of the operator's shell history:
 
 ```bash
-sinexd backfill --database URL --store DIR \
-  --atuin ~/.local/share/atuin/history.db --zsh "$HISTFILE" --host HOST
+sinexd backfill --database URL --store DIR --host HOST \
+  --source atuin=$HOME/.local/share/atuin/history.db --source zsh="$HISTFILE"
 ```

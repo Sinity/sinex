@@ -64,7 +64,12 @@ impl Parser for RawLogParser {
     type Carry = ();
     type Payload = LogEntry;
 
-    fn parse(&self, record: &&[u8], _: &()) -> Result<(Vec<LogEntry>, ()), RecordError> {
+    fn parse(
+        &self,
+        record: &&[u8],
+        _: &(),
+        _context: &crate::RecordContext<'_>,
+    ) -> Result<(Vec<LogEntry>, ()), RecordError> {
         let text = std::str::from_utf8(record)
             .map_err(|e| RecordError::new(format!("entry is not UTF-8: {e}")))?;
         let rest = text
@@ -164,6 +169,7 @@ impl Parser for SteeringParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<SteeringRecord>, ()), RecordError> {
         let id = fields::text(row, "id")?;
         let time_field = match self.table {
@@ -209,6 +215,62 @@ pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> Sqli
         full_pass_secs: 3600,
     }
 }
+
+/// `--source raw-log=PATH`: the operator's raw log, read in the binding's
+/// zone, recorded when it is planned.
+pub const RAW_LOG_KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "raw-log",
+    specs: || vec![&RAW_LOG],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::single(
+            &RAW_LOG,
+            input,
+            &settings.clone().with_zone()?,
+        ))
+    }),
+    source: |b| Ok(Box::new(raw_log(b.settings.zone()?))),
+    reader: Some(|b| {
+        Ok(crate::binding::appended(
+            raw_log_driver(b.input.clone(), b.settings.host.clone()),
+            frame_log,
+        ))
+    }),
+    capture: None,
+};
+
+/// The steering table a binding reads, from its spec name.
+fn steering_table(b: &crate::binding::Binding) -> Result<&'static str, String> {
+    ["commitments", "activities", "reviews"]
+        .into_iter()
+        .find(|t| b.parser.ends_with(t))
+        .ok_or_else(|| format!("{}: not a steering table", b.parser))
+}
+
+/// `--source steering=PATH`: the steering store's three tables.
+pub const STEERING_KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "steering",
+    specs: || STEERING.iter().collect(),
+    plan: Some(|input, settings| {
+        Ok(STEERING
+            .iter()
+            .map(|spec| crate::binding::Binding::of(spec, input, settings.clone()))
+            .collect())
+    }),
+    source: |b| {
+        let table = steering_table(b)?;
+        steering(table)
+            .map(|s| Box::new(s) as Box<dyn crate::Source>)
+            .ok_or_else(|| format!("{table}: not a steering table"))
+    },
+    reader: Some(|b| {
+        Ok(crate::binding::rows(steering_driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+            steering_table(b)?,
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

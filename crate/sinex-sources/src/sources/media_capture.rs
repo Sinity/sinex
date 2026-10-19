@@ -45,13 +45,7 @@ impl Parser for MediaParser {
     type Carry = ();
     type Payload = MediaSegment;
 
-    fn parse(&self, _: &&[u8], _: &()) -> Result<(Vec<MediaSegment>, ()), RecordError> {
-        Err(RecordError::new(
-            "a media segment is read with its manifest",
-        ))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         record: &&[u8],
         _: &(),
@@ -270,6 +264,44 @@ pub fn capture_audio(
     }
     Ok(n)
 }
+
+/// What a media binding captures: the `kind` option, `screen` or `audio`.
+fn media(b: &crate::binding::Binding) -> Result<&'static str, String> {
+    match b.settings.option("kind") {
+        Some("screen") => Ok("screen"),
+        Some("audio") => Ok("audio"),
+        other => Err(format!("media: kind {other:?}; one of screen, audio")),
+    }
+}
+
+/// `--source media=SPOOL`: screen stills (option `kind: screen`, every
+/// `every` seconds, 60 by default) or audio segments (`kind: audio`,
+/// `segment` seconds each, 300 by default), captured into SPOOL.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "media",
+    specs: || vec![&SPEC],
+    plan: Some(|spool, settings| {
+        let b = crate::binding::Binding::of(&SPEC, spool, settings.clone());
+        let kind = media(&b)?;
+        Ok(vec![b.named(kind)])
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+            media(b)?,
+        )))
+    }),
+    capture: Some(|b, stop| {
+        let seconds = |key, default| Duration::from_secs(b.settings.number(key).unwrap_or(default));
+        match media(b)? {
+            "screen" => capture_screen(&b.input, seconds("every", 60), stop),
+            _ => capture_audio(&b.input, seconds("segment", 300), stop),
+        }
+        .map_err(|e| e.to_string())
+    }),
+};
 
 #[cfg(test)]
 mod tests;

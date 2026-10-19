@@ -63,13 +63,7 @@ impl Parser for SamsungCloudParser {
     type Carry = Carry;
     type Payload = SamsungEvent;
 
-    fn parse(&self, _: &&[u8], _: &Carry) -> Result<(Vec<SamsungEvent>, Carry), RecordError> {
-        Err(RecordError::new(
-            "a Samsung export row needs its file's path",
-        ))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         record: &&[u8],
         carry: &Carry,
@@ -259,6 +253,25 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source samsung-account=PATH`: each table of a Samsung account export under PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "samsung-account",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC, input, settings, true, is_table,
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

@@ -138,6 +138,7 @@ impl Parser for ClipboardParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<ClipboardCopied>, ()), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let f: Map<String, Value> = serde_json::from_slice(&bytes)
@@ -206,6 +207,51 @@ pub fn driver(spool: PathBuf, host: String, selection: &str) -> LiveStream {
         },
     }
 }
+
+/// The selection a binding captures: the `selection` option, `clipboard` by
+/// default.
+fn selection(b: &crate::binding::Binding) -> &'static str {
+    match b.settings.option("selection") {
+        Some("primary") => "primary",
+        _ => "clipboard",
+    }
+}
+
+/// `--source clipboard=SPOOL`: the clipboard (or, with the option
+/// `selection: primary`, the primary selection), captured into SPOOL. The
+/// frame printer is this program's own `clipboard-frame` command.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "clipboard",
+    specs: || vec![&SPEC],
+    plan: Some(|spool, settings| {
+        Ok(crate::binding::single(&SPEC, spool, settings)
+            .into_iter()
+            .map(|b| {
+                let s = selection(&b);
+                b.named(s)
+            })
+            .collect())
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+            selection(b),
+        )))
+    }),
+    capture: Some(|b, stop| {
+        let s = selection(b);
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let helper: Vec<OsString> = vec![
+            exe.into(),
+            "clipboard-frame".into(),
+            "--selection".into(),
+            s.into(),
+        ];
+        capture(s, &helper, &b.input, stop).map_err(|e| e.to_string())
+    }),
+};
 
 #[cfg(test)]
 mod tests;

@@ -8,10 +8,8 @@
 //! with `--upload`, the node keeps its own store and sends each material's
 //! bytes over the link in chunk frames first.
 use clap::Parser;
-use sinex_sources::Source;
-use sinex_sources::drivers::live_stream::LiveStream;
-use sinex_sources::drivers::producer::{Position, Producer, Store};
-use sinex_sources::sources::{file_watch, journald};
+use sinex_sources::drivers::producer::{Producer, Store};
+use sinex_sources::live;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -88,70 +86,28 @@ async fn run(cli: Cli) -> Result<(), String> {
         producer = producer.upload_bytes(own);
     }
 
-    let mut bindings: Vec<(Box<dyn Source>, String, LiveStream)> = Vec::new();
+    let mut requested: Vec<(&str, &str, serde_json::Value)> = Vec::new();
     if cli.journald {
-        let spool = spools.join("journald");
-        let s = spool.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = journald::capture(&s, true, journald::Start::Beginning) {
-                eprintln!("sinex-capture: journald: {e}");
-            }
-        });
-        bindings.push((
-            Box::new(journald::source()),
-            format!("journald@{}", cli.host),
-            journald::driver(spool, cli.host.clone()),
-        ));
+        requested.push(("journald", "journald", serde_json::json!({"follow": true})));
     }
     if !cli.watch.is_empty() {
-        let spool = spools.join("files");
-        let (s, roots) = (spool.clone(), cli.watch.clone());
-        std::thread::spawn(move || {
-            let roots = file_watch::Roots {
-                roots,
-                skip: file_watch::SKIP.iter().map(|s| (*s).to_owned()).collect(),
-            };
-            if let Err(e) = file_watch::capture(&roots, &s, None) {
-                eprintln!("sinex-capture: file watch: {e}");
-            }
-        });
-        bindings.push((
-            Box::new(file_watch::source()),
-            format!("file-watch@{}", cli.host),
-            file_watch::driver(spool, cli.host.clone()),
-        ));
+        let roots: Vec<String> = cli.watch.iter().map(|p| p.display().to_string()).collect();
+        requested.push(("file-watch", "files", serde_json::json!({ "roots": roots })));
     }
-    if bindings.is_empty() {
+    if requested.is_empty() {
         return Err("nothing to capture: pass --journald and/or --watch".into());
     }
-    let private = sinex_protocol::private_mode::PrivateMode::default();
-    loop {
-        // Private mode: capture nothing until it is off again.
-        if private.on() {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            continue;
-        }
-        for (source, binding, driver) in &bindings {
-            loop {
-                let position = producer
-                    .position(binding, &positions)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let acquired = driver.poll(&position.cursor).map_err(|e| e.to_string())?;
-                let had_material = acquired.material.is_some();
-                producer
-                    .produce(source.as_ref(), binding, acquired, &store, &positions)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let committed = Position::load(&positions, binding).map_err(|e| e.to_string())?;
-                driver
-                    .remove_passed(&committed.cursor)
-                    .map_err(|e| e.to_string())?;
-                if !had_material {
-                    break;
-                }
-            }
-        }
-        tokio::time::sleep(Duration::from_secs(cli.every)).await;
-    }
+    let mut lives = requested
+        .into_iter()
+        .map(|(kind, spool, options)| live::start(kind, &spools.join(spool), &cli.host, options))
+        .collect::<Result<Vec<_>, _>>()?;
+    live::produce(
+        &mut producer,
+        &store,
+        &positions,
+        &mut lives,
+        Duration::from_secs(cli.every),
+        None,
+    )
+    .await
 }

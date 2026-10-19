@@ -11,7 +11,7 @@ fn run(path: &str, rows: &[&[u8]]) -> Vec<SamsungEvent> {
     let mut out = Vec::new();
     for row in rows {
         let (events, next) = SamsungCloudParser
-            .parse_record(row, &carry, &context)
+            .parse(row, &carry, &context)
             .unwrap();
         out.extend(events);
         carry = next;

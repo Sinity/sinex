@@ -37,6 +37,7 @@ impl Parser for GitParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<GitCommit>, ()), RecordError> {
         let commit: GitCommit = serde_json::from_value(Value::Object(record.clone()))
             .map_err(|e| RecordError::new(format!("not a commit record: {e}")))?;
@@ -165,6 +166,21 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Repository> {
         api: Repository { path, host },
     }
 }
+
+/// `--source repository=PATH`: a local repository's commits.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "repository",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| Ok(crate::binding::single(&SPEC, input, settings))),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

@@ -32,14 +32,6 @@ impl Parser for FitParser {
 
     fn parse(
         &self,
-        _: &Map<String, Value>,
-        _: &(),
-    ) -> Result<(Vec<HealthRecord>, ()), RecordError> {
-        Err(RecordError::new("a Fit data point needs its file's name"))
-    }
-
-    fn parse_record(
-        &self,
         point: &Map<String, Value>,
         _: &(),
         context: &RecordContext<'_>,

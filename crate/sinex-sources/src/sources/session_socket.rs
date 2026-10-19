@@ -140,6 +140,7 @@ impl Parser for SessionSocketParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<Produced>, ()), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let mut m: Map<String, Value> = serde_json::from_slice(&bytes)
@@ -180,6 +181,31 @@ pub fn source() -> Declared<SessionSocketParser> {
         parser: SessionSocketParser,
     }
 }
+
+/// `--source producers=SPOOL`: lines the editor and terminal integrations
+/// write to the producer socket (the `socket` option, or the default path),
+/// captured into SPOOL.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "producers",
+    specs: || vec![&SPEC],
+    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: Some(|b, stop| {
+        let socket = b
+            .settings
+            .option("socket")
+            .map(PathBuf::from)
+            .or_else(default_path)
+            .ok_or("no producer socket path (XDG_RUNTIME_DIR unset)")?;
+        capture(&socket, &b.input, stop).map_err(|e| e.to_string())
+    }),
+};
 
 #[cfg(test)]
 mod tests;

@@ -35,7 +35,7 @@ self: {
         return events, blobs
 
     machine.wait_for_unit("sinexd.service")
-    machine.succeed(f"{sinex} sinexd backfill --database '{url}' --store /var/lib/sinex/store --zsh /var/lib/sinex/zsh_history")
+    machine.succeed(f"{sinex} sinexd backfill --database '{url}' --store /var/lib/sinex/store --source zsh=/var/lib/sinex/zsh_history")
     before = state()
     assert not before[0].startswith("0|"), before
 

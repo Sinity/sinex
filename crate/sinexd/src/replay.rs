@@ -18,8 +18,9 @@ use sinex_model::{
     ArchiveRequest, Batch, BatchKind, MaterialId, OperationId, RecordOutcome, ReplayScope, RunId,
     Timestamp,
 };
-use sinex_sources::{DrainInput, Limits, drivers, sources};
+use sinex_sources::{DrainInput, Limits, Source, drivers, sources};
 use sinex_store::Blobs;
+use sinex_store::bindings;
 use sinex_store::replay::{self, Change, Diff, Stored};
 use sqlx::PgConnection;
 use std::collections::{BTreeSet, HashMap};
@@ -187,13 +188,16 @@ pub async fn run(
             continue;
         }
         let chain: Vec<Stored> = chain[..=last].iter().map(|m| (*m).clone()).collect();
+        let parsers = sources_of(&mut ctx.aux, &chain).await?;
         // The chain is read on a blocking thread while the writer admits its
         // batches as they come, a few at a time.
         let (sender, batches) = tokio::sync::mpsc::channel(READ_AHEAD);
         let reading = {
             let (blobs, in_scope, scope) = (blobs.clone(), in_scope.clone(), scope.clone());
             tokio::task::spawn_blocking(move || {
-                read_chain(&blobs, &chain, &in_scope, &scope, operation, &sender)
+                read_chain(
+                    &blobs, &chain, &parsers, &in_scope, &scope, operation, &sender,
+                )
             })
         };
         let replayed = writer
@@ -222,6 +226,52 @@ pub async fn run(
 }
 
 /// Group stored materials into chains, each first part to last.
+/// Each material's parser, built with the settings its binding was read with
+/// (stored by backfill and the binding runner). A material with no stored
+/// binding (sent by an outside producer) is read by the source whose parser
+/// it names.
+async fn sources_of(
+    aux: &mut sqlx::PgConnection,
+    chain: &[Stored],
+) -> Result<Vec<Box<dyn Source>>, String> {
+    let mut out = Vec::with_capacity(chain.len());
+    let mut bound: HashMap<String, sinex_sources::Binding> = HashMap::new();
+    for m in chain {
+        let stored_binding = match &m.binding {
+            Some(name) if !bound.contains_key(name) => {
+                let found = bindings::load(aux, name).await.map_err(|e| e.to_string())?;
+                if let Some(s) = found {
+                    let b = sinex_sources::Binding {
+                        name: s.binding,
+                        source: s.source,
+                        parser: m.parser.clone(),
+                        input: s.input.into(),
+                        settings: serde_json::from_value(s.settings)
+                            .map_err(|e| format!("binding {name}: settings: {e}"))?,
+                    };
+                    bound.insert(name.clone(), b);
+                }
+                bound.get(name).cloned()
+            }
+            Some(name) => bound.get(name).cloned(),
+            None => None,
+        };
+        // The material names the parser it was read with.
+        let binding = match stored_binding {
+            Some(b) => sinex_sources::Binding {
+                parser: m.parser.clone(),
+                ..b
+            },
+            None => sources::binding_for_parser(&m.parser, m.host.as_deref().unwrap_or_default())
+                .ok_or_else(|| {
+                format!("material {}: no source has parser {}", m.id, m.parser)
+            })?,
+        };
+        out.push(sources::source_for(&binding).map_err(|e| format!("material {}: {e}", m.id))?);
+    }
+    Ok(out)
+}
+
 fn chains(stored: &[Stored]) -> Vec<Vec<&Stored>> {
     let by_id: HashMap<Uuid, &Stored> = stored.iter().map(|m| (m.id, m)).collect();
     let mut next: HashMap<Uuid, Vec<&Stored>> = HashMap::new();
@@ -269,22 +319,27 @@ struct Read {
 fn read_chain(
     blobs: &sinex_store::Blobs,
     chain: &[Stored],
+    parsers: &[Box<dyn Source>],
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
 ) -> Read {
     let mut read = Read::default();
-    if let Err(error) = read_chain_into(blobs, chain, in_scope, scope, operation, out, &mut read) {
+    if let Err(error) = read_chain_into(
+        blobs, chain, parsers, in_scope, scope, operation, out, &mut read,
+    ) {
         // The writer may already have stopped reading; nothing else to tell.
         let _ = out.blocking_send(Err(error));
     }
     read
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_chain_into(
     blobs: &sinex_store::Blobs,
     chain: &[Stored],
+    parsers: &[Box<dyn Source>],
     in_scope: &BTreeSet<Uuid>,
     scope: &Scope,
     operation: OperationId,
@@ -319,9 +374,7 @@ fn read_chain_into(
         }],
     })?;
     let mut carry = Value::Null;
-    for m in chain {
-        let source = sources::by_parser(&m.parser, m.host.as_deref().unwrap_or_default())
-            .ok_or_else(|| format!("material {}: no source has parser {}", m.id, m.parser))?;
+    for (m, source) in chain.iter().zip(parsers) {
         // A compressed export's records are in its decoded member stream
         // (`ExportArchive`), which replay does not decode yet.
         if let Some(container) = m.manifest.get("container").and_then(Value::as_str)

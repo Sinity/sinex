@@ -50,6 +50,18 @@ pub struct RecordContext<'a> {
     pub member: Option<&'a Value>,
 }
 
+static NO_MANIFEST: Value = Value::Null;
+
+impl RecordContext<'static> {
+    /// A record read outside any material (a test, a live line).
+    pub fn none() -> Self {
+        Self {
+            manifest: &NO_MANIFEST,
+            member: None,
+        }
+    }
+}
+
 impl RecordContext<'_> {
     /// The member's path, or the material's own `path`.
     pub fn path(&self) -> Option<&str> {
@@ -224,7 +236,7 @@ fn parse_one<P: Parser>(
     // never the run.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let record = <P::Record<'_> as RecordShape>::decode(raw)?;
-        parser.parse_record(&record, carry, context)
+        parser.parse(&record, carry, context)
     })) {
         Ok(result) => result,
         Err(panic) => {

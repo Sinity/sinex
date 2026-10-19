@@ -40,6 +40,7 @@ impl Parser for RaindropParser {
         &self,
         record: &&[u8],
         header: &Vec<String>,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<BookmarkSaved>, Vec<String>), RecordError> {
         if record.trim_ascii_start().starts_with(b"{") {
             let row: Map<String, Value> = serde_json::from_slice(record)
@@ -220,6 +221,29 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source raindrop=PATH`: each Raindrop export in PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "raindrop",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            false,
+            crate::binding::any,
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

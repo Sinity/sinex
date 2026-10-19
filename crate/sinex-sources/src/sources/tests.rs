@@ -1,10 +1,90 @@
 use super::*;
 
 #[test]
-fn every_registered_parser_resolves_to_its_source() {
+fn every_source_belongs_to_exactly_one_kind() {
     for spec in specs() {
-        let source = by_parser(spec.parser, "h").expect("registered parser resolves");
-        assert_eq!(source.spec().parser, spec.parser);
+        let owners: Vec<&str> = kinds()
+            .iter()
+            .filter(|k| {
+                (k.specs)()
+                    .iter()
+                    .any(|s| s.name == spec.name && s.parser == spec.parser)
+            })
+            .map(|k| k.name)
+            .collect();
+        assert_eq!(
+            owners.len(),
+            1,
+            "{} with {}: read by {owners:?}",
+            spec.name,
+            spec.parser
+        );
     }
-    assert!(by_parser("no-such-parser", "h").is_none());
+}
+
+#[test]
+fn kind_names_are_unique() {
+    let mut names: Vec<&str> = kinds().iter().map(|k| k.name).collect();
+    names.sort_unstable();
+    let before = names.len();
+    names.dedup();
+    assert_eq!(names.len(), before, "duplicate kind names");
+}
+
+#[test]
+fn a_shared_source_name_resolves_by_parser() {
+    // The live clipboard and its lake lane are one source read two ways.
+    let lake = specs()
+        .into_iter()
+        .find(|s| s.name == "desktop.clipboard" && s.parser.starts_with("sinnix-lake:"))
+        .expect("the lake's clipboard lane");
+    let b = crate::Binding::of(lake, std::path::Path::new("/realm"), Settings::new("h"));
+    assert_eq!(source_for(&b).unwrap().spec().parser, lake.parser);
+    assert_eq!(
+        kind_of_spec(lake.name, lake.parser).unwrap().name,
+        "sinnix-lake"
+    );
+}
+
+#[test]
+fn a_shared_parser_resolves_by_name() {
+    let outlook = spec("communication.outlook").expect("Outlook is registered");
+    let b = crate::Binding::of(outlook, std::path::Path::new("/x.mbox"), Settings::new("h"));
+    assert_eq!(kind_of_spec(&b.source, &b.parser).unwrap().name, "outlook");
+}
+
+#[test]
+fn every_source_resolves_its_parser_from_a_binding() {
+    for spec in specs() {
+        let binding = Binding {
+            source: spec.name.to_owned(),
+            ..binding_for_parser(spec.parser, "h").expect("its parser is registered")
+        };
+        // Sources reading local times need a zone; give every binding one.
+        let binding = Binding {
+            settings: Settings {
+                zone: Some("UTC".into()),
+                options: serde_json::json!({"kind": "screen"}),
+                ..binding.settings
+            },
+            ..binding
+        };
+        let source = source_for(&binding).expect("source builds");
+        assert_eq!(source.spec().parser, spec.parser, "{}", spec.name);
+    }
+    assert!(binding_for_parser("no-such-parser", "h").is_none());
+}
+
+#[test]
+fn the_six_late_sources_are_registered() {
+    for name in [
+        "desktop.arbtt",
+        "terminal.asciinema",
+        "communication.outlook",
+        "account.samsung",
+        "google.location-history",
+        "google.fit",
+    ] {
+        assert!(spec(name).is_some(), "{name} is in the registry");
+    }
 }

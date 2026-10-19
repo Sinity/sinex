@@ -67,11 +67,7 @@ impl Parser for RedditParser {
     type Carry = Carry;
     type Payload = RedditEvent;
 
-    fn parse(&self, _: &&[u8], _: &Carry) -> Result<(Vec<RedditEvent>, Carry), RecordError> {
-        Err(RecordError::new("a Reddit row needs its member's name"))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         record: &&[u8],
         carry: &Carry,
@@ -262,6 +258,29 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source reddit=PATH`: each Reddit export ZIP in PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "reddit",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            false,
+            |p| p.extension().is_some_and(|e| e == "zip"),
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

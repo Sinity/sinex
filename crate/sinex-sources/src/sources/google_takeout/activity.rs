@@ -47,7 +47,12 @@ impl Parser for MyActivityParser {
     type Carry = ();
     type Payload = ActionRecorded;
 
-    fn parse(&self, cell: &Cell, _: &()) -> Result<(Vec<ActionRecorded>, ()), RecordError> {
+    fn parse(
+        &self,
+        cell: &Cell,
+        _: &(),
+        _context: &crate::RecordContext<'_>,
+    ) -> Result<(Vec<ActionRecorded>, ()), RecordError> {
         let first = &cell.lines[0];
         let (verb, title, title_url, unlinked_text) = match first.links.first() {
             Some((href, text)) => {
@@ -95,7 +100,12 @@ impl Parser for YouTubeParser {
     type Carry = ();
     type Payload = YouTubeEvent;
 
-    fn parse(&self, cell: &Cell, _: &()) -> Result<(Vec<YouTubeEvent>, ()), RecordError> {
+    fn parse(
+        &self,
+        cell: &Cell,
+        _: &(),
+        _context: &crate::RecordContext<'_>,
+    ) -> Result<(Vec<YouTubeEvent>, ()), RecordError> {
         let first = &cell.lines[0];
         let service = "youtube".to_owned();
         if first.text.starts_with("Watched") {

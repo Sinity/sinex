@@ -68,6 +68,7 @@ impl Parser for SpotifyParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<MusicPlayed>, ()), RecordError> {
         let payload = if row.contains_key("ts") {
             extended(row)?
@@ -171,6 +172,29 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source spotify=PATH`: each Spotify export archive in PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "spotify",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            false,
+            crate::binding::any,
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

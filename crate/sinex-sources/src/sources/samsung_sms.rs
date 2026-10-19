@@ -35,6 +35,7 @@ impl Parser for SmsParser {
         &self,
         record: &&[u8],
         header: &Vec<String>,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<ConversationMessage>, Vec<String>), RecordError> {
         let cells = fields::csv_cells(record)?;
         if header.is_empty() || cells.first().map(String::as_str) == Some("ITEM_DATA") {
@@ -110,6 +111,33 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source samsung-sms=PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "samsung-sms",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            true,
+            |p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("SMS_") && n.ends_with(".csv"))
+            },
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

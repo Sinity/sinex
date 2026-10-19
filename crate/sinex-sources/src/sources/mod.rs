@@ -50,137 +50,127 @@ pub mod weechat;
 pub mod wykop;
 pub mod zsh;
 
+use crate::binding::{Binding, Kind, Settings};
 use crate::registry::{Source, SourceSpec};
 
-/// Every source's declaration.
+/// Every kind of input and the sources that read it: the one list the
+/// catalog, backfill, the binding runner, `sinex-session` and replay all
+/// work from.
+pub fn kinds() -> &'static [&'static Kind] {
+    &[
+        &atuin::KIND,
+        &zsh::KIND,
+        &hyprland::KIND,
+        &journald::KIND,
+        &file_watch::KIND,
+        &activitywatch::KIND,
+        &repository::KIND,
+        &chromium::KIND,
+        &takeout_chrome::KIND,
+        &spotify::KIND,
+        &raindrop::KIND,
+        &notes::KIND,
+        &mail::MBOX_KIND,
+        &mail::MAILDIR_KIND,
+        &mail_imap::KIND,
+        &outlook::KIND,
+        &outlook::CSV_KIND,
+        &weechat::KIND,
+        &calendar::KIND,
+        &google_takeout::KIND,
+        &goodreads::KIND,
+        &messenger::KIND,
+        &sleep_as_android::KIND,
+        &wykop::KIND,
+        &reddit::KIND,
+        &samsung_health::KIND,
+        &samsung_sms::KIND,
+        &samsung_cloud::KIND,
+        &arbtt::KIND,
+        &asciinema::KIND,
+        &operator::RAW_LOG_KIND,
+        &operator::STEERING_KIND,
+        &sinnix_lake::KIND,
+        &notifications::KIND,
+        &mpris::KIND,
+        &clipboard::KIND,
+        &session_socket::KIND,
+        &media_capture::KIND,
+        &library::KIND,
+        &page_crawl::KIND,
+    ]
+}
+
+/// Every source's declaration, each once.
 pub fn specs() -> Vec<&'static SourceSpec> {
-    let mut out = vec![
-        &atuin::SPEC,
-        &zsh::SPEC,
-        &hyprland::SPEC,
-        &journald::SPEC,
-        &activitywatch::SPEC,
-        &repository::SPEC,
-        &file_watch::SPEC,
-        &chromium::VISITS,
-        &chromium::URLS,
-        &takeout_chrome::SPEC,
-        &spotify::SPEC,
-        &raindrop::SPEC,
-        &notes::SPEC,
-        &mail::MBOX,
-        &mail::MAILDIR,
-        &weechat::SPEC,
-        &google_takeout::activity::MY_ACTIVITY,
-        &google_takeout::activity::YOUTUBE,
-        &google_takeout::keep::SPEC,
-        &google_takeout::tasks::SPEC,
-        &google_takeout::purchases::PLAY_STORE,
-        &google_takeout::purchases::PURCHASES,
-        &calendar::SPEC,
-        &goodreads::SPEC,
-        &messenger::SPEC,
-        &sleep_as_android::SPEC,
-        &wykop::SPEC,
-        &reddit::SPEC,
-        &samsung_health::SPEC,
-        &samsung_sms::SPEC,
-        &operator::RAW_LOG,
-        &operator::STEERING[0],
-        &operator::STEERING[1],
-        &operator::STEERING[2],
-        &library::SCAN,
-        &library::REQUEST,
-        &notifications::SPEC,
-        &mpris::SPEC,
-        &clipboard::SPEC,
-        &session_socket::SPEC,
-        &media_capture::SPEC,
-        &page_crawl::SPEC,
-        &mail_imap::SPEC,
-    ];
-    out.extend(sinnix_lake::LANES.iter().map(|l| &l.spec));
+    let mut out: Vec<&'static SourceSpec> = Vec::new();
+    for kind in kinds() {
+        for spec in (kind.specs)() {
+            if !out
+                .iter()
+                .any(|s| s.name == spec.name && s.parser == spec.parser)
+            {
+                out.push(spec);
+            }
+        }
+    }
     out
 }
 
-/// The source whose parser read a stored material, as a replay re-reads it
-/// with the current version of that parser. `host` is the material's input
-/// host, for parsers that record it.
-pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
-    match parser {
-        p if p == atuin::SPEC.parser => Some(Box::new(atuin::source())),
-        p if p == zsh::SPEC.parser => Some(Box::new(zsh::source(host.to_owned()))),
-        p if p == hyprland::SPEC.parser => Some(Box::new(hyprland::source())),
-        p if p == journald::SPEC.parser => Some(Box::new(journald::source())),
-        p if p == activitywatch::SPEC.parser => Some(Box::new(activitywatch::source())),
-        p if p == repository::SPEC.parser => Some(Box::new(repository::source())),
-        p if p == file_watch::SPEC.parser => Some(Box::new(file_watch::source())),
-        p if p == chromium::VISITS.parser => Some(Box::new(chromium::visits())),
-        p if p == chromium::URLS.parser => Some(Box::new(chromium::urls())),
-        p if p == takeout_chrome::SPEC.parser => Some(Box::new(takeout_chrome::source())),
-        p if p == spotify::SPEC.parser => Some(Box::new(spotify::source())),
-        p if p == raindrop::SPEC.parser => Some(Box::new(raindrop::source())),
-        p if p == notes::SPEC.parser => Some(Box::new(notes::source())),
-        // mbox and Maildir share the parser; the spec named is the mbox one.
-        p if p == mail::MBOX.parser => Some(Box::new(mail::mbox_source())),
-        // WeeChat's zone is a setting of the capture, not in the stored log; a
-        // replay reads with this system's zone.
-        p if p == weechat::SPEC.parser => Some(Box::new(weechat::source(
-            weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
-        ))),
-        p if p == google_takeout::activity::MY_ACTIVITY.parser => {
-            Some(Box::new(google_takeout::activity::my_activity()))
-        }
-        p if p == google_takeout::activity::YOUTUBE.parser => {
-            Some(Box::new(google_takeout::activity::youtube()))
-        }
-        p if p == google_takeout::keep::SPEC.parser => {
-            Some(Box::new(google_takeout::keep::source()))
-        }
-        p if p == google_takeout::tasks::SPEC.parser => {
-            Some(Box::new(google_takeout::tasks::source()))
-        }
-        p if p == google_takeout::purchases::PLAY_STORE.parser => {
-            Some(Box::new(google_takeout::purchases::play_store()))
-        }
-        p if p == google_takeout::purchases::PURCHASES.parser => {
-            Some(Box::new(google_takeout::purchases::purchases()))
-        }
-        p if p == goodreads::SPEC.parser => Some(Box::new(goodreads::source())),
-        p if p == messenger::SPEC.parser => Some(Box::new(messenger::source())),
-        p if p == sleep_as_android::SPEC.parser => Some(Box::new(sleep_as_android::source())),
-        p if p == wykop::SPEC.parser => Some(Box::new(wykop::source())),
-        p if p == reddit::SPEC.parser => Some(Box::new(reddit::source())),
-        p if p == samsung_health::SPEC.parser => Some(Box::new(samsung_health::source())),
-        p if p == samsung_sms::SPEC.parser => Some(Box::new(samsung_sms::source())),
-        p if p == operator::RAW_LOG.parser => Some(Box::new(operator::raw_log(
-            weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
-        ))),
-        p if p.starts_with("steering-") => {
-            let table = p.trim_start_matches("steering-");
-            ["commitments", "activities", "reviews"]
-                .into_iter()
-                .find(|t| *t == table)
-                .and_then(operator::steering)
-                .map(|s| Box::new(s) as Box<dyn Source>)
-        }
-        // Like WeeChat, floating times are read in this system's zone.
-        p if p == calendar::SPEC.parser => Some(Box::new(calendar::source(
-            weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
-        ))),
-        p if p == library::SCAN.parser => Some(Box::new(library::scan_source())),
-        p if p == library::REQUEST.parser => Some(Box::new(library::request_source())),
-        p if p == notifications::SPEC.parser => Some(Box::new(notifications::source())),
-        p if p == mpris::SPEC.parser => Some(Box::new(mpris::source())),
-        p if p == clipboard::SPEC.parser => Some(Box::new(clipboard::source())),
-        p if p == session_socket::SPEC.parser => Some(Box::new(session_socket::source())),
-        p if p == media_capture::SPEC.parser => Some(Box::new(media_capture::source())),
-        p if p == page_crawl::SPEC.parser => Some(Box::new(page_crawl::source())),
-        p => sinnix_lake::LANES
+/// The kind named `name` (`--source NAME=PATH`).
+pub fn kind(name: &str) -> Option<&'static Kind> {
+    kinds().iter().copied().find(|k| k.name == name)
+}
+
+/// The kind that reads the source `spec_name`.
+///
+/// Several kinds can read one source name (the live clipboard and its lake
+/// lane); this is the first registered, and a configuration names the kind
+/// to choose another.
+pub fn kind_of(spec_name: &str) -> Option<&'static Kind> {
+    kinds().iter().copied().find(|k| k.reads(spec_name))
+}
+
+/// The kind reading the source `name` with `parser`. Neither is unique
+/// alone: a name is shared by one source read two ways (the live clipboard
+/// and its lake lane), a parser by sources of one format (mbox, Maildir and
+/// Outlook mail).
+pub fn kind_of_spec(name: &str, parser: &str) -> Option<&'static Kind> {
+    kinds().iter().copied().find(|k| {
+        (k.specs)()
             .iter()
-            .find(|l| l.spec.parser == p)
-            .map(|l| Box::new(sinnix_lake::source(l)) as Box<dyn Source>),
-    }
+            .any(|s| s.name == name && s.parser == parser)
+    })
+}
+
+/// The declaration of the source `spec_name`.
+pub fn spec(spec_name: &str) -> Option<&'static SourceSpec> {
+    specs().into_iter().find(|s| s.name == spec_name)
+}
+
+/// The parser of `binding`, built with the settings it was read with.
+pub fn source_for(binding: &Binding) -> Result<Box<dyn Source>, String> {
+    let kind = kind_of_spec(&binding.source, &binding.parser).ok_or_else(|| {
+        format!(
+            "{} with {}: no registered source",
+            binding.source, binding.parser
+        )
+    })?;
+    (kind.source)(binding)
+}
+
+/// The binding a material read by `parser` on `host` had, for a material
+/// stored without one (written by an outside producer): the source whose
+/// parser it is, with only the host known.
+pub fn binding_for_parser(parser: &str, host: &str) -> Option<Binding> {
+    let spec = specs().into_iter().find(|s| s.parser == parser)?;
+    Some(Binding {
+        name: String::new(),
+        source: spec.name.to_owned(),
+        parser: spec.parser.to_owned(),
+        input: Default::default(),
+        settings: Settings::new(host),
+    })
 }
 
 #[cfg(test)]

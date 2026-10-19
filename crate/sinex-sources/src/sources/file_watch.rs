@@ -230,6 +230,7 @@ impl Parser for FileWatchParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<FileChanged>, ()), RecordError> {
         let (received_at, line) = live_stream::received(record).map_err(RecordError::new)?;
         let change: Map<String, Value> = serde_json::from_slice(&line)
@@ -289,6 +290,48 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
         },
     }
 }
+
+/// `--source file-watch=SPOOL`: changes under the directories in the
+/// `roots` option (and not under `skip` names), captured into SPOOL.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "file-watch",
+    specs: || vec![&SPEC],
+    plan: Some(|spool, settings| Ok(crate::binding::single(&SPEC, spool, settings))),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: Some(|b, stop| {
+        let list = |key: &str| -> Vec<String> {
+            b.settings
+                .options
+                .get(key)
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let skip = list("skip");
+        let roots = Roots {
+            roots: list("roots").into_iter().map(PathBuf::from).collect(),
+            skip: if skip.is_empty() {
+                SKIP.iter().map(|s| (*s).to_owned()).collect()
+            } else {
+                skip
+            },
+        };
+        if roots.roots.is_empty() {
+            return Err("file-watch: no `roots` to watch".into());
+        }
+        capture(&roots, &b.input, stop).map_err(|e| e.to_string())
+    }),
+};
 
 #[cfg(test)]
 mod tests;

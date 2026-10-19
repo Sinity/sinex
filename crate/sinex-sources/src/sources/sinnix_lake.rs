@@ -254,6 +254,7 @@ impl Parser for EnvelopeParser {
         &self,
         record: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<CaptureObserved>, ()), RecordError> {
         let observed = envelope(record, self.lane)?;
         if self.lane.firehose {
@@ -308,6 +309,39 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
         framer: lines,
     }
 }
+
+/// The lane a binding reads, from its spec name.
+fn lane_of(b: &crate::binding::Binding) -> Result<&'static Lane, String> {
+    LANES
+        .iter()
+        .find(|l| l.spec.parser == b.parser)
+        .ok_or_else(|| format!("{}: not a lake lane", b.parser))
+}
+
+/// `--source sinnix-lake=ROOT`: every lane's day files under the lake root
+/// (`/realm`); each lane's directories are its configuration.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "sinnix-lake",
+    specs: || LANES.iter().map(|l| &l.spec).collect(),
+    plan: Some(|input, settings| {
+        Ok(LANES
+            .iter()
+            .flat_map(|lane| {
+                day_files(input, lane)
+                    .into_iter()
+                    .map(|f| crate::binding::Binding::of(&lane.spec, &f, settings.clone()))
+            })
+            .collect())
+    }),
+    source: |b| Ok(Box::new(source(lane_of(b)?))),
+    reader: Some(|b| {
+        Ok(crate::binding::appended(
+            driver(b.input.clone(), b.settings.host.clone()),
+            lane_of(b)?.spec.framer,
+        ))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

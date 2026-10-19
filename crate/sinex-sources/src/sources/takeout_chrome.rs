@@ -41,6 +41,7 @@ impl Parser for TakeoutChromeParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<BrowserHistoryEntry>, ()), RecordError> {
         let payload = BrowserHistoryEntry {
             url: fields::text(row, "url")?,
@@ -80,6 +81,29 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// `--source takeout-chrome=PATH`: each Takeout Chrome history in PATH.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "takeout-chrome",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            false,
+            crate::binding::any,
+        ))
+    }),
+    source: |_| Ok(Box::new(source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

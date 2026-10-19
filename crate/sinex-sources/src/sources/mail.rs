@@ -53,14 +53,10 @@ impl Parser for MailParser {
     type Carry = ();
     type Payload = MailMessage;
 
-    fn parse(&self, record: &&[u8], _: &()) -> Result<(Vec<MailMessage>, ()), RecordError> {
-        parse_message(record).map(|m| (vec![m], ()))
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         record: &&[u8],
-        carry: &(),
+        _: &(),
         context: &RecordContext<'_>,
     ) -> Result<(Vec<MailMessage>, ()), RecordError> {
         // A vanished Maildir file: nothing to read (see the module note).
@@ -70,7 +66,7 @@ impl Parser for MailParser {
         {
             return Ok((vec![], ()));
         }
-        self.parse(record, carry)
+        parse_message(record).map(|m| (vec![m], ()))
     }
 }
 
@@ -255,6 +251,44 @@ pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
         part_bytes: 64 << 20,
     }
 }
+
+/// `--source mbox=PATH`: each mbox file in PATH.
+pub const MBOX_KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "mbox",
+    specs: || vec![&MBOX],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &MBOX,
+            input,
+            settings,
+            false,
+            crate::binding::any,
+        ))
+    }),
+    source: |_| Ok(Box::new(mbox_source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(mbox_driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
+
+/// `--source maildir=PATH`: the Maildir at PATH, walked as one directory.
+pub const MAILDIR_KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "maildir",
+    specs: || vec![&MAILDIR],
+    plan: Some(|input, settings| Ok(crate::binding::single(&MAILDIR, input, settings))),
+    source: |_| Ok(Box::new(maildir_source())),
+    reader: Some(|b| {
+        Ok(crate::binding::walked(maildir_driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

@@ -8,7 +8,7 @@ fn type_line_header_and_rows() {
         member: None,
     };
     let (_, c) = SamsungParser
-        .parse_record(
+        .parse(
             &&b"\xef\xbb\xbfcom.samsung.health.hrv,7006003,1\n"[..],
             &Carry::default(),
             &ctx,
@@ -16,7 +16,7 @@ fn type_line_header_and_rows() {
         .unwrap();
     assert_eq!(c.category, "hrv");
     let (_, c) = SamsungParser
-        .parse_record(
+        .parse(
             &&b"com.samsung.health.hrv.start_time,time_offset,datauuid,end_time,score\n"[..],
             &c,
             &ctx,
@@ -24,7 +24,7 @@ fn type_line_header_and_rows() {
         .unwrap();
     assert_eq!(c.header[0], "start_time");
     let (out, _) = SamsungParser
-        .parse_record(
+        .parse(
             &&b"2025-05-21 04:00:00.000,UTC+0200,a291,2025-05-21 05:00:00.000,7\n"[..],
             &c,
             &ctx,

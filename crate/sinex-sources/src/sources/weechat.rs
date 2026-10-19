@@ -39,11 +39,7 @@ impl Parser for WeeChatParser {
     type Carry = ();
     type Payload = ChatMessage;
 
-    fn parse(&self, record: &&[u8], carry: &()) -> Result<(Vec<ChatMessage>, ()), RecordError> {
-        self.line(record, carry, "")
-    }
-
-    fn parse_record(
+    fn parse(
         &self,
         record: &&[u8],
         carry: &(),
@@ -168,6 +164,33 @@ fn framer(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile { path, host, framer }
 }
+
+/// `--source weechat=PATH`: each WeeChat log under PATH, read in the
+/// binding's zone (WeeChat writes local times), recorded when it is planned.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "weechat",
+    specs: || vec![&SPEC],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(
+            &SPEC,
+            input,
+            &settings.clone().with_zone()?,
+            true,
+            |p| {
+                p.extension()
+                    .is_some_and(|e| e == "log" || e == "weechatlog")
+            },
+        ))
+    }),
+    source: |b| Ok(Box::new(source(b.settings.zone()?))),
+    reader: Some(|b| {
+        Ok(crate::binding::appended(
+            driver(b.input.clone(), b.settings.host.clone()),
+            SPEC.framer,
+        ))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

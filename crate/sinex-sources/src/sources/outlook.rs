@@ -119,6 +119,7 @@ impl Parser for CsvParser {
         &self,
         record: &&[u8],
         header: &Header,
+        _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<MailMessage>, Header), RecordError> {
         let (decoded, _, _) = encoding_rs::WINDOWS_1250.decode(record);
         let cells = fields::csv_cells(decoded.as_bytes())?;
@@ -206,6 +207,58 @@ pub fn csv_driver(path: PathBuf, host: String) -> ExportArchive {
         part_bytes: PART_BYTES,
     }
 }
+
+/// Where PST stores are converted to mbox files before they are read; the
+/// mbox bytes go to the content store, so this is only a cache.
+fn staging() -> PathBuf {
+    std::env::temp_dir().join("sinex-outlook")
+}
+
+/// `--source outlook=PATH`: each `.pst` under PATH, converted with `readpst`
+/// to one mbox per folder, each folder its own binding.
+pub const KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "outlook",
+    specs: || vec![&PST],
+    plan: Some(|input, settings| {
+        let stage = staging();
+        let mut out = Vec::new();
+        for pst in crate::binding::files(input, true, |p| {
+            p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pst"))
+        }) {
+            for mbox in stage_pst(&pst, &stage)? {
+                out.push(crate::binding::Binding::of(&PST, &mbox, settings.clone()));
+            }
+        }
+        Ok(out)
+    }),
+    source: |_| Ok(Box::new(pst_source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(pst_driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
+
+/// `--source outlook-csv=PATH`: each Outlook CSV export under PATH.
+pub const CSV_KIND: crate::binding::Kind = crate::binding::Kind {
+    name: "outlook-csv",
+    specs: || vec![&CSV],
+    plan: Some(|input, settings| {
+        Ok(crate::binding::per_file(&CSV, input, settings, true, |p| {
+            p.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"))
+        }))
+    }),
+    source: |_| Ok(Box::new(csv_source())),
+    reader: Some(|b| {
+        Ok(crate::binding::plain(csv_driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    }),
+    capture: None,
+};
 
 #[cfg(test)]
 mod tests;

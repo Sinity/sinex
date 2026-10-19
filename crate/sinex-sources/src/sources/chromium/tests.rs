@@ -48,7 +48,7 @@ fn visits_carry_their_url_and_unknown_times_stay_unknown() {
     let path = history();
     let (rows, manifest) = rows(&visits_driver(path, "h".into()));
     let cx = context(&manifest);
-    let (open, ()) = VisitParser.parse_record(&rows[0], &(), &cx).unwrap();
+    let (open, ()) = VisitParser.parse(&rows[0], &(), &cx).unwrap();
     assert!(open[0].profile.ends_with("/Default"));
     assert_eq!(open[0].url.as_deref(), Some("https://a.example/"));
     assert_eq!(open[0].title.as_deref(), Some("A"));
@@ -57,7 +57,7 @@ fn visits_carry_their_url_and_unknown_times_stay_unknown() {
         open[0].visited_at.unix_ns(),
         i128::from(NOW_WEBKIT - WEBKIT_EPOCH_OFFSET_US) * 1000
     );
-    let (closed, ()) = VisitParser.parse_record(&rows[1], &(), &cx).unwrap();
+    let (closed, ()) = VisitParser.parse(&rows[1], &(), &cx).unwrap();
     assert_eq!(
         (closed[0].from_visit, closed[0].duration_us),
         (Some(10), Some(1_500_000))
@@ -71,7 +71,7 @@ fn urls_read_counts_and_never_visited_is_unknown() {
     let path = history();
     let (rows, manifest) = rows(&urls_driver(path, "h".into()));
     let (b, ()) = UrlParser
-        .parse_record(&rows[1], &(), &context(&manifest))
+        .parse(&rows[1], &(), &context(&manifest))
         .unwrap();
     assert_eq!(b[0].last_visited_at, None);
     assert_eq!(b[0].title, None);
