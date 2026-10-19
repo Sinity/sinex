@@ -12,6 +12,7 @@ sinex-schema.workspace = true
 sinex-store.workspace = true
 sinex-sources.workspace = true
 sinex-automata.workspace = true
+sinex-analysis.workspace = true
 sinex-protocol.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

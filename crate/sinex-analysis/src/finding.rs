@@ -102,6 +102,23 @@ pub enum Template {
         unit: String,
         reason: String,
     },
+    /// A monotonic trend: Sen's slope per unit with the Mann-Kendall p.
+    Trend {
+        metric: String,
+        slope_per_unit: f64,
+        p: f64,
+        from: String,
+        to: String,
+        units: u64,
+    },
+    /// What a source could observe of a unit (data quality first, `analysis.md` §12.1).
+    Coverage {
+        source: String,
+        unit: String,
+        observed_fraction: f64,
+        completeness: String,
+        basis: String,
+    },
 }
 
 /// Separate checks, never one green tick (`a4w.2`).
@@ -146,9 +163,11 @@ impl Finding {
                 ((after - before) / before.abs().max(1.0)).abs()
             }
             Template::MetricChange { a, b, .. } => ((b - a) / a.abs().max(1.0)).abs(),
-            Template::MetricValue { .. } | Template::NotFound { .. } | Template::Missing { .. } => {
-                0.0
-            }
+            Template::Trend { p, .. } => 1.0 - p,
+            Template::MetricValue { .. }
+            | Template::NotFound { .. }
+            | Template::Missing { .. }
+            | Template::Coverage { .. } => 0.0,
         };
         (self.status, -(effect * 1e6) as i64)
     }
@@ -237,6 +256,36 @@ impl Finding {
                     "{metric} on {unit} is not known: {}",
                     reason.replace('_', " ")
                 )
+            }
+            Template::Trend {
+                metric,
+                slope_per_unit,
+                p,
+                from,
+                to,
+                units,
+            } => format!(
+                "{metric} {} by {:.2} per day from {from} to {to} ({units} days, Mann-Kendall p = {p:.3})",
+                if *slope_per_unit >= 0.0 {
+                    "rose"
+                } else {
+                    "fell"
+                },
+                slope_per_unit.abs()
+            ),
+            Template::Coverage {
+                source,
+                unit,
+                observed_fraction,
+                completeness,
+                basis,
+            } => {
+                let seen = if *observed_fraction <= 0.0 {
+                    "not observed".to_owned()
+                } else {
+                    format!("{:.0}% observed", observed_fraction * 100.0)
+                };
+                format!("{source} on {unit}: {seen} ({completeness}; {basis})")
             }
         };
         for c in &self.caveats {

@@ -11,6 +11,7 @@ pub(crate) const SCHEMAS: &[&str] = &[
     "privacy",
     "reflection",
     "kinds",
+    "analysis",
 ];
 
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
@@ -369,6 +370,92 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 )".into(),
         "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
         "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops)".into(),
+        // The analysis layer (spec `analysis.md` §14). Metric values are a
+        // read model kept per unit, recomputed from dirty units; requests,
+        // attempts, results, their dependencies and status, and findings are
+        // the products. None of it is an event and all of it is rebuildable.
+        "CREATE TABLE analysis.metric_values (
+  metric text NOT NULL,
+  metric_version integer NOT NULL,
+  day_setting text NOT NULL,
+  unit_start timestamptz NOT NULL,
+  unit_end timestamptz NOT NULL,
+  unit_label text NOT NULL,
+  dimension text NOT NULL DEFAULT '',
+  dimension_value text NOT NULL DEFAULT '',
+  state text NOT NULL CHECK (state IN ('observed', 'partial', 'recorded', 'gap', 'unknown', 'not_applicable')),
+  reason text,
+  value double precision,
+  observed_fraction double precision,
+  numerator double precision,
+  denominator double precision,
+  n_rows bigint NOT NULL,
+  observed_s double precision NOT NULL,
+  computed_seq bigint NOT NULL,
+  PRIMARY KEY (metric, metric_version, day_setting, unit_start, dimension, dimension_value),
+  CHECK ((state IN ('observed', 'partial', 'recorded')) = (value IS NOT NULL))
+)".into(),
+        "CREATE TABLE analysis.requests (
+  id bytea PRIMARY KEY CHECK (length(id) = 32),
+  body jsonb NOT NULL,
+  recipe text NOT NULL,
+  recipe_version integer NOT NULL,
+  intent text NOT NULL CHECK (intent IN ('exploratory', 'registered')),
+  family jsonb,
+  as_of bigint NOT NULL,
+  standing text,
+  track_staleness boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+)".into(),
+        "CREATE TABLE analysis.attempts (
+  id uuid PRIMARY KEY,
+  request bytea NOT NULL REFERENCES analysis.requests(id),
+  requested_by jsonb NOT NULL,
+  producer text NOT NULL,
+  started_at timestamptz NOT NULL,
+  finished_at timestamptz,
+  status text NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'cancelled')),
+  error text
+)".into(),
+        "CREATE TABLE analysis.results (
+  id uuid PRIMARY KEY,
+  attempt uuid NOT NULL UNIQUE REFERENCES analysis.attempts(id),
+  request bytea NOT NULL REFERENCES analysis.requests(id),
+  status text NOT NULL CHECK (status IN ('estimated', 'not_estimable', 'failed')),
+  reason text,
+  readsets jsonb NOT NULL,
+  tables jsonb,
+  diagnostics jsonb NOT NULL,
+  output_hash bytea NOT NULL CHECK (length(output_hash) = 32),
+  created_at timestamptz NOT NULL DEFAULT now()
+)".into(),
+        "CREATE INDEX results_request ON analysis.results (request)".into(),
+        "CREATE TABLE analysis.result_dependencies (
+  result uuid NOT NULL REFERENCES analysis.results(id) ON DELETE CASCADE,
+  relation text NOT NULL,
+  span tstzrange NOT NULL
+)".into(),
+        "CREATE INDEX result_dependencies_relation ON analysis.result_dependencies (relation)".into(),
+        "CREATE INDEX result_dependencies_span ON analysis.result_dependencies USING gist (span)".into(),
+        "CREATE TABLE analysis.result_status (
+  result uuid PRIMARY KEY REFERENCES analysis.results(id) ON DELETE CASCADE,
+  state text NOT NULL CHECK (state IN ('current', 'stale', 'superseded', 'withdrawn')),
+  reason text,
+  changed_seq bigint NOT NULL,
+  changed_at timestamptz NOT NULL DEFAULT now()
+)".into(),
+        "CREATE TABLE analysis.findings (
+  id uuid PRIMARY KEY,
+  result uuid NOT NULL REFERENCES analysis.results(id) ON DELETE CASCADE,
+  template text NOT NULL,
+  slots jsonb NOT NULL,
+  role text NOT NULL,
+  status text NOT NULL,
+  caveats jsonb NOT NULL,
+  evidence jsonb NOT NULL,
+  checks jsonb NOT NULL
+)".into(),
+        "CREATE INDEX findings_result ON analysis.findings (result)".into(),
         // Admission's staging table. Permanent and unlogged so compile-time
         // checked queries can name it; only the one writer uses it, inside its
         // transaction, and truncates it first.

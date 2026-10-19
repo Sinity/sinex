@@ -1,6 +1,7 @@
 //! `sinexd`: one context built in `main`; admission and the writer task; the
 //! commit-log reader; the confirmed-stream publisher; the NATS ingress
 //! consumer; the automaton driver; replay; the API (architecture §7.4).
+mod analysis;
 mod api;
 mod backfill;
 mod commits;
@@ -130,6 +131,114 @@ enum Command {
         database: String,
         #[arg(long, default_value = "localhost")]
         host: String,
+    },
+    /// The analysis layer: metric panels, recipes, results and briefs
+    /// (architecture §6.5).
+    Analysis {
+        #[command(subcommand)]
+        command: AnalysisCommand,
+    },
+}
+
+#[derive(clap::Args)]
+struct AnalysisAt {
+    #[arg(long)]
+    database: String,
+    /// The zone logical days are read in.
+    #[arg(long, default_value = "Europe/Warsaw")]
+    zone: String,
+    /// When a logical day starts.
+    #[arg(long, default_value = "04:00")]
+    day_start: String,
+}
+
+#[derive(Subcommand)]
+enum AnalysisCommand {
+    /// The shipped metrics, methods and recipes.
+    Catalog,
+    /// Metric cells per logical day, each with its observation state.
+    Panel {
+        #[command(flatten)]
+        at: AnalysisAt,
+        /// First logical day (YYYY-MM-DD).
+        #[arg(long)]
+        from: String,
+        /// Last logical day, included.
+        #[arg(long)]
+        to: String,
+        /// Only these metrics; repeat for more. Default: all.
+        #[arg(long = "metric")]
+        metrics: Vec<String>,
+        /// Break down by this dimension (host, app, repository, unit).
+        #[arg(long)]
+        by: Option<String>,
+        #[arg(long)]
+        json: bool,
+        /// Also store the cells as the maintained metric values.
+        #[arg(long)]
+        keep: bool,
+    },
+    /// Run a recipe over a range of logical days and store its result.
+    Run {
+        #[command(flatten)]
+        at: AnalysisAt,
+        recipe: analysis::Recipe,
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        /// Record the run as the standing question's newest answer, which
+        /// supersedes the previous one.
+        #[arg(long)]
+        standing: bool,
+        /// Admit partly observed days covering at least this fraction.
+        #[arg(long)]
+        min_observed_fraction: Option<f64>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// A stored result: its status, readsets, tables and findings.
+    Show {
+        #[command(flatten)]
+        at: AnalysisAt,
+        result: uuid::Uuid,
+        #[arg(long)]
+        json: bool,
+    },
+    /// The newest stored results.
+    Results {
+        #[command(flatten)]
+        at: AnalysisAt,
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+    },
+    /// Why a metric's cell for a day is missing, partial or observed.
+    WhyNot {
+        #[command(flatten)]
+        at: AnalysisAt,
+        metric: String,
+        day: String,
+    },
+    /// The brief for one logical day: data quality, the day, departures,
+    /// associations, the machine.
+    Brief {
+        #[command(flatten)]
+        at: AnalysisAt,
+        /// Default: today.
+        #[arg(long)]
+        day: Option<String>,
+        /// Bytes of findings; whole findings are dropped to fit.
+        #[arg(long, default_value_t = 4000)]
+        budget: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Recompute the maintained metric values of dirty and recent days.
+    Maintain {
+        #[command(flatten)]
+        at: AnalysisAt,
+        #[arg(long, default_value_t = 2)]
+        recent_days: i64,
     },
 }
 
@@ -550,12 +659,264 @@ async fn main() -> std::process::ExitCode {
             .await
         }
         Command::Derive { database, host } => run_derive(database, host).await,
+        Command::Analysis { command } => run_analysis(command).await,
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("sinexd: {e}");
             std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn analysis_open(
+    at: &AnalysisAt,
+) -> Result<(sqlx::PgConnection, analysis::Settings), String> {
+    use sqlx::Connection;
+    let settings = analysis::Settings::new(&at.zone, &at.day_start)?;
+    let conn = sqlx::PgConnection::connect(&at.database)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((conn, settings))
+}
+
+fn metric_defs(ids: &[String]) -> Result<Vec<&'static sinex_analysis::MetricDef>, String> {
+    if ids.is_empty() {
+        return Ok(sinex_analysis::catalog::METRICS.iter().collect());
+    }
+    ids.iter()
+        .map(|id| {
+            sinex_analysis::catalog::metric(id).ok_or_else(|| {
+                let known: Vec<&str> = sinex_analysis::catalog::METRICS
+                    .iter()
+                    .map(|m| m.id)
+                    .collect();
+                format!("no metric {id}; known: {}", known.join(", "))
+            })
+        })
+        .collect()
+}
+
+fn print_json(v: &impl serde::Serialize) -> Result<(), String> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(v).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
+async fn run_analysis(command: AnalysisCommand) -> Result<(), String> {
+    match command {
+        AnalysisCommand::Catalog => {
+            println!("metrics:");
+            for m in sinex_analysis::catalog::METRICS {
+                println!(
+                    "  {:<26} v{} {:<15} {} [{}]",
+                    m.id,
+                    m.version,
+                    m.relation,
+                    m.description,
+                    m.opportunity.sources().join(", ")
+                );
+            }
+            println!("methods:");
+            for (id, version, summary) in sinex_analysis::methods::catalog() {
+                println!("  {id:<20} v{version} {summary}");
+            }
+            println!("recipes: correlations, trends, deviations");
+            Ok(())
+        }
+        AnalysisCommand::Panel {
+            at,
+            from,
+            to,
+            metrics,
+            by,
+            json,
+            keep,
+        } => {
+            let (mut conn, settings) = analysis_open(&at).await?;
+            let defs = metric_defs(&metrics)?;
+            let (from, to) = (analysis::parse_day(&from)?, analysis::parse_day(&to)?);
+            let as_of = sinex_store::analysis::head(&mut conn)
+                .await
+                .map_err(|e| e.to_string())?;
+            let sources: Vec<&str> = {
+                let mut s: Vec<&str> = defs
+                    .iter()
+                    .flat_map(|d| d.opportunity.sources().iter().copied())
+                    .collect();
+                s.sort_unstable();
+                s.dedup();
+                s
+            };
+            let started = std::time::Instant::now();
+            let opp = analysis::opportunity(&mut conn, &sources, as_of).await?;
+            let start = settings.civil.day_start(from).map_err(|e| e.to_string())?;
+            let end = settings.civil.day_end(to).map_err(|e| e.to_string())?;
+            let range = sinex_analysis::Span::new(
+                i64::try_from(start.unix_ns() / 1000).unwrap_or(0),
+                i64::try_from(end.unix_ns() / 1000).unwrap_or(0),
+            );
+            let p = analysis::panel(&mut conn, &settings, &defs, range, as_of, &opp).await?;
+            if keep {
+                analysis::keep(&mut conn, &settings, &p, as_of).await?;
+            }
+            if json {
+                print_json(
+                    &serde_json::json!({"as_of": as_of, "day_setting": settings.label, "opportunity": opp, "cells": p.cells}),
+                )
+            } else {
+                print!("{}", analysis::table(&p, &defs, by.as_deref()));
+                eprintln!(
+                    "as of commit {as_of}; {} cells in {:.2}s{}",
+                    p.cells.len(),
+                    started.elapsed().as_secs_f64(),
+                    if keep { "; stored" } else { "" }
+                );
+                Ok(())
+            }
+        }
+        AnalysisCommand::Run {
+            at,
+            recipe,
+            from,
+            to,
+            standing,
+            min_observed_fraction,
+            json,
+        } => {
+            let (mut conn, settings) = analysis_open(&at).await?;
+            let eligibility = sinex_analysis::Eligibility {
+                min_observed_fraction,
+                admit_recorded: false,
+            };
+            let started = std::time::Instant::now();
+            let run = analysis::run(
+                &mut conn,
+                &settings,
+                recipe,
+                analysis::parse_day(&from)?,
+                analysis::parse_day(&to)?,
+                eligibility,
+                standing,
+            )
+            .await?;
+            if json {
+                return print_json(&serde_json::json!({
+                    "result": run.result.id, "state": run.result.state, "reused": run.reused,
+                    "findings": run.findings, "tables": run.tables,
+                }));
+            }
+            println!(
+                "result {} ({}{}) in {:.2}s",
+                run.result.id,
+                run.result.state,
+                if run.reused {
+                    ", an identical request's stored answer"
+                } else {
+                    ""
+                },
+                started.elapsed().as_secs_f64()
+            );
+            if run.findings.is_empty() {
+                println!("no findings");
+            }
+            for f in &run.findings {
+                println!("- {}", f.markdown());
+            }
+            Ok(())
+        }
+        AnalysisCommand::Show { at, result, json } => {
+            let (mut conn, _) = analysis_open(&at).await?;
+            let view = sinex_store::analysis::result(&mut conn, result)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("no result {result}"))?;
+            if json {
+                return print_json(&serde_json::json!({
+                    "id": view.id, "recipe": view.recipe, "request": view.request, "as_of": view.as_of,
+                    "status": view.status, "reason": view.reason, "state": view.state,
+                    "state_reason": view.state_reason, "readsets": view.readsets, "tables": view.tables,
+                    "diagnostics": view.diagnostics, "findings": view.findings,
+                }));
+            }
+            println!(
+                "{} {} as of commit {}: {} ({}{})",
+                view.id,
+                view.recipe,
+                view.as_of,
+                view.status,
+                view.state,
+                view.state_reason
+                    .map(|r| format!(": {r}"))
+                    .unwrap_or_default()
+            );
+            let readsets = view.readsets.as_array().cloned().unwrap_or_default();
+            for r in &readsets {
+                println!(
+                    "  read {} rows, digest {}",
+                    r["rows"],
+                    r["digest"].as_str().unwrap_or_default()
+                );
+            }
+            for f in view.findings.iter().filter_map(analysis::stored_finding) {
+                println!("- {}", f.markdown());
+            }
+            Ok(())
+        }
+        AnalysisCommand::Results { at, limit } => {
+            let (mut conn, _) = analysis_open(&at).await?;
+            for (id, recipe, status, state, at) in
+                sinex_store::analysis::recent_results(&mut conn, None, limit)
+                    .await
+                    .map_err(|e| e.to_string())?
+            {
+                println!("{id} {at} {recipe:<14} {status:<14} {state}");
+            }
+            Ok(())
+        }
+        AnalysisCommand::WhyNot { at, metric, day } => {
+            let (mut conn, settings) = analysis_open(&at).await?;
+            let def = metric_defs(&[metric])?[0];
+            print!(
+                "{}",
+                analysis::why_not(&mut conn, &settings, def, analysis::parse_day(&day)?).await?
+            );
+            Ok(())
+        }
+        AnalysisCommand::Brief {
+            at,
+            day,
+            budget,
+            json,
+        } => {
+            let (mut conn, settings) = analysis_open(&at).await?;
+            let day = match day {
+                Some(d) => analysis::parse_day(&d)?,
+                None => settings
+                    .civil
+                    .day(sinex_model::Timestamp::now())
+                    .map_err(|e| e.to_string())?,
+            };
+            let p = analysis::brief(&mut conn, &settings, day, budget).await?;
+            if json {
+                print_json(&p)
+            } else {
+                print!("{}", p.markdown);
+                Ok(())
+            }
+        }
+        AnalysisCommand::Maintain { at, recent_days } => {
+            let (mut conn, settings) = analysis_open(&at).await?;
+            let started = std::time::Instant::now();
+            let n = analysis::maintain(&mut conn, &settings, recent_days).await?;
+            println!(
+                "{n} day(s) recomputed in {:.2}s",
+                started.elapsed().as_secs_f64()
+            );
+            Ok(())
         }
     }
 }

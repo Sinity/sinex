@@ -195,10 +195,12 @@ async fn commands_fuse_into_sessions_and_summaries() {
         )
         .await;
     assert_eq!(daily, 1);
+    // Metric days stay dirty for the analysis maintainer, not the driver.
     assert_eq!(
-        w.count("SELECT count(*) FROM derivation.dirty").await,
+        w.count("SELECT count(*) FROM derivation.dirty WHERE derivation NOT LIKE 'metric:%'")
+            .await,
         0,
-        "everything settled"
+        "every derivation settled"
     );
     // Every derived event cites parents.
     assert_eq!(

@@ -6,6 +6,7 @@
 //! SQL is checked at compile time against a live development database with
 //! `sqlx::query!`; there is no offline cache (operator ruling, 2025-08-10).
 pub mod admission;
+pub mod analysis;
 pub mod blobs;
 pub mod committed;
 pub mod derived;

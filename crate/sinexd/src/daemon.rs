@@ -28,6 +28,12 @@ use tokio::task::JoinSet;
 /// keys whose outputs wait on evidence outside their window settle with time.
 const DRIVER_IDLE: Duration = Duration::from_secs(30);
 
+/// Metric values are recomputed at least this often (new opportunity, such
+/// as time passing for a live source, changes cells without a commit) and
+/// after commits have been quiet for `METRICS_QUIET`.
+const METRICS_IDLE: Duration = Duration::from_secs(600);
+const METRICS_QUIET: Duration = Duration::from_secs(30);
+
 pub struct Options {
     pub database: String,
     pub store: PathBuf,
@@ -104,6 +110,26 @@ pub async fn run(o: Options) -> Result<(), String> {
                     w.notify_one();
                 }
             } => ("automaton driver wake", Ok(())),
+        }
+    });
+
+    // Metric values follow their inputs: after commits settle, recompute the
+    // days admission marked dirty and the most recent ones.
+    let mut metrics_conn = connect(&o.database).await?;
+    let (mut c, mut s) = (commits.clone(), stop.clone());
+    tasks.spawn(async move {
+        let settings = crate::analysis::Settings::operator_default();
+        loop {
+            tokio::select! {
+                changed = c.changed() => if changed.is_err() { return ("metric maintenance", Ok(())) },
+                _ = tokio::time::sleep(METRICS_IDLE) => {}
+                _ = s.wait_for(|s| *s) => return ("metric maintenance", Ok(())),
+            }
+            // Let a burst of commits (an import) finish before recomputing.
+            while tokio::time::timeout(METRICS_QUIET, c.changed()).await.is_ok() {}
+            if let Err(e) = crate::analysis::maintain(&mut metrics_conn, &settings, 2).await {
+                return ("metric maintenance", Err(e));
+            }
         }
     });
 

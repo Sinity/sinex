@@ -7,6 +7,7 @@ use crate::metric::{
     AggLaw, Allocation, IntervalShape, Lit, MetricDef, OpportunityRule, Predicate, Quantity,
     SourceRole, Term, UnitGrain,
 };
+use crate::opportunity::Basis;
 use crate::panel::Completeness;
 
 const SHELLS: &[&str] = &["terminal.atuin-history", "terminal.zsh-history"];
@@ -222,6 +223,22 @@ pub fn completeness(source: &str) -> Completeness {
         | "code.git"
         | "browser.chromium-visits" => Completeness::Sample,
         _ => Completeness::Unknown,
+    }
+}
+
+/// How each source's opportunity is bounded. The journal and ActivityWatch
+/// are stores with history read through a cursor, so a read sees everything
+/// before it; the window-manager socket and the filesystem watch see only
+/// while they run.
+pub fn basis(source: &str) -> Basis {
+    match source {
+        "desktop.hyprland" | "machine.file-watch" => Basis::Live,
+        "media.spotify-history"
+        | "browser.takeout-chrome-history"
+        | "reading.raindrop"
+        | "communication.mbox"
+        | "communication.weechat-log" => Basis::Export,
+        _ => Basis::Polled,
     }
 }
 
