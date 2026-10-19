@@ -1,5 +1,6 @@
 //! Every source, one module per family, registered in one list.
 pub mod activitywatch;
+pub mod arbtt;
 pub mod atuin;
 pub mod calendar;
 pub mod chromium;

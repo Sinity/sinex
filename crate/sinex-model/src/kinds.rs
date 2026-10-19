@@ -258,6 +258,7 @@ pub const ALL: &[KindInfo] = &[
     info::<desktop::PresenceInterval>(),
     info::<desktop::BrowserTabActive>(),
     info::<desktop::ActivityWatchOther>(),
+    info::<desktop::WindowSampled>(),
     // Machine
     info::<machine::JournalEntry>(),
     info::<machine::CaptureObserved>(),

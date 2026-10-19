@@ -41,6 +41,7 @@ pub const EXPORT_KINDS: &[&str] = &[
     "sinnix-lake",
     "outlook",
     "outlook-csv",
+    "arbtt",
     "chromium",
     "takeout-chrome",
     "spotify",
@@ -705,6 +706,28 @@ async fn export(
                 let mut memory = drivers::append_file::AppendMemory::rebuild(
                     chain.iter().map(|(id, b)| (*id, b.as_slice())),
                     weechat::SPEC.framer,
+                );
+                totals.add(
+                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                        driver.poll(c, &mut memory)
+                    })
+                    .await?,
+                );
+            }
+        }
+        "arbtt" => {
+            use sinex_sources::sources::arbtt;
+            let logs = files(&path, true, |p| {
+                p.file_name().is_some_and(|n| n == "capture.log")
+            });
+            let source = arbtt::source();
+            for log in logs {
+                let driver = arbtt::driver(log.clone(), host.clone());
+                let name = binding(&log.display().to_string());
+                let chain = stored(ctx, &name).await?;
+                let mut memory = drivers::append_file::AppendMemory::rebuild(
+                    chain.iter().map(|(id, b)| (*id, b.as_slice())),
+                    arbtt::SPEC.framer,
                 );
                 totals.add(
                     drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {

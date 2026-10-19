@@ -73,11 +73,21 @@ impl Parser for RawLogParser {
         let (stamp, body) = rest
             .split_once("**")
             .ok_or_else(|| RecordError::new("entry without a closing ** after its time"))?;
-        // A heading that is a label, not a time: the entry is kept, its time
-        // unknown.
-        if let Some(label) = stamp.trim().strip_suffix(':').filter(|l| !l.is_empty())
-            && !label.starts_with(|c: char| c.is_ascii_digit())
-        {
+        // A heading that is a label or only a day (`SPECIAL:`, `2025-08-18`):
+        // the entry is kept with an unknown time and the heading as its
+        // label. A time without seconds reads as `:00`.
+        let stamp = stamp.trim();
+        let civil = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", stamp)
+            .or_else(|_| jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M", stamp));
+        let Ok(civil) = civil else {
+            let label = stamp.trim_end_matches(':').trim();
+            if label.is_empty()
+                || label.contains(' ') && label.starts_with(|c: char| c.is_ascii_digit())
+            {
+                return Err(RecordError::new(format!(
+                    "entry heading {stamp:?} is not a time or a label"
+                )));
+            }
             return Ok((
                 vec![LogEntry {
                     written_at: None,
@@ -86,9 +96,7 @@ impl Parser for RawLogParser {
                 }],
                 (),
             ));
-        }
-        let civil = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", stamp.trim())
-            .map_err(|e| RecordError::new(format!("entry time {stamp:?}: {e}")))?;
+        };
         let zoned = self
             .zone
             .to_ambiguous_zoned(civil)
@@ -228,6 +236,20 @@ mod tests {
         assert_eq!(out[0].written_at, None);
         assert_eq!(out[0].label.as_deref(), Some("SPECIAL"));
         assert_eq!(out[0].text, "[[note]].");
+        let (out, ()) = p.parse(&&b"- **2025-08-18** a day\n"[..], &()).unwrap();
+        assert_eq!(
+            (out[0].written_at, out[0].label.as_deref()),
+            (None, Some("2025-08-18"))
+        );
+        let (out, ()) = p.parse(&&b"- **2025-08-03:** a day\n"[..], &()).unwrap();
+        assert_eq!(out[0].label.as_deref(), Some("2025-08-03"));
+        let (out, ()) = p
+            .parse(&&b"- **2025-07-30 21:57** minutes\n"[..], &())
+            .unwrap();
+        assert_eq!(
+            out[0].written_at,
+            fields::rfc3339("2025-07-30T19:57:00Z").ok()
+        );
     }
 
     #[test]
