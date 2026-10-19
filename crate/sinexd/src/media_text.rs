@@ -65,7 +65,9 @@ impl PerEvent for ScreenText {
         if segment.payload.get("kind").and_then(|k| k.as_str()) != Some("screen") {
             return Ok(Vec::new());
         }
-        let image = input.material.ok_or("the screen still's bytes were not read")?;
+        let image = input
+            .material
+            .ok_or("the screen still's bytes were not read")?;
         let text = ocr(image)?;
         let started_at = segment
             .payload

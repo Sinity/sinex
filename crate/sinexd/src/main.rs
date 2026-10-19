@@ -734,8 +734,8 @@ async fn local_driver(
     )
     .await?;
     if let Some(store) = store {
-        driver = driver
-            .with_blobs(sinex_store::blobs::Blobs::open(store).map_err(|e| e.to_string())?);
+        driver =
+            driver.with_blobs(sinex_store::blobs::Blobs::open(store).map_err(|e| e.to_string())?);
     }
     Ok((driver, task))
 }
