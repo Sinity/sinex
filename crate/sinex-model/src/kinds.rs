@@ -275,6 +275,8 @@ pub const ALL: &[KindInfo] = &[
     info::<machine::JournalEntry>(),
     info::<machine::CaptureObserved>(),
     info::<machine::FileChanged>(),
+    info::<machine::TerminalSession>(),
+    info::<machine::TerminalOutput>(),
     // Code
     info::<code::GitCommit>(),
     // Derived

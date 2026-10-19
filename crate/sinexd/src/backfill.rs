@@ -44,6 +44,7 @@ pub const EXPORT_KINDS: &[&str] = &[
     "arbtt",
     "imap",
     "samsung-account",
+    "asciinema",
     "chromium",
     "takeout-chrome",
     "spotify",
@@ -758,6 +759,47 @@ async fn export(
                     drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
                         driver.poll(c)
                     })
+                    .await?,
+                );
+            }
+        }
+        "asciinema" => {
+            // Each recording directory: its cast and the capture's events
+            // beside it, each its own binding.
+            use sinex_sources::sources::asciinema;
+            let files_of = files(&path, true, |p| {
+                p.file_name()
+                    .is_some_and(|n| n == "session.cast" || n == "events.jsonl")
+            });
+            for file in files_of {
+                let cast = file.file_name().is_some_and(|n| n == "session.cast");
+                let spec = if cast {
+                    asciinema::CAST
+                } else {
+                    asciinema::EVENTS
+                };
+                let driver = asciinema::driver(file.clone(), host.clone(), &spec);
+                let name = binding(&file.display().to_string());
+                let chain = stored(ctx, &name).await?;
+                let mut memory = drivers::append_file::AppendMemory::rebuild(
+                    chain.iter().map(|(id, b)| (*id, b.as_slice())),
+                    spec.framer,
+                );
+                let source: Box<dyn Source> = if cast {
+                    Box::new(asciinema::cast_source())
+                } else {
+                    Box::new(asciinema::events_source())
+                };
+                totals.add(
+                    drive(
+                        &mut ctx.aux,
+                        &ctx.writer,
+                        run,
+                        source.as_ref(),
+                        &name,
+                        sink,
+                        |c| driver.poll(c, &mut memory),
+                    )
                     .await?,
                 );
             }
