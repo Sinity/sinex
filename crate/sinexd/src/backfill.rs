@@ -46,6 +46,13 @@ pub const EXPORT_KINDS: &[&str] = &[
     "mbox",
     "maildir",
     "weechat",
+    "takeout",
+    "calendar",
+    "goodreads",
+    "messenger",
+    "sleep-as-android",
+    "wykop",
+    "reddit",
 ];
 
 #[derive(Default)]
@@ -477,10 +484,31 @@ async fn export(
                 }
             }
         }
-        "takeout-chrome" | "spotify" | "raindrop" | "mbox" => {
-            for file in files(&path, false, any) {
+        "takeout-chrome" | "spotify" | "raindrop" | "mbox" | "goodreads" | "messenger"
+        | "sleep-as-android" | "wykop" | "reddit" => {
+            use sinex_sources::sources::{goodreads, messenger, reddit, sleep_as_android, wykop};
+            let keep: fn(&std::path::Path) -> bool = match kind {
+                "wykop" => wykop::is_own,
+                "reddit" => |p| p.extension().is_some_and(|e| e == "zip"),
+                _ => any,
+            };
+            for file in files(&path, false, keep) {
                 let name = binding(&file.display().to_string());
                 let (source, driver): (Box<dyn Source>, _) = match kind {
+                    "wykop" => (Box::new(wykop::source()), wykop::driver(file, host.clone())),
+                    "reddit" => (Box::new(reddit::source()), reddit::driver(file, host.clone())),
+                    "goodreads" => (
+                        Box::new(goodreads::source()),
+                        goodreads::driver(file, host.clone()),
+                    ),
+                    "messenger" => (
+                        Box::new(messenger::source()),
+                        messenger::driver(file, host.clone()),
+                    ),
+                    "sleep-as-android" => (
+                        Box::new(sleep_as_android::source()),
+                        sleep_as_android::driver(file, host.clone()),
+                    ),
                     "takeout-chrome" => (
                         Box::new(takeout_chrome::source()),
                         takeout_chrome::driver(file, host.clone()),
@@ -510,6 +538,62 @@ async fn export(
                     )
                     .await?,
                 );
+            }
+        }
+        // Every Takeout product source over each archive, plus the calendars
+        // in it; each source its own binding, so each keeps its own cursor.
+        "takeout" | "calendar" => {
+            use sinex_sources::sources::{calendar, google_takeout as g};
+            let zone = weechat::zone(o.zone.as_deref())?;
+            for file in files(&path, false, any) {
+                let mut readers: Vec<(Box<dyn Source>, drivers::export_archive::ExportArchive)> =
+                    vec![(
+                        Box::new(calendar::source(zone.clone())),
+                        calendar::driver(file.clone(), host.clone()),
+                    )];
+                if kind == "takeout" {
+                    readers.extend([
+                        (
+                            Box::new(g::activity::my_activity()) as Box<dyn Source>,
+                            g::activity::my_activity_driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::activity::youtube()),
+                            g::activity::youtube_driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::keep::source()),
+                            g::keep::driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::tasks::source()),
+                            g::tasks::driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::purchases::play_store()),
+                            g::purchases::play_store_driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::purchases::purchases()),
+                            g::purchases::purchases_driver(file.clone(), host.clone()),
+                        ),
+                    ]);
+                }
+                for (source, driver) in readers {
+                    let name = binding(&format!("{}:{}", source.spec().name, file.display()));
+                    let t = drive(
+                        &mut ctx.aux,
+                        &ctx.writer,
+                        run,
+                        source.as_ref(),
+                        &name,
+                        sink,
+                        |c| driver.poll(c),
+                    )
+                    .await?;
+                    println!("  {} {t}", source.spec().name);
+                    totals.add(t);
+                }
             }
         }
         "notes" | "maildir" => {

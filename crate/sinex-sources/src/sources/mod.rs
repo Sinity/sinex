@@ -1,19 +1,26 @@
 //! Every source, one module per family, registered in one list.
 pub mod activitywatch;
 pub mod atuin;
+pub mod calendar;
 pub mod chromium;
-mod fields;
+pub(crate) mod fields;
 pub mod file_watch;
+pub mod goodreads;
+pub mod google_takeout;
 pub mod hyprland;
 pub mod journald;
 pub mod mail;
+pub mod messenger;
 pub mod notes;
 pub mod raindrop;
+pub mod reddit;
 /// Commits in local repositories (`code.git`).
 pub mod repository;
+pub mod sleep_as_android;
 pub mod spotify;
 pub mod takeout_chrome;
 pub mod weechat;
+pub mod wykop;
 pub mod zsh;
 
 use crate::registry::{Source, SourceSpec};
@@ -37,6 +44,18 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &mail::MBOX,
         &mail::MAILDIR,
         &weechat::SPEC,
+        &google_takeout::activity::MY_ACTIVITY,
+        &google_takeout::activity::YOUTUBE,
+        &google_takeout::keep::SPEC,
+        &google_takeout::tasks::SPEC,
+        &google_takeout::purchases::PLAY_STORE,
+        &google_takeout::purchases::PURCHASES,
+        &calendar::SPEC,
+        &goodreads::SPEC,
+        &messenger::SPEC,
+        &sleep_as_android::SPEC,
+        &wykop::SPEC,
+        &reddit::SPEC,
     ]
 }
 
@@ -63,6 +82,33 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         // WeeChat's zone is a setting of the capture, not in the stored log; a
         // replay reads with this system's zone.
         p if p == weechat::SPEC.parser => Some(Box::new(weechat::source(
+            weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
+        ))),
+        p if p == google_takeout::activity::MY_ACTIVITY.parser => {
+            Some(Box::new(google_takeout::activity::my_activity()))
+        }
+        p if p == google_takeout::activity::YOUTUBE.parser => {
+            Some(Box::new(google_takeout::activity::youtube()))
+        }
+        p if p == google_takeout::keep::SPEC.parser => {
+            Some(Box::new(google_takeout::keep::source()))
+        }
+        p if p == google_takeout::tasks::SPEC.parser => {
+            Some(Box::new(google_takeout::tasks::source()))
+        }
+        p if p == google_takeout::purchases::PLAY_STORE.parser => {
+            Some(Box::new(google_takeout::purchases::play_store()))
+        }
+        p if p == google_takeout::purchases::PURCHASES.parser => {
+            Some(Box::new(google_takeout::purchases::purchases()))
+        }
+        p if p == goodreads::SPEC.parser => Some(Box::new(goodreads::source())),
+        p if p == messenger::SPEC.parser => Some(Box::new(messenger::source())),
+        p if p == sleep_as_android::SPEC.parser => Some(Box::new(sleep_as_android::source())),
+        p if p == wykop::SPEC.parser => Some(Box::new(wykop::source())),
+        p if p == reddit::SPEC.parser => Some(Box::new(reddit::source())),
+        // Like WeeChat, floating times are read in this system's zone.
+        p if p == calendar::SPEC.parser => Some(Box::new(calendar::source(
             weechat::zone(None).unwrap_or(jiff::tz::TimeZone::UTC),
         ))),
         _ => None,

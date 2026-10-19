@@ -102,3 +102,41 @@ pub struct NoteDocument {
     /// When a completed scan first found the file gone.
     pub vanished_at: Option<Timestamp>,
 }
+
+/// A book shelved or read in a reading tracker (Goodreads). Dates are days,
+/// so these serve long-horizon interest, not daily behaviour.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "book.event",
+    key = ["service", "book_id", "action"],
+    replace = newer,
+    time = at,
+    quality = intrinsic
+)]
+pub struct BookEvent {
+    pub service: String,
+    pub book_id: String,
+    /// `shelved` (added) or `read` (finished).
+    pub action: String,
+    /// The day, at midnight UTC; the export gives no time of day.
+    pub at: Option<Timestamp>,
+    pub title: String,
+    pub author: Option<String>,
+    pub additional_authors: Option<String>,
+    pub isbn: Option<String>,
+    pub isbn13: Option<String>,
+    /// The operator's rating, 1-5; `None` when unrated (the export writes 0).
+    pub my_rating: Option<i64>,
+    pub average_rating: Option<f64>,
+    pub publisher: Option<String>,
+    pub binding: Option<String>,
+    pub pages: Option<i64>,
+    pub year_published: Option<i64>,
+    pub original_year: Option<i64>,
+    pub shelves: Vec<String>,
+    pub exclusive_shelf: Option<String>,
+    pub review: Option<String>,
+    pub private_notes: Option<String>,
+    pub read_count: Option<i64>,
+    pub owned_copies: Option<i64>,
+}

@@ -4,13 +4,16 @@
 use crate::{EventPayload, Timestamp};
 use schemars::JsonSchema;
 
+pub mod account;
 pub mod browser;
 pub mod code;
 pub mod communication;
 pub mod desktop;
+pub mod health;
 pub mod machine;
 pub mod media;
 pub mod polylogue;
+pub mod social;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -269,6 +272,19 @@ pub const ALL: &[KindInfo] = &[
     info::<communication::MailMessage>(),
     // Polylogue's archive in primary mode
     info::<polylogue::PolylogueRows>(),
+    // Account exports
+    info::<account::ActionRecorded>(),
+    info::<account::VideoWatched>(),
+    info::<account::VideoSearched>(),
+    info::<account::NoteObserved>(),
+    info::<account::TaskRevised>(),
+    info::<account::PurchaseObserved>(),
+    info::<account::CalendarEvent>(),
+    info::<communication::ConversationMessage>(),
+    info::<media::BookEvent>(),
+    info::<health::HealthRecord>(),
+    info::<social::PostPublished>(),
+    info::<social::VoteCast>(),
 ];
 
 /// The registered type named `event_type`, for code that holds a type name

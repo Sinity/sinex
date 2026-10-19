@@ -113,11 +113,14 @@ enum Command {
         /// An export or directory source as `kind=path`: chromium (a browser's
         /// user-data directory), takeout-chrome, spotify, raindrop (a `.csv`
         /// or `.jsonl` export), mbox (a file or a directory of files), notes,
-        /// maildir (a directory), weechat (a log file or directory).
+        /// maildir (a directory), weechat (a log file or directory), takeout
+        /// (a Google Takeout archive or a directory of them: My Activity,
+        /// YouTube history, Keep, Tasks, Play Store, Purchases, Calendar),
+        /// calendar (an `.ics` file, or archives holding them).
         #[arg(long = "source")]
         sources: Vec<String>,
-        /// The zone WeeChat logs were written in (IANA name); the system zone
-        /// when unset.
+        /// The zone WeeChat logs and floating calendar times were written in
+        /// (IANA name); the system zone when unset.
         #[arg(long)]
         zone: Option<String>,
         #[arg(long, default_value = "localhost")]

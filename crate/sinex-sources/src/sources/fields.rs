@@ -54,3 +54,45 @@ pub fn rfc3339(raw: &str) -> Result<Timestamp, RecordError> {
         .map(Timestamp)
         .map_err(|e| RecordError::new(format!("invalid time {raw:?}: {e}")))
 }
+
+pub fn from_unix_ms(ms: i64) -> Result<Timestamp, RecordError> {
+    Timestamp::from_unix_ns(i128::from(ms) * 1_000_000)
+        .map_err(|_| RecordError::new(format!("time {ms} ms out of range")))
+}
+
+/// The cells of one framed CSV row; a byte-order mark on the first is dropped.
+pub fn csv_cells(record: &[u8]) -> Result<Vec<String>, RecordError> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(record);
+    let row = reader
+        .records()
+        .next()
+        .ok_or_else(|| RecordError::new("empty CSV record"))?
+        .map_err(|e| RecordError::new(format!("CSV: {e}")))?;
+    let mut cells: Vec<String> = row.iter().map(str::to_owned).collect();
+    if let Some(first) = cells.first_mut() {
+        *first = first.trim_start_matches('\u{feff}').to_owned();
+    }
+    Ok(cells)
+}
+
+/// A day (`YYYY/MM/DD` or `YYYY-MM-DD`) at midnight UTC, or `None` if empty.
+pub fn day(raw: &str) -> Result<Option<Timestamp>, RecordError> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let mut parts = raw.split(['/', '-']).map(str::parse::<u16>);
+    let (Some(Ok(y)), Some(Ok(m)), Some(Ok(d)), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(RecordError::new(format!("invalid date {raw:?}")));
+    };
+    let month = time::Month::try_from(m as u8)
+        .map_err(|_| RecordError::new(format!("invalid month in {raw:?}")))?;
+    time::Date::from_calendar_date(i32::from(y), month, d as u8)
+        .map(|date| Some(Timestamp(date.midnight().assume_utc())))
+        .map_err(|e| RecordError::new(format!("invalid date {raw:?}: {e}")))
+}
