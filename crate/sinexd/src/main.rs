@@ -312,12 +312,6 @@ enum Admin {
     Table(Vec<String>),
 }
 
-fn timestamp(s: &str) -> Result<sinex_model::Timestamp, String> {
-    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
-        .map(sinex_model::Timestamp)
-        .map_err(|e| format!("not an RFC 3339 time: {e}"))
-}
-
 
 async fn admin(command: Admin) -> Result<(), String> {
     match command {

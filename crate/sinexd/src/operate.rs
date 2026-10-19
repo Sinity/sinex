@@ -1,44 +1,11 @@
-//! The operator's actions on stored events, through the one writer: hide and
-//! unhide (reversible), and excision (permanent; architecture §3.4).
-use crate::context::Context;
-use crate::writer::{Excision, Priority, WriterHandle};
-use sinex_model::{ArchiveRequest, Batch, BatchKind, EventId, OperationId, RunId};
+//! Excision (permanent; architecture §3.4), through the one writer: what it
+//! would remove, and removing it. Hide and unhide are plain writer batches.
+use crate::writer::{Excision, WriterHandle};
+use sinex_model::OperationId;
 use sinex_sources::sources;
 use sinex_store::Blobs;
 use sinex_store::excision::{self, Plan, Rewrite, Target};
 use sqlx::PgConnection;
-
-/// Hide (or with `undo`, unhide) the record `target` was read from.
-pub async fn hide(ctx: &Context, target: EventId, undo: bool, actor: &str) -> Result<(), String> {
-    let operation = OperationId::new();
-    let request = if undo {
-        ArchiveRequest::Unhide { target, operation }
-    } else {
-        ArchiveRequest::Hide { target, operation }
-    };
-    ctx.writer
-        .submit(
-            Priority::Live,
-            Batch {
-                run: RunId::new(),
-                kind: BatchKind::Api {
-                    actor: actor.to_owned(),
-                },
-                records: Vec::new(),
-                archive: vec![request],
-            },
-        )
-        .await
-        .map(drop)
-        .map_err(|e| e.to_string())
-}
-
-/// What an excision removes, without removing it.
-pub async fn plan(ctx: &mut Context, target: Target) -> Result<Plan, String> {
-    excision::plan(&mut ctx.aux, target)
-        .await
-        .map_err(|e| e.to_string())
-}
 
 pub fn describe(plan: &Plan) -> String {
     let records: usize = plan.materials.iter().map(|m| m.anchors.len()).sum();
@@ -55,13 +22,8 @@ pub fn describe(plan: &Plan) -> String {
 }
 
 /// Excise `target`: blank its records' bytes in new blobs, then remove every
-/// reading in one transaction; the old blob files go after commit.
-pub async fn excise(ctx: &mut Context, target: Target, actor: &str) -> Result<String, String> {
-    excise_with(&mut ctx.aux, &ctx.blobs, &ctx.writer, target, actor).await
-}
-
-/// [`excise`] with its parts: a read connection, the content store and the
-/// writer (the API holds these rather than a [`Context`]).
+/// reading in one transaction; the old blob files go after commit. Takes a
+/// read connection, the content store and the writer.
 pub async fn excise_with(
     aux: &mut PgConnection,
     blobs: &Blobs,

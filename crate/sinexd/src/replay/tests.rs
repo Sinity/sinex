@@ -1,12 +1,31 @@
 //! Replay through the real writer and the zsh driver, on a real database.
 use super::*;
-use crate::context::Sink;
+use crate::context::{Context, Sink};
 use crate::writer::Priority;
 use sinex_sources::drivers::append_file::AppendMemory;
 use sinex_sources::sources::zsh;
 use sinex_store::positions;
 use sqlx::PgConnection;
 use std::path::{Path, PathBuf};
+
+/// Hide the record `target` was read from, as the API's `hide` does.
+async fn hide(writer: &crate::writer::WriterHandle, target: sinex_model::EventId) {
+    writer
+        .submit(
+            Priority::Live,
+            sinex_model::Batch {
+                run: sinex_model::RunId::new(),
+                kind: sinex_model::BatchKind::Api { actor: "t".into() },
+                records: Vec::new(),
+                archive: vec![sinex_model::ArchiveRequest::Hide {
+                    target,
+                    operation: sinex_model::OperationId::new(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+}
 
 struct Fixture {
     _db: devkit::pg::TestDatabase,
@@ -163,7 +182,9 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content() {
 
     // Resuming the finished operation skips its chain.
     let resumed = run(
-        &mut f.ctx,
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
         Options {
             resume: Some(applied.operation),
             ..options(Scope::default(), false)
@@ -184,11 +205,11 @@ async fn a_narrowed_replay_touches_only_its_window_and_hidden_stays_hidden() {
             .fetch_one(&mut f.ctx.aux)
             .await
             .unwrap();
-    crate::operate::hide(&f.ctx, sinex_model::EventId(two), false, "t")
-        .await
-        .unwrap();
+    hide(&f.ctx.writer, sinex_model::EventId(two)).await;
     let report = run(
-        &mut f.ctx,
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
         options(
             Scope {
                 from: Some(Timestamp::from_unix_secs(150).unwrap()),
@@ -257,8 +278,10 @@ async fn an_excised_record_stays_out_of_a_replay() {
     .fetch_one(&mut f.ctx.aux)
     .await
     .unwrap();
-    let out = crate::operate::excise(
-        &mut f.ctx,
+    let out = crate::operate::excise_with(
+        &mut f.ctx.aux,
+        &f.ctx.blobs,
+        &f.ctx.writer,
         sinex_store::excision::Target::Event(sinex_model::EventId(secret)),
         "t",
     )
