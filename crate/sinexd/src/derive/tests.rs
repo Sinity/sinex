@@ -541,3 +541,45 @@ async fn per_event_derivations_read_in_commit_order_and_keep_their_place() {
         .await
     );
 }
+
+/// Reading many windows at once returns, for each, exactly what reading it
+/// alone returns: adjacent windows share a query, distant windows and
+/// windows with another filter do not.
+#[tokio::test]
+async fn windows_read_together_equal_windows_read_alone() {
+    let w = World::new().await;
+    let mut events = Vec::new();
+    for (i, secs) in [0, 1_800, 3_599, 3_600, 7_200, 90_000, 400_000]
+        .into_iter()
+        .enumerate()
+    {
+        events.push(zsh(&format!("z{i}"), secs, u64::try_from(i).unwrap() * 100));
+        events.push(atuin(&format!("a{i}"), &format!("a{i}"), secs, 0, 1));
+    }
+    w.admit(events).await;
+    let hour = |h: i64, types: &[&str]| Window {
+        event_types: types.iter().map(|s| (*s).to_owned()).collect(),
+        start: at(h * 3_600).0,
+        end: at((h + 1) * 3_600).0,
+        matching: vec![],
+        before: vec![],
+        after: vec![],
+    };
+    let windows = vec![
+        hour(1, &["command.imported"]),
+        hour(0, &["command.imported"]),
+        hour(0, &["command.executed"]),
+        hour(25, &["command.imported"]),
+        hour(111, &["command.imported"]),
+        hour(2, &["command.imported"]),
+        hour(0, &["command.imported", "command.executed"]),
+    ];
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    let together = derived::read_windows(&mut conn, &windows).await.unwrap();
+    for (w, got) in windows.iter().zip(&together) {
+        let alone = derived::read_window(&mut conn, w).await.unwrap();
+        let ids = |v: &[derived::Committed]| v.iter().map(|c| c.event.id).collect::<Vec<_>>();
+        assert_eq!(ids(got), ids(&alone), "{w:?}");
+    }
+    assert_eq!(together[1].len(), 3, "the first hour's three zsh commands");
+}

@@ -20,6 +20,10 @@ const HOST: &str = "crash";
 // Three admission batches each (10,000 events per batch), so a kill can land
 // between committed batches. The databases live on the development server's
 // tmpfs, so each test keeps one at a time.
+/// How long a step may take to reach its kill point or finish: just under the
+/// suite's own termination of a crash test (`.config/nextest.toml`: 120 s × 5),
+/// so a slow host makes a test slow, never a spurious failure.
+const WAIT_LIMIT: Duration = Duration::from_secs(570);
 const ZSH_LINES: usize = 22_000;
 const ATUIN_ROWS: usize = 21_000;
 
@@ -266,7 +270,7 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
     let mut child: Option<Child> = None;
     if let Some(ready) = ready {
         child = Some(command.spawn().unwrap());
-        let deadline = Instant::now() + Duration::from_secs(120);
+        let deadline = Instant::now() + WAIT_LIMIT;
         loop {
             let ok: bool = sqlx::query_scalar(ready)
                 .fetch_one(&mut harness)
@@ -293,7 +297,7 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
     // PostgreSQL keeps one activity snapshot per transaction, so the lock
     // holder cannot watch for the blocked backend; a second connection can.
     let mut watch = target.connect().await;
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + WAIT_LIMIT;
     let blocked: i32 = loop {
         let waiting: Option<i32> = sqlx::query_scalar(
             "SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND pid <> $1 AND wait_event_type = 'Lock' LIMIT 1",
@@ -589,7 +593,7 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
 
     let mut daemon = run().spawn().unwrap();
     let mut c = target.connect().await;
-    let deadline = Instant::now() + Duration::from_secs(300);
+    let deadline = Instant::now() + WAIT_LIMIT;
     loop {
         // Caught up, and still caught up a moment later: the daemon's
         // derivations commit events of their own while it runs.

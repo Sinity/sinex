@@ -467,8 +467,42 @@ impl Driver {
         let mut records: Vec<RecordOutcome> = Vec::new();
         let mut outputs = 0usize;
         let total = work.len();
+        // Read every key's inputs first: adjacent keys share one query.
+        let name = self.keyed[index].name();
+        let queries: Vec<Option<Window>> = work
+            .iter()
+            .map(|(key, _, _)| self.keyed[index].inputs(key, env).map(|q| to_window(&q)))
+            .collect();
+        let windows: Vec<Window> = queries.iter().flatten().cloned().collect();
+        let t = Instant::now();
+        let mut read = derived::read_windows(&mut self.read, &windows)
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter();
+        let mut inputs: Vec<Vec<Event>> = queries
+            .iter()
+            .map(|q| match q {
+                Some(_) => read
+                    .next()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|c| c.event)
+                    .collect(),
+                None => Vec::new(),
+            })
+            .collect();
+        self.counts.entry(name).or_default().read += t.elapsed();
         for (i, (key, dirty_seq, give_up)) in work.into_iter().enumerate() {
-            let mut computed = self.compute_key(index, &key, env).await?;
+            let input = std::mem::take(&mut inputs[i]);
+            let t = Instant::now();
+            let mut computed = if queries[i].is_some() {
+                self.keyed[index].compute(&key, &input, env)
+            } else {
+                sinex_automata::Computed::default()
+            };
+            let c = self.counts.entry(name).or_default();
+            c.compute += t.elapsed();
+            c.inputs += input.len();
             if give_up {
                 computed.waiting = false;
             }
