@@ -36,13 +36,20 @@ pub enum Framing {
     Mbox,
     /// The whole member is one record.
     Whole,
+    /// A record starts at each occurrence of this byte pattern and runs to the
+    /// next (an HTML export's repeated cell); bytes before the first are not a
+    /// record.
+    Delimited(&'static [u8]),
 }
 
 impl Framing {
     /// Whether records can be framed from a prefix of the bytes, so a plain
     /// file can be read in parts.
     fn streamable(self) -> bool {
-        matches!(self, Self::Lines | Self::Csv | Self::Mbox)
+        matches!(
+            self,
+            Self::Lines | Self::Csv | Self::Mbox | Self::Delimited(_)
+        )
     }
 
     fn name(self) -> String {
@@ -52,6 +59,7 @@ impl Framing {
             Self::Csv => "csv".into(),
             Self::Mbox => "mbox".into(),
             Self::Whole => "whole".into(),
+            Self::Delimited(d) => format!("delimited:{}", String::from_utf8_lossy(d)),
         }
     }
 
@@ -71,6 +79,7 @@ impl Framing {
             Self::Mbox => mbox(bytes, eof),
             Self::Whole if bytes.is_empty() => (vec![], 0),
             Self::Whole => (vec![(0, bytes.len())], bytes.len()),
+            Self::Delimited(delimiter) => delimited(bytes, delimiter, eof),
         }
     }
 }
@@ -589,6 +598,29 @@ fn csv_rows(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
     (out, consumed)
 }
 
+/// Records starting at each `delimiter`. Before `eof` the last one may be
+/// incomplete, so it is left for the next part.
+fn delimited(bytes: &[u8], delimiter: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
+    let mut starts = Vec::new();
+    let mut i = 0;
+    while let Some(p) = find(&bytes[i..], delimiter) {
+        starts.push(i + p);
+        i += p + delimiter.len();
+    }
+    let mut out: Vec<(usize, usize)> = starts.windows(2).map(|w| (w[0], w[1])).collect();
+    match starts.last() {
+        Some(&last) if eof => {
+            out.push((last, bytes.len()));
+            (out, bytes.len())
+        }
+        Some(&last) => (out, last),
+        // No record yet: everything before a delimiter could still be one, so
+        // only the bytes that cannot hold the start of a delimiter are covered.
+        None if eof => (out, bytes.len()),
+        None => (out, bytes.len().saturating_sub(delimiter.len())),
+    }
+}
+
 fn mbox(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
     let mut starts = Vec::new();
     if bytes.starts_with(b"From ") {
@@ -646,6 +678,23 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn delimited_records_start_at_each_delimiter_and_hold_back_the_last() {
+        let bytes = b"<head>css</head><c>one</c><c>two</c><c>thr";
+        let (records, covered) = Framing::Delimited(b"<c>").frame(bytes, false);
+        assert_eq!(records, vec![(16, 26), (26, 36)]);
+        assert_eq!(covered, 36, "the last cell may be cut, so it waits");
+        let (records, covered) = Framing::Delimited(b"<c>").frame(bytes, true);
+        assert_eq!(records.len(), 3);
+        assert_eq!(covered, bytes.len());
+        let (records, covered) = Framing::Delimited(b"<c>").frame(b"<head>no cells", false);
+        assert!(records.is_empty());
+        assert_eq!(
+            covered, 11,
+            "a delimiter could still start in the last bytes"
+        );
+    }
 
     fn dir() -> PathBuf {
         let d = std::env::temp_dir().join(format!("sinex-export-{}", uuid::Uuid::now_v7()));

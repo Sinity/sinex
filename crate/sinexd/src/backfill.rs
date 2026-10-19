@@ -46,6 +46,17 @@ pub const EXPORT_KINDS: &[&str] = &[
     "mbox",
     "maildir",
     "weechat",
+    "takeout",
+    "calendar",
+    "goodreads",
+    "messenger",
+    "sleep-as-android",
+    "wykop",
+    "reddit",
+    "samsung-health",
+    "samsung-sms",
+    "raw-log",
+    "steering",
 ];
 
 #[derive(Default)]
@@ -477,10 +488,50 @@ async fn export(
                 }
             }
         }
-        "takeout-chrome" | "spotify" | "raindrop" | "mbox" => {
-            for file in files(&path, false, any) {
+        "takeout-chrome" | "spotify" | "raindrop" | "mbox" | "goodreads" | "messenger"
+        | "sleep-as-android" | "wykop" | "reddit" | "samsung-health" | "samsung-sms" => {
+            use sinex_sources::sources::{
+                goodreads, messenger, reddit, samsung_health, samsung_sms, sleep_as_android, wykop,
+            };
+            let keep: fn(&std::path::Path) -> bool = match kind {
+                "wykop" => wykop::is_own,
+                "reddit" | "samsung-health" => |p| p.extension().is_some_and(|e| e == "zip"),
+                "samsung-sms" => |p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("SMS_") && n.ends_with(".csv"))
+                },
+                _ => any,
+            };
+            let recursive = matches!(kind, "samsung-health" | "samsung-sms");
+            for file in files(&path, recursive, keep) {
                 let name = binding(&file.display().to_string());
                 let (source, driver): (Box<dyn Source>, _) = match kind {
+                    "samsung-health" => (
+                        Box::new(samsung_health::source()),
+                        samsung_health::driver(file, host.clone()),
+                    ),
+                    "samsung-sms" => (
+                        Box::new(samsung_sms::source()),
+                        samsung_sms::driver(file, host.clone()),
+                    ),
+                    "wykop" => (Box::new(wykop::source()), wykop::driver(file, host.clone())),
+                    "reddit" => (
+                        Box::new(reddit::source()),
+                        reddit::driver(file, host.clone()),
+                    ),
+                    "goodreads" => (
+                        Box::new(goodreads::source()),
+                        goodreads::driver(file, host.clone()),
+                    ),
+                    "messenger" => (
+                        Box::new(messenger::source()),
+                        messenger::driver(file, host.clone()),
+                    ),
+                    "sleep-as-android" => (
+                        Box::new(sleep_as_android::source()),
+                        sleep_as_android::driver(file, host.clone()),
+                    ),
                     "takeout-chrome" => (
                         Box::new(takeout_chrome::source()),
                         takeout_chrome::driver(file, host.clone()),
@@ -508,6 +559,96 @@ async fn export(
                         sink,
                         |c| driver.poll(c),
                     )
+                    .await?,
+                );
+            }
+        }
+        // Every Takeout product source over each archive, plus the calendars
+        // in it; each source its own binding, so each keeps its own cursor.
+        "takeout" | "calendar" => {
+            use sinex_sources::sources::{calendar, google_takeout as g};
+            let zone = weechat::zone(o.zone.as_deref())?;
+            for file in files(&path, false, any) {
+                let mut readers: Vec<(Box<dyn Source>, drivers::export_archive::ExportArchive)> =
+                    vec![(
+                        Box::new(calendar::source(zone.clone())),
+                        calendar::driver(file.clone(), host.clone()),
+                    )];
+                if kind == "takeout" {
+                    readers.extend([
+                        (
+                            Box::new(g::activity::my_activity()) as Box<dyn Source>,
+                            g::activity::my_activity_driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::activity::youtube()),
+                            g::activity::youtube_driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::keep::source()),
+                            g::keep::driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::tasks::source()),
+                            g::tasks::driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::purchases::play_store()),
+                            g::purchases::play_store_driver(file.clone(), host.clone()),
+                        ),
+                        (
+                            Box::new(g::purchases::purchases()),
+                            g::purchases::purchases_driver(file.clone(), host.clone()),
+                        ),
+                    ]);
+                }
+                for (source, driver) in readers {
+                    let name = binding(&format!("{}:{}", source.spec().name, file.display()));
+                    let t = drive(
+                        &mut ctx.aux,
+                        &ctx.writer,
+                        run,
+                        source.as_ref(),
+                        &name,
+                        sink,
+                        |c| driver.poll(c),
+                    )
+                    .await?;
+                    println!("  {} {t}", source.spec().name);
+                    totals.add(t);
+                }
+            }
+        }
+        "raw-log" => {
+            use sinex_sources::sources::operator;
+            let source = operator::raw_log(weechat::zone(o.zone.as_deref())?);
+            let driver = operator::raw_log_driver(path.clone(), host.clone());
+            let name = binding(&path.display().to_string());
+            let chain = stored(ctx, &name).await?;
+            let mut memory = drivers::append_file::AppendMemory::rebuild(
+                chain.iter().map(Vec::as_slice),
+                operator::frame_log,
+            );
+            totals.add(
+                drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                    driver.poll(c, &mut memory)
+                })
+                .await?,
+            );
+        }
+        "steering" => {
+            use sinex_sources::sources::operator;
+            for table in ["commitments", "activities", "reviews"] {
+                let source = operator::steering(table).expect("a known table");
+                let driver = operator::steering_driver(path.clone(), host.clone(), table);
+                let name = binding(&format!("{}/{table}", path.display()));
+                let chain = stored(ctx, &name).await?;
+                let mut memory =
+                    drivers::sqlite_rows::RowMemory::rebuild(chain.iter().map(Vec::as_slice));
+                totals.add(
+                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                        driver.poll(c, &mut memory)
+                    })
                     .await?,
                 );
             }

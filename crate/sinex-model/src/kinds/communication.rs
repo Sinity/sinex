@@ -79,3 +79,39 @@ pub struct MailAttachment {
     pub content_type: String,
     pub size: u64,
 }
+
+/// A message in a direct or group conversation of a messaging service
+/// (Facebook Messenger, SMS). Exports carry no thread or message ID that
+/// survives between them, so a message is the thread (its participants), its
+/// time and its sender; the same message read from another export or input is
+/// the same occurrence.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
+#[event(
+    type = "conversation.message",
+    key = ["service", "thread", "sent_at", "sender"],
+    replace = newer,
+    time = sent_at,
+    quality = intrinsic,
+    removed_when = unsent_at
+)]
+pub struct ConversationMessage {
+    pub service: String,
+    /// The thread's participants, sorted and joined by `|`.
+    pub thread: String,
+    /// The name the export gave the thread.
+    pub thread_name: Option<String>,
+    pub participants: Vec<String>,
+    pub sender: String,
+    pub sent_at: Timestamp,
+    pub text: Option<String>,
+    /// The service's message type (`text`, `media`, `call`).
+    pub kind: Option<String>,
+    /// Media and attachments, by the path the export wrote them under.
+    pub media: Vec<String>,
+    pub reactions: Vec<serde_json::Value>,
+    /// The service's message ID, when the export has one.
+    pub message_id: Option<String>,
+    /// When the sender unsent it; the export gives no time, so the send time
+    /// stands for it.
+    pub unsent_at: Option<Timestamp>,
+}
