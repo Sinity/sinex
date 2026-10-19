@@ -42,6 +42,7 @@ pub const EXPORT_KINDS: &[&str] = &[
     "outlook",
     "outlook-csv",
     "arbtt",
+    "imap",
     "chromium",
     "takeout-chrome",
     "spotify",
@@ -64,7 +65,7 @@ pub const EXPORT_KINDS: &[&str] = &[
 ];
 
 #[derive(Default)]
-struct Totals {
+pub(crate) struct Totals {
     polls: usize,
     materials: usize,
     material_bytes: usize,
@@ -301,7 +302,7 @@ async fn stored(
     stored_chain(&mut ctx.aux, &ctx.blobs, &cursor).await
 }
 
-async fn drive(
+pub(crate) async fn drive(
     aux: &mut PgConnection,
     handle: &writer::WriterHandle,
     run: RunId,
@@ -464,6 +465,29 @@ async fn export(
     let binding = |name: &str| format!("{kind}:{name}@{host}");
     let any = |_: &std::path::Path| true;
     match kind {
+        // `imap=CONFIG.json`: live mail, the messages new since the last run.
+        "imap" => {
+            use sinex_sources::sources::mail_imap;
+            let config: mail_imap::ImapConfig = serde_json::from_slice(
+                &std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?,
+            )
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+            let name = binding(&format!(
+                "{}@{}/{}",
+                config.username, config.host, config.mailbox
+            ));
+            let imap = mail_imap::ImapMail {
+                config,
+                host: host.clone(),
+            };
+            let source = mail_imap::source();
+            totals.add(
+                drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                    imap.poll(c)
+                })
+                .await?,
+            );
+        }
         "chromium" => {
             for (profile, history) in chromium::profiles(&path) {
                 for table in ["visits", "urls"] {

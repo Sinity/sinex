@@ -32,6 +32,9 @@ encoding_rs = "0.8"
 jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 sha2 = "0.10"
 md-5 = "0.10"
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 
 [dev-dependencies]
 proptest.workspace = true

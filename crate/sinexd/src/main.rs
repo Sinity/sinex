@@ -7,6 +7,7 @@ mod backfill;
 mod catalog;
 mod commits;
 mod context;
+mod crawl;
 mod daemon;
 mod derive;
 mod ingress;
@@ -14,6 +15,7 @@ mod keys;
 mod library;
 #[cfg(test)]
 mod library_tests;
+mod media_text;
 mod operate;
 mod publisher;
 mod replay;
@@ -392,6 +394,37 @@ enum Admin {
         command: String,
         args: Vec<String>,
     },
+    /// Fetch pages from stored browser history whose host is on the allow
+    /// list and that were not fetched yet (`page.fetched`).
+    Crawl {
+        #[command(flatten)]
+        at: Store,
+        #[arg(long, default_value = "localhost")]
+        host: String,
+        /// A domain whose pages may be fetched (and its subdomains); repeatable.
+        /// Nothing is fetched without one.
+        #[arg(long = "allow")]
+        allow: Vec<String>,
+        /// Fetch these URLs instead of the stored history; repeatable.
+        #[arg(long = "url")]
+        urls: Vec<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Seconds between two requests to the same host.
+        #[arg(long, default_value_t = 2)]
+        pause: u64,
+    },
+    /// Read text from screen segments not yet read (`screen.text`) with the
+    /// local OCR engine.
+    MediaText {
+        #[command(flatten)]
+        at: Store,
+        #[arg(long, default_value = "localhost")]
+        host: String,
+        /// Read at most this many segments.
+        #[arg(long)]
+        limit: Option<u64>,
+    },
 }
 
 #[derive(clap::Args)]
@@ -500,6 +533,36 @@ async fn admin(command: Admin) -> Result<(), String> {
                 "{}",
                 sinex_protocol::Subjects::new(subjects)
                     .authorization((&daemon_user, &daemon_password), &users)
+            );
+            Ok(())
+        }
+        Admin::Crawl {
+            at,
+            host,
+            allow,
+            urls,
+            limit,
+            pause,
+        } => {
+            let mut ctx = context::Context::open(&at.database, &at.store).await?;
+            let t = crawl::run(
+                &mut ctx,
+                &host,
+                allow,
+                urls,
+                limit,
+                std::time::Duration::from_secs(pause),
+            )
+            .await?;
+            println!("crawl  {t}");
+            Ok(())
+        }
+        Admin::MediaText { at, host, limit } => {
+            let mut ctx = context::Context::open(&at.database, &at.store).await?;
+            let t = media_text::run(&mut ctx.aux, &ctx.blobs, &ctx.writer, &host, limit).await?;
+            println!(
+                "screen text: {} segments read, {} failed, {:.1}s",
+                t.read, t.failed, t.seconds
             );
             Ok(())
         }

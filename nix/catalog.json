@@ -351,6 +351,72 @@
       ]
     },
     {
+      "name": "desktop.notifications",
+      "driver": "LiveStream",
+      "consumer": "recall and the day's interruptions",
+      "class": "guarded",
+      "eventTypes": [
+        "notification.shown",
+        "notification.closed",
+        "notification.action"
+      ]
+    },
+    {
+      "name": "media.mpris",
+      "driver": "LiveStream",
+      "consumer": "listening and watching history, attention",
+      "class": "guarded",
+      "eventTypes": [
+        "player.changed"
+      ]
+    },
+    {
+      "name": "desktop.clipboard",
+      "driver": "LiveStream",
+      "consumer": "recall: what was copied where",
+      "class": "guarded",
+      "eventTypes": [
+        "clipboard.copied"
+      ]
+    },
+    {
+      "name": "session.producers",
+      "driver": "LiveStream",
+      "consumer": "recall: files edited, commands run in the terminal",
+      "class": "guarded",
+      "eventTypes": [
+        "editor.event",
+        "terminal.event"
+      ]
+    },
+    {
+      "name": "session.media",
+      "driver": "Media",
+      "consumer": "recall: what was on screen and said; screen text and transcripts",
+      "class": "guarded",
+      "eventTypes": [
+        "media.segment"
+      ]
+    },
+    {
+      "name": "browser.page_crawl",
+      "driver": "ApiCursor",
+      "consumer": "page content for recall and search over what was read",
+      "class": "guarded",
+      "eventTypes": [
+        "page.fetched"
+      ]
+    },
+    {
+      "name": "communication.imap",
+      "driver": "ApiCursor",
+      "consumer": "mail recall and correspondence history",
+      "class": "open",
+      "eventTypes": [
+        "mail.message"
+      ]
+    },
+    {
       "name": "desktop.clipboard",
       "driver": "AppendFile",
       "consumer": "recall, prompt provenance",

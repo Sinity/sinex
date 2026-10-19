@@ -4,6 +4,10 @@ pub mod arbtt;
 pub mod atuin;
 pub mod calendar;
 pub mod chromium;
+/// The Wayland clipboard and primary selection.
+pub mod clipboard;
+/// Capture from the session bus, shared by the D-Bus sources.
+pub mod dbus;
 pub(crate) mod fields;
 pub mod file_watch;
 pub mod goodreads;
@@ -13,16 +17,28 @@ pub mod journald;
 /// The media library: scans of library roots and library requests.
 pub mod library;
 pub mod mail;
+/// Live mail over IMAP, with IDLE and XOAUTH2.
+pub mod mail_imap;
+/// Screen stills and audio segments on the `Media` driver.
+pub mod media_capture;
 pub mod messenger;
+/// Media players (MPRIS) on the session bus.
+pub mod mpris;
 pub mod notes;
+/// Desktop notifications on the session bus.
+pub mod notifications;
 pub mod operator;
 pub mod outlook;
+/// The forward crawl of browser-history pages, opt-in per domain.
+pub mod page_crawl;
 pub mod raindrop;
 pub mod reddit;
 /// Commits in local repositories (`code.git`).
 pub mod repository;
 pub mod samsung_health;
 pub mod samsung_sms;
+/// The session producer socket: Neovim and kitty integrations.
+pub mod session_socket;
 /// The Sinnix capture lake's envelope lanes (phase 1 of the port).
 pub mod sinnix_lake;
 pub mod sleep_as_android;
@@ -73,6 +89,13 @@ pub fn specs() -> Vec<&'static SourceSpec> {
         &operator::STEERING[2],
         &library::SCAN,
         &library::REQUEST,
+        &notifications::SPEC,
+        &mpris::SPEC,
+        &clipboard::SPEC,
+        &session_socket::SPEC,
+        &media_capture::SPEC,
+        &page_crawl::SPEC,
+        &mail_imap::SPEC,
     ];
     out.extend(sinnix_lake::LANES.iter().map(|l| &l.spec));
     out
@@ -145,6 +168,12 @@ pub fn by_parser(parser: &str, host: &str) -> Option<Box<dyn Source>> {
         ))),
         p if p == library::SCAN.parser => Some(Box::new(library::scan_source())),
         p if p == library::REQUEST.parser => Some(Box::new(library::request_source())),
+        p if p == notifications::SPEC.parser => Some(Box::new(notifications::source())),
+        p if p == mpris::SPEC.parser => Some(Box::new(mpris::source())),
+        p if p == clipboard::SPEC.parser => Some(Box::new(clipboard::source())),
+        p if p == session_socket::SPEC.parser => Some(Box::new(session_socket::source())),
+        p if p == media_capture::SPEC.parser => Some(Box::new(media_capture::source())),
+        p if p == page_crawl::SPEC.parser => Some(Box::new(page_crawl::source())),
         p => sinnix_lake::LANES
             .iter()
             .find(|l| l.spec.parser == p)
