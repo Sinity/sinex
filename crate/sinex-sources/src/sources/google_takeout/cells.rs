@@ -170,7 +170,12 @@ pub fn decode(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         let tail = &rest[i..];
-        let Some(semi) = tail[..tail.len().min(12)].find(';') else {
+        // Searched as bytes: `;` is ASCII, and a cut of the text a few bytes
+        // on could fall inside a multi-byte character.
+        let Some(semi) = tail.as_bytes()[..tail.len().min(12)]
+            .iter()
+            .position(|b| *b == b';')
+        else {
             out.push('&');
             rest = &tail[1..];
             continue;
@@ -309,6 +314,12 @@ mod tests {
         assert_eq!(c.zone_label, "CEST");
         assert_eq!(c.section("Products"), vec!["Search"]);
         assert_eq!(c.section("Locations").len(), 1);
+    }
+
+    #[test]
+    fn a_bare_ampersand_before_multibyte_text() {
+        assert_eq!(decode("Kraków & Łódź żółć"), "Kraków & Łódź żółć");
+        assert_eq!(decode("a &amp; ż&#x17c;"), "a & żż");
     }
 
     #[test]
