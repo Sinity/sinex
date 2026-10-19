@@ -336,6 +336,54 @@ pub const COMMANDS: &[Command] = &[
         access: Access::Operator,
         mcp: false,
     },
+    Command {
+        name: "analysis-catalog",
+        summary: "The analysis catalog: metrics with the sources that observe them, registered methods, recipes.",
+        args: &[],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "analysis-run",
+        summary: "Run an analysis recipe (correlations, trends, deviations) over logical days and store its result; asking again at the same commit position returns the stored result.",
+        args: &[
+            pos(
+                "recipe",
+                ArgKind::Text,
+                "correlations, trends or deviations",
+            ),
+            pos("from", ArgKind::Text, "first logical day, YYYY-MM-DD"),
+            pos("to", ArgKind::Text, "last logical day, included"),
+            opt(
+                "standing",
+                ArgKind::Bool,
+                "record it as the standing question's newest answer",
+            ),
+        ],
+        access: Access::Agent,
+        mcp: true,
+    },
+    Command {
+        name: "analysis-show",
+        summary: "A stored analysis result: its status, readsets, tables and findings.",
+        args: &[pos("result", ArgKind::Text, "the result ID")],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "brief",
+        summary: "The brief for one logical day: data quality first, the day's metrics, departures from the recent level, associations, the machine.",
+        args: &[
+            opt("day", ArgKind::Text, "YYYY-MM-DD; default today"),
+            opt(
+                "budget",
+                ArgKind::Integer,
+                "bytes of findings (default 4000)",
+            ),
+        ],
+        access: Access::Read,
+        mcp: true,
+    },
 ];
 
 pub fn command(name: &str) -> Option<&'static Command> {
@@ -459,6 +507,26 @@ pub enum Request {
         minutes: Option<u64>,
     },
     Lock,
+    #[serde(rename = "analysis-catalog")]
+    AnalysisCatalog,
+    #[serde(rename = "analysis-run")]
+    AnalysisRun {
+        recipe: String,
+        from: String,
+        to: String,
+        #[serde(default)]
+        standing: Option<bool>,
+    },
+    #[serde(rename = "analysis-show")]
+    AnalysisShow {
+        result: String,
+    },
+    Brief {
+        #[serde(default)]
+        day: Option<String>,
+        #[serde(default)]
+        budget: Option<u64>,
+    },
 }
 
 impl Request {
@@ -505,6 +573,10 @@ impl Request {
             Request::PrivacyVerify => "privacy-verify",
             Request::Unlock { .. } => "unlock",
             Request::Lock => "lock",
+            Request::AnalysisCatalog => "analysis-catalog",
+            Request::AnalysisRun { .. } => "analysis-run",
+            Request::AnalysisShow { .. } => "analysis-show",
+            Request::Brief { .. } => "brief",
         }
     }
 

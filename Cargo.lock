@@ -4226,6 +4226,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sinex-analysis",
  "sinex-automata",
  "sinex-model",
  "sinex-protocol",

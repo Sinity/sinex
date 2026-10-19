@@ -287,6 +287,10 @@ impl Api {
                 .await
             }
             Request::Excise { reference } => self.excise(caller, &reference, actor).await,
+            Request::AnalysisCatalog
+            | Request::AnalysisRun { .. }
+            | Request::AnalysisShow { .. }
+            | Request::Brief { .. } => self.analysis(caller, request).await,
             Request::Follow { .. } => refused("follow streams; use the API's follow stream"),
             Request::Stage { .. } => not_built(
                 "stage needs the staging path of the source framework, which this daemon does not run yet (architecture §5.4)",
@@ -493,6 +497,113 @@ impl Api {
     }
 
     /// Excise the record a citation names, with its bytes (architecture §3.4).
+    /// The analysis layer's four calls (spec `analysis.md` §13.3). Results
+    /// carry their status, as-of position, caveats and citations; findings
+    /// are rendered from their slots, so every surface reads the same text.
+    async fn analysis(&self, caller: &Caller, request: Request) -> Reply {
+        use crate::analysis::{self, Recipe};
+        if let Request::AnalysisCatalog = request {
+            let metrics: Vec<Value> = sinex_analysis::catalog::METRICS
+                .iter()
+                .map(|m| {
+                    json!({"id": m.id, "version": m.version, "description": m.description,
+                           "relation": m.relation, "sources": m.opportunity.sources(),
+                           "dimensions": m.dimensions, "role": m.role})
+                })
+                .collect();
+            let methods: Vec<Value> = sinex_analysis::methods::catalog()
+                .into_iter()
+                .map(|(id, version, summary)| json!({"id": id, "version": version, "summary": summary}))
+                .collect();
+            return data(json!({
+                "metrics": metrics, "methods": methods,
+                "recipes": ["correlations", "trends", "deviations"],
+            }));
+        }
+        let settings = match analysis::Settings::from_api(&self.zone, self.day_start) {
+            Ok(s) => s,
+            Err(e) => return refused(e),
+        };
+        let mut conn = match self.acquire(caller).await {
+            Ok(c) => c,
+            Err(e) => return refused(e.to_string()),
+        };
+        let outcome: Result<Value, String> = async {
+            match request {
+                Request::AnalysisRun {
+                    recipe,
+                    from,
+                    to,
+                    standing,
+                } => {
+                    let recipe = match recipe.as_str() {
+                        "correlations" => Recipe::Correlations,
+                        "trends" => Recipe::Trends,
+                        "deviations" => Recipe::Deviations,
+                        other => {
+                            return Err(format!(
+                                "no recipe {other}; recipes: correlations, trends, deviations"
+                            ));
+                        }
+                    };
+                    let run = analysis::run(
+                        &mut conn,
+                        &settings,
+                        recipe,
+                        analysis::parse_day(&from)?,
+                        analysis::parse_day(&to)?,
+                        sinex_analysis::Eligibility::default(),
+                        standing.unwrap_or(false),
+                    )
+                    .await?;
+                    Ok(json!({
+                        "result": run.result.id, "state": run.result.state, "reused": run.reused,
+                        "findings": run.findings.iter().map(|f| json!({"text": f.markdown(), "finding": f})).collect::<Vec<_>>(),
+                    }))
+                }
+                Request::AnalysisShow { result } => {
+                    let id: uuid::Uuid = result
+                        .parse()
+                        .map_err(|e| format!("`{result}` is not a result ID: {e}"))?;
+                    let view = sinex_store::analysis::result(&mut conn, id)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| format!("no result {id}"))?;
+                    let findings: Vec<Value> = view
+                        .findings
+                        .iter()
+                        .filter_map(analysis::stored_finding)
+                        .map(|f| json!({"text": f.markdown(), "finding": f}))
+                        .collect();
+                    Ok(json!({
+                        "result": view.id, "recipe": view.recipe, "as_of": view.as_of,
+                        "status": view.status, "reason": view.reason, "state": view.state,
+                        "state_reason": view.state_reason, "readsets": view.readsets,
+                        "tables": view.tables, "findings": findings,
+                    }))
+                }
+                Request::Brief { day, budget } => {
+                    let day = match day {
+                        Some(d) => analysis::parse_day(&d)?,
+                        None => settings
+                            .civil
+                            .day(sinex_model::Timestamp::now())
+                            .map_err(|e| e.to_string())?,
+                    };
+                    let budget = budget.map_or(4000, |b| usize::try_from(b).unwrap_or(usize::MAX));
+                    let p = analysis::brief(&mut conn, &settings, day, budget).await?;
+                    Ok(json!({"text": p.markdown, "presentation": p}))
+                }
+                _ => Err("not an analysis call".into()),
+            }
+        }
+        .await;
+        match outcome {
+            Ok(v) => data(v),
+            Err(e) => refused(e),
+        }
+    }
+
     async fn excise(&self, caller: &Caller, reference: &str, actor: &str) -> Reply {
         let Some(writer) = &self.writer else {
             return refused("this daemon has no writer; writes go through `sinexd run`");
