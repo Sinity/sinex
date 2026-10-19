@@ -23,7 +23,7 @@ pub enum Cell<T> {
 #[serde(rename_all = "snake_case")]
 pub enum Missing {
     /// No source feeding the metric was running or exported for the unit.
-    NoOpportunity,
+    NoCoverage,
     /// A recorded gap covers the unit.
     Gap,
     /// Coverage cannot be established and nothing was recorded.
@@ -39,7 +39,7 @@ impl Missing {
     /// reason wins (`analysis.md` §6.6).
     pub fn severity(self) -> u8 {
         match self {
-            Missing::NoOpportunity => 6,
+            Missing::NoCoverage => 6,
             Missing::Gap => 5,
             Missing::CoverageUnknown => 4,
             Missing::Recomputing => 3,
@@ -52,7 +52,7 @@ impl Missing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Exclusion {
-    NoOpportunity,
+    NoCoverage,
     Gap,
     CoverageUnknown,
     Recomputing,
@@ -64,7 +64,7 @@ pub enum Exclusion {
 impl Exclusion {
     fn severity(self) -> u8 {
         match self {
-            Exclusion::NoOpportunity => 7,
+            Exclusion::NoCoverage => 7,
             Exclusion::Gap => 6,
             Exclusion::CoverageUnknown => 5,
             Exclusion::Recomputing => 4,
@@ -87,7 +87,7 @@ impl Exclusion {
 impl From<Missing> for Exclusion {
     fn from(m: Missing) -> Self {
         match m {
-            Missing::NoOpportunity => Exclusion::NoOpportunity,
+            Missing::NoCoverage => Exclusion::NoCoverage,
             Missing::Gap => Exclusion::Gap,
             Missing::CoverageUnknown => Exclusion::CoverageUnknown,
             Missing::NotApplicable => Exclusion::NotApplicable,

@@ -28,7 +28,7 @@ fn the_minimum_counts_observed_units_not_calendar_units() {
     let mut points = observed(&[5.0; 28]);
     for p in points.iter_mut().take(20) {
         p.cell = Cell::Missing {
-            reason: Missing::NoOpportunity,
+            reason: Missing::NoCoverage,
         };
     }
     let mut input = MethodInput::default();

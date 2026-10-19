@@ -3,12 +3,11 @@
 //! port of Lynchpin's day panel (`operator_daily`, `port-lynchpin-analysis.md`
 //! §3.1 #1) for the sources Sinex captures today: one metric per field
 //! instead of a wide table, every cell with its state.
+use crate::coverage::{CaptureMode, Completeness};
 use crate::metric::{
-    AggLaw, Allocation, IntervalShape, Lit, MetricDef, OpportunityRule, Predicate, Quantity,
+    AggLaw, Allocation, CoverageRule, IntervalShape, Lit, MetricDef, Predicate, Quantity,
     SourceRole, Term, UnitGrain,
 };
-use crate::opportunity::Basis;
-use crate::panel::Completeness;
 
 const SHELLS: &[&str] = &["terminal.atuin-history", "terminal.zsh-history"];
 const ACTIVITYWATCH: &[&str] = &["desktop.activitywatch"];
@@ -60,7 +59,7 @@ const fn day(
         law,
         interval: None,
         allocation: Allocation::Instant,
-        opportunity: OpportunityRule::AnyOf(SHELLS),
+        coverage: CoverageRule::AnyOf(SHELLS),
         dimensions: &[],
         role: SourceRole::Measured,
         deviation: false,
@@ -68,7 +67,7 @@ const fn day(
 }
 
 pub const SHELL_COMMANDS: MetricDef = MetricDef {
-    opportunity: OpportunityRule::AnyOf(SHELLS),
+    coverage: CoverageRule::AnyOf(SHELLS),
     dimensions: &["host"],
     deviation: true,
     ..day(
@@ -110,7 +109,7 @@ pub const ACTIVE_SECONDS: MetricDef = MetricDef {
     filter: Some(NOT_AFK),
     interval: Some(IntervalShape::EndField { field: "ended_at" }),
     allocation: Allocation::ClipInterval,
-    opportunity: OpportunityRule::Sources(ACTIVITYWATCH),
+    coverage: CoverageRule::Sources(ACTIVITYWATCH),
     deviation: true,
     ..day(
         "activity.active_seconds",
@@ -124,7 +123,7 @@ pub const FOCUS_SECONDS: MetricDef = MetricDef {
     quantity: Quantity::Seconds,
     interval: Some(IntervalShape::EndField { field: "ended_at" }),
     allocation: Allocation::ClipInterval,
-    opportunity: OpportunityRule::Sources(ACTIVITYWATCH),
+    coverage: CoverageRule::Sources(ACTIVITYWATCH),
     dimensions: &["app"],
     ..day(
         "focus.seconds",
@@ -135,7 +134,7 @@ pub const FOCUS_SECONDS: MetricDef = MetricDef {
 };
 
 pub const FOCUS_SWITCHES: MetricDef = MetricDef {
-    opportunity: OpportunityRule::Sources(ACTIVITYWATCH),
+    coverage: CoverageRule::Sources(ACTIVITYWATCH),
     deviation: true,
     ..day(
         "focus.switches",
@@ -149,7 +148,7 @@ pub const MUSIC_SECONDS: MetricDef = MetricDef {
     quantity: Quantity::Seconds,
     interval: Some(IntervalShape::EndField { field: "ended_at" }),
     allocation: Allocation::ClipInterval,
-    opportunity: OpportunityRule::Sources(SPOTIFY),
+    coverage: CoverageRule::Sources(SPOTIFY),
     ..day(
         "music.listen_seconds",
         "Time listening",
@@ -159,7 +158,7 @@ pub const MUSIC_SECONDS: MetricDef = MetricDef {
 };
 
 pub const MUSIC_PLAYS: MetricDef = MetricDef {
-    opportunity: OpportunityRule::Sources(SPOTIFY),
+    coverage: CoverageRule::Sources(SPOTIFY),
     ..day(
         "music.plays",
         "Tracks played",
@@ -169,14 +168,14 @@ pub const MUSIC_PLAYS: MetricDef = MetricDef {
 };
 
 pub const GIT_COMMITS: MetricDef = MetricDef {
-    opportunity: OpportunityRule::Sources(GIT),
+    coverage: CoverageRule::Sources(GIT),
     dimensions: &["repository"],
     ..day("git.commits", "Commits made", "git.commit", AggLaw::Count)
 };
 
 pub const JOURNAL_ERRORS: MetricDef = MetricDef {
     filter: Some(JOURNAL_ERROR),
-    opportunity: OpportunityRule::Sources(JOURNALD),
+    coverage: CoverageRule::Sources(JOURNALD),
     dimensions: &["unit"],
     ..day(
         "machine.journal_errors",
@@ -187,7 +186,7 @@ pub const JOURNAL_ERRORS: MetricDef = MetricDef {
 };
 
 pub const WEB_VISITS: MetricDef = MetricDef {
-    opportunity: OpportunityRule::Sources(CHROMIUM),
+    coverage: CoverageRule::Sources(CHROMIUM),
     deviation: true,
     ..day(
         "web.visits",
@@ -198,7 +197,7 @@ pub const WEB_VISITS: MetricDef = MetricDef {
 };
 
 pub const GIT_REPOSITORIES: MetricDef = MetricDef {
-    opportunity: OpportunityRule::Sources(GIT),
+    coverage: CoverageRule::Sources(GIT),
     ..day(
         "git.repositories",
         "Repositories committed to",
@@ -211,7 +210,7 @@ pub const GIT_REPOSITORIES: MetricDef = MetricDef {
 
 pub const CHAT_LINES: MetricDef = MetricDef {
     filter: Some(SAID),
-    opportunity: OpportunityRule::Sources(IRC),
+    coverage: CoverageRule::Sources(IRC),
     dimensions: &["buffer"],
     ..day(
         "chat.lines",
@@ -222,7 +221,7 @@ pub const CHAT_LINES: MetricDef = MetricDef {
 };
 
 pub const MAIL_MESSAGES: MetricDef = MetricDef {
-    opportunity: OpportunityRule::AnyOf(MAIL),
+    coverage: CoverageRule::AnyOf(MAIL),
     ..day(
         "mail.messages",
         "Mail messages",
@@ -272,27 +271,27 @@ pub fn completeness(source: &str) -> Completeness {
     }
 }
 
-/// How each source's opportunity is bounded. The journal and ActivityWatch
+/// How each source captures, which bounds its coverage. The journal and ActivityWatch
 /// are stores with history read through a cursor, so a read sees everything
 /// before it; the window-manager socket and the filesystem watch see only
 /// while they run.
-pub fn basis(source: &str) -> Basis {
+pub fn capture_mode(source: &str) -> CaptureMode {
     match source {
-        "desktop.hyprland" | "machine.file-watch" => Basis::Live,
+        "desktop.hyprland" | "machine.file-watch" => CaptureMode::Live,
         "media.spotify-history"
         | "browser.takeout-chrome-history"
         | "reading.raindrop"
         | "communication.mbox"
-        | "communication.weechat-log" => Basis::Export,
-        _ => Basis::Polled,
+        | "communication.weechat-log" => CaptureMode::Export,
+        _ => CaptureMode::Polled,
     }
 }
 
-/// Every source a shipped metric's opportunity reads.
-pub fn opportunity_sources() -> Vec<&'static str> {
+/// Every source whose coverage a shipped metric depends on.
+pub fn coverage_sources() -> Vec<&'static str> {
     let mut v: Vec<&'static str> = METRICS
         .iter()
-        .flat_map(|m| m.opportunity.sources().iter().copied())
+        .flat_map(|m| m.coverage.sources().iter().copied())
         .collect();
     v.sort_unstable();
     v.dedup();

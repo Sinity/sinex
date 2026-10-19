@@ -16,7 +16,7 @@ fn metric() -> MetricDef {
         law: AggLaw::Count,
         interval: None,
         allocation: Allocation::Instant,
-        opportunity: OpportunityRule::AnyOf(&["atuin", "zsh"]),
+        coverage: CoverageRule::AnyOf(&["atuin", "zsh"]),
         dimensions: &["host"],
         role: SourceRole::Measured,
         deviation: true,
@@ -32,12 +32,12 @@ fn day_units(n: i64) -> Vec<Unit> {
         .collect()
 }
 
-fn opp(source: &str, a: i64, b: i64) -> Opportunity {
-    Opportunity {
+fn covered(source: &str, a: i64, b: i64) -> Coverage {
+    Coverage {
         source: source.into(),
         span: Span::new(a, b),
         completeness: Completeness::Sample,
-        basis: "test".into(),
+        bounded_by: "test".into(),
     }
 }
 
@@ -62,12 +62,12 @@ fn kestrel_week_tells_zero_from_missing() {
             payload: p,
         });
     }
-    let opportunity = [opp("atuin", DAY - DAY / 4, 2 * DAY + DAY / 2)];
+    let coverage = [covered("atuin", DAY - DAY / 4, 2 * DAY + DAY / 2)];
     let cells = compute(
         &metric(),
         &day_units(4),
         &rows,
-        &opportunity,
+        &coverage,
         &SpanSet::default(),
     );
     let totals: Vec<_> = cells.iter().filter(|c| c.dimension.is_empty()).collect();
@@ -89,27 +89,27 @@ fn kestrel_week_tells_zero_from_missing() {
     assert_eq!(
         totals[3].cell,
         Cell::Missing {
-            reason: Missing::NoOpportunity
+            reason: Missing::NoCoverage
         }
     );
 }
 
 #[test]
 fn any_of_unions_and_sources_intersects() {
-    let rows = [opp("atuin", 0, 10), opp("zsh", 5, 20)];
-    let (u, _) = opportunity_for(&OpportunityRule::AnyOf(&["atuin", "zsh"]), &rows);
+    let rows = [covered("atuin", 0, 10), covered("zsh", 5, 20)];
+    let (u, _) = covered_spans(&CoverageRule::AnyOf(&["atuin", "zsh"]), &rows);
     assert_eq!(u.len(), 20);
-    let (i, _) = opportunity_for(&OpportunityRule::Sources(&["atuin", "zsh"]), &rows);
+    let (i, _) = covered_spans(&CoverageRule::Sources(&["atuin", "zsh"]), &rows);
     assert_eq!(i.len(), 5);
 }
 
 #[test]
-fn gaps_turn_opportunity_into_missing() {
+fn gaps_turn_coverage_into_missing() {
     let cells = compute(
         &metric(),
         &day_units(1),
         &[],
-        &[opp("zsh", 0, DAY)],
+        &[covered("zsh", 0, DAY)],
         &SpanSet::from_spans([Span::new(0, DAY)]),
     );
     assert_eq!(
@@ -121,16 +121,16 @@ fn gaps_turn_opportunity_into_missing() {
 }
 
 #[test]
-fn rows_without_known_opportunity_are_lower_bounds() {
+fn rows_without_known_coverage_are_lower_bounds() {
     let p = json!({"host": "h"});
     let rows = [Row {
         source: "zsh",
         at: 10,
         payload: &p,
     }];
-    let unknown = Opportunity {
+    let unknown = Coverage {
         completeness: Completeness::Unknown,
-        ..opp("zsh", 0, DAY)
+        ..covered("zsh", 0, DAY)
     };
     let cells = compute(
         &metric(),
@@ -149,7 +149,7 @@ fn rows_without_known_opportunity_are_lower_bounds() {
 }
 
 #[test]
-fn breakdowns_share_the_unit_opportunity() {
+fn breakdowns_share_the_unit_coverage() {
     let a = json!({"host": "a"});
     let b = json!({});
     let rows = [
@@ -168,7 +168,7 @@ fn breakdowns_share_the_unit_opportunity() {
         &metric(),
         &day_units(1),
         &rows,
-        &[opp("zsh", 0, DAY)],
+        &[covered("zsh", 0, DAY)],
         &SpanSet::default(),
     );
     assert_eq!(

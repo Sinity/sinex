@@ -2,15 +2,20 @@
 //! and marks dependent results stale; maintenance recomputes the cells;
 //! products are stored, reused for identical requests and superseded by
 //! newer answers to the same standing question.
-use super::*;
+use super::super::cells::maintain;
+use super::super::*;
 use crate::keys::Registered as Keys;
 use crate::writer::{self, Priority};
+use serde_json::json;
+use sinex_analysis::Eligibility;
 use sinex_model::kinds::code::GitCommit;
 use sinex_model::{
     Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordOutcome, RunId,
 };
+use sinex_store::analysis as store;
 use sqlx::Connection;
+use sqlx::PgConnection;
 use std::sync::Arc;
 
 /// 2026-09-14 10:00 CEST.
@@ -117,7 +122,7 @@ fn result_on(
         started_at: OffsetDateTime::now_utc(),
         status: "estimated",
         reason: None,
-        readsets: json!([]),
+        inputs_read: json!([]),
         tables: json!({}),
         diagnostics: json!({}),
         output_hash: [0; 32],
@@ -315,7 +320,7 @@ async fn the_brief_reports_coverage_first_and_never_shows_missing_as_zero() {
     // unknown, not zero.
     assert!(
         p.markdown
-            .contains("shell.commands on 2026-09-14 is not known: no opportunity"),
+            .contains("shell.commands on 2026-09-14 is not known: no coverage"),
         "{}",
         p.markdown
     );

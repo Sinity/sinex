@@ -22,8 +22,8 @@ fn partial_cells_enter_only_above_the_requested_fraction() {
 #[test]
 fn missing_outranks_partial_when_a_pair_drops_a_unit() {
     assert_eq!(
-        Exclusion::Partial.worse(Exclusion::NoOpportunity),
-        Exclusion::NoOpportunity
+        Exclusion::Partial.worse(Exclusion::NoCoverage),
+        Exclusion::NoCoverage
     );
     assert_eq!(Exclusion::Gap.worse(Exclusion::Recorded), Exclusion::Gap);
 }
@@ -34,11 +34,11 @@ fn a_zero_is_observed_not_missing() {
     assert_eq!(c.state_name(), "observed");
     assert_eq!(c.value(), Some(&0.0));
     let m: Cell<f64> = Cell::Missing {
-        reason: Missing::NoOpportunity,
+        reason: Missing::NoCoverage,
     };
     assert_eq!(m.value(), None);
     assert_eq!(
         serde_json::to_value(&m).unwrap(),
-        serde_json::json!({"state": "missing", "reason": "no_opportunity"})
+        serde_json::json!({"state": "missing", "reason": "no_coverage"})
     );
 }

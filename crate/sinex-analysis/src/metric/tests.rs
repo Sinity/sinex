@@ -18,7 +18,7 @@ fn def(law: AggLaw) -> MetricDef {
         law,
         interval: None,
         allocation: Allocation::Instant,
-        opportunity: OpportunityRule::AnyOf(&["s"]),
+        coverage: CoverageRule::AnyOf(&["s"]),
         dimensions: &[],
         role: SourceRole::Measured,
         deviation: false,

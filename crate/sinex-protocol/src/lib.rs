@@ -475,13 +475,55 @@ pub const COMMANDS: &[Command] = &[
                 ArgKind::Bool,
                 "record it as the standing question's newest answer",
             ),
+            opt(
+                "partial",
+                ArgKind::Text,
+                "also use partly observed days covering at least this fraction (0 to 1)",
+            ),
         ],
         access: Access::Agent,
         mcp: true,
     },
     Command {
+        name: "analysis-panel",
+        summary: "Metric cells per logical day, each with its observation state, and the coverage behind them.",
+        args: &[
+            pos("from", ArgKind::Text, "first logical day, YYYY-MM-DD"),
+            pos("to", ArgKind::Text, "last logical day, included"),
+            opt(
+                "metric",
+                ArgKind::List,
+                "only this metric; repeat for more (default: all)",
+            ),
+            opt(
+                "by",
+                ArgKind::Text,
+                "break down by this dimension (host, app, repository, unit)",
+            ),
+        ],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "analysis-why",
+        summary: "Why a metric's cell for one logical day is missing, partial or observed: its state and the coverage each of its sources had.",
+        args: &[
+            pos("metric", ArgKind::Text, "the metric"),
+            pos("day", ArgKind::Text, "the logical day, YYYY-MM-DD"),
+        ],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
+        name: "analysis-results",
+        summary: "The newest stored analysis results.",
+        args: &[opt("limit", ArgKind::Integer, "how many (default 20)")],
+        access: Access::Read,
+        mcp: true,
+    },
+    Command {
         name: "analysis-show",
-        summary: "A stored analysis result: its status, readsets, tables and findings.",
+        summary: "A stored analysis result: its status, the inputs it read, its tables and findings.",
         args: &[pos("result", ArgKind::Text, "the result ID")],
         access: Access::Read,
         mcp: true,
@@ -842,6 +884,27 @@ pub enum Request {
         to: String,
         #[serde(default)]
         standing: Option<bool>,
+        #[serde(default)]
+        partial: Option<String>,
+    },
+    #[serde(rename = "analysis-panel")]
+    AnalysisPanel {
+        from: String,
+        to: String,
+        #[serde(default)]
+        metric: Option<Vec<String>>,
+        #[serde(default)]
+        by: Option<String>,
+    },
+    #[serde(rename = "analysis-why")]
+    AnalysisWhy {
+        metric: String,
+        day: String,
+    },
+    #[serde(rename = "analysis-results")]
+    AnalysisResults {
+        #[serde(default)]
+        limit: Option<u64>,
     },
     #[serde(rename = "analysis-show")]
     AnalysisShow {
@@ -990,6 +1053,9 @@ impl Request {
             Request::Lock => "lock",
             Request::AnalysisCatalog => "analysis-catalog",
             Request::AnalysisRun { .. } => "analysis-run",
+            Request::AnalysisPanel { .. } => "analysis-panel",
+            Request::AnalysisWhy { .. } => "analysis-why",
+            Request::AnalysisResults { .. } => "analysis-results",
             Request::AnalysisShow { .. } => "analysis-show",
             Request::Brief { .. } => "brief",
             Request::LibraryAdd { .. } => "library-add",

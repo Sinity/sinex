@@ -7,16 +7,17 @@
 //! daemon's job; nothing here does IO.
 pub mod catalog;
 pub mod cell;
+pub mod coverage;
 pub mod finding;
 pub mod methods;
 pub mod metric;
-pub mod opportunity;
 pub mod panel;
-pub mod present;
+pub mod presentation;
 pub mod request;
 pub mod span;
 
 pub use cell::{Cell, Eligibility, Exclusion, Missing};
+pub use coverage::{CaptureMode, Completeness, Coverage};
 pub use metric::{MetricDef, Row};
-pub use panel::{Completeness, Opportunity, PanelCell, Unit};
+pub use panel::{PanelCell, Unit};
 pub use span::{Span, SpanSet};

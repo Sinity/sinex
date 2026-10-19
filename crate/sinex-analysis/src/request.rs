@@ -1,9 +1,9 @@
-//! Requests, readsets and result status (spec `analysis.md` §7). A request
-//! holds everything that determines a computation, frozen before it runs; its
-//! identity is a keyed BLAKE3 hash of its canonical bytes, so the same
-//! question at the same commit position is the same request, and the second
-//! asking returns the first's result.
-use crate::panel::Completeness;
+//! Requests and the inputs a result read. A request holds everything that
+//! determines a computation, frozen before it runs; its identity is a keyed
+//! BLAKE3 hash of its canonical bytes, so the same question at the same commit
+//! position is the same request, and the second asking returns the first's
+//! result.
+use crate::coverage::Coverage;
 use crate::span::Span;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -13,15 +13,15 @@ use serde_json::{Map, Value};
 pub enum Intent {
     /// Fixed after (or without) seeing outcomes; findings over it say so.
     Exploratory,
-    /// Family and method fixed in a request recorded before the outcome
-    /// period ended.
-    Registered,
+    /// Pre-registered: family and method fixed in a request recorded before
+    /// the outcome period ended.
+    PreRegistered,
 }
 
-/// One read plan: a relation over a time range, read at the request's
-/// commit position.
+/// What a request reads: a relation over a time range, read at the
+/// request's commit position.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Plan {
+pub struct ReadPlan {
     pub relation: String,
     /// RFC 3339 bounds of the half-open range.
     pub from: String,
@@ -35,7 +35,7 @@ pub struct Request {
     pub params: Value,
     /// `(method id, version)` of every method the recipe calls.
     pub methods: Vec<(String, u32)>,
-    pub plans: Vec<Plan>,
+    pub plans: Vec<ReadPlan>,
     /// The commit position every plan is read at.
     pub as_of: i64,
     /// The day setting the units were computed under (`analysis.md` §4.3).
@@ -105,9 +105,9 @@ fn write_canonical(v: &Value, out: &mut String) {
 }
 
 /// The exact input of one computation: which rows a plan selected at a commit
-/// position, and the opportunity it relied on.
+/// position, and the coverage it relied on.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Readset {
+pub struct InputsRead {
     /// Hex BLAKE3 of the canonical plan.
     pub plan: String,
     pub as_of: i64,
@@ -120,16 +120,14 @@ pub struct Readset {
     pub membership: Option<Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Coverage {
-    pub source: String,
-    pub span: Span,
-    pub completeness: Completeness,
-}
-
-impl Readset {
-    /// A readset from the plan and the identities of the rows it read.
-    pub fn new(plan: &Plan, as_of: i64, mut row_ids: Vec<String>, coverage: Vec<Coverage>) -> Self {
+impl InputsRead {
+    /// The record of what `plan` read: the identities of its rows.
+    pub fn new(
+        plan: &ReadPlan,
+        as_of: i64,
+        mut row_ids: Vec<String>,
+        coverage: Vec<Coverage>,
+    ) -> Self {
         row_ids.sort_unstable();
         let mut h = blake3::Hasher::new();
         for id in &row_ids {
@@ -154,15 +152,6 @@ impl Readset {
 pub struct Dependency {
     pub relation: String,
     pub span: Span,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResultStatus {
-    Current,
-    Stale,
-    Superseded,
-    Withdrawn,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

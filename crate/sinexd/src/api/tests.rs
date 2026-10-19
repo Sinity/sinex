@@ -566,3 +566,59 @@ async fn analysis_calls_run_store_and_brief_through_the_api() {
             .starts_with("no recipe astrology")
     );
 }
+
+#[tokio::test]
+async fn analysis_panel_why_and_results_answer_through_the_api() {
+    let w = world().await;
+    let (status, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "analysis-panel", "from": "2026-09-14", "to": "2026-09-15", "metric": ["shell.commands"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let cells = body["result"]["cells"].as_array().unwrap();
+    assert_eq!(cells.len(), 2, "one total cell per day: {body}");
+    assert_eq!(
+        cells[0]["cell"]["reason"], "no_coverage",
+        "nothing stored: missing, never zero"
+    );
+    assert!(
+        body["result"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("2026-09-14")
+    );
+
+    let (status, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "analysis-why", "metric": "shell.commands", "day": "2026-09-14"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["result"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("nothing stored, so no coverage anywhere"),
+        "{body}"
+    );
+
+    let (_, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "analysis-why", "metric": "astrology", "day": "2026-09-14"}),
+    )
+    .await;
+    assert!(
+        body["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("no metric astrology")
+    );
+
+    let (status, body) = call(&w, Some(READ), json!({"method": "analysis-results"})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["results"], json!([]));
+}

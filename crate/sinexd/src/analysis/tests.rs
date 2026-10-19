@@ -10,3 +10,5 @@ fn day_settings_parse_and_label() {
     let span = s.day_span(d, d).unwrap();
     assert_eq!(span.len(), MICROS_PER_DAY);
 }
+
+mod database;
