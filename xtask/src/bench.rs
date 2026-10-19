@@ -233,8 +233,13 @@ fn sample(per_input: u64, seed: u64) -> Result<(), String> {
 }
 
 fn sinexd_binary() -> Result<PathBuf, String> {
+    // The query macros check against the schema database at compile time,
+    // as `xtask check` does; the server stops on drop if this started it.
+    let (server, databases) =
+        crate::database::prepare(Path::new(".")).map_err(|e| format!("schema database: {e}"))?;
     let ok = slotted("cargo")
         .args(["build", "--locked", "--release", "-p", "sinexd"])
+        .envs(crate::database::env(&server, &databases))
         .status()
         .map_err(|e| e.to_string())?
         .success();

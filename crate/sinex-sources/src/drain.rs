@@ -33,7 +33,7 @@ pub struct DrainInput<'a> {
     /// The carried state before the first record.
     pub carry: Value,
     /// Which of two readings is newer, by the record's anchor.
-    pub reading_order: &'a dyn Fn(usize) -> ReadingOrder,
+    pub reading_order: &'a (dyn Fn(usize) -> ReadingOrder + Sync),
     pub limits: Limits,
     /// The material's manifest. A `members` array of `{path, stream_offset,
     /// length, ...}` (archive member streams, directory snapshots) tells each
@@ -96,34 +96,62 @@ pub struct DrainOutput {
 }
 
 /// Parse every framed record, in order, into chunks bounded by `limits`.
+/// Collects [`Drainer`]; callers that admit chunks as they come use the
+/// drainer directly, so memory holds one chunk, not a whole material's.
 pub fn drain<P: Parser>(
     parser: &P,
     input: DrainInput<'_>,
 ) -> Result<Vec<DrainOutput>, RecordError> {
-    let mut carry: P::Carry = if input.carry.is_null() {
-        P::Carry::default()
-    } else {
-        serde_json::from_value(input.carry.clone())
-            .map_err(|e| RecordError::new(format!("stored parser carry does not decode: {e}")))?
-    };
-    let mut chunk_carry = carry.clone();
-    let mut chunks = Vec::new();
-    let mut current = DrainOutput {
-        outcomes: Vec::new(),
-        end: 0,
-        carry: Value::Null,
-        events: 0,
-        failures: 0,
-    };
-    let mut bytes_in_chunk = 0usize;
-    for &(start, end) in input.records {
+    Ok(Drainer::new(parser, input)?.collect())
+}
+
+/// A record parsed but not yet placed: it did not fit the chunk being
+/// closed, so it opens the next one.
+struct Pending<C> {
+    outcome: RecordOutcome,
+    size: usize,
+    events: usize,
+    end: usize,
+    carry_after: C,
+}
+
+/// The drain as an iterator: each `next` parses records until a chunk is
+/// full (by `limits`) and returns it. The chunk's carry is the state after
+/// its last record, so a resume from any chunk's cursor is exact.
+pub struct Drainer<'a, P: Parser> {
+    parser: &'a P,
+    input: DrainInput<'a>,
+    next: usize,
+    carry: P::Carry,
+    pending: Option<Pending<P::Carry>>,
+    finished: bool,
+    emitted: bool,
+}
+
+impl<'a, P: Parser> Drainer<'a, P> {
+    pub fn new(parser: &'a P, input: DrainInput<'a>) -> Result<Self, RecordError> {
+        let carry: P::Carry = if input.carry.is_null() {
+            P::Carry::default()
+        } else {
+            serde_json::from_value(input.carry.clone()).map_err(|e| {
+                RecordError::new(format!("stored parser carry does not decode: {e}"))
+            })?
+        };
+        Ok(Self {
+            parser,
+            input,
+            next: 0,
+            carry,
+            pending: None,
+            finished: false,
+            emitted: false,
+        })
+    }
+
+    /// Parse one record into its outcome, advancing the carry on success.
+    fn outcome(&mut self, start: usize, end: usize) -> RecordOutcome {
+        let input = &self.input;
         let raw = &input.bytes[start..end];
-        // An excision blanks a record to spaces (its newline kept): no record
-        // is left there, so nothing is read and nothing fails.
-        if is_blanked(raw) {
-            current.end = end;
-            continue;
-        }
         let location = RecordLocation {
             material: input.material,
             anchor: start as u64,
@@ -132,9 +160,9 @@ pub fn drain<P: Parser>(
             manifest: input.manifest,
             member: member_at(input.manifest, start),
         };
-        let outcome = match parse_one(parser, raw, &carry, &context) {
+        match parse_one(self.parser, raw, &self.carry, &context) {
             Ok((payloads, next)) => {
-                carry = next;
+                self.carry = next;
                 // A record shape's own hash that panics falls back to the
                 // bytes' hash rather than stopping the run.
                 let hash = std::panic::catch_unwind(|| {
@@ -184,46 +212,91 @@ pub fn drain<P: Parser>(
                 location,
                 reason: e.0,
             },
-        };
-        let size = end - start;
-        let n = match &outcome {
-            RecordOutcome::Events { events, .. } => events.len(),
-            RecordOutcome::Failure { .. } => 0,
-        };
-        let full = !current.outcomes.is_empty()
-            && (current.events + n > input.limits.max_events
-                || bytes_in_chunk + size > input.limits.max_bytes);
-        if full {
-            // The closed chunk ends at the previous record; its carry is the
-            // state after that record. Serialized once per chunk, not per
-            // record, so a growing carry costs nothing per record.
-            current.carry = serde_json::to_value(&chunk_carry).expect("carry serializes");
-            chunks.push(std::mem::replace(
-                &mut current,
-                DrainOutput {
-                    outcomes: Vec::new(),
-                    end: 0,
-                    carry: Value::Null,
-                    events: 0,
-                    failures: 0,
-                },
-            ));
-            bytes_in_chunk = 0;
         }
-        if matches!(outcome, RecordOutcome::Failure { .. }) {
-            current.failures += 1;
+    }
+}
+
+fn empty_chunk() -> DrainOutput {
+    DrainOutput {
+        outcomes: Vec::new(),
+        end: 0,
+        carry: Value::Null,
+        events: 0,
+        failures: 0,
+    }
+}
+
+fn place(chunk: &mut DrainOutput, outcome: RecordOutcome, events: usize, end: usize) {
+    if matches!(outcome, RecordOutcome::Failure { .. }) {
+        chunk.failures += 1;
+    }
+    chunk.events += events;
+    chunk.outcomes.push(outcome);
+    chunk.end = end;
+}
+
+impl<P: Parser> Iterator for Drainer<'_, P> {
+    type Item = DrainOutput;
+
+    fn next(&mut self) -> Option<DrainOutput> {
+        if self.finished {
+            return None;
         }
-        current.events += n;
-        current.outcomes.push(outcome);
-        current.end = end;
-        chunk_carry = carry.clone();
-        bytes_in_chunk += size;
+        let mut current = empty_chunk();
+        let mut bytes_in_chunk = 0usize;
+        // The carry after the chunk's last record. Serialized once per chunk,
+        // not per record, so a growing carry costs nothing per record.
+        let mut chunk_carry: Option<P::Carry> = None;
+        if let Some(p) = self.pending.take() {
+            place(&mut current, p.outcome, p.events, p.end);
+            bytes_in_chunk = p.size;
+            chunk_carry = Some(p.carry_after);
+        }
+        while let Some(&(start, end)) = self.input.records.get(self.next) {
+            self.next += 1;
+            // An excision blanks a record to spaces (its newline kept): no
+            // record is left there, so nothing is read and nothing fails.
+            if is_blanked(&self.input.bytes[start..end]) {
+                current.end = end;
+                continue;
+            }
+            let outcome = self.outcome(start, end);
+            let size = end - start;
+            let events = match &outcome {
+                RecordOutcome::Events { events, .. } => events.len(),
+                RecordOutcome::Failure { .. } => 0,
+            };
+            let full = !current.outcomes.is_empty()
+                && (current.events + events > self.input.limits.max_events
+                    || bytes_in_chunk + size > self.input.limits.max_bytes);
+            if full {
+                // The closed chunk ends at the previous record; this record
+                // opens the next one.
+                self.pending = Some(Pending {
+                    outcome,
+                    size,
+                    events,
+                    end,
+                    carry_after: self.carry.clone(),
+                });
+                current.carry =
+                    serde_json::to_value(chunk_carry.as_ref().expect("a placed record"))
+                        .expect("carry serializes");
+                self.emitted = true;
+                return Some(current);
+            }
+            place(&mut current, outcome, events, end);
+            chunk_carry = Some(self.carry.clone());
+            bytes_in_chunk += size;
+        }
+        self.finished = true;
+        if !current.outcomes.is_empty() || !self.emitted {
+            current.carry = serde_json::to_value(&self.carry).expect("carry serializes");
+            self.emitted = true;
+            return Some(current);
+        }
+        None
     }
-    if !current.outcomes.is_empty() || chunks.is_empty() {
-        current.carry = serde_json::to_value(&carry).expect("carry serializes");
-        chunks.push(current);
-    }
-    Ok(chunks)
 }
 
 fn parse_one<P: Parser>(

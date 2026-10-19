@@ -18,7 +18,7 @@ pub mod registry;
 pub mod sources;
 
 pub use binding::{Binding, Kind, Reader, Settings};
-pub use drain::{DrainInput, DrainOutput, Limits, RecordContext, drain};
+pub use drain::{DrainInput, DrainOutput, Drainer, Limits, RecordContext, drain};
 pub use drivers::{Acquired, DriverError, MaterialSink};
 pub use registry::{Declared, Driver, Framer, Source, SourceSpec};
 

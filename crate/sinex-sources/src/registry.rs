@@ -49,7 +49,15 @@ pub struct Declared<P> {
 /// in one list.
 pub trait Source: Send + Sync {
     fn spec(&self) -> &SourceSpec;
-    fn drain(&self, input: DrainInput<'_>) -> Result<Vec<DrainOutput>, RecordError>;
+    /// Drain a material one chunk at a time: memory holds one chunk.
+    fn drainer<'a>(
+        &'a self,
+        input: DrainInput<'a>,
+    ) -> Result<Box<dyn Iterator<Item = DrainOutput> + Send + 'a>, RecordError>;
+
+    fn drain(&self, input: DrainInput<'_>) -> Result<Vec<DrainOutput>, RecordError> {
+        Ok(self.drainer(input)?.collect())
+    }
 }
 
 impl<P: Parser> Source for Declared<P> {
@@ -57,7 +65,10 @@ impl<P: Parser> Source for Declared<P> {
         &self.spec
     }
 
-    fn drain(&self, input: DrainInput<'_>) -> Result<Vec<DrainOutput>, RecordError> {
-        crate::drain(&self.parser, input)
+    fn drainer<'a>(
+        &'a self,
+        input: DrainInput<'a>,
+    ) -> Result<Box<dyn Iterator<Item = DrainOutput> + Send + 'a>, RecordError> {
+        Ok(Box::new(crate::drain::Drainer::new(&self.parser, input)?))
     }
 }

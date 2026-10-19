@@ -182,3 +182,49 @@ fn a_record_longer_than_a_part_is_read_whole() {
     let a = driver(path, Framing::Lines, 8).poll(&Value::Null).unwrap();
     assert_eq!(records(&a)[0].len(), 51);
 }
+
+#[test]
+fn a_zip_is_read_in_parts_of_whole_members_covering_every_record() {
+    let d = dir();
+    let path = d.join("takeout.zip");
+    {
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let o = zip::write::SimpleFileOptions::default();
+        for i in 0..20 {
+            z.start_file(format!("Takeout/{i:02}.json"), o).unwrap();
+            z.write_all(format!("[{}, {}]", i * 2, i * 2 + 1).as_bytes())
+                .unwrap();
+        }
+        z.finish().unwrap();
+    }
+    // A part of 20 bytes: two or three members each, never a split one.
+    let x = driver(path.clone(), Framing::JsonArray(""), 20);
+    let mut cursor = Value::Null;
+    let mut read = Vec::new();
+    let mut parts = 0;
+    loop {
+        let a = x.poll(&cursor).unwrap();
+        let Some(m) = &a.material else { break };
+        parts += 1;
+        assert!(
+            m.bytes.len() <= 20 + 8,
+            "a part holds whole members up to the size"
+        );
+        // Only the first part stores the archive itself; later parts
+        // store their decoded stream and say so.
+        assert_eq!(m.manifest["container"], json!("zip"));
+        if parts == 1 {
+            assert_eq!(m.stored_file.as_deref(), Some(path.as_path()));
+        } else {
+            assert!(m.stored_file.is_none());
+            assert_eq!(m.manifest["stream"], json!("decoded"));
+        }
+        read.extend(records(&a));
+        cursor = (m.cursor_at)(m.bytes.len());
+    }
+    assert!(parts > 5, "{parts} parts");
+    let expected: Vec<String> = (0..40).map(|i| i.to_string()).collect();
+    assert_eq!(read, expected);
+    assert_eq!(cursor["done"], json!(true));
+    assert!(x.poll(&cursor).unwrap().material.is_none());
+}

@@ -21,6 +21,9 @@ use std::path::PathBuf;
 
 /// Bytes before the offset whose hash proves the prefix is unchanged.
 const WINDOW: u64 = 4096;
+/// The most bytes one poll reads past its cursor (more only for a single
+/// record longer than this): a file of any size is read in bounded parts.
+pub const PART: u64 = 64 << 20;
 
 pub use crate::registry::Framer;
 
@@ -47,13 +50,34 @@ pub struct Cursor {
     pub through: usize,
 }
 
-/// The records of the current revision, by content hash, with where each
-/// occurrence was read: what a rewrite is aligned against. Kept for the life
-/// of the source task and rebuilt from the stored materials after a restart
-/// ([`AppendMemory::rebuild`]).
+/// How much of the current revision the memory keeps: its newest records, at
+/// most this many record bytes and this many records (a record costs about
+/// 100 bytes of memory whatever its length, so short lines are bounded by
+/// count). A rewrite is aligned against that tail; a record older than it
+/// that a rewrite drops is not recognized as read before (rewrites such as a
+/// shell's duplicate expiry touch recent history), and one it keeps is read
+/// again as a repeat. Bounds the memory and a restart's rebuild alike.
+#[cfg(not(test))]
+pub const MEMORY_TAIL: usize = 16 << 20;
+#[cfg(test)]
+pub const MEMORY_TAIL: usize = 4096;
+#[cfg(not(test))]
+pub const MEMORY_RECORDS: usize = 200_000;
+#[cfg(test)]
+pub const MEMORY_RECORDS: usize = 40;
+
+/// The records of the current revision's tail, by content hash, with where
+/// each occurrence was read: what a rewrite is aligned against. Kept for the
+/// life of the source task and rebuilt from the stored materials after a
+/// restart ([`AppendMemory::rebuild`]); bounded by [`MEMORY_TAIL`] and
+/// [`MEMORY_RECORDS`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppendMemory {
     records: HashMap<[u8; 32], Vec<RecordLocation>>,
+    /// Every held record in reading order, with its length, so the oldest
+    /// is dropped first when the tail grows past a bound.
+    order: std::collections::VecDeque<([u8; 32], RecordLocation, usize)>,
+    bytes: usize,
 }
 
 impl AppendMemory {
@@ -73,13 +97,28 @@ impl AppendMemory {
     }
 
     fn insert(&mut self, record: &[u8], material: MaterialId, anchor: usize) {
-        self.records
-            .entry(*blake3::hash(record).as_bytes())
-            .or_default()
-            .push(RecordLocation {
-                material,
-                anchor: anchor as u64,
-            });
+        let hash = *blake3::hash(record).as_bytes();
+        let location = RecordLocation {
+            material,
+            anchor: anchor as u64,
+        };
+        self.records.entry(hash).or_default().push(location);
+        self.order.push_back((hash, location, record.len()));
+        self.bytes += record.len();
+        while self.order.len() > MEMORY_RECORDS
+            || (self.bytes > MEMORY_TAIL && self.order.len() > 1)
+        {
+            let (hash, location, n) = self.order.pop_front().expect("not empty");
+            self.bytes -= n;
+            if let Some(held) = self.records.get_mut(&hash) {
+                if let Some(i) = held.iter().position(|l| *l == location) {
+                    held.remove(i);
+                }
+                if held.is_empty() {
+                    self.records.remove(&hash);
+                }
+            }
+        }
     }
 
     /// Whether an equal record was held, consuming one occurrence of it.
@@ -116,6 +155,16 @@ impl AppendFile {
     }
 
     pub fn poll(&self, cursor: &Value, memory: &mut AppendMemory) -> Result<Acquired, DriverError> {
+        self.poll_in_parts(cursor, memory, PART)
+    }
+
+    /// [`poll`](Self::poll) reading at most `part` bytes past the cursor.
+    pub fn poll_in_parts(
+        &self,
+        cursor: &Value,
+        memory: &mut AppendMemory,
+        part: u64,
+    ) -> Result<Acquired, DriverError> {
         let previous: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -176,12 +225,34 @@ impl AppendFile {
         };
         file.seek(SeekFrom::Start(start))
             .map_err(|e| DriverError::Io(e.to_string()))?;
-        let mut data = Vec::with_capacity((size - start) as usize);
-        (&mut file)
-            .take(size - start)
-            .read_to_end(&mut data)
-            .map_err(|e| DriverError::Io(e.to_string()))?;
-        let (records, consumed) = (self.framer)(&data);
+        // Read in parts of at most PART bytes, ending on a record boundary,
+        // so a file of any size is read in bounded memory. A record longer
+        // than a part grows the read until it completes; no record is
+        // refused. A rewrite is read whole: aligning it against the previous
+        // revision needs every record to tell which ones vanished.
+        let restart = start == 0 && !cursor.is_null();
+        let available = size - start;
+        let mut want = if restart {
+            available
+        } else {
+            available.min(part.max(1))
+        };
+        let mut data = Vec::new();
+        let (records, consumed) = loop {
+            data.clear();
+            file.seek(SeekFrom::Start(start))
+                .map_err(|e| DriverError::Io(e.to_string()))?;
+            (&mut file)
+                .take(want)
+                .read_to_end(&mut data)
+                .map_err(|e| DriverError::Io(e.to_string()))?;
+            let framed = (self.framer)(&data);
+            if framed.1 > 0 || want >= available {
+                break framed;
+            }
+            want = (want * 2).min(available);
+        };
+        let read_to_end = start + consumed as u64 == size || want >= available;
         let restarted = start == 0 && !cursor.is_null();
         let base = Cursor {
             offset: start,
@@ -252,18 +323,29 @@ impl AppendFile {
                 .read_to_end(&mut head)
                 .map_err(|e| DriverError::Io(e.to_string()))?;
         }
+        // Parts are capped at PART bytes, so this copy is bounded. Each call
+        // hashes only the WINDOW bytes before `end`, never the whole prefix.
         let tail_source = bytes.clone();
+        let material_len = bytes.len();
         let cursor_at = move |end: usize| -> Value {
-            let mut joined = head.clone();
-            joined.extend_from_slice(&tail_source[..end]);
-            let w = &joined[joined.len().saturating_sub(WINDOW as usize)..];
+            let window = WINDOW as usize;
+            let mut w = Vec::with_capacity(window);
+            if end < window {
+                w.extend_from_slice(&head[head.len().saturating_sub(window - end)..]);
+            }
+            w.extend_from_slice(&tail_source[end.saturating_sub(window)..end]);
+            let w = w.as_slice();
             serde_json::to_value(Cursor {
                 offset: start + end as u64,
                 // Only a cursor that covers everything this poll read may
                 // skip an unchanged file. One left between two batches of the
                 // same read has records after it, so it records no file size
                 // and the next poll reads on from its offset.
-                size: if end == tail_source.len() { size } else { 0 },
+                size: if end == material_len && read_to_end {
+                    size
+                } else {
+                    0
+                },
                 mtime_ns: mtime,
                 inode,
                 window: blake3::hash(w).to_hex().to_string(),

@@ -119,6 +119,9 @@ pub struct Cursor {
     pub done: bool,
     pub material: Option<MaterialId>,
     pub part_index: u32,
+    /// For a compressed export read in parts: the next selected member.
+    #[serde(default)]
+    pub member: usize,
 }
 
 /// Default part size for plain files read in parts.
@@ -212,6 +215,7 @@ impl ExportArchive {
             done: false,
             material: if continuing { previous.material } else { None },
             part_index: if continuing { previous.part_index } else { 0 },
+            member: if continuing { previous.member } else { 0 },
         };
         let revision = if continuing {
             RevisionChange::Appended
@@ -223,7 +227,7 @@ impl ExportArchive {
         let read = match container {
             Container::Plain if self.framing.streamable() => self.read_part(&base, size)?,
             Container::Plain => self.read_whole()?,
-            _ => self.read_archive(container)?,
+            _ => self.read_archive(container, base.member)?,
         };
         let Some(read) = read else {
             let content = hash_file(&self.path)?;
@@ -253,7 +257,9 @@ impl ExportArchive {
         let consumed = read.consumed;
         let last = read.records.last().map_or(0, |(_, e)| *e);
         let reaches_end = read.reaches_end;
-        let archive = read.stored_file.is_some();
+        let archive = read.members.is_some();
+        let first_member = base.member;
+        let next_member = read.next_member;
         let cursor_at = move |end: usize| -> Value {
             // Within a plain file's part, the cursor is the byte after the
             // record; a whole read is done only after its last record.
@@ -273,6 +279,14 @@ impl ExportArchive {
                 done: reaches,
                 material: Some(id),
                 part_index,
+                // A crash inside a part re-reads the part (its records come
+                // back as repeats); after the part's last record the next
+                // part starts at the member after it.
+                member: if end >= last {
+                    next_member
+                } else {
+                    first_member
+                },
             })
             .expect("cursor serializes")
         };
@@ -284,6 +298,12 @@ impl ExportArchive {
             // Every reading of one export file is as new as the file.
             "order_base": order,
         });
+        if read.members.is_some() && read.stored_file.is_none() {
+            // A later part of an archive stores its decoded member stream,
+            // not the archive. It keeps the archive's container, so replay
+            // treats it as it treats the first part.
+            manifest["stream"] = json!("decoded");
+        }
         if let Some(members) = read.members {
             manifest["members"] = Value::Array(members);
         } else {
@@ -339,6 +359,7 @@ impl ExportArchive {
                         file_offset: start,
                         stored_file: None,
                         members: None,
+                        next_member: 0,
                     })
                 });
             }
@@ -361,34 +382,62 @@ impl ExportArchive {
             file_offset: 0,
             stored_file: None,
             members: None,
+            next_member: 0,
         }))
     }
 
-    /// The selected members of a compressed export, decoded into one stream.
-    fn read_archive(&self, container: Container) -> Result<Option<Part>, DriverError> {
+    /// The next part of a compressed export: the selected members from
+    /// `first` on, decoded into one stream, stopping once the stream reaches
+    /// a part's size (a member is never split; one larger than a part is a
+    /// part alone). The first part stores the archive as received; later
+    /// parts store their decoded stream, so memory holds one part.
+    fn read_archive(
+        &self,
+        container: Container,
+        first: usize,
+    ) -> Result<Option<Part>, DriverError> {
         let mut stream = Vec::new();
         let mut records = Vec::new();
         let mut members = Vec::new();
-        let mut add = |path: String, data: Vec<u8>| {
-            let offset = stream.len();
-            let (framed, _) = self.framing.frame(&data, true);
-            records.extend(framed.into_iter().map(|(s, e)| (offset + s, offset + e)));
-            members.push(json!({"path": path, "stream_offset": offset, "length": data.len()}));
-            stream.extend_from_slice(&data);
-        };
-        decode_members(&self.path, container, self.select, &mut add)?;
-        if records.is_empty() {
+        let mut next = first;
+        let mut more = false;
+        let part = self.part_bytes.max(1);
+        visit_members(
+            &self.path,
+            container,
+            self.select,
+            &mut |n, path, reader| {
+                if n < first {
+                    return Ok(true);
+                }
+                if !members.is_empty() && stream.len() >= part {
+                    more = true;
+                    return Ok(false);
+                }
+                let mut data = Vec::new();
+                reader.read_to_end(&mut data).map_err(io)?;
+                let offset = stream.len();
+                let (framed, _) = self.framing.frame(&data, true);
+                records.extend(framed.into_iter().map(|(s, e)| (offset + s, offset + e)));
+                members.push(json!({"path": path, "stream_offset": offset, "length": data.len()}));
+                stream.extend_from_slice(&data);
+                next = n + 1;
+                Ok(true)
+            },
+        )?;
+        if members.is_empty() {
             return Ok(None);
         }
         let consumed = stream.len();
         Ok(Some(Part {
-            reaches_end: true,
+            reaches_end: !more,
             bytes: stream,
             records,
             consumed,
             file_offset: 0,
-            stored_file: Some(self.path.clone()),
+            stored_file: (first == 0).then(|| self.path.clone()),
             members: Some(members),
+            next_member: next,
         }))
     }
 }
@@ -401,35 +450,43 @@ struct Part {
     file_offset: u64,
     stored_file: Option<PathBuf>,
     members: Option<Vec<Value>>,
+    /// For an archive read in parts: the selected member after this part.
+    next_member: usize,
 }
 
-/// Decode the selected members of a compressed export, in archive order. The
-/// same decoding rebuilds the member stream from the stored archive.
-pub fn decode_members(
+/// What [`visit_members`] calls for each selected member.
+pub type MemberVisitor<'a> =
+    dyn FnMut(usize, String, &mut dyn Read) -> Result<bool, DriverError> + 'a;
+
+/// Visit the selected members of an export, in archive order, numbered from
+/// 0 among the selected. `visit` gets each member's number, path and a reader
+/// of its decoded bytes; it reads what it wants (a skipped member is never
+/// decoded) and returns whether to go on. The same decoding rebuilds the
+/// member stream from the stored archive.
+pub fn visit_members(
     path: &std::path::Path,
     container: Container,
     select: fn(&str) -> bool,
-    add: &mut dyn FnMut(String, Vec<u8>),
+    visit: &mut MemberVisitor<'_>,
 ) -> Result<(), DriverError> {
     let file = std::fs::File::open(path).map_err(io)?;
     match container {
         Container::Plain => {
             let name = file_name(path);
-            add(name, std::fs::read(path).map_err(io)?);
+            let mut reader = std::io::BufReader::new(file);
+            visit(0, name, &mut reader)?;
         }
         Container::Gzip => {
             let name = file_name(path);
             let name = name.strip_suffix(".gz").unwrap_or(&name).to_owned();
-            let mut data = Vec::new();
-            flate2::read::MultiGzDecoder::new(std::io::BufReader::new(file))
-                .read_to_end(&mut data)
-                .map_err(io)?;
-            add(name, data);
+            let mut reader = flate2::read::MultiGzDecoder::new(std::io::BufReader::new(file));
+            visit(0, name, &mut reader)?;
         }
         Container::Zip => {
             let mut archive = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| {
                 DriverError::Io(format!("{}: not a readable ZIP: {e}", path.display()))
             })?;
+            let mut n = 0;
             for i in 0..archive.len() {
                 let mut entry = archive
                     .by_index(i)
@@ -438,9 +495,11 @@ pub fn decode_members(
                     continue;
                 }
                 let name = entry.name().to_owned();
-                let mut data = Vec::with_capacity(entry.size() as usize);
-                entry.read_to_end(&mut data).map_err(io)?;
-                add(name, data);
+                let go_on = visit(n, name, &mut entry)?;
+                n += 1;
+                if !go_on {
+                    break;
+                }
             }
         }
         Container::Tar | Container::TarGzip => {
@@ -452,6 +511,7 @@ pub fn decode_members(
                 Box::new(std::io::BufReader::new(file))
             };
             let mut archive = tar::Archive::new(reader);
+            let mut n = 0;
             for entry in archive.entries().map_err(io)? {
                 let mut entry = entry.map_err(io)?;
                 if !entry.header().entry_type().is_file() {
@@ -461,13 +521,30 @@ pub fn decode_members(
                 if !select(&name) {
                     continue;
                 }
-                let mut data = Vec::new();
-                entry.read_to_end(&mut data).map_err(io)?;
-                add(name, data);
+                let go_on = visit(n, name, &mut entry)?;
+                n += 1;
+                if !go_on {
+                    break;
+                }
             }
         }
     }
     Ok(())
+}
+
+/// Decode every selected member of an export, in archive order.
+pub fn decode_members(
+    path: &std::path::Path,
+    container: Container,
+    select: fn(&str) -> bool,
+    add: &mut dyn FnMut(String, Vec<u8>),
+) -> Result<(), DriverError> {
+    visit_members(path, container, select, &mut |_, name, reader| {
+        let mut data = Vec::new();
+        reader.read_to_end(&mut data).map_err(io)?;
+        add(name, data);
+        Ok(true)
+    })
 }
 
 /// The container `path` is, from its first bytes.
