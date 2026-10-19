@@ -180,6 +180,60 @@ async fn replaced_readings_are_archived_with_their_successor() {
     assert_eq!((older.admitted, older.older), (0, 1));
 }
 
+fn watched(title: Option<&str>, order: i64) -> Event {
+    let payload = sinex_model::kinds::account::VideoWatched {
+        service: "youtube".into(),
+        video_id: Some("v1".into()),
+        watched_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
+        url: Some("https://www.youtube.com/watch?v=v1".into()),
+        title: title.map(str::to_owned),
+        channel: title.map(|_| "Chan".to_owned()),
+        channel_url: None,
+        products: vec![],
+        details: vec![order.to_string()],
+    };
+    Event::build(
+        &payload,
+        "youtube",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                anchor: 0,
+            },
+            ordinal: 0,
+        },
+        ReadingOrder(order),
+        *blake3::hash(format!("{title:?}{order}").as_bytes()).as_bytes(),
+        Class::Open,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_newer_reading_keeps_known_fields_it_leaves_unknown() {
+    let (_db, mut conn) = testdb::fresh().await;
+    admit_one(&mut conn, &batch(vec![watched(Some("A talk"), 1)])).await;
+    // The later export dropped the title and channel of a deleted video.
+    let out = admit_one(&mut conn, &batch(vec![watched(None, 2)])).await;
+    assert_eq!((out.admitted, out.replaced), (1, 1));
+    let live = sqlx::query!(
+        r#"SELECT e.payload->>'title' AS title, e.payload->>'channel' AS channel,
+                  e.payload->'details'->>0 AS details
+           FROM core.live_equivalence l JOIN core.events e ON e.id = l.event_id
+           WHERE l.source = 'youtube'"#
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(live.title.as_deref(), Some("A talk"));
+    assert_eq!(live.channel.as_deref(), Some("Chan"));
+    assert_eq!(
+        live.details.as_deref(),
+        Some("2"),
+        "the rest is the newer reading"
+    );
+}
+
 #[tokio::test]
 async fn location_keyed_records_are_one_live_reading_and_never_replaced() {
     let (_db, mut conn) = testdb::fresh().await;

@@ -64,6 +64,11 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     const REPLACE: ReplaceRule;
     /// Per-field privacy hints; rules in the store decide the effective class.
     const FIELD_CLASSES: &'static [(&'static str, Class)] = &[];
+    /// Fields a newer reading does not erase: when it leaves one unknown
+    /// (`null` or absent) and the reading it replaces had a value, admission
+    /// keeps that value. For exports that drop details of things that are
+    /// gone (a deleted video's title).
+    const KEEP_KNOWN: &'static [&'static str] = &[];
 
     /// When the thing happened, by the source's evidence.
     fn ts_orig(&self) -> TsOrig;

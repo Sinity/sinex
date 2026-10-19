@@ -10,6 +10,7 @@
 //!     time = started_at,           // a `Timestamp` or `Option<Timestamp>` field; omit for unknown
 //!     quality = intrinsic,         // TimeQuality variant, snake_case
 //!     removed_when = deleted_at,   // optional `Option<_>` field: Some means removed at source
+//!     keep_known = ["title"],      // optional fields a newer reading does not erase
 //! )]
 //! ```
 //!
@@ -72,6 +73,7 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let mut time: Option<Ident> = None;
     let mut quality: Option<Ident> = None;
     let mut removed_when: Option<Ident> = None;
+    let mut keep_known: Vec<LitStr> = Vec::new();
     for attr in input.attrs.iter().filter(|a| a.path().is_ident("event")) {
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("type") {
@@ -101,6 +103,12 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                 quality = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("removed_when") {
                 removed_when = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("keep_known") {
+                let value = meta.value()?;
+                let content;
+                syn::bracketed!(content in value);
+                let list = content.parse_terminated(|p| p.parse::<LitStr>(), syn::Token![,])?;
+                keep_known = list.into_iter().collect();
             } else {
                 return Err(meta.error("unknown event attribute"));
             }
@@ -145,6 +153,15 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
             }
         }
     };
+    for field in &keep_known {
+        let ident = Ident::new(&field.value(), field.span());
+        if !is_option(field_type(&ident)?) {
+            return Err(syn::Error::new_spanned(
+                field,
+                "keep_known fields are `Option<_>`",
+            ));
+        }
+    }
     let removed_tokens = removed_when.map(|field| {
         quote! {
             fn record_state(&self) -> ::sinex_model::RecordState {
@@ -162,6 +179,7 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
             const EVENT_TYPE: &'static str = #event_type;
             const KEY: ::sinex_model::KeyKind = #key_tokens;
             const REPLACE: ::sinex_model::ReplaceRule = #replace_tokens;
+            const KEEP_KNOWN: &'static [&'static str] = &[#(#keep_known),*];
 
             fn ts_orig(&self) -> ::sinex_model::TsOrig {
                 #time_tokens

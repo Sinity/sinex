@@ -15,6 +15,7 @@ pub mod mail;
 pub mod messenger;
 pub mod notes;
 pub mod operator;
+pub mod outlook;
 pub mod raindrop;
 pub mod reddit;
 /// Commits in local repositories (`code.git`).

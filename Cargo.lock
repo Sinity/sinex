@@ -4150,6 +4150,7 @@ dependencies = [
  "blake3",
  "csv",
  "devkit",
+ "encoding_rs",
  "flate2",
  "futures",
  "gix",

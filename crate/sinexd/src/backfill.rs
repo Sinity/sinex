@@ -39,6 +39,8 @@ pub struct Options {
 /// reads one file is read file by file, each its own binding.
 pub const EXPORT_KINDS: &[&str] = &[
     "sinnix-lake",
+    "outlook",
+    "outlook-csv",
     "chromium",
     "takeout-chrome",
     "spotify",
@@ -707,6 +709,55 @@ async fn export(
                 totals.add(
                     drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
                         driver.poll(c, &mut memory)
+                    })
+                    .await?,
+                );
+            }
+        }
+        "outlook" => {
+            // Each `.pst` is staged to mbox files with readpst, then read as
+            // mail; the staging directory goes when the store has the bytes.
+            use sinex_sources::sources::outlook;
+            let stage = std::env::temp_dir().join(format!("sinex-outlook-{}", std::process::id()));
+            let stores = files(&path, true, |p| {
+                p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pst"))
+            });
+            let result = async {
+                for pst in stores {
+                    for mbox in outlook::stage_pst(&pst, &stage)? {
+                        let folder = mbox
+                            .strip_prefix(&stage)
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default();
+                        let name = binding(&format!("{}#{folder}", pst.display()));
+                        let source = outlook::pst_source();
+                        let driver = outlook::pst_driver(mbox, host.clone());
+                        totals.add(
+                            drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                                driver.poll(c)
+                            })
+                            .await?,
+                        );
+                    }
+                }
+                Ok::<(), String>(())
+            }
+            .await;
+            let _ = std::fs::remove_dir_all(&stage);
+            result?;
+        }
+        "outlook-csv" => {
+            use sinex_sources::sources::outlook;
+            let exports = files(&path, true, |p| {
+                p.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"))
+            });
+            for file in exports {
+                let name = binding(&file.display().to_string());
+                let source = outlook::csv_source();
+                let driver = outlook::csv_driver(file, host.clone());
+                totals.add(
+                    drive(&mut ctx.aux, &ctx.writer, run, &source, &name, sink, |c| {
+                        driver.poll(c)
                     })
                     .await?,
                 );

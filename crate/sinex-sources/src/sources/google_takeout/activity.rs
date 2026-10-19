@@ -31,7 +31,7 @@ pub const YOUTUBE: SourceSpec = SourceSpec {
     consumer: "videos watched and searched for",
     class: Class::Open,
     parser: "google-youtube-history",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["video.watched", "video.searched"],
     framer: frame,
 };
@@ -99,28 +99,33 @@ impl Parser for YouTubeParser {
         let first = &cell.lines[0];
         let service = "youtube".to_owned();
         if first.text.starts_with("Watched") {
-            let (url, link_text) = first
-                .links
-                .first()
-                .cloned()
-                .ok_or_else(|| RecordError::new("watch entry without a video link"))?;
-            let video_id = video_id(&url)
-                .ok_or_else(|| RecordError::new(format!("no video ID in {url:?}")))?;
-            // `Watched <url>`: the video is gone and Google omits its title and
-            // channel; the field is unknown, not the URL.
-            let title = (link_text != url && !link_text.is_empty()).then_some(link_text);
+            // A removed video is listed as text without a link; a link can
+            // also point at something other than a video (a post, a
+            // playlist). Both keep what is known and leave the rest unknown.
+            let link = first.links.first().cloned();
+            let video_id = link.as_ref().and_then(|(url, _)| video_id(url));
+            let title = match &link {
+                // `Watched <url>`: the video is gone and Google omits its
+                // title and channel; the field is unknown, not the URL.
+                Some((url, text)) => (text != url && !text.is_empty()).then(|| text.clone()),
+                None => None,
+            };
             let channel = cell.lines.get(1).and_then(|l| l.links.first().cloned());
+            let mut details = cell.section("Details");
+            if link.is_none() {
+                details.insert(0, first.text.trim().to_owned());
+            }
             Ok((
                 vec![YouTubeEvent::Watched(VideoWatched {
                     service,
                     video_id,
                     watched_at: cell.at,
-                    url,
+                    url: link.map(|(u, _)| u),
                     title,
                     channel: channel.as_ref().map(|(_, n)| n.clone()),
                     channel_url: channel.map(|(u, _)| u),
                     products: cell.section("Products"),
-                    details: cell.section("Details"),
+                    details,
                 })],
                 (),
             ))
@@ -256,7 +261,7 @@ mod tests {
         let YouTubeEvent::Watched(w) = &out[0] else {
             panic!()
         };
-        assert_eq!(w.video_id, "abc123");
+        assert_eq!(w.video_id.as_deref(), Some("abc123"));
         assert_eq!(w.title.as_deref(), Some("A talk"));
         assert_eq!(w.channel.as_deref(), Some("Chan"));
         let gone = cell(
@@ -270,6 +275,17 @@ mod tests {
         };
         assert_eq!(w.title, None);
         assert_eq!(w.channel, None);
+        let removed = cell(
+            "YouTube",
+            "Watched a video that has been removed",
+            "Aug 26, 2026, 9:34:44 PM CEST",
+        );
+        let (out, ()) = YouTubeParser.parse(&removed, &()).unwrap();
+        let YouTubeEvent::Watched(w) = &out[0] else {
+            panic!()
+        };
+        assert_eq!((w.video_id.as_ref(), w.url.as_ref()), (None, None));
+        assert_eq!(w.details[0], "Watched a video that has been removed");
     }
 
     #[test]
