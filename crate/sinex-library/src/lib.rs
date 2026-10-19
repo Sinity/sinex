@@ -1,29 +1,18 @@
-//! The media library (architecture §6.6): items, renditions, curation records
-//! and handoff to players and viewers, built on materials and admission.
-//! Intake is ordinary staging; curation is written through admission; removal
-//! is hide and excision. Filled by the library lane once its record design is
-//! checked against the operator's library requirements (architecture §15).
-use serde::{Deserialize, Serialize};
-use sinex_model::MaterialId;
+//! The media library (architecture §6.6): items, renditions, curation and
+//! handoff, built on materials and admission. Intake is a scan of a library
+//! root through the ordinary source path (`sinex-sources`'s `library.scan`);
+//! every library change is a library request, stored as its own material and
+//! admitted (`library.request`); removal is hide and excision. This crate
+//! holds the library's rules: which item an acquisition belongs to, which
+//! value is shown, how comparisons rank, how other applications' curation is
+//! read, and how renditions and handoff work.
+pub mod adopt;
+pub mod db;
+pub mod import;
+pub mod policy;
+pub mod rank;
+pub mod render;
 
-/// A continuing reference whose revisions can point at changed bytes.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Item {
-    pub content: MaterialId,
-    /// Where the file was last seen; found again by hash if it moved.
-    pub last_known_path: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Rendition {
-    Original,
-    Crop,
-    Preview,
-    Transcode,
-}
-
-/// Stage a file into the library.
-pub fn intake(_path: &std::path::Path) -> Item {
-    todo!("architecture §6.6: library intake through ordinary staging")
-}
+pub use adopt::{Owner, adopt, key, mint};
+pub use policy::{Shown, Tag, property, tags};
+pub use rank::{Ranked, bradley_terry, next_pair};

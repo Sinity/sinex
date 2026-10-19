@@ -210,6 +210,14 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
               CASE WHEN jsonb_typeof({t}.payload -> 'observed_by') = 'array' THEN {t}.payload -> 'observed_by' END) x)"
                 .to_string()
         }
+        ("items", "item" | "label" | "content" | "media_type") => payload_text(name),
+        ("items", "revision") => payload_number(name),
+        ("media", "path" | "media_type" | "content") => payload_text(name),
+        ("media", "size" | "width" | "height") => payload_number(name),
+        ("media", "duration") => format!("({} / 1e3)", payload_number("duration_ms")),
+        ("media", "stored") => payload_bool(name),
+        ("assignments", "item") => payload_text("target,item"),
+        ("assignments", "field" | "value" | "level") => payload_text(name),
         (_, "start" | "end") => payload_time(name),
         (_, "duration" | "active") => payload_number(name),
         (_, "open") => payload_bool(name),

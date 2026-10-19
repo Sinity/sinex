@@ -25,6 +25,8 @@ pub struct Api {
     pub agent_grants: Vec<sinex_model::Class>,
     /// The sealed class's unlock session, shared by every call.
     pub unlock: std::sync::Arc<tokio::sync::Mutex<Option<Unlocked>>>,
+    /// This machine's name, for library requests and scans.
+    pub host: String,
 }
 
 /// An unlock session (spec `privacy.md` §4): the operator's identity until it
@@ -435,7 +437,40 @@ impl Api {
                     Err(e) => refused(e.to_string()),
                 }
             }
+            r @ (Request::LibraryAdd { .. }
+            | Request::LibraryItem { .. }
+            | Request::LibraryTag { .. }
+            | Request::LibraryUntag { .. }
+            | Request::LibrarySet { .. }
+            | Request::LibraryCollect { .. }
+            | Request::LibraryUncollect { .. }
+            | Request::LibraryCollection { .. }
+            | Request::LibraryRate { .. }
+            | Request::LibraryCompare { .. }
+            | Request::LibraryRank { .. }
+            | Request::LibraryOpen { .. }
+            | Request::LibraryViewed { .. }
+            | Request::LibraryPreview { .. }
+            | Request::LibraryImport { .. }) => match self.library(r, caller).await {
+                Ok(v) => data(v),
+                Err(e) => refused(e),
+            },
         }
+    }
+
+    /// The media library's commands (`crate::library`). Reads see only what
+    /// the caller may, through the same visibility as every other read.
+    async fn library(&self, request: Request, caller: &Caller) -> Result<Value, String> {
+        let mut conn = self.acquire(caller).await.map_err(|e| e.to_string())?;
+        crate::library::dispatch(
+            &mut conn,
+            self.writer.as_ref(),
+            &self.blobs,
+            &self.host,
+            request,
+            caller.actor,
+        )
+        .await
     }
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {

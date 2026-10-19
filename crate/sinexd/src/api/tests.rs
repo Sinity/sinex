@@ -111,6 +111,7 @@ async fn world() -> World {
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
         agent_grants: vec![],
         unlock: Default::default(),
+        host: "h".into(),
     };
     let (commits, rx) = watch::channel(0u64);
     let tokens = Tokens::new(Some(READ.into()), Some(AGENT.into()), Some(OPERATOR.into()));

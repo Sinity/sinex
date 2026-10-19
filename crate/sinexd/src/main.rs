@@ -11,6 +11,9 @@ mod daemon;
 mod derive;
 mod ingress;
 mod keys;
+mod library;
+#[cfg(test)]
+mod library_tests;
 mod operate;
 mod publisher;
 mod replay;
@@ -377,6 +380,18 @@ enum Admin {
         #[arg(long, default_value_t = 20)]
         limit: i64,
     },
+    /// Run a media-library command without the daemon (architecture §6.6):
+    /// `library-add PATH`, `library-item ID`, `library-tag ID TAG`, and the
+    /// rest of `sinexctl`'s `library-*` commands. Positional arguments go in
+    /// the command's order; options as `name=value`.
+    Library {
+        #[command(flatten)]
+        at: Store,
+        #[arg(long, default_value = "localhost")]
+        host: String,
+        command: String,
+        args: Vec<String>,
+    },
 }
 
 #[derive(clap::Args)]
@@ -485,6 +500,50 @@ async fn admin(command: Admin) -> Result<(), String> {
                 "{}",
                 sinex_protocol::Subjects::new(subjects)
                     .authorization((&daemon_user, &daemon_password), &users)
+            );
+            Ok(())
+        }
+        Admin::Library {
+            at,
+            host,
+            command,
+            args,
+        } => {
+            let spec = sinex_protocol::command(&command)
+                .filter(|c| c.name.starts_with("library-"))
+                .ok_or_else(|| format!("no library command `{command}`"))?;
+            let mut map = serde_json::Map::new();
+            let mut positional = spec.args.iter().filter(|a| a.positional);
+            for arg in args {
+                let (name, value) = match arg.split_once('=') {
+                    Some((n, v)) if spec.args.iter().any(|a| a.name == n) => {
+                        (n.to_owned(), v.to_owned())
+                    }
+                    _ => {
+                        let a = positional.next().ok_or_else(|| {
+                            format!("`{command}` takes no more positional arguments: {arg}")
+                        })?;
+                        (a.name.to_owned(), arg)
+                    }
+                };
+                let kind = spec.args.iter().find(|a| a.name == name).map(|a| a.kind);
+                let value = match kind {
+                    Some(sinex_protocol::ArgKind::Bool) => serde_json::Value::Bool(value == "true"),
+                    _ => serde_json::Value::String(value),
+                };
+                map.insert(name, value);
+            }
+            let request = sinex_protocol::Request::from_args(&command, map)?;
+            let mut ctx = context::Context::open(&at.database, &at.store).await?;
+            let writer = ctx.writer.clone();
+            let blobs = ctx.blobs.clone();
+            let result =
+                library::dispatch(&mut ctx.aux, Some(&writer), &blobs, &host, request, ACTOR).await;
+            drop(writer);
+            ctx.close().await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&result?).expect("JSON values print")
             );
             Ok(())
         }

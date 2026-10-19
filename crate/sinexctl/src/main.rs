@@ -180,6 +180,52 @@ fn fail(code: u8, message: impl std::fmt::Display) -> ExitCode {
     ExitCode::from(code)
 }
 
+/// `library-open`: ask the daemon where the item's bytes are, hand that file
+/// to the player for its type, and record the view with how long the player
+/// ran (spec `library.md` §4: the target is fixed when the request is made).
+async fn open_and_record(client: &Client, request: &Request, item: &str) -> ExitCode {
+    let target = match client.call(request).await {
+        Ok((_, Reply::Ok { result })) => result,
+        Ok((_, Reply::Refused { reason, .. })) => return fail(REFUSED, reason),
+        Err(ClientError::Unreachable(m)) => {
+            return fail(UNREACHABLE, format!("the daemon is not reachable: {m}"));
+        }
+        Err(e) => return fail(1, e),
+    };
+    let (Some(path), Some(player)) = (target["path"].as_str(), target["player"].as_str()) else {
+        return fail(1, "the daemon's answer named no file or player");
+    };
+    eprintln!("opening {path} with {player}");
+    let started = std::time::Instant::now();
+    let status = tokio::process::Command::new(player)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .status()
+        .await;
+    let seconds = started.elapsed().as_secs_f64();
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(s) => return fail(1, format!("{player} exited with {s}")),
+        Err(e) => return fail(1, format!("{player}: {e}")),
+    }
+    // `xdg-open` returns at once; only a player that ran in the foreground
+    // tells how long the item was open.
+    let seconds = (player != "xdg-open").then_some(seconds);
+    let viewed = Request::LibraryViewed {
+        item: item.to_owned(),
+        seconds: seconds.map(|s| format!("{s:.1}")),
+        player: Some(player.to_owned()),
+    };
+    match client.call(&viewed).await {
+        Ok((_, Reply::Ok { .. })) => ExitCode::SUCCESS,
+        Ok((_, Reply::Refused { reason, .. })) => fail(
+            REFUSED,
+            format!("opened, but the view was not recorded: {reason}"),
+        ),
+        Err(e) => fail(1, format!("opened, but the view was not recorded: {e}")),
+    }
+}
+
 fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).expect("JSON prints"));
 }
@@ -343,6 +389,11 @@ async fn main() -> ExitCode {
         Ok(r) => r,
         Err(e) => return fail(1, e),
     };
+    if let Request::LibraryOpen { item, .. } = &request
+        && !json
+    {
+        return open_and_record(&client, &request, item).await;
+    }
     let paged = matches!(
         request,
         Request::Query { .. }
