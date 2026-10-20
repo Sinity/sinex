@@ -646,7 +646,7 @@
     {
       "name": "library.request",
       "kind": "library",
-      "driver": "Operator",
+      "driver": "ApiRequest",
       "consumer": "the media library",
       "class": "open",
       "eventTypes": [

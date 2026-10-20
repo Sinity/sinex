@@ -43,7 +43,7 @@
         cargoBuildFlags = [ "-p" "sinexd" "-p" "sinexctl" "-p" "sinex-session" "-p" "sinex-capture" "-p" "xtask" ];
         doCheck = true;
         # Database tests need devkit's server; they run under `xtask test`.
-        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-automata" ];
+        cargoTestFlags = [ "-p" "sinex-model" "-p" "sinex-protocol" "-p" "sinex-schema" "-p" "sinex-sources" "-p" "sinex-derivations" ];
       };
     in {
       packages.${system} = { default = package; sinexd = package; sinexctl = package; };
@@ -56,13 +56,7 @@
         vm-restore = pkgs.testers.runNixOSTest (import ./nix/tests/restore.nix self);
       };
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ rustPkgs.cargo pkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config pkgs.sccache ];
-        # One compiler cache shared by every checkout and worktree on this
-        # machine, so dependencies compile once; incremental workspace crates
-        # pass through it uncached.
-        RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
-        SCCACHE_DIR = "/realm/state/sccache";
-        SCCACHE_CACHE_SIZE = "60G";
+        packages = [ rustPkgs.cargo pkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config ];
         shellHook = "export CARGO_TARGET_DIR=\"$PWD/target\"";
       };
     };

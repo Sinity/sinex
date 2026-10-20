@@ -12,24 +12,24 @@ The workspace follows the target architecture
 (`/realm/project/sinex/analysis/architecture-20261018/sinex-architecture.md`
 §2).
 
-- `crate/sinex-macros`: the `EventPayload` and `DbCheck` derives.
-- `crate/sinex-model`: identifiers, the three clocks, record locations,
-  equivalence keys, typed payloads (`kinds`), events and batches. No IO.
-- `crate/sinex-protocol`: the command table and the producer protocol. No IO.
-- `crate/sinex-schema`: the schema declared in Rust and `sinex-schema apply`.
+- `crates/sinex-macros`: the `EventPayload` and `DbCheck` derives.
+- `crates/sinex-model`: identifiers, the three clocks, record locations,
+  equivalence keys, typed payloads (`event_types`), events and batches. No IO.
+- `crates/sinex-protocol`: the command table and the producer protocol. No IO.
+- `crates/sinex-schema`: the schema declared in Rust and `sinex-schema apply`.
   It has no checked queries, so it builds before any database exists.
-- `crate/sinex-store`: admission (the only way events are stored), materials,
+- `crates/sinex-store`: admission (the only way events are stored), materials,
   positions, privacy rules, runs, queries. Knows no source by name.
-- `crate/sinex-sources`: the parser trait, the drain, shared drivers
+- `crates/sinex-sources`: the parser trait, the drain, shared drivers
   (append-only file, SQLite rows, export archive, directory snapshot, live
   stream, API cursor, producer, media) and one module per source.
-- `crate/sinex-automata`, `crate/sinex-analysis`: derivations and analysis as
+- `crates/sinex-derivations`, `crates/sinex-analysis`: derivations and analysis as
   pure code.
-- `crate/sinex-library`: the media library.
-- `crate/sinexd`: the daemon: the writer task, source tasks, `backfill`.
-- `crate/sinex-session`, `crate/sinex-capture`: the session service and the
+- `crates/sinex-library`: the media library.
+- `crates/sinexd`: the daemon: the writer task, source tasks, `backfill`.
+- `crates/sinex-session`, `crates/sinex-capture`: the session service and the
   capture-only node, outside producers over the NATS ingress.
-- `crate/sinexctl`, `crate/sinex-offline`: the CLI and MCP server, and
+- `crates/sinexctl`, `crates/sinex-diagnostics`: the CLI and MCP server, and
   diagnostics that work while the daemon is down.
 - `xtask`: developer commands (`check`, `test`, `db`, `boundaries`), built on
   `devkit` from polylogue-sinex-common. Every run is recorded; `xtask status`
@@ -54,8 +54,8 @@ Optimize for fast integration.
 
 - While editing, run focused tests for the change.
 - The pre-push hook (`.githooks/pre-push`) runs `cargo fmt --check` and
-  `xtask boundaries` (seconds). There is no hosted CI and no required check;
-  open a PR and merge it when it is ready.
+  `xtask boundaries` (seconds). Open a PR when ready and follow the forge's
+  current check and review rules.
 - Heavier work runs as AgentCTL operations (`agentctl project operations
   sinex`): `check` (fmt, boundaries, clippy against the schema database),
   `test` (all Rust tests under nextest) and `package` (Nix build). Run
@@ -64,6 +64,9 @@ Optimize for fast integration.
 - Merge small PRs often. Rebase before pushing; do not keep long-lived
   branches.
 - Report what you ran and what you did not. A merge is not evidence of testing.
+- Keep the loop fast: compare build, setup and test times separately. When a
+  run slows down, inspect its slow tests, resource waits and cleanup before
+  increasing timeouts or reducing coverage. Record measurements in Beads.
 
 ## Code
 

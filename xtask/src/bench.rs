@@ -20,7 +20,7 @@
 //! (one process per input, so each has its own peak memory), runs every
 //! derivation once, records the result with the host's load, and predicts
 //! the full inputs' time from each input's own rate. Every command it runs
-//! waits out a build pause and holds the real-data lock.
+//! runs inside its AgentCTL job and holds the real-data lock.
 use devkit::bench::{self, Candidate, HostLoad, Manifest};
 use devkit::history::Store;
 use serde_json::{Value, json};
@@ -45,20 +45,6 @@ fn manifest_path() -> PathBuf {
 }
 
 const LOCK: &str = "/realm/tmp/work/realdata.lock";
-
-/// A command that waits out a machine-wide build pause first.
-fn slotted(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let slot = env::var_os("BUILD_SLOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/realm/tmp/work/build-slot"));
-    if slot.exists() {
-        let mut c = Command::new(slot);
-        c.arg(program);
-        c
-    } else {
-        Command::new(program)
-    }
-}
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Bench {
@@ -237,7 +223,7 @@ fn sinexd_binary() -> Result<PathBuf, String> {
     // as `xtask check` does; the server stops on drop if this started it.
     let (server, databases) =
         crate::database::prepare(Path::new(".")).map_err(|e| format!("schema database: {e}"))?;
-    let ok = slotted("cargo")
+    let ok = Command::new("cargo")
         .args(["build", "--locked", "--release", "-p", "sinexd"])
         .envs(crate::database::env(&server, &databases))
         .status()
@@ -352,10 +338,10 @@ impl Drop for Cluster {
     }
 }
 
-/// Runs `sinexd <args> --json` under a memory cap, waiting out a build
-/// pause and holding the real-data lock, and returns its JSON line.
+/// Runs `sinexd <args> --json` under a memory cap and the real-data lock
+/// inside the admitted AgentCTL job, and returns its JSON line.
 fn sinexd(binary: &Path, memory_max: &str, args: &[&std::ffi::OsStr]) -> Result<Value, String> {
-    let output = slotted("systemd-run")
+    let output = Command::new("systemd-run")
         .args(["--user", "--scope", "--quiet", "-p"])
         .arg(format!("MemoryMax={memory_max}"))
         .args(["-p", "MemorySwapMax=0", "--", "flock", "-o", LOCK])

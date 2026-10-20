@@ -1,0 +1,168 @@
+//! Event types. One Rust type per stored event type; the catalog in `ALL`
+//! is the single list the schema registry, NixOS options and documentation are
+//! generated from.
+use crate::EventPayload;
+
+pub mod account;
+pub mod browser;
+pub mod code;
+pub mod communication;
+pub mod derived;
+pub mod desktop;
+pub mod health;
+pub mod library;
+pub mod machine;
+pub mod media;
+pub mod operator;
+pub mod polylogue;
+pub mod session;
+pub mod shell;
+pub mod social;
+
+pub use derived::{ActivitySummary, StateInterval};
+use serde_json::Value;
+pub use shell::{CommandExecuted, CommandFused, CommandImported, ShellSession};
+
+/// A registered event type, as the schema registry stores it.
+#[derive(Clone, Debug)]
+pub struct EventTypeInfo {
+    pub event_type: &'static str,
+    pub key: crate::KeyKind,
+    pub replace: crate::ReplaceRule,
+    /// See [`crate::EventPayload::KEEP_KNOWN`].
+    pub keep_known: &'static [&'static str],
+    pub json_schema: fn() -> Value,
+    /// Build an event of this type from a JSON payload, as arriving over the
+    /// NATS ingress: the payload is decoded into the Rust type first, so the
+    /// type's time and removal rules apply exactly as for in-process sources.
+    pub build: Build,
+}
+
+/// See [`EventTypeInfo::build`].
+pub type Build = fn(
+    &Value,
+    &str,
+    crate::Origin,
+    crate::ReadingOrder,
+    [u8; 32],
+    crate::Class,
+) -> Result<crate::Event, crate::BuildError>;
+
+const fn info<P: EventPayload>() -> EventTypeInfo {
+    EventTypeInfo {
+        event_type: P::EVENT_TYPE,
+        key: P::KEY,
+        replace: P::REPLACE,
+        keep_known: P::KEEP_KNOWN,
+        json_schema: P::payload_schema,
+        build: build_from_json::<P>,
+    }
+}
+
+fn build_from_json<P: EventPayload>(
+    payload: &Value,
+    source: &str,
+    origin: crate::Origin,
+    reading_order: crate::ReadingOrder,
+    record_hash: [u8; 32],
+    class: crate::Class,
+) -> Result<crate::Event, crate::BuildError> {
+    let typed: P = serde_json::from_value(payload.clone())
+        .map_err(|e| crate::BuildError::Payload(P::EVENT_TYPE, e.to_string()))?;
+    crate::Event::build(&typed, source, origin, reading_order, record_hash, class)
+}
+
+/// Every event type Sinex stores.
+pub const ALL: &[EventTypeInfo] = &[
+    info::<CommandExecuted>(),
+    info::<CommandImported>(),
+    info::<CommandFused>(),
+    // Desktop
+    info::<desktop::WindowFocused>(),
+    info::<desktop::WindowOpened>(),
+    info::<desktop::WindowClosed>(),
+    info::<desktop::WindowMoved>(),
+    info::<desktop::WindowTitleChanged>(),
+    info::<desktop::WorkspaceSwitched>(),
+    info::<desktop::MonitorFocused>(),
+    info::<desktop::DesktopOther>(),
+    // Session
+    info::<session::NotificationShown>(),
+    info::<session::NotificationClosed>(),
+    info::<session::NotificationAction>(),
+    info::<session::ClipboardCopied>(),
+    info::<session::PlayerChanged>(),
+    info::<session::EditorEvent>(),
+    info::<session::TerminalEvent>(),
+    info::<session::MediaSegment>(),
+    info::<session::ScreenText>(),
+    info::<session::PageFetched>(),
+    info::<desktop::WindowSpan>(),
+    info::<desktop::PresenceSpan>(),
+    info::<desktop::PresenceInterval>(),
+    info::<desktop::BrowserTabActive>(),
+    info::<desktop::ActivityWatchOther>(),
+    info::<desktop::WindowSampled>(),
+    // Machine
+    info::<machine::JournalEntry>(),
+    info::<machine::CaptureObserved>(),
+    info::<machine::FileChanged>(),
+    info::<machine::TerminalSession>(),
+    info::<machine::TerminalOutput>(),
+    // Code
+    info::<code::GitCommit>(),
+    // Derived
+    info::<ShellSession>(),
+    info::<StateInterval>(),
+    info::<ActivitySummary>(),
+    // Browsing, listening, reading, notes, communication
+    info::<browser::BrowserVisit>(),
+    info::<browser::BrowserUrl>(),
+    info::<browser::BrowserHistoryEntry>(),
+    info::<media::MusicPlayed>(),
+    info::<media::BookmarkSaved>(),
+    info::<media::NoteDocument>(),
+    info::<communication::ChatMessage>(),
+    info::<communication::MailMessage>(),
+    // Polylogue's archive in primary mode
+    info::<polylogue::PolylogueRows>(),
+    // Account exports
+    info::<account::ActionRecorded>(),
+    info::<account::VideoWatched>(),
+    info::<account::VideoSearched>(),
+    info::<account::NoteObserved>(),
+    info::<account::TaskRevised>(),
+    info::<account::PurchaseObserved>(),
+    info::<account::CalendarEvent>(),
+    info::<account::AccountRecord>(),
+    info::<account::LocationSample>(),
+    info::<communication::ConversationMessage>(),
+    info::<media::BookEvent>(),
+    info::<health::HealthRecord>(),
+    info::<social::PostPublished>(),
+    info::<social::VoteCast>(),
+    info::<social::NotificationReceived>(),
+    info::<social::AccountSetting>(),
+    info::<operator::LogEntry>(),
+    info::<operator::SteeringRecord>(),
+    // Library
+    info::<library::Acquisition>(),
+    info::<library::Item>(),
+    info::<library::Rendition>(),
+    info::<library::Assignment>(),
+    info::<library::Collection>(),
+    info::<library::Entry>(),
+    info::<library::Rating>(),
+    info::<library::Comparison>(),
+    info::<library::View>(),
+    info::<library::Dismissal>(),
+];
+
+/// The registered type named `event_type`, for code that holds a type name
+/// read from the database and needs the static one.
+pub fn find(event_type: &str) -> Option<&'static EventTypeInfo> {
+    ALL.iter().find(|k| k.event_type == event_type)
+}
+
+#[cfg(test)]
+mod tests;

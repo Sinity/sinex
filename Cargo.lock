@@ -748,7 +748,7 @@ dependencies = [
 [[package]]
 name = "credential-masking"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.3#3b4e01f20fe56a72bdc21b8fbc7ea93f950100a3"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4#b4f47f43728a096c5dcadaf4cfc9b1f2a1c66554"
 
 [[package]]
 name = "crossbeam-channel"
@@ -956,7 +956,7 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.3#3b4e01f20fe56a72bdc21b8fbc7ea93f950100a3"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4#b4f47f43728a096c5dcadaf4cfc9b1f2a1c66554"
 dependencies = [
  "blake3",
  "clap",
@@ -970,7 +970,7 @@ dependencies = [
 [[package]]
 name = "devkit-macros"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.3#3b4e01f20fe56a72bdc21b8fbc7ea93f950100a3"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4#b4f47f43728a096c5dcadaf4cfc9b1f2a1c66554"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2139,7 +2139,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 [[package]]
 name = "hashed-blobs"
 version = "0.1.1"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.3#3b4e01f20fe56a72bdc21b8fbc7ea93f950100a3"
+source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4#b4f47f43728a096c5dcadaf4cfc9b1f2a1c66554"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -4082,7 +4082,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-automata"
+name = "sinex-capture"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde_json",
+ "sinex-model",
+ "sinex-protocol",
+ "sinex-sources",
+ "tokio",
+]
+
+[[package]]
+name = "sinex-derivations"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -4094,14 +4106,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-capture"
+name = "sinex-diagnostics"
 version = "0.1.0"
 dependencies = [
- "clap",
  "serde_json",
  "sinex-model",
- "sinex-protocol",
- "sinex-sources",
+ "sinex-schema",
+ "sinex-store",
+ "time",
  "tokio",
 ]
 
@@ -4146,18 +4158,6 @@ dependencies = [
  "unicode-normalization",
  "unicode-segmentation",
  "uuid",
-]
-
-[[package]]
-name = "sinex-offline"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "sinex-model",
- "sinex-schema",
- "sinex-store",
- "time",
- "tokio",
 ]
 
 [[package]]
@@ -4269,7 +4269,7 @@ dependencies = [
  "jiff",
  "rmcp",
  "serde_json",
- "sinex-offline",
+ "sinex-diagnostics",
  "sinex-protocol",
  "tokio",
 ]
@@ -4294,7 +4294,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-analysis",
- "sinex-automata",
+ "sinex-derivations",
  "sinex-library",
  "sinex-model",
  "sinex-protocol",

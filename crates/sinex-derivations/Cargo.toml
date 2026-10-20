@@ -1,0 +1,18 @@
+[package]
+name = "sinex-derivations"
+description = "Derivation logic as pure functions: per-event and keyed derivations, one module per derivation."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+sinex-model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+blake3.workspace = true
+jiff.workspace = true
+
+[lints]
+workspace = true

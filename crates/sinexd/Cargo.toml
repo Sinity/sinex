@@ -1,0 +1,45 @@
+[package]
+name = "sinexd"
+description = "The Sinex daemon: admission and the one writer, sources, derivations, the API, the confirmed stream."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+sinex-model.workspace = true
+sinex-schema.workspace = true
+sinex-store.workspace = true
+sinex-sources.workspace = true
+sinex-library.workspace = true
+sinex-derivations.workspace = true
+sinex-analysis.workspace = true
+sinex-protocol = { workspace = true, features = ["cli"] }
+serde_json.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["net"] }
+clap.workspace = true
+time.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+async-nats.workspace = true
+jsonschema.workspace = true
+futures.workspace = true
+base64.workspace = true
+blake3.workspace = true
+serde.workspace = true
+jiff.workspace = true
+axum.workspace = true
+tokio-stream.workspace = true
+credential-masking.workspace = true
+
+[dev-dependencies]
+devkit.workspace = true
+tower = { version = "0.5", features = ["util"] }
+http-body-util.workspace = true
+blake3.workspace = true
+rusqlite.workspace = true
+age.workspace = true
+
+[lints]
+workspace = true

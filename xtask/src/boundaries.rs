@@ -55,7 +55,7 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
     match name {
         "sinex-macros" | "xtask" => Ok(&[]),
         "sinex-model" => Ok(&["sinex-macros"]),
-        "sinex-protocol" | "sinex-schema" | "sinex-automata" | "sinex-analysis" => {
+        "sinex-protocol" | "sinex-schema" | "sinex-derivations" | "sinex-analysis" => {
             Ok(&["sinex-model"])
         }
         // Drivers include the producer side of the NATS ingress, which speaks
@@ -63,21 +63,21 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         "sinex-sources" => Ok(&["sinex-model", "sinex-protocol"]),
         "sinex-store" => Ok(&["sinex-model", "sinex-schema"]),
         "sinex-library" => Ok(&["sinex-model", "sinex-store"]),
-        "sinex-offline" => Ok(&["sinex-model", "sinex-schema", "sinex-store"]),
+        "sinex-diagnostics" => Ok(&["sinex-model", "sinex-schema", "sinex-store"]),
         "sinexd" => Ok(&[
             "sinex-model",
             "sinex-protocol",
             "sinex-schema",
             "sinex-store",
             "sinex-sources",
-            "sinex-automata",
+            "sinex-derivations",
             "sinex-analysis",
             "sinex-library",
         ]),
         "sinex-session" | "sinex-capture" => {
             Ok(&["sinex-model", "sinex-protocol", "sinex-sources"])
         }
-        "sinexctl" => Ok(&["sinex-model", "sinex-protocol", "sinex-offline"]),
+        "sinexctl" => Ok(&["sinex-model", "sinex-protocol", "sinex-diagnostics"]),
         _ => Err(format!("unassigned workspace package: {name}")),
     }
 }
@@ -85,7 +85,7 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
 fn pure(name: &str) -> bool {
     matches!(
         name,
-        "sinex-model" | "sinex-protocol" | "sinex-automata" | "sinex-analysis"
+        "sinex-model" | "sinex-protocol" | "sinex-derivations" | "sinex-analysis"
     )
 }
 fn impure(name: &str) -> bool {

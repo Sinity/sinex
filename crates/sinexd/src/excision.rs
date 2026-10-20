@@ -1,0 +1,94 @@
+//! Excision (permanent; architecture §3.4), through the one writer: what it
+//! would remove, and removing it. Hide and unhide are plain writer batches.
+use crate::writer::{Excision, WriterHandle};
+use sinex_model::OperationId;
+use sinex_sources::sources;
+use sinex_store::Blobs;
+use sinex_store::excision::{self, Plan, Rewrite, Target};
+use sqlx::PgConnection;
+
+pub fn describe(plan: &Plan) -> String {
+    let records: usize = plan.materials.iter().map(|m| m.anchors.len()).sum();
+    let whole = plan
+        .materials
+        .iter()
+        .filter(|m| m.whole && !m.sealed)
+        .count();
+    let sealed = plan.materials.iter().filter(|m| m.sealed).count();
+    format!(
+        "events {} | records blanked {records} | whole materials blanked {whole} | sealed materials whose key is destroyed {sealed}",
+        plan.events.len(),
+    )
+}
+
+/// Excise `target`: blank its records' bytes in new blobs, then remove every
+/// reading in one transaction; the old blob files go after commit. Takes a
+/// read connection, the content store and the writer.
+pub async fn excise_with(
+    read_conn: &mut PgConnection,
+    blobs: &Blobs,
+    writer: &WriterHandle,
+    target: Target,
+    actor: &str,
+) -> Result<String, String> {
+    let plan = excision::plan(read_conn, target)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut rewrites = Vec::new();
+    for m in plan.materials.iter().filter(|m| !m.sealed) {
+        let mut bytes = blobs.read(&m.blob).map_err(|e| e.to_string())?;
+        let spans: Vec<(usize, usize)> = if m.whole {
+            vec![(0, bytes.len())]
+        } else {
+            // Framing belongs to the source's declaration, whatever the
+            // binding's settings.
+            let spec = sources::specs()
+                .into_iter()
+                .find(|s| s.parser == m.parser)
+                .ok_or_else(|| format!("material {}: no source has parser {}", m.id, m.parser))?;
+            let framed = (spec.framer)(&bytes).0;
+            m.anchors
+                .iter()
+                .map(|a| {
+                    framed
+                        .iter()
+                        .find(|(s, _)| i64::try_from(*s).is_ok_and(|s| s == *a))
+                        .copied()
+                        .ok_or_else(|| format!("material {}: no record starts at {a}", m.id))
+                })
+                .collect::<Result<_, _>>()?
+        };
+        excision::blank(&mut bytes, &spans);
+        rewrites.push(Rewrite {
+            material: m.id,
+            blob: blobs.put(&bytes).map_err(|e| e.to_string())?,
+            length: bytes.len() as u64,
+        });
+    }
+    let done = writer
+        .excise(Excision {
+            target,
+            plan,
+            rewrites,
+            operation: OperationId::new(),
+            actor: actor.to_owned(),
+            blobs: blobs.clone(),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    let a = &done.applied;
+    let mut out = format!(
+        "excised events {} | materials rewritten {} | keys destroyed {} | blob files deleted {}",
+        a.events,
+        a.materials_rewritten,
+        a.keys_destroyed,
+        a.delete_after_commit.len() - done.files_left.len()
+    );
+    if !done.files_left.is_empty() {
+        out.push_str(&format!(
+            "\nblob files no row refers to but that could not be deleted: {}",
+            done.files_left.join(", ")
+        ));
+    }
+    Ok(out)
+}
