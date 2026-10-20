@@ -72,3 +72,47 @@ fn chunks_in_order_are_checked_then_stored() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn plain_copy_and_retained_reader_keep_exact_bytes() {
+    let dir = std::env::temp_dir().join(format!("sinex-plain-copy-{}", uuid::Uuid::now_v7()));
+    let blobs = Blobs::open(&dir).unwrap();
+    let bytes: Vec<u8> = (0..(8 << 20)).map(|n| (n % 251) as u8).collect();
+    let name = blobs.put(&bytes).unwrap();
+    struct Compare<'a> {
+        expected: &'a [u8],
+        through: usize,
+    }
+    impl std::io::Write for Compare<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            assert_eq!(
+                bytes,
+                &self.expected[self.through..self.through + bytes.len()]
+            );
+            self.through += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut out = Compare {
+        expected: &bytes,
+        through: 0,
+    };
+    assert_eq!(blobs.copy_to(&name, &mut out).unwrap(), bytes.len() as u64);
+    assert_eq!(out.through, bytes.len());
+    assert!(
+        blobs
+            .read_plain(&name, Some(bytes.len() as u64 + 1), || Ok(()))
+            .is_err()
+    );
+    let mut reader = blobs
+        .read_plain(&name, Some(bytes.len() as u64), || Ok(()))
+        .unwrap();
+    let mut prefix = [0; 19];
+    reader.read_exact(&mut prefix).unwrap();
+    assert_eq!(prefix, bytes[..19]);
+    drop(reader);
+    std::fs::remove_dir_all(dir).unwrap();
+}

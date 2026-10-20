@@ -133,6 +133,18 @@ impl Blobs {
         Ok(self.0.read_range(&parse(name)?, offset, len)?)
     }
 
+    /// Verify and open a plain blob for bounded sequential reads. The same representation
+    /// stays open; the callback can cancel verification and subsequent reads. Delta and sealed
+    /// encodings keep their separate read/key APIs and are refused by this operation.
+    pub fn read_plain(
+        &self,
+        name: &str,
+        expected_len: Option<u64>,
+        check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
+    ) -> Result<hashed_blobs::PlainReader> {
+        Ok(self.0.read_plain(&parse(name)?, expected_len, check)?)
+    }
+
     /// The whole blob, verified against its name as it is read.
     pub fn read(&self, name: &str) -> Result<Vec<u8>> {
         let mut out = Vec::new();
@@ -141,11 +153,18 @@ impl Blobs {
         Ok(out)
     }
 
-    /// Stream a blob into `out`, verified against its name as it is read,
-    /// without holding it in memory. Returns the bytes written.
+    /// Copy verified content into `out`. Plain blobs use bounded sequential reads; the
+    /// legacy delta read still materializes the decoded body. Sealed blobs require a key
+    /// and are refused here. Returns the number of bytes written.
     pub fn copy_to(&self, name: &str, out: &mut impl std::io::Write) -> Result<u64> {
-        std::io::copy(&mut self.0.read(&parse(name)?)?, out)
-            .map_err(|e| crate::Error::Invalid(format!("read {name}: {e}")))
+        let hash = parse(name)?;
+        let copied = match self.0.kind(&hash)? {
+            hashed_blobs::Kind::Plain => {
+                std::io::copy(&mut self.0.read_plain(&hash, None, || Ok(()))?, out)
+            }
+            _ => std::io::copy(&mut self.0.read(&hash)?, out),
+        };
+        copied.map_err(|e| crate::Error::Invalid(format!("read {name}: {e}")))
     }
 
     /// Delete a blob's file once no row refers to it (spec `storage.md` §5:
