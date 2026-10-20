@@ -55,7 +55,10 @@ Optimize for fast integration.
 
 - While editing, run selected tests with
   `agentctl job start sinex focused -- -p <package> -E 'test(<name>)'`
-  in the normal queue. Package selection limits the build; a name filter alone
+  in the normal queue. For selected compilation use `agentctl job start sinex
+  compile -- -p <package> [--tests]`; it sets the schema database and runs
+  `cargo check --locked` without adding workspace selection. Package selection
+  limits the build; a name filter alone
   still builds the workspace. Full suites use the bulk `test` operation.
 - The pre-push hook (`.githooks/pre-push`) runs `cargo fmt --check` and
   `xtask boundaries` (seconds). Open a PR when ready and follow the forge's

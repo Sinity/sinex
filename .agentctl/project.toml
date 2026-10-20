@@ -77,3 +77,12 @@ result = "exit"
 timeout_seconds = 14400
 scratch = "nvme"
 cache = "none"
+
+[operations.compile]
+description = "Selected package or target compilation against the schema database"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "compile"]
+arguments = "required"
+pool = "normal"
+result = "exit"
+timeout_seconds = 1800
+cache = "none"
