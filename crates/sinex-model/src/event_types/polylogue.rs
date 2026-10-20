@@ -7,6 +7,9 @@
 //! cite are materials of their own, placed in the content store before the
 //! event. Sinex never parses either: a deleted Polylogue archive is restored
 //! by reading these batches back in `local_seq` order.
+mod replacement;
+pub use replacement::{ArchiveUnit, ExcisionPublication, UnitReplacement};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +39,10 @@ pub struct PolylogueRows {
     /// `blake3:<hex>` of every input blob the rows cite, each a material
     /// placed before this event.
     pub blobs: Vec<String>,
+    /// Confirmed current replacements or tombstones. Restore selects these
+    /// before opening old batches, whose bytes may already be retired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excision: Option<ExcisionPublication>,
 }
 
 #[cfg(test)]
