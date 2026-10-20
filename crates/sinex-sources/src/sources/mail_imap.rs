@@ -390,7 +390,7 @@ impl ImapMail {
             material: Some(NewMaterial {
                 id,
                 bytes,
-                stored_file: None,
+                stored: None,
                 records,
                 part_index,
                 previous_part: previous.material,

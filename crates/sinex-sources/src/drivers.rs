@@ -37,6 +37,8 @@ pub trait MaterialSink: Send + Sync {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DriverError {
+    #[error("capture was cancelled")]
+    Cancelled,
     #[error("{0}")]
     Io(String),
     #[error("stored cursor does not decode: {0}")]
@@ -59,6 +61,13 @@ pub struct Acquired {
     pub cursor_unchanged: Value,
 }
 
+/// Bytes already retained independently from the current decoded records.
+#[derive(Clone, Debug)]
+pub enum StoredBytes {
+    File(std::path::PathBuf),
+    Blob { name: String, length: u64 },
+}
+
 pub struct NewMaterial {
     pub id: MaterialId,
     /// The bytes the records index into.
@@ -66,7 +75,7 @@ pub struct NewMaterial {
     /// When set, the material stored is this file as received (an export
     /// archive) and `bytes` is the stream decoded from it as the manifest
     /// describes, so a replay decodes the stored file the same way.
-    pub stored_file: Option<std::path::PathBuf>,
+    pub stored: Option<StoredBytes>,
     pub records: Vec<(usize, usize)>,
     pub part_index: u32,
     pub previous_part: Option<MaterialId>,
@@ -132,13 +141,14 @@ pub fn prepare<'s>(
     let material = match acquired.material {
         None => None,
         Some(m) => {
-            let (blob, length) = match &m.stored_file {
-                Some(path) => {
+            let (blob, length) = match &m.stored {
+                Some(StoredBytes::File(path)) => {
                     let length = std::fs::metadata(path)
                         .map_err(|e| DriverError::Io(format!("{}: {e}", path.display())))?
                         .len();
                     (sink.put_file(path).map_err(DriverError::Store)?, length)
                 }
+                Some(StoredBytes::Blob { name, length }) => (name.clone(), *length),
                 None => (
                     sink.put(&m.bytes).map_err(DriverError::Store)?,
                     m.bytes.len() as u64,

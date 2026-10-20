@@ -503,7 +503,7 @@ impl LibraryScan {
             material: Some(NewMaterial {
                 id,
                 bytes: lines,
-                stored_file: None,
+                stored: None,
                 records,
                 part_index,
                 previous_part: previous.material,
@@ -923,7 +923,7 @@ pub fn request_material(
         material: Some(NewMaterial {
             id: MaterialId::new(),
             bytes,
-            stored_file: None,
+            stored: None,
             records: spans,
             part_index: 0,
             previous_part: None,

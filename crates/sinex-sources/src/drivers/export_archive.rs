@@ -15,6 +15,9 @@
 //! An unchanged stat tuple skips the file. A changed one whose content hash is
 //! the same is a touch, not a new export. Anything else is a new revision,
 //! read from the start; record keys make the records already held repeats.
+pub mod group;
+mod records;
+
 use super::{Acquired, DriverError, NewMaterial, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -95,6 +98,7 @@ pub enum Container {
     TarGzip,
 }
 
+#[derive(Clone)]
 pub struct ExportArchive {
     pub path: PathBuf,
     pub host: String,
@@ -316,7 +320,7 @@ impl ExportArchive {
             material: Some(NewMaterial {
                 id,
                 bytes: read.bytes,
-                stored_file: read.stored_file,
+                stored: read.stored_file.map(super::StoredBytes::File),
                 records: read.records,
                 part_index,
                 previous_part,

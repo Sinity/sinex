@@ -262,7 +262,7 @@ impl Crawl {
                     id,
                     records: vec![(0, body.len())],
                     bytes: body,
-                    stored_file: None,
+                    stored: None,
                     part_index,
                     previous_part: previous.material,
                     reading_order: crate::drivers::reading_order(&manifest),

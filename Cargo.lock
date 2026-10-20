@@ -4223,6 +4223,7 @@ dependencies = [
  "sinex-model",
  "sinex-protocol",
  "tar",
+ "tempfile",
  "thiserror 2.0.21",
  "time",
  "tokio",
