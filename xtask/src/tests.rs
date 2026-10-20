@@ -60,3 +60,14 @@ fn test_selection_does_not_treat_binary_arguments_as_package_selection() {
     let got = test_options(&["--".into(), "-p".into()], Vec::new());
     assert_eq!(got.args, ["--locked", "--workspace", "--", "-p"]);
 }
+
+#[test]
+fn compile_requires_and_preserves_explicit_selection() {
+    assert!(Cli::try_parse_from(["xtask", "compile"]).is_err());
+    let Cli::Compile { args } =
+        Cli::try_parse_from(["xtask", "compile", "-p", "sinex-model", "--tests"]).unwrap()
+    else {
+        panic!("expected compile")
+    };
+    assert_eq!(args, ["-p", "sinex-model", "--tests"]);
+}

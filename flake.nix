@@ -56,7 +56,7 @@
         vm-restore = pkgs.testers.runNixOSTest (import ./nix/tests/restore.nix self);
       };
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ rustPkgs.cargo pkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config ];
+        packages = [ rustPkgs.cargo rustPkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config ];
         shellHook = "export CARGO_TARGET_DIR=\"$PWD/target\"";
       };
     };

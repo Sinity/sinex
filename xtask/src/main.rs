@@ -16,6 +16,11 @@ type Result<T = ()> = std::result::Result<T, String>;
 enum Cli {
     /// fmt, dependency boundaries and clippy against the schema database.
     Check,
+    /// Compile selected packages or targets against the schema database.
+    Compile {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        args: Vec<String>,
+    },
     /// Rust tests under nextest; each database test clones the schema template.
     Test {
         /// Further `cargo nextest run` arguments: packages, filters, names.
@@ -38,6 +43,7 @@ enum Cli {
 fn main() -> ExitCode {
     match Cli::parse() {
         Cli::Check => recorded("check", &[], check),
+        Cli::Compile { args } => recorded("compile", &args, |run| compile(run, &args)),
         Cli::Test { args } => recorded("test", &args, |run| test(run, &args)),
         Cli::Db(command) => {
             let (hash, apply) = match database::schema(Path::new(".")) {
@@ -99,6 +105,21 @@ fn check(run: &mut Run) -> Result {
         &["clippy", "--locked", "--workspace", "--all-targets"],
         &database::env(&server, &databases),
     )?;
+    Ok(())
+}
+
+fn compile(run: &mut Run, args: &[String]) -> Result {
+    let mut prepared = None;
+    run.step("database", |run| {
+        prepared = Some(database::prepare(&run.root)?);
+        Ok(())
+    })?;
+    let (server, databases) = prepared.expect("prepared");
+    let selected: Vec<&str> = ["check", "--locked"]
+        .into_iter()
+        .chain(args.iter().map(String::as_str))
+        .collect();
+    run.cargo_with("compile", &selected, &database::env(&server, &databases))?;
     Ok(())
 }
 
