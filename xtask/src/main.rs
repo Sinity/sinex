@@ -7,7 +7,7 @@ mod database;
 use clap::Parser;
 use devkit::{Nextest, Run, pg::Schema};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 type Result<T = ()> = std::result::Result<T, String>;
 
@@ -84,7 +84,7 @@ fn recorded(command: &str, args: &[String], steps: impl FnOnce(&mut Run) -> Resu
 fn check(run: &mut Run) -> Result {
     run.command(
         "fmt",
-        Command::new("cargo").args(["fmt", "--all", "--", "--check"]),
+        devkit::cargo_command().args(["fmt", "--all", "--", "--check"]),
     )?;
     run.step("boundaries", |run| Ok(boundaries::check(&run.root)?))?;
     let mut prepared = None;

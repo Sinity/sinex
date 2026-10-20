@@ -224,7 +224,7 @@ fn sinexd_binary() -> Result<PathBuf, String> {
     // as `xtask check` does; the server stops on drop if this started it.
     let (server, databases) =
         crate::database::prepare(Path::new(".")).map_err(|e| format!("schema database: {e}"))?;
-    let ok = Command::new("cargo")
+    let ok = devkit::cargo_command()
         .args(["build", "--locked", "--release", "-p", "sinexd"])
         .envs(crate::database::env(&server, &databases))
         .status()

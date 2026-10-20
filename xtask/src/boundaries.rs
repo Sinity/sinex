@@ -245,7 +245,7 @@ pub fn check(root: &Path) -> Result<(), String> {
     // The graph for the platform the crates are built for: a dependency that
     // only another platform uses (`log` under wasm32) is not built here.
     let host = host_triple()?;
-    let output = Command::new("cargo")
+    let output = devkit::cargo_command()
         .args([
             "metadata",
             "--format-version",

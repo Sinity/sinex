@@ -42,7 +42,7 @@ pub fn schema_hash(root: &Path) -> Result<String> {
 /// Build the query-free schema tool and apply the schema to `database`.
 pub fn bootstrap(server: &Server, database: &str) -> devkit::pg::Result {
     server.ensure_roles(ROLES)?;
-    let status = Command::new("cargo")
+    let status = devkit::cargo_command()
         .args(["build", "--locked", "-p", "sinex-schema"])
         .status()
         .map_err(|e| format!("cargo build: {e}"))?;
