@@ -14,7 +14,7 @@ The workspace follows the target architecture
 
 - `crates/sinex-macros`: the `EventPayload` and `DbCheck` derives.
 - `crates/sinex-model`: identifiers, the three clocks, record locations,
-  equivalence keys, typed payloads (`kinds`), events and batches. No IO.
+  equivalence keys, typed payloads (`event_types`), events and batches. No IO.
 - `crates/sinex-protocol`: the command table and the producer protocol. No IO.
 - `crates/sinex-schema`: the schema declared in Rust and `sinex-schema apply`.
   It has no checked queries, so it builds before any database exists.

@@ -604,7 +604,14 @@ async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
                 break;
             }
         }
-        assert!(daemon.try_wait().unwrap().is_none(), "the daemon stopped");
+        if let Some(status) = daemon.try_wait().unwrap() {
+            let output = daemon.wait_with_output().unwrap();
+            panic!(
+                "the daemon stopped ({status}):\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
         assert!(
             Instant::now() < deadline,
             "the publisher never caught up ({behind} behind)"

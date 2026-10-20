@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 pub struct Options {
     pub database: String,
     pub store: PathBuf,
-    /// `kind=path`, one per input; see [`sources::kinds`].
+    /// `kind=path`, one per input; see [`sources::input_kinds`].
     pub sources: Vec<String>,
     /// The zone sources with local times were written in (IANA name); the
     /// system zone when unset. Recorded with each binding.

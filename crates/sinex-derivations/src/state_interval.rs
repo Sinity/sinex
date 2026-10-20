@@ -367,7 +367,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
                     .get(end)
                     .and_then(|v| serde_json::from_value(v.clone()).ok());
                 let observed = observed.map(|t| t.max(at));
-                // A interruption inside the span ends it there.
+                // An interruption inside the span ends it there.
                 let interrupted = interruptions
                     .iter()
                     .find(|(_, f)| *f > at && observed.is_none_or(|o| *f < o));
