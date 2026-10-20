@@ -108,19 +108,7 @@ pub fn key_ref(payload: &Value) -> Option<&str> {
 /// Seal an event read from a sealed material: encrypt its payload, key its
 /// equivalence key and record hash, and set its class.
 pub fn seal_event(event: &mut Event, key: &DataKey) -> Result<()> {
-    let plain = serde_json::to_vec(&event.payload).map_err(|e| Error::Invalid(e.to_string()))?;
-    let mut nonce = [0u8; 24];
-    getrandom::fill(&mut nonce).map_err(|e| Error::Invalid(format!("random nonce: {e}")))?;
-    let cipher = XChaCha20Poly1305::new((&payload_key(&key.key)).into());
-    let sealed = cipher
-        .encrypt(&XNonce::from(nonce), plain.as_slice())
-        .map_err(|_| Error::Invalid("payload encryption failed".into()))?;
-    let mut body = nonce.to_vec();
-    body.extend(sealed);
-    event.payload = json!({
-        "sealed": base64::engine::general_purpose::STANDARD.encode(body),
-        "key": key.key_ref,
-    });
+    event.payload = seal_value(&event.payload, key)?;
     let naming = naming_key(&key.key);
     if let Some(k) = &event.equivalence_key {
         event.equivalence_key = Some(EquivalenceKey(format!(
@@ -131,6 +119,29 @@ pub fn seal_event(event: &mut Event, key: &DataKey) -> Result<()> {
     event.record_hash = *blake3::keyed_hash(&naming, &event.record_hash).as_bytes();
     event.class = Class::Sealed;
     Ok(())
+}
+
+/// Seal one persisted interpretation value, including parser carry or failure details.
+pub fn seal_value(value: &Value, key: &DataKey) -> Result<Value> {
+    let plain = serde_json::to_vec(value).map_err(|e| Error::Invalid(e.to_string()))?;
+    let mut nonce = [0u8; 24];
+    getrandom::fill(&mut nonce).map_err(|e| Error::Invalid(format!("random nonce: {e}")))?;
+    let cipher = XChaCha20Poly1305::new((&payload_key(&key.key)).into());
+    let sealed = cipher
+        .encrypt(&XNonce::from(nonce), plain.as_slice())
+        .map_err(|_| Error::Invalid("payload encryption failed".into()))?;
+    let mut body = nonce.to_vec();
+    body.extend(sealed);
+    Ok(json!({
+        "sealed": base64::engine::general_purpose::STANDARD.encode(body),
+        "key": key.key_ref,
+    }))
+}
+
+/// A sealed value carried by a text column, such as a failure reason.
+pub fn sealed_text(text: &str) -> Option<Value> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    is_sealed(&value).then_some(value)
 }
 
 /// The plaintext of a sealed payload.
@@ -170,6 +181,17 @@ pub async fn store_key(
     )
     .execute(&mut *conn)
     .await?;
+    let actual = sqlx::query_scalar!(
+        "SELECT key_ref FROM privacy.material_keys WHERE material_id=$1",
+        material.0
+    )
+    .fetch_one(conn)
+    .await?;
+    if actual != key_ref {
+        return Err(Error::Invalid(
+            "material is already bound to a different sealed key".into(),
+        ));
+    }
     Ok(())
 }
 

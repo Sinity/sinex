@@ -128,6 +128,7 @@ pub struct Options {
     pub compare: bool,
     pub resume: Option<OperationId>,
     pub actor: String,
+    pub authority: Option<crate::sealed_access::Authority>,
 }
 
 /// Replay with its parts: a read connection, the content store and the writer
@@ -189,6 +190,32 @@ pub async fn run(
         }
         let chain: Vec<Stored> = chain[..=last].iter().map(|m| (*m).clone()).collect();
         let parsers = sources_of(read_conn, &chain).await?;
+        let mut keys = HashMap::new();
+        for material in &chain {
+            if sinex_model::MaterialRole::of(&material.manifest).map_err(|e| e.to_string())?
+                == sinex_model::MaterialRole::OriginalArchive
+            {
+                continue;
+            }
+            if blobs.is_sealed(&material.blob).map_err(|e| e.to_string())? {
+                let authority=o.authority.as_ref().ok_or_else(||format!("material {}: sealed replay is pending explicit operator unlock and --sealed",material.id))?;
+                let reference =
+                    sinex_store::material_bytes::reference(read_conn, MaterialId(material.id))
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or("sealed material reference missing")?;
+                keys.insert(
+                    material.id,
+                    (
+                        authority
+                            .material_key(read_conn, MaterialId(material.id))
+                            .await?,
+                        reference.length,
+                    ),
+                );
+            }
+        }
+        let authority = o.authority.clone();
         // The chain is read on a blocking thread while the writer admits its
         // batches as they come, a few at a time.
         let (sender, batches) = tokio::sync::mpsc::channel(READ_AHEAD);
@@ -196,7 +223,15 @@ pub async fn run(
             let (blobs, in_scope, scope) = (blobs.clone(), in_scope.clone(), scope.clone());
             tokio::task::spawn_blocking(move || {
                 read_chain(
-                    &blobs, &chain, &parsers, &in_scope, &scope, operation, &sender,
+                    &blobs,
+                    &chain,
+                    &parsers,
+                    &in_scope,
+                    &scope,
+                    operation,
+                    &sender,
+                    &keys,
+                    authority.as_ref(),
                 )
             })
         };
@@ -204,7 +239,11 @@ pub async fn run(
             .replay(ReplayChain {
                 operation,
                 actor: o.actor.clone(),
-                scope: scope.to_json(),
+                scope: {
+                    let mut value = scope.to_json();
+                    value["sealed"] = Value::Bool(o.authority.is_some());
+                    value
+                },
                 root,
                 compare: o.compare,
                 batches,
@@ -318,6 +357,7 @@ struct Read {
 /// they are built. The first batch carries the request to archive what is
 /// re-read. A material that cannot be read is sent as an error, which rolls
 /// the chain back.
+#[allow(clippy::too_many_arguments)]
 fn read_chain(
     blobs: &sinex_store::Blobs,
     chain: &[Stored],
@@ -326,10 +366,12 @@ fn read_chain(
     scope: &Scope,
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
+    keys: &HashMap<Uuid, (sinex_store::sealed::DataKey, u64)>,
+    authority: Option<&crate::sealed_access::Authority>,
 ) -> Read {
     let mut read = Read::default();
     if let Err(error) = read_chain_into(
-        blobs, chain, parsers, in_scope, scope, operation, out, &mut read,
+        blobs, chain, parsers, in_scope, scope, operation, out, &mut read, keys, authority,
     ) {
         // The writer may already have stopped reading; nothing else to tell.
         let _ = out.blocking_send(Err(error));
@@ -347,8 +389,13 @@ fn read_chain_into(
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     report: &mut Read,
+    keys: &HashMap<Uuid, (sinex_store::sealed::DataKey, u64)>,
+    authority: Option<&crate::sealed_access::Authority>,
 ) -> Result<(), String> {
     let send = |batch: Batch| {
+        if let Some(authority) = authority {
+            authority.check()?;
+        }
         out.blocking_send(Ok(batch))
             .map_err(|_| "the writer stopped reading the chain".to_owned())
     };
@@ -392,15 +439,31 @@ fn read_chain_into(
                 m.id
             ));
         }
-        // A sealed material needs the class unlocked to be read; replay does
-        // not unlock, so it is deferred and named rather than read blind.
-        if blobs.is_sealed(&m.blob).map_err(|e| e.to_string())? {
-            return Err(format!(
-                "material {}: sealed; replaying it needs the sealed class unlocked, which replay does not do yet (deferred)",
-                m.id
-            ));
-        }
-        let bytes = blobs.read(&m.blob).map_err(|e| e.to_string())?;
+        let key = keys.get(&m.id);
+        let bytes = if let Some((key, length)) = key {
+            use std::io::Read;
+            let authority = authority
+                .ok_or("sealed replay requires scoped authority")?
+                .clone();
+            let mut reader = blobs
+                .read_sealed(
+                    &m.blob,
+                    Some(*length),
+                    key,
+                    crate::sealed_access::read_limits(*length)?,
+                    move || {
+                        authority
+                            .check()
+                            .map_err(|e| std::io::Error::other(e).into())
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+            bytes
+        } else {
+            blobs.read(&m.blob).map_err(|e| e.to_string())?
+        };
         let records = drivers::stored_records(&m.manifest, &bytes, source.spec().framer);
         let order = drivers::reading_order(&m.manifest);
         // Chunks are drained one at a time, so a material's events are never
@@ -428,7 +491,7 @@ fn read_chain_into(
             if !scoped {
                 continue;
             }
-            let records: Vec<RecordOutcome> = chunk
+            let mut records: Vec<RecordOutcome> = chunk
                 .outcomes
                 .into_iter()
                 .filter_map(|outcome| match outcome {
@@ -447,6 +510,24 @@ fn read_chain_into(
                 .collect();
             if records.is_empty() {
                 continue;
+            }
+            if let Some((key, _)) = key {
+                for record in &mut records {
+                    match record {
+                        RecordOutcome::Events { events, .. } => {
+                            for event in events {
+                                sinex_store::sealed::seal_event(event, key)
+                                    .map_err(|e| e.to_string())?;
+                            }
+                        }
+                        RecordOutcome::Failure { reason, .. } => {
+                            *reason =
+                                sinex_store::sealed::seal_value(&Value::String(reason.clone()), key)
+                                    .map_err(|e| e.to_string())?
+                                    .to_string()
+                        }
+                    }
+                }
             }
             send(Batch {
                 run: RunId::new(),

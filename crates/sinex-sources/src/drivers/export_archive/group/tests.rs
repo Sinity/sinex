@@ -67,6 +67,7 @@ fn facts(length: usize) -> ObservationFacts {
 }
 fn route(cursor: Value, pending: Option<Pending>, budget: usize) -> Route {
     Route {
+        class: Class::Open,
         driver: driver(budget),
         cursor,
         pending,
@@ -405,4 +406,180 @@ fn cancellation_stops_decoding_before_an_unused_large_suffix() {
     assert!(matches!(result, Err(DriverError::Cancelled)));
     assert!(seen.events[&0].len() < 400);
     assert_ne!(seen.cursors[&0]["done"], true);
+}
+
+#[test]
+fn sealed_zip_uses_supplied_seek_without_plaintext_staging() {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("a.json", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(&points(7)).unwrap();
+    let raw = zip.finish().unwrap().into_inner();
+    let sink = Sink::default();
+    let blob = sink.put(&raw).unwrap();
+    let mut sealed_route = route(Value::Null, None, 400);
+    sealed_route.class = Class::Sealed;
+    let mut seen = Seen::default();
+    let work = read_input(
+        Input::Seekable(Box::new(std::io::Cursor::new(raw.clone()))),
+        blob.clone(),
+        raw.len() as u64,
+        facts(raw.len()),
+        Arc::new(AtomicBool::new(false)),
+        vec![sealed_route],
+        &sink,
+        &mut |index, acquired| Ok(seen.accept(index, acquired, &sink)),
+    )
+    .unwrap();
+    assert_eq!(work.zip_staging_bytes, 0);
+    assert_eq!(work.member_staging_bytes, 0);
+    assert_eq!(seen.events[&0].len(), 7);
+    let mut sealed_route = route(Value::Null, None, 400);
+    sealed_route.class = Class::Sealed;
+    let error = read(
+        Box::new(std::io::Cursor::new(raw.clone())),
+        blob,
+        raw.len() as u64,
+        facts(raw.len()),
+        Arc::new(AtomicBool::new(false)),
+        vec![sealed_route],
+        &sink,
+        &mut |_, _| panic!("refuse before original admission"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("plaintext staging is forbidden"));
+}
+
+#[test]
+fn zip_members_keep_exact_ranges_and_long_plain_records_stay_whole() {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for i in 0..20 {
+        zip.start_file(
+            format!("Takeout/{i:02}.json"),
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(format!("[{},{}]", i * 2, i * 2 + 1).as_bytes())
+            .unwrap();
+    }
+    zip.start_file("unused.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(b"not JSON").unwrap();
+    let raw = zip.finish().unwrap().into_inner();
+    let sink = Sink::default();
+    let blob = sink.put(&raw).unwrap();
+    let mut selected = route(Value::Null, None, 20);
+    selected.driver.framing = Framing::JsonArray("");
+    let mut records = Vec::new();
+    let mut parts = 0;
+    let mut original = 0;
+    let mut cursor = Value::Null;
+    let work = read(
+        Box::new(std::io::Cursor::new(raw.clone())),
+        blob,
+        raw.len() as u64,
+        facts(raw.len()),
+        Arc::new(AtomicBool::new(false)),
+        vec![selected],
+        &sink,
+        &mut |_, acquired| {
+            let acquired = acquired?;
+            if let Some(material) = acquired.material {
+                if material.manifest["role"] == "original-archive" {
+                    original += 1;
+                } else {
+                    parts += 1;
+                    assert!(material.bytes.len() <= 20);
+                    assert_eq!(material.manifest["source_container"], "zip");
+                    let path = material.manifest["members"][0]["path"].as_str().unwrap();
+                    assert!(path.ends_with(".json"));
+                    for (start, end) in material.records {
+                        records
+                            .push(String::from_utf8(material.bytes[start..end].to_vec()).unwrap());
+                    }
+                }
+            } else {
+                cursor = acquired.cursor_unchanged;
+            }
+            Ok(true)
+        },
+    )
+    .unwrap();
+    assert_eq!(records, (0..40).map(|i| i.to_string()).collect::<Vec<_>>());
+    assert_eq!(original, 1);
+    assert!(parts > 5);
+    assert_eq!(cursor["done"], true);
+    assert_eq!(work.zip_staging_bytes, raw.len() as u64);
+    let raw = format!("{}\nb\n", "a".repeat(50)).into_bytes();
+    let blob = sink.put(&raw).unwrap();
+    let mut selected = route(Value::Null, None, 8);
+    selected.driver.framing = Framing::Lines;
+    let mut records = Vec::new();
+    read(
+        Box::new(std::io::Cursor::new(raw.clone())),
+        blob,
+        raw.len() as u64,
+        facts(raw.len()),
+        Arc::new(AtomicBool::new(false)),
+        vec![selected],
+        &sink,
+        &mut |_, acquired| {
+            if let Some(material) = acquired?.material {
+                for (start, end) in material.records {
+                    records.push(material.bytes[start..end].to_vec());
+                }
+            }
+            Ok(true)
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        records,
+        vec![
+            format!("{}\n", "a".repeat(50)).into_bytes(),
+            b"b\n".to_vec()
+        ]
+    );
+}
+
+#[test]
+fn identical_captured_content_keeps_completed_material_identity_when_file_facts_change() {
+    let raw = points(4);
+    let sink = Sink::default();
+    let blob = sink.put(&raw).unwrap();
+    let mut seen = Seen::default();
+    read(
+        Box::new(std::io::Cursor::new(raw.clone())),
+        blob.clone(),
+        raw.len() as u64,
+        facts(raw.len()),
+        Arc::new(AtomicBool::new(false)),
+        vec![route(Value::Null, None, 400)],
+        &sink,
+        &mut |i, a| Ok(seen.accept(i, a, &sink)),
+    )
+    .unwrap();
+    let prior = seen.cursors[&0].clone();
+    let material = prior["material"].clone();
+    let writes = sink.writes.load(Ordering::Relaxed);
+    let mut touched = facts(raw.len());
+    touched.mtime_ns = Some(2000);
+    read(
+        Box::new(std::io::Cursor::new(raw.clone())),
+        blob,
+        raw.len() as u64,
+        touched,
+        Arc::new(AtomicBool::new(false)),
+        vec![route(prior, None, 400)],
+        &sink,
+        &mut |i, a| Ok(seen.accept(i, a, &sink)),
+    )
+    .unwrap();
+    assert_eq!(seen.cursors[&0]["material"], material);
+    assert_eq!(seen.cursors[&0]["mtime_ns"], 2000);
+    assert_eq!(sink.writes.load(Ordering::Relaxed), writes);
+    assert_eq!(seen.originals.len(), 1);
+    assert_eq!(seen.events[&0].len(), 4);
 }

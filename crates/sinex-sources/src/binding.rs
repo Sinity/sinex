@@ -255,8 +255,10 @@ impl StatelessDriver for crate::drivers::export_archive::ExportArchive {
         Some(self)
     }
 
-    fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.poll(cursor)
+    fn poll_once(&self, _cursor: &Value) -> Result<Acquired, DriverError> {
+        Err(DriverError::InvalidMaterial(
+            "export archives require retained traversal, not a standalone poll".into(),
+        ))
     }
 }
 

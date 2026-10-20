@@ -138,6 +138,7 @@ pub async fn run(
                 &sink,
                 &mut bound,
                 stop.clone(),
+                binding_reader::Access::default(),
             )
             .await
             {

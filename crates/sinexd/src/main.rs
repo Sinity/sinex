@@ -19,6 +19,7 @@ mod one_shot;
 mod publisher;
 mod replay;
 mod screen_text;
+mod sealed_access;
 mod source_runner;
 mod writer;
 
@@ -122,6 +123,9 @@ enum Command {
         /// One JSON object: totals per source and peak memory.
         #[arg(long)]
         json: bool,
+        /// Explicitly unlock retained sealed archive bytes for this backfill only.
+        #[arg(long)]
+        identity_file: Option<PathBuf>,
     },
     /// Run every derivation until nothing is dirty, through the writer, and
     /// report counts and rates. The daemon's driver, run to completion,
@@ -359,6 +363,7 @@ async fn main() -> std::process::ExitCode {
             options,
             host,
             json,
+            identity_file,
         } => {
             backfill::run(backfill::Options {
                 database,
@@ -368,6 +373,7 @@ async fn main() -> std::process::ExitCode {
                 options,
                 host,
                 json,
+                identity_file,
             })
             .await
         }

@@ -228,6 +228,38 @@ async fn replay_is_offered_through_the_api() {
     assert_eq!(body["outcome"], json!("ok"), "{body}");
     assert_eq!(body["result"]["chains"], json!(0));
     assert_eq!(body["result"]["compare_only"], json!(true));
+    for token in [AGENT, OPERATOR] {
+        let (_, body) = call(
+            &w,
+            Some(token),
+            json!({"method":"replay","sealed":true,"binding":"nothing@here"}),
+        )
+        .await;
+        assert_eq!(body["outcome"], "refused", "{body}");
+    }
+    let identity = sinex_store::sealed::Identity::generate();
+    use age::secrecy::ExposeSecret;
+    let (_, body) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"unlock","identity":identity.to_string().expose_secret()}),
+    )
+    .await;
+    assert_eq!(body["outcome"], "ok", "{body}");
+    let (_, body) = call(
+        &w,
+        Some(AGENT),
+        json!({"method":"replay","sealed":true,"binding":"nothing@here"}),
+    )
+    .await;
+    assert_eq!(body["outcome"], "refused", "{body}");
+    let (_, body) = call(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"replay","sealed":true,"binding":"nothing@here"}),
+    )
+    .await;
+    assert_eq!(body["outcome"], "ok", "{body}");
 }
 
 #[tokio::test]
@@ -486,8 +518,7 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 
     // Destroying the key (what excision does) leaves nothing to unseal, even
-    // for an unlocked operator with a fresh session.
-    call(&w, Some(OPERATOR), json!({"method": "lock"})).await;
+    // for an already unlocked operator with a cached key.
     sqlx::query!(
         "DELETE FROM privacy.material_keys WHERE material_id = $1",
         material.0
@@ -495,12 +526,6 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
     .execute(&w.reads)
     .await
     .unwrap();
-    call(
-        &w,
-        Some(OPERATOR),
-        json!({"method": "unlock", "identity": identity.to_string().expose_secret()}),
-    )
-    .await;
     let (_, shredded) = call(&w, Some(OPERATOR), query).await;
     assert!(!first(&shredded).contains("diary"), "shredded: {shredded}");
 }

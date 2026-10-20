@@ -35,9 +35,14 @@ pub struct Api {
 /// An unlock session (spec `privacy.md` §4): the operator's identity until it
 /// expires, and the data keys it has unwrapped.
 pub struct Unlocked {
-    identity: sinex_store::sealed::Identity,
-    until: std::time::Instant,
+    authority: crate::sealed_access::Authority,
     keys: std::collections::HashMap<String, [u8; 32]>,
+}
+
+impl Drop for Unlocked {
+    fn drop(&mut self) {
+        self.authority.revoke();
+    }
 }
 
 /// Who is calling: the actor recorded on writes and the classes whose values
@@ -87,6 +92,11 @@ fn collect_sealed(value: &Value, out: &mut Vec<String>) {
         return;
     }
     match value {
+        Value::String(text) => {
+            if let Some(value) = sinex_store::sealed::sealed_text(text) {
+                collect_sealed(&value, out);
+            }
+        }
         Value::Array(items) => items.iter().for_each(|v| collect_sealed(v, out)),
         Value::Object(map) => map.values().for_each(|v| collect_sealed(v, out)),
         _ => {}
@@ -103,6 +113,14 @@ fn unseal_in(value: &mut Value, keys: &std::collections::HashMap<String, [u8; 32
         return;
     }
     match value {
+        Value::String(text) => {
+            if let Some(mut sealed) = sinex_store::sealed::sealed_text(text) {
+                unseal_in(&mut sealed, keys);
+                if !sinex_store::sealed::is_sealed(&sealed) {
+                    *value = sealed;
+                }
+            }
+        }
         Value::Array(items) => items.iter_mut().for_each(|v| unseal_in(v, keys)),
         Value::Object(map) => map.values_mut().for_each(|v| unseal_in(v, keys)),
         _ => {}
@@ -127,7 +145,7 @@ impl Api {
                 let mut session = self.unlock.lock().await;
                 if session
                     .as_ref()
-                    .is_some_and(|s| s.until <= std::time::Instant::now())
+                    .is_some_and(|s| s.authority.check().is_err())
                 {
                     *session = None;
                 }
@@ -194,20 +212,22 @@ impl Api {
         let Some(s) = session.as_mut() else {
             return Ok(());
         };
+        s.authority.check()?;
         let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
         for r in refs {
-            if s.keys.contains_key(&r) {
-                continue;
-            }
             if let Some(wrapped) = sinex_store::sealed::wrapped_key(&mut conn, &r)
                 .await
                 .map_err(|e| e.to_string())?
             {
-                let key = sinex_store::sealed::unwrap(&wrapped, &s.identity)
-                    .map_err(|e| e.to_string())?;
-                s.keys.insert(r, key);
+                if !s.keys.contains_key(&r) {
+                    let key = s.authority.unwrap(&wrapped)?;
+                    s.keys.insert(r, key);
+                }
+            } else {
+                s.keys.remove(&r);
             }
         }
+        s.authority.check()?;
         unseal_in(value, &s.keys);
         Ok(())
     }
@@ -313,6 +333,7 @@ impl Api {
                 .await
             }
             Request::Replay {
+                sealed,
                 material,
                 binding,
                 event_type,
@@ -349,8 +370,10 @@ impl Api {
                                 compare: compare.unwrap_or(false),
                                 resume,
                                 actor: actor.to_string(),
+                                authority: None,
                             },
                             all.unwrap_or(false),
+                            sealed.unwrap_or(false),
                         )
                         .await
                     }

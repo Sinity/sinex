@@ -110,9 +110,18 @@ impl Api {
                     Err(e) => return refused(e.to_string()),
                 };
                 let minutes = minutes.unwrap_or(480);
-                *self.unlock.lock().await = Some(Unlocked {
+                let Some(seconds) = minutes.checked_mul(60) else {
+                    return refused("unlock duration exceeds u64 seconds");
+                };
+                let authority = match crate::sealed_access::Authority::new(
                     identity,
-                    until: std::time::Instant::now() + std::time::Duration::from_secs(minutes * 60),
+                    std::time::Duration::from_secs(seconds),
+                ) {
+                    Ok(authority) => authority,
+                    Err(error) => return refused(error),
+                };
+                *self.unlock.lock().await = Some(Unlocked {
+                    authority,
                     keys: Default::default(),
                 });
                 Reply::Ok {

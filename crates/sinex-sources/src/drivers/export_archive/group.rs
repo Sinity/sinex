@@ -3,7 +3,7 @@ use super::{Container, DriverError, ExportArchive, Framing, file_name, io, is_ta
 use crate::drivers::{Acquired, MaterialSink, NewMaterial, StoredBytes};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sinex_model::{MaterialId, MaterialRef, ObservationFacts, RevisionChange};
+use sinex_model::{Class, MaterialId, MaterialRef, ObservationFacts, RevisionChange};
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::sync::{
     Arc,
@@ -14,6 +14,8 @@ const VERSION: u8 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capture {
+    #[serde(default)]
+    pub class: Class,
     pub blob: String,
     pub length: u64,
     pub container: Container,
@@ -36,6 +38,8 @@ pub struct Cursor {
     pub order_offset: u64,
     pub material: Option<MaterialId>,
     pub part_index: u32,
+    #[serde(default)]
+    pub original_material: Option<MaterialId>,
     pub done: bool,
     pub part_member: Option<usize>,
     pub part_start: usize,
@@ -72,6 +76,7 @@ impl Cursor {
 }
 
 pub struct Route {
+    pub class: Class,
     pub driver: ExportArchive,
     pub cursor: Value,
     pub pending: Option<Pending>,
@@ -137,6 +142,14 @@ pub struct Work {
 
 type Emit<'a> = dyn FnMut(usize, Result<Acquired, DriverError>) -> Result<bool, DriverError> + 'a;
 
+/// Archive input keeps ZIP's real random-access requirement explicit.
+pub trait ReadSeek: Read + Seek + Send {}
+impl<T: Read + Seek + Send> ReadSeek for T {}
+pub enum Input {
+    Sequential(Box<dyn Read + Send>),
+    Seekable(Box<dyn ReadSeek>),
+}
+
 /// Read already-retained bytes. The caller groups only compatible privacy/acquisition
 /// contexts and installs the original blob once. Each callback is completed before reading
 /// further, so admission supplies backpressure. A false result stops only that route.
@@ -151,16 +164,60 @@ pub fn read(
     sink: &dyn MaterialSink,
     emit: &mut Emit<'_>,
 ) -> Result<Work, DriverError> {
+    read_input(
+        Input::Sequential(reader),
+        blob,
+        length,
+        facts,
+        stop,
+        routes,
+        sink,
+        emit,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn read_input(
+    input: Input,
+    blob: String,
+    length: u64,
+    facts: ObservationFacts,
+    stop: Arc<AtomicBool>,
+    routes: Vec<Route>,
+    sink: &dyn MaterialSink,
+    emit: &mut Emit<'_>,
+) -> Result<Work, DriverError> {
     if routes.is_empty() {
         return Ok(Work::default());
     }
+    if routes.iter().any(|r| r.class == Class::Sealed) && routes.len() != 1 {
+        return Err(DriverError::InvalidMaterial(
+            "sealed bindings require independent material keys and traversals".into(),
+        ));
+    }
+    let input = match input {
+        Input::Sequential(reader) => Input::Sequential(Box::new(Cancellable {
+            reader,
+            stop: Arc::clone(&stop),
+        })),
+        Input::Seekable(reader) => Input::Seekable(Box::new(Cancellable {
+            reader,
+            stop: Arc::clone(&stop),
+        })),
+    };
     let decoded = Arc::new(AtomicU64::new(0));
-    let mut opened = Opened::new(reader, Arc::clone(&decoded))?;
-    opened.reader = Box::new(Cancellable {
-        reader: opened.reader,
-        stop: Arc::clone(&stop),
-    });
+    let opened = Opened::new(input, Arc::clone(&decoded))?;
+    if routes[0].class == Class::Sealed
+        && opened.container == Container::Zip
+        && opened.seekable.is_none()
+    {
+        return Err(DriverError::InvalidMaterial(
+            "sealed ZIP requires a retained random-access reader; plaintext staging is forbidden"
+                .into(),
+        ));
+    }
     let capture = Capture {
+        class: routes[0].class,
         blob,
         length,
         container: opened.container,
@@ -178,7 +235,8 @@ pub fn read(
     for route in routes {
         let previous = Cursor::parse(&route.cursor)?;
         let continuing = previous.as_ref().is_some_and(|c| {
-            c.capture.blob == context.capture.blob
+            c.capture.class == context.capture.class
+                && c.capture.blob == context.capture.blob
                 && c.capture.length == context.capture.length
                 && c.capture.container == context.capture.container
         });
@@ -198,6 +256,7 @@ pub fn read(
                 order_offset: 0,
                 material: None,
                 part_index: 0,
+                original_material: None,
                 done: false,
                 part_member: None,
                 part_start: 0,
@@ -356,9 +415,10 @@ impl Context<'_, '_> {
         let state = &mut self.routes[index];
         let id = MaterialId::new();
         state.cursor.material = Some(id);
+        state.cursor.original_material = Some(id);
         let after = json!(state.cursor);
         let manifest = json!({"role": "original-archive", "format_version": VERSION,
-            "path": state.driver.path, "host": state.driver.host, "container": self.capture.container});
+            "path": state.driver.path, "host": state.driver.host, "container": self.capture.container, "class": self.capture.class});
         let acquired = Acquired {
             input: state.driver.input(),
             observation: self.facts.clone(),
@@ -612,9 +672,25 @@ impl Context<'_, '_> {
 struct Opened {
     container: Container,
     reader: Box<dyn Read + Send>,
+    seekable: Option<Box<dyn ReadSeek>>,
 }
 impl Opened {
-    fn new(reader: Box<dyn Read + Send>, count: Arc<AtomicU64>) -> Result<Self, DriverError> {
+    fn new(input: Input, count: Arc<AtomicU64>) -> Result<Self, DriverError> {
+        let reader = match input {
+            Input::Sequential(reader) => reader,
+            Input::Seekable(reader) => {
+                let mut reader = BufReader::with_capacity(65536, reader);
+                let head = reader.fill_buf().map_err(io)?;
+                if head.starts_with(b"PK\x03\x04") || head.starts_with(b"PK\x05\x06") {
+                    return Ok(Self {
+                        container: Container::Zip,
+                        reader: Box::new(std::io::empty()),
+                        seekable: Some(Box::new(reader)),
+                    });
+                }
+                Box::new(reader) as Box<dyn Read + Send>
+            }
+        };
         let mut reader = BufReader::with_capacity(65536, reader);
         let head = reader.fill_buf().map_err(io)?;
         let container = if head.starts_with(b"PK\x03\x04") || head.starts_with(b"PK\x05\x06") {
@@ -641,16 +717,19 @@ impl Opened {
             };
             Ok(Self {
                 container,
+                seekable: None,
                 reader: Box::new(decoded),
             })
         } else if container == Container::Zip {
             Ok(Self {
                 container,
+                seekable: None,
                 reader: Box::new(reader),
             })
         } else {
             Ok(Self {
                 container,
+                seekable: None,
                 reader: Box::new(Counted { reader, count }),
             })
         }
@@ -679,10 +758,16 @@ impl Opened {
                 }
             }
             Container::Zip => {
-                let mut file = tempfile::tempfile().map_err(io)?;
-                *zip_staged += std::io::copy(&mut input, &mut file).map_err(io)?;
-                file.rewind().map_err(io)?;
-                let mut archive = zip::ZipArchive::new(file).map_err(io)?;
+                let reader: Box<dyn ReadSeek> = match self.seekable {
+                    Some(reader) => reader,
+                    None => {
+                        let mut file = tempfile::tempfile().map_err(io)?;
+                        *zip_staged += std::io::copy(&mut input, &mut file).map_err(io)?;
+                        file.rewind().map_err(io)?;
+                        Box::new(file)
+                    }
+                };
+                let mut archive = zip::ZipArchive::new(reader).map_err(io)?;
                 for member in 0..archive.len() {
                     let entry = archive.by_index(member).map_err(io)?;
                     if entry.is_dir() {
@@ -728,5 +813,14 @@ impl<R: Read> Read for Cancellable<R> {
             return Err(std::io::Error::other("archive read cancelled"));
         }
         self.reader.read(bytes)
+    }
+}
+
+impl<R: Read + Seek> Seek for Cancellable<R> {
+    fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
+        if self.stop.load(Ordering::Relaxed) {
+            return Err(std::io::Error::other("archive seek cancelled"));
+        }
+        self.reader.seek(position)
     }
 }

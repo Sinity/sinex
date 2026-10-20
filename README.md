@@ -31,14 +31,23 @@ boundaries between capture, interpretation, admission and public interfaces.
   `sinexd run --sources sources.json` reads configured bindings continuously;
   `sinex-session` and `sinex-capture` capture from the desktop session and
   from other hosts and send over the NATS ingress.
-  New unsealed archive bindings capture one physical revision per host and effective
-  privacy class, then traverse it once while admitting bounded record parts. Logical
+  New archive bindings capture a physical revision, then traverse it once while
+  admitting bounded record parts. Unsealed bindings share capture per host and effective
+  privacy class; sealed bindings retain independent material keys. Logical
   bindings keep separate materials and committed cursors. Restart reuses retained
   bytes and may replay the archive prefix once; replay reads the exact stored record
-  ranges. ZIP requires a private temporary file for seeking; overlapping selectors
+  ranges. Sealed ZIP seeks through one cached authenticated frame without plaintext
+  staging. Unsealed ZIP uses a private temporary file; overlapping unsealed selectors
   with different framing may stage one decoded member. One valid record may exceed
-  the usual part size. Sealed sources retain their keyed reader. Existing unsealed byte cursors require
-  an explicit migration and are refused without changing their saved progress.
+  the usual part size. Fresh sealed capture needs only the public recipient. Resuming
+  an unfinished sealed archive requires explicit operation authority:
+  `sinexd backfill --identity-file KEYFILE` (held for at most eight hours), or
+  `replay --sealed` during an operator unlock. Local replay accepts
+  `sinexd admin replay --sealed --identity-file KEYFILE --database URL --store DIR`.
+  Lock or expiry stops scoped reads; the background source reader never borrows an
+  operator unlock. Stored legacy byte cursors require an explicit migration and are
+  refused without changing saved progress. A privacy-class change captures a new
+  revision; it does not erase previously captured bytes.
   Excision refuses records backed by a retained original archive: cross-binding
   archive rewriting is not implemented, and hiding does not delete those bytes.
 - **Derivations.** Fused shell commands, shell sessions, state intervals,

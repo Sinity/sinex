@@ -37,8 +37,13 @@ impl Bound {
 
 enum Choice {
     Complete,
-    Sealed,
     Retained(ObservationFacts, Class),
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Access<'a> {
+    pub recipient: Option<&'a sinex_store::sealed::Recipient>,
+    pub authority: Option<&'a crate::sealed_access::Authority>,
 }
 
 struct Archive {
@@ -49,6 +54,7 @@ struct Archive {
 }
 
 /// Read independent bindings, reporting each error without preventing other bindings.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn read(
     conn: &mut PgConnection,
     blobs: &Blobs,
@@ -57,6 +63,7 @@ pub(crate) async fn read(
     sink: &Sink,
     bound: &mut [Bound],
     stop: watch::Receiver<bool>,
+    access: Access<'_>,
 ) -> Vec<(String, Result<Totals, String>)> {
     let mut results = Vec::new();
     let mut archives: Vec<Archive> = Vec::new();
@@ -99,40 +106,25 @@ pub(crate) async fn read(
                     .copied()
                     .unwrap_or_default();
                 let class = b.source.spec().class.max(floor);
-                if class == Class::Sealed {
-                    if cursor.get("version").is_some() {
-                        return Err("a retained plain archive needs an explicit keyed migration before continuing as sealed".into());
-                    }
-                    return Ok(Choice::Sealed);
-                }
                 // A legacy byte cursor cannot be translated into exact retained record
                 // identities by guessing. Keep it unchanged and require migration.
                 let previous = Cursor::parse(&cursor).map_err(|e| e.to_string())?;
-                if previous.as_ref().is_some_and(|c| c.done && c.same_file(&facts)) {
+                if previous
+                    .as_ref()
+                    .is_some_and(|c| c.done && c.same_file(&facts) && c.capture.class == class)
+                {
                     return Ok(Choice::Complete);
                 }
                 Ok::<_, String>(Choice::Retained(facts, class))
             }
             .await;
             match candidate {
-                Ok(Choice::Sealed) => {
-                    let result = backfill::drive(
-                        conn,
-                        writer,
-                        run,
-                        b.source.as_ref(),
-                        &b.binding.name,
-                        sink,
-                        |cursor| b.reader.poll(cursor),
-                    )
-                    .await;
-                    results.push((b.binding.source.clone(), result));
-                }
                 Ok(Choice::Retained(facts, class)) => {
                     // Host and effective class are the acquisition/privacy context. Physical
                     // file facts permit aliases without conflating authored logical identities.
                     let compatible = archives.iter_mut().find(|g| {
                         g.class == class
+                            && class != Class::Sealed
                             && same_file(&g.facts, &facts)
                             && g.host == b.binding.settings.host
                     });
@@ -191,6 +183,7 @@ pub(crate) async fn read(
             bound,
             &archive,
             stop.clone(),
+            access,
         )
         .await;
         match outcome {
@@ -255,9 +248,29 @@ async fn read_archive(
     bound: &mut [Bound],
     archive: &Archive,
     mut stop: watch::Receiver<bool>,
+    access: Access<'_>,
 ) -> Result<Vec<Result<Totals, String>>, String> {
     let started = std::time::Instant::now();
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
+    let sealing = if archive.class == Class::Sealed {
+        let configured = if access.recipient.is_none() {
+            crate::one_shot::class_key()?
+        } else {
+            None
+        };
+        let recipient = access
+            .recipient
+            .cloned()
+            .or(configured)
+            .or_else(|| access.authority.map(|a| a.recipient()))
+            .ok_or("sealed archive capture requires the class key's public recipient")?;
+        Some(Arc::new(crate::one_shot::SealingSink::new(
+            blobs.clone(),
+            recipient,
+        )))
+    } else {
+        None
+    };
     let mut routes = Vec::new();
     let mut retained = None;
     let mut slots = Vec::new();
@@ -275,20 +288,71 @@ async fn read_archive(
                 .map(|(cursor, _)| cursor)
                 .unwrap_or(Value::Null);
             let saved = Cursor::parse(&cursor).map_err(|e| e.to_string())?;
-            if let Some(c) = saved.as_ref().filter(|c| c.same_file(&archive.facts)) {
+            if let Some(c) = saved
+                .as_ref()
+                .filter(|c| c.same_file(&archive.facts) && c.capture.class == archive.class)
+            {
                 retained = Some((c.capture.blob.clone(), c.capture.length));
             }
-            let pending = if let Some(id) = saved.as_ref().and_then(Cursor::pending_material) {
+            let continuing = saved
+                .as_ref()
+                .is_some_and(|c| c.same_file(&archive.facts) && c.capture.class == archive.class);
+            if continuing && let Some(sealing) = &sealing {
+                let authority = access
+                    .authority
+                    .ok_or("retained sealed archive is pending explicit operator unlock")?;
+                let cursor = saved.as_ref().expect("continuing");
+                let original = cursor.original_material.ok_or(
+                    "sealed cursor has no original material identity; explicit migration required",
+                )?;
+                let original_key = authority.material_key(conn, original).await?;
+                sealing.restore_key(cursor.capture.blob.clone(), original_key);
+                if let Some(material) = cursor.material {
+                    let reference = sinex_store::material_bytes::reference(conn, material)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or("sealed cursor material is missing")?;
+                    let key = authority.material_key(conn, material).await?;
+                    sealing.restore_current(material, reference.blob, key);
+                }
+            }
+            let pending = if let Some(id) = saved
+                .as_ref()
+                .filter(|_| continuing)
+                .and_then(Cursor::pending_material)
+            {
                 let material = sinex_store::material_bytes::reference(conn, id)
                     .await
                     .map_err(|e| e.to_string())?
                     .ok_or_else(|| format!("missing pending archive material {id}"))?;
-                let bytes = blobs.read(&material.blob).map_err(|e| e.to_string())?;
+                let bytes = if let Some(sealing) = &sealing {
+                    let key = sealing.key(&material.blob)?;
+                    let authority = access.authority.expect("scoped key loading").clone();
+                    let mut reader = blobs
+                        .read_sealed(
+                            &material.blob,
+                            Some(material.length),
+                            &key,
+                            crate::sealed_access::read_limits(material.length)?,
+                            move || {
+                                authority
+                                    .check()
+                                    .map_err(|e| std::io::Error::other(e).into())
+                            },
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let mut bytes = Vec::new();
+                    reader.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+                    bytes
+                } else {
+                    blobs.read(&material.blob).map_err(|e| e.to_string())?
+                };
                 Some(Pending::new(material, bytes, b.source.spec()).map_err(|e| e.to_string())?)
             } else {
                 None
             };
             Ok::<_, String>(Route {
+                class: archive.class,
                 driver: b.reader.export_archive().expect("archive group").clone(),
                 cursor,
                 pending,
@@ -310,6 +374,8 @@ async fn read_archive(
     let facts = archive.facts.clone();
     let store = blobs.clone();
     let material_sink = Sink(blobs.clone());
+    let worker_sealing = sealing.clone();
+    let authority = access.authority.cloned();
     let cancelled = Arc::clone(&cancel.0);
     let (send, mut receive) = mpsc::channel::<Delivery>(1);
     let worker = tokio::task::spawn_blocking(move || {
@@ -318,12 +384,14 @@ async fn read_archive(
             Some(captured) => captured,
             None => {
                 let input = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-                let blob = store
-                    .put_reader(Checked {
-                        input,
-                        stop: Arc::clone(&cancelled),
-                    })
-                    .map_err(|e| e.to_string())?;
+                let input = Checked {
+                    input,
+                    stop: Arc::clone(&cancelled),
+                };
+                let blob = match &worker_sealing {
+                    Some(sealing) => sealing.put_reader(input)?,
+                    None => store.put_reader(input).map_err(|e| e.to_string())?,
+                };
                 let after = drivers::file_facts(&path).map_err(|e| e.to_string())?;
                 if !same_file(&facts, &after) {
                     return Err(
@@ -334,28 +402,52 @@ async fn read_archive(
             }
         };
         let verify_stop = Arc::clone(&cancelled);
-        let reader = store
-            .read_plain(&blob, Some(length), move || {
-                if verify_stop.load(Ordering::Relaxed)
-                    || sinex_protocol::private_mode::PrivateMode::default().on()
-                {
-                    Err(std::io::Error::other("archive verification cancelled").into())
-                } else {
-                    Ok(())
-                }
-            })
-            .map_err(|e| e.to_string())?;
-        group::read(
-            Box::new(Checked {
-                input: reader,
+        let check = move || {
+            if verify_stop.load(Ordering::Relaxed)
+                || sinex_protocol::private_mode::PrivateMode::default().on()
+            {
+                return Err(std::io::Error::other("archive verification cancelled").into());
+            }
+            if let Some(authority) = &authority {
+                authority.check().map_err(std::io::Error::other)?;
+            }
+            Ok(())
+        };
+        let input = match &worker_sealing {
+            Some(sealing) => {
+                let key = sealing.key(&blob)?;
+                group::Input::Seekable(Box::new(Checked {
+                    input: store
+                        .read_sealed(
+                            &blob,
+                            Some(length),
+                            &key,
+                            crate::sealed_access::read_limits(length)?,
+                            check,
+                        )
+                        .map_err(|e| e.to_string())?,
+                    stop: Arc::clone(&cancelled),
+                }))
+            }
+            None => group::Input::Sequential(Box::new(Checked {
+                input: store
+                    .read_plain(&blob, Some(length), check)
+                    .map_err(|e| e.to_string())?,
                 stop: Arc::clone(&cancelled),
-            }),
+            })),
+        };
+        let physical_sink: &dyn drivers::MaterialSink = match &worker_sealing {
+            Some(sealing) => sealing.as_ref(),
+            None => &material_sink,
+        };
+        group::read_input(
+            input,
             blob,
             length,
             facts,
             cancelled,
             routes,
-            &material_sink,
+            physical_sink,
             &mut |index, acquired| {
                 let (ack, answer) = std::sync::mpsc::sync_channel(0);
                 send.blocking_send(Delivery {
@@ -386,11 +478,32 @@ async fn read_archive(
             if sinex_protocol::private_mode::PrivateMode::default().on() {
                 return Err("private mode is on; archive admission stopped".into());
             }
+            if let Some(authority) = access.authority {
+                authority.check()?;
+            }
             let carry = positions::load(conn, &b.binding.name)
                 .await
                 .map_err(|e| e.to_string())?
                 .map(|(_, carry)| carry)
                 .unwrap_or(Value::Null);
+            let carry = if acquired
+                .material
+                .as_ref()
+                .is_some_and(|m| m.manifest["role"] == "original-archive")
+            {
+                Value::Null
+            } else if acquired.material.is_some() {
+                match &sealing {
+                    Some(sealing) => sealing.open_carry(&carry)?,
+                    None => carry,
+                }
+            } else {
+                carry
+            };
+            let physical_sink: &dyn drivers::MaterialSink = match &sealing {
+                Some(sealing) => sealing.as_ref(),
+                None => sink,
+            };
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
             backfill::submit(
                 conn,
@@ -398,8 +511,9 @@ async fn read_archive(
                 run,
                 b.source.as_ref(),
                 &b.binding.name,
-                sink,
-                None,
+                physical_sink,
+                sealing.as_deref(),
+                access.authority,
                 acquired,
                 carry,
                 total,
@@ -433,6 +547,15 @@ async fn read_archive(
         total.finish(started);
     }
     Ok(totals)
+}
+
+impl<R: Read + std::io::Seek> std::io::Seek for Checked<R> {
+    fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
+        if self.stop.load(Ordering::Relaxed) {
+            return Err(std::io::Error::other("archive capture cancelled"));
+        }
+        self.input.seek(position)
+    }
 }
 
 #[cfg(test)]
