@@ -10,6 +10,9 @@ and can be read again when a parser or rule changes.
 This is the second rewrite, built to the target architecture. The old Sinex
 is in Git history for reference.
 
+[Architecture](ARCHITECTURE.md) describes current module ownership and the
+boundaries between capture, interpretation, admission and public interfaces.
+
 ## What works
 
 - **Storage.** The schema is declared in Rust and applied by
