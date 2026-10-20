@@ -24,6 +24,15 @@ result = "exit"
 timeout_seconds = 3600
 cache = "none"
 
+[operations.focused]
+description = "Selected Rust tests under nextest; full suites use the bulk test operation"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "test"]
+arguments = "required"
+pool = "normal"
+result = "exit"
+timeout_seconds = 900
+cache = "none"
+
 [operations.package]
 description = "Build the Nix package (runs the tests that need no database inside the builder)"
 exec = ["nix", "build", "--no-link", ".#default", "--print-build-logs", "--max-jobs", "1"]

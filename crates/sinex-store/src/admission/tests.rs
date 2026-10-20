@@ -497,4 +497,57 @@ async fn admitted_and_archived_readings_mark_dirty_keys() {
     assert_eq!(n, 1, "both events fall on the same day");
 }
 
+#[tokio::test]
+async fn dirty_keys_keep_each_derivation_and_advance_existing_keys() {
+    let (_db, mut conn) = testdb::fresh().await;
+    let first = json!({"day": "2026-01-01"});
+    let second = json!({"day": "2026-01-02"});
+    let mut tx = conn.begin().await.unwrap();
+    let offered = derived::mark_dirty(
+        &mut tx,
+        vec![
+            ("daily", first.clone()),
+            ("daily", first.clone()),
+            ("hourly", first.clone()),
+            ("daily", second.clone()),
+        ],
+        3,
+    )
+    .await
+    .unwrap();
+    assert_eq!(offered, 4);
+    let offered = derived::mark_dirty(
+        &mut tx,
+        vec![("daily", first.clone()), ("daily", first.clone())],
+        7,
+    )
+    .await
+    .unwrap();
+    assert_eq!(offered, 2);
+    let rows = sqlx::query!(
+        "SELECT derivation, key, first_dirty_seq, last_dirty_seq FROM derivation.dirty ORDER BY derivation, key"
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    let actual: Vec<_> = rows
+        .into_iter()
+        .map(|r| (r.derivation, r.key, r.first_dirty_seq, r.last_dirty_seq))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("daily".to_owned(), first.clone(), 3, 7),
+            ("daily".to_owned(), second, 3, 3),
+            ("hourly".to_owned(), first, 3, 3),
+        ]
+    );
+    tx.rollback().await.unwrap();
+    let count = sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM derivation.dirty"#)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
 mod privacy;

@@ -181,9 +181,15 @@ pub(super) async fn mark_dirty(
     if dirty.is_empty() {
         return Ok(0);
     }
+    let n = dirty.len();
+    // Many events affect the same day or hour. Deduplicate before encoding
+    // the SQL parameters, while keeping the number of offered marks in the outcome.
+    let mut unique = std::collections::HashSet::new();
+    for key in dirty {
+        unique.insert(key);
+    }
     let (names, keys): (Vec<String>, Vec<Value>) =
-        dirty.into_iter().map(|(n, k)| (n.to_owned(), k)).unzip();
-    let n = names.len();
+        unique.into_iter().map(|(n, k)| (n.to_owned(), k)).unzip();
     sqlx::query!(
         r#"INSERT INTO derivation.dirty (derivation, key, first_dirty_seq, last_dirty_seq)
            SELECT DISTINCT d, k, $3::bigint, $3::bigint FROM unnest($1::text[], $2::jsonb[]) AS u(d, k)
