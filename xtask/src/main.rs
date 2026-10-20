@@ -129,7 +129,6 @@ fn test(run: &mut Run, filter: Option<&str>) -> Result {
             env,
             allow_no_tests: filter.is_some(),
             tmpfs: true,
-            ..Nextest::default()
         },
     )?;
     Ok(())
