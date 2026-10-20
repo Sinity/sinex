@@ -58,3 +58,13 @@ result = "exit"
 timeout_seconds = 1800
 scratch = "nvme"
 cache = "none"
+
+[operations.bench]
+description = "Run the corpus benchmark through the shared job queue"
+exec = ["cargo", "run", "--locked", "--quiet", "-p", "xtask", "--", "bench"]
+arguments = "required"
+pool = "bulk"
+result = "exit"
+timeout_seconds = 14400
+scratch = "nvme"
+cache = "none"

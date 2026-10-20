@@ -79,19 +79,14 @@ fn golden_cases() {
     let bless = std::env::var_os("GOLDEN_BLESS").is_some();
     let mut failures = Vec::new();
     let mut ran = 0;
-    let Ok(parsers) = std::fs::read_dir(&root) else {
-        return;
-    };
-    let mut parsers: Vec<_> = parsers.flatten().collect();
+    let mut parsers = entries(&root).expect("golden case directory is readable");
     parsers.sort_by_key(|e| e.file_name());
     for parser in parsers {
         let name = parser.file_name().to_string_lossy().into_owned();
-        let mut cases: Vec<_> = std::fs::read_dir(parser.path())
-            .unwrap()
-            .flatten()
-            .collect();
+        let mut cases = entries(&parser.path()).expect("parser cases are readable");
         cases.sort_by_key(|e| e.file_name());
         for case in cases {
+            ran += 1;
             let dir = case.path();
             let got = run_case(&name, &dir);
             let expected_path = dir.join("expected.json");
@@ -100,7 +95,6 @@ fn golden_cases() {
                 std::fs::write(&expected_path, text).unwrap();
                 continue;
             }
-            ran += 1;
             let expected: Value = serde_json::from_slice(
                 &std::fs::read(&expected_path)
                     .unwrap_or_else(|_| panic!("{} has no expected.json", dir.display())),
@@ -116,10 +110,31 @@ fn golden_cases() {
             }
         }
     }
+    assert!(ran > 0, "no golden cases found");
     assert!(
         failures.is_empty(),
         "{} of {ran} golden cases differ:\n{}",
         failures.len(),
         failures.join("\n\n")
     );
+}
+
+fn entries(root: &Path) -> std::io::Result<Vec<std::fs::DirEntry>> {
+    let entries = std::fs::read_dir(root)?.collect::<std::io::Result<Vec<_>>>()?;
+    if entries.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "no golden cases in {}",
+            root.display()
+        )));
+    }
+    Ok(entries)
+}
+
+#[test]
+fn missing_or_empty_case_directories_fail() {
+    let root = std::env::temp_dir().join(format!("golden-{}", uuid::Uuid::now_v7()));
+    assert!(entries(&root).is_err());
+    std::fs::create_dir(&root).unwrap();
+    assert!(entries(&root).is_err());
+    std::fs::remove_dir(root).unwrap();
 }
