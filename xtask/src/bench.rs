@@ -18,10 +18,11 @@
 //! starts its own PostgreSQL with TimescaleDB (on /realm for `disk`, on
 //! /dev/shm for `memory`), backfills each input separately with a memory cap
 //! (one process per input, so each has its own peak memory), runs every
-//! derivation once, records the result with the host's load, and predicts
-//! the full inputs' time from each input's own rate. Every command it runs
+//! derivation once, and records periodic host-load observations. Full-input
+//! estimates explicitly assume linear work per input byte; one sample does
+//! not calibrate backfill or derivation. Every command it runs
 //! runs inside its AgentCTL job and holds the real-data lock.
-use devkit::bench::{self, Candidate, HostLoad, Manifest};
+use devkit::bench::{self, Candidate, LoadMonitor, Manifest};
 use devkit::history::Store;
 use serde_json::{Value, json};
 use std::{
@@ -436,7 +437,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         fs::remove_dir_all(&out).map_err(|e| e.to_string())?;
     }
     let binary = sinexd_binary()?;
-    let load = HostLoad::now();
+    let load = LoadMonitor::start()?;
     let cluster = Cluster::start(&out.join("pg"), storage == "disk")?;
     let url = cluster.url();
     let store_dir = out.join("store");
@@ -451,19 +452,19 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         ));
     }
     let shape = manifest.representativeness();
-    let scale_of = |label: &str| -> f64 {
+    let scale_of = |label: &str| -> Option<f64> {
         shape["strata"]
-            .as_array()
-            .and_then(|s| s.iter().find(|s| s["stratum"] == label))
+            .as_array()?
+            .iter()
+            .find(|s| s["stratum"] == label)
             .and_then(|s| {
-                let c = s["corpus"]["bytes"].as_f64()?;
-                let m = s["sample"]["bytes"].as_f64()?;
-                (m > 0.0).then_some(c / m)
+                let corpus = s["corpus"]["bytes"].as_f64()?;
+                let sample = s["sample"]["bytes"].as_f64()?;
+                (sample > 0.0).then_some(corpus / sample)
             })
-            .unwrap_or(1.0)
     };
     let mut inputs_out = serde_json::Map::new();
-    let mut predicted = 0.0;
+    let mut estimates = Vec::new();
     for input in &inputs {
         let source = format!("{}={}", input.kind, source_path(&home, input).display());
         let args: Vec<&std::ffi::OsStr> = [
@@ -481,15 +482,21 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         let scale = scale_of(&input.label);
         let result = match sinexd(&binary, memory_max, &args) {
             Ok(v) => {
-                let wall: f64 = v["sources"]
-                    .as_object()
-                    .map(|m| m.values().filter_map(|t| t["wall_s"].as_f64()).sum())
-                    .unwrap_or(0.0);
-                predicted += wall * scale;
+                let wall = source_wall_seconds(&v);
+                let estimate =
+                    bench::linear_estimate(wall, &std::collections::BTreeMap::new(), scale);
+                estimates.push(estimate.clone());
                 json!({"ok": true, "scale": scale, "wall_s": wall,
-                       "predicted_s": wall * scale, "result": v})
+                       "linear_estimate": estimate, "result": v})
             }
-            Err(e) => json!({"ok": false, "error": e}),
+            Err(e) => {
+                estimates.push(bench::linear_estimate(
+                    None,
+                    &std::collections::BTreeMap::new(),
+                    scale,
+                ));
+                json!({"ok": false, "error": e})
+            }
         };
         eprintln!("{} {}", input.label, result);
         inputs_out.insert(input.label.clone(), result);
@@ -507,24 +514,36 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
             "bench".as_ref(),
         ],
     );
-    let scale = shape["scale"].as_f64().unwrap_or(1.0);
+    let scale = shape["scale"].as_f64();
     let derive = match derive {
-        Ok(v) => {
-            predicted += v["wall_s"].as_f64().unwrap_or(0.0) * scale;
-            v
+        Ok(value) => {
+            estimates.push(bench::linear_estimate(
+                value["wall_s"].as_f64(),
+                &std::collections::BTreeMap::new(),
+                scale,
+            ));
+            value
         }
-        Err(e) => json!({"error": e}),
+        Err(error) => {
+            estimates.push(bench::linear_estimate(
+                None,
+                &std::collections::BTreeMap::new(),
+                scale,
+            ));
+            json!({"error": error})
+        }
     };
     let metrics = json!({
         "inputs": inputs_out,
         "derive": derive,
         "database_mb": cluster.database_mb(),
         "store_mb": dir_mb(&store_dir),
-        "sample_mb": manifest.bytes() as f64 / 1e6,
+        "sample_input_file_bytes": manifest.bytes(),
         "memory_max": memory_max,
-        "prediction": {"seconds": predicted, "scale": scale},
+        "linear_estimate": combined_estimate(&estimates),
     });
     drop(cluster);
+    let load = load.finish()?;
     let store = Store::open().map_err(|e| e.to_string())?;
     let checkout = env::current_dir().unwrap_or_default();
     let id = bench::record(
@@ -534,17 +553,51 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         "backfill",
         &manifest.id(),
         &out,
-        load,
+        &load,
         &metrics,
     )
     .map_err(|e| e.to_string())?;
     println!(
         "{}",
-        json!({"run": id, "storage": bench::storage_of(&out), "quiet": load.quiet(),
-               "metrics": metrics})
+        json!({"run": id, "storage": bench::storage_of(&out),
+               "load_checks_passed": load.checks_passed(), "load": load.to_json(), "metrics": metrics})
     );
     if storage == "memory" {
         let _ = fs::remove_dir_all(&out);
     }
     Ok(())
 }
+
+/// Sum only when every successful source reported a finite wall time.
+fn source_wall_seconds(result: &Value) -> Option<f64> {
+    let sources = result["sources"].as_object()?;
+    if sources.is_empty() {
+        return None;
+    }
+    sources.values().try_fold(0.0, |total, source| {
+        let seconds = source["wall_s"]
+            .as_f64()
+            .filter(|n| n.is_finite() && *n >= 0.0)?;
+        let next = total + seconds;
+        next.is_finite().then_some(next)
+    })
+}
+
+fn combined_estimate(parts: &[Value]) -> Value {
+    let seconds = if parts.is_empty() {
+        None
+    } else {
+        parts.iter().try_fold(0.0, |total, part| {
+            let seconds = part["estimate"]["seconds"].as_f64()?;
+            let next = total + seconds;
+            (next.is_finite() && seconds >= 0.0).then_some(next)
+        })
+    };
+    json!({"method": "sum_of_input_byte_linear_estimates", "calibrated": false,
+        "estimated_seconds": seconds, "components": parts,
+        "scope": "Source backfill wall times plus derivation, excluding setup and teardown.",
+        "limitation": "A missing or failed component makes the total unknown; input bytes do not measure decoded, hashed or physically written bytes."})
+}
+
+#[cfg(test)]
+mod tests;

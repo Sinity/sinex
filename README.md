@@ -75,3 +75,16 @@ A first import of the operator's shell history:
 sinexd backfill --database URL --store DIR --host HOST \
   --source atuin=$HOME/.local/share/atuin/history.db --source zsh="$HISTFILE"
 ```
+
+## Benchmark reports
+
+`agentctl job start sinex bench -- run` uses the frozen sample. Reports keep
+source-file bytes, per-source material bytes, database size and final blob-store
+size separate. The runner does not measure total decoded, hashed or physically
+written bytes. Its load observations cover setup, backfills, derivation and
+shutdown, with sampled peaks, unknown readings and the largest sampling gap.
+
+Full-input estimates explicitly assume linear time per source-file byte and are
+uncalibrated; setup and teardown are excluded. A failed input or missing component
+time leaves the total estimate unknown. A passing load check permits descriptive
+comparisons on the same sample and storage, without establishing timing reliability.
