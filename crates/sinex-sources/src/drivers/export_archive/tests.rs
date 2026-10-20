@@ -135,7 +135,13 @@ fn zip_members_form_one_stream_with_an_index() {
         .unwrap();
     assert_eq!(records(&a), vec!["1", "2", "3"]);
     let m = a.material.as_ref().unwrap();
-    assert_eq!(m.stored_file.as_deref(), Some(path.as_path()));
+    assert_eq!(
+        m.stored.as_ref().and_then(|stored| match stored {
+            super::super::StoredBytes::File(path) => Some(path.as_path()),
+            _ => None,
+        }),
+        Some(path.as_path())
+    );
     assert_eq!(m.manifest["container"], json!("zip"));
     assert_eq!(
         m.manifest["members"],
@@ -214,9 +220,15 @@ fn a_zip_is_read_in_parts_of_whole_members_covering_every_record() {
         // store their decoded stream and say so.
         assert_eq!(m.manifest["container"], json!("zip"));
         if parts == 1 {
-            assert_eq!(m.stored_file.as_deref(), Some(path.as_path()));
+            assert_eq!(
+                m.stored.as_ref().and_then(|stored| match stored {
+                    super::super::StoredBytes::File(path) => Some(path.as_path()),
+                    _ => None,
+                }),
+                Some(path.as_path())
+            );
         } else {
-            assert!(m.stored_file.is_none());
+            assert!(m.stored.is_none());
             assert_eq!(m.manifest["stream"], json!("decoded"));
         }
         read.extend(records(&a));

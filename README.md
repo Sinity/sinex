@@ -31,6 +31,16 @@ boundaries between capture, interpretation, admission and public interfaces.
   `sinexd run --sources sources.json` reads configured bindings continuously;
   `sinex-session` and `sinex-capture` capture from the desktop session and
   from other hosts and send over the NATS ingress.
+  New unsealed archive bindings capture one physical revision per host and effective
+  privacy class, then traverse it once while admitting bounded record parts. Logical
+  bindings keep separate materials and committed cursors. Restart reuses retained
+  bytes and may replay the archive prefix once; replay reads the exact stored record
+  ranges. ZIP requires a private temporary file for seeking; overlapping selectors
+  with different framing may stage one decoded member. One valid record may exceed
+  the usual part size. Sealed sources retain their keyed reader. Existing unsealed byte cursors require
+  an explicit migration and are refused without changing their saved progress.
+  Excision refuses records backed by a retained original archive: cross-binding
+  archive rewriting is not implemented, and hiding does not delete those bytes.
 - **Derivations.** Fused shell commands, shell sessions, state intervals,
   presence, hourly and daily summaries, and text read from screen stills,
   recomputed per changed key as inputs arrive.

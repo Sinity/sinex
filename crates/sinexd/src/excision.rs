@@ -46,7 +46,13 @@ pub async fn excise_with(
                 .into_iter()
                 .find(|s| s.parser == m.parser)
                 .ok_or_else(|| format!("material {}: no source has parser {}", m.id, m.parser))?;
-            let framed = (spec.framer)(&bytes).0;
+            let framed = sinex_sources::drivers::stored_records(&m.manifest, &bytes, spec.framer);
+            if framed
+                .iter()
+                .any(|&(start, end)| start >= end || end > bytes.len())
+            {
+                return Err(format!("material {}: invalid stored record ranges", m.id));
+            }
             m.anchors
                 .iter()
                 .map(|a| {

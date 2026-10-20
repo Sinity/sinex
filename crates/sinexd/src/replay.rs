@@ -377,6 +377,11 @@ fn read_chain_into(
     })?;
     let mut carry = Value::Null;
     for (m, source) in chain.iter().zip(parsers) {
+        let role = sinex_model::MaterialRole::of(&m.manifest)
+            .map_err(|e| format!("material {}: {e}", m.id))?;
+        if role == sinex_model::MaterialRole::OriginalArchive {
+            continue;
+        }
         // A compressed export's records are in its decoded member stream
         // (`ExportArchive`), which replay does not decode yet.
         if let Some(container) = m.manifest.get("container").and_then(Value::as_str)

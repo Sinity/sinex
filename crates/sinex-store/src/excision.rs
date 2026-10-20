@@ -43,6 +43,7 @@ pub struct Material {
     /// The parser and host that read it: how the caller finds its framing.
     pub parser: String,
     pub host: String,
+    pub manifest: serde_json::Value,
     /// Anchors of the records to blank; empty when `whole`.
     pub anchors: BTreeSet<i64>,
     pub whole: bool,
@@ -135,7 +136,7 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     let ids: Vec<Uuid> = events.iter().copied().collect();
 
     let rows = sqlx::query!(
-        r#"SELECT DISTINCT e.material_id AS "material!", e.anchor AS "anchor!", m.blob, m.parser,
+        r#"SELECT DISTINCT e.material_id AS "material!", e.anchor AS "anchor!", m.blob, m.parser, m.manifest,
              i.host AS "host?", (k.material_id IS NOT NULL) AS "sealed!"
            FROM core.events e
            JOIN raw.materials m ON m.id = e.material_id
@@ -153,6 +154,7 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
             blob: r.blob.clone(),
             parser: r.parser.clone(),
             host: r.host.clone().unwrap_or_default(),
+            manifest: r.manifest.clone(),
             anchors: BTreeSet::new(),
             whole: matches!(target, Target::Material(t) if t.0 == r.material),
             sealed: r.sealed,
@@ -166,7 +168,7 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     {
         // A material with no events left (all suppressed or failed) still has bytes.
         let r = sqlx::query!(
-            r#"SELECT m.blob, m.parser, i.host AS "host?", (k.material_id IS NOT NULL) AS "sealed!"
+            r#"SELECT m.blob, m.parser, m.manifest, i.host AS "host?", (k.material_id IS NOT NULL) AS "sealed!"
                FROM raw.materials m LEFT JOIN raw.inputs i ON i.id = m.input_id
                LEFT JOIN privacy.material_keys k ON k.material_id = m.id WHERE m.id = $1"#,
             m.0
@@ -181,11 +183,31 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
                 blob: r.blob,
                 parser: r.parser,
                 host: r.host.unwrap_or_default(),
+                manifest: r.manifest,
                 anchors: BTreeSet::new(),
                 whole: true,
                 sealed: r.sealed,
             },
         );
+    }
+    // Record bodies do not replace their original archive. Blanking a decoded
+    // part alone would leave the same private bytes in its captured ancestor.
+    let material_ids: Vec<Uuid> = materials.keys().copied().collect();
+    let retained_archive = sqlx::query_scalar!(
+        r#"WITH RECURSIVE ancestors AS (
+             SELECT id, previous_part_id, manifest FROM raw.materials WHERE id = ANY($1)
+             UNION
+             SELECT m.id, m.previous_part_id, m.manifest FROM raw.materials m
+               JOIN ancestors a ON m.id = a.previous_part_id)
+           SELECT id AS "id!" FROM ancestors WHERE manifest->>'role' = 'original-archive' LIMIT 1"#,
+        &material_ids,
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(id) = retained_archive {
+        return Err(Error::Invalid(format!(
+            "material {id} retains an original archive: excision needs a cross-binding archive rewrite, which is not supported"
+        )));
     }
     for m in materials.values() {
         if m.sealed && !m.whole {

@@ -127,6 +127,25 @@ pub enum RevisionChange {
     Snapshot,
 }
 
+/// Whether retained material contributes to the original input byte stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MaterialRole {
+    Input,
+    OriginalArchive,
+    Records,
+}
+
+impl MaterialRole {
+    /// Existing drivers without an explicit role store original input bytes.
+    pub fn of(manifest: &Value) -> Result<Self, serde_json::Error> {
+        manifest
+            .get("role")
+            .map(|value| serde_json::from_value(value.clone()))
+            .unwrap_or(Ok(Self::Input))
+    }
+}
+
 /// A material whose bytes are already in the content store.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaterialRef {

@@ -121,6 +121,11 @@ impl Binding {
 /// state rebuilt from the stored materials before the first poll, so a
 /// restart reads only what changed.
 pub trait Reader: Send {
+    /// The export declaration, when this reader can share a physical archive traversal.
+    fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
+        None
+    }
+
     fn remember(&mut self, _stored: &[(MaterialId, Vec<u8>)]) {}
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError>;
@@ -216,6 +221,10 @@ pub struct Stateless<D>(pub D);
 
 /// The polls a memoryless driver offers.
 pub trait StatelessDriver: Send {
+    fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
+        None
+    }
+
     fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError>;
     fn remove_passed_files(&self, _committed: &Value) -> Result<usize, DriverError> {
         Ok(0)
@@ -223,6 +232,10 @@ pub trait StatelessDriver: Send {
 }
 
 impl<D: StatelessDriver> Reader for Stateless<D> {
+    fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
+        self.0.export_archive()
+    }
+
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         self.0.poll_once(cursor)
     }
@@ -238,6 +251,10 @@ pub fn stateless<D: StatelessDriver + 'static>(driver: D) -> Box<dyn Reader> {
 }
 
 impl StatelessDriver for crate::drivers::export_archive::ExportArchive {
+    fn export_archive(&self) -> Option<&crate::drivers::export_archive::ExportArchive> {
+        Some(self)
+    }
+
     fn poll_once(&self, cursor: &Value) -> Result<Acquired, DriverError> {
         self.poll(cursor)
     }

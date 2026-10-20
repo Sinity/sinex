@@ -85,7 +85,7 @@ fn batches_are_drained_lazily() {
         material: Some(NewMaterial {
             id: MaterialId::new(),
             bytes,
-            stored_file: None,
+            stored: None,
             records: framed,
             part_index: 0,
             previous_part: None,
