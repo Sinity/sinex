@@ -6,7 +6,7 @@
 //! binding is recorded with its settings (so a replay reads it the same way)
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
-use crate::context::{Context, Sink, stored_chain};
+use crate::one_shot::{OneShot, Sink, stored_chain};
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
 use sinex_sources::{Binding, InputKind, Limits, Settings, Source, drivers, sources};
@@ -114,7 +114,7 @@ pub async fn run(o: Options) -> Result<(), String> {
             planned.push((kind, b));
         }
     }
-    let mut ctx = Context::open(&o.database, &o.store).await?;
+    let mut ctx = OneShot::open(&o.database, &o.store).await?;
     let sink = Sink(ctx.blobs.clone());
     let emits: Vec<&'static str> = {
         let mut types: Vec<&'static str> = planned
@@ -133,7 +133,7 @@ pub async fn run(o: Options) -> Result<(), String> {
         build: option_env!("SINEX_BUILD").unwrap_or("dev"),
         emits: &emits,
     };
-    let run = runs::start(&mut ctx.aux, &manifest, &o.host)
+    let run = runs::start(&mut ctx.read_conn, &manifest, &o.host)
         .await
         .map_err(|e| e.to_string())?;
     // Totals per source, in the order sources were first read.
@@ -159,7 +159,7 @@ pub async fn run(o: Options) -> Result<(), String> {
             println!("{source} {totals}");
         }
     }
-    runs::end(&mut ctx.aux, run)
+    runs::end(&mut ctx.read_conn, run)
         .await
         .map_err(|e| e.to_string())?;
     ctx.close().await
@@ -168,7 +168,7 @@ pub async fn run(o: Options) -> Result<(), String> {
 /// Record `b`, rebuild its driver state from what it stored, and read it
 /// to the end.
 pub(crate) async fn read_binding(
-    ctx: &mut Context,
+    ctx: &mut OneShot,
     run: RunId,
     sink: &Sink,
     kind: &InputKind,
@@ -179,10 +179,10 @@ pub(crate) async fn read_binding(
         .reader
         .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
     let mut reader = reader_for(b)?;
-    record(&mut ctx.aux, b).await?;
+    record(&mut ctx.read_conn, b).await?;
     reader.remember(&stored(ctx, &b.name).await?);
     drive(
-        &mut ctx.aux,
+        &mut ctx.read_conn,
         &ctx.writer,
         run,
         source.as_ref(),
@@ -194,9 +194,9 @@ pub(crate) async fn read_binding(
 }
 
 /// Store `b`'s source, input and settings under its name.
-pub(crate) async fn record(aux: &mut PgConnection, b: &Binding) -> Result<(), String> {
+pub(crate) async fn record(read_conn: &mut PgConnection, b: &Binding) -> Result<(), String> {
     bindings::save(
-        aux,
+        read_conn,
         &bindings::Stored {
             binding: b.name.clone(),
             source: b.source.clone(),
@@ -210,19 +210,19 @@ pub(crate) async fn record(aux: &mut PgConnection, b: &Binding) -> Result<(), St
 
 /// The stored bytes the binding's driver read last, for its state.
 pub(crate) async fn stored(
-    ctx: &mut Context,
+    ctx: &mut OneShot,
     binding: &str,
 ) -> Result<Vec<(sinex_model::MaterialId, Vec<u8>)>, String> {
-    let cursor = positions::load(&mut ctx.aux, binding)
+    let cursor = positions::load(&mut ctx.read_conn, binding)
         .await
         .map_err(|e| e.to_string())?
         .map(|(cursor, _)| cursor)
         .unwrap_or(serde_json::Value::Null);
-    stored_chain(&mut ctx.aux, &ctx.blobs, &cursor).await
+    stored_chain(&mut ctx.read_conn, &ctx.blobs, &cursor).await
 }
 
 pub(crate) async fn drive(
-    aux: &mut PgConnection,
+    read_conn: &mut PgConnection,
     handle: &writer::WriterHandle,
     run: RunId,
     source: &dyn Source,
@@ -235,7 +235,7 @@ pub(crate) async fn drive(
     let private = sinex_protocol::private_mode::PrivateMode::default();
     // The source's class: its declaration, raised by the operator's floor.
     // A sealed source seals each material and its events as they are read.
-    let floor = sinex_store::privacy::load(aux, std::iter::once(source.spec().name))
+    let floor = sinex_store::privacy::load(read_conn, std::iter::once(source.spec().name))
         .await
         .map_err(|e| e.to_string())?
         .floors
@@ -243,13 +243,13 @@ pub(crate) async fn drive(
         .copied()
         .unwrap_or_default();
     let sealing = if source.spec().class.max(floor) == sinex_model::Class::Sealed {
-        let recipient = crate::context::class_key()?.ok_or_else(|| {
+        let recipient = crate::one_shot::class_key()?.ok_or_else(|| {
             format!(
                 "{}: its class is sealed, but no class key is configured (SINEX_CLASS_KEY_FILE)",
                 source.spec().name
             )
         })?;
-        Some(crate::context::SealingSink::new(sink.0.clone(), recipient))
+        Some(crate::one_shot::SealingSink::new(sink.0.clone(), recipient))
     } else {
         None
     };
@@ -265,7 +265,7 @@ pub(crate) async fn drive(
                 private.path().display()
             ));
         }
-        let (cursor, carry) = positions::load(aux, binding)
+        let (cursor, carry) = positions::load(read_conn, binding)
             .await
             .map_err(|e| e.to_string())?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
@@ -294,7 +294,7 @@ pub(crate) async fn drive(
         for batch in prepared.batches().map_err(|e| e.to_string())? {
             let mut one = [batch];
             if let Some(s) = &sealing {
-                s.seal(aux, &mut one).await?;
+                s.seal(read_conn, &mut one).await?;
             }
             let [batch] = one;
             totals.batches += 1;

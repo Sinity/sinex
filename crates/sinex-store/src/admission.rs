@@ -197,7 +197,7 @@ async fn removed_at_source(
 ) -> Result<()> {
     for request in &batch.archive {
         if let ArchiveRequest::RemovedAtSource { locations } = request {
-            for live in crate::derived::live_at(conn, locations).await? {
+            for live in crate::derivations::live_at(conn, locations).await? {
                 if live.record_state == sinex_model::RecordState::Removed {
                     continue;
                 }

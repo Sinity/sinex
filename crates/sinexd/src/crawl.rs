@@ -2,7 +2,7 @@
 //! on the allow list and that have not been fetched yet (architecture §5.6).
 //! The allow list is the opt-in: nothing is fetched without one.
 use crate::backfill::{Totals, drive};
-use crate::context::Sink;
+use crate::one_shot::Sink;
 use crate::writer::WriterHandle;
 use sinex_sources::sources::page_crawl::{self, Crawl};
 use sinex_store::Blobs;
@@ -13,11 +13,11 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 /// URLs the browser sources stored, newest reading order first deduplicated.
-async fn history_urls(aux: &mut PgConnection) -> Result<Vec<String>, String> {
+async fn history_urls(read_conn: &mut PgConnection) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
     for event_type in ["browser.url", "browser.history_entry", "browser.visit"] {
-        let rows = payloads::live_all(aux, event_type, State::Present)
+        let rows = payloads::live_all(read_conn, event_type, State::Present)
             .await
             .map_err(|e| e.to_string())?;
         for p in rows {
@@ -34,7 +34,7 @@ async fn history_urls(aux: &mut PgConnection) -> Result<Vec<String>, String> {
 /// Crawl with its parts: a read connection, the content store and the writer.
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
-    aux: &mut PgConnection,
+    read_conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
     host: &str,
@@ -46,7 +46,7 @@ pub async fn run(
     if allow.is_empty() {
         return Err("nothing is crawled without an allow list (--allow DOMAIN)".into());
     }
-    let fetched: BTreeSet<String> = payloads::live_all(aux, "page.fetched", State::Any)
+    let fetched: BTreeSet<String> = payloads::live_all(read_conn, "page.fetched", State::Any)
         .await
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -57,7 +57,7 @@ pub async fn run(
         })
         .collect();
     let candidates = if urls.is_empty() {
-        history_urls(aux).await?
+        history_urls(read_conn).await?
     } else {
         urls
     };
@@ -77,7 +77,7 @@ pub async fn run(
         build: option_env!("SINEX_BUILD").unwrap_or("dev"),
         emits: &["page.fetched"],
     };
-    let run = runs::start(aux, &manifest, host)
+    let run = runs::start(read_conn, &manifest, host)
         .await
         .map_err(|e| e.to_string())?;
     let crawl = Crawl::new(todo, allow, pause, host.to_owned());
@@ -85,10 +85,10 @@ pub async fn run(
     let sink = Sink(blobs.clone());
     // Each crawl is its own list, so its binding starts from the beginning.
     let binding = format!("page-crawl@{host}/{}", run.0);
-    let totals = drive(aux, writer, run, &source, &binding, &sink, |c| {
+    let totals = drive(read_conn, writer, run, &source, &binding, &sink, |c| {
         crawl.poll(c)
     })
     .await?;
-    runs::end(aux, run).await.map_err(|e| e.to_string())?;
+    runs::end(read_conn, run).await.map_err(|e| e.to_string())?;
     Ok(totals)
 }

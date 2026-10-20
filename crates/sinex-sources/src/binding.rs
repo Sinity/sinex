@@ -6,7 +6,7 @@
 //! the kinds, so adding a source touches only its own module (and one line in
 //! the registry list).
 use crate::drivers::append_file::{AppendFile, AppendState};
-use crate::drivers::dir_snapshot::{DirState, DirSnapshot};
+use crate::drivers::dir_snapshot::{DirSnapshot, DirState};
 use crate::drivers::sqlite_rows::{RowState, SqliteRows};
 use crate::drivers::{Acquired, DriverError};
 use crate::registry::{Framer, Source, SourceSpec};
@@ -233,7 +233,7 @@ impl<D: StatelessDriver> Reader for Stateless<D> {
 }
 
 /// A box of `driver` as a [`Reader`].
-pub fn plain<D: StatelessDriver + 'static>(driver: D) -> Box<dyn Reader> {
+pub fn stateless<D: StatelessDriver + 'static>(driver: D) -> Box<dyn Reader> {
     Box::new(Stateless(driver))
 }
 

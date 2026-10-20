@@ -1,27 +1,29 @@
-//! Interval lift: transitions and observed spans become `state.interval`
-//! events (ported from the predecessor's `automata/interval_lift.rs`). One rule
-//! per state kind, as data; a new point, transition or span source adds a
-//! rule, never a new derivation.
+//! State intervals: transitions and observed spans become `state.interval`
+//! events, one per span during which a state held (a focused window, a
+//! workspace, a running systemd unit). One rule per state kind, as data; a new
+//! point, transition or span source adds a rule, never a new derivation.
 //!
 //! Three rule shapes:
 //!
 //! - **adjacent transitions** (window focus, workspace): a state holds until
-//!   the next transition to a different subject, or until a fence;
+//!   the next transition to a different subject, or until an interruption;
 //! - **spans** (ActivityWatch window and presence spans, already joined at the
-//!   source): each span is one interval, cut short by a fence inside it;
-//! - **start/stop pairs** (systemd units): a start opens a subject, the matching
-//!   stop closes it; a second start closes the first at its own time.
+//!   source): each span is one interval, cut short by an interruption inside
+//!   it;
+//! - **start/stop pairs** (systemd units): a start opens a subject, the
+//!   matching stop closes it; a second start closes the first at its own time.
 //!
-//! Fences end desktop-attention states at their own time: a suspend (systemd
-//! sleep and suspend units starting) ends focus, workspace and window spans;
-//! going AFK ends focus and workspace.
+//! Interruptions end desktop-attention states at their own time: a suspend
+//! (systemd sleep and suspend units starting) ends focus, workspace and window
+//! spans; going AFK ends focus and workspace.
 //!
 //! The key is the rule and the logical day. A key emits the intervals that
 //! start inside its day; it reads the earliest transitions after the day to end
 //! them. An interval still open at the end of the evidence has no end yet and
-//! the key is recomputed whenever the derivation runs again. Interval identity
-//! is the start evidence's record location ("ends move, starts do not", `y8v`).
-use crate::output::derived;
+//! the key is recomputed whenever the derivation runs again. An interval is
+//! identified by its start evidence's record location: its end moves as later
+//! evidence arrives, its start does not.
+use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Neighbour};
 use serde_json::{Value, json};
 use sinex_model::event_types::StateInterval;
@@ -41,15 +43,15 @@ pub const SUSPEND_UNITS: &[&str] = &[
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fence {
+pub enum Interruption {
     /// The machine suspends or hibernates.
     Suspend,
     /// The operator went AFK.
     Afk,
 }
 
-impl Fence {
-    /// The neighbour query that finds the next fence of this kind.
+impl Interruption {
+    /// The neighbour query that finds the next interruption of this kind.
     fn neighbour(self) -> Neighbour {
         match self {
             Self::Suspend => Neighbour {
@@ -92,9 +94,9 @@ pub enum Shape {
     },
 }
 
-/// One state kind's lift rule.
+/// One state kind's interval rule.
 #[derive(Clone, Copy)]
-pub struct LiftRule {
+pub struct IntervalRule {
     pub state_kind: &'static str,
     pub event_types: &'static [&'static str],
     pub shape: Shape,
@@ -102,7 +104,7 @@ pub struct LiftRule {
     pub label: fn(&Value) -> Option<String>,
     /// Payload fields copied into the interval's attributes.
     pub attributes: &'static [&'static str],
-    pub fenced_by: &'static [Fence],
+    pub ended_by: &'static [Interruption],
 }
 
 fn text<'a>(p: &'a Value, f: &str) -> Option<&'a str> {
@@ -130,8 +132,8 @@ fn app_and_title(p: &Value, app: &str, title: &str) -> Option<String> {
     }
 }
 
-pub const RULES: &[LiftRule] = &[
-    LiftRule {
+pub const RULES: &[IntervalRule] = &[
+    IntervalRule {
         state_kind: "desktop.focus",
         event_types: &["window.focused"],
         shape: Shape::AdjacentTransitions,
@@ -142,9 +144,9 @@ pub const RULES: &[LiftRule] = &[
         },
         label: |p| app_and_title(p, "class", "title"),
         attributes: &["window", "class", "title"],
-        fenced_by: &[Fence::Suspend, Fence::Afk],
+        ended_by: &[Interruption::Suspend, Interruption::Afk],
     },
-    LiftRule {
+    IntervalRule {
         state_kind: "desktop.workspace",
         event_types: &["workspace.switched"],
         shape: Shape::AdjacentTransitions,
@@ -159,9 +161,9 @@ pub const RULES: &[LiftRule] = &[
                 .or_else(|| scalar(p, "workspace_id"))
         },
         attributes: &["workspace_id", "workspace_name"],
-        fenced_by: &[Fence::Suspend, Fence::Afk],
+        ended_by: &[Interruption::Suspend, Interruption::Afk],
     },
-    LiftRule {
+    IntervalRule {
         state_kind: "desktop.activitywatch.window",
         event_types: &["window.span"],
         shape: Shape::Span { end: "ended_at" },
@@ -173,21 +175,21 @@ pub const RULES: &[LiftRule] = &[
         },
         label: |p| app_and_title(p, "app", "title"),
         attributes: &["bucket", "app", "title"],
-        fenced_by: &[Fence::Suspend],
+        ended_by: &[Interruption::Suspend],
     },
-    LiftRule {
+    IntervalRule {
         state_kind: "desktop.activitywatch.afk",
         event_types: &["presence.span"],
         shape: Shape::Span { end: "ended_at" },
         subject: |p| text(p, "status").map(|s| format!("status:{s}")),
         label: |p| text(p, "status").map(str::to_owned),
         attributes: &["bucket", "status"],
-        fenced_by: &[Fence::Suspend],
+        ended_by: &[Interruption::Suspend],
     },
     // The systemd source emits `unit.started` and `unit.stopped` with
     // `unit_name`, `unit_type`, `active_state`, `sub_state` and, when known,
     // `main_pid` or `exit_code` (the predecessor's payloads).
-    LiftRule {
+    IntervalRule {
         state_kind: "system.systemd.unit",
         event_types: &["unit.started", "unit.stopped"],
         shape: Shape::StartStopPair {
@@ -204,15 +206,15 @@ pub const RULES: &[LiftRule] = &[
             "main_pid",
             "exit_code",
         ],
-        fenced_by: &[],
+        ended_by: &[],
     },
 ];
 
-pub fn rule(state_kind: &str) -> Option<&'static LiftRule> {
+pub fn rule(state_kind: &str) -> Option<&'static IntervalRule> {
     RULES.iter().find(|r| r.state_kind == state_kind)
 }
 
-/// Every event type any rule reads, as transitions, spans or fences.
+/// Every event type any rule reads, as transitions, spans or interruptions.
 pub const INPUT_TYPES: &[&str] = &[
     "window.focused",
     "workspace.switched",
@@ -233,7 +235,7 @@ struct Open<'a> {
 }
 
 impl<'a> Open<'a> {
-    fn new(rule: &LiftRule, event: &'a Event, at: Timestamp) -> Self {
+    fn new(rule: &IntervalRule, event: &'a Event, at: Timestamp) -> Self {
         let p = &event.payload;
         Self {
             start: event,
@@ -280,7 +282,7 @@ fn interval_id(state_kind: &str, open: &Open<'_>) -> String {
     }
 }
 
-fn to_event(rule: &LiftRule, l: Lifted<'_>) -> Event {
+fn to_event(rule: &IntervalRule, l: Lifted<'_>) -> Event {
     let payload = StateInterval {
         interval_id: interval_id(rule.state_kind, &l.open),
         state_kind: rule.state_kind.to_owned(),
@@ -294,25 +296,25 @@ fn to_event(rule: &LiftRule, l: Lifted<'_>) -> Event {
     };
     derived(
         &payload,
-        IntervalLift::NAME,
+        StateIntervals::NAME,
         std::iter::once(l.open.start).chain(l.closers),
     )
 }
 
-fn fence_applies(rule: &LiftRule, e: &Event) -> bool {
-    Fence::of(e.event_type, &e.payload).is_some_and(|f| rule.fenced_by.contains(&f))
+fn interrupts(rule: &IntervalRule, e: &Event) -> bool {
+    Interruption::of(e.event_type, &e.payload).is_some_and(|f| rule.ended_by.contains(&f))
 }
 
 /// Fold one rule over time-sorted events. Returns every interval whose start
 /// is among `events`, closed or still open.
-fn fold<'a>(rule: &LiftRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
+fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
     let mut out: Vec<Lifted<'a>> = Vec::new();
     match rule.shape {
         Shape::AdjacentTransitions => {
             let mut open: Option<Open<'a>> = None;
             for &e in events {
                 let Some(at) = e.ts_orig.at else { continue };
-                if fence_applies(rule, e)
+                if interrupts(rule, e)
                     && let Some(o) = open.take_if(|o| o.at <= at)
                 {
                     out.push(Lifted {
@@ -350,9 +352,9 @@ fn fold<'a>(rule: &LiftRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
             }
         }
         Shape::Span { end } => {
-            let fences: Vec<(&'a Event, Timestamp)> = events
+            let interruptions: Vec<(&'a Event, Timestamp)> = events
                 .iter()
-                .filter(|e| fence_applies(rule, e))
+                .filter(|e| interrupts(rule, e))
                 .filter_map(|&e| Some((e, e.ts_orig.at?)))
                 .collect();
             for &e in events {
@@ -365,12 +367,14 @@ fn fold<'a>(rule: &LiftRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
                     .get(end)
                     .and_then(|v| serde_json::from_value(v.clone()).ok());
                 let observed = observed.map(|t| t.max(at));
-                // A fence inside the span ends it there.
-                let fenced = fences
+                // A interruption inside the span ends it there.
+                let interrupted = interruptions
                     .iter()
                     .find(|(_, f)| *f > at && observed.is_none_or(|o| *f < o));
-                let (end, closers) = match fenced {
-                    Some(&(fence, f)) => (Some((f, fence.event_type)), vec![fence]),
+                let (end, closers) = match interrupted {
+                    Some(&(interruption, f)) => {
+                        (Some((f, interruption.event_type)), vec![interruption])
+                    }
                     None => (observed.map(|o| (o, e.event_type)), vec![]),
                 };
                 out.push(Lifted {
@@ -425,15 +429,15 @@ fn fold<'a>(rule: &LiftRule, events: &[&'a Event]) -> Vec<Lifted<'a>> {
     out
 }
 
-pub struct IntervalLift;
+pub struct StateIntervals;
 
-fn key_parts(key: &Value) -> Option<(&'static LiftRule, jiff::civil::Date)> {
+fn key_parts(key: &Value) -> Option<(&'static IntervalRule, jiff::civil::Date)> {
     let r = rule(key.get("state")?.as_str()?)?;
     let day = key.get("day")?.as_str()?.parse().ok()?;
     Some((r, day))
 }
 
-impl Keyed for IntervalLift {
+impl Keyed for StateIntervals {
     const NAME: &'static str = "state.intervals";
     const VERSION: u32 = 1;
     const INPUTS: &'static [&'static str] = INPUT_TYPES;
@@ -446,12 +450,12 @@ impl Keyed for IntervalLift {
         let Ok(day) = env.civil.day(t) else {
             return vec![];
         };
-        let fence = Fence::of(input.event_type, input.payload);
+        let interruption = Interruption::of(input.event_type, input.payload);
         RULES
             .iter()
             .filter(|r| {
                 r.event_types.contains(&input.event_type)
-                    || fence.is_some_and(|f| r.fenced_by.contains(&f))
+                    || interruption.is_some_and(|f| r.ended_by.contains(&f))
             })
             .map(|r| json!({"state": r.state_kind, "day": day.to_string()}))
             .collect()
@@ -462,7 +466,7 @@ impl Keyed for IntervalLift {
         let start = env.civil.day_start(day).ok()?;
         let end = env.civil.day_end(day).ok()?;
         let mut types: Vec<&'static str> = r.event_types.to_vec();
-        for f in r.fenced_by {
+        for f in r.ended_by {
             for t in f.neighbour().event_types {
                 if !types.contains(&t) {
                     types.push(t);
@@ -485,7 +489,7 @@ impl Keyed for IntervalLift {
                 count: 1,
             }),
         }
-        for f in r.fenced_by {
+        for f in r.ended_by {
             q.after.push(f.neighbour());
         }
         Some(q)

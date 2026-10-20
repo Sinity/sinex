@@ -1,7 +1,7 @@
 //! What a one-shot command (backfill, replay, excision, hide) runs with: the
 //! schema checked, the content store open, and the one writer task. Reads go
-//! through `aux`, never the writer's connection.
-use crate::keys::Registered;
+//! through `read_conn`, never the writer's connection.
+use crate::dirty_keys::Registered;
 use crate::writer::{self, WriterHandle};
 use sinex_model::MaterialId;
 use sinex_sources::drivers::MaterialSink;
@@ -11,19 +11,19 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
-pub struct Context {
-    pub aux: PgConnection,
+pub struct OneShot {
+    pub read_conn: PgConnection,
     pub blobs: Blobs,
     pub writer: WriterHandle,
     task: JoinHandle<()>,
 }
 
-impl Context {
+impl OneShot {
     pub async fn open(database: &str, store: &Path) -> Result<Self, String> {
-        let mut aux = PgConnection::connect(database)
+        let mut read_conn = PgConnection::connect(database)
             .await
             .map_err(|e| e.to_string())?;
-        sinex_schema::apply(&mut aux)
+        sinex_schema::apply(&mut read_conn)
             .await
             .map_err(|e| e.to_string())?;
         let blobs = Blobs::open(store).map_err(|e| e.to_string())?;
@@ -39,7 +39,7 @@ impl Context {
             Arc::new(Registered::new(sinex_derivations::keyed())),
         ));
         Ok(Self {
-            aux,
+            read_conn,
             blobs,
             writer,
             task,
@@ -107,7 +107,7 @@ impl SealingSink {
     /// never exists without its key.
     pub async fn seal(
         &self,
-        aux: &mut PgConnection,
+        read_conn: &mut PgConnection,
         batches: &mut [sinex_model::Batch],
     ) -> Result<(), String> {
         for batch in batches {
@@ -129,7 +129,7 @@ impl SealingSink {
                 .ok_or_else(|| format!("material {}: stored without a data key", material.id))?;
             let wrapped =
                 sinex_store::sealed::wrap(&key, &self.recipient).map_err(|e| e.to_string())?;
-            sinex_store::sealed::store_key(aux, material.id, &key.key_ref, &wrapped)
+            sinex_store::sealed::store_key(read_conn, material.id, &key.key_ref, &wrapped)
                 .await
                 .map_err(|e| e.to_string())?;
             for record in &mut batch.records {
@@ -165,7 +165,7 @@ impl MaterialSink for SealingSink {
 /// cursor's `through`: bytes after it were stored but their readings never
 /// committed, so the driver must read them again.
 pub async fn stored_chain(
-    aux: &mut PgConnection,
+    read_conn: &mut PgConnection,
     blobs: &Blobs,
     cursor: &serde_json::Value,
 ) -> Result<Vec<(MaterialId, Vec<u8>)>, String> {
@@ -176,7 +176,7 @@ pub async fn stored_chain(
     else {
         return Ok(Vec::new());
     };
-    let names = sinex_store::replay::chain_ending(aux, last)
+    let names = sinex_store::replay::chain_ending(read_conn, last)
         .await
         .map_err(|e| e.to_string())?;
     let through = cursor

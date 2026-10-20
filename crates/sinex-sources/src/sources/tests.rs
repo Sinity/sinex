@@ -50,7 +50,10 @@ fn a_shared_source_name_resolves_by_parser() {
 fn a_shared_parser_resolves_by_name() {
     let outlook = spec("communication.outlook").expect("Outlook is registered");
     let b = crate::Binding::of(outlook, std::path::Path::new("/x.mbox"), Settings::new("h"));
-    assert_eq!(input_kind_of_source(&b.source, &b.parser).unwrap().name, "outlook");
+    assert_eq!(
+        input_kind_of_source(&b.source, &b.parser).unwrap().name,
+        "outlook"
+    );
 }
 
 #[test]

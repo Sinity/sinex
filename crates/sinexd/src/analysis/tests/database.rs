@@ -4,7 +4,7 @@
 //! newer answers to the same standing question.
 use super::super::cells::maintain;
 use super::super::*;
-use crate::keys::Registered as Keys;
+use crate::dirty_keys::Registered as Keys;
 use crate::writer::{self, Priority};
 use serde_json::json;
 use sinex_analysis::Eligibility;

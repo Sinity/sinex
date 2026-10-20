@@ -6,19 +6,19 @@ mod analysis;
 mod api;
 mod backfill;
 mod catalog;
-mod commits;
-mod context;
+mod commit_reader;
 mod crawl;
 mod daemon;
-mod derive;
+mod derivation_runner;
+mod dirty_keys;
+mod excision;
 mod ingress;
-mod keys;
 mod library;
-mod media_text;
-mod operate;
+mod one_shot;
 mod publisher;
 mod replay;
-mod runner;
+mod screen_text;
+mod source_runner;
 mod writer;
 
 #[cfg(test)]
@@ -163,7 +163,13 @@ async fn local_driver(
     database: &str,
     host: &str,
     store: Option<&std::path::Path>,
-) -> Result<(derive::Driver, tokio::task::JoinHandle<()>), String> {
+) -> Result<
+    (
+        derivation_runner::DerivationRunner,
+        tokio::task::JoinHandle<()>,
+    ),
+    String,
+> {
     use sqlx::Connection;
     sinex_schema::apply_url(database)
         .await
@@ -176,16 +182,16 @@ async fn local_driver(
         database.to_owned(),
         writer_conn,
         queues,
-        std::sync::Arc::new(keys::Registered::new(sinex_derivations::keyed())),
+        std::sync::Arc::new(dirty_keys::Registered::new(sinex_derivations::keyed())),
     ));
     let read = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| e.to_string())?;
-    let mut driver = derive::Driver::start(
+    let mut driver = derivation_runner::DerivationRunner::start(
         read,
         handle,
         sinex_derivations::keyed(),
-        derive::per_event(),
+        derivation_runner::per_event(),
         host,
     )
     .await?;

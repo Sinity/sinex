@@ -2,7 +2,7 @@
 //! consumers through the commit-log reader, never by database triggers
 //! (architecture §3.6, `nbi.3`).
 use crate::Result;
-use crate::committed::{self, Committed};
+use crate::commit_log::{self, Committed};
 use sinex_model::query::text::payload_text;
 use sqlx::{Connection, PgConnection};
 
@@ -41,15 +41,15 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
 /// Bring the search read model up to the newest commit without the daemon's
 /// reader, page by page with its position: for tools and tests.
 pub async fn catch_up_search_text(conn: &mut PgConnection) -> Result<i64> {
-    let (mut position, _) = committed::consumer_position(conn, SEARCH_TEXT).await?;
+    let (mut position, _) = commit_log::consumer_position(conn, SEARCH_TEXT).await?;
     loop {
-        let page = committed::after(conn, position, 2_000).await?;
+        let page = commit_log::after(conn, position, 2_000).await?;
         let Some(up_to) = page.up_to else {
             return Ok(position);
         };
         let mut tx = conn.begin().await?;
         apply_search_text(&mut tx, &page.events).await?;
-        committed::set_consumer_position(&mut tx, SEARCH_TEXT, up_to, 0).await?;
+        commit_log::set_consumer_position(&mut tx, SEARCH_TEXT, up_to, 0).await?;
         tx.commit().await?;
         position = up_to;
     }

@@ -488,7 +488,7 @@ async fn excision_deletes_the_stored_media_bytes() {
         "the scan kept c's bytes"
     );
     assert!(blob_row(&mut w.conn, &c_bytes).await);
-    crate::operate::excise_with(
+    crate::excision::excise_with(
         &mut w.conn,
         &w.blobs.clone(),
         &w.writer,
@@ -504,7 +504,7 @@ async fn excision_deletes_the_stored_media_bytes() {
     assert!(!blob_row(&mut w.conn, &c_bytes).await);
 
     let (a_event, a_bytes) = acquisition(&mut w.conn, &a).await;
-    crate::operate::excise_with(
+    crate::excision::excise_with(
         &mut w.conn,
         &w.blobs.clone(),
         &w.writer,

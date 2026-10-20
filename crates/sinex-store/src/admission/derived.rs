@@ -56,7 +56,7 @@ pub(super) async fn settle(
                 sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
                     .fetch_one(&mut *conn)
                     .await?;
-            let name: &'static str = crate::derived::static_type(derivation);
+            let name: &'static str = crate::derivations::static_type(derivation);
             mark_dirty(conn, marked.into_iter().map(|k| (name, k)).collect(), seq).await
         }
         DerivedScope::Position { position } => {

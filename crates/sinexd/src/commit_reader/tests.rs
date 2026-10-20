@@ -154,7 +154,7 @@ async fn read_models_get_every_event_once_across_restarts() {
     reader.await.unwrap().unwrap();
 
     assert_eq!(counted(&mut check).await, 6);
-    let (position, _) = committed::consumer_position(&mut check, "test.counter")
+    let (position, _) = commit_log::consumer_position(&mut check, "test.counter")
         .await
         .unwrap();
     assert_eq!(position, 6);
@@ -191,7 +191,7 @@ async fn excised_events_never_reach_consumers() {
     .unwrap();
     tx.commit().await.unwrap();
     let mut conn = PgConnection::connect(&url).await.unwrap();
-    let page = committed::after(&mut conn, 0, 10).await.unwrap();
+    let page = commit_log::after(&mut conn, 0, 10).await.unwrap();
     assert_eq!(page.up_to, Some(2));
     assert_eq!(page.events.len(), 1);
     assert_eq!(

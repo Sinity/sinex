@@ -17,14 +17,14 @@
 //! - **Maintained tables:** derivations whose outputs are store rows rather
 //!   than events (analysis metric values), on the same dirty keys. They run
 //!   once the event derivations have settled, at most every
-//!   [`MAINTAIN_QUIET`] while the daemon runs, so an import's burst of
+//!   [`MAINTAIN_AT_MOST_EVERY`] while the daemon runs, so an import's burst of
 //!   commits is maintained once rather than per commit.
 //!
 //! Derivations run in the order their inputs and outputs give: a derivation
 //! whose inputs another one produces runs after it, so a daily summary is
 //! computed once the commands it counts have been fused, not again for every
 //! intermediate state. A pass works on the lowest rank that has work; one pass
-//! in [`FAIR_EVERY`] works every rank, so a busy upstream cannot keep a
+//! in [`EVERY_LEVEL_EVERY`] works every rank, so a busy upstream cannot keep a
 //! downstream derivation from running.
 //!
 //! A key waiting on evidence outside its window stops waiting once it has
@@ -40,8 +40,8 @@ use sinex_derivations::{AnyKeyed, AnyPerEvent, Env, Input, InputQuery, KeyView, 
 use sinex_model::civil::Civil;
 use sinex_model::{Batch, BatchKind, Event, ReadingOrder, RecordOutcome, RunId, Timestamp};
 use sinex_store::blobs::Blobs;
-use sinex_store::derived::{self, Match, Nearest, Registered, Window};
-use sinex_store::{DerivedScope, KeyScope, media, runs};
+use sinex_store::derivations::{self, Match, Nearest, Registered, Window};
+use sinex_store::{DerivedScope, KeyScope, material_bytes, runs};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
@@ -66,66 +66,12 @@ type KeyWork = (Value, i64, bool);
 /// Keys marked dirty per recompute request.
 const KEYS_PER_REQUEST: usize = 5_000;
 /// One pass in this many works every rank, not only the lowest with work.
-pub const FAIR_EVERY: u32 = 8;
+pub const EVERY_LEVEL_EVERY: u32 = 8;
 /// While the daemon runs, maintained tables are brought up to date at most
 /// this often.
-pub const MAINTAIN_QUIET: Duration = Duration::from_secs(30);
+pub const MAINTAIN_AT_MOST_EVERY: Duration = Duration::from_secs(30);
 /// A key that has waited this long stops waiting.
 pub const WAITING_HORIZON: time::Duration = time::Duration::days(14);
-
-/// Counts for one derivation.
-#[derive(Clone, Debug, Default)]
-pub struct Counts {
-    pub keys: usize,
-    pub inputs: usize,
-    pub outputs: usize,
-    pub admitted: usize,
-    pub repeats: usize,
-    pub replaced: usize,
-    /// Inputs a per-event derivation could not derive (their outputs are
-    /// missing until a new version reads them again).
-    pub failed: usize,
-    pub compute: Duration,
-    pub read: Duration,
-    pub write: Duration,
-}
-
-impl Counts {
-    pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "keys": self.keys,
-            "inputs": self.inputs,
-            "outputs": self.outputs,
-            "admitted": self.admitted,
-            "repeats": self.repeats,
-            "replaced": self.replaced,
-            "failed": self.failed,
-            "read_s": self.read.as_secs_f64(),
-            "compute_s": self.compute.as_secs_f64(),
-            "write_s": self.write.as_secs_f64(),
-            "outputs_per_write_s": self.outputs as f64 / self.write.as_secs_f64().max(1e-9),
-        })
-    }
-}
-
-impl std::fmt::Display for Counts {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "keys {} | inputs read {} | outputs {} | admitted {} | repeats {} | replaced {} | failed {} | read {:.2}s | compute {:.2}s | write {:.2}s",
-            self.keys,
-            self.inputs,
-            self.outputs,
-            self.admitted,
-            self.repeats,
-            self.replaced,
-            self.failed,
-            self.read.as_secs_f64(),
-            self.compute.as_secs_f64(),
-            self.write.as_secs_f64(),
-        )
-    }
-}
 
 /// A derivation that keeps store rows (not events) equal to a function of its
 /// inputs, driven by dirty keys admission marks under its own names.
@@ -139,7 +85,7 @@ pub trait Maintained: Send {
     ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + 'a>>;
 }
 
-pub struct Driver {
+pub struct DerivationRunner {
     keyed: Vec<Box<dyn AnyKeyed>>,
     per_event: Vec<Box<dyn AnyPerEvent>>,
     maintained: Vec<Box<dyn Maintained>>,
@@ -192,7 +138,7 @@ fn to_window(q: &InputQuery) -> Window {
     }
 }
 
-impl Driver {
+impl DerivationRunner {
     /// Register the derivation catalog, start one run per derivation, and
     /// queue a full recompute for every derivation whose version changed.
     pub async fn start(
@@ -219,12 +165,12 @@ impl Driver {
                 outputs: d.output_types().iter().map(|s| (*s).to_owned()).collect(),
             }))
             .collect();
-        let changed = derived::register(&mut read, &catalog)
+        let changed = derivations::register(&mut read, &catalog)
             .await
             .map_err(|e| e.to_string())?;
         let mut runs = BTreeMap::new();
         for d in &catalog {
-            let name = derived::static_type(&d.name);
+            let name = derivations::static_type(&d.name);
             let version = d.version.to_string();
             let emits: Vec<&str> = d.outputs.iter().map(String::as_str).collect();
             let manifest = runs::Manifest {
@@ -259,7 +205,7 @@ impl Driver {
             if driver.keyed.iter().any(|d| d.name() == name) {
                 driver.recompute_all(&name, None).await?;
             } else {
-                derived::reset_position(&mut driver.read, &name)
+                derivations::reset_position(&mut driver.read, &name)
                     .await
                     .map_err(|e| e.to_string())?;
             }
@@ -293,7 +239,7 @@ impl Driver {
         let mut seen: HashSet<String> = HashSet::new();
         let mut after = 0i64;
         loop {
-            let page = derived::after_seq(&mut self.read, &types, after, 10_000)
+            let page = derivations::after_seq(&mut self.read, &types, after, 10_000)
                 .await
                 .map_err(|e| e.to_string())?;
             let Some(last) = page.last() else { break };
@@ -323,7 +269,7 @@ impl Driver {
     /// A driver for one operation on one keyed derivation: a recompute or a
     /// comparison asked for through the command table. It registers nothing
     /// and starts one run, for that derivation.
-    pub async fn operating(
+    pub async fn for_one(
         mut read: PgConnection,
         writer: WriterHandle,
         name: &str,
@@ -439,7 +385,7 @@ impl Driver {
             return Ok(sinex_derivations::Computed::default());
         };
         let t = Instant::now();
-        let inputs: Vec<Event> = derived::read_window(&mut self.read, &to_window(&q))
+        let inputs: Vec<Event> = derivations::read_window(&mut self.read, &to_window(&q))
             .await
             .map_err(|e| e.to_string())?
             .into_iter()
@@ -475,7 +421,7 @@ impl Driver {
             .collect();
         let windows: Vec<Window> = queries.iter().flatten().cloned().collect();
         let t = Instant::now();
-        let mut read = derived::read_windows(&mut self.read, &windows)
+        let mut read = derivations::read_windows(&mut self.read, &windows)
             .await
             .map_err(|e| e.to_string())?
             .into_iter();
@@ -537,7 +483,7 @@ impl Driver {
         mut records: Vec<RecordOutcome>,
     ) -> Result<(), String> {
         let name = self.keyed[index].name();
-        let head = derived::head(&mut self.read)
+        let head = derivations::head(&mut self.read)
             .await
             .map_err(|e| e.to_string())?;
         let mut n = 0;
@@ -577,13 +523,13 @@ impl Driver {
     }
 
     /// One pass over the lowest rank with work (every rank, one pass in
-    /// [`FAIR_EVERY`]): its dirty keys, then the waiting keys of the
+    /// [`EVERY_LEVEL_EVERY`]): its dirty keys, then the waiting keys of the
     /// derivations that ran, then its per-event derivations. Returns how much
     /// work it did.
     pub async fn pass(&mut self) -> Result<usize, String> {
         let env = self.env();
         self.passes = self.passes.wrapping_add(1);
-        let every_rank = self.passes % FAIR_EVERY == 0;
+        let every_rank = self.passes % EVERY_LEVEL_EVERY == 0;
         let mut levels: Vec<u32> = self.ranks.values().copied().collect();
         levels.sort_unstable();
         levels.dedup();
@@ -610,7 +556,7 @@ impl Driver {
             .collect();
         let mut work = 0;
         if !names.is_empty() {
-            let dirty = derived::dirty(&mut self.read, &names, DIRTY_PER_PASS)
+            let dirty = derivations::dirty(&mut self.read, &names, DIRTY_PER_PASS)
                 .await
                 .map_err(|e| e.to_string())?;
             let mut touched: BTreeMap<usize, (HashSet<String>, Vec<KeyWork>)> = BTreeMap::new();
@@ -625,7 +571,7 @@ impl Driver {
             }
             for (index, (done, mut keys)) in touched {
                 let name = self.keyed[index].name();
-                let waiting = derived::waiting(&mut self.read, name)
+                let waiting = derivations::waiting(&mut self.read, name)
                     .await
                     .map_err(|e| e.to_string())?;
                 for (key, since) in waiting {
@@ -653,10 +599,10 @@ impl Driver {
         let name = d.name();
         let version = i64::from(d.version());
         let types: Vec<String> = d.inputs_types().iter().map(|s| (*s).to_owned()).collect();
-        let position = derived::position(&mut self.read, name)
+        let position = derivations::position(&mut self.read, name)
             .await
             .map_err(|e| e.to_string())?;
-        let events = derived::after_seq(&mut self.read, &types, position, EVENTS_PER_PASS)
+        let events = derivations::after_seq(&mut self.read, &types, position, EVENTS_PER_PASS)
             .await
             .map_err(|e| e.to_string())?;
         let Some(last) = events.last().map(|c| c.commit_seq) else {
@@ -744,7 +690,7 @@ impl Driver {
             .blobs
             .as_ref()
             .ok_or("no content store was given to the driver")?;
-        let blob = media::material_blob(&mut self.read, location.material)
+        let blob = material_bytes::material_blob(&mut self.read, location.material)
             .await
             .map_err(|e| e.to_string())?
             .ok_or("its material is not stored")?;
@@ -766,7 +712,7 @@ impl Driver {
             if self.pass().await? == 0 {
                 let due = self
                     .last_maintained
-                    .is_none_or(|t| t.elapsed() >= MAINTAIN_QUIET);
+                    .is_none_or(|t| t.elapsed() >= MAINTAIN_AT_MOST_EVERY);
                 if !self.maintained.is_empty() && due && self.maintain().await? > 0 {
                     continue;
                 }
@@ -810,7 +756,7 @@ impl Driver {
         let version = self.keyed[index].version();
         for key in keys {
             let new = self.compute_key(index, &key, &env).await?.outputs;
-            let old = derived::outputs(&mut self.read, name, &key)
+            let old = derivations::outputs(&mut self.read, name, &key)
                 .await
                 .map_err(|e| e.to_string())?;
             let by_key = |events: &[Event]| -> BTreeMap<String, Event> {
@@ -827,22 +773,22 @@ impl Driver {
             let (new, old) = (by_key(&new), by_key(&old));
             for (k, n) in &new {
                 match old.get(k) {
-                    None => cmp.note(Kind::Added, &key, None, Some(n), examples),
+                    None => cmp.note(Change::Added, &key, None, Some(n), examples),
                     Some(o) if o.payload == n.payload => cmp.same += 1,
-                    Some(o) => cmp.note(Kind::Changed, &key, Some(o), Some(n), examples),
+                    Some(o) => cmp.note(Change::Changed, &key, Some(o), Some(n), examples),
                 }
             }
             for (k, o) in &old {
                 if !new.contains_key(k) {
-                    cmp.note(Kind::Removed, &key, Some(o), None, examples);
+                    cmp.note(Change::Removed, &key, Some(o), None, examples);
                 }
             }
         }
         let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
         cmp.id = Some(
-            derived::store_comparison(
+            derivations::store_comparison(
                 &mut self.read,
-                &derived::StoredComparison {
+                &derivations::StoredComparison {
                     id: 0,
                     derivation: name.to_owned(),
                     version: i32::try_from(version).unwrap_or(i32::MAX),
@@ -899,79 +845,15 @@ fn ranks(catalog: &[Registered]) -> BTreeMap<&'static str, u32> {
         }
     }
     rank.into_iter()
-        .map(|(name, r)| (derived::static_type(name), r))
+        .map(|(name, r)| (derivations::static_type(name), r))
         .collect()
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    Added,
-    Changed,
-    Removed,
-}
+mod comparison;
+mod counts;
 
-/// What a recompute would change.
-#[derive(Debug, Default)]
-pub struct Comparison {
-    /// The stored comparison's ID.
-    pub id: Option<i64>,
-    pub keys: usize,
-    pub same: usize,
-    pub added: usize,
-    pub changed: usize,
-    pub removed: usize,
-    /// (kind, key, old payload, new payload) for the first few of each kind.
-    pub examples: Vec<(Kind, Value, Option<Value>, Option<Value>)>,
-}
-
-impl Comparison {
-    fn note(
-        &mut self,
-        kind: Kind,
-        key: &Value,
-        old: Option<&Event>,
-        new: Option<&Event>,
-        examples: usize,
-    ) {
-        let count = match kind {
-            Kind::Added => &mut self.added,
-            Kind::Changed => &mut self.changed,
-            Kind::Removed => &mut self.removed,
-        };
-        *count += 1;
-        if self.examples.iter().filter(|e| e.0 == kind).count() < examples {
-            self.examples.push((
-                kind,
-                key.clone(),
-                old.map(|e| e.payload.clone()),
-                new.map(|e| e.payload.clone()),
-            ));
-        }
-    }
-}
-
-impl std::fmt::Display for Comparison {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(id) = self.id {
-            writeln!(f, "comparison {id}")?;
-        }
-        writeln!(
-            f,
-            "keys {} | outputs unchanged {} | added {} | changed {} | removed {}",
-            self.keys, self.same, self.added, self.changed, self.removed
-        )?;
-        for (kind, key, old, new) in &self.examples {
-            writeln!(f, "{kind:?} at {key}")?;
-            if let Some(old) = old {
-                writeln!(f, "  old {old}")?;
-            }
-            if let Some(new) = new {
-                writeln!(f, "  new {new}")?;
-            }
-        }
-        Ok(())
-    }
-}
+pub use comparison::{Change, Comparison};
+pub use counts::Counts;
 
 #[cfg(test)]
 mod tests;
@@ -980,8 +862,8 @@ mod tests;
 /// when a local OCR engine is installed (said once when it is not).
 pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
     let mut all = sinex_derivations::per_event();
-    match crate::media_text::engine() {
-        Ok(engine) => all.push(Box::new(crate::media_text::ScreenText { engine })),
+    match crate::screen_text::engine() {
+        Ok(engine) => all.push(Box::new(crate::screen_text::ScreenText { engine })),
         Err(reason) => eprintln!("sinexd: screen text off: {reason}"),
     }
     all

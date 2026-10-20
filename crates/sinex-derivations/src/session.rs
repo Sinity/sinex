@@ -7,7 +7,7 @@
 //! The key is the host and the logical day (operator's zone, days from the
 //! configured start, 04:00 by default). A session never crosses a day start;
 //! the rule says nothing about attention or real task boundaries.
-use crate::output::derived;
+use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::{CommandFused, ShellSession};

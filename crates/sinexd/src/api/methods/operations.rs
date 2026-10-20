@@ -39,12 +39,12 @@ impl Api {
         if dry_run {
             return match sinex_store::excision::plan(&mut conn, target).await {
                 Ok(plan) => Reply::Ok {
-                    result: json!({ "dry_run": true, "would_excise": crate::operate::describe(&plan) }),
+                    result: json!({ "dry_run": true, "would_excise": crate::excision::describe(&plan) }),
                 },
                 Err(e) => refused(e.to_string()),
             };
         }
-        match crate::operate::excise_with(&mut conn, &self.blobs, writer, target, actor).await {
+        match crate::excision::excise_with(&mut conn, &self.blobs, writer, target, actor).await {
             Ok(summary) => Reply::Ok {
                 result: json!({ "excised": summary }),
             },
@@ -89,13 +89,17 @@ impl Api {
             Ok(c) => c.detach(),
             Err(e) => return refused(e.to_string()),
         };
-        let mut driver =
-            match crate::derive::Driver::operating(conn, writer.clone(), derivation, &self.host)
-                .await
-            {
-                Ok(d) => d,
-                Err(e) => return refused(e),
-            };
+        let mut driver = match crate::derivation_runner::DerivationRunner::for_one(
+            conn,
+            writer.clone(),
+            derivation,
+            &self.host,
+        )
+        .await
+        {
+            Ok(d) => d,
+            Err(e) => return refused(e),
+        };
         let result = if compare {
             driver
                 .compare(derivation, range, examples)

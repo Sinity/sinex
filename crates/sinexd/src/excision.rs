@@ -25,13 +25,13 @@ pub fn describe(plan: &Plan) -> String {
 /// reading in one transaction; the old blob files go after commit. Takes a
 /// read connection, the content store and the writer.
 pub async fn excise_with(
-    aux: &mut PgConnection,
+    read_conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
     target: Target,
     actor: &str,
 ) -> Result<String, String> {
-    let plan = excision::plan(aux, target)
+    let plan = excision::plan(read_conn, target)
         .await
         .map_err(|e| e.to_string())?;
     let mut rewrites = Vec::new();

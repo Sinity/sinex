@@ -1,5 +1,7 @@
 use super::*;
+use crate::Timestamp;
 use crate::{KeyKind, RecordState, ReplaceRule, TimeQuality};
+use serde_json::Map;
 
 fn atuin(deleted: bool) -> CommandExecuted {
     CommandExecuted {

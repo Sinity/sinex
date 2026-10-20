@@ -14,11 +14,11 @@ use serde_json::Value;
 use sinex_model::civil::Civil;
 use sinex_model::{Event, EventId, Timestamp};
 
+pub mod derived_event;
 pub mod fusion;
-pub mod interval;
-pub mod output;
 pub mod presence;
 pub mod session;
+pub mod state_interval;
 pub mod summary;
 
 /// What a key function sees of an admitted or archived event.
@@ -226,7 +226,7 @@ pub fn keyed() -> Vec<Box<dyn AnyKeyed>> {
     vec![
         Box::new(fusion::CommandFusion),
         Box::new(session::ShellSessions),
-        Box::new(interval::IntervalLift),
+        Box::new(state_interval::StateIntervals),
         Box::new(summary::HourlySummary),
         Box::new(summary::DailySummary),
         Box::new(presence::Presence),

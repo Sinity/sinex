@@ -3,7 +3,7 @@
 //! are stored as the request's own bytes and admitted through the one writer
 //! (`sinex-sources`'s `library.request`), attributed to the caller. Reads
 //! come from live events through `sinex_library::reads`.
-use crate::context::Sink;
+use crate::one_shot::Sink;
 use crate::writer::{Priority, WriterHandle};
 use serde_json::{Value, json};
 use sinex_library::{items, reads};

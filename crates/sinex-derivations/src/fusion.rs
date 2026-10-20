@@ -19,7 +19,7 @@
 //! hour edge also dirties the neighbouring hour, and each hour reads a margin
 //! of `fallback` on both sides but emits only groups whose earliest member
 //! starts inside it, so a group straddling the edge is emitted exactly once.
-use crate::output::derived;
+use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::{CommandExecuted, CommandFused, CommandImported};
@@ -195,7 +195,7 @@ fn fused(group: &[usize], records: &[Record<'_>]) -> Event {
     let first = &records[group[0]];
     let pick = |f: fn(&Record<'_>) -> Option<String>| group.iter().find_map(|&m| f(&records[m]));
     let payload = CommandFused {
-        record: crate::output::record_identity(first.event),
+        record: crate::derived_event::record_identity(first.event),
         command: first.command.clone(),
         host: first.host.clone(),
         started_at: first.event.ts_orig.at.expect("fused records have a time"),

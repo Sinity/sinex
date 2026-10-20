@@ -1,7 +1,7 @@
 //! The driver against a real database: keys dirtied by admission, outputs
 //! replacing the key's previous set, waiting keys, the comparison lane.
 use super::*;
-use crate::keys::Registered as Keys;
+use crate::dirty_keys::Registered as Keys;
 use crate::writer;
 use serde_json::json;
 use sinex_derivations::{Computed, KeyState, Keyed};
@@ -137,7 +137,7 @@ impl World {
         self.handle.submit(Priority::Live, batch).await.unwrap();
     }
 
-    async fn driver(&self) -> Driver {
+    async fn driver(&self) -> DerivationRunner {
         self.driver_with(sinex_derivations::keyed(), vec![]).await
     }
 
@@ -145,9 +145,9 @@ impl World {
         &self,
         keyed: Vec<Box<dyn AnyKeyed>>,
         per_event: Vec<Box<dyn AnyPerEvent>>,
-    ) -> Driver {
+    ) -> DerivationRunner {
         let read = PgConnection::connect(&self.url).await.unwrap();
-        Driver::start(read, self.handle.clone(), keyed, per_event, "test")
+        DerivationRunner::start(read, self.handle.clone(), keyed, per_event, "test")
             .await
             .unwrap()
     }
@@ -319,7 +319,7 @@ impl Keyed for Waiting {
             observed_by: vec![],
         };
         Computed {
-            outputs: vec![sinex_derivations::output::derived(
+            outputs: vec![sinex_derivations::derived_event::derived(
                 &payload,
                 "test.waiting",
                 inputs,
@@ -450,7 +450,7 @@ impl<const V: u32> Keyed for Count<V> {
             observed_by: vec![],
         };
         Computed {
-            outputs: vec![sinex_derivations::output::derived(
+            outputs: vec![sinex_derivations::derived_event::derived(
                 &payload,
                 "test.count",
                 inputs,
@@ -479,7 +479,7 @@ async fn compare_shows_a_version_change_before_switching() {
     assert!(cmp.to_string().contains("v2:2"));
     // The comparison is kept, newest first, with its examples.
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
-    let kept = derived::comparisons(&mut conn, Some("test.count"), 10)
+    let kept = derivations::comparisons(&mut conn, Some("test.count"), 10)
         .await
         .unwrap();
     assert_eq!(kept.len(), 2);
@@ -503,9 +503,9 @@ impl sinex_derivations::PerEvent for Echo {
     fn derive(&self, input: sinex_derivations::Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
         let input = input.event;
         let c: CommandImported = input.payload_as().unwrap();
-        Ok(vec![sinex_derivations::output::derived(
+        Ok(vec![sinex_derivations::derived_event::derived(
             &CommandFused {
-                record: sinex_derivations::output::record_identity(input),
+                record: sinex_derivations::derived_event::record_identity(input),
                 command: c.command.to_uppercase(),
                 host: c.hostname,
                 started_at: c.started_at,
@@ -575,10 +575,12 @@ async fn windows_read_together_equal_windows_read_alone() {
         hour(0, &["command.imported", "command.executed"]),
     ];
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
-    let together = derived::read_windows(&mut conn, &windows).await.unwrap();
+    let together = derivations::read_windows(&mut conn, &windows)
+        .await
+        .unwrap();
     for (w, got) in windows.iter().zip(&together) {
-        let alone = derived::read_window(&mut conn, w).await.unwrap();
-        let ids = |v: &[derived::Committed]| v.iter().map(|c| c.event.id).collect::<Vec<_>>();
+        let alone = derivations::read_window(&mut conn, w).await.unwrap();
+        let ids = |v: &[derivations::Committed]| v.iter().map(|c| c.event.id).collect::<Vec<_>>();
         assert_eq!(ids(got), ids(&alone), "{w:?}");
     }
     assert_eq!(together[1].len(), 3, "the first hour's three zsh commands");

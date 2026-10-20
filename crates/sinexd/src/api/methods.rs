@@ -391,7 +391,7 @@ impl Api {
                     Err(e) => return refused(e.to_string()),
                 };
                 let limit = i64::try_from(limit.unwrap_or(20)).unwrap_or(i64::MAX);
-                match sinex_store::derived::comparisons(&mut conn, derivation.as_deref(), limit)
+                match sinex_store::derivations::comparisons(&mut conn, derivation.as_deref(), limit)
                     .await
                 {
                     Ok(kept) => {

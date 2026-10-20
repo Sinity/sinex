@@ -5,14 +5,14 @@
 //! reported span becomes a `presence.interval`, cut at logical-day boundaries:
 //!
 //! - `afk` is `absent`;
-//! - a `not-afk` span shorter than [`SPEC`]'s `long` is `present`;
+//! - a `not-afk` span shorter than [`THRESHOLDS`]'s `long` is `present`;
 //! - a long `not-afk` span with no corroborating input is `uncertain`;
 //! - a long one with input is `present`, and `sparse` when the input is
 //!   thinner than one event per `dense_every`.
 //!
 //! The spans as reported stay as read; this is a separate judgment with its
 //! evidence counted, never a silent guess.
-use crate::output::derived;
+use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Neighbour};
 use serde_json::{Value, json};
 use sinex_model::event_types::desktop::{PresenceInterval, PresenceSpan};
@@ -21,7 +21,7 @@ use sinex_model::{Event, EventPayload, Timestamp};
 
 /// The correction's parameters, in one place (`y0o3.13` acceptance 4).
 #[derive(Clone, Copy, Debug)]
-pub struct PresenceSpec {
+pub struct PresenceThresholds {
     /// A `not-afk` span at least this long must be corroborated by input.
     pub long: time::Duration,
     /// Input thinner than one event per this long makes a present span
@@ -31,7 +31,7 @@ pub struct PresenceSpec {
     pub evidence: &'static [&'static str],
 }
 
-pub const SPEC: PresenceSpec = PresenceSpec {
+pub const THRESHOLDS: PresenceThresholds = PresenceThresholds {
     long: time::Duration::minutes(60),
     dense_every: time::Duration::minutes(10),
     evidence: &[
@@ -119,7 +119,7 @@ impl Keyed for Presence {
         };
         let evidence: Vec<(i128, &Event)> = inputs
             .iter()
-            .filter(|e| SPEC.evidence.contains(&e.event_type))
+            .filter(|e| THRESHOLDS.evidence.contains(&e.event_type))
             .filter_map(|e| Some((e.ts_orig.at?.unix_ns(), e)))
             .collect();
         let mut outputs = Vec::new();
@@ -144,10 +144,10 @@ impl Keyed for Presence {
             let length = end.0 - start.0;
             let (state, sparse) = match span.status.as_str() {
                 "afk" => ("absent", false),
-                _ if length < SPEC.long => ("present", false),
+                _ if length < THRESHOLDS.long => ("present", false),
                 _ if n == 0 => ("uncertain", false),
                 _ => {
-                    let needed = length.as_seconds_f64() / SPEC.dense_every.as_seconds_f64();
+                    let needed = length.as_seconds_f64() / THRESHOLDS.dense_every.as_seconds_f64();
                     ("present", f64::from(n) < needed)
                 }
             };

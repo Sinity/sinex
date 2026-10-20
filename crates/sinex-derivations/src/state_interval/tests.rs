@@ -287,7 +287,7 @@ fn a_stop_at_its_start_is_zero_length() {
 }
 
 #[test]
-fn a_suspend_fences_focus() {
+fn a_suspend_interrupts_focus() {
     let out = lift(
         "desktop.focus",
         &[
@@ -302,7 +302,7 @@ fn a_suspend_fences_focus() {
         "not the 9000 s overnight span"
     );
     assert_eq!(out[0].end_event_type.as_deref(), Some("unit.started"));
-    // An ordinary unit start is not a fence.
+    // An ordinary unit start is not a interruption.
     let out = lift(
         "desktop.focus",
         &[
@@ -315,7 +315,7 @@ fn a_suspend_fences_focus() {
 }
 
 #[test]
-fn going_afk_fences_focus_and_is_lifted_itself() {
+fn going_afk_interrupts_focus_and_is_an_interval_itself() {
     let events = [focus(0, "0xa", "vim"), presence(50, 650, "afk")];
     let f = lift("desktop.focus", &events);
     assert_eq!(f[0].ended_at, Some(at(50)));
@@ -356,7 +356,7 @@ fn a_key_emits_what_starts_in_its_day_and_waits_on_open_states() {
         focus(day_end - 10, "0xb", "late"),
         focus(day_end + 50, "0xc", "tomorrow"),
     ];
-    let out = IntervalLift.compute(&key("desktop.focus"), &inputs, &env);
+    let out = StateIntervals.compute(&key("desktop.focus"), &inputs, &env);
     let lifted: Vec<StateInterval> = out
         .outputs
         .iter()
@@ -370,20 +370,23 @@ fn a_key_emits_what_starts_in_its_day_and_waits_on_open_states() {
     );
     assert!(!out.waiting);
 
-    let open = IntervalLift.compute(&key("desktop.focus"), &inputs[..3], &env);
+    let open = StateIntervals.compute(&key("desktop.focus"), &inputs[..3], &env);
     assert!(open.waiting, "the late focus has no end yet");
 }
 
 #[test]
 fn inputs_ask_for_the_transitions_after_the_day() {
     let env = Env::at(at(0));
-    let q = IntervalLift.inputs(&key("desktop.focus"), &env).unwrap();
+    let q = StateIntervals.inputs(&key("desktop.focus"), &env).unwrap();
     assert_eq!(q.window.0, at(-6 * 3600));
     assert_eq!(q.window.1, at(18 * 3600));
     assert!(q.event_types.contains(&"window.focused"));
-    assert!(q.event_types.contains(&"unit.started"), "fences are inputs");
+    assert!(
+        q.event_types.contains(&"unit.started"),
+        "interruptions are inputs"
+    );
     assert_eq!(q.after.len(), 3, "next transitions, next suspend, next afk");
-    let q = IntervalLift
+    let q = StateIntervals
         .inputs(&key("system.systemd.unit"), &env)
         .unwrap();
     assert_eq!(q.after[0].per, Some("unit_name"));
@@ -393,7 +396,7 @@ fn inputs_ask_for_the_transitions_after_the_day() {
 fn keys_cover_the_rules_a_fence_ends() {
     let env = Env::at(at(0));
     let view = |e: &Event| {
-        IntervalLift.keys_for(
+        StateIntervals.keys_for(
             &KeyView {
                 event_type: e.event_type,
                 ts_orig: e.ts_orig.at,

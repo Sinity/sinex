@@ -264,7 +264,7 @@ pub async fn maintain(
     recent_days: i64,
 ) -> Result<usize, String> {
     let names: Vec<String> = catalog::METRICS.iter().map(|m| dirty_name(m.id)).collect();
-    let dirty = sinex_store::derived::dirty(conn, &names, 10_000)
+    let dirty = sinex_store::derivations::dirty(conn, &names, 10_000)
         .await
         .map_err(|e| e.to_string())?;
     let mut days: BTreeMap<String, Vec<(String, Value, i64)>> = BTreeMap::new();
@@ -334,7 +334,7 @@ impl MetricValues {
     }
 }
 
-impl crate::derive::Maintained for MetricValues {
+impl crate::derivation_runner::Maintained for MetricValues {
     fn name(&self) -> &'static str {
         "metric values"
     }

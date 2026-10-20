@@ -1,6 +1,6 @@
 //! `sinexd admin`: administration that needs the database but not the running
 //! daemon, and any command of the command table run locally.
-use crate::{api, catalog, context};
+use crate::{api, catalog, one_shot};
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -130,7 +130,7 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     let day_start: &String = matches.get_one("day-start").expect("defaulted");
     let day_start = sinex_model::query::time::clock(day_start)
         .ok_or_else(|| format!("day start `{day_start}` is not a clock time like 04:00"))?;
-    let ctx = context::Context::open(database, store).await?;
+    let ctx = one_shot::OneShot::open(database, store).await?;
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .connect(database)

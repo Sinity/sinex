@@ -9,7 +9,7 @@
 //! each consumer gets the part of the page after its own position.
 //! Per-event derivations are run by the derivation runner (`derive.rs`).
 use futures::future::BoxFuture;
-use sinex_store::committed::{self, Committed};
+use sinex_store::commit_log::{self, Committed};
 use sqlx::{Connection, PgConnection};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -62,7 +62,7 @@ pub async fn run(
         }
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);
-        let page = committed::after(&mut conn, from, PAGE)
+        let page = commit_log::after(&mut conn, from, PAGE)
             .await
             .map_err(|e| e.to_string())?;
         let Some(up_to) = page.up_to else {
@@ -163,7 +163,7 @@ impl Consumer for ReadModelRunner {
 
     fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64, String>> {
         Box::pin(async move {
-            committed::consumer_position(conn, self.0.name())
+            commit_log::consumer_position(conn, self.0.name())
                 .await
                 .map(|(seq, _)| seq)
                 .map_err(|e| e.to_string())
@@ -179,7 +179,7 @@ impl Consumer for ReadModelRunner {
         Box::pin(async move {
             let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
             self.0.apply(events, &mut tx).await?;
-            committed::set_consumer_position(&mut tx, self.0.name(), up_to, 0)
+            commit_log::set_consumer_position(&mut tx, self.0.name(), up_to, 0)
                 .await
                 .map_err(|e| e.to_string())?;
             tx.commit().await.map_err(|e| e.to_string())

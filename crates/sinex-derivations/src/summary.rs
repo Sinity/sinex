@@ -16,7 +16,7 @@
 //! but never past the end of the logical day it started in: missing evidence is
 //! not continued activity, and a history that simply stopped must not count
 //! as one focus held until today.
-use crate::output::derived;
+use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Neighbour};
 use serde_json::{Value, json};
 use sinex_model::event_types::{ActivitySummary, CommandFused, ShellSession, StateInterval};
@@ -32,9 +32,9 @@ const INPUTS: &[&str] = &[
 /// Entries in each "top" list of a summary.
 const TOP: usize = 10;
 
-/// The desktop state kinds the interval derivation lifts.
+/// The desktop state kinds the state-interval derivation produces.
 fn desktop_kinds() -> Vec<&'static str> {
-    crate::interval::RULES
+    crate::state_interval::RULES
         .iter()
         .map(|r| r.state_kind)
         .filter(|k| k.starts_with("desktop."))

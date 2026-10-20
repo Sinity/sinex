@@ -12,9 +12,9 @@
 //! through the writer. The source tasks (§5) and signals (§7.2) are added
 //! here by their lanes.
 use crate::api::{self, Api};
-use crate::commits::{self, Consumer, ReadModelRunner};
-use crate::keys::Registered;
-use crate::{derive, ingress, publisher, runner, writer};
+use crate::commit_reader::{self, Consumer, ReadModelRunner};
+use crate::dirty_keys::Registered;
+use crate::{derivation_runner, ingress, publisher, source_runner, writer};
 use sinex_protocol::Subjects;
 use sinex_store::Blobs;
 use sqlx::{Connection, PgConnection};
@@ -106,11 +106,11 @@ pub async fn run(o: Options) -> Result<(), String> {
 
     // Every derivation runs in the driver: events from keyed and per-event
     // derivations (screen text included), then the maintained metric values.
-    let driver = derive::Driver::start(
+    let driver = derivation_runner::DerivationRunner::start(
         connect(&o.database).await?,
         handle.clone(),
         sinex_derivations::keyed(),
-        derive::per_event(),
+        derivation_runner::per_event(),
         &o.host,
     )
     .await?
@@ -135,7 +135,7 @@ pub async fn run(o: Options) -> Result<(), String> {
     });
 
     let mut consumers: Vec<Box<dyn Consumer>> = Vec::new();
-    for model in commits::read_models() {
+    for model in commit_reader::read_models() {
         consumers.push(Box::new(ReadModelRunner(model)));
     }
     let reader_conn = connect(&o.database).await?;
@@ -143,7 +143,7 @@ pub async fn run(o: Options) -> Result<(), String> {
     tasks.spawn(async move {
         (
             "commit-log reader",
-            commits::run(reader_conn, consumers, c, s).await,
+            commit_reader::run(reader_conn, consumers, c, s).await,
         )
     });
 
@@ -192,8 +192,8 @@ pub async fn run(o: Options) -> Result<(), String> {
 
     // The configured sources, read continuously by the binding runner.
     if let Some(file) = &o.sources {
-        let planned = runner::plan(&runner::Config::load(file)?, &o.host)?;
-        let (aux, b, w, host, s) = (
+        let planned = source_runner::plan(&source_runner::Config::load(file)?, &o.host)?;
+        let (read_conn, b, w, host, s) = (
             connect(&o.database).await?,
             blobs.clone(),
             handle.clone(),
@@ -203,7 +203,7 @@ pub async fn run(o: Options) -> Result<(), String> {
         tasks.spawn(async move {
             (
                 "binding runner",
-                runner::run(aux, b, w, host, planned, BINDINGS_EVERY, s).await,
+                source_runner::run(read_conn, b, w, host, planned, BINDINGS_EVERY, s).await,
             )
         });
     }

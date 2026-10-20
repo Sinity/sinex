@@ -83,10 +83,5 @@ fn a_touched_but_unchanged_file_is_skipped() {
         .unwrap();
     f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
         .unwrap();
-    assert!(
-        d.poll(&Value::Null, &mut state)
-            .unwrap()
-            .material
-            .is_none()
-    );
+    assert!(d.poll(&Value::Null, &mut state).unwrap().material.is_none());
 }

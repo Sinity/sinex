@@ -133,18 +133,18 @@ pub struct Options {
 /// Replay with its parts: a read connection, the content store and the writer
 /// (the daemon's API and a local `sinexd admin` run hold these).
 pub async fn run(
-    aux: &mut PgConnection,
+    read_conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
     o: Options,
 ) -> Result<Report, String> {
     let (operation, scope, done) = match o.resume {
         Some(op) => {
-            let stored = replay::scope_of(aux, op)
+            let stored = replay::scope_of(read_conn, op)
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("no replay operation {op}"))?;
-            let done: BTreeSet<Uuid> = replay::chains_done(aux, op)
+            let done: BTreeSet<Uuid> = replay::chains_done(read_conn, op)
                 .await
                 .map_err(|e| e.to_string())?
                 .into_iter()
@@ -154,7 +154,7 @@ pub async fn run(
         None => (OperationId::new(), o.scope, BTreeSet::new()),
     };
     let in_scope: BTreeSet<Uuid> = replay::select(
-        aux,
+        read_conn,
         &scope.materials,
         scope.binding.as_deref(),
         scope.event_types.as_deref(),
@@ -166,10 +166,10 @@ pub async fn run(
     .into_iter()
     .collect();
     let in_scope_list: Vec<Uuid> = in_scope.iter().copied().collect();
-    let inputs = replay::inputs_of(aux, &in_scope_list)
+    let inputs = replay::inputs_of(read_conn, &in_scope_list)
         .await
         .map_err(|e| e.to_string())?;
-    let stored = replay::chains(aux, &inputs, &in_scope_list)
+    let stored = replay::chains(read_conn, &inputs, &in_scope_list)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -188,7 +188,7 @@ pub async fn run(
             continue;
         }
         let chain: Vec<Stored> = chain[..=last].iter().map(|m| (*m).clone()).collect();
-        let parsers = sources_of(aux, &chain).await?;
+        let parsers = sources_of(read_conn, &chain).await?;
         // The chain is read on a blocking thread while the writer admits its
         // batches as they come, a few at a time.
         let (sender, batches) = tokio::sync::mpsc::channel(READ_AHEAD);
@@ -231,7 +231,7 @@ pub async fn run(
 /// binding (sent by an outside producer) is read by the source whose parser
 /// it names.
 async fn sources_of(
-    aux: &mut sqlx::PgConnection,
+    read_conn: &mut sqlx::PgConnection,
     chain: &[Stored],
 ) -> Result<Vec<Box<dyn Source>>, String> {
     let mut out = Vec::with_capacity(chain.len());
@@ -239,7 +239,9 @@ async fn sources_of(
     for m in chain {
         let stored_binding = match &m.binding {
             Some(name) if !bound.contains_key(name) => {
-                let found = bindings::load(aux, name).await.map_err(|e| e.to_string())?;
+                let found = bindings::load(read_conn, name)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if let Some(s) = found {
                     let b = sinex_sources::Binding {
                         name: s.binding,

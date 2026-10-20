@@ -21,7 +21,7 @@ use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
 use sinex_model::{Class, EventId, OperationId, RecordLocation, RunId, Timestamp};
 use sinex_protocol::{ArchiveNotice, Confirmed, ConfirmedEvent, Subjects, Withheld};
-use sinex_store::committed::{self, Committed, Notice};
+use sinex_store::commit_log::{self, Committed, Notice};
 use sqlx::{Connection, PgConnection};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -108,16 +108,16 @@ pub async fn publish_pending(
 ) -> Result<Published, String> {
     let mut total = Published::default();
     loop {
-        let (seq, notice) = committed::consumer_position(conn, CONSUMER)
+        let (seq, notice) = commit_log::consumer_position(conn, CONSUMER)
             .await
             .map_err(|e| e.to_string())?;
-        let page = committed::after(conn, seq, PAGE)
+        let page = commit_log::after(conn, seq, PAGE)
             .await
             .map_err(|e| e.to_string())?;
         let covered = page.up_to.unwrap_or(seq);
         // A notice follows the commit that caused it: only notices archived at
         // or before the commit position this page reaches go out with it.
-        let notices: Vec<Notice> = committed::notices_after(conn, notice, PAGE)
+        let notices: Vec<Notice> = commit_log::notices_after(conn, notice, PAGE)
             .await
             .map_err(|e| e.to_string())?
             .into_iter()
@@ -165,10 +165,10 @@ pub async fn publish_pending(
         }
         let last_notice = notices.last().map_or(notice, |n| n.notice_seq);
         let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
-        committed::record_published(&mut tx, &placed)
+        commit_log::record_published(&mut tx, &placed)
             .await
             .map_err(|e| e.to_string())?;
-        committed::set_consumer_position(&mut tx, CONSUMER, covered, last_notice)
+        commit_log::set_consumer_position(&mut tx, CONSUMER, covered, last_notice)
             .await
             .map_err(|e| e.to_string())?;
         tx.commit().await.map_err(|e| e.to_string())?;
@@ -188,7 +188,7 @@ async fn erase_excised(
 ) -> Result<u64, String> {
     let mut erased = 0;
     loop {
-        let pending = committed::excised_on_stream(conn, PAGE)
+        let pending = commit_log::excised_on_stream(conn, PAGE)
             .await
             .map_err(|e| e.to_string())?;
         if pending.is_empty() {
@@ -225,7 +225,7 @@ async fn erase_excised(
                 .map_err(|e| format!("confirmed stream did not acknowledge: {e}"))?;
         }
         let ids: Vec<uuid::Uuid> = pending.iter().map(|e| e.event_id).collect();
-        committed::forget_published(conn, &ids)
+        commit_log::forget_published(conn, &ids)
             .await
             .map_err(|e| e.to_string())?;
         erased += ids.len() as u64;

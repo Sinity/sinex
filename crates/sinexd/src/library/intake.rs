@@ -1,7 +1,7 @@
 //! Intake: scanning a library root and making or continuing items from what
 //! the scan saw.
 use super::{INTAKE, Library, R, e};
-use crate::context::Sink;
+use crate::one_shot::Sink;
 use crate::writer::Priority;
 use serde_json::{Value, json};
 use sinex_library::{items, reads};

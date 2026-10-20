@@ -105,8 +105,7 @@ impl AppendState {
         self.records.entry(hash).or_default().push(location);
         self.order.push_back((hash, location, record.len()));
         self.bytes += record.len();
-        while self.order.len() > STATE_RECORDS
-            || (self.bytes > STATE_TAIL && self.order.len() > 1)
+        while self.order.len() > STATE_RECORDS || (self.bytes > STATE_TAIL && self.order.len() > 1)
         {
             let (hash, location, n) = self.order.pop_front().expect("not empty");
             self.bytes -= n;

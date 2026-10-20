@@ -32,7 +32,7 @@ use sinex_model::{
 use sinex_protocol::{
     Acknowledgment, Have, Ingress, MaterialFrame, ProducerEvent, ProducerFailure, Subjects,
 };
-use sinex_store::committed::{self, StoredFrame};
+use sinex_store::commit_log::{self, StoredFrame};
 use sinex_store::{Blobs, runs};
 use sqlx::PgConnection;
 use std::collections::HashMap;
@@ -204,17 +204,19 @@ impl Ingest {
         producer: &str,
         request: &Have,
     ) -> Result<Vec<Acknowledgment>, String> {
-        Ok(committed::frames(&mut self.conn, producer, &request.frames)
-            .await
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(acknowledgment)
-            .collect())
+        Ok(
+            commit_log::frames(&mut self.conn, producer, &request.frames)
+                .await
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(acknowledgment)
+                .collect(),
+        )
     }
 
     async fn stored(&mut self, producer: &str, frame: &str) -> Result<Option<StoredFrame>, String> {
         Ok(
-            committed::frames(&mut self.conn, producer, &[frame.to_owned()])
+            commit_log::frames(&mut self.conn, producer, &[frame.to_owned()])
                 .await
                 .map_err(|e| e.to_string())?
                 .pop(),

@@ -5,7 +5,7 @@
 //! retried on the next round, never stopping the others or the daemon.
 //! Private mode pauses every read until it is off again.
 use crate::backfill::{drive, record};
-use crate::context::{Sink, stored_chain};
+use crate::one_shot::{Sink, stored_chain};
 use crate::writer::WriterHandle;
 use serde::Deserialize;
 use serde_json::Value;
@@ -62,7 +62,9 @@ pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputKind, Bind
             Some(k) => sources::input_kind(k)
                 .filter(|k| k.reads(name))
                 .ok_or_else(|| format!("{name}: kind {k} does not read it"))?,
-            None => sources::input_kind_of(name).ok_or_else(|| format!("{name}: no such source"))?,
+            None => {
+                sources::input_kind_of(name).ok_or_else(|| format!("{name}: no such source"))?
+            }
         };
         let plan = kind
             .plan
@@ -95,7 +97,7 @@ struct Bound {
 
 /// Read `planned` in rounds every `interval` until `stop`.
 pub async fn run(
-    mut aux: PgConnection,
+    mut read_conn: PgConnection,
     blobs: Blobs,
     writer: WriterHandle,
     host: String,
@@ -137,7 +139,7 @@ pub async fn run(
         build: option_env!("SINEX_BUILD").unwrap_or("dev"),
         emits: &emits,
     };
-    let run = runs::start(&mut aux, &manifest, &host)
+    let run = runs::start(&mut read_conn, &manifest, &host)
         .await
         .map_err(|e| e.to_string())?;
     let sink = Sink(blobs.clone());
@@ -146,7 +148,7 @@ pub async fn run(
     loop {
         if !private.on() {
             for b in &mut bound {
-                if let Err(e) = round(&mut aux, &blobs, &writer, run, &sink, b).await {
+                if let Err(e) = round(&mut read_conn, &blobs, &writer, run, &sink, b).await {
                     eprintln!("sinexd: binding {}: {e}", b.binding.name);
                 }
             }
@@ -156,12 +158,14 @@ pub async fn run(
             _ = stop.wait_for(|s| *s) => break,
         }
     }
-    runs::end(&mut aux, run).await.map_err(|e| e.to_string())
+    runs::end(&mut read_conn, run)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Read one binding until it has nothing new.
 async fn round(
-    aux: &mut PgConnection,
+    read_conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
     run: RunId,
@@ -169,18 +173,19 @@ async fn round(
     b: &mut Bound,
 ) -> Result<(), String> {
     if !b.remembered {
-        record(aux, &b.binding).await?;
-        let cursor = positions::load(aux, &b.binding.name)
+        record(read_conn, &b.binding).await?;
+        let cursor = positions::load(read_conn, &b.binding.name)
             .await
             .map_err(|e| e.to_string())?
             .map(|(cursor, _)| cursor)
             .unwrap_or(Value::Null);
-        b.reader.remember(&stored_chain(aux, blobs, &cursor).await?);
+        b.reader
+            .remember(&stored_chain(read_conn, blobs, &cursor).await?);
         b.remembered = true;
     }
     let reader = &mut b.reader;
     drive(
-        aux,
+        read_conn,
         writer,
         run,
         b.source.as_ref(),
@@ -190,7 +195,7 @@ async fn round(
     )
     .await?;
     // Spool readers drop what the committed cursor has passed.
-    if let Some((committed, _)) = positions::load(aux, &b.binding.name)
+    if let Some((committed, _)) = positions::load(read_conn, &b.binding.name)
         .await
         .map_err(|e| e.to_string())?
     {
