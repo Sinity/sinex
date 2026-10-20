@@ -47,7 +47,7 @@ impl Library<'_> {
             if let Some(dir) = target.parent() {
                 std::fs::create_dir_all(dir).map_err(e)?;
             }
-            // Streamed: a long video is never held in memory.
+            // Plain media streams to the cache; delta content still uses its legacy whole read.
             let tmp = target.with_extension("partial");
             let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp).map_err(e)?);
             blobs.copy_to(&content, &mut file).map_err(e)?;
