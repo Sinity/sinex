@@ -8,6 +8,7 @@ history for reference.
 
 ## Structure
 
+Read [ARCHITECTURE.md](ARCHITECTURE.md) for current ownership boundaries.
 The workspace follows the target architecture
 (`/realm/project/sinex/analysis/architecture-20261018/sinex-architecture.md`
 §2).
