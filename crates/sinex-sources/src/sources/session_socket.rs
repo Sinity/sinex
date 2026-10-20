@@ -14,7 +14,8 @@ use serde_json::{Map, Value};
 use sinex_model::event_types::session::{EditorEvent, TerminalEvent};
 use sinex_model::{Class, InputRef, Timestamp};
 use std::io::{BufRead, BufReader};
-use std::os::unix::net::UnixListener;
+use std::net::Shutdown;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -52,7 +53,8 @@ pub fn default_path() -> Option<PathBuf> {
 }
 
 /// Listen on `socket` and spool every line any connection writes, until
-/// `seconds` pass (forever otherwise). Returns the lines captured.
+/// `seconds` pass (forever otherwise). Stopping closes reception on accepted
+/// connections and drains their queued bytes before returning the lines captured.
 pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
     if let Some(dir) = socket.parent() {
         std::fs::create_dir_all(dir)?;
@@ -60,46 +62,145 @@ pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::i
     // A socket left by a previous run is stale: nothing listens on it.
     let _ = std::fs::remove_file(socket);
     let listener = UnixListener::bind(socket)?;
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+    let result = (|| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+        let writer = Arc::new(Mutex::new(SpoolWriter::open(spool, Rotation::default())?));
+        let deadline = seconds.map(|s| Instant::now() + s);
+        capture_connections(listener, writer, || {
+            deadline.is_some_and(|d| Instant::now() >= d)
+        })
+    })();
+    let cleanup = std::fs::remove_file(socket);
+    match result {
+        Ok(count) => cleanup.map(|()| count),
+        Err(error) => Err(error),
+    }
+}
+
+const ACCEPT_BATCH: usize = 32;
+
+fn capture_connections(
+    listener: UnixListener,
+    writer: Arc<Mutex<SpoolWriter>>,
+    mut stop: impl FnMut() -> bool,
+) -> std::io::Result<u64> {
     listener.set_nonblocking(true)?;
-    let writer = Arc::new(Mutex::new(SpoolWriter::open(spool, Rotation::default())?));
-    let count = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let deadline = seconds.map(|s| Instant::now() + s);
-    while deadline.is_none_or(|d| Instant::now() < d) {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                let (writer, count) = (writer.clone(), count.clone());
-                std::thread::spawn(move || {
-                    let _ = stream.set_nonblocking(false);
-                    let mut reader = BufReader::new(stream);
-                    let mut line = Vec::new();
-                    while matches!(reader.read_until(b'\n', &mut line), Ok(n) if n > 0) {
-                        let body = line.strip_suffix(b"\n").unwrap_or(&line);
-                        if !body.is_empty() {
-                            let mut w = writer.lock().expect("spool lock");
-                            if w.append(Timestamp::now(), body)
-                                .and_then(|()| w.sync())
-                                .is_ok()
-                            {
-                                count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            }
+    let mut handlers = Vec::new();
+    let mut count = 0;
+    let mut failure = None;
+    loop {
+        // Check stop between bounded batches even when new clients keep
+        // the accept queue populated. Only accepted readers are drained.
+        for _ in 0..ACCEPT_BATCH {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let control = match stream.try_clone() {
+                        Ok(control) => control,
+                        Err(error) => {
+                            failure = Some(error);
+                            break;
                         }
-                        line.clear();
+                    };
+                    let writer = writer.clone();
+                    match std::thread::Builder::new()
+                        .spawn(move || capture_connection(stream, &writer))
+                    {
+                        Ok(handler) => handlers.push((control, handler)),
+                        Err(error) => {
+                            failure = Some(error);
+                            break;
+                        }
                     }
-                });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(50))
+        }
+        let mut i = 0;
+        while i < handlers.len() {
+            if handlers[i].1.is_finished() {
+                let (_, handler) = handlers.swap_remove(i);
+                match join_connection(handler) {
+                    Ok(lines) => count += lines,
+                    Err(error) => {
+                        failure.get_or_insert(error);
+                    }
+                }
+            } else {
+                i += 1;
             }
-            Err(e) => return Err(e),
+        }
+        if failure.is_some() || stop() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(listener);
+    // Shut down reception before joining: queued bytes remain readable up
+    // to EOF, while idle peers wake and future writes cannot extend the drain.
+    for (control, _) in &handlers {
+        if let Err(error) = control.shutdown(Shutdown::Read)
+            && error.kind() != std::io::ErrorKind::NotConnected
+        {
+            failure.get_or_insert(error);
         }
     }
-    let _ = std::fs::remove_file(socket);
-    // Let connections still open flush what they already sent.
-    std::thread::sleep(Duration::from_millis(200));
-    writer.lock().expect("spool lock").sync()?;
-    Ok(count.load(std::sync::atomic::Ordering::Relaxed))
+    for (_, handler) in handlers {
+        match join_connection(handler) {
+            Ok(lines) => count += lines,
+            Err(error) => {
+                failure.get_or_insert(error);
+            }
+        }
+    }
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    writer
+        .lock()
+        .map_err(|_| std::io::Error::other("spool lock poisoned"))?
+        .sync()?;
+    Ok(count)
+}
+
+fn join_connection(handler: std::thread::JoinHandle<std::io::Result<u64>>) -> std::io::Result<u64> {
+    handler
+        .join()
+        .map_err(|_| std::io::Error::other("producer socket reader panicked"))?
+}
+
+fn capture_connection(stream: UnixStream, writer: &Mutex<SpoolWriter>) -> std::io::Result<u64> {
+    stream.set_nonblocking(false)?;
+    let mut reader = BufReader::new(stream);
+    let mut line = Vec::new();
+    let mut count = 0;
+    loop {
+        let ended = match reader.read_until(b'\n', &mut line) {
+            Ok(0) => true,
+            Ok(_) => false,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        let body = line.strip_suffix(b"\n").unwrap_or(&line);
+        if !body.is_empty() {
+            let mut writer = writer
+                .lock()
+                .map_err(|_| std::io::Error::other("spool lock poisoned"))?;
+            let dropped = writer.dropped;
+            writer.append(Timestamp::now(), body)?;
+            writer.sync()?;
+            count += u64::from(writer.dropped == dropped);
+        }
+        line.clear();
+        if ended {
+            return Ok(count);
+        }
+    }
 }
 
 pub fn driver(spool: PathBuf, host: String) -> LiveStream {

@@ -88,7 +88,7 @@ fn spans_are_bounded_and_cover_every_complete_line() {
             .skip(1)
             .all(|(s, e)| e - s <= SPAN_BYTES + line.len())
     );
-    assert!(records.len() >= 1 + 300 * line.len() / SPAN_BYTES);
+    assert!(records.len() > 300 * line.len() / SPAN_BYTES);
     assert_eq!(records.last().unwrap().1, consumed);
     assert!(consumed < cast.len(), "the partial last line waits");
     let covered: usize = records.iter().map(|(s, e)| e - s).sum();
