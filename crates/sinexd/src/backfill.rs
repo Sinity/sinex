@@ -256,6 +256,14 @@ pub(crate) async fn drive(
             .map_err(|e| e.to_string())?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
         let acquired = poll(&cursor).map_err(|e| e.to_string())?;
+        let carry = if acquired.material.is_some() {
+            match &sealing {
+                Some(s) => s.open_carry(&carry)?,
+                None => carry,
+            }
+        } else {
+            carry
+        };
         if let Some(reason) = &acquired.observation.unavailable {
             return Err(format!("{binding}: {reason}"));
         }

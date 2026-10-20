@@ -2,6 +2,7 @@
 //! as seekable zstd. Drivers write a material's bytes here before the batch that
 //! registers it, so bytes always exist before any row refers to them.
 use crate::Result;
+pub use hashed_blobs::{DEFAULT_FRAME as BLOB_FRAME_BYTES, SealedReadLimits};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -106,6 +107,30 @@ impl Blobs {
     pub fn put_sealed(&self, bytes: &[u8], key: &crate::sealed::DataKey) -> Result<String> {
         let hash = self.0.put_sealed(std::io::Cursor::new(bytes), 3, key)?;
         Ok(format!("blake3:{}", hash.hex()))
+    }
+
+    /// Seal a seekable input in bounded frames without staging plaintext on disk.
+    pub fn put_sealed_reader(
+        &self,
+        reader: impl Read + Seek,
+        key: &crate::sealed::DataKey,
+    ) -> Result<String> {
+        let hash = self.0.put_sealed(reader, 3, key)?;
+        Ok(format!("blake3:{}", hash.hex()))
+    }
+
+    /// Sequential sealed reads under the operation's explicit key and memory budgets.
+    pub fn read_sealed(
+        &self,
+        name: &str,
+        expected_len: Option<u64>,
+        key: &crate::sealed::DataKey,
+        limits: SealedReadLimits,
+        check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
+    ) -> Result<hashed_blobs::SealedReader> {
+        Ok(self
+            .0
+            .read_sealed(&parse(name)?, expected_len, key, limits, check)?)
     }
 
     /// Whether the blob named `name` is sealed.

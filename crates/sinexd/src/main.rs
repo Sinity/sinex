@@ -19,6 +19,7 @@ mod one_shot;
 mod publisher;
 mod replay;
 mod screen_text;
+mod sealed_access;
 mod source_runner;
 mod writer;
 

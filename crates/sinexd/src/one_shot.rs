@@ -90,7 +90,13 @@ pub fn class_key() -> Result<Option<sinex_store::sealed::Recipient>, String> {
 pub struct SealingSink {
     blobs: Blobs,
     recipient: sinex_store::sealed::Recipient,
-    keys: std::sync::Mutex<std::collections::HashMap<String, sinex_store::sealed::DataKey>>,
+    state: std::sync::Mutex<SealingState>,
+}
+
+#[derive(Default)]
+struct SealingState {
+    pending: std::collections::HashMap<String, sinex_store::sealed::DataKey>,
+    current: Option<(MaterialId, String, sinex_store::sealed::DataKey)>,
 }
 
 impl SealingSink {
@@ -98,8 +104,66 @@ impl SealingSink {
         Self {
             blobs,
             recipient,
-            keys: Default::default(),
+            state: Default::default(),
         }
+    }
+
+    pub fn key(&self, blob: &str) -> Result<sinex_store::sealed::DataKey, String> {
+        let state = self.state.lock().expect("sealing state");
+        state
+            .pending
+            .get(blob)
+            .cloned()
+            .or_else(|| {
+                state
+                    .current
+                    .as_ref()
+                    .filter(|(_, name, _)| name == blob)
+                    .map(|(_, _, key)| key.clone())
+            })
+            .ok_or_else(|| "sealed material key is unavailable; explicit unlock is required".into())
+    }
+
+    pub fn open_carry(&self, value: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let Some(reference) = sinex_store::sealed::key_ref(value) else {
+            return Ok(value.clone());
+        };
+        let state = self.state.lock().expect("sealing state");
+        let key = state
+            .current
+            .as_ref()
+            .filter(|(_, _, key)| key.key_ref == reference)
+            .map(|(_, _, key)| key)
+            .or_else(|| state.pending.values().find(|key| key.key_ref == reference))
+            .ok_or("sealed parser carry needs explicit operator unlock")?;
+        sinex_store::sealed::unseal_payload(value, &key.key).map_err(|e| e.to_string())
+    }
+
+    pub fn restore_key(&self, blob: String, key: sinex_store::sealed::DataKey) {
+        self.state
+            .lock()
+            .expect("sealing state")
+            .pending
+            .insert(blob, key);
+    }
+
+    pub fn restore_current(
+        &self,
+        material: MaterialId,
+        blob: String,
+        key: sinex_store::sealed::DataKey,
+    ) {
+        self.state.lock().expect("sealing state").current = Some((material, blob, key));
+    }
+
+    pub fn put_reader(&self, reader: impl std::io::Read + std::io::Seek) -> Result<String, String> {
+        let key = sinex_store::sealed::new_key().map_err(|e| e.to_string())?;
+        let name = self
+            .blobs
+            .put_sealed_reader(reader, &key)
+            .map_err(|e| e.to_string())?;
+        self.restore_key(name.clone(), key);
+        Ok(name)
     }
 
     /// Seal the batches' events with their material's key and record the
@@ -112,31 +176,68 @@ impl SealingSink {
     ) -> Result<(), String> {
         for batch in batches {
             let material = match &batch.kind {
-                sinex_model::BatchKind::Source(p) => p.material.clone(),
-                _ => None,
+                sinex_model::BatchKind::Source(p) => p.material.as_ref(),
+                _ => return Err("source sealing only accepts source progress".into()),
             };
-            let Some(material) = material else {
-                // No new material: these events cite earlier parts, already
-                // sealed when they were read.
-                continue;
+            if let Some(material) = material {
+                let key = self.key(&material.blob)?;
+                let wrapped =
+                    sinex_store::sealed::wrap(&key, &self.recipient).map_err(|e| e.to_string())?;
+                sinex_store::sealed::store_key(read_conn, material.id, &key.key_ref, &wrapped)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut state = self.state.lock().expect("sealing state");
+                state.pending.remove(&material.blob);
+                state.current = Some((material.id, material.blob.clone(), key));
+            }
+            let current = self.state.lock().expect("sealing state").current.clone();
+            let Some((material, _, key)) = current else {
+                let sinex_model::BatchKind::Source(progress) = &batch.kind else {
+                    unreachable!()
+                };
+                if batch.records.is_empty()
+                    && (progress.carry.is_null() || sinex_store::sealed::is_sealed(&progress.carry))
+                {
+                    continue;
+                }
+                return Err(
+                    "sealed source state needs its material key; explicit unlock is required"
+                        .into(),
+                );
             };
-            let key = self
-                .keys
-                .lock()
-                .expect("key map")
-                .get(&material.blob)
-                .cloned()
-                .ok_or_else(|| format!("material {}: stored without a data key", material.id))?;
-            let wrapped =
-                sinex_store::sealed::wrap(&key, &self.recipient).map_err(|e| e.to_string())?;
-            sinex_store::sealed::store_key(read_conn, material.id, &key.key_ref, &wrapped)
-                .await
-                .map_err(|e| e.to_string())?;
             for record in &mut batch.records {
-                if let sinex_model::RecordOutcome::Events { events, .. } = record {
-                    for e in events {
-                        sinex_store::sealed::seal_event(e, &key).map_err(|e| e.to_string())?;
+                match record {
+                    sinex_model::RecordOutcome::Events { events, .. } => {
+                        for event in events {
+                            if event
+                                .location()
+                                .is_none_or(|(location, _)| location.material != material)
+                            {
+                                return Err(
+                                    "sealed batch cites a different material than its key".into()
+                                );
+                            }
+                            sinex_store::sealed::seal_event(event, &key)
+                                .map_err(|e| e.to_string())?;
+                        }
                     }
+                    sinex_model::RecordOutcome::Failure { location, reason } => {
+                        if location.material != material {
+                            return Err("sealed failure cites a different material".into());
+                        }
+                        *reason = sinex_store::sealed::seal_value(
+                            &serde_json::Value::String(reason.clone()),
+                            &key,
+                        )
+                        .map_err(|e| e.to_string())?
+                        .to_string();
+                    }
+                }
+            }
+            if let sinex_model::BatchKind::Source(progress) = &mut batch.kind {
+                if !sinex_store::sealed::is_sealed(&progress.carry) {
+                    progress.carry = sinex_store::sealed::seal_value(&progress.carry, &key)
+                        .map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -145,13 +246,22 @@ impl SealingSink {
 }
 
 impl MaterialSink for SealingSink {
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        self.put_reader(file)
+    }
+
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         let key = sinex_store::sealed::new_key().map_err(|e| e.to_string())?;
         let name = self
             .blobs
             .put_sealed(bytes, &key)
             .map_err(|e| e.to_string())?;
-        self.keys.lock().expect("key map").insert(name.clone(), key);
+        self.state
+            .lock()
+            .expect("sealing state")
+            .pending
+            .insert(name.clone(), key);
         Ok(name)
     }
 }
@@ -202,3 +312,6 @@ pub async fn stored_chain(
     chain.reverse();
     Ok(chain)
 }
+
+#[cfg(test)]
+mod tests;
