@@ -53,7 +53,8 @@ pub fn default_path() -> Option<PathBuf> {
 }
 
 /// Listen on `socket` and spool every line any connection writes, until
-/// `seconds` pass (forever otherwise). Returns the lines captured.
+/// `seconds` pass (forever otherwise). Stopping closes reception on accepted
+/// connections and drains their queued bytes before returning the lines captured.
 pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
     if let Some(dir) = socket.parent() {
         std::fs::create_dir_all(dir)?;
@@ -77,6 +78,8 @@ pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::i
     }
 }
 
+const ACCEPT_BATCH: usize = 32;
+
 fn capture_connections(
     listener: UnixListener,
     writer: Arc<Mutex<SpoolWriter>>,
@@ -87,9 +90,9 @@ fn capture_connections(
     let mut count = 0;
     let mut failure = None;
     loop {
-        // Accept the pending connections before observing stop, then close
-        // admission and finish everything those connections already sent.
-        loop {
+        // Check stop between bounded batches even when new clients keep
+        // the accept queue populated. Only accepted readers are drained.
+        for _ in 0..ACCEPT_BATCH {
             match listener.accept() {
                 Ok((stream, _)) => {
                     let control = match stream.try_clone() {

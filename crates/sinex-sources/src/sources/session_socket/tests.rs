@@ -255,3 +255,35 @@ fn private_records_stay_unwritten_and_do_not_count_as_captured() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn stop_is_checked_between_accept_batches_with_more_clients_pending() {
+    let dir = std::env::temp_dir().join(format!("sx-sock-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("s.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let writer = Arc::new(Mutex::new(
+        SpoolWriter::open(dir.join("spool"), Rotation::default()).unwrap(),
+    ));
+    // More arrivals than one batch, without a timing race: all have queued
+    // input before capture starts, and stop is already requested.
+    let clients: Vec<_> = (0..=ACCEPT_BATCH)
+        .map(|_| {
+            let mut client = UnixStream::connect(&socket).unwrap();
+            client.write_all(b"accepted record\n").unwrap();
+            client
+        })
+        .collect();
+    assert_eq!(
+        capture_connections(listener, writer, || true).unwrap(),
+        ACCEPT_BATCH as u64
+    );
+    let material = driver(dir.join("spool"), "h".into())
+        .poll(&Value::Null)
+        .unwrap()
+        .material
+        .unwrap();
+    assert_eq!(material.records.len(), ACCEPT_BATCH);
+    drop(clients);
+    let _ = std::fs::remove_dir_all(dir);
+}
