@@ -65,6 +65,8 @@ Optimize for fast integration.
   `test` (all Rust tests under nextest) and `package` (Nix build). Run
   them on batches of merged work, not before every merge, and fix what they
   find afterwards.
+- Give each writable Cargo target directory one active build owner. Coordinate
+  sequential warm-cache reuse; concurrent worktrees use separate targets.
 - Merge small PRs often. Rebase before pushing; do not keep long-lived
   branches.
 - Report what you ran and what you did not. A merge is not evidence of testing.
