@@ -115,6 +115,11 @@ async fn sealed_failure_details_are_encrypted_and_exactly_recoverable() {
         location,
         reason: "synthetic_failure_secret".into(),
     }];
+    let literal_envelope =
+        serde_json::json!({"key":"synthetic_carry_secret","sealed":"synthetic_carry_secret"});
+    if let sinex_model::BatchKind::Source(progress) = &mut batch.kind {
+        progress.carry = literal_envelope.clone();
+    }
     let mut batch = [batch];
     sink.seal(&mut ctx.read_conn, &mut batch).await.unwrap();
     ctx.writer
@@ -140,6 +145,44 @@ async fn sealed_failure_details_are_encrypted_and_exactly_recoverable() {
         sinex_store::sealed::unseal_payload(&sealed, &key).unwrap(),
         "synthetic_failure_secret"
     );
+    let (_, carry) = sinex_store::positions::load(&mut ctx.read_conn, "synthetic-failure")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!carry.to_string().contains("synthetic_carry_secret"));
+    assert_eq!(
+        sinex_store::sealed::unseal_payload(&carry, &key).unwrap(),
+        literal_envelope
+    );
     ctx.close().await.unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test]
+async fn sealed_material_cannot_silently_switch_its_wrapped_key() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let mut conn = sqlx::Connection::connect(&url).await.unwrap();
+    let identity = sinex_store::sealed::Identity::generate();
+    let material = sinex_model::MaterialId::new();
+    let first = sinex_store::sealed::new_key().unwrap();
+    let other = sinex_store::sealed::new_key().unwrap();
+    let wrapped = sinex_store::sealed::wrap(&first, &identity.to_public()).unwrap();
+    sinex_store::sealed::store_key(&mut conn, material, &first.key_ref, &wrapped)
+        .await
+        .unwrap();
+    sinex_store::sealed::store_key(&mut conn, material, &first.key_ref, &wrapped)
+        .await
+        .unwrap();
+    let other_wrapped = sinex_store::sealed::wrap(&other, &identity.to_public()).unwrap();
+    assert!(
+        sinex_store::sealed::store_key(&mut conn, material, &other.key_ref, &other_wrapped)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sinex_store::sealed::wrapped_key(&mut conn, &first.key_ref)
+            .await
+            .unwrap(),
+        Some(wrapped)
+    );
 }

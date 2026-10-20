@@ -55,6 +55,8 @@ pub enum Request {
     },
     Replay {
         #[serde(default)]
+        sealed: Option<bool>,
+        #[serde(default)]
         material: Vec<String>,
         #[serde(default)]
         binding: Option<String>,

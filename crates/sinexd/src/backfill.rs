@@ -29,6 +29,7 @@ pub struct Options {
     /// Print one JSON object (per-source totals, peak memory) instead of
     /// lines.
     pub json: bool,
+    pub identity_file: Option<PathBuf>,
 }
 
 /// The kinds `--source KIND=PATH` accepts.
@@ -97,6 +98,17 @@ impl std::fmt::Display for Totals {
 }
 
 pub async fn run(o: Options) -> Result<(), String> {
+    let authority = o
+        .identity_file
+        .as_ref()
+        .map(|path| {
+            let text =
+                std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let identity =
+                sinex_store::sealed::parse_identity(text.trim()).map_err(|e| e.to_string())?;
+            crate::sealed_access::Authority::new(identity, Duration::from_secs(480 * 60))
+        })
+        .transpose()?;
     let mut settings = Settings::new(o.host.clone());
     settings.zone = o.zone.clone();
     settings.options = sinex_sources::live::options(&o.options)?;
@@ -155,6 +167,10 @@ pub async fn run(o: Options) -> Result<(), String> {
         &sink,
         &mut bound,
         stop,
+        crate::binding_reader::Access {
+            recipient: None,
+            authority: authority.as_ref(),
+        },
     )
     .await;
     let mut failures = Vec::new();
@@ -276,6 +292,7 @@ pub(crate) async fn drive(
             binding,
             material_sink,
             sealing.as_ref(),
+            None,
             acquired,
             carry,
             &mut totals,
@@ -299,6 +316,7 @@ pub(crate) async fn submit(
     binding: &str,
     material_sink: &dyn drivers::MaterialSink,
     sealing: Option<&crate::one_shot::SealingSink>,
+    authority: Option<&crate::sealed_access::Authority>,
     acquired: drivers::Acquired,
     carry: serde_json::Value,
     totals: &mut Totals,
@@ -325,6 +343,9 @@ pub(crate) async fn submit(
         let mut one = [batch];
         if let Some(s) = sealing {
             s.seal(read_conn, &mut one).await?;
+        }
+        if let Some(authority) = authority {
+            authority.check()?;
         }
         let [batch] = one;
         totals.batches += 1;

@@ -109,6 +109,11 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
                 .required(true)
                 .value_parser(value_parser!(PathBuf)),
         )
+        .arg(
+            Arg::new("identity-file")
+                .long("identity-file")
+                .value_parser(value_parser!(PathBuf)),
+        )
         .arg(Arg::new("host").long("host").default_value("localhost"))
         .arg(Arg::new("zone").long("zone"))
         .arg(
@@ -130,6 +135,22 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
     let day_start: &String = matches.get_one("day-start").expect("defaulted");
     let day_start = sinex_model::query::time::clock(day_start)
         .ok_or_else(|| format!("day start `{day_start}` is not a clock time like 04:00"))?;
+    let identity = if let Some(path) = matches.get_one::<PathBuf>("identity-file") {
+        if !matches!(
+            &request,
+            sinex_protocol::Request::Replay {
+                sealed: Some(true),
+                ..
+            }
+        ) {
+            return Err("--identity-file requires replay --sealed".into());
+        }
+        let identity =
+            std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Some(identity)
+    } else {
+        None
+    };
     let ctx = one_shot::OneShot::open(database, store).await?;
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
@@ -146,6 +167,22 @@ async fn admin_table(args: Vec<String>) -> Result<(), String> {
         unlock: Default::default(),
         host: host.clone(),
     };
+    if let Some(identity) = identity {
+        if let sinex_protocol::Reply::Refused { reason, .. } = local
+            .call(
+                sinex_protocol::Request::Unlock {
+                    identity: identity.trim().to_owned(),
+                    minutes: None,
+                },
+                sinex_protocol::Access::Operator,
+            )
+            .await
+        {
+            drop(local);
+            ctx.close().await?;
+            return Err(reason);
+        }
+    }
     let reply = local.call(request, sinex_protocol::Access::Operator).await;
     drop(local);
     ctx.close().await?;

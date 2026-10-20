@@ -212,19 +212,22 @@ impl Api {
         let Some(s) = session.as_mut() else {
             return Ok(());
         };
+        s.authority.check()?;
         let mut conn = self.reads.acquire().await.map_err(|e| e.to_string())?;
         for r in refs {
-            if s.keys.contains_key(&r) {
-                continue;
-            }
             if let Some(wrapped) = sinex_store::sealed::wrapped_key(&mut conn, &r)
                 .await
                 .map_err(|e| e.to_string())?
             {
-                let key = s.authority.unwrap(&wrapped)?;
-                s.keys.insert(r, key);
+                if !s.keys.contains_key(&r) {
+                    let key = s.authority.unwrap(&wrapped)?;
+                    s.keys.insert(r, key);
+                }
+            } else {
+                s.keys.remove(&r);
             }
         }
+        s.authority.check()?;
         unseal_in(value, &s.keys);
         Ok(())
     }
@@ -330,6 +333,7 @@ impl Api {
                 .await
             }
             Request::Replay {
+                sealed,
                 material,
                 binding,
                 event_type,
@@ -366,8 +370,10 @@ impl Api {
                                 compare: compare.unwrap_or(false),
                                 resume,
                                 actor: actor.to_string(),
+                                authority: None,
                             },
                             all.unwrap_or(false),
+                            sealed.unwrap_or(false),
                         )
                         .await
                     }

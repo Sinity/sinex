@@ -118,6 +118,7 @@ fn options(scope: Scope, compare: bool) -> Options {
         compare,
         resume: None,
         actor: "t".into(),
+        authority: None,
     }
 }
 

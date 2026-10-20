@@ -179,6 +179,7 @@ impl SealingSink {
                 sinex_model::BatchKind::Source(p) => p.material.as_ref(),
                 _ => return Err("source sealing only accepts source progress".into()),
             };
+            let checkpoint = material.is_none() && batch.records.is_empty();
             if let Some(material) = material {
                 let key = self.key(&material.blob)?;
                 let wrapped =
@@ -235,7 +236,10 @@ impl SealingSink {
                 }
             }
             if let sinex_model::BatchKind::Source(progress) = &mut batch.kind {
-                if !sinex_store::sealed::is_sealed(&progress.carry) {
+                let retained = checkpoint
+                    && sinex_store::sealed::key_ref(&progress.carry) == Some(key.key_ref.as_str())
+                    && sinex_store::sealed::unseal_payload(&progress.carry, &key.key).is_ok();
+                if !retained {
                     progress.carry = sinex_store::sealed::seal_value(&progress.carry, &key)
                         .map_err(|e| e.to_string())?;
                 }

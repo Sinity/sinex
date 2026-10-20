@@ -55,9 +55,25 @@ impl Api {
     pub(super) async fn replay(
         &self,
         caller: &Caller,
-        o: crate::replay::Options,
+        mut o: crate::replay::Options,
         all: bool,
+        sealed: bool,
     ) -> Reply {
+        if sealed {
+            if caller.actor != "operator" || !caller.grants.split(',').any(|g| g == "sealed") {
+                return refused(
+                    "sealed replay requires the operator's current unlock and explicit --sealed grant",
+                );
+            }
+            let unlock = self.unlock.lock().await;
+            let Some(session) = unlock.as_ref() else {
+                return refused("sealed replay is pending explicit operator unlock");
+            };
+            if let Err(error) = session.authority.check() {
+                return refused(error);
+            }
+            o.authority = Some(session.authority.clone());
+        }
         let Some(writer) = &self.writer else {
             return refused("this daemon has no writer; writes go through `sinexd run`");
         };

@@ -30,6 +30,10 @@ impl Authority {
             }),
         })
     }
+    pub fn recipient(&self) -> sinex_store::sealed::Recipient {
+        self.identity.to_public()
+    }
+
     pub fn check(&self) -> Result<(), String> {
         if self.lease.revoked.load(Ordering::Acquire) || Instant::now() >= self.lease.until {
             Err("this operation's sealed unlock authority expired or was revoked".into())
@@ -71,3 +75,17 @@ impl Authority {
 
 #[cfg(test)]
 mod tests;
+
+// Native sealed writers use this frame size; the index allowance includes footer metadata.
+pub(crate) fn read_limits(length: u64) -> Result<sinex_store::blobs::SealedReadLimits, String> {
+    let frame = sinex_store::blobs::BLOB_FRAME_BYTES;
+    let frames = length.div_ceil(frame as u64).max(1);
+    let index = frames
+        .checked_mul(8)
+        .and_then(|n| n.checked_add(65536))
+        .ok_or("sealed index budget overflow")?;
+    Ok(sinex_store::blobs::SealedReadLimits {
+        frame_bytes: frame,
+        index_bytes: usize::try_from(index).map_err(|_| "sealed index exceeds address space")?,
+    })
+}

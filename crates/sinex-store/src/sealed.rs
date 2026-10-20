@@ -181,6 +181,17 @@ pub async fn store_key(
     )
     .execute(&mut *conn)
     .await?;
+    let actual = sqlx::query_scalar!(
+        "SELECT key_ref FROM privacy.material_keys WHERE material_id=$1",
+        material.0
+    )
+    .fetch_one(conn)
+    .await?;
+    if actual != key_ref {
+        return Err(Error::Invalid(
+            "material is already bound to a different sealed key".into(),
+        ));
+    }
     Ok(())
 }
 

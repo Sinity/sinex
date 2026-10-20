@@ -177,6 +177,11 @@ pub const COMMANDS: &[Command] = &[
         summary: "Read stored materials again with current parsers and rules; old readings are archived. With no scope, every material.",
         args: &[
             opt(
+                "sealed",
+                ArgKind::Bool,
+                "explicitly use the operator's current sealed unlock for this operation",
+            ),
+            opt(
                 "material",
                 ArgKind::List,
                 "a material to re-read (repeatable)",
