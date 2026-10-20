@@ -54,6 +54,18 @@ nix develop --command cargo run -p xtask -- test    # every test under nextest; 
 nix develop --command cargo run -p xtask -- db ensure   # the schema database's URL, for an editor
 ```
 
+For a focused run through the normal job queue:
+
+```bash
+agentctl job start sinex focused -- -p sinex-sources -E 'test(session_socket)'
+```
+
+`xtask test` passes arguments to `cargo nextest run`. `-p` / `--package`
+selects what Cargo builds; a name or `-E` filter alone selects tests after
+building the workspace. Existing `xtask test NAME` calls keep their behavior.
+Without arguments it still runs the full workspace. Package selection keeps
+the same schema database, per-test clones, shared NATS and tmpfs test storage.
+
 A first import of the operator's shell history:
 
 ```bash

@@ -53,8 +53,9 @@ schema change gives a new one and only the query-checking crates recompile.
 Optimize for fast integration.
 
 - While editing, run selected tests with
-  `agentctl job start sinex focused -- <filter>` in the normal queue. Full
-  suites use the bulk `test` operation.
+  `agentctl job start sinex focused -- -p <package> -E 'test(<name>)'`
+  in the normal queue. Package selection limits the build; a name filter alone
+  still builds the workspace. Full suites use the bulk `test` operation.
 - The pre-push hook (`.githooks/pre-push`) runs `cargo fmt --check` and
   `xtask boundaries` (seconds). Open a PR when ready and follow the forge's
   current check and review rules.

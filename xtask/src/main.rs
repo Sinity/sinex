@@ -18,8 +18,9 @@ enum Cli {
     Check,
     /// Rust tests under nextest; each database test clones the schema template.
     Test {
-        /// Run only tests whose name contains this.
-        filter: Option<String>,
+        /// Further `cargo nextest run` arguments: packages, filters, names.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// The development database: `ensure` prints `DATABASE_URL`, `exec` runs a
     /// command with it set.
@@ -37,10 +38,7 @@ enum Cli {
 fn main() -> ExitCode {
     match Cli::parse() {
         Cli::Check => recorded("check", &[], check),
-        Cli::Test { filter } => {
-            let args: Vec<String> = filter.iter().cloned().collect();
-            recorded("test", &args, |run| test(run, filter.as_deref()))
-        }
+        Cli::Test { args } => recorded("test", &args, |run| test(run, &args)),
         Cli::Db(command) => {
             let (hash, apply) = match database::schema(Path::new(".")) {
                 Ok(schema) => schema,
@@ -104,7 +102,7 @@ fn check(run: &mut Run) -> Result {
     Ok(())
 }
 
-fn test(run: &mut Run, filter: Option<&str>) -> Result {
+fn test(run: &mut Run, args: &[String]) -> Result {
     let mut prepared = None;
     run.step("database", |run| {
         prepared = Some(database::prepare(&run.root)?);
@@ -120,20 +118,40 @@ fn test(run: &mut Run, filter: Option<&str>) -> Result {
     })?;
     let mut env = database::env(&server, &databases);
     env.extend(nats.as_ref().expect("started").test_env());
-    let mut args = vec!["--locked".to_owned(), "--workspace".to_owned()];
-    args.extend(filter.map(str::to_owned));
-    run.nextest(
-        "test",
-        &Nextest {
-            args,
-            env,
-            allow_no_tests: filter.is_some(),
-            tmpfs: true,
-        },
-    )?;
+    run.nextest("test", &test_options(args, env))?;
     Ok(())
+}
+
+fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
+    let explicit_scope = args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| {
+            arg == "-p"
+                || (arg.starts_with("-p") && arg.len() > 2)
+                || arg == "--package"
+                || arg.starts_with("--package=")
+                || arg == "--workspace"
+                || arg == "--all"
+        });
+    let mut selected = vec!["--locked".to_owned()];
+    if !explicit_scope {
+        selected.push("--workspace".to_owned());
+    }
+    selected.extend_from_slice(args);
+    Nextest {
+        args: selected,
+        env,
+        // Preserve the original single name-filter invocation. New nextest
+        // selectors retain devkit's default refusal when no tests match.
+        allow_no_tests: args.len() == 1 && !args[0].starts_with('-'),
+        tmpfs: true,
+    }
 }
 
 fn target_dir() -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| PathBuf::from("target"), PathBuf::from)
 }
+
+#[cfg(test)]
+mod tests;
