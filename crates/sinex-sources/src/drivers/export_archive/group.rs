@@ -3,11 +3,11 @@ use super::{Container, DriverError, ExportArchive, Framing, file_name, io, is_ta
 use crate::drivers::{Acquired, MaterialSink, NewMaterial, StoredBytes};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sinex_model::{MaterialId, ObservationFacts, RevisionChange};
+use sinex_model::{MaterialId, MaterialRef, ObservationFacts, RevisionChange};
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 const VERSION: u8 = 1;
@@ -26,14 +26,20 @@ pub struct Cursor {
     pub capture: Capture,
     pub size: u64,
     pub mtime_ns: i128,
+    pub ctime_ns: Option<i128>,
     pub inode: u64,
     pub device: u64,
     /// Archive file member, then the next record within that member.
     pub member: usize,
     pub record: usize,
+    /// Compact record bytes in preceding selected members, for stable reading order.
+    pub order_offset: u64,
     pub material: Option<MaterialId>,
     pub part_index: u32,
     pub done: bool,
+    pub part_member: Option<usize>,
+    pub part_start: usize,
+    pub part_end: usize,
 }
 
 impl Cursor {
@@ -42,16 +48,24 @@ impl Cursor {
             return Ok(None);
         }
         if value.get("version").and_then(Value::as_u64) != Some(u64::from(VERSION)) {
-            return Err(DriverError::Cursor("this archive cursor predates retained capture; explicitly reimport it before using the grouped reader".into()));
+            return Err(DriverError::Cursor("this archive cursor predates retained capture; an explicit migration is required before its saved record coordinates can be read".into()));
         }
         serde_json::from_value(value.clone())
             .map(Some)
             .map_err(|e| DriverError::Cursor(e.to_string()))
     }
 
+    /// A partly admitted record material must finish from its retained bytes and identity.
+    pub fn pending_material(&self) -> Option<MaterialId> {
+        (!self.done && self.part_member == Some(self.member) && self.record < self.part_end)
+            .then_some(self.material)
+            .flatten()
+    }
+
     pub fn same_file(&self, facts: &ObservationFacts) -> bool {
         Some(self.size) == facts.size
             && Some(self.mtime_ns) == facts.mtime_ns
+            && self.ctime_ns == facts.ctime_ns
             && Some(self.inode) == facts.inode
             && Some(self.device) == facts.device
     }
@@ -60,6 +74,56 @@ impl Cursor {
 pub struct Route {
     pub driver: ExportArchive,
     pub cursor: Value,
+    pub pending: Option<Pending>,
+}
+
+/// The current material loaded by its durable ID. Metadata stays in the material row,
+/// not duplicated in every cursor update. Its body is one part or one oversized record.
+pub struct Pending {
+    material: MaterialRef,
+    bytes: Vec<u8>,
+    records: Vec<(usize, usize)>,
+}
+
+impl Pending {
+    pub fn new(
+        material: MaterialRef,
+        bytes: Vec<u8>,
+        source: &crate::SourceSpec,
+    ) -> Result<Self, DriverError> {
+        if material.parser != source.parser || material.parser_version != source.parser_version {
+            return Err(DriverError::Cursor(
+                "the pending archive part needs an explicit parser replay before resumption".into(),
+            ));
+        }
+        if sinex_model::MaterialRole::of(&material.manifest)
+            .map_err(|e| DriverError::InvalidMaterial(e.to_string()))?
+            != sinex_model::MaterialRole::Records
+            || material.manifest["format_version"] != VERSION
+            || material.length != bytes.len() as u64
+        {
+            return Err(DriverError::Cursor(
+                "pending archive record material has inconsistent metadata".into(),
+            ));
+        }
+        let records: Vec<(usize, usize)> =
+            serde_json::from_value(material.manifest["records"].clone())
+                .map_err(|e| DriverError::Cursor(e.to_string()))?;
+        let mut through = 0;
+        for &(start, end) in &records {
+            if start < through || start >= end || end > bytes.len() {
+                return Err(DriverError::Cursor(
+                    "invalid pending archive record ranges".into(),
+                ));
+            }
+            through = end;
+        }
+        Ok(Self {
+            material,
+            bytes,
+            records,
+        })
+    }
 }
 
 #[derive(Debug, Default)]
@@ -82,6 +146,7 @@ pub fn read(
     blob: String,
     length: u64,
     facts: ObservationFacts,
+    stop: Arc<AtomicBool>,
     routes: Vec<Route>,
     sink: &dyn MaterialSink,
     emit: &mut Emit<'_>,
@@ -90,7 +155,11 @@ pub fn read(
         return Ok(Work::default());
     }
     let decoded = Arc::new(AtomicU64::new(0));
-    let opened = Opened::new(reader, Arc::clone(&decoded))?;
+    let mut opened = Opened::new(reader, Arc::clone(&decoded))?;
+    opened.reader = Box::new(Cancellable {
+        reader: opened.reader,
+        stop: Arc::clone(&stop),
+    });
     let capture = Capture {
         blob,
         length,
@@ -104,6 +173,7 @@ pub fn read(
         sink,
         emit,
         work: Work::default(),
+        stop: Arc::clone(&stop),
     };
     for route in routes {
         let previous = Cursor::parse(&route.cursor)?;
@@ -120,17 +190,23 @@ pub fn read(
                 capture: context.capture.clone(),
                 size: context.facts.size.unwrap_or(0),
                 mtime_ns: context.facts.mtime_ns.unwrap_or(0),
+                ctime_ns: context.facts.ctime_ns,
                 inode: context.facts.inode.unwrap_or(0),
                 device: context.facts.device.unwrap_or(0),
                 member: 0,
                 record: 0,
+                order_offset: 0,
                 material: None,
                 part_index: 0,
                 done: false,
+                part_member: None,
+                part_start: 0,
+                part_end: 0,
             }
         };
         cursor.size = context.facts.size.unwrap_or(0);
         cursor.mtime_ns = context.facts.mtime_ns.unwrap_or(0);
+        cursor.ctime_ns = context.facts.ctime_ns;
         cursor.inode = context.facts.inode.unwrap_or(0);
         cursor.device = context.facts.device.unwrap_or(0);
         let revision = if route.cursor.is_null() {
@@ -142,20 +218,36 @@ pub fn read(
             driver: route.driver,
             cursor,
             active: true,
+            pending: if continuing { route.pending } else { None },
         });
         let index = context.routes.len() - 1;
         if !continuing {
             context.original(index, revision)?;
+        } else {
+            context.resume(index)?;
         }
     }
     let path = context.routes[0].driver.path.clone();
     let mut zip_staging = 0;
-    opened.visit(
-        &path,
-        Arc::clone(&decoded),
-        &mut |member, name, input| context.member(member, name, input),
-        &mut zip_staging,
-    )?;
+    opened
+        .visit(
+            &path,
+            Arc::clone(&decoded),
+            &mut |member, name, input| {
+                if stop.load(Ordering::Relaxed) {
+                    return Err(DriverError::Cancelled);
+                }
+                context.member(member, name, input)
+            },
+            &mut zip_staging,
+        )
+        .map_err(|error| {
+            if stop.load(Ordering::Relaxed) {
+                DriverError::Cancelled
+            } else {
+                error
+            }
+        })?;
     context.work.zip_staging_bytes = zip_staging;
     context.work.decoded_bytes = decoded.load(Ordering::Relaxed);
     for index in 0..context.routes.len() {
@@ -183,6 +275,7 @@ struct State {
     driver: ExportArchive,
     cursor: Cursor,
     active: bool,
+    pending: Option<Pending>,
 }
 struct Context<'a, 'b> {
     capture: Capture,
@@ -191,9 +284,74 @@ struct Context<'a, 'b> {
     sink: &'a dyn MaterialSink,
     emit: &'a mut Emit<'b>,
     work: Work,
+    stop: Arc<AtomicBool>,
 }
 
 impl Context<'_, '_> {
+    fn resume(&mut self, index: usize) -> Result<(), DriverError> {
+        let state = &mut self.routes[index];
+        let Some(id) = state.cursor.pending_material() else {
+            return Ok(());
+        };
+        let pending = state.pending.take().ok_or_else(|| {
+            DriverError::Cursor("the partly admitted archive material was not loaded".into())
+        })?;
+        if pending.material.id != id
+            || pending.material.part_index != state.cursor.part_index
+            || pending.records.len()
+                != state
+                    .cursor
+                    .part_end
+                    .saturating_sub(state.cursor.part_start)
+            || state.cursor.record < state.cursor.part_start
+            || pending.material.manifest["framing"] != state.driver.framing.name()
+        {
+            return Err(DriverError::Cursor(
+                "the pending archive material does not match its cursor".into(),
+            ));
+        }
+        let skip = state.cursor.record - state.cursor.part_start;
+        let mut after = state.cursor.clone();
+        after.record = after.part_end;
+        let ends: Vec<usize> = pending.records.iter().map(|&(_, end)| end).collect();
+        let cursor_base = after.clone();
+        let acquired = Acquired {
+            input: state.driver.input(),
+            observation: ObservationFacts {
+                changed: false,
+                ..self.facts.clone()
+            },
+            revision: RevisionChange::Same,
+            material: Some(NewMaterial {
+                id,
+                bytes: pending.bytes,
+                stored: Some(StoredBytes::Blob {
+                    name: pending.material.blob.clone(),
+                    length: pending.material.length,
+                }),
+                records: pending.records[skip..].to_vec(),
+                part_index: pending.material.part_index,
+                previous_part: pending.material.previous_part,
+                reading_order: crate::drivers::reading_order(&pending.material.manifest),
+                manifest: pending.material.manifest,
+                cursor_at: Box::new(move |end| {
+                    let mut cursor = cursor_base.clone();
+                    cursor.record = cursor.part_start + ends.partition_point(|&at| at <= end);
+                    json!(cursor)
+                }),
+                aligned: false,
+                vanished: Vec::new(),
+            }),
+            cursor_unchanged: Value::Null,
+        };
+        if (self.emit)(index, Ok(acquired))? {
+            state.cursor = after;
+        } else {
+            state.active = false;
+        }
+        Ok(())
+    }
+
     fn original(&mut self, index: usize, revision: RevisionChange) -> Result<(), DriverError> {
         let state = &mut self.routes[index];
         let id = MaterialId::new();
@@ -295,16 +453,25 @@ impl Context<'_, '_> {
         let mut ranges = Vec::new();
         let mut ordinal = 0;
         let mut start = 0;
+        let mut byte_position = 0u64;
+        let mut part_offset = 0u64;
         let result = records::visit(reader, framing, budget, &mut |record| {
+            if self.stop.load(Ordering::Relaxed) {
+                return Err(DriverError::Cancelled);
+            }
+            byte_position = byte_position
+                .checked_add(record.len() as u64)
+                .ok_or_else(|| DriverError::Cursor("archive reading order exceeds u64".into()))?;
             let begin = bytes.len();
             bytes.extend_from_slice(&record);
             ranges.push((begin, bytes.len()));
             ordinal += 1;
-            if bytes.len() >= budget {
-                self.part(member, name, indices, start, &bytes, &ranges)?;
+            if bytes.len() >= budget || ranges.len() >= crate::Limits::default().max_events {
+                self.part(member, name, indices, start, part_offset, &bytes, &ranges)?;
                 bytes.clear();
                 ranges.clear();
                 start = ordinal;
+                part_offset = byte_position;
             }
             Ok(())
         });
@@ -322,10 +489,17 @@ impl Context<'_, '_> {
             return Ok(());
         }
         if !ranges.is_empty() {
-            self.part(member, name, indices, start, &bytes, &ranges)?;
+            self.part(member, name, indices, start, part_offset, &bytes, &ranges)?;
         }
         for &index in indices {
             if self.routes[index].active {
+                self.routes[index].cursor.order_offset = self.routes[index]
+                    .cursor
+                    .order_offset
+                    .checked_add(byte_position)
+                    .ok_or_else(|| {
+                        DriverError::Cursor("archive reading order exceeds u64".into())
+                    })?;
                 self.routes[index].cursor.member = member + 1;
                 self.routes[index].cursor.record = 0;
             }
@@ -333,12 +507,14 @@ impl Context<'_, '_> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn part(
         &mut self,
         member: usize,
         name: &str,
         indices: &[usize],
         start: usize,
+        part_offset: u64,
         bytes: &[u8],
         ranges: &[(usize, usize)],
     ) -> Result<(), DriverError> {
@@ -372,7 +548,10 @@ impl Context<'_, '_> {
             after.part_index = part_index;
             after.member = member;
             after.record = start + ranges.len();
-            let ends: Vec<usize> = ranges.iter().map(|&(_, end)| end).collect();
+            after.part_member = Some(member);
+            after.part_start = start + skip;
+            after.part_end = after.record;
+            let ends: Vec<usize> = records.iter().map(|&(_, end)| end).collect();
             let cursor_base = after.clone();
             let path = if self.capture.container == Container::Gzip {
                 let name = file_name(&state.driver.path);
@@ -382,8 +561,8 @@ impl Context<'_, '_> {
             };
             let manifest = json!({"role": "records", "format_version": VERSION, "container": "plain",
                 "source_container": self.capture.container, "path": state.driver.path, "host": state.driver.host,
-                "framing": state.driver.framing.name(), "records": records, "order_base": after.capture.reading_order_base,
-                "members": [{"path": path, "stream_offset": 0, "length": bytes.len(), "record_start": start}]});
+                "framing": state.driver.framing.name(), "records": records, "order_base": after.capture.reading_order_base.saturating_add(i64::try_from(after.order_offset.saturating_add(part_offset)).unwrap_or(i64::MAX)),
+                "members": [{"path": path, "stream_offset": 0, "length": bytes.len(), "record_start": after.part_start}]});
             let acquired = Acquired {
                 input: state.driver.input(),
                 observation: ObservationFacts {
@@ -405,7 +584,7 @@ impl Context<'_, '_> {
                     manifest,
                     cursor_at: Box::new(move |end| {
                         let mut cursor = cursor_base.clone();
-                        cursor.record = start + ends.partition_point(|&at| at <= end);
+                        cursor.record = cursor.part_start + ends.partition_point(|&at| at <= end);
                         json!(cursor)
                     }),
                     aligned: false,
@@ -533,5 +712,21 @@ impl<R: Read> Read for Counted<R> {
         let n = self.reader.read(bytes)?;
         self.count.fetch_add(n as u64, Ordering::Relaxed);
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
+struct Cancellable<R> {
+    reader: R,
+    stop: Arc<AtomicBool>,
+}
+impl<R: Read> Read for Cancellable<R> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        if self.stop.load(Ordering::Relaxed) {
+            return Err(std::io::Error::other("archive read cancelled"));
+        }
+        self.reader.read(bytes)
     }
 }

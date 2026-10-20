@@ -6,7 +6,7 @@
 //! binding is recorded with its settings (so a replay reads it the same way)
 //! and its driver state is rebuilt from the materials it stored, so a
 //! second run reads only what changed.
-use crate::one_shot::{OneShot, Sink, stored_chain};
+use crate::one_shot::{OneShot, Sink};
 use crate::writer::{self, Priority};
 use sinex_model::RunId;
 use sinex_sources::{Binding, InputKind, Limits, Settings, Source, drivers, sources};
@@ -57,6 +57,10 @@ pub(crate) struct Totals {
     dirty_keys: usize,
     admit_time: Duration,
     wall: Duration,
+    archive_source_opens: u64,
+    archive_captures: u64,
+    archive_decoded_bytes: u64,
+    archive_record_bytes: u64,
 }
 
 impl std::fmt::Display for Totals {
@@ -138,11 +142,29 @@ pub async fn run(o: Options) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     // Totals per source, in the order sources were first read.
     let mut per_source: Vec<(String, Totals)> = Vec::new();
-    for (kind, b) in &planned {
-        let totals = read_binding(&mut ctx, run, &sink, kind, b).await?;
-        match per_source.iter_mut().find(|(s, _)| *s == b.source) {
-            Some((_, t)) => t.add(totals),
-            None => per_source.push((b.source.clone(), totals)),
+    let mut bound = planned
+        .into_iter()
+        .map(|(kind, b)| crate::binding_reader::Bound::new(kind, b))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (_stop, stop) = tokio::sync::watch::channel(false);
+    let results = crate::binding_reader::read(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        run,
+        &sink,
+        &mut bound,
+        stop,
+    )
+    .await;
+    let mut failures = Vec::new();
+    for (source, result) in results {
+        match result {
+            Ok(totals) => match per_source.iter_mut().find(|(s, _)| *s == source) {
+                Some((_, t)) => t.add(totals),
+                None => per_source.push((source, totals)),
+            },
+            Err(e) => failures.push(format!("{source}: {e}")),
         }
     }
     if o.json {
@@ -162,35 +184,12 @@ pub async fn run(o: Options) -> Result<(), String> {
     runs::end(&mut ctx.read_conn, run)
         .await
         .map_err(|e| e.to_string())?;
-    ctx.close().await
-}
-
-/// Record `b`, rebuild its driver state from what it stored, and read it
-/// to the end.
-pub(crate) async fn read_binding(
-    ctx: &mut OneShot,
-    run: RunId,
-    sink: &Sink,
-    kind: &InputKind,
-    b: &Binding,
-) -> Result<Totals, String> {
-    let source = (kind.source)(b)?;
-    let reader_for = kind
-        .reader
-        .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
-    let mut reader = reader_for(b)?;
-    record(&mut ctx.read_conn, b).await?;
-    reader.remember(&stored(ctx, &b.name).await?);
-    drive(
-        &mut ctx.read_conn,
-        &ctx.writer,
-        run,
-        source.as_ref(),
-        &b.name,
-        sink,
-        |cursor| reader.poll(cursor),
-    )
-    .await
+    ctx.close().await?;
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 /// Store `b`'s source, input and settings under its name.
@@ -206,19 +205,6 @@ pub(crate) async fn record(read_conn: &mut PgConnection, b: &Binding) -> Result<
     )
     .await
     .map_err(|e| e.to_string())
-}
-
-/// The stored bytes the binding's driver read last, for its state.
-pub(crate) async fn stored(
-    ctx: &mut OneShot,
-    binding: &str,
-) -> Result<Vec<(sinex_model::MaterialId, Vec<u8>)>, String> {
-    let cursor = positions::load(&mut ctx.read_conn, binding)
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|(cursor, _)| cursor)
-        .unwrap_or(serde_json::Value::Null);
-    stored_chain(&mut ctx.read_conn, &ctx.blobs, &cursor).await
 }
 
 pub(crate) async fn drive(
@@ -270,51 +256,24 @@ pub(crate) async fn drive(
             .map_err(|e| e.to_string())?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
         let acquired = poll(&cursor).map_err(|e| e.to_string())?;
-        totals.polls += 1;
         if let Some(reason) = &acquired.observation.unavailable {
             return Err(format!("{binding}: {reason}"));
         }
-        // Batches are submitted as they are drained, so memory holds one
-        // batch at a time, never a whole material's events.
-        let prepared = drivers::prepare(
+        let had_material = acquired.material.is_some();
+        submit(
+            read_conn,
+            handle,
+            run,
             source,
             binding,
-            run,
+            material_sink,
+            sealing.as_ref(),
             acquired,
             carry,
-            material_sink,
-            Limits::default(),
+            &mut totals,
         )
-        .map_err(|e| e.to_string())?;
-        let had_material = prepared.material_len();
-        if let Some(bytes) = had_material {
-            totals.materials += 1;
-            totals.material_bytes += bytes;
-        }
-        for batch in prepared.batches().map_err(|e| e.to_string())? {
-            let mut one = [batch];
-            if let Some(s) = &sealing {
-                s.seal(read_conn, &mut one).await?;
-            }
-            let [batch] = one;
-            totals.batches += 1;
-            totals.events_offered += batch.event_count();
-            let t = Instant::now();
-            let out = handle
-                .submit(Priority::Bulk, batch)
-                .await
-                .map_err(|e| e.to_string())?;
-            totals.admit_time += t.elapsed();
-            totals.admitted += out.admitted;
-            totals.repeats += out.repeats;
-            totals.replaced += out.replaced;
-            totals.older += out.older;
-            totals.hidden += out.hidden;
-            totals.superseded += out.superseded;
-            totals.failures += out.failures;
-            totals.dirty_keys += out.dirty_keys;
-        }
-        if had_material.is_none() {
+        .await?;
+        if !had_material {
             break;
         }
     }
@@ -322,11 +281,87 @@ pub(crate) async fn drive(
     Ok(totals)
 }
 
+/// Submit one acquisition through the same drain and writer in every binding reader.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn submit(
+    read_conn: &mut PgConnection,
+    handle: &writer::WriterHandle,
+    run: RunId,
+    source: &dyn Source,
+    binding: &str,
+    material_sink: &dyn drivers::MaterialSink,
+    sealing: Option<&crate::one_shot::SealingSink>,
+    acquired: drivers::Acquired,
+    carry: serde_json::Value,
+    totals: &mut Totals,
+) -> Result<(), String> {
+    totals.polls += 1;
+    // Batches are submitted as they are drained, so memory holds one
+    // batch at a time, never a whole material's events.
+    let prepared = drivers::prepare(
+        source,
+        binding,
+        run,
+        acquired,
+        carry,
+        material_sink,
+        Limits::default(),
+    )
+    .map_err(|e| e.to_string())?;
+    let had_material = prepared.material_len();
+    if let Some(bytes) = had_material {
+        totals.materials += 1;
+        totals.material_bytes += bytes;
+    }
+    for batch in prepared.batches().map_err(|e| e.to_string())? {
+        let mut one = [batch];
+        if let Some(s) = sealing {
+            s.seal(read_conn, &mut one).await?;
+        }
+        let [batch] = one;
+        totals.batches += 1;
+        totals.events_offered += batch.event_count();
+        let t = Instant::now();
+        let out = handle
+            .submit(Priority::Bulk, batch)
+            .await
+            .map_err(|e| e.to_string())?;
+        totals.admit_time += t.elapsed();
+        totals.admitted += out.admitted;
+        totals.repeats += out.repeats;
+        totals.replaced += out.replaced;
+        totals.older += out.older;
+        totals.hidden += out.hidden;
+        totals.superseded += out.superseded;
+        totals.failures += out.failures;
+        totals.dirty_keys += out.dirty_keys;
+    }
+    Ok(())
+}
+
 impl Totals {
-    fn to_json(&self) -> serde_json::Value {
+    pub(crate) fn finish(&mut self, started: Instant) {
+        self.wall = started.elapsed();
+    }
+
+    pub(crate) fn archive_work(
+        &mut self,
+        work: &sinex_sources::drivers::export_archive::group::Work,
+        captured: bool,
+    ) {
+        self.archive_source_opens += u64::from(captured);
+        self.archive_captures += u64::from(captured);
+        self.archive_decoded_bytes += work.decoded_bytes;
+        self.archive_record_bytes += work.record_bytes_stored;
+    }
+    pub(crate) fn to_json(&self) -> serde_json::Value {
         let per_s = |n: usize, d: Duration| n as f64 / d.as_secs_f64().max(1e-9);
         serde_json::json!({
             "polls": self.polls,
+            "archive_source_opens": self.archive_source_opens,
+            "archive_captures": self.archive_captures,
+            "archive_decoded_bytes": self.archive_decoded_bytes,
+            "archive_record_bytes": self.archive_record_bytes,
             "materials": self.materials,
             "material_bytes": self.material_bytes,
             "batches": self.batches,
@@ -347,8 +382,12 @@ impl Totals {
         })
     }
 
-    fn add(&mut self, o: Totals) {
+    pub(crate) fn add(&mut self, o: Totals) {
         self.polls += o.polls;
+        self.archive_source_opens += o.archive_source_opens;
+        self.archive_captures += o.archive_captures;
+        self.archive_decoded_bytes += o.archive_decoded_bytes;
+        self.archive_record_bytes += o.archive_record_bytes;
         self.materials += o.materials;
         self.material_bytes += o.material_bytes;
         self.batches += o.batches;

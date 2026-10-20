@@ -5,6 +5,7 @@ mod admin;
 mod analysis;
 mod api;
 mod backfill;
+mod binding_reader;
 mod catalog;
 mod commit_reader;
 mod crawl;

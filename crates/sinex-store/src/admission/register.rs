@@ -106,6 +106,12 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     )
     .execute(&mut *conn)
     .await?;
+    let role = sinex_model::MaterialRole::of(&m.manifest)
+        .map_err(|e| Error::Invalid(format!("material {}: {e}", m.id)))?;
+    // Decoded record parts retain parser coordinates, not additional input bytes.
+    if role == sinex_model::MaterialRole::Records {
+        return Ok(());
+    }
     sqlx::query!(
         r#"INSERT INTO raw.revision_extents (revision_id, position, blob, blob_offset, length)
            VALUES ($1, (SELECT coalesce(max(position) + 1, 0) FROM raw.revision_extents WHERE revision_id = $1), $2, 0, $3)"#,

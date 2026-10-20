@@ -34,6 +34,8 @@ tokio-stream.workspace = true
 credential-masking.workspace = true
 
 [dev-dependencies]
+tar = "0.4"
+flate2 = "1"
 devkit.workspace = true
 tower = { version = "0.5", features = ["util"] }
 http-body-util.workspace = true

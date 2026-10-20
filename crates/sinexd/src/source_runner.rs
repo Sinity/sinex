@@ -4,14 +4,13 @@
 //! their settings, and read in turn; a binding that fails is reported and
 //! retried on the next round, never stopping the others or the daemon.
 //! Private mode pauses every read until it is off again.
-use crate::backfill::{drive, record};
-use crate::one_shot::{Sink, stored_chain};
+use crate::binding_reader::{self, Bound};
+use crate::one_shot::Sink;
 use crate::writer::WriterHandle;
 use serde::Deserialize;
 use serde_json::Value;
-use sinex_model::RunId;
-use sinex_sources::{Binding, InputKind, Reader, Settings, Source, sources};
-use sinex_store::{Blobs, positions, runs};
+use sinex_sources::{Binding, InputKind, Settings, sources};
+use sinex_store::{Blobs, runs};
 use sqlx::PgConnection;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -86,15 +85,6 @@ pub fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputKind, Bind
     Ok(out)
 }
 
-/// One binding being read: its parser, its driver, and whether its driver's
-/// state has been rebuilt yet.
-struct Bound {
-    binding: Binding,
-    source: Box<dyn Source>,
-    reader: Box<dyn Reader>,
-    remembered: bool,
-}
-
 /// Read `planned` in rounds every `interval` until `stop`.
 pub async fn run(
     mut read_conn: PgConnection,
@@ -107,17 +97,10 @@ pub async fn run(
 ) -> Result<(), String> {
     let mut bound = Vec::new();
     for (kind, binding) in planned {
-        let Some(reader_for) = kind.reader else {
-            continue;
-        };
-        match ((kind.source)(&binding), reader_for(&binding)) {
-            (Ok(source), Ok(reader)) => bound.push(Bound {
-                binding,
-                source,
-                reader,
-                remembered: false,
-            }),
-            (Err(e), _) | (_, Err(e)) => eprintln!("sinexd: binding {}: {e}", binding.name),
+        let name = binding.name.clone();
+        match Bound::new(kind, binding) {
+            Ok(b) => bound.push(b),
+            Err(e) => eprintln!("sinexd: binding {name}: {e}"),
         }
     }
     if bound.is_empty() {
@@ -147,9 +130,19 @@ pub async fn run(
     eprintln!("sinexd: reading {} bindings", bound.len());
     loop {
         if !private.on() {
-            for b in &mut bound {
-                if let Err(e) = round(&mut read_conn, &blobs, &writer, run, &sink, b).await {
-                    eprintln!("sinexd: binding {}: {e}", b.binding.name);
+            for (source, result) in binding_reader::read(
+                &mut read_conn,
+                &blobs,
+                &writer,
+                run,
+                &sink,
+                &mut bound,
+                stop.clone(),
+            )
+            .await
+            {
+                if let Err(e) = result {
+                    eprintln!("sinexd: source {source}: {e}");
                 }
             }
         }
@@ -161,49 +154,6 @@ pub async fn run(
     runs::end(&mut read_conn, run)
         .await
         .map_err(|e| e.to_string())
-}
-
-/// Read one binding until it has nothing new.
-async fn round(
-    read_conn: &mut PgConnection,
-    blobs: &Blobs,
-    writer: &WriterHandle,
-    run: RunId,
-    sink: &Sink,
-    b: &mut Bound,
-) -> Result<(), String> {
-    if !b.remembered {
-        record(read_conn, &b.binding).await?;
-        let cursor = positions::load(read_conn, &b.binding.name)
-            .await
-            .map_err(|e| e.to_string())?
-            .map(|(cursor, _)| cursor)
-            .unwrap_or(Value::Null);
-        b.reader
-            .remember(&stored_chain(read_conn, blobs, &cursor).await?);
-        b.remembered = true;
-    }
-    let reader = &mut b.reader;
-    drive(
-        read_conn,
-        writer,
-        run,
-        b.source.as_ref(),
-        &b.binding.name,
-        sink,
-        |cursor| reader.poll(cursor),
-    )
-    .await?;
-    // Spool readers drop what the committed cursor has passed.
-    if let Some((committed, _)) = positions::load(read_conn, &b.binding.name)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        b.reader
-            .remove_passed(&committed)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

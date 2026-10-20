@@ -475,3 +475,66 @@ async fn a_plan_that_went_stale_is_refused() {
     .unwrap_err();
     assert!(err.to_string().contains("plan the excision again"));
 }
+
+#[tokio::test]
+async fn retained_archive_refuses_record_and_original_excision_without_changes() {
+    let (_db, mut conn) = testdb::fresh().await;
+    let store = Store::new();
+    let original_bytes = b"synthetic captured archive bytes";
+    let records = b"one\ntwo\n";
+    let (original, original_blob) = material(&mut conn, &store, original_bytes).await;
+    let (other_original, _) = material(&mut conn, &store, original_bytes).await;
+    let (part, part_blob) = material(&mut conn, &store, records).await;
+    let (other_part, _) = material(&mut conn, &store, records).await;
+    for id in [original, other_original] {
+        sqlx::query!(
+            "UPDATE raw.materials SET manifest = '{\"role\":\"original-archive\"}' WHERE id = $1",
+            id.0
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    }
+    for (id, previous) in [(part, original), (other_part, other_original)] {
+        sqlx::query!("UPDATE raw.materials SET previous_part_id = $2, manifest = '{\"role\":\"records\",\"records\":[[0,4],[4,8]]}' WHERE id = $1", id.0, previous.0)
+            .execute(&mut conn).await.unwrap();
+    }
+    let event = keyed(part, records, 0, "first", 1);
+    let other = keyed(other_part, records, 4, "second", 2);
+    admit_events(&mut conn, vec![event.clone(), other]).await;
+    let before: Vec<(Uuid, serde_json::Value, String, Option<Uuid>)> = sqlx::query_as(
+        "SELECT id, manifest, blob, previous_part_id FROM raw.materials ORDER BY id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    let events = count(&mut conn, "SELECT count(*) FROM core.events").await;
+    for target in [
+        Target::Event(event.id),
+        Target::Material(part),
+        Target::Material(original),
+    ] {
+        let err = excise(&mut conn, &store, target).await.unwrap_err();
+        assert!(
+            err.to_string().contains("cross-binding archive rewrite"),
+            "{err}"
+        );
+    }
+    let after: Vec<(Uuid, serde_json::Value, String, Option<Uuid>)> = sqlx::query_as(
+        "SELECT id, manifest, blob, previous_part_id FROM raw.materials ORDER BY id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(before, after);
+    assert_eq!(
+        events,
+        count(&mut conn, "SELECT count(*) FROM core.events").await
+    );
+    assert_eq!(store.blobs.read(&original_blob).unwrap(), original_bytes);
+    assert_eq!(store.blobs.read(&part_blob).unwrap(), records);
+    assert_eq!(
+        count(&mut conn, "SELECT count(*) FROM core.operations").await,
+        0
+    );
+}
