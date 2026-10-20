@@ -135,7 +135,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -146,7 +146,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -956,39 +956,15 @@ dependencies = [
 [[package]]
 name = "devkit"
 version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.3#3b4e01f20fe56a72bdc21b8fbc7ea93f950100a3"
-dependencies = [
- "blake3",
- "clap",
- "devkit-macros 0.1.0 (git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.3)",
- "quick-xml",
- "rusqlite",
- "serde_json",
- "zstd",
-]
-
-[[package]]
-name = "devkit"
-version = "0.1.0"
 source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4#b4f47f43728a096c5dcadaf4cfc9b1f2a1c66554"
 dependencies = [
  "blake3",
  "clap",
- "devkit-macros 0.1.0 (git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4)",
+ "devkit-macros",
  "quick-xml",
  "rusqlite",
  "serde_json",
  "zstd",
-]
-
-[[package]]
-name = "devkit-macros"
-version = "0.1.0"
-source = "git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.3#3b4e01f20fe56a72bdc21b8fbc7ea93f950100a3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -4146,7 +4122,7 @@ name = "sinex-library"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "devkit 0.1.0 (git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4)",
+ "devkit",
  "serde",
  "serde_json",
  "sinex-model",
@@ -4227,7 +4203,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "csv",
- "devkit 0.1.0 (git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4)",
+ "devkit",
  "encoding_rs",
  "flate2",
  "futures",
@@ -4264,7 +4240,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "chacha20poly1305",
- "devkit 0.1.0 (git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4)",
+ "devkit",
  "getrandom 0.3.4",
  "hashed-blobs",
  "jiff",
@@ -4309,7 +4285,7 @@ dependencies = [
  "blake3",
  "clap",
  "credential-masking",
- "devkit 0.1.0 (git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.4)",
+ "devkit",
  "futures",
  "http-body-util",
  "jiff",
@@ -4356,7 +4332,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5617,7 +5593,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "clap",
- "devkit 0.1.0 (git+https://github.com/Sinity/polylogue-sinex-common?tag=v0.5.3)",
+ "devkit",
  "serde",
  "serde_json",
 ]
