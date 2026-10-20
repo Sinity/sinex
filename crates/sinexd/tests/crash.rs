@@ -63,16 +63,19 @@ impl Inputs {
             "CREATE TABLE history (id TEXT PRIMARY KEY, timestamp INTEGER, duration INTEGER, exit INTEGER, command TEXT, cwd TEXT, session TEXT, hostname TEXT, deleted_at INTEGER); BEGIN;",
         )
         .unwrap();
-        for i in 0..ATUIN_ROWS {
-            c.execute(
-                "INSERT INTO history VALUES (?1, ?2, 1000, 0, ?3, '/', 's', 'h', NULL)",
-                rusqlite::params![
-                    format!("a{i:06}"),
-                    1_600_000_000_000_000_000i64 + i as i64 * 1_000_000_000,
-                    format!("atuin {i}")
-                ],
-            )
-            .unwrap();
+        {
+            let mut insert = c
+                .prepare("INSERT INTO history VALUES (?1, ?2, 1000, 0, ?3, '/', 's', 'h', NULL)")
+                .unwrap();
+            for i in 0..ATUIN_ROWS {
+                insert
+                    .execute(rusqlite::params![
+                        format!("a{i:06}"),
+                        1_600_000_000_000_000_000i64 + i as i64 * 1_000_000_000,
+                        format!("atuin {i}")
+                    ])
+                    .unwrap();
+            }
         }
         c.execute_batch("COMMIT").unwrap();
         Self { dir, zsh, atuin }
