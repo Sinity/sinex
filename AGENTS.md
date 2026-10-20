@@ -54,8 +54,8 @@ Optimize for fast integration.
 
 - While editing, run focused tests for the change.
 - The pre-push hook (`.githooks/pre-push`) runs `cargo fmt --check` and
-  `xtask boundaries` (seconds). There is no hosted CI and no required check;
-  open a PR and merge it when it is ready.
+  `xtask boundaries` (seconds). Open a PR when ready and follow the forge's
+  current check and review rules.
 - Heavier work runs as AgentCTL operations (`agentctl project operations
   sinex`): `check` (fmt, boundaries, clippy against the schema database),
   `test` (all Rust tests under nextest) and `package` (Nix build). Run
