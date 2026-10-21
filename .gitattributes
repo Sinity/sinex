@@ -5,8 +5,8 @@
 # (kept in sync with the generated/vendored patterns below).
 
 # Lock files
-Cargo.lock linguist-generated -diff
-flake.lock linguist-generated -diff
+Cargo.lock linguist-generated
+flake.lock linguist-generated
 
 # SQLx offline cache (query metadata, not source code)
 .sqlx/** linguist-generated -diff binary
@@ -49,7 +49,4 @@ nixos/monitoring/grafana-dashboards/*.json linguist-vendored
 .claude/ export-ignore
 secret/ export-ignore
 
-# ── Merge strategies ─────────────────────────────────────────────────
-Cargo.lock merge=ours
-flake.lock merge=ours
 tests/sources/** -text
