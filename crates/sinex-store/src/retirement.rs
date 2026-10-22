@@ -146,6 +146,11 @@ pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
             let current: String = row.get(2);
             let length: i64 = row.get(3);
             let revision: Option<Uuid> = row.get(4);
+            // A retry must not recreate filler or overwrite newer backing.
+            // The old hash still participates in the reference checks below.
+            if current != old {
+                continue;
+            }
             let shared:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE revision_id=$1 AND id<>$2) OR EXISTS(SELECT 1 FROM core.events e WHERE material_id=$2 AND NOT EXISTS(SELECT 1 FROM retirement_candidates c WHERE c.event=e.id)) OR EXISTS(SELECT 1 FROM privacy.material_keys WHERE material_id=$2) OR EXISTS(SELECT 1 FROM raw.materials WHERE previous_part_id=$2)").bind(revision).bind(material).fetch_one(&mut *conn).await?;
             if shared {
                 done.retained += 1;
@@ -153,11 +158,6 @@ pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
             }
             let blank =
                 blobs.put_reader(std::io::Read::take(std::io::repeat(b' '), length as u64))?;
-            if current != old && current != blank {
-                return Err(Error::Invalid(
-                    "batch material changed outside retirement".into(),
-                ));
-            }
             sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present') ON CONFLICT(hash) DO UPDATE SET status='present' WHERE core.blobs.status='deleting'").bind(&blank).bind(length).execute(&mut *conn).await?;
             sqlx::query("UPDATE raw.revision_extents SET blob=$2 WHERE revision_id=$1 AND blob=$3")
                 .bind(revision)

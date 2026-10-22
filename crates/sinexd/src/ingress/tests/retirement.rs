@@ -157,6 +157,38 @@ async fn row_retirement_preserves_descriptors_for_stream_reconstruction_and_retr
 }
 
 #[tokio::test]
+async fn row_retirement_retry_preserves_newer_material_backing() {
+    let h = Harness::start().await;
+    let (proof, material, old, _) = h.fixture().await;
+    assert_eq!(h.retire("polylogue", &proof).await.refusal, None);
+    let newer = h.blobs.put(b"newer material backing\n").unwrap();
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present')")
+        .bind(&newer)
+        .bind(23_i64)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE raw.materials SET blob=$2 WHERE id=$1")
+        .bind(material.0)
+        .bind(&newer)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let result = h.retire("polylogue", &proof).await;
+    assert_eq!(result.refusal, None);
+    assert_eq!(result.retired_materials, 0);
+    let current: String = sqlx::query_scalar("SELECT blob FROM raw.materials WHERE id=$1")
+        .bind(material.0)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(current, newer);
+    assert!(h.blobs.contains(&newer).unwrap());
+    assert!(!h.blobs.contains(&old).unwrap());
+}
+
+#[tokio::test]
 async fn row_retirement_refuses_wrong_proofs_and_incomplete_coverage_before_mutation() {
     let h = Harness::start().await;
     let (proof, _, old, _) = h.fixture().await;

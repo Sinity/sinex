@@ -369,9 +369,6 @@ pub struct ArchiveNotice {
     pub operation: Option<sinex_model::OperationId>,
 }
 
-#[cfg(test)]
-mod tests;
-
 /// Immutable confirmed proof; never a caller-supplied deletion hash list.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -388,3 +385,6 @@ pub struct Retirement {
     pub retained_files: u64,
     pub refusal: Option<String>,
 }
+
+#[cfg(test)]
+mod tests;
