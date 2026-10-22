@@ -132,6 +132,21 @@ pub struct Applied {
 /// mutations. Same-revision aliases are retained, before touching any extents.
 pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
     sqlx::query("INSERT INTO retirement_hashes SELECT DISTINCT c.hash FROM retirement_candidates c JOIN retirement_current s ON s.identity=c.identity WHERE c.hash IS DISTINCT FROM s.hash").execute(&mut *conn).await?;
+    // Verify before unlinking unreferenced old bytes, including pending retries.
+    // Completed requests need no repeated scan of the live batch contents.
+    let mut verified: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM retirement_hashes h JOIN core.blobs b ON b.hash=h.hash
+             WHERE NOT EXISTS(SELECT 1 FROM raw.materials m WHERE m.blob=b.hash)
+               AND NOT EXISTS(SELECT 1 FROM raw.revision_extents x WHERE x.blob=b.hash)
+               AND NOT EXISTS(SELECT 1 FROM core.event_blobs e WHERE e.blob=b.hash)
+         )",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if verified {
+        verify_selected(conn, blobs).await?;
+    }
     let mut done = Applied::default();
     let mut after = Uuid::nil();
     loop {
@@ -155,6 +170,10 @@ pub async fn apply(conn: &mut PgConnection, blobs: &Blobs) -> Result<Applied> {
             if shared {
                 done.retained += 1;
                 continue;
+            }
+            if !verified {
+                verify_selected(conn, blobs).await?;
+                verified = true;
             }
             let blank =
                 blobs.put_reader(std::io::Read::take(std::io::repeat(b' '), length as u64))?;
@@ -194,17 +213,36 @@ pub async fn record(
     sqlx::query("INSERT INTO core.operations(id,kind,actor,scope) VALUES($1,'retire_materials',$2,$3) ON CONFLICT(id) DO NOTHING").bind(operation).bind(actor).bind(scope).execute(conn).await?;
     Ok(())
 }
-pub async fn verify_selected(conn: &mut PgConnection, blobs: &Blobs) -> Result<()> {
+async fn verify_selected(conn: &mut PgConnection, blobs: &Blobs) -> Result<()> {
     let mut after = String::new();
     loop {
-        let names:Vec<String>=sqlx::query_scalar("SELECT DISTINCT hash FROM (SELECT hash FROM retirement_current WHERE hash IS NOT NULL UNION SELECT jsonb_array_elements_text(refs) FROM retirement_current) r WHERE hash>$1 ORDER BY hash LIMIT 500").bind(&after).fetch_all(&mut *conn).await?;
+        let names: Vec<(String, bool)> = sqlx::query_as(
+            "SELECT hash, bool_or(batch)
+             FROM (
+                 SELECT hash, true AS batch FROM retirement_current WHERE hash IS NOT NULL
+                 UNION ALL
+                 SELECT jsonb_array_elements_text(refs), false FROM retirement_current
+             ) r
+             WHERE hash > $1 GROUP BY hash ORDER BY hash LIMIT 500",
+        )
+        .bind(&after)
+        .fetch_all(&mut *conn)
+        .await?;
         if names.is_empty() {
             break;
         }
-        for name in names {
-            if !blobs.contains(&name)? {
+        for (name, batch) in names {
+            if batch {
+                // These bytes replace backing we are about to remove. A
+                // registered pathname alone does not prove they survived.
+                if blobs.verify(&name)? != hashed_blobs::Verified::Intact {
+                    return Err(Error::Invalid(format!(
+                        "selected row batch {name} failed content verification"
+                    )));
+                }
+            } else if !blobs.contains(&name)? {
                 return Err(Error::Invalid(
-                    "selected replacement/source bytes are unavailable".into(),
+                    "selected source bytes are unavailable".into(),
                 ));
             }
             after = name;

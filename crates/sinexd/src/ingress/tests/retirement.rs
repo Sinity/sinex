@@ -189,6 +189,68 @@ async fn row_retirement_retry_preserves_newer_material_backing() {
 }
 
 #[tokio::test]
+async fn row_retirement_refuses_corrupt_replacement_bytes_before_mutation() {
+    for valid_blob in [false, true] {
+        let h = Harness::start().await;
+        let (proof, material, old, replacement) = h.fixture().await;
+        let hex = replacement.strip_prefix("blake3:").unwrap();
+        let path = h
+            .store_dir
+            .join("blobs")
+            .join(&hex[..2])
+            .join(format!("{hex}.zst"));
+        if valid_blob {
+            let other = h.blobs.put(b"bad rows\n").unwrap();
+            let other_hex = other.strip_prefix("blake3:").unwrap();
+            let other_path = h
+                .store_dir
+                .join("blobs")
+                .join(&other_hex[..2])
+                .join(format!("{other_hex}.zst"));
+            std::fs::copy(other_path, &path).unwrap();
+        } else {
+            std::fs::write(&path, b"corrupt replacement bytes").unwrap();
+        }
+        assert!(h.blobs.contains(&replacement).unwrap());
+        let result = h.retire("polylogue", &proof).await;
+        assert!(result.refusal.is_some(), "corrupt replacement was accepted");
+        assert!(h.blobs.contains(&old).unwrap());
+        let mut conn = PgConnection::connect(&h.url).await.unwrap();
+        let current: String = sqlx::query_scalar("SELECT blob FROM raw.materials WHERE id=$1")
+            .bind(material.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(current, old);
+        assert_eq!(h.count("SELECT count(*) FROM core.commit_log").await, 2);
+        assert_eq!(h.count("SELECT count(*) FROM core.operations").await, 0);
+    }
+}
+
+#[tokio::test]
+async fn completed_row_retirement_does_not_reread_live_replacements() {
+    let h = Harness::start().await;
+    let (proof, _, old, replacement) = h.fixture().await;
+    assert_eq!(h.retire("polylogue", &proof).await.refusal, None);
+    assert!(!h.blobs.contains(&old).unwrap());
+    let hex = replacement.strip_prefix("blake3:").unwrap();
+    let path = h
+        .store_dir
+        .join("blobs")
+        .join(&hex[..2])
+        .join(format!("{hex}.zst"));
+    let held = h.store_dir.join("held-replacement");
+    std::fs::rename(&path, &held).unwrap();
+    // Physical cleanup is already complete. A repeat request has no backing
+    // change to authorize and must not scan the live batch contents again.
+    let retry = h.retire("polylogue", &proof).await;
+    std::fs::rename(&held, &path).unwrap();
+    assert_eq!(retry.refusal, None);
+    assert_eq!(retry.retired_materials, 0);
+    assert_eq!(retry.pending_files, 0);
+}
+
+#[tokio::test]
 async fn row_retirement_refuses_wrong_proofs_and_incomplete_coverage_before_mutation() {
     let h = Harness::start().await;
     let (proof, _, old, _) = h.fixture().await;
@@ -284,7 +346,7 @@ async fn row_retirement_reclaims_successive_replacements_but_keeps_selected_alia
 async fn row_retirement_pending_unlinks_recover_and_reregistration_cancels_stale_cleanup() {
     for reregister in [false, true] {
         let h = Harness::start().await;
-        let (proof, _, old, _) = h.fixture().await;
+        let (proof, _, old, replacement) = h.fixture().await;
         let hex = old.strip_prefix("blake3:").unwrap();
         let path = h
             .store_dir
@@ -299,6 +361,21 @@ async fn row_retirement_pending_unlinks_recover_and_reregistration_cancels_stale
         assert_eq!(result.pending_files, 1);
         std::fs::remove_dir(&path).unwrap();
         std::fs::rename(&saved, &path).unwrap();
+        let replacement_hex = replacement.strip_prefix("blake3:").unwrap();
+        let replacement_path = h
+            .store_dir
+            .join("blobs")
+            .join(&replacement_hex[..2])
+            .join(format!("{replacement_hex}.zst"));
+        let held = h.store_dir.join("held-live-replacement");
+        std::fs::rename(&replacement_path, &held).unwrap();
+        let retry = h.retire("polylogue", &proof).await;
+        std::fs::rename(&held, &replacement_path).unwrap();
+        assert!(
+            retry.refusal.is_some(),
+            "pending unlink skipped replacement verification"
+        );
+        assert!(h.blobs.contains(&old).unwrap());
         if reregister {
             h.batch("unrelated-archive", b"old private rows\n").await;
         }
