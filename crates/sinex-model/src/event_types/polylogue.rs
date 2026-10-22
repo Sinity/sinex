@@ -26,10 +26,11 @@ pub struct PolylogueRows {
     pub position: u64,
     /// The archive's write counter at the unit.
     pub local_seq: i64,
-    /// `revision`, `note`, `excision`, `setting` or `delivery`.
+    /// `revision`, `note`, `excision`, `setting`, `delivery`,
+    /// `observation` or `delivery_event`.
     pub unit: String,
     /// The unit's own key: `<input>/<number>` for a revision, the row ID
-    /// otherwise.
+    /// otherwise; delivery events use their encoded compound key.
     pub key: String,
     /// `blake3:<hex>` of the record-batch material: the unit's rows as JSON
     /// lines, one `{"table": …, "row": {…}}` per line.
