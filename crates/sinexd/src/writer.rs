@@ -72,12 +72,14 @@ enum Work {
     Admit(Batch),
     Replay(ReplayChain),
     Excise(Box<Excision>),
+    Retire(String, sinex_protocol::RetireBatches, Blobs),
 }
 
 enum Done {
     Admitted(Outcome),
     Replayed(Vec<Outcome>, Diff),
     Excised(Excised),
+    Retired(sinex_protocol::Retirement),
 }
 
 struct Job {
@@ -117,6 +119,21 @@ impl WriterHandle {
         {
             Done::Excised(done) => Ok(done),
             _ => unreachable!("an excision answers with what it removed"),
+        }
+    }
+
+    pub async fn retire(
+        &self,
+        producer: String,
+        request: sinex_protocol::RetireBatches,
+        blobs: Blobs,
+    ) -> Result<sinex_protocol::Retirement, WriteError> {
+        match self
+            .send(Priority::Live, Work::Retire(producer, request, blobs))
+            .await?
+        {
+            Done::Retired(done) => Ok(done),
+            _ => unreachable!("retirement returns its outcome"),
         }
     }
 
@@ -226,6 +243,12 @@ pub async fn run_notifying(
             Work::Replay(mut chain) => replay_chain(&mut connection, &mut chain, keys.as_ref())
                 .await
                 .map(|(o, d)| Done::Replayed(o, d)),
+            Work::Retire(producer, request, blobs) => {
+                crate::row_retirement::retire(&mut connection, &blobs, &producer, &request)
+                    .await
+                    .map(Done::Retired)
+                    .map_err(WriteError::Refused)
+            }
             Work::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
                 .await
                 .map(Done::Excised),

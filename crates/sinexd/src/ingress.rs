@@ -478,6 +478,11 @@ pub async fn run(
         .subscribe(ingest.subjects.have_all())
         .await
         .map_err(|e| format!("have subscription: {e}"))?;
+    let mut retire = client
+        .subscribe(ingest.subjects.retire_all())
+        .await
+        .map_err(|e| format!("retirement subscription: {e}"))?;
+    client.flush().await.map_err(|e| e.to_string())?;
     loop {
         tokio::select! {
             _ = stop.changed() => {
@@ -506,6 +511,16 @@ pub async fn run(
                         let _ = message.ack_with(AckKind::Nak(Some(Duration::from_secs(5)))).await;
                     }
                 }
+            }
+            request = retire.next() => {
+                let Some(request)=request else {return Err("retirement subscription ended".into())};
+                let (Some(reply),Some(producer))=(request.reply.clone(),ingest.subjects.producer_of(&request.subject)) else {continue};
+                let result=match serde_json::from_slice::<sinex_protocol::RetireBatches>(&request.payload) {
+                    Ok(proof)=>ingest.writer.retire(producer.to_owned(),proof,ingest.blobs.clone()).await.map_err(|e|e.to_string()),
+                    Err(e)=>Err(format!("not a retirement proof: {e}")),
+                };
+                let answer=result.unwrap_or_else(|e|sinex_protocol::Retirement{refusal:Some(e),..Default::default()});
+                let _=client.publish(reply,serde_json::to_vec(&answer).map_err(|e|e.to_string())?.into()).await;
             }
             request = have.next() => {
                 let Some(request) = request else {
