@@ -529,3 +529,5 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
         .await;
     assert!(ack.refusal.unwrap().contains("only material and events"));
 }
+
+mod retirement;

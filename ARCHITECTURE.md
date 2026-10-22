@@ -42,3 +42,27 @@ immutable `polylogue-sinex-common` releases. Prefer these existing owners to
 another local implementation. Change an interface with its callers and remove
 the replaced path. Read [AGENTS.md](AGENTS.md) for test placement and focused
 development commands; passing a component test does not qualify a deployment.
+
+## Superseded producer row batches
+
+Polylogue requests physical row-batch retirement on its own NATS retirement
+subject, naming a confirmed archive, excision owner and immutable manifest
+digest. `sinexd/row_retirement.rs` interprets that producer's descriptor history;
+`sinex-store/retirement.rs` stages selection in temporary PostgreSQL tables and
+changes material references under the existing writer. The complete unit prefix
+and replacement coverage are checked before mutation. Original batches and older
+replacement batches are candidates; selected batches and source references stay.
+
+Retirement repoints eligible material/extent references to same-length blank
+bytes and preserves descriptor events and commit-log rows. Same-revision aliases,
+other event readings, sealed materials and descendant parts retain their backing.
+Other material, extent or event-blob aliases retain shared physical bytes. No
+source blob or original provider file is selected for removal. Existing durable
+`core.blobs` deletion recovery owns unlink retries; every request retries it and
+reports remaining owned files separately from retained shared files. The request
+proof also names an idempotent entry in the existing operations journal.
+
+This producer grant performs cleanup of already confirmed excision metadata; it
+does not grant general material excision. Operator excision retains its existing
+access gate. Older servers have no retirement responder, allowing callers to
+report unsupported physical retirement immediately.
