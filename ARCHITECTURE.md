@@ -52,6 +52,12 @@ digest. `sinexd/row_retirement.rs` interprets that producer's descriptor history
 changes material references under the existing writer. The complete unit prefix
 and replacement coverage are checked before mutation. Original batches and older
 replacement batches are candidates; selected batches and source references stay.
+Selected batch bytes are read back and checked against their hashes before
+retirement changes backing references. Raw source references receive a presence
+check; this operation does not rehash the source corpus.
+Already completed requests resolve their descriptors and report cleanup without
+rereading live batch contents. A request that retries an owned deletion verifies
+again before cleanup.
 
 Retirement repoints eligible material/extent references to same-length blank
 bytes and preserves descriptor events and commit-log rows. Same-revision aliases,

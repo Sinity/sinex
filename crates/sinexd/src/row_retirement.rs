@@ -145,9 +145,6 @@ pub async fn retire(
             return Err("no confirmed producer-owned archive/excision/digest proof".into());
         }
         store::validate(&mut tx).await.map_err(|e| e.to_string())?;
-        store::verify_selected(&mut tx, blobs)
-            .await
-            .map_err(|e| e.to_string())?;
         let applied = store::apply(&mut tx, blobs)
             .await
             .map_err(|e| e.to_string())?;
