@@ -48,8 +48,16 @@ impl ExcisionPublication {
             let unit = &replacement.unit;
             if unit.commit_seq < 1
                 || unit.key.is_empty()
-                || !["revision", "note", "excision", "setting", "delivery"]
-                    .contains(&unit.kind.as_str())
+                || ![
+                    "revision",
+                    "note",
+                    "excision",
+                    "setting",
+                    "delivery",
+                    "observation",
+                    "delivery_event",
+                ]
+                .contains(&unit.kind.as_str())
                 || previous.is_some_and(|previous: &ArchiveUnit| previous >= unit)
             {
                 return Err(

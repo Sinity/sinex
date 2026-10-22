@@ -13,9 +13,9 @@ fn a_unit_is_keyed_by_archive_and_position_and_never_replaced() {
     assert!(schema.to_string().contains("position"));
 }
 
-fn manifest() -> serde_json::Value {
+fn manifest_for(kind: &str) -> serde_json::Value {
     let mut value = serde_json::json!({"version":1,"replacements":[{
-        "unit":{"commit_seq":1,"kind":"note","key":"note1"},
+        "unit":{"commit_seq":1,"kind":kind,"key":"note1"},
         "batch":null,"bytes":0,"rows":0,"blobs":[]
     }],"retired_batches":[]});
     value.sort_all_objects();
@@ -26,7 +26,7 @@ fn manifest() -> serde_json::Value {
 
 #[test]
 fn excision_metadata_checks_the_exact_mapping_before_admission() {
-    let value = manifest();
+    let value = manifest_for("note");
     let decoded: ExcisionPublication = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(decoded.replacements[0].unit.key, "note1");
     for field in ["key", "kind", "commit_seq"] {
@@ -46,4 +46,14 @@ fn original_rows_without_excision_metadata_remain_readable() {
         "rows":1,"blobs":[]});
     let decoded: PolylogueRows = serde_json::from_value(value).unwrap();
     assert!(decoded.excision.is_none());
+}
+
+#[test]
+fn independently_appended_facts_can_be_replaced_or_excised() {
+    for kind in ["observation", "delivery_event"] {
+        let value = manifest_for(kind);
+        let decoded: ExcisionPublication = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.replacements[0].unit.kind, kind);
+    }
+    assert!(serde_json::from_value::<ExcisionPublication>(manifest_for("unknown")).is_err());
 }
