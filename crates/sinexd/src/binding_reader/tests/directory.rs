@@ -1,10 +1,10 @@
 //! Directory capture, retained replay and byte checkpoints through the real writer.
 use super::*;
 
-type NoteReadings = Vec<(String, Value, i64, Vec<u8>)>;
+type NoteReadings = Vec<(String, Value, i64, Vec<u8>, i64)>;
 
 async fn current_notes(conn: &mut PgConnection) -> NoteReadings {
-    sqlx::query_as("SELECT e.payload->>'path', e.payload->'text', e.anchor, e.record_hash FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='note.document' ORDER BY e.payload->>'path'")
+    sqlx::query_as("SELECT e.payload->>'path', e.payload->'text', e.anchor, e.record_hash, e.reading_order FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='note.document' ORDER BY e.payload->>'path'")
         .fetch_all(conn).await.unwrap()
 }
 
@@ -182,7 +182,7 @@ async fn legacy_empty_tail_commits_with_its_shared_checkpoint_and_retries_exactl
     let sink = Sink(ctx.blobs.clone());
     let source = notes::source();
     let id = MaterialId::new();
-    let manifest = json!({"path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle",
+    let manifest = json!({"path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle", "read_at_ns":1, "scan_complete":true,
     "records":[[0,5],[5,5]], "members":[
         {"path":"a.md","stream_offset":0,"length":5}, {"path":"b.md","stream_offset":5,"length":0}
     ]});
@@ -203,7 +203,9 @@ async fn legacy_empty_tail_commits_with_its_shared_checkpoint_and_retries_exactl
             previous_part: None,
             manifest,
             reading_order: Box::new(|_| ReadingOrder(1)),
-            cursor_at: Box::new(move |end| json!({"material":id,"through":end})),
+            cursor_at: Box::new(
+                move |end| json!({"material":id,"part_index":0,"last_complete_scan_ns":1,"through":end}),
+            ),
             aligned: false,
             vanished: vec![],
         }),
