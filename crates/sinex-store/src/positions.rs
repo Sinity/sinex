@@ -40,3 +40,19 @@ pub async fn last_material(
         )
     }))
 }
+
+/// Exact record locations with a retained outcome. This does not establish
+/// that any earlier or later record in that material was processed.
+pub async fn accounted_anchors(
+    conn: &mut PgConnection,
+    material: sinex_model::MaterialId,
+) -> Result<Vec<i64>> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT anchor AS "anchor!" FROM core.events WHERE material_id = $1
+           UNION SELECT anchor FROM raw.failures WHERE material_id = $1
+           ORDER BY 1"#,
+        material.0,
+    )
+    .fetch_all(conn)
+    .await?)
+}

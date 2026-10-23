@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod format;
+mod restore;
 pub(crate) use format::validate as validate_records;
 
 pub struct DirSnapshot {
@@ -54,12 +55,12 @@ pub struct Cursor {
 /// What was already read, by relative path: size, modification time, hash.
 #[derive(Default)]
 pub struct DirState {
-    files: HashMap<String, (u64, i128, [u8; 32])>,
+    files: HashMap<String, Option<(u64, i128, [u8; 32])>>,
     pending: Option<Pending>,
 }
 
 struct Pending {
-    file: Arc<File>,
+    stored: StoredBytes,
     length: usize,
     records: Vec<(usize, usize)>,
     manifest: Value,
@@ -67,7 +68,7 @@ struct Pending {
     part_index: u32,
     previous: Cursor,
     scanned: Cursor,
-    files: HashMap<String, (u64, i128, [u8; 32])>,
+    files: HashMap<String, Option<(u64, i128, [u8; 32])>>,
     observation: ObservationFacts,
 }
 
@@ -93,11 +94,15 @@ impl Pending {
             image: None,
             input,
             observation: self.observation.clone(),
-            revision: RevisionChange::Snapshot,
+            revision: if matches!(&self.stored, StoredBytes::FramedReader(_)) {
+                RevisionChange::Same
+            } else {
+                RevisionChange::Snapshot
+            },
             material: Some(NewMaterial {
                 id,
                 bytes: Vec::new(),
-                stored: Some(StoredBytes::FramedFile(self.file.clone())),
+                stored: Some(self.stored.clone()),
                 records,
                 part_index,
                 previous_part: self.previous.material,
@@ -188,7 +193,7 @@ impl DirSnapshot {
         let mut seen = HashSet::new();
         for (relative, (size, mtime)) in &found {
             seen.insert(relative.clone());
-            if let Some((s, m, _)) = state.files.get(relative)
+            if let Some(Some((s, m, _))) = state.files.get(relative)
                 && *s == *size
                 && *m == *mtime
             {
@@ -217,8 +222,8 @@ impl DirSnapshot {
             let same = state
                 .files
                 .get(relative)
-                .is_some_and(|(_, _, h)| *h == hash);
-            next_files.insert(relative.clone(), (*size, *mtime, hash));
+                .is_some_and(|facts| facts.as_ref().is_some_and(|(_, _, h)| *h == hash));
+            next_files.insert(relative.clone(), Some((*size, *mtime, hash)));
             if same {
                 staged.set_len(length as u64).map_err(io)?;
                 staged
@@ -300,6 +305,7 @@ impl DirSnapshot {
             "members": members,
             "records": records,
             "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
+            "directory_resume": { "previous": previous, "scanned": scanned, "observation": facts },
         });
         let id = MaterialId::new();
         let part_index = if previous.material.is_some() {
@@ -308,7 +314,7 @@ impl DirSnapshot {
             0
         };
         let pending = Pending {
-            file: Arc::new(staged),
+            stored: StoredBytes::FramedFile(Arc::new(staged)),
             length,
             records,
             manifest,

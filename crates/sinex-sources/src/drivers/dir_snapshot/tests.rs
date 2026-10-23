@@ -365,3 +365,86 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
         }
     }
 }
+
+#[test]
+fn an_isolated_accounted_member_does_not_confirm_the_preceding_empty_member() {
+    let root = vault();
+    std::fs::write(root.join("a.md"), b"").unwrap();
+    let d = driver(root.clone(), 1 << 20);
+    let mut fresh = DirState::default();
+    let acquired = d.poll(&Value::Null, &mut fresh).unwrap();
+    let material = acquired.material.as_ref().unwrap();
+    let mut restored = DirState::default();
+    restored
+        .remember_members(&material.manifest, &[material.records[1].0])
+        .unwrap();
+    assert!(!restored.files.contains_key("a.md"));
+    assert_eq!(restored.files.get("sub/b.md"), Some(&None));
+    // An explicit consumed prefix, unlike one later outcome, includes even a
+    // record whose parser produced nothing.
+    let all: Vec<_> = material.records.iter().map(|r| r.0).collect();
+    restored.remember_members(&material.manifest, &all).unwrap();
+    assert_eq!(restored.files.get("a.md"), Some(&None));
+    assert_eq!(
+        paths(&d.poll(&Value::Null, &mut restored).unwrap()),
+        vec!["a.md", "sub/b.md"],
+        "known membership must not suppress unverified current bytes"
+    );
+}
+
+#[test]
+fn failed_disappearance_is_retried_before_a_reappeared_file() {
+    use super::super::prepare;
+    use crate::{Limits, sources::notes};
+    use sinex_model::{BatchKind, RunId};
+    let root = vault();
+    let d = driver(root.clone(), 1 << 20);
+    let mut state = DirState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
+    let m = first.material.as_ref().unwrap();
+    let cursor = (m.cursor_at)(m.records.last().unwrap().1);
+    assert!(d.poll(&cursor, &mut state).unwrap().material.is_none());
+    std::fs::remove_file(root.join("a.md")).unwrap();
+    let gone = d.poll(&cursor, &mut state).unwrap();
+    let id = gone.material.as_ref().unwrap().id;
+    let source = notes::source();
+    assert!(
+        prepare(
+            &source,
+            "b",
+            RunId::new(),
+            gone,
+            Value::Null,
+            &Refuse,
+            Limits::default()
+        )
+        .is_err()
+    );
+    assert!(state.files.contains_key("a.md"));
+    std::fs::write(root.join("a.md"), "reappeared").unwrap();
+    let retry = d.poll(&cursor, &mut state).unwrap();
+    assert_eq!(retry.material.as_ref().unwrap().id, id);
+    assert_eq!(
+        record(retry.material.as_ref().unwrap(), 0),
+        vanished_marker("a.md")
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let sink = super::super::producer::Store::open(dir.path()).unwrap();
+    let prepared = prepare(
+        &source,
+        "b",
+        RunId::new(),
+        retry,
+        Value::Null,
+        &sink,
+        Limits::default(),
+    )
+    .unwrap();
+    let batch = prepared.batches().unwrap().next().unwrap().unwrap();
+    let BatchKind::Source(progress) = batch.kind else {
+        panic!()
+    };
+    let newer = d.poll(&progress.cursor, &mut state).unwrap();
+    assert_ne!(newer.material.as_ref().unwrap().id, id);
+    assert_eq!(record(newer.material.as_ref().unwrap(), 0), b"reappeared");
+}
