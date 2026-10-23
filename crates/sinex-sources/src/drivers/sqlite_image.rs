@@ -319,46 +319,6 @@ impl Image {
                 .clone(),
         })
     }
-    pub fn stored(&self) -> Result<Option<SqliteImagePublication>, String> {
-        Ok(self
-            .stored
-            .lock()
-            .map_err(|_| "SQLite image poisoned")?
-            .clone())
-    }
-    pub fn retain(&self, publication: SqliteImagePublication) -> Result<(), String> {
-        *self.stored.lock().map_err(|_| "SQLite image poisoned")? = Some(publication);
-        self.view
-            .lock()
-            .map_err(|_| "SQLite image poisoned")?
-            .take();
-        Ok(())
-    }
-    pub fn reader(
-        &self,
-        map_hash: Arc<dyn Fn(&[u8; 32]) -> [u8; 32] + Send + Sync>,
-        full_data_only: bool,
-    ) -> Result<ImageReader, DriverError> {
-        Ok(ImageReader {
-            view: self.view()?,
-            map: self.map.clone(),
-            map_hash,
-            size: self.metadata.page_size,
-            count: self.metadata.page_count,
-            changed: if self.metadata.full || full_data_only {
-                None
-            } else {
-                Some(self.changed.clone())
-            },
-            position: 0,
-            include_map: !full_data_only,
-            check: self
-                .check
-                .lock()
-                .map_err(|_| io("SQLite image check poisoned"))?
-                .clone(),
-        })
-    }
     pub fn extents(&self, blob: &str) -> Result<Vec<ImageExtent>, String> {
         if self.metadata.full {
             return Ok(vec![ImageExtent {
