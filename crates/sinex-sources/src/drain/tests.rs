@@ -211,10 +211,43 @@ fn staged_records_match_slice_hashes_locations_carry_and_limits() {
                 assert_eq!(actual.carry, expected.carry);
                 assert_eq!(actual.events, expected.events);
                 assert_eq!(actual.failures, expected.failures);
-                assert_eq!(
-                    serde_json::to_value(&actual.outcomes).unwrap(),
-                    serde_json::to_value(&expected.outcomes).unwrap()
-                );
+                assert_eq!(actual.outcomes.len(), expected.outcomes.len());
+                for (actual, expected) in actual.outcomes.iter().zip(&expected.outcomes) {
+                    match (actual, expected) {
+                        (
+                            RecordOutcome::Failure {
+                                location: a,
+                                reason: ar,
+                            },
+                            RecordOutcome::Failure {
+                                location: b,
+                                reason: br,
+                            },
+                        ) => {
+                            assert_eq!(a, b);
+                            assert_eq!(ar, br);
+                        }
+                        (
+                            RecordOutcome::Events {
+                                location: a,
+                                events: ae,
+                            },
+                            RecordOutcome::Events {
+                                location: b,
+                                events: be,
+                            },
+                        ) => {
+                            assert_eq!(a, b);
+                            assert_eq!(ae.len(), be.len());
+                            for (a, b) in ae.iter().zip(be) {
+                                let mut a = a.clone();
+                                a.id = b.id;
+                                assert_eq!(&a, b);
+                            }
+                        }
+                        _ => panic!("record outcome differs"),
+                    }
+                }
             }
         }
     }

@@ -117,7 +117,7 @@ fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
             source: "operator.steering",
             class: Class::Open,
             material,
-            bytes: bytes.into(),
+            bytes: bytes.as_slice().into(),
             records: &records,
             carry: Value::Null,
             reading_order: &|at| ReadingOrder(at as i64),
