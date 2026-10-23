@@ -68,7 +68,7 @@ fn batches_are_drained_lazily() {
             parser: "counting",
             parser_version: 1,
             event_types: &["command.imported"],
-            framer: lines,
+            framer: crate::Framer::incremental(lines),
         },
         parser: Counting,
     };
@@ -174,14 +174,14 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
             parser: "counting",
             parser_version: 1,
             event_types: &["command.imported"],
-            framer: lines,
+            framer: crate::Framer::incremental(lines),
         },
         parser: Counting,
     };
     let driver = AppendFile {
         path: path.clone(),
         host: "h".into(),
-        framer: lines,
+        framer: crate::Framer::incremental(lines),
     };
     let before = peak_rss();
     let mut state = AppendState::default();
@@ -244,7 +244,7 @@ fn retained_original_length_does_not_replace_decoded_record_coordinates() {
             parser: "counting",
             parser_version: 1,
             event_types: &["command.imported"],
-            framer: lines,
+            framer: crate::Framer::incremental(lines),
         },
         parser: Counting,
     };

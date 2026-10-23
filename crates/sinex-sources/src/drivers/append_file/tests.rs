@@ -22,7 +22,7 @@ fn a_cursor_between_two_batches_reads_on_though_the_file_is_unchanged() {
     let d = AppendFile {
         path: path.clone(),
         host: "h".into(),
-        framer: lines,
+        framer: crate::Framer::incremental(lines),
     };
     let first = d.poll(&Value::Null, &mut AppendState::default()).unwrap();
     let m = first.material.unwrap();
@@ -47,7 +47,7 @@ fn appends_read_only_new_complete_records() {
     let d = AppendFile {
         path: path.clone(),
         host: "h".into(),
-        framer: lines,
+        framer: crate::Framer::incremental(lines),
     };
     let mut state = AppendState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
@@ -83,7 +83,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     let d = AppendFile {
         path: path.clone(),
         host: "h".into(),
-        framer: lines,
+        framer: crate::Framer::incremental(lines),
     };
     let mut state = AppendState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
@@ -93,7 +93,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     // zsh expired the duplicate "b" and appended "dd": a rewrite.
     std::fs::write(&path, b"a\nc\ndd\n").unwrap();
     // A restart in between: the state is rebuilt from the stored bytes.
-    let mut rebuilt = AppendState::rebuild([(m.id, m.bytes.as_slice())], lines);
+    let mut rebuilt = AppendState::rebuild([(m.id, m.bytes.as_slice())], crate::Framer::incremental(lines));
     assert_eq!(rebuilt, state);
     let again = d.poll(&cursor, &mut rebuilt).unwrap();
     assert_eq!(again.revision, RevisionChange::Rewritten);
@@ -127,7 +127,7 @@ fn rewritten_prefix_is_read_again_as_a_new_revision() {
     let d = AppendFile {
         path: path.clone(),
         host: "h".into(),
-        framer: lines,
+        framer: crate::Framer::incremental(lines),
     };
     let mut state = AppendState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
@@ -145,7 +145,7 @@ fn missing_file_is_unavailable_not_empty() {
     let d = AppendFile {
         path: temp("absent"),
         host: "h".into(),
-        framer: lines,
+        framer: crate::Framer::incremental(lines),
     };
     let a = d.poll(&Value::Null, &mut AppendState::default()).unwrap();
     assert!(a.observation.unavailable.is_some());
@@ -168,7 +168,7 @@ fn a_file_larger_than_a_part_is_read_in_bounded_parts_covering_every_record() {
     let d = AppendFile {
         path: path.clone(),
         host: "h".into(),
-        framer: lines,
+        framer: crate::Framer::incremental(lines),
     };
     let mut state = AppendState::default();
     let mut cursor = Value::Null;

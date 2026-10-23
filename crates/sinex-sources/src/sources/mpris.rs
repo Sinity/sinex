@@ -25,7 +25,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "dbus-mpris",
     parser_version: 1,
     event_types: &["player.changed"],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 pub const MATCHES: &[&str] = &[

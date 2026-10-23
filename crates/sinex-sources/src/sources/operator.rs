@@ -25,7 +25,7 @@ pub const RAW_LOG: SourceSpec = SourceSpec {
     parser: "operator-raw-log",
     parser_version: 2,
     event_types: &["operator.log.entry"],
-    framer: frame_log,
+    framer: crate::Framer::incremental(frame_log),
 };
 
 const ENTRY: &[u8] = b"\n- **";
@@ -130,7 +130,7 @@ pub fn raw_log_driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: frame_log,
+        framer: crate::Framer::incremental(frame_log),
     }
 }
 
@@ -151,7 +151,7 @@ const fn steering_spec(parser: &'static str) -> SourceSpec {
         parser,
         parser_version: 2,
         event_types: &["steering.record"],
-        framer: crate::drivers::append_file::lines,
+        framer: crate::Framer::incremental(crate::drivers::append_file::lines),
     }
 }
 

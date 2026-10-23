@@ -36,7 +36,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "file-watch",
     parser_version: 1,
     event_types: &["file.changed"],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 /// Directory names skipped by default.

@@ -20,9 +20,8 @@ pub enum Driver {
     ApiRequest,
 }
 
-/// Frames complete records in `bytes`: their ranges, and how many bytes they
-/// cover. A trailing partial record is left for the next read.
-pub type Framer = fn(&[u8]) -> (Vec<(usize, usize)>, usize);
+mod framing;
+pub use framing::Framer;
 
 #[derive(Clone, Debug)]
 pub struct SourceSpec {

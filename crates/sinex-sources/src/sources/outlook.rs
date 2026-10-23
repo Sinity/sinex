@@ -28,7 +28,7 @@ pub const PST: SourceSpec = SourceSpec {
     parser: "rfc5322-mail",
     parser_version: 1,
     event_types: &["mail.message"],
-    framer: crate::drivers::export_archive::frame_mbox,
+    framer: crate::Framer::export(crate::drivers::export_archive::frame_mbox, crate::drivers::export_archive::Framing::Mbox),
 };
 
 pub const CSV: SourceSpec = SourceSpec {
@@ -39,7 +39,7 @@ pub const CSV: SourceSpec = SourceSpec {
     parser: "outlook-csv",
     parser_version: 1,
     event_types: &["mail.message"],
-    framer: frame_csv,
+    framer: crate::Framer::export(frame_csv, crate::drivers::export_archive::Framing::Csv),
 };
 
 pub fn pst_source() -> DeclaredSource<mail::MailParser> {

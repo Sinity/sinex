@@ -39,7 +39,7 @@ pub const CAST: SourceSpec = SourceSpec {
     parser: "asciinema-cast",
     parser_version: 2,
     event_types: &["terminal.session", "terminal.output"],
-    framer: cast_spans,
+    framer: crate::Framer::incremental(cast_spans),
 };
 
 pub const EVENTS: SourceSpec = SourceSpec {
@@ -50,7 +50,7 @@ pub const EVENTS: SourceSpec = SourceSpec {
     parser: "terminal-capture-events",
     parser_version: 1,
     event_types: &["terminal.event"],
-    framer: complete_lines,
+    framer: crate::Framer::incremental(complete_lines),
 };
 
 sinex_model::payload_enum! {

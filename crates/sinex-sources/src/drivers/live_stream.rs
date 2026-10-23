@@ -279,7 +279,7 @@ impl LiveStream {
             let file = AppendFile {
                 path: segment_path(&self.spool, state.segment),
                 host: self.input.host.clone(),
-                framer: lines,
+                framer: crate::Framer::incremental(lines),
             };
             // A spool only grows, so there is no rewrite to align against.
             let mut acquired = file.poll(&state.inner, &mut AppendState::default())?;

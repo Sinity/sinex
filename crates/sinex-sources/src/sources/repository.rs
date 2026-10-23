@@ -23,7 +23,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "git-commits",
     parser_version: 1,
     event_types: &["git.commit"],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 pub struct GitParser;

@@ -27,7 +27,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "page-fetch",
     parser_version: 1,
     event_types: &["page.fetched"],
-    framer: crate::drivers::media::whole,
+    framer: crate::Framer::export(crate::drivers::media::whole, crate::drivers::export_archive::Framing::Whole),
 };
 
 pub const USER_AGENT: &str = "sinex-crawl/0.1 (personal archive of the operator's own browsing)";

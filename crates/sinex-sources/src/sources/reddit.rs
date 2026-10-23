@@ -28,7 +28,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "bookmark.saved",
         "conversation.message",
     ],
-    framer: frame,
+    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
 /// The members read; the rest (account metadata) are kept, not parsed.

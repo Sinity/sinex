@@ -39,7 +39,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "samsung-account-export",
     parser_version: 4,
     event_types: &["health.record", "account.record"],
-    framer: frame,
+    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
 sinex_model::payload_enum! {

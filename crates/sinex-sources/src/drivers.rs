@@ -376,7 +376,20 @@ pub fn stored_records(
             .iter()
             .filter_map(|r| Some((r.get(0)?.as_u64()? as usize, r.get(1)?.as_u64()? as usize)))
             .collect(),
-        None => framer(bytes).0,
+        None => framer.frame(bytes).0,
+    }
+}
+
+/// Stored explicit ranges take precedence over legacy source framing.
+pub fn stored_records_from(
+    manifest: &Value,
+    reader: &mut dyn std::io::Read,
+    framer: crate::Framer,
+) -> std::io::Result<Vec<(usize, usize)>> {
+    if manifest.get("records").and_then(Value::as_array).is_some() {
+        Ok(stored_records(manifest, &[], framer))
+    } else {
+        framer.ranges(reader)
     }
 }
 

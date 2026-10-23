@@ -182,12 +182,29 @@ impl Blobs {
     /// legacy delta read still materializes the decoded body. Sealed blobs require a key
     /// and are refused here. Returns the number of bytes written.
     pub fn copy_to(&self, name: &str, out: &mut impl std::io::Write) -> Result<u64> {
+        self.copy_to_checked(name, out, || Ok(()))
+    }
+
+    /// Copy one verified representation with cancellation during plain reads.
+    /// Legacy deltas still decode their body in the shared reader; cancellation is
+    /// checked before and after that decode. Sealed bytes require the keyed API.
+    pub fn copy_to_checked(
+        &self,
+        name: &str,
+        out: &mut impl std::io::Write,
+        mut check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
+    ) -> Result<u64> {
         let hash = parse(name)?;
         let copied = match self.0.kind(&hash)? {
             hashed_blobs::Kind::Plain => {
-                std::io::copy(&mut self.0.read_plain(&hash, None, || Ok(()))?, out)
+                std::io::copy(&mut self.0.read_plain(&hash, None, check)?, out)
             }
-            _ => std::io::copy(&mut self.0.read(&hash)?, out),
+            _ => {
+                check()?;
+                let copied = std::io::copy(&mut self.0.read(&hash)?, out);
+                check()?;
+                copied
+            }
         };
         copied.map_err(|e| crate::Error::Invalid(format!("read {name}: {e}")))
     }

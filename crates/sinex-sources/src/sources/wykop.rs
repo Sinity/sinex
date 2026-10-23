@@ -38,7 +38,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "notification.received",
         "account.setting",
     ],
-    framer: frame,
+    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Lines),
 };
 
 sinex_model::payload_enum! {

@@ -258,7 +258,7 @@ async fn a_rewritten_history_file_is_aligned_and_replays_without_duplicates() {
         .await
         .unwrap();
     let mut rebuilt =
-        AppendState::rebuild(chain.iter().map(|(id, b)| (*id, b.as_slice())), zsh::frame);
+        AppendState::rebuild(chain.iter().map(|(id, b)| (*id, b.as_slice())), zsh::SPEC.framer);
     assert_eq!(rebuilt, state);
     ingest(&mut f.ctx, &path, &mut rebuilt).await;
     assert_eq!(

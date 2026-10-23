@@ -28,7 +28,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "samsung-health-export",
     parser_version: 2,
     event_types: &["health.record"],
-    framer: frame,
+    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
 /// The member being read, its type (line 1) and header (line 2).

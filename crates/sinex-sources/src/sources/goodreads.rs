@@ -18,7 +18,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "goodreads-library",
     parser_version: 1,
     event_types: &["book.event"],
-    framer: frame,
+    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
 pub struct GoodreadsParser;

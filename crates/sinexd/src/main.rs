@@ -18,6 +18,7 @@ mod library;
 mod one_shot;
 mod publisher;
 mod replay;
+mod retained;
 mod row_retirement;
 mod screen_text;
 mod sealed_access;

@@ -133,3 +133,110 @@ impl<'de> Visitor<'de> for ArrayAt<'_, '_> {
 
 #[cfg(test)]
 mod tests;
+
+/// Frame a retained original stream without changing its byte coordinates.
+/// JSON syntax failure keeps the former one-record fallback; no valid prefix escapes it.
+pub(crate) fn ranges(reader: &mut dyn Read, framing: Framing) -> std::io::Result<Vec<(usize, usize)>> {
+    if let Framing::JsonArray(pointer) = framing {
+        return json_ranges(reader, pointer);
+    }
+    if framing == Framing::Whole {
+        let length = std::io::copy(reader, &mut std::io::sink())?;
+        let length = usize::try_from(length).map_err(|_| std::io::Error::other("material exceeds address space"))?;
+        return Ok(if length == 0 { vec![] } else { vec![(0, length)] });
+    }
+    let mut pending = Vec::new();
+    let mut base = 0usize;
+    let mut out = Vec::new();
+    let mut block = [0; 65536];
+    loop {
+        let n = reader.read(&mut block)?;
+        pending.extend_from_slice(&block[..n]);
+        let eof = n == 0;
+        let (records, consumed) = framing.frame(&pending, eof);
+        out.extend(records.into_iter().map(|(start,end)| (base+start,base+end)));
+        pending.drain(..consumed);
+        base += consumed;
+        if eof { return Ok(out); }
+    }
+}
+
+#[derive(Default)]
+struct Position {
+    bytes: std::cell::Cell<usize>,
+    last: std::cell::Cell<u8>,
+    error: std::cell::RefCell<Option<std::io::Error>>,
+}
+struct Counted<'a> {
+    reader: std::io::BufReader<&'a mut dyn Read>,
+    position: std::rc::Rc<Position>,
+}
+impl Read for Counted<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        match self.reader.read(out) {
+            Ok(n) => {
+                self.position.bytes.set(self.position.bytes.get()+n);
+                if n > 0 {self.position.last.set(out[n-1]);}
+                Ok(n)
+            }
+            Err(error) => {
+                let message=error.to_string();
+                *self.position.error.borrow_mut()=Some(error);
+                Err(std::io::Error::other(message))
+            }
+        }
+    }
+}
+
+fn json_ranges(reader: &mut dyn Read, pointer: &str) -> std::io::Result<Vec<(usize, usize)>> {
+    let position = std::rc::Rc::new(Position::default());
+    let mut counted=Counted {reader: std::io::BufReader::with_capacity(65536,reader),position:position.clone()};
+    let path:Vec<_>=pointer.split('/').skip(1).collect();
+    let mut records=Vec::new();
+    let mut de=serde_json::Deserializer::from_reader(&mut counted);
+    let parsed=RangesAt {path:&path,position:&position,records:&mut records}.deserialize(&mut de).and_then(|()|de.end());
+    if let Some(error)=position.error.borrow_mut().take() {return Err(error);}
+    if parsed.is_err() {
+        // Finish the same reader so malformed source syntax still covers all original bytes.
+        std::io::copy(&mut counted,&mut std::io::sink())?;
+        let length=position.bytes.get();
+        return Ok(if length==0 {vec![]} else {vec![(0,length)]});
+    }
+    Ok(records)
+}
+
+struct RangesAt<'a,'b> {
+    path:&'a [&'a str],
+    position:&'a Position,
+    records:&'b mut Vec<(usize,usize)>,
+}
+impl<'de> DeserializeSeed<'de> for RangesAt<'_,'_> {
+    type Value=();
+    fn deserialize<D:de::Deserializer<'de>>(self,de:D)->Result<(),D::Error> {
+        if self.path.is_empty() {de.deserialize_seq(self)} else {de.deserialize_map(self)}
+    }
+}
+impl<'de> Visitor<'de> for RangesAt<'_,'_> {
+    type Value=();
+    fn expecting(&self,f:&mut fmt::Formatter<'_>)->fmt::Result {f.write_str("the selected JSON array")}
+    fn visit_seq<A:SeqAccess<'de>>(self,mut sequence:A)->Result<(),A::Error> {
+        self.records.clear();
+        while let Some(raw)=sequence.next_element::<Box<RawValue>>()? {
+            // Serde's reader may have peeked one delimiter past a scalar. The raw value
+            // excludes that lookahead; structured/string values end at their closing byte.
+            let end=self.position.bytes.get()-usize::from(self.position.last.get()!=*raw.get().as_bytes().last().expect("nonempty JSON value"));
+            self.records.push((end-raw.get().len(),end));
+        }
+        Ok(())
+    }
+    fn visit_map<A:MapAccess<'de>>(self,mut map:A)->Result<(),A::Error> {
+        let mut found=false;
+        while let Some(key)=map.next_key::<String>()? {
+            if key==self.path[0] {
+                found=true;
+                map.next_value_seed(RangesAt {path:&self.path[1..],position:self.position,records:self.records})?;
+            } else {map.next_value::<IgnoredAny>()?;}
+        }
+        if found {Ok(())} else {Err(de::Error::custom("selected JSON array field is absent"))}
+    }
+}

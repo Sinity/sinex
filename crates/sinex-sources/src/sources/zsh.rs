@@ -23,7 +23,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "zsh-extended-history",
     parser_version: 3,
     event_types: &["command.imported"],
-    framer: frame,
+    framer: crate::Framer::incremental(frame),
 };
 
 pub struct ZshParser {
@@ -209,7 +209,7 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: frame,
+        framer: crate::Framer::incremental(frame),
     }
 }
 

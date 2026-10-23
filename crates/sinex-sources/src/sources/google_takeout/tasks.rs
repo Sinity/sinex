@@ -19,7 +19,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "google-tasks",
     parser_version: 1,
     event_types: &["task.revised"],
-    framer: frame,
+    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Whole),
 };
 
 const KNOWN: &[&str] = &[

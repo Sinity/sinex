@@ -20,7 +20,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "samsung-sms",
     parser_version: 1,
     event_types: &["conversation.message"],
-    framer: frame,
+    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
 pub struct SmsParser;

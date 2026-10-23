@@ -29,7 +29,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "session-socket",
     parser_version: 1,
     event_types: &["editor.event", "terminal.event"],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 sinex_model::payload_enum! {

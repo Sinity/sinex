@@ -21,7 +21,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "raindrop-export",
     parser_version: 1,
     event_types: &["bookmark.saved"],
-    framer: frame,
+    framer: crate::Framer::incremental(frame),
 };
 
 /// Raindrop's trash collection.

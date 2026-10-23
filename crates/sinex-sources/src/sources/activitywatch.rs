@@ -44,7 +44,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "browser.tab_active",
         "activitywatch.other",
     ],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 /// The corrections applied while reading (`y0o3.13` AC4: one declared spec).

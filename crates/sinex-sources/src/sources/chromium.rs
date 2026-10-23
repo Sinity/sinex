@@ -26,7 +26,7 @@ pub const VISITS: SourceSpec = SourceSpec {
     parser: "chromium-visits",
     parser_version: 1,
     event_types: &["browser.visit"],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 pub const URLS: SourceSpec = SourceSpec {
@@ -37,7 +37,7 @@ pub const URLS: SourceSpec = SourceSpec {
     parser: "chromium-urls",
     parser_version: 1,
     event_types: &["browser.url"],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 /// The profile a `History` path belongs to: `<browser dir>/<profile dir>`.

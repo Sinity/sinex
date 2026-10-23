@@ -30,7 +30,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         "notification.closed",
         "notification.action",
     ],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 /// The match rules capture monitors.

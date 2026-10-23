@@ -20,7 +20,7 @@ pub const PLAY_STORE: SourceSpec = SourceSpec {
     parser: "google-play-store",
     parser_version: 1,
     event_types: &["purchase.observed"],
-    framer: frame_play_store,
+    framer: crate::Framer::export(frame_play_store, crate::drivers::export_archive::Framing::JsonArray("")),
 };
 
 pub const PURCHASES: SourceSpec = SourceSpec {
@@ -31,7 +31,7 @@ pub const PURCHASES: SourceSpec = SourceSpec {
     parser: "google-purchases",
     parser_version: 1,
     event_types: &["purchase.observed"],
-    framer: frame_purchases,
+    framer: crate::Framer::export(frame_purchases, crate::drivers::export_archive::Framing::Whole),
 };
 
 /// The wrapper keys and the field holding each wrapped item's time.
