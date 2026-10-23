@@ -131,7 +131,7 @@ fn decoded_bins_preserve_extensions_without_hiding_bad_known_fields() {
     assert_eq!(output["values"], original["values"]);
     assert_eq!(
         output["uninterpreted_fields"],
-        json!(["/values/binning_data"])
+        json!(["/values/binning_data/0/extra"])
     );
 }
 

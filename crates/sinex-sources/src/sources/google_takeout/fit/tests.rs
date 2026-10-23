@@ -49,6 +49,6 @@ fn direct_fit_values_keep_large_integers_and_extensions() {
     assert_eq!(wire["values"]["fitValue"], point["fitValue"]);
     assert_eq!(
         wire["uninterpreted_fields"],
-        json!(["/values/fitValue", "/values/new_column"])
+        json!(["/values/fitValue/0/extra", "/values/new_column"])
     );
 }

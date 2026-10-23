@@ -528,11 +528,19 @@ impl<'de> Deserialize<'de> for Binning {
 }
 
 impl Binning {
-    pub(crate) fn has_uninterpreted(&self) -> bool {
+    pub(crate) fn uninterpreted_fields(&self) -> Vec<String> {
         match self {
-            Self::Uninterpreted(_) => true,
-            Self::Reference(_) => false,
-            Self::Rows(rows) => rows.iter().any(|row| !row.uninterpreted.is_empty()),
+            Self::Uninterpreted(_) => vec!["/values/binning_data".into()],
+            Self::Reference(_) => vec![],
+            Self::Rows(rows) => rows
+                .iter()
+                .enumerate()
+                .flat_map(|(i, row)| {
+                    row.uninterpreted
+                        .keys()
+                        .map(move |key| format!("/values/binning_data/{i}/{}", super::pointer(key)))
+                })
+                .collect(),
         }
     }
 }

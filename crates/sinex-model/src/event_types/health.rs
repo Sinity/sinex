@@ -131,41 +131,17 @@ impl HealthValues {
             .keys()
             .map(|key| format!("/values/{}", pointer(key)))
             .collect();
-        let unknown_bins = match self {
-            Self::Stress(row) => row
-                .binning_data
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_some_and(samsung::Binning::has_uninterpreted),
-            Self::Hrv(row) => row
-                .binning_data
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_some_and(samsung::Binning::has_uninterpreted),
-            Self::HeartRate(row) => row
-                .binning_data
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_some_and(samsung::Binning::has_uninterpreted),
-            Self::Respiratory(row) => row
-                .binning_data
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_some_and(samsung::Binning::has_uninterpreted),
-            Self::SkinTemperature(row) => row
-                .binning_data
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_some_and(samsung::Binning::has_uninterpreted),
-            Self::Movement(row) => row
-                .binning_data
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_some_and(samsung::Binning::has_uninterpreted),
-            _ => false,
+        let bins = match self {
+            Self::Stress(row) => row.binning_data.as_ref().and_then(Option::as_ref),
+            Self::Hrv(row) => row.binning_data.as_ref().and_then(Option::as_ref),
+            Self::HeartRate(row) => row.binning_data.as_ref().and_then(Option::as_ref),
+            Self::Respiratory(row) => row.binning_data.as_ref().and_then(Option::as_ref),
+            Self::SkinTemperature(row) => row.binning_data.as_ref().and_then(Option::as_ref),
+            Self::Movement(row) => row.binning_data.as_ref().and_then(Option::as_ref),
+            _ => None,
         };
-        if unknown_bins {
-            fields.push("/values/binning_data".into());
+        if let Some(bins) = bins {
+            fields.extend(bins.uninterpreted_fields());
         }
         if let Self::Fit(row) = self {
             fields.extend(row.nested_uninterpreted_fields());

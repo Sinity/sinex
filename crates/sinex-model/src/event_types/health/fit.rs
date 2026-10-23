@@ -64,39 +64,37 @@ pub struct MapEntry {
 impl Fit {
     pub(crate) fn nested_uninterpreted_fields(&self) -> Vec<String> {
         let mut fields = Vec::new();
-        if self
-            .fit_value
-            .as_ref()
-            .and_then(Option::as_ref)
-            .is_some_and(|values| values.iter().any(FitValue::has_uninterpreted))
-        {
-            fields.push("/values/fitValue".into());
+        if let Some(Some(values)) = &self.fit_value {
+            for (i, value) in values.iter().enumerate() {
+                value.uninterpreted_fields(&format!("/values/fitValue/{i}"), &mut fields);
+            }
         }
         fields
     }
 }
-
 impl FitValue {
-    fn has_uninterpreted(&self) -> bool {
-        !self.uninterpreted.is_empty()
-            || self
-                .value
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_some_and(|v| v.has_uninterpreted())
-            || self
-                .map_val
-                .as_ref()
-                .and_then(Option::as_ref)
-                .is_some_and(|rows| {
-                    rows.iter().any(|row| {
-                        !row.uninterpreted.is_empty()
-                            || row
-                                .value
-                                .as_ref()
-                                .and_then(Option::as_ref)
-                                .is_some_and(FitValue::has_uninterpreted)
-                    })
-                })
+    fn uninterpreted_fields(&self, path: &str, fields: &mut Vec<String>) {
+        fields.extend(
+            self.uninterpreted
+                .keys()
+                .map(|key| format!("{path}/{}", super::pointer(key))),
+        );
+        if let Some(Some(value)) = &self.value {
+            value.uninterpreted_fields(&format!("{path}/value"), fields);
+        }
+        if let Some(Some(entries)) = &self.map_val {
+            for (i, entry) in entries.iter().enumerate() {
+                let path = format!("{path}/mapVal/{i}");
+                fields.extend(
+                    entry
+                        .uninterpreted
+                        .keys()
+                        .map(|key| format!("{path}/{}", super::pointer(key))),
+                );
+                if let Some(Some(value)) = &entry.value {
+                    value.uninterpreted_fields(&format!("{path}/value"), fields);
+                }
+            }
+        }
     }
 }
