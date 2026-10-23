@@ -347,11 +347,11 @@ pub fn overlay(
     blob: &str,
 ) -> Result<Vec<ImageExtent>, String> {
     let size = u64::from(size);
-    if size == 0 || length == 0 || length % size != 0 {
+    if size == 0 || length == 0 || !length.is_multiple_of(size) {
         return Err("invalid SQLite image length/page size".into());
     }
     let old_length = previous.iter().try_fold(0u64, |n, e| {
-        if e.length == 0 || e.offset % size != 0 || e.length % size != 0 {
+        if e.length == 0 || !e.offset.is_multiple_of(size) || e.!length.is_multiple_of(size) {
             return Err("unaligned SQLite extent");
         }
         e.offset

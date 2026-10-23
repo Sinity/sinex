@@ -30,6 +30,7 @@ pub struct SqliteImageMeta {
     pub map_bytes: u64,
     pub base_stored_bytes: u64,
     pub patch_stored_bytes: u64,
+    /// Unique compressed bytes referenced by DB extents, not measured decoder IO.
     pub read_stored_bytes: u64,
 }
 
@@ -53,7 +54,7 @@ impl SqliteImageMeta {
         if bytes != self.image_bytes
             || map != self.map_bytes
             || self.map_offset.checked_add(map) != Some(self.evidence_bytes)
-            || self.map_offset % u64::from(self.page_size) != 0
+            || !self.map_offset.is_multiple_of(u64::from(self.page_size))
         {
             return Err("SQLite evidence/map layout differs from page count".into());
         }
@@ -70,8 +71,8 @@ impl SqliteImageMeta {
         if length != bytes
             || extents.iter().any(|e| {
                 e.length == 0
-                    || e.offset % u64::from(self.page_size) != 0
-                    || e.length % u64::from(self.page_size) != 0
+                    || !e.offset.is_multiple_of(u64::from(self.page_size))
+                    || !e.length.is_multiple_of(u64::from(self.page_size))
             })
         {
             return Err("SQLite extents do not cover the exact image".into());

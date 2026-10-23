@@ -66,8 +66,11 @@ each reconstructed page and map entry against the pinned view. Each due image
 still reads every page, and extent verification/storage may reread those pages.
 Changed-page indices and extent plans also consume memory proportional to changed
 pages/spans. Rebase occurs after more than half of pages change, accumulated
-compressed patch cost exceeds the configured base multiple, or reconstruction
-read cost exceeds twice the compressed base. Sealed images use fresh encrypted
+compressed patch cost exceeds the configured base multiple, or unique referenced
+compressed bytes exceed twice the compressed base. This footprint is not a
+measurement of decoder I/O: the current shared v0.5.15 assembled reader can
+reverify a whole base each time sparse extents switch between base and patch
+blobs. Its operation-scoped reader reuse is a separate shared follow-up. Sealed images use fresh encrypted
 full bases at cadence with keyed digests and no cross-image page reuse. Provider
 page readers feed encryption directly; sealed retained input is never staged as
 plaintext or opened with borrowed operator authority.
