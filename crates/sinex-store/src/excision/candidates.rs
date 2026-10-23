@@ -40,7 +40,8 @@ pub async fn candidate_materials(
                ) owned ORDER BY s) AS sources
              FROM raw.materials m LEFT JOIN raw.inputs i ON i.id=m.input_id
              LEFT JOIN privacy.material_keys k ON k.material_id=m.id WHERE m.parser=$2)
-           SELECT id,blob,durable_bytes,manifest,parser,parser_version,host,key_ref,wrapped_key,role,class,
+           SELECT id,blob,durable_bytes,manifest,parser,parser_version,host AS "host?",
+             key_ref AS "key_ref?",wrapped_key AS "wrapped_key?",role AS "role?",class AS "class?",
              sources AS "sources!" FROM candidates WHERE cardinality(sources)=0 OR $1=ANY(sources) ORDER BY id"#,
         source,parser
     ).fetch_all(conn).await?;
