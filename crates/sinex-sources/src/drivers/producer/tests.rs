@@ -36,6 +36,15 @@ async fn standin(
     subjects: &Subjects,
     producer: &str,
 ) -> Arc<Mutex<Vec<Ingress>>> {
+    standin_with_refusal(nats, subjects, producer, None).await
+}
+
+async fn standin_with_refusal(
+    nats: &devkit::nats::TestNats,
+    subjects: &Subjects,
+    producer: &str,
+    mut refuse_offset: Option<u64>,
+) -> Arc<Mutex<Vec<Ingress>>> {
     use async_nats::jetstream::{consumer, stream};
     let client = async_nats::connect(nats.url()).await.unwrap();
     let js = jetstream::new(client.clone());
@@ -68,12 +77,19 @@ async fn standin(
                 ),
                 Ingress::Chunk { .. } | Ingress::Indirect { .. } => (None, vec![]),
             };
+            let refusal = match &frame {
+                Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {
+                    refuse_offset = None;
+                    Some("synthetic interruption".into())
+                }
+                _ => None,
+            };
             let ack = Acknowledgment {
                 frame: frame.frame().to_owned(),
                 material,
                 admitted,
                 outcome: json!({}),
-                refusal: None,
+                refusal,
                 commit_seq: Some(1),
             };
             seen.lock().unwrap().push(frame);
@@ -97,12 +113,15 @@ async fn standin(
 async fn a_pending_batch_is_resent_with_uploaded_bytes() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    let received = standin(&nats, &subjects, "node-test").await;
+    let received =
+        standin_with_refusal(&nats, &subjects, "node-test", Some(CHUNK_BYTES as u64)).await;
     let dir = std::env::temp_dir().join(format!("sinex-pend-{}", uuid::Uuid::now_v7()));
     let state = dir.join("positions");
     let store = Store::open(&dir.join("store")).unwrap();
-    let bytes = vec![b'x'; 3 * CHUNK_BYTES / 2];
-    let blob = store.put(&bytes).unwrap();
+    let bytes: Vec<u8> = (0..3 * CHUNK_BYTES / 2).map(|i| (i % 251) as u8).collect();
+    let file = dir.join("material");
+    std::fs::write(&file, &bytes).unwrap();
+    let blob = store.put_file(&file).unwrap();
     let material = sinex_model::MaterialId::new();
     let frames = vec![
         Ingress::Material {
@@ -143,7 +162,20 @@ async fn a_pending_batch_is_resent_with_uploaded_bytes() {
         .await
         .unwrap()
         .upload_bytes(Store::open(&dir.join("store")).unwrap());
+    assert!(matches!(
+        producer.position("b", &state).await,
+        Err(Error::Refused { .. })
+    ));
+    assert!(Pending::load(&state, "b").unwrap().is_some());
+    assert!(Position::load(&state, "b").unwrap().cursor.is_null());
+    let first_attempt = received.lock().unwrap().clone();
+    assert_eq!(first_attempt.len(), 2);
+    assert_chunks(&first_attempt, &bytes);
+    received.lock().unwrap().clear();
     let position = producer.position("b", &state).await.unwrap();
+    let second_attempt = received.lock().unwrap().clone();
+    assert_ne!(first_attempt[0].frame(), second_attempt[0].frame());
+    assert_chunks(&second_attempt[..2], &bytes);
     assert_eq!(position.cursor, json!({"segment": 7}));
     assert!(Pending::load(&state, "b").unwrap().is_none());
     let kinds = |frames: &[Ingress]| -> Vec<String> {
@@ -259,4 +291,96 @@ fn position_survives_a_restart() {
         Position::load(&dir, "hyprland@h").unwrap().cursor,
         json!({"segment": 3})
     );
+}
+
+fn assert_chunks(frames: &[Ingress], expected: &[u8]) {
+    let mut bytes = Vec::new();
+    for frame in frames {
+        let Ingress::Chunk {
+            offset,
+            total,
+            data,
+            ..
+        } = frame
+        else {
+            panic!("not a chunk")
+        };
+        assert_eq!(*offset, bytes.len() as u64);
+        assert_eq!(*total, expected.len() as u64);
+        let chunk = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .unwrap();
+        assert!(chunk.len() <= CHUNK_BYTES);
+        bytes.extend(chunk);
+    }
+    assert_eq!(bytes, expected);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let received = standin(&nats, &subjects, "boundaries").await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let mut producer = Producer::connect(nats.url(), subjects, "boundaries")
+        .await
+        .unwrap()
+        .upload_bytes(Store::open(dir.path()).unwrap());
+    for length in [
+        0,
+        1,
+        CHUNK_BYTES,
+        2 * CHUNK_BYTES,
+        2 * CHUNK_BYTES + 19,
+        9 * CHUNK_BYTES + 19,
+    ] {
+        let bytes: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
+        let path = dir.path().join("input");
+        std::fs::write(&path, &bytes).unwrap();
+        let blob = store.put_file(&path).unwrap();
+        assert_eq!(blob, format!("blake3:{}", blake3::hash(&bytes).to_hex()));
+        received.lock().unwrap().clear();
+        producer.upload_blob(&blob).await.unwrap();
+        let frames = received.lock().unwrap();
+        assert_eq!(frames.len(), length.div_ceil(CHUNK_BYTES).max(1));
+        assert_chunks(&frames, &bytes);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn damaged_producer_material_sends_no_chunks() {
+    let nats = devkit::nats::test_nats().unwrap();
+    let subjects = Subjects::new(nats.prefix());
+    let received = standin(&nats, &subjects, "damaged").await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let blob = store.put(b"synthetic retained material").unwrap();
+    let hex = blob.strip_prefix("blake3:").unwrap();
+    let path = dir
+        .path()
+        .join("blobs")
+        .join(&hex[..2])
+        .join(format!("{hex}.zst"));
+    std::fs::write(&path, b"damaged").unwrap();
+    let mut producer = Producer::connect(nats.url(), subjects, "damaged")
+        .await
+        .unwrap()
+        .upload_bytes(store);
+    assert!(producer.upload_blob(&blob).await.is_err());
+    assert!(received.lock().unwrap().is_empty());
+}
+
+#[test]
+fn malformed_producer_blob_names_are_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    for name in [
+        format!("blake3:xé{}", "a".repeat(61)),
+        format!("blake3:{}", "g".repeat(64)),
+        "blake3:ab".into(),
+        format!("sha256:{}", "a".repeat(64)),
+    ] {
+        assert!(store.open_upload(&name).is_err(), "{name}");
+    }
 }
