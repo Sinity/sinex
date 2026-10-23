@@ -15,8 +15,9 @@
 //! so each has its own record location and the parser reads the removal.
 //!
 //! The admitted cursor confirms cached file facts. Until its final byte commits,
-//! retries retain the staged bundle and its identity. After a restart the
-//! first walk reads everything again and admission suppresses the repeats.
+//! retries retain the staged bundle and its identity. Restart restores known
+//! member paths and finishes the retained current bundle before a fresh walk.
+//! Existing files are reread; restored membership has no fingerprint shortcut.
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
