@@ -38,8 +38,9 @@ alone does not mean their records were interpreted successfully. Archive
 capture and replay have additional open acceptance criteria in Beads.
 
 Outside producers install material files through the streaming blob writer and
-upload them from one verified open representation, holding at most one 512 KiB
-chunk plus the shared blob reader's frame metadata and decoder. Empty materials
+upload them from one verified open representation using one 512 KiB plaintext
+buffer, plus the bounded encoded outgoing frame and the shared blob reader's
+frame metadata and decoder. Empty materials
 still send one empty chunk; acknowledgment and pending-batch retry ordering are
 unchanged. This bounds producer transport memory, not a driver's decoded records.
 
