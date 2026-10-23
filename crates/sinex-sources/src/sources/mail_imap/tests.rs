@@ -43,7 +43,8 @@ fn server(messages: Vec<(u32, &'static str)>, uid_validity: u32, expect_token: b
                 } else if let Some(range) = cmd.strip_prefix("UID FETCH ") {
                     let range = range.split(' ').next().unwrap();
                     let (from, through) = range.split_once(':').unwrap();
-                    let (from, through): (u32, u32) = (from.parse().unwrap(), through.parse().unwrap());
+                    let (from, through): (u32, u32) =
+                        (from.parse().unwrap(), through.parse().unwrap());
                     let mut out = String::new();
                     for (i, (uid, body)) in messages.iter().enumerate() {
                         if *uid >= from && *uid <= through {
@@ -151,7 +152,6 @@ fn a_renumbered_mailbox_is_read_from_the_start() {
     assert_eq!(m.records.len(), 2);
 }
 
-
 #[test]
 fn an_empty_examined_window_reaches_the_later_message() {
     let port = server(vec![(201, M1)], 99, false);
@@ -160,7 +160,11 @@ fn an_empty_examined_window_reaches_the_later_message() {
     assert!(first.material.is_none());
     let next: Cursor = serde_json::from_value(first.cursor_unchanged.clone()).unwrap();
     assert_eq!(next.uid_next, 201);
-    let second = imap.poll(&first.cursor_unchanged).unwrap().material.unwrap();
+    let second = imap
+        .poll(&first.cursor_unchanged)
+        .unwrap()
+        .material
+        .unwrap();
     assert_eq!(second.manifest["uids"], json!([201]));
     assert_eq!(second.bytes, M1.as_bytes());
 }
@@ -171,21 +175,40 @@ fn scripted(responses: Vec<(&'static str, String)>) -> (u16, std::thread::JoinHa
     let port = listener.local_addr().unwrap().port();
     let handle = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut idle_tag = String::new();
         stream.write_all(b"* OK fake IMAP ready\r\n").unwrap();
         for (expected, response) in responses {
             let mut line = String::new();
-            assert_ne!(reader.read_line(&mut line).unwrap(), 0, "expected {expected}");
-            let (tag, command) = line.trim_end().split_once(' ').unwrap();
+            assert_ne!(
+                reader.read_line(&mut line).unwrap(),
+                0,
+                "expected {expected}"
+            );
+            let (tag, command) = if line.trim_end() == "DONE" {
+                (idle_tag.as_str(), "DONE")
+            } else {
+                line.trim_end().split_once(' ').unwrap()
+            };
             assert_eq!(command, expected);
-            stream.write_all(response.replace("{tag}", tag).as_bytes()).unwrap();
+            stream
+                .write_all(response.replace("{tag}", tag).as_bytes())
+                .unwrap();
+            if command == "IDLE" {
+                idle_tag = tag.to_owned();
+            }
         }
     });
     (port, handle)
 }
 
 fn selected(next: Option<u32>, validity: u32) -> String {
-    let next = next.map(|n| format!("* OK [UIDNEXT {n}] ok\r\n")).unwrap_or_default();
+    let next = next
+        .map(|n| format!("* OK [UIDNEXT {n}] ok\r\n"))
+        .unwrap_or_default();
     format!("* OK [UIDVALIDITY {validity}] ok\r\n{next}{{tag}} OK selected\r\n")
 }
 
@@ -206,6 +229,82 @@ fn examined_empty_progress_is_clamped_and_unknown_or_stale_bounds_stay_put() {
         let acquired = mail(port, Some("secret"), None).poll(&Value::Null).unwrap();
         let cursor: Cursor = serde_json::from_value(acquired.cursor_unchanged).unwrap();
         assert_eq!(cursor.uid_next, expected, "boundary={boundary:?}");
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn failed_fetch_returns_no_progress_and_the_same_cursor_can_retry() {
+    let previous = json!({"uid_validity": 99, "uid_next": 1, "material": null, "part_index": 0});
+    let original = previous.clone();
+    let (port, server) = scripted(vec![
+        ("LOGIN \"me@x\" \"secret\"", "{tag} OK login\r\n".into()),
+        ("SELECT \"INBOX\"", selected(Some(202), 99)),
+        (
+            "UID FETCH 1:200 (UID BODY.PEEK[])",
+            "{tag} NO fetch failed\r\n".into(),
+        ),
+    ]);
+    assert!(mail(port, Some("secret"), None).poll(&previous).is_err());
+    server.join().unwrap();
+    assert_eq!(previous, original);
+    let (port, server) = scripted(vec![
+        ("LOGIN \"me@x\" \"secret\"", "{tag} OK login\r\n".into()),
+        ("SELECT \"INBOX\"", selected(Some(202), 99)),
+        (
+            "UID FETCH 1:200 (UID BODY.PEEK[])",
+            "{tag} OK fetched\r\n".into(),
+        ),
+        ("LOGOUT", "{tag} OK bye\r\n".into()),
+    ]);
+    let acquired = mail(port, Some("secret"), None).poll(&previous).unwrap();
+    assert_eq!(acquired.cursor_unchanged["uid_next"], 201);
+    server.join().unwrap();
+}
+
+#[test]
+fn idle_refreshes_uidnext_and_validity_before_the_next_fetch() {
+    for (validity, next, fetch, expected) in [
+        (99, 204, "UID FETCH 201:203 (UID BODY.PEEK[])", 204),
+        (100, 3, "UID FETCH 1:2 (UID BODY.PEEK[])", 3),
+    ] {
+        let (port, server) = scripted(vec![
+            ("LOGIN \"me@x\" \"secret\"", "{tag} OK login\r\n".into()),
+            ("SELECT \"INBOX\"", selected(Some(201), 99)),
+            ("IDLE", "+ idling\r\n* 1 EXISTS\r\n".into()),
+            ("DONE", "{tag} OK idle ended\r\n".into()),
+            ("SELECT \"INBOX\"", selected(Some(next), validity)),
+            (fetch, "{tag} OK fetched\r\n".into()),
+            ("LOGOUT", "{tag} OK bye\r\n".into()),
+        ]);
+        let mut imap = mail(port, Some("secret"), None);
+        imap.config.idle_seconds = 1;
+        let acquired = imap
+            .poll(&json!({"uid_validity":99, "uid_next":201,
+            "material":null, "part_index":0}))
+            .unwrap();
+        assert_eq!(acquired.cursor_unchanged["uid_next"], expected);
+        assert_eq!(acquired.cursor_unchanged["uid_validity"], validity);
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn returned_uids_allow_progress_without_an_usable_uidnext() {
+    for boundary in [None, Some(0), Some(1)] {
+        let (port, server) = scripted(vec![
+            ("LOGIN \"me@x\" \"secret\"", "{tag} OK login\r\n".into()),
+            ("SELECT \"INBOX\"", selected(boundary, 99)),
+            (
+                "UID FETCH 1:200 (UID BODY.PEEK[])",
+                format!("* 1 FETCH (UID 4 BODY[] {{{}}}\r\n{M1})\r\n{{tag}} OK fetched\r\n", M1.len()),
+            ),
+            ("LOGOUT", "{tag} OK bye\r\n".into()),
+        ]);
+        let acquired = mail(port, Some("secret"), None).poll(&Value::Null).unwrap();
+        let material = acquired.material.unwrap();
+        assert_eq!(material.bytes, M1.as_bytes());
+        assert_eq!((material.cursor_at)(material.bytes.len())["uid_next"], 5);
         server.join().unwrap();
     }
 }
