@@ -22,7 +22,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "weechat-log",
     parser_version: 1,
     event_types: &["chat.message"],
-    framer,
+    framer: crate::Framer::incremental(framer),
 };
 
 /// The buffer a line belongs to is named by its log's folder (or, for a flat
@@ -153,7 +153,7 @@ fn framer(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 }
 
 pub fn driver(path: PathBuf, host: String) -> AppendFile {
-    AppendFile { path, host, framer }
+    AppendFile { path, host, framer: SPEC.framer }
 }
 
 /// `--source weechat=PATH`: each WeeChat log under PATH, read in the

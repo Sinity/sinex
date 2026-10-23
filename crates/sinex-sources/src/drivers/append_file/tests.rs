@@ -111,7 +111,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     );
     assert_eq!(n.manifest["records"], json!([[4, 7]]));
     assert_eq!(
-        crate::drivers::stored_records(&n.manifest, &n.bytes, lines),
+        crate::drivers::stored_records(&n.manifest, &n.bytes, crate::Framer::incremental(lines)),
         vec![(4, 7)]
     );
     // The cursor covers the whole rewritten file, skipped records included.
