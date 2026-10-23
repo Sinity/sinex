@@ -258,10 +258,17 @@ async fn cursor_sizes_and_offsets_are_checked_before_integer_conversion() {
 }
 
 #[tokio::test]
-async fn page_count_and_rows_keep_one_snapshot_across_a_concurrent_hide() {
+async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion() {
     use std::time::{Duration, Instant};
     let (db, mut conn) = testdb::fresh().await;
-    let ids = world(&mut conn).await;
+    world(&mut conn).await;
+    let run = runs(&mut conn).await[0];
+    // Align this synthetic run with the fixed event fixture without changing runtime clocks.
+    sqlx::query("UPDATE core.runs SET started_at = '2026-09-14T08:00:00Z' WHERE id=$1")
+        .bind(run.0)
+        .execute(&mut conn)
+        .await
+        .unwrap();
     let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut conn)
         .await
@@ -283,7 +290,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_a_concurrent_hide() {
     let read = tokio::spawn(async move {
         ask_at(
             &mut conn,
-            "events sort when",
+            "events near (runs where status = running) within 1h sort when",
             &ctx(),
             Page {
                 size: Some(100),
@@ -312,18 +319,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_a_concurrent_hide() {
         );
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
-    let hide = Batch {
-        run: RunId::new(),
-        kind: BatchKind::Api {
-            actor: "test".into(),
-        },
-        records: vec![],
-        archive: vec![ArchiveRequest::Hide {
-            target: EventId(ids[0].0),
-            operation: OperationId::new(),
-        }],
-    };
-    admit(&mut block, &hide, &NoDerivations).await.unwrap();
+    crate::runs::end(&mut block, run).await.unwrap();
     block.commit().await.unwrap();
     let answer = read.await.unwrap();
     assert_eq!(answer.total, 10);
@@ -332,15 +328,18 @@ async fn page_count_and_rows_keep_one_snapshot_across_a_concurrent_hide() {
         10,
         "count and rows observed different committed views"
     );
-    assert!(
-        answer
-            .rows
-            .iter()
-            .any(|row| row["id"] == ids[0].0.to_string())
+    let after = ask_at(
+        &mut watch,
+        "events near (runs where status = running) within 1h sort when",
+        &ctx(),
+        Page::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        after.total, 0,
+        "run completion really committed during the page read"
     );
-    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e WHERE NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)")
-        .fetch_one(&mut watch).await.unwrap();
-    assert_eq!(after, 9, "the hide really committed during the page read");
 }
 
 #[tokio::test]
