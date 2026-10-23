@@ -187,46 +187,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
                 return Err(RecordError::new("record range exceeds staged material"));
             }
         }
-        if input.manifest.get("media_type").and_then(Value::as_str)
-            == Some("application/x-sinex-file-bundle")
-        {
-            if let Some(version) = input.manifest.get("format_version") {
-                if !matches!(version.as_u64(), Some(1 | 2)) {
-                    return Err(RecordError::new("unsupported directory bundle format"));
-                }
-            }
-            if input
-                .records
-                .windows(2)
-                .any(|records| records[0].0 >= records[1].0)
-            {
-                return Err(RecordError::new(
-                    "directory record anchors are not distinct and increasing; retained member evidence needs an explicit mapping before byte-anchored replay",
-                ));
-            }
-            if input
-                .records
-                .windows(2)
-                .any(|records| records[0].1 > records[1].0)
-            {
-                return Err(RecordError::new("directory record ranges overlap"));
-            }
-            for &(start, end) in input.records {
-                if start > end {
-                    return Err(RecordError::new("invalid directory record range"));
-                }
-                let member = member_at(input.manifest, start).ok_or_else(|| {
-                    RecordError::new("directory record has no unambiguous member")
-                })?;
-                if member.get("stream_offset").and_then(Value::as_u64) != Some(start as u64)
-                    || member.get("length").and_then(Value::as_u64) != Some((end - start) as u64)
-                {
-                    return Err(RecordError::new(
-                        "directory record range differs from its member",
-                    ));
-                }
-            }
-        }
+        crate::drivers::dir_snapshot::validate_records(input.manifest, input.records)?;
         let carry: P::Carry = if input.carry.is_null() {
             P::Carry::default()
         } else {

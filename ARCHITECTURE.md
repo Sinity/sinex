@@ -46,9 +46,12 @@ older byte anchors require an explicit mapping from retained member evidence.
 Uniquely mapped legacy records sharing a byte end are admitted together, so a
 new checkpoint cannot omit an empty tail; whole-material retry preserves their
 locations and deduplication. An older checkpoint alone does not prove that tail
-was admitted.
-The existing drain reads declared source ranges, preserving hashes,
-carry and ordinary batch limits. Memory holds the current file record and batch;
+was admitted. Directory validation bounds a same-end group to the preceding
+nonempty record and one empty tail; ordinary batch limits remain targets for
+that indivisible group.
+
+The existing drain reads declared source ranges, preserving hashes and carried
+state. Memory holds the current file record and batch plus directory/member metadata;
 a single oversized note or message still requires that whole decoded record.
 File-read failures stop draining without advancing the failed range. The committed
 cursor confirms file-cache changes only at the bundle's final byte; earlier

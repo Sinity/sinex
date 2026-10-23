@@ -27,6 +27,9 @@ use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod format;
+pub(crate) use format::validate as validate_records;
+
 pub struct DirSnapshot {
     pub root: PathBuf,
     pub host: String,
@@ -198,7 +201,7 @@ impl DirSnapshot {
             let mut file = File::open(self.root.join(relative))
                 .map_err(|error| DriverError::Io(format!("{relative}: {error}")))?;
             let before = file.metadata().map_err(io)?;
-            staged.write_all(&[0]).map_err(io)?;
+            staged.write_all(&[format::PREFIX]).map_err(io)?;
             let (actual_size, hash) = stage(&mut file, &mut staged).map_err(io)?;
             let after = file.metadata().map_err(io)?;
             if !same_file(&before, &after)
@@ -251,7 +254,7 @@ impl DirSnapshot {
             for relative in gone {
                 next_files.remove(&relative);
                 let marker = vanished_marker(&relative);
-                staged.write_all(&[0]).map_err(io)?;
+                staged.write_all(&[format::PREFIX]).map_err(io)?;
                 let offset = length + 1;
                 members.push(json!({
                     "path": relative,
@@ -288,8 +291,8 @@ impl DirSnapshot {
         let manifest = json!({
             "path": self.root.display().to_string(),
             "host": self.host,
-            "media_type": "application/x-sinex-file-bundle",
-            "format_version": 2,
+            "media_type": format::MEDIA_TYPE,
+            "format_version": format::VERSION,
             "scan_complete": complete,
             "members": members,
             "records": records,
