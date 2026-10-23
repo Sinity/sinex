@@ -40,6 +40,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = "1"
 
 [dev-dependencies]
+allocation-counter = "0.8.1"
 proptest.workspace = true
 devkit.workspace = true
 
