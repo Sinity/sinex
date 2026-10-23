@@ -80,7 +80,9 @@ pub struct Applied {
 }
 
 mod basis;
+mod source_guard;
 pub use basis::{operations_basis, validate_basis};
+pub use source_guard::{lock_source, unsupported_ingress};
 
 /// Find every reading the excision of `target` removes. Read-only.
 pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {

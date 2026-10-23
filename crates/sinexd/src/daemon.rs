@@ -163,7 +163,7 @@ pub async fn run(o: Options) -> Result<(), String> {
         .await
         .map_err(|e| format!("read pool: {e}"))?;
     let reader_api = Api {
-        reads,
+        reads: reads.clone(),
         writer: Some(handle.clone()),
         blobs: blobs.clone(),
         zone: o.api.zone.clone(),
@@ -212,6 +212,7 @@ pub async fn run(o: Options) -> Result<(), String> {
         subjects,
         handle.clone(),
         connect(&o.database).await?,
+        reads,
         blobs,
         o.host.clone(),
     )?;

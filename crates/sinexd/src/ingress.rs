@@ -81,6 +81,7 @@ pub struct Ingest {
     pub writer: WriterHandle,
     /// A read connection for recorded frames and registered materials.
     pub conn: PgConnection,
+    reads: sqlx::PgPool,
     pub blobs: Blobs,
     pub host: String,
     validators: HashMap<&'static str, jsonschema::Validator>,
@@ -92,6 +93,7 @@ impl Ingest {
         subjects: Subjects,
         writer: WriterHandle,
         conn: PgConnection,
+        reads: sqlx::PgPool,
         blobs: Blobs,
         host: String,
     ) -> Result<Self, String> {
@@ -106,6 +108,7 @@ impl Ingest {
             subjects,
             writer,
             conn,
+            reads,
             blobs,
             host,
             validators,
@@ -117,6 +120,20 @@ impl Ingest {
     /// means the frame could not be handled now (the database or writer is
     /// unavailable) and should be delivered again.
     pub async fn handle(&mut self, producer: &str, body: &[u8]) -> Result<Acknowledgment, String> {
+        let mut guard = self.reads.begin().await.map_err(|e| e.to_string())?;
+        sinex_store::excision::lock_source(&mut guard, producer, true)
+            .await
+            .map_err(|e| e.to_string())?;
+        let result = self.handle_guarded(producer, body).await;
+        guard.rollback().await.map_err(|e| e.to_string())?;
+        result
+    }
+
+    async fn handle_guarded(
+        &mut self,
+        producer: &str,
+        body: &[u8],
+    ) -> Result<Acknowledgment, String> {
         let frame: Ingress = match serde_json::from_slice(body) {
             Ok(frame) => frame,
             Err(error) => {
@@ -131,6 +148,14 @@ impl Ingest {
         }
         if let Some(stored) = self.stored(producer, &name).await? {
             return Ok(acknowledgment(stored));
+        }
+        let basis = sinex_store::excision::operations_basis(&mut self.conn, producer)
+            .await
+            .map_err(|e| e.to_string())?;
+        if basis.count != 0 {
+            return Ok(refused_unrecorded(
+                "producer namespace has permanent exclusions; scoped custody filtering is unavailable",
+            ));
         }
         let run = self.run(producer).await?;
         let checked = match self.unwrap(frame) {
