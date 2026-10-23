@@ -24,19 +24,23 @@ async fn whole_database_image_class_checks_other_bindings_before_opening_provide
         json!({"sqlite_images":{"scope":"whole_database","class":"open","interval_secs":3600}});
     let binding = Binding::of(&atuin::SPEC, &path, settings);
     let mut b = Bound::new(&atuin::KIND, binding).unwrap();
-    let alias=dir.path().join("alias.db");std::fs::hard_link(&path,&alias).unwrap();
-    let known=[sinex_store::bindings::Stored {
-        binding:"other-selected-table".into(),source:sinex_sources::sources::activitywatch::SPEC.name.into(),input:alias.display().to_string(),settings:serde_json::to_value(&b.binding.settings).unwrap(),
+    let alias = dir.path().join("alias.db");
+    std::fs::hard_link(&path, &alias).unwrap();
+    let known = [sinex_store::bindings::Stored {
+        binding: "other-selected-table".into(),
+        source: sinex_sources::sources::activitywatch::SPEC.name.into(),
+        input: alias.display().to_string(),
+        settings: serde_json::to_value(&b.binding.settings).unwrap(),
     }];
-    let err = check_image_class(&mut ctx.read_conn,&mut b,&known)
-    .await
-    .unwrap_err();
+    let err = check_image_class(&mut ctx.read_conn, &mut b, &known)
+        .await
+        .unwrap_err();
     assert!(err.contains("source/field class"));
     // The check itself did not create a pending read view or material.
     b.binding.settings.options["sqlite_images"]["class"] = json!("sealed");
     b.reader.configure(&b.binding.settings).unwrap();
-    check_image_class(&mut ctx.read_conn,&mut b,&known)
-    .await
-    .unwrap();
+    check_image_class(&mut ctx.read_conn, &mut b, &known)
+        .await
+        .unwrap();
     ctx.close().await.unwrap();
 }

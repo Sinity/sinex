@@ -121,7 +121,9 @@ impl Binding {
 /// restart reads only what changed.
 pub trait Reader: Send {
     fn configure(&mut self, settings: &Settings) -> Result<(), String> {
-        if settings.options.get("sqlite_images").is_some() {return Err("SQLite image configuration requires a SQLite rows reader".into());}
+        if settings.options.get("sqlite_images").is_some() {
+            return Err("SQLite image configuration requires a SQLite rows reader".into());
+        }
         Ok(())
     }
     fn image_policy(&self) -> Option<&crate::drivers::sqlite_image::Policy> {

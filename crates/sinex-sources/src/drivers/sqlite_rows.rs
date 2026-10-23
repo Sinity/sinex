@@ -399,7 +399,10 @@ impl SqliteRows {
                 facts,
             )
         };
-        let now_ns=image.as_ref().map(|i|i64::try_from(i.metadata.captured_at.unix_ns()).unwrap_or(i64::MAX)).unwrap_or(now_ns);
+        let now_ns = image
+            .as_ref()
+            .map(|i| i64::try_from(i.metadata.captured_at.unix_ns()).unwrap_or(i64::MAX))
+            .unwrap_or(now_ns);
         let full = !state.polled
             || now_ns.saturating_sub(previous.last_full_pass_ns)
                 >= self.full_pass_secs.saturating_mul(1_000_000_000);
