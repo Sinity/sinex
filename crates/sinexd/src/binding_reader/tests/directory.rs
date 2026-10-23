@@ -59,24 +59,6 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
     )
     .await;
     let after = current_notes(&mut ctx.read_conn).await;
-    std::fs::remove_file(root.join("a.md")).unwrap();
-    std::fs::remove_file(root.join("b.md")).unwrap();
-    let removed = read(
-        &mut ctx.read_conn,
-        &ctx.blobs,
-        &ctx.writer,
-        RunId::new(),
-        &sink,
-        &mut bindings,
-        stop,
-        Access::default(),
-    )
-    .await;
-    let removal_results: Vec<_> = removed
-        .into_iter()
-        .map(|(_, r)| r.map(|t| t.to_json()))
-        .collect();
-    let final_notes = current_notes(&mut ctx.read_conn).await;
     let target: Option<uuid::Uuid> = sqlx::query_scalar("SELECT e.id FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='note.document' AND e.payload->>'path'='c.md'")
         .fetch_optional(&mut ctx.read_conn).await.unwrap();
     let excised = match target {
@@ -109,6 +91,24 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
     )
     .await;
     let after_excision = current_notes(&mut ctx.read_conn).await;
+    std::fs::remove_file(root.join("a.md")).unwrap();
+    std::fs::remove_file(root.join("b.md")).unwrap();
+    let removed = read(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        RunId::new(),
+        &sink,
+        &mut bindings,
+        stop,
+        Access::default(),
+    )
+    .await;
+    let removal_results: Vec<_> = removed
+        .into_iter()
+        .map(|(_, r)| r.map(|t| t.to_json()))
+        .collect();
+    let final_notes = current_notes(&mut ctx.read_conn).await;
     ctx.close().await.unwrap();
     std::fs::remove_dir_all(dir).unwrap();
     assert!(
@@ -146,11 +146,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
             .iter()
             .map(|r| (&*r.0, r.1.clone()))
             .collect::<Vec<_>>(),
-        vec![
-            ("a.md", Value::Null),
-            ("b.md", Value::Null),
-            ("c.md", json!("gamma"))
-        ]
+        vec![("a.md", Value::Null), ("b.md", Value::Null)]
     );
     assert!(excised.is_ok(), "nonempty sibling excision: {excised:?}");
     assert!(
@@ -162,7 +158,7 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
             .iter()
             .map(|r| (&*r.0, r.1.clone()))
             .collect::<Vec<_>>(),
-        vec![("a.md", Value::Null), ("b.md", Value::Null)]
+        vec![("a.md", json!("")), ("b.md", json!(""))]
     );
 }
 
