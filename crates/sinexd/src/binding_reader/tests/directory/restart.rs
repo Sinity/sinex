@@ -419,3 +419,214 @@ async fn sealed_pending_directory_requires_authority_and_preserves_the_original_
     assert!(classes.iter().all(|c| c == "sealed"));
     ctx.close().await.unwrap();
 }
+
+struct IgnoreFirst;
+impl sinex_sources::Parser for IgnoreFirst {
+    type Record<'a> = &'a [u8];
+    type Carry = ();
+    type Payload = sinex_model::event_types::media::NoteDocument;
+    fn parse(
+        &self,
+        record: &&[u8],
+        carry: &(),
+        context: &sinex_sources::drain::RecordContext<'_>,
+    ) -> Result<(Vec<Self::Payload>, ()), sinex_sources::RecordError> {
+        if context
+            .member
+            .is_some_and(|m| m["path"] == "a.md" && m.get("vanished_at_ns").is_none())
+        {
+            return Ok((Vec::new(), ()));
+        }
+        sinex_sources::Parser::parse(&notes::NotesParser, record, carry, context)
+    }
+}
+fn ignore_first(b: &mut Bound) {
+    let mut spec = notes::SPEC;
+    spec.parser_version = 99;
+    b.source = Box::new(sinex_sources::DeclaredSource {
+        spec,
+        parser: IgnoreFirst,
+    });
+}
+
+#[tokio::test]
+async fn an_explicit_consumed_prefix_restores_an_ignored_first_member_without_an_event_anchor() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.md"), "ignored alpha").unwrap();
+    std::fs::write(root.join("b.md"), "beta").unwrap();
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let sink = Sink(ctx.blobs.clone());
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let mut b = Bound::new(&notes::KIND, binding.clone()).unwrap();
+    ignore_first(&mut b);
+    let reference = prefix(&mut ctx, &mut b, &sink, None).await;
+    let anchors = positions::accounted_anchors(&mut ctx.read_conn, reference.id)
+        .await
+        .unwrap();
+    assert!(
+        anchors.is_empty(),
+        "ignored source record has no event/error witness"
+    );
+    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(checkpoint.0["through"].as_u64().unwrap() > 0);
+    drop(b);
+    std::fs::remove_file(root.join("a.md")).unwrap();
+    let mut restarted = vec![Bound::new(&notes::KIND, binding).unwrap()];
+    ignore_first(&mut restarted[0]);
+    turn(&mut ctx, &mut restarted, Access::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        current_notes(&mut ctx.read_conn)
+            .await
+            .iter()
+            .map(|r| (&*r.0, r.1.clone()))
+            .collect::<Vec<_>>(),
+        vec![("a.md", Value::Null), ("b.md", json!("beta"))]
+    );
+    ctx.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material_key() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.md"), "synthetic sealed alpha").unwrap();
+    std::fs::write(root.join("b.md"), "synthetic sealed beta").unwrap();
+    let identity = sinex_store::sealed::Identity::generate();
+    let recipient = identity.to_public();
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    sinex_store::privacy::set_source_class(
+        &mut ctx.read_conn,
+        notes::SPEC.name,
+        Class::Sealed,
+        "synthetic",
+    )
+    .await
+    .unwrap();
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let mut bounds = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    turn(
+        &mut ctx,
+        &mut bounds,
+        Access {
+            recipient: Some(&recipient),
+            authority: None,
+        },
+    )
+    .await
+    .unwrap();
+    drop(bounds);
+    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    let material = sinex_model::MaterialId(
+        uuid::Uuid::parse_str(checkpoint.0["material"].as_str().unwrap()).unwrap(),
+    );
+    let reference = sinex_store::material_bytes::reference(&mut ctx.read_conn, material)
+        .await
+        .unwrap()
+        .unwrap();
+    let authority =
+        crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60)).unwrap();
+    let mut cached = Bound::new(&notes::KIND, binding.clone()).unwrap();
+    let mut old_cursor = checkpoint.0.clone();
+    old_cursor["through"] = json!(0);
+    let (_stop, stop) = watch::channel(false);
+    // An earlier acknowledged position can already have opened all bytes
+    // before another operation excises the material.
+    crate::binding_reader::directory::restore(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &mut cached,
+        &old_cursor,
+        Access {
+            recipient: Some(&recipient),
+            authority: Some(&authority),
+        },
+        stop,
+    )
+    .await
+    .unwrap();
+    let acquired = cached.reader.poll(&old_cursor).unwrap();
+    assert!(matches!(
+        acquired.material.as_ref().unwrap().stored,
+        Some(drivers::StoredBytes::FramedReader(_))
+    ));
+    let sealing = crate::one_shot::SealingSink::new(ctx.blobs.clone(), recipient);
+    sealing.restore_key(
+        reference.blob,
+        authority
+            .material_key(&mut ctx.read_conn, material)
+            .await
+            .unwrap(),
+    );
+    let carry = sealing.open_carry(&checkpoint.1).unwrap();
+    crate::excision::excise_with(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        sinex_store::excision::Target::Material(material),
+        "synthetic",
+    )
+    .await
+    .unwrap();
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM privacy.material_keys WHERE material_id=$1)",
+    )
+    .bind(material.0)
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
+    assert!(!exists);
+    let mut total = Totals::default();
+    crate::backfill::submit(
+        &ctx.writer,
+        RunId::new(),
+        cached.source.as_ref(),
+        &binding.name,
+        &sealing,
+        Some(&sealing),
+        Some(&authority),
+        acquired,
+        carry,
+        &mut total,
+    )
+    .await
+    .unwrap();
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM privacy.material_keys WHERE material_id=$1)",
+    )
+    .bind(material.0)
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
+    assert!(
+        !exists,
+        "a retained read must not restore the destroyed wrapped key"
+    );
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events WHERE material_id=$1")
+        .bind(material.0)
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        events, 0,
+        "ordinary excision digests still suppress the cached readings"
+    );
+    assert_eq!(total.to_json()["admitted"], 0);
+    ctx.close().await.unwrap();
+}

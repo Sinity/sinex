@@ -378,6 +378,13 @@ fn an_isolated_accounted_member_does_not_confirm_the_preceding_empty_member() {
     restored
         .remember_members(&material.manifest, &[material.records[1].0])
         .unwrap();
+    let mut malformed = material.manifest.clone();
+    malformed["members"][0]["vanished_at_ns"] = Value::Null;
+    assert!(
+        DirState::default()
+            .remember_members(&malformed, &[material.records[0].0])
+            .is_err()
+    );
     assert!(!restored.files.contains_key("a.md"));
     assert_eq!(restored.files.get("sub/b.md"), Some(&None));
     // An explicit consumed prefix, unlike one later outcome, includes even a

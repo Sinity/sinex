@@ -362,6 +362,13 @@ pub(crate) async fn submit(
     totals.polls += 1;
     // Batches are submitted as they are drained, so memory holds one
     // batch at a time, never a whole material's events.
+    let retained_material = acquired.material.as_ref().and_then(|material| {
+        matches!(
+            &material.stored,
+            Some(drivers::StoredBytes::FramedReader(_))
+        )
+        .then_some(material.id)
+    });
     let prepared = drivers::prepare(
         source,
         binding,
@@ -387,6 +394,15 @@ pub(crate) async fn submit(
         let mut one = [batch.map_err(|e| e.to_string())?];
         if let Some(s) = sealing {
             s.seal(&mut one)?;
+            if let (Some(material), sinex_model::BatchKind::Source(progress)) =
+                (retained_material, &mut one[0].kind)
+            {
+                // Admission already owned this key. An authorized cached read
+                // cannot publish it again after excision destroyed it.
+                progress
+                    .material_keys
+                    .retain(|key| key.material != material);
+            }
         }
         if let Some(authority) = authority {
             authority.check()?;

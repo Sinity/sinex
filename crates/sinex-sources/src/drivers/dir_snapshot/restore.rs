@@ -23,7 +23,7 @@ impl DirState {
             let path = member["path"]
                 .as_str()
                 .ok_or_else(|| DriverError::Cursor("directory member has no path".into()))?;
-            if member.get("vanished_at_ns").is_some() {
+            if vanished(member)? {
                 self.files.remove(path);
             } else {
                 self.files.insert(path.to_owned(), None);
@@ -106,7 +106,7 @@ impl DirState {
             let path = member["path"]
                 .as_str()
                 .ok_or_else(|| DriverError::Cursor("directory member has no path".into()))?;
-            if member.get("vanished_at_ns").is_some() {
+            if vanished(member)? {
                 files.remove(path);
                 continue;
             }
@@ -172,4 +172,22 @@ fn records(manifest: &Value) -> Result<Vec<(usize, usize)>, DriverError> {
         .map_err(|e| DriverError::Cursor(format!("directory records: {e}")))?;
     format::validate(manifest, &records).map_err(|e| DriverError::Cursor(e.to_string()))?;
     Ok(records)
+}
+
+fn vanished(member: &Value) -> Result<bool, DriverError> {
+    match member.get("vanished_at_ns") {
+        None => Ok(false),
+        Some(value)
+            if value
+                .as_str()
+                .and_then(|s| s.parse::<i128>().ok())
+                .and_then(|n| Timestamp::from_unix_ns(n).ok())
+                .is_some() =>
+        {
+            Ok(true)
+        }
+        Some(_) => Err(DriverError::Cursor(
+            "directory removal time is invalid".into(),
+        )),
+    }
 }
