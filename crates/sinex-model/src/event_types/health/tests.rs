@@ -192,3 +192,88 @@ fn interpretation_markers_are_computed_from_values_not_input_claims() {
     assert!(schema["properties"].get("uninterpreted").is_some());
     assert!(schema["properties"].get("uninterpreted_fields").is_some());
 }
+
+#[test]
+fn every_declared_category_validates_its_own_fields_before_fallback() {
+    for (category, field) in [
+        ("Stress Internal Data", "score"),
+        ("Step Count", "count"),
+        ("Health HRV", "score"),
+        ("Heart Rate", "heart_rate"),
+        ("Oxygen Saturation (SpO2)", "spo2"),
+        ("Health Respiratory Rate", "average"),
+        ("Samsung Health Skin Temperature", "temperature"),
+        ("Sleep", "sleep_score"),
+        ("Sleep Combined", "total_rem_duration"),
+        ("Sleep Stage", "stage"),
+        ("Sleep Snoring", "duration"),
+        ("Health Movement", "binning_data"),
+        ("Shealth Vitality Nap Data", "score_before"),
+        ("Health Vitality Score", "total_score"),
+        ("Weight", "weight"),
+        ("Floors Climbed", "floor"),
+        ("Shealth Mood", "notes"),
+        ("Activity Day Summary", "step_count"),
+        ("Calories Burned", "active_calorie"),
+        ("Electrocardiogram 2", "sample_count"),
+    ] {
+        // Bins have an explicit unknown-shape case; an array has known entries.
+        let invalid = if field == "binning_data" {
+            json!([{"activity_level":[]}])
+        } else {
+            json!([])
+        };
+        let values = Value::Object([(field.to_owned(), invalid)].into_iter().collect());
+        assert!(
+            serde_json::from_value::<HealthRecord>(row("samsung-health-cloud", category, values))
+                .is_err(),
+            "{category}.{field}"
+        );
+    }
+}
+
+#[test]
+fn registration_keeps_identity_time_and_validates_known_payloads() {
+    use crate::{EventPayload, KeyKind, ReplaceRule, TimeQuality};
+    assert_eq!(HealthRecord::EVENT_TYPE, "health.record");
+    assert_eq!(
+        HealthRecord::KEY,
+        KeyKind::Fields(&["provider", "category", "native_id"])
+    );
+    assert_eq!(HealthRecord::REPLACE, ReplaceRule::ReplaceWhenNewer);
+    let mut wire = row("samsung-health-cloud", "Step Count", json!({"count":21}));
+    wire["start"] = json!("2026-01-01T00:00:00Z");
+    let record: HealthRecord = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(record.ts_orig().at, record.start);
+    assert_eq!(record.ts_orig().quality, TimeQuality::Intrinsic);
+    let kind = crate::event_types::find("health.record").unwrap();
+    let origin = crate::Origin::Record {
+        location: crate::RecordLocation {
+            material: crate::MaterialId::new(),
+            anchor: 7,
+        },
+        ordinal: 2,
+    };
+    let event = (kind.build)(
+        &wire,
+        "producer:synthetic-health",
+        origin.clone(),
+        crate::ReadingOrder(1),
+        [0; 32],
+        crate::Class::Open,
+    )
+    .unwrap();
+    assert_eq!(event.payload, wire);
+    wire["values"]["count"] = json!([]);
+    assert!(
+        (kind.build)(
+            &wire,
+            "producer:synthetic-health",
+            origin,
+            crate::ReadingOrder(1),
+            [0; 32],
+            crate::Class::Open
+        )
+        .is_err()
+    );
+}
