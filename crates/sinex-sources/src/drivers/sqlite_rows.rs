@@ -9,19 +9,23 @@
 //! Rows are stored as a JSON-lines material ("rows part"); each line is one
 //! row's columns, so the record location is the line's offset and a replay
 //! reads exactly the bytes the parser saw. Rows identical to what this driver
-//! already stored are left out of the material.
+//! already stored are left out of the material. Pending material and row hashes
+//! are retained until its final admitted cursor confirms them.
 //!
 //! What the driver already stored survives a restart: the rows still open
 //! travel in the cursor, and the row hashes are rebuilt from the stored parts
 //! ([`RowState::rebuild`]), so a restart does not read and store every row
 //! again.
-use super::{Acquired, DriverError, NewMaterial, file_facts};
+use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::fs::File;
+use std::io::Write;
+use std::sync::Arc;
 
 pub struct SqliteRows {
     pub path: PathBuf,
@@ -68,13 +72,70 @@ pub struct Cursor {
 /// rowid. Kept for the life of the source task and rebuilt from the stored
 /// parts after a restart. An empty state (no stored parts yet) triggers a
 /// full pass, whose repeats admission suppresses.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default)]
 pub struct RowState {
     hashes: HashMap<i64, [u8; 32]>,
     /// Whether this process has polled since the state was made: the first
     /// poll after a start is a full pass even when the hashes were rebuilt,
     /// so an update made while Sinex was down is seen (law L20).
     polled: bool,
+    pending: Option<Pending>,
+}
+
+#[derive(Debug)]
+struct Pending {
+    file: Arc<File>,
+    length: usize,
+    records: Vec<(usize, usize)>,
+    ends: Vec<(usize, i64)>,
+    hashes: Vec<(i64, [u8; 32])>,
+    id: MaterialId,
+    previous: Cursor,
+    scanned: Cursor,
+    base: i64,
+    manifest: Value,
+    observation: ObservationFacts,
+}
+
+impl Pending {
+    fn acquired(&self, input: InputRef, cursor: &Cursor) -> Acquired {
+        let through = if cursor.material == Some(self.id) { cursor.through } else { 0 };
+        let records = self.records.iter().copied().filter(|&(_, end)| end > through).collect();
+        let previous = self.previous.clone();
+        let scanned = self.scanned.clone();
+        let ends = self.ends.clone();
+        let base = self.base;
+        let length = self.length;
+        Acquired {
+            input,
+            observation: self.observation.clone(),
+            revision: RevisionChange::Snapshot,
+            material: Some(NewMaterial {
+                id: self.id,
+                bytes: Vec::new(),
+                stored: Some(StoredBytes::FramedFile(self.file.clone())),
+                records,
+                part_index: scanned.part_index,
+                previous_part: previous.material,
+                reading_order: super::reading_order(&self.manifest),
+                manifest: self.manifest.clone(),
+                cursor_at: Box::new(move |end| {
+                    let upto = ends.iter().take_while(|(e, _)| *e <= end).map(|(_, r)| *r).max().unwrap_or(previous.max_rowid);
+                    serde_json::to_value(Cursor {
+                        max_rowid: upto.max(previous.max_rowid),
+                        last_full_pass_ns: if end == length { scanned.last_full_pass_ns } else { previous.last_full_pass_ns },
+                        last_order: base.saturating_add(end as i64),
+                        open: if end == length { scanned.open.clone() } else { previous.open.clone() },
+                        through: end,
+                        ..scanned.clone()
+                    }).expect("cursor serializes")
+                }),
+                aligned: false,
+                vanished: Vec::new(),
+            }),
+            cursor_unchanged: Value::Null,
+        }
+    }
 }
 
 impl RowState {
@@ -116,6 +177,16 @@ impl SqliteRows {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
+        if let Some(pending) = state.pending.take() {
+            if previous.material == Some(pending.id) && previous.through == pending.length {
+                state.hashes.extend(pending.hashes);
+                state.polled = true;
+            } else {
+                let acquired = pending.acquired(self.input(), &previous);
+                state.pending = Some(pending);
+                return Ok(acquired);
+            }
+        }
         let unavailable = |reason: String| Acquired {
             input: self.input(),
             observation: ObservationFacts {
@@ -137,7 +208,7 @@ impl SqliteRows {
             || now_ns.saturating_sub(previous.last_full_pass_ns)
                 >= self.full_pass_secs.saturating_mul(1_000_000_000);
 
-        let (connection, copy) = match open_for_read(&self.path) {
+        let connection = match open_for_read(&self.path) {
             Ok(opened) => opened,
             Err(e) => return Ok(unavailable(e)),
         };
@@ -181,15 +252,13 @@ impl SqliteRows {
             "SELECT {open_column} AS _open, rowid AS _rowid, * FROM {} WHERE ({filter}) AND ?1 IS NOT NULL AND ?2 IS NOT NULL ORDER BY rowid",
             self.from.unwrap_or(self.table)
         );
-        // One read transaction: a consistent snapshot even while the provider writes.
-        connection
-            .execute_batch("BEGIN")
-            .map_err(|e| DriverError::Io(e.to_string()))?;
         let mut stmt = connection
             .prepare(&sql)
             .map_err(|e| DriverError::Io(e.to_string()))?;
         let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
-        let mut bytes = Vec::new();
+        let mut staged = tempfile::tempfile().map_err(|e| DriverError::Io(e.to_string()))?;
+        let mut length = 0usize;
+        let mut hashes = Vec::new();
         let mut records = Vec::new();
         let mut ends: Vec<(usize, i64)> = Vec::new();
         let mut max_rowid = previous.max_rowid;
@@ -231,19 +300,17 @@ impl SqliteRows {
                 if state.hashes.get(&rowid) == Some(&hash) {
                     continue;
                 }
-                state.hashes.insert(rowid, hash);
-                let start = bytes.len();
-                bytes.extend_from_slice(line.as_bytes());
-                bytes.push(b'\n');
-                records.push((start, bytes.len()));
-                ends.push((bytes.len(), rowid));
+                hashes.push((rowid, hash));
+                let start = length;
+                staged.write_all(line.as_bytes()).and_then(|_| staged.write_all(b"\n"))
+                    .map_err(|e| DriverError::Io(e.to_string()))?;
+                length = length.checked_add(line.len() + 1).ok_or_else(|| DriverError::Io("row material exceeds addressable size".into()))?;
+                records.push((start, length));
+                ends.push((length, rowid));
             }
         }
         drop(stmt);
         connection.execute_batch("COMMIT").ok();
-        if full {
-            state.polled = true;
-        }
 
         let last_full = if full {
             now_ns
@@ -252,6 +319,7 @@ impl SqliteRows {
         };
         let open: Vec<i64> = open.into_iter().collect();
         if records.is_empty() {
+            state.polled = true;
             let unchanged = Cursor {
                 max_rowid,
                 last_full_pass_ns: last_full,
@@ -274,119 +342,51 @@ impl SqliteRows {
         // never below what earlier polls gave out, so a row read again later
         // (in this poll or a later one) is always newer.
         let base = now_ns.max(previous.last_order.saturating_add(1));
-        let manifest = json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": if copy.is_some() { "verified copy" } else { "database" }});
+        let manifest = json!({"path": self.path.display().to_string(), "host": self.host, "table": self.table, "from": self.from, "media_type": "application/x-ndjson", "full_pass": full, "read_at_ns": now_ns, "order_base": base, "read_from": "database"});
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
         } else {
             0
         };
-        let cursor_at = move |end: usize| -> Value {
-            // Rows are in rowid order, so the cursor is the last row at or before `end`.
-            let upto = ends
-                .iter()
-                .take_while(|(e, _)| *e <= end)
-                .map(|(_, r)| *r)
-                .max()
-                .unwrap_or(previous.max_rowid);
-            serde_json::to_value(Cursor {
-                max_rowid: upto.max(previous.max_rowid),
+        let pending = Pending {
+            file: Arc::new(staged),
+            length,
+            records,
+            ends,
+            hashes,
+            id,
+            previous,
+            scanned: Cursor {
+                max_rowid,
                 last_full_pass_ns: last_full,
-                last_order: base.saturating_add(end as i64),
+                last_order: base.saturating_add(length as i64),
                 material: Some(id),
                 part_index,
-                open: open.clone(),
-                through: end,
-            })
-            .expect("cursor serializes")
-        };
-        Ok(Acquired {
-            input: self.input(),
+                open,
+                through: length,
+            },
+            base,
+            manifest,
             observation: facts,
-            revision: RevisionChange::Snapshot,
-            material: Some(NewMaterial {
-                id,
-                bytes,
-                stored: None,
-                records,
-                part_index,
-                previous_part: previous.material,
-                reading_order: super::reading_order(&manifest),
-                manifest,
-                cursor_at: Box::new(cursor_at),
-                aligned: false,
-                vanished: Vec::new(),
-            }),
-            cursor_unchanged: Value::Null,
-        })
-    }
-}
-
-/// Open `path` read-only. When its program holds it locked (Chromium keeps
-/// `History` locked while it runs), copy it and read the copy, accepted only
-/// if the file's size and times did not change while copying (`y0o3.4`). The
-/// returned guard removes the copy.
-fn open_for_read(path: &std::path::Path) -> Result<(Connection, Option<Copy>), String> {
-    let open = |p: &std::path::Path, immutable: bool| -> rusqlite::Result<Connection> {
-        let mut flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-        let target = if immutable {
-            flags |= OpenFlags::SQLITE_OPEN_URI;
-            format!("file:{}?immutable=1", p.display())
-        } else {
-            p.display().to_string()
         };
-        let c = Connection::open_with_flags(target, flags)?;
-        c.busy_timeout(std::time::Duration::from_secs(2))?;
-        // Touch the schema so a lock shows now rather than mid-read.
-        c.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))?;
-        Ok(c)
-    };
-    match open(path, false) {
-        Ok(c) => return Ok((c, None)),
-        Err(e) if !is_locked(&e) => return Err(format!("cannot open read-only: {e}")),
-        Err(_) => {}
-    }
-    let facts = |p: &std::path::Path| file_facts(p).map(|f| (f.size, f.mtime_ns, f.ctime_ns));
-    for _ in 0..3 {
-        let before = facts(path).map_err(|e| e.to_string())?;
-        let copy = Copy::new()?;
-        std::fs::copy(path, &copy.file).map_err(|e| format!("copy {}: {e}", path.display()))?;
-        if facts(path).map_err(|e| e.to_string())? == before {
-            let c = open(&copy.file, true).map_err(|e| format!("cannot read the copy: {e}"))?;
-            return Ok((c, Some(copy)));
-        }
-    }
-    Err(format!(
-        "{} is locked and kept changing while being copied",
-        path.display()
-    ))
-}
-
-fn is_locked(e: &rusqlite::Error) -> bool {
-    matches!(
-        e.sqlite_error_code(),
-        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
-    )
-}
-
-/// A temporary copy of a locked database, removed when dropped.
-struct Copy {
-    dir: PathBuf,
-    file: PathBuf,
-}
-
-impl Copy {
-    fn new() -> Result<Self, String> {
-        let dir = std::env::temp_dir().join(format!("sinex-sqlite-copy-{}", uuid::Uuid::now_v7()));
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let file = dir.join("db");
-        Ok(Self { dir, file })
+        let acquired = pending.acquired(self.input(), &Cursor::default());
+        state.pending = Some(pending);
+        Ok(acquired)
     }
 }
 
-impl Drop for Copy {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
+/// SQLite owns the committed view, including WAL and rollback-journal rules.
+/// A locked database is unavailable: a stable main file may contain spilled
+/// uncommitted pages, so copying it cannot replace a read transaction.
+fn open_for_read(path: &std::path::Path) -> Result<Connection, String> {
+    let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|e| format!("cannot open read-only: {e}"))?;
+    c.busy_timeout(std::time::Duration::from_secs(2)).map_err(|e| e.to_string())?;
+    c.execute_batch("BEGIN").map_err(|e| format!("cannot begin committed read: {e}"))?;
+    // Establish the snapshot before inspecting its schema and rows.
+    c.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+        .map_err(|e| format!("cannot read committed snapshot: {e}"))?;
+    Ok(c)
 }
 
 fn hex(bytes: &[u8]) -> String {

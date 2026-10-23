@@ -23,10 +23,22 @@ fn driver(path: PathBuf) -> SqliteRows {
 
 fn lines(a: &Acquired) -> Vec<Value> {
     let m = a.material.as_ref().unwrap();
+    let bytes = material_bytes(m);
     m.records
         .iter()
-        .map(|(s, e)| serde_json::from_slice(&m.bytes[*s..*e]).unwrap())
+        .map(|(s, e)| serde_json::from_slice(&bytes[*s..*e]).unwrap())
         .collect()
+}
+
+fn material_bytes(m: &NewMaterial) -> Vec<u8> {
+    use std::os::unix::fs::FileExt;
+    if let Some(StoredBytes::FramedFile(file)) = &m.stored {
+        let mut bytes = vec![0; file.metadata().unwrap().len() as usize];
+        file.read_exact_at(&mut bytes, 0).unwrap();
+        bytes
+    } else {
+        m.bytes.clone()
+    }
 }
 
 #[test]
@@ -39,7 +51,7 @@ fn reads_rows_then_only_new_and_changed_ones() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0]["b"], json!({"blob_hex": "00ff"}));
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(material_bytes(m).len());
     assert_eq!(cursor["max_rowid"], json!(2));
 
     let c = Connection::open(&path).unwrap();
@@ -61,7 +73,7 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(material_bytes(m).len());
     assert_eq!(
         cursor["open"],
         json!([2]),
@@ -70,8 +82,8 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     assert!(m.manifest["read_at_ns"].as_i64().is_some());
 
     // A new process: the state comes back from the stored part.
-    let mut rebuilt = RowState::rebuild([m.bytes.as_slice()]);
-    assert_eq!(rebuilt.hashes, state.hashes);
+    let mut rebuilt = RowState::rebuild([material_bytes(m).as_slice()]);
+    assert!(state.hashes.is_empty(), "unconfirmed hashes remain pending");
     let again = d.poll(&cursor, &mut rebuilt).unwrap();
     assert!(
         again.material.is_none(),
@@ -86,7 +98,7 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
     let settled = d.poll(&again.cursor_unchanged, &mut rebuilt).unwrap();
     assert_eq!(lines(&settled)[0]["n"], json!(7));
     let s = settled.material.as_ref().unwrap();
-    assert_eq!((s.cursor_at)(s.bytes.len())["open"], Value::Null);
+    assert_eq!((s.cursor_at)(material_bytes(s).len())["open"], Value::Null);
 }
 
 /// L20: a finished row changed while Sinex was down (Atuin's soft
@@ -99,12 +111,12 @@ fn a_row_changed_while_down_is_read_after_the_restart() {
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(material_bytes(m).len());
     Connection::open(&path)
         .unwrap()
         .execute_batch("UPDATE t SET n = 9 WHERE id = 'a'")
         .unwrap();
-    let mut rebuilt = RowState::rebuild([m.bytes.as_slice()]);
+    let mut rebuilt = RowState::rebuild([material_bytes(m).as_slice()]);
     let after = d.poll(&cursor, &mut rebuilt).unwrap();
     let rows = lines(&after);
     assert_eq!(rows.len(), 1, "only the changed row");
@@ -118,7 +130,7 @@ fn a_row_changed_while_down_is_read_after_the_restart() {
                 .material
                 .as_ref()
                 .map_or(after.cursor_unchanged.clone(), |m| {
-                    (m.cursor_at)(m.bytes.len())
+                    (m.cursor_at)(material_bytes(m).len())
                 }),
             &mut rebuilt,
         )
@@ -138,7 +150,7 @@ fn reading_orders_only_grow() {
         (m.reading_order)(m.records[1].0),
     );
     assert!(b > a, "later in one snapshot is newer");
-    let cursor = (m.cursor_at)(m.bytes.len());
+    let cursor = (m.cursor_at)(material_bytes(m).len());
     let c = Connection::open(&path).unwrap();
     c.execute_batch("UPDATE t SET n = 7 WHERE id = 'a';")
         .unwrap();
@@ -176,7 +188,8 @@ fn locked_rollback_spill_is_unavailable_until_rollback() {
 #[test]
 fn failed_poll_retries_same_material_before_reading_source_changes() {
     let path = db();
-    let d = driver(path.clone());
+    let mut d = driver(path.clone());
+    d.full_pass_secs = 0;
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let first_material = first.material.as_ref().unwrap();
@@ -200,4 +213,29 @@ fn missing_column_is_named() {
         a.observation.unavailable.as_deref(),
         Some("table t has no column nope")
     );
+}
+
+#[test]
+fn wal_reads_committed_rows_while_writer_has_uncommitted_changes() {
+    let path = db();
+    let writer = Connection::open(&path).unwrap();
+    writer.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; INSERT INTO t VALUES ('wal-committed',3,NULL); BEGIN IMMEDIATE; UPDATE t SET id='uncommitted';").unwrap();
+    let d = driver(path);
+    let a = d.poll(&Value::Null, &mut RowState::default()).unwrap();
+    assert!(a.observation.unavailable.is_none());
+    let rows = lines(&a);
+    assert_eq!(rows.len(),3);
+    assert_eq!(rows[2]["id"],"wal-committed");
+    assert!(rows.iter().all(|r| r["id"] != "uncommitted"));
+    writer.execute_batch("ROLLBACK").unwrap();
+}
+
+#[test]
+fn missing_database_stays_unavailable_without_creating_a_file() {
+    let path = db().with_file_name("absent.db");
+    let a = driver(path.clone()).poll(&Value::Null,&mut RowState::default()).unwrap();
+    assert!(a.observation.unavailable.is_some());
+    assert!(a.material.is_none());
+    assert_eq!(a.cursor_unchanged,Value::Null);
+    assert!(!path.exists());
 }
