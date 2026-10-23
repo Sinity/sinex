@@ -37,6 +37,12 @@ to the writer. A source cursor describes admitted progress; obtaining bytes
 alone does not mean their records were interpreted successfully. Archive
 capture and replay have additional open acceptance criteria in Beads.
 
+Outside producers install material files through the streaming blob writer and
+upload them from one verified open representation, holding at most one 512 KiB
+chunk plus the shared blob reader's frame metadata and decoder. Empty materials
+still send one empty chunk; acknowledgment and pending-batch retry ordering are
+unchanged. This bounds producer transport memory, not a driver's decoded records.
+
 The outside producers use `sinex-sources::live::run` to start capture threads
 and publish their spools under one lifetime. Signal handlers are registered
 before capture begins. Deadline, production failure, interrupt and termination

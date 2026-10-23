@@ -34,6 +34,7 @@ use sinex_model::{BatchKind, Origin, RecordOutcome, RunId};
 use sinex_protocol::{
     Acknowledgment, Have, Ingress, MaterialFrame, ProducerEvent, ProducerFailure, Subjects,
 };
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -76,9 +77,9 @@ impl Store {
 }
 
 impl Store {
-    /// The bytes named `name` (`blake3:<hex>`), to send to a `sinexd` that
-    /// does not share this store.
-    pub fn get(&self, name: &str) -> Result<Vec<u8>, String> {
+    /// Verify before sending any chunk and retain that representation for the
+    /// complete attempt. Producer installs are plain, including indirect frames.
+    fn open_upload(&self, name: &str) -> Result<hashed_blobs::PlainReader, String> {
         let invalid = || format!("invalid blob name {name}");
         let hex = name.strip_prefix("blake3:").ok_or_else(invalid)?;
         if hex.len() != 64 {
@@ -89,17 +90,21 @@ impl Store {
             *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| invalid())?;
         }
         let hash = hashed_blobs::Hash(raw);
-        let mut out = Vec::new();
-        std::io::Read::read_to_end(
-            &mut self.0.read(&hash).map_err(|e| e.to_string())?,
-            &mut out,
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(out)
+        self.0
+            .read_plain(&hash, None, || Ok(()))
+            .map_err(|e| e.to_string())
     }
 }
 
 impl MaterialSink for Store {
+    fn put_file(&self, path: &Path) -> Result<String, String> {
+        let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        self.0
+            .put(std::io::BufReader::new(file), 3)
+            .map(|hash| format!("blake3:{}", hash.hex()))
+            .map_err(|e| e.to_string())
+    }
+
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         self.0
             .put(bytes, 3)
@@ -317,22 +322,25 @@ impl Producer {
     /// sending, and a refused attempt never blocks the next one.
     async fn upload_blob(&mut self, blob: &str) -> Result<(), Error> {
         let store = self.upload.as_ref().expect("uploading");
-        let bytes = store.get(blob).map_err(Error::Nats)?;
-        let total = bytes.len() as u64;
+        let mut reader = store.open_upload(blob).map_err(Error::Nats)?;
+        // The initial whole-name verification accounts for every decoded byte.
+        let total = reader.stats().decoded_bytes;
         let attempt = uuid::Uuid::now_v7();
-        let mut offset = 0usize;
+        let mut offset = 0u64;
+        let mut bytes = vec![0; total.min(CHUNK_BYTES as u64) as usize];
         loop {
-            let end = (offset + CHUNK_BYTES).min(bytes.len());
+            let count = (total - offset).min(CHUNK_BYTES as u64) as usize;
+            reader.read_exact(&mut bytes[..count]).map_err(nats)?;
             self.send(Ingress::Chunk {
                 frame: format!("{blob}/{attempt}/{offset}"),
                 blob: blob.to_owned(),
-                offset: offset as u64,
+                offset,
                 total,
-                data: base64::engine::general_purpose::STANDARD.encode(&bytes[offset..end]),
+                data: base64::engine::general_purpose::STANDARD.encode(&bytes[..count]),
             })
             .await?;
-            offset = end;
-            if offset >= bytes.len() {
+            offset += count as u64;
+            if offset >= total {
                 return Ok(());
             }
         }
