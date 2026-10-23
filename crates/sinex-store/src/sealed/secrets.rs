@@ -19,10 +19,20 @@ pub enum SecretRole {
 
 /// No serialization or debug representation: capabilities leave this type only
 /// through a class-wrapped envelope or an explicitly checked data-key request.
-#[derive(Clone)]
 pub struct MaterialSecrets {
     data: Option<SecretBox<[u8; 32]>>,
     record_naming: SecretBox<[u8; 32]>,
+}
+impl Clone for MaterialSecrets {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.as_ref().map(copy_secret),
+            record_naming: copy_secret(&self.record_naming),
+        }
+    }
+}
+fn copy_secret(secret: &SecretBox<[u8; 32]>) -> SecretBox<[u8; 32]> {
+    SecretBox::new(Box::new(*secret.expose_secret()))
 }
 impl MaterialSecrets {
     pub fn from_data_key(key: &DataKey) -> Self {
@@ -43,14 +53,14 @@ impl MaterialSecrets {
     pub fn naming_only(&self) -> Self {
         Self {
             data: None,
-            record_naming: self.record_naming.clone(),
+            record_naming: copy_secret(&self.record_naming),
         }
     }
     /// Fresh content encryption preserves record identity through excision.
     pub fn with_data_key(&self, key: &DataKey) -> Self {
         Self {
             data: Some(SecretBox::new(Box::new(key.key))),
-            record_naming: self.record_naming.clone(),
+            record_naming: copy_secret(&self.record_naming),
         }
     }
     pub fn data_key(&self, key_ref: String) -> Result<DataKey> {
