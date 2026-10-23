@@ -257,3 +257,24 @@ fn missing_database_stays_unavailable_without_creating_a_file() {
     assert_eq!(a.cursor_unchanged, Value::Null);
     assert!(!path.exists());
 }
+
+#[test]
+fn pinned_dbpage_reads_match_rows_and_include_committed_wal_pages() {
+    let path = db();
+    let writer = Connection::open(&path).unwrap();
+    writer.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;").unwrap();
+    let read = open_for_read(&path).unwrap();
+    let pages = |connection: &Connection| -> Vec<Vec<u8>> {
+        connection.prepare("SELECT data FROM sqlite_dbpage('main') ORDER BY pgno").unwrap()
+            .query_map([], |row| row.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+    };
+    let before = pages(&read);
+    assert!(!before.is_empty(), "the pinned rusqlite build must provide dbpage");
+    writer.execute_batch("UPDATE t SET n=99 WHERE id='a'").unwrap();
+    assert_eq!(read.query_row("SELECT n FROM t WHERE id='a'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    assert_eq!(pages(&read), before, "page reads and rows stay on the pinned view");
+    drop(read);
+    let next = open_for_read(&path).unwrap();
+    assert_eq!(next.query_row("SELECT n FROM t WHERE id='a'", [], |r| r.get::<_, i64>(0)).unwrap(), 99);
+    assert_ne!(pages(&next), before, "the next view includes the WAL commit");
+}
