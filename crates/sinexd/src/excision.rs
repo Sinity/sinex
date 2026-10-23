@@ -49,7 +49,7 @@ pub async fn excise_with(
             let framed = sinex_sources::drivers::stored_records(&m.manifest, &bytes, spec.framer);
             if framed
                 .iter()
-                .any(|&(start, end)| start >= end || end > bytes.len())
+                .any(|&(start, end)| start > end || end > bytes.len())
             {
                 return Err(format!("material {}: invalid stored record ranges", m.id));
             }

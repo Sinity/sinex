@@ -43,6 +43,10 @@ range. Even empty files then have distinct byte anchors and advancing cursor
 ends; source record hashes exclude the prefix. Notes and Maildir parser version 2
 use this framing. Retained unambiguous older ranges remain readable; ambiguous
 older byte anchors require an explicit mapping from retained member evidence.
+Uniquely mapped legacy records sharing a byte end are admitted together, so a
+new checkpoint cannot omit an empty tail; whole-material retry preserves their
+locations and deduplication. An older checkpoint alone does not prove that tail
+was admitted.
 The existing drain reads declared source ranges, preserving hashes,
 carry and ordinary batch limits. Memory holds the current file record and batch;
 a single oversized note or message still requires that whole decoded record.

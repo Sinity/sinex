@@ -6,7 +6,9 @@ use sinex_model::{
 };
 
 /// Batch size bounds. Batches are sized by events and bytes; a record too large
-/// for a normal batch goes alone in a batch of one. No valid record is refused.
+/// for a normal batch goes alone in a batch of one. Records sharing a byte
+/// end stay together because one byte checkpoint cannot distinguish them.
+/// No valid record is refused.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub max_events: usize,
@@ -202,6 +204,13 @@ impl<'a, P: Parser> Drainer<'a, P> {
                     "directory record anchors are not distinct and increasing; retained member evidence needs an explicit mapping before byte-anchored replay",
                 ));
             }
+            if input
+                .records
+                .windows(2)
+                .any(|records| records[0].1 > records[1].0)
+            {
+                return Err(RecordError::new("directory record ranges overlap"));
+            }
             for &(start, end) in input.records {
                 if start > end {
                     return Err(RecordError::new("invalid directory record range"));
@@ -362,7 +371,9 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
                 RecordOutcome::Events { events, .. } => events.len(),
                 RecordOutcome::Failure { .. } => 0,
             };
+            // A byte checkpoint must cover every record ending there.
             let full = !current.outcomes.is_empty()
+                && end != current.end
                 && (current.events + events > self.input.limits.max_events
                     || bytes_in_chunk + size > self.input.limits.max_bytes);
             if full {

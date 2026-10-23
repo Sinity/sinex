@@ -299,3 +299,69 @@ fn missing_directory_is_unavailable_and_accessible_empty_is_not() {
     assert!(empty.material.is_none());
     assert!(empty.cursor_unchanged["last_complete_scan_ns"].is_number());
 }
+
+#[test]
+fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
+    use crate::{Limits, drain::drain, sources::notes};
+    use sinex_model::{Class, ReadingOrder, RecordOutcome};
+    use std::os::unix::fs::FileExt;
+    for bodies in [
+        vec!["", "", "gamma"],
+        vec!["gamma", "", ""],
+        vec!["", "gamma", ""],
+        vec![""],
+        vec!["", ""],
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        for (index, body) in bodies.iter().enumerate() {
+            std::fs::write(dir.path().join(format!("{index}.md")), body).unwrap();
+        }
+        let acquired = driver(dir.path().to_owned(), 1 << 20)
+            .poll(&Value::Null, &mut DirState::default())
+            .unwrap();
+        let m = acquired.material.unwrap();
+        assert_eq!(m.manifest["format_version"], 2);
+        assert!(m.records.windows(2).all(|ranges| ranges[0].1 < ranges[1].1));
+        let Some(StoredBytes::FramedFile(file)) = &m.stored else {
+            panic!()
+        };
+        for ((start, end), body) in m.records.iter().zip(&bodies) {
+            assert_eq!(end - start, body.len());
+            let mut prefix = [1];
+            file.read_exact_at(&mut prefix, (start - 1) as u64).unwrap();
+            assert_eq!(prefix, [0]);
+        }
+        let chunks = drain(
+            &notes::NotesParser,
+            crate::DrainInput {
+                source: "synthetic",
+                class: Class::Open,
+                material: m.id,
+                bytes: m.record_bytes(),
+                records: &m.records,
+                carry: Value::Null,
+                reading_order: &|_| ReadingOrder(0),
+                limits: Limits {
+                    max_events: 1,
+                    max_bytes: 1,
+                },
+                manifest: &m.manifest,
+            },
+        )
+        .unwrap();
+        let outcomes: Vec<_> = chunks.into_iter().flat_map(|c| c.outcomes).collect();
+        assert_eq!(outcomes.len(), bodies.len());
+        for (index, (outcome, body)) in outcomes.iter().zip(&bodies).enumerate() {
+            let RecordOutcome::Events { location, events } = outcome else {
+                panic!("{outcome:?}")
+            };
+            assert_eq!(location.unwrap().anchor, m.records[index].0 as u64);
+            assert_eq!(events[0].payload["path"], format!("{index}.md"));
+            assert_eq!(events[0].payload["text"], *body);
+            assert_eq!(
+                &events[0].record_hash,
+                blake3::hash(body.as_bytes()).as_bytes()
+            );
+        }
+    }
+}

@@ -306,3 +306,110 @@ fn invalid_staged_ranges_are_refused_before_record_allocation() {
         .is_err()
     );
 }
+
+#[test]
+fn legacy_empty_members_keep_unambiguous_coordinates_and_refuse_ambiguous_ones() {
+    use crate::sources::notes::NotesParser;
+    let manifest = serde_json::json!({
+        "path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle",
+        "members":[{"path":"a.md", "stream_offset":0, "length":5}, {"path":"b.md", "stream_offset":5, "length":0}],
+    });
+    let chunks = drain(
+        &NotesParser,
+        DrainInput {
+            source: "synthetic",
+            class: Class::Open,
+            material: MaterialId::new(),
+            bytes: b"alpha".as_slice().into(),
+            records: &[(0, 5), (5, 5)],
+            carry: Value::Null,
+            reading_order: &|_| ReadingOrder(0),
+            limits: Limits {
+                max_events: 1,
+                max_bytes: 1,
+            },
+            manifest: &manifest,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        chunks.len(),
+        1,
+        "a shared byte checkpoint covers both records"
+    );
+    let outcomes: Vec<_> = chunks.into_iter().flat_map(|c| c.outcomes).collect();
+    for (index, (path, text, anchor)) in [("a.md", "alpha", 0), ("b.md", "", 5)]
+        .into_iter()
+        .enumerate()
+    {
+        let RecordOutcome::Events { location, events } = &outcomes[index] else {
+            panic!()
+        };
+        assert_eq!(location.unwrap().anchor, anchor);
+        assert_eq!(events[0].payload["path"], path);
+        assert_eq!(events[0].payload["text"], text);
+    }
+    let ambiguous = serde_json::json!({
+        "path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle",
+        "members":[{"path":"a.md", "stream_offset":0, "length":0}, {"path":"b.md", "stream_offset":0, "length":0}],
+    });
+    for records in [&[(0, 0), (0, 0)][..], &[(0, 0)][..]] {
+        assert!(
+            drain(
+                &NotesParser,
+                DrainInput {
+                    source: "synthetic",
+                    class: Class::Open,
+                    material: MaterialId::new(),
+                    bytes: b"".as_slice().into(),
+                    records,
+                    carry: Value::Null,
+                    reading_order: &|_| ReadingOrder(0),
+                    limits: Limits::default(),
+                    manifest: &ambiguous,
+                }
+            )
+            .is_err()
+        );
+    }
+    let overlap = serde_json::json!({
+        "media_type":"application/x-sinex-file-bundle", "path":"synthetic-vault",
+        "members":[{"path":"a.md","stream_offset":0,"length":5}, {"path":"b.md","stream_offset":2,"length":3}],
+    });
+    assert!(
+        drain(
+            &NotesParser,
+            DrainInput {
+                source: "synthetic",
+                class: Class::Open,
+                material: MaterialId::new(),
+                bytes: b"alpha".as_slice().into(),
+                records: &[(0, 5), (2, 5)],
+                carry: Value::Null,
+                reading_order: &|_| ReadingOrder(0),
+                limits: Limits::default(),
+                manifest: &overlap,
+            }
+        )
+        .is_err()
+    );
+    let mut unknown = manifest.clone();
+    unknown["format_version"] = serde_json::json!(3);
+    assert!(
+        drain(
+            &NotesParser,
+            DrainInput {
+                source: "synthetic",
+                class: Class::Open,
+                material: MaterialId::new(),
+                bytes: b"alpha".as_slice().into(),
+                records: &[(0, 5)],
+                carry: Value::Null,
+                reading_order: &|_| ReadingOrder(0),
+                limits: Limits::default(),
+                manifest: &unknown,
+            }
+        )
+        .is_err()
+    );
+}
