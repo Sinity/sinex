@@ -92,6 +92,12 @@ selects what Cargo builds; a name or `-E` filter alone selects tests after
 building the workspace. Existing `xtask test NAME` calls keep their behavior.
 Without arguments it still runs the full workspace. Package selection keeps
 the same schema database, per-test clones, shared NATS and tmpfs test storage.
+The declared test operations give that storage to AgentCTL, which removes it
+when the native job exits, including cancellation or SIGKILL. Devkit uses a
+short held-directory path for long Linux socket roots while keeping files
+inside owned scratch. Standalone Drop removes only its child; abrupt death has
+no external cleanup guarantee. PostgreSQL and NATS retain their existing separate
+lifecycle owners.
 
 A first import of the operator's shell history:
 
