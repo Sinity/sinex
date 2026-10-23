@@ -12,8 +12,8 @@ fn imported(command: &str, anchor: u64) -> Event {
         &CommandImported {
             command: command.into(),
             hostname: "h".into(),
-            started_at: Timestamp::from_unix_secs(1_700_000_000 + anchor as i64).unwrap(),
-            header_elapsed: 0,
+            started_at: Some(Timestamp::from_unix_secs(1_700_000_000 + anchor as i64).unwrap()),
+            header_elapsed: Some(0),
             n: 0,
         },
         "zsh",

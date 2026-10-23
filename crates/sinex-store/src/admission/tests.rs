@@ -367,8 +367,8 @@ async fn a_dropped_record_gets_a_removed_reading_once() {
         &CommandImported {
             command: "b".into(),
             hostname: "h".into(),
-            started_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
-            header_elapsed: 0,
+            started_at: Some(Timestamp::from_unix_secs(1_700_000_000).unwrap()),
+            header_elapsed: Some(0),
             n: 0,
         },
         "terminal.zsh",
@@ -551,3 +551,65 @@ async fn dirty_keys_keep_each_derivation_and_advance_existing_keys() {
 }
 
 mod privacy;
+
+#[tokio::test]
+async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat() {
+    let (_db, mut conn) = testdb::fresh().await;
+    let first = MaterialId::new();
+    let second = MaterialId::new();
+    let make = |material, anchor, timed: bool| {
+        Event::build(
+            &CommandImported {
+                command: "pwd".into(),
+                hostname: "h".into(),
+                started_at: timed.then(|| Timestamp::from_unix_secs(10).unwrap()),
+                header_elapsed: timed.then_some(0),
+                n: 0,
+            },
+            "zsh",
+            Origin::Record {
+                location: RecordLocation { material, anchor },
+                ordinal: 0,
+            },
+            ReadingOrder(anchor as i64),
+            [1; 32],
+            Class::Open,
+        )
+        .unwrap()
+    };
+    let events = vec![
+        make(first, 0, false),
+        make(first, 4, false),
+        make(second, 0, false),
+        make(first, 8, true),
+    ];
+    assert!(
+        events[..3]
+            .iter()
+            .all(|e| e.ts_orig.at.is_none() && e.equivalence_key.is_none())
+    );
+    assert!(events[3].equivalence_key.is_some());
+    assert_eq!(admit_one(&mut conn, &batch(events)).await.admitted, 4);
+    let repeated = admit_one(
+        &mut conn,
+        &batch(vec![
+            make(first, 0, false),
+            make(second, 0, false),
+            make(second, 4, true),
+        ]),
+    )
+    .await;
+    assert_eq!(repeated.admitted, 0);
+    assert_eq!(repeated.repeats, 3);
+    let live: i64 = sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM core.live_locations"#)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(live, 3);
+    let timed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.live_equivalence WHERE source = 'zsh'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(timed, 1);
+}

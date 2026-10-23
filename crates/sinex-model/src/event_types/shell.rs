@@ -40,31 +40,48 @@ pub struct CommandExecuted {
     pub extra: Map<String, Value>,
 }
 
-/// A command from a zsh extended history file. The file has no record IDs, so
-/// a record is identified by host, start second, command and its occurrence
-/// number among identical pairs; a later reading of it, wherever it is read
-/// from, is a repeat.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "command.imported",
-    key = ["hostname", "started_at", "command", "n"],
-    replace = repeat,
-    time = started_at,
-    quality = intrinsic
-)]
+/// A command from a plain or extended zsh history file. Timed records keep
+/// their natural key across materials; untimed records use their material
+/// location because neither text nor an unknown start identifies an occurrence.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CommandImported {
     pub command: String,
     pub hostname: String,
-    pub started_at: Timestamp,
+    /// Absent in plain history; acquisition time is not a command start.
+    pub started_at: Option<Timestamp>,
     /// The elapsed seconds field as written. With SHARE_HISTORY zsh writes 0
     /// before the command ends, so this is not a duration.
-    pub header_elapsed: i64,
+    pub header_elapsed: Option<i64>,
     /// Which occurrence this is among records with the same start second and
     /// command, in file order (the same command run twice in one second is
-    /// two runs). With host, start and command it identifies the record
+    /// two runs). Untimed records use their material location instead; this
+    /// discriminator is zero and unused for them.
+    /// With host, start and command it identifies the timed record
     /// wherever it is read from, so a re-read from the start (a lost position,
     /// re-staged bytes) is a repeat, not a new command.
     pub n: u32,
+}
+
+impl crate::EventPayload for CommandImported {
+    const EVENT_TYPE: &'static str = "command.imported";
+    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["hostname", "started_at", "command", "n"]);
+    const REPLACE: crate::ReplaceRule = crate::ReplaceRule::SuppressRepeat;
+
+    fn key_kind(&self) -> crate::KeyKind {
+        if self.started_at.is_some() {
+            Self::KEY
+        } else {
+            crate::KeyKind::Location
+        }
+    }
+
+    fn ts_orig(&self) -> crate::TsOrig {
+        crate::TsOrig::maybe(self.started_at, crate::TimeQuality::Intrinsic)
+    }
+
+    fn payload_schema() -> Value {
+        serde_json::to_value(schemars::schema_for!(Self)).expect("schemas serialize")
+    }
 }
 
 /// One command run, combined from every source that saw it (Atuin, zsh,
@@ -121,3 +138,6 @@ pub struct ShellSession {
     /// Working directories in first-seen order.
     pub cwds: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests;

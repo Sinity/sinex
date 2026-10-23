@@ -67,7 +67,7 @@ pub struct Event {
     pub origin: Origin,
     pub ts_orig: TsOrig,
     pub payload: Value,
-    /// Set for types keyed by fields; `None` for location-keyed types.
+    /// Set when this record has field identity; `None` uses its location.
     pub equivalence_key: Option<EquivalenceKey>,
     pub replace: ReplaceRule,
     pub reading_order: ReadingOrder,
@@ -99,7 +99,7 @@ impl Event {
         if !value.is_object() {
             return Err(BuildError::NotAnObject(P::EVENT_TYPE));
         }
-        let equivalence_key = match P::KEY {
+        let equivalence_key = match payload.key_kind() {
             KeyKind::Location => None,
             KeyKind::Fields(fields) => Some(EquivalenceKey::of(P::EVENT_TYPE, fields, &value)),
         };

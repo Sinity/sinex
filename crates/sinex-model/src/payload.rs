@@ -71,6 +71,8 @@ pub struct Cited {
 pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// The stored event type, such as `command.executed`.
     const EVENT_TYPE: &'static str;
+    /// Declared natural key. Individual records may lack that identity and
+    /// select the existing material-location path through `key_kind`.
     const KEY: KeyKind;
     const REPLACE: ReplaceRule;
     /// Per-field privacy hints; rules in the store decide the effective class.
@@ -80,6 +82,12 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// keeps that value. For exports that drop details of things that are
     /// gone (a deleted video's title).
     const KEEP_KNOWN: &'static [&'static str] = &[];
+
+    /// The identity available in this particular record. The default retains
+    /// the declared key, including existing null-field behavior.
+    fn key_kind(&self) -> KeyKind {
+        Self::KEY
+    }
 
     /// When the thing happened, by the source's evidence.
     fn ts_orig(&self) -> TsOrig;

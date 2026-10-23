@@ -10,8 +10,8 @@ fn event(command: &str) -> Event {
         &CommandImported {
             command: command.into(),
             hostname: "h".into(),
-            started_at: Timestamp::from_unix_secs(1).unwrap(),
-            header_elapsed: 0,
+            started_at: Some(Timestamp::from_unix_secs(1).unwrap()),
+            header_elapsed: Some(0),
             n: 0,
         },
         "terminal.zsh-history",

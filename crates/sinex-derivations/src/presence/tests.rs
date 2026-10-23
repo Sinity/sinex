@@ -42,8 +42,8 @@ fn command(at: Timestamp, n: u64) -> Event {
         &CommandImported {
             command: format!("c{n}"),
             hostname: "box".into(),
-            started_at: at,
-            header_elapsed: 0,
+            started_at: Some(at),
+            header_elapsed: Some(0),
             n: 0,
         },
         "terminal.zsh",

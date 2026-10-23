@@ -25,8 +25,8 @@ impl Parser for Lines {
         let payload = CommandImported {
             command: text.into(),
             hostname: "h".into(),
-            started_at: Timestamp::from_unix_secs(i64::from(*carry)).unwrap(),
-            header_elapsed: 0,
+            started_at: Some(Timestamp::from_unix_secs(i64::from(*carry)).unwrap()),
+            header_elapsed: Some(0),
             n: 0,
         };
         Ok((vec![payload], carry + 1))

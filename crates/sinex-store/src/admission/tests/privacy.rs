@@ -19,8 +19,8 @@ fn imported(source: &str, command: &str, origin: Origin) -> Event {
         &CommandImported {
             command: command.into(),
             hostname: "h".into(),
-            started_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
-            header_elapsed: 0,
+            started_at: Some(Timestamp::from_unix_secs(1_700_000_000).unwrap()),
+            header_elapsed: Some(0),
             n: 0,
         },
         source,

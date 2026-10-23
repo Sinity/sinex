@@ -67,7 +67,7 @@ fn metafied_bytes_and_continuations() {
     assert_eq!(consumed, bytes.len() - b": 3602:0;partial".len());
     assert_eq!(parse(&bytes[r[0].0..r[0].1]).unwrap(), "echo ĥ");
     assert_eq!(parse(&bytes[r[1].0..r[1].1]).unwrap(), "printf a\nb");
-    assert!(parse(b"plain\n").is_err());
+    assert_eq!(parse(b"plain\n").unwrap(), "plain");
     assert!(unmetafy(b"\x83").is_err());
 }
 
@@ -131,4 +131,175 @@ proptest! {
             prop_assert_eq!(parse(&file[anchor..anchor + r[0].1]).unwrap(), command);
         }
     }
+}
+
+#[test]
+fn plain_commands_preserve_text_and_do_not_invent_times() {
+    let parser = ZshParser { host: "h".into() };
+    let cases: &[(&[u8], &str)] = &[
+        (b"  echo\t spaced  \n", "  echo\t spaced  "),
+        (b"echo slash\\ \n", "echo slash\\"),
+        (b"printf a\\\nb\n", "printf a\nb"),
+        (b"echo \xc4\x83\x85\n", "echo ĥ"),
+        (b"\\: echo colon\n", ": echo colon"),
+        (b"\\: 10:0;literal\n", ": 10:0;literal"),
+    ];
+    for (raw, expected) in cases {
+        let (events, state) = parser
+            .parse(raw, &Seen::default(), &crate::RecordContext::none())
+            .unwrap();
+        assert_eq!(events[0].command, *expected);
+        assert_eq!(events[0].started_at, None);
+        assert_eq!(events[0].header_elapsed, None);
+        assert_eq!(state, Seen::default());
+    }
+    assert_eq!(parse(b": 10:0;\\: literal\n").unwrap(), "\\: literal");
+    assert!(
+        parser
+            .parse(
+                &b"\n".as_slice(),
+                &Seen::default(),
+                &crate::RecordContext::none()
+            )
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    for raw in [
+        b": bad:0;cmd\n".as_slice(),
+        b": 1:bad;cmd\n",
+        b": 1:0bad\n",
+        b"\xff\n",
+        b"\x83",
+        b"partial",
+    ] {
+        assert!(
+            parser
+                .parse(&raw, &Seen::default(), &crate::RecordContext::none())
+                .is_err(),
+            "{raw:?}"
+        );
+    }
+}
+
+// Normalize random event IDs away, retaining the payload, byte coordinates,
+// source clock, natural key and record bytes hash.
+fn observations(
+    bytes: &[u8],
+    base: usize,
+    carry: serde_json::Value,
+) -> (Vec<serde_json::Value>, serde_json::Value) {
+    let (records, _) = frame(bytes);
+    let chunks = drain(
+        &ZshParser { host: "h".into() },
+        DrainInput {
+            manifest: &serde_json::Value::Null,
+            source: SPEC.name,
+            class: Class::Open,
+            material: MaterialId(uuid::Uuid::nil()),
+            bytes,
+            records: &records,
+            carry: carry.clone(),
+            reading_order: &|a| ReadingOrder((base + a) as i64),
+            limits: Limits::default(),
+        },
+    )
+    .unwrap();
+    assert_eq!(chunks.last().unwrap().end, frame(bytes).1);
+    let mut out = Vec::new();
+    for chunk in &chunks {
+        for outcome in &chunk.outcomes {
+            match outcome {
+                RecordOutcome::Events { location, events } => {
+                    let anchor = location.unwrap().anchor as usize;
+                    let end = records.iter().find(|r| r.0 == anchor).unwrap().1;
+                    for event in events {
+                        assert_eq!(
+                            event.record_hash,
+                            *blake3::hash(&bytes[anchor..end]).as_bytes()
+                        );
+                        out.push(serde_json::json!([
+                            base + anchor,
+                            event.payload,
+                            event.ts_orig.at,
+                            event.ts_orig.quality,
+                            event.equivalence_key,
+                            event.reading_order.0
+                        ]));
+                    }
+                    if events.is_empty() {
+                        out.push(serde_json::json!([base + anchor, "empty"]));
+                    }
+                }
+                RecordOutcome::Failure { location, reason } => {
+                    out.push(serde_json::json!([base + location.anchor as usize, reason]))
+                }
+            }
+        }
+    }
+    let carry = chunks.last().map(|c| c.carry.clone()).unwrap_or(carry);
+    (out, carry)
+}
+
+#[test]
+fn mixed_history_append_cuts_keep_carry_coordinates_and_failures() {
+    let file = b"pwd\n: 10:0;pwd\npwd\n\n: invalid\n: 10:2;pwd\nprintf a\\\nb\n\\: literal\npwd\n: 10:0;pwd\n";
+    let (whole, state) = observations(file, 0, serde_json::Value::Null);
+    // The shared drain accounts blank/excised records without emitting an outcome.
+    assert_eq!(whole.len(), 9);
+    assert_eq!(whole[0][3], "unknown");
+    assert_eq!(whole[1][1]["n"], 0);
+    assert_eq!(whole[4][1]["n"], 1);
+    assert_eq!(whole[8][1]["n"], 2);
+    for cut in 0..=file.len() {
+        let (_, consumed) = frame(&file[..cut]);
+        let (mut parts, carry) = observations(&file[..consumed], 0, serde_json::Value::Null);
+        let (rest, final_carry) = observations(&file[consumed..], consumed, carry);
+        parts.extend(rest);
+        assert_eq!(parts, whole, "cut {cut}");
+        assert_eq!(final_carry, state, "carry cut {cut}");
+    }
+}
+
+#[test]
+fn appended_plain_records_keep_distinct_material_locations_on_replay() {
+    use crate::drivers::append_file::AppendState;
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history");
+    std::fs::write(&path, b"pwd\n: 10:0;pwd\nprintf a\\\n").unwrap();
+    let driver = driver(path.clone(), "h".into());
+    let mut state = AppendState::default();
+    let first = driver
+        .poll(&serde_json::Value::Null, &mut state)
+        .unwrap()
+        .material
+        .unwrap();
+    assert_eq!(first.bytes, b"pwd\n: 10:0;pwd\n");
+    let (_, carry) = observations(&first.bytes, 0, serde_json::Value::Null);
+    let cursor = (first.cursor_at)(first.bytes.len());
+    let mut restarted = AppendState::rebuild([(first.id, first.bytes.as_slice())], frame);
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"b\npwd\n: 10:0;pwd\n")
+        .unwrap();
+    let second = driver
+        .poll(&cursor, &mut restarted)
+        .unwrap()
+        .material
+        .unwrap();
+    assert_eq!(second.previous_part, Some(first.id));
+    assert_ne!(second.id, first.id);
+    assert_eq!(second.bytes, b"printf a\\\nb\npwd\n: 10:0;pwd\n");
+    assert_eq!(second.records, frame(&second.bytes).0);
+    let (actual, _) = observations(&second.bytes, first.bytes.len(), carry.clone());
+    assert_eq!(actual[0][1]["command"], "printf a\nb");
+    assert_eq!(actual[1][3], "unknown");
+    assert_eq!(actual[2][1]["n"], 1);
+    assert_eq!(
+        actual,
+        observations(&second.bytes, first.bytes.len(), carry).0
+    );
 }
