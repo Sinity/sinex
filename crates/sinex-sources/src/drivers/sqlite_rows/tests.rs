@@ -201,6 +201,12 @@ fn failed_poll_retries_same_material_before_reading_source_changes() {
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let first_material = first.material.as_ref().unwrap();
     let original = lines(&first);
+    let unchanged_retry = d.poll(&Value::Null, &mut state).unwrap();
+    assert_eq!(
+        unchanged_retry.material.as_ref().unwrap().id,
+        first_material.id
+    );
+    assert_eq!(lines(&unchanged_retry), original);
     Connection::open(&path)
         .unwrap()
         .execute_batch("UPDATE t SET n=99;")
