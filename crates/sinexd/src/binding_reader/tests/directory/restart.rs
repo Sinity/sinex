@@ -465,11 +465,11 @@ async fn an_explicit_consumed_prefix_restores_an_ignored_first_member_without_an
     let mut b = Bound::new(&notes::KIND, binding.clone()).unwrap();
     ignore_first(&mut b);
     let reference = prefix(&mut ctx, &mut b, &sink, None).await;
-    let anchors = positions::accounted_anchors(&mut ctx.read_conn, reference.id)
+    let anchors = positions::accounted_records(&mut ctx.read_conn, reference.id)
         .await
         .unwrap();
     assert!(
-        anchors.is_empty(),
+        anchors.anchors.is_empty(),
         "ignored source record has no event/error witness"
     );
     let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
@@ -601,6 +601,7 @@ async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material
         &sealing,
         Some(&sealing),
         Some(&authority),
+        Class::Sealed,
         acquired,
         carry,
         &mut total,
@@ -678,5 +679,54 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried() {
         .await
         .unwrap();
     assert_eq!(current_notes(&mut ctx.read_conn).await[0].1, Value::Null);
+    ctx.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_vanished_guarded_member_keeps_its_class_after_the_source_floor_is_lowered() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.md"), "synthetic guarded alpha").unwrap();
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    sinex_store::privacy::set_source_class(
+        &mut ctx.read_conn,
+        notes::SPEC.name,
+        Class::Guarded,
+        "synthetic",
+    )
+    .await
+    .unwrap();
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let mut bounds = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    turn(&mut ctx, &mut bounds, Access::default())
+        .await
+        .unwrap();
+    drop(bounds);
+    sinex_store::privacy::set_source_class(
+        &mut ctx.read_conn,
+        notes::SPEC.name,
+        Class::Open,
+        "synthetic",
+    )
+    .await
+    .unwrap();
+    std::fs::remove_file(root.join("a.md")).unwrap();
+    let mut restarted = vec![Bound::new(&notes::KIND, binding).unwrap()];
+    turn(&mut ctx, &mut restarted, Access::default())
+        .await
+        .unwrap();
+    let class: String = sqlx::query_scalar(
+        "SELECT class FROM core.events WHERE event_type='note.document' AND record_state='removed'",
+    )
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(class, "guarded");
+    let shown:Value=sqlx::query_scalar("SELECT payload FROM core.visible_events WHERE event_type='note.document' AND record_state='removed'").fetch_one(&mut ctx.read_conn).await.unwrap();
+    assert_eq!(shown, json!({"withheld":"guarded"}));
     ctx.close().await.unwrap();
 }

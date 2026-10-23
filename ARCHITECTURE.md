@@ -115,7 +115,9 @@ Older ignored suffixes without progress evidence remain a historical replay
 limit; raw registration alone does not prove their interpretation completed.
 All material sinks implement file storage explicitly; production sinks stream it.
 
-Completed sealed directory membership can be restored without a private key
+Known event classes remain a floor for history-derived capture, including
+when an operator lowers the current source setting. Failure records establish
+no class by themselves. Completed sealed directory membership can be restored without a private key
 when the effective binding floor remains sealed. A lowered floor requires
 scoped authority, and history-derived capture retains the sealed floor. An
 unfinished sealed body additionally needs authenticated access under that

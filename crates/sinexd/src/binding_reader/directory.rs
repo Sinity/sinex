@@ -131,9 +131,14 @@ async fn restore_one(
         }
         b.history_floor = b.history_floor.max(Class::Sealed);
     }
-    let mut anchors = sinex_store::positions::accounted_anchors(conn, reference.id)
+    let evidence = sinex_store::positions::accounted_records(conn, reference.id)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    if let Some(class) = evidence.class {
+        b.history_floor = b.history_floor.max(class);
+    }
+    let mut anchors = evidence
+        .anchors
         .into_iter()
         .map(|n| usize::try_from(n).map_err(|_| "directory outcome anchor is invalid".to_string()))
         .collect::<Result<Vec<_>, _>>()?;

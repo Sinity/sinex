@@ -691,6 +691,7 @@ async fn read_archive(
                 physical_sink,
                 sealing.as_deref(),
                 access.authority,
+                archive.class,
                 acquired,
                 carry,
                 total,

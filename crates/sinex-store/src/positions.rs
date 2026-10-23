@@ -41,18 +41,35 @@ pub async fn last_material(
     }))
 }
 
-/// Exact record locations with a retained outcome. This does not establish
-/// that any earlier or later record in that material was processed.
-pub async fn accounted_anchors(
+/// Retained record outcomes. Only events establish a known privacy class;
+/// failures alone leave it unknown.
+#[derive(Default)]
+pub struct AccountedRecords {
+    pub anchors: Vec<i64>,
+    pub class: Option<sinex_model::Class>,
+}
+
+/// Exact locations only: an isolated later outcome proves no earlier record.
+pub async fn accounted_records(
     conn: &mut PgConnection,
     material: sinex_model::MaterialId,
-) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar!(
-        r#"SELECT anchor AS "anchor!" FROM core.events WHERE material_id = $1
-           UNION SELECT anchor FROM raw.failures WHERE material_id = $1
+) -> Result<AccountedRecords> {
+    let rows = sqlx::query!(
+        r#"SELECT anchor AS "anchor!", class AS "class?" FROM core.events WHERE material_id = $1
+           UNION SELECT anchor, NULL::text FROM raw.failures WHERE material_id = $1
            ORDER BY 1"#,
         material.0,
     )
     .fetch_all(conn)
-    .await?)
+    .await?;
+    let mut records = AccountedRecords::default();
+    for row in rows {
+        records.anchors.push(row.anchor);
+        if let Some(class) = row.class {
+            let class = crate::privacy::parse_class(&class)?;
+            records.class = Some(records.class.map_or(class, |c| c.max(class)));
+        }
+    }
+    records.anchors.dedup();
+    Ok(records)
 }

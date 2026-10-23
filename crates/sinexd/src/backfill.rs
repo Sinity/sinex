@@ -251,21 +251,22 @@ pub(crate) async fn drive(
         .get(source.spec().name)
         .copied()
         .unwrap_or_default();
-    let sealing =
-        if source.spec().class.max(floor).max(minimum_class) == sinex_model::Class::Sealed {
-            let recipient = match access.recipient {
+    let effective_class = source.spec().class.max(floor).max(minimum_class);
+    let sealing = if effective_class == sinex_model::Class::Sealed {
+        let recipient = match access.recipient {
             Some(recipient) => Some(recipient.clone()),
             None => crate::one_shot::class_key()?,
-        }.ok_or_else(|| {
+        };
+        let recipient = recipient.ok_or_else(|| {
             format!(
                 "{}: its class is sealed, but no class key is configured (SINEX_CLASS_KEY_FILE)",
                 source.spec().name
             )
         })?;
-            Some(crate::one_shot::SealingSink::new(sink.0.clone(), recipient))
-        } else {
-            None
-        };
+        Some(crate::one_shot::SealingSink::new(sink.0.clone(), recipient))
+    } else {
+        None
+    };
     let material_sink: &dyn drivers::MaterialSink = match &sealing {
         Some(s) => s,
         None => sink,
@@ -332,6 +333,7 @@ pub(crate) async fn drive(
             material_sink,
             sealing.as_ref(),
             access.authority,
+            effective_class,
             acquired,
             carry,
             &mut totals,
@@ -355,6 +357,7 @@ pub(crate) async fn submit(
     material_sink: &dyn drivers::MaterialSink,
     sealing: Option<&crate::one_shot::SealingSink>,
     authority: Option<&crate::sealed_access::Authority>,
+    minimum_class: sinex_model::Class,
     acquired: drivers::Acquired,
     carry: serde_json::Value,
     totals: &mut Totals,
@@ -392,6 +395,13 @@ pub(crate) async fn submit(
     }
     for batch in prepared.batches().map_err(|e| e.to_string())? {
         let mut one = [batch.map_err(|e| e.to_string())?];
+        for record in &mut one[0].records {
+            if let sinex_model::RecordOutcome::Events { events, .. } = record {
+                for event in events {
+                    event.class = event.class.max(minimum_class);
+                }
+            }
+        }
         if let Some(s) = sealing {
             s.seal(&mut one)?;
             if let (Some(material), sinex_model::BatchKind::Source(progress)) =
