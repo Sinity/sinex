@@ -62,6 +62,10 @@ async fn admit(w: &World, texts: &[&str], from: i64) {
         .enumerate()
         .map(|(i, t)| command(t, from + i as i64))
         .collect();
+    admit_events(w, events).await;
+}
+
+async fn admit_events(w: &World, events: Vec<Event>) {
     w.writer
         .submit(
             writer::Priority::Live,
@@ -160,6 +164,160 @@ async fn tokens_grant_levels() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn crossing_quoted_credentials_are_masked_in_refusals_and_follow_query_errors() {
+    let w = world().await;
+    for quote in ['"', '\''] {
+        let text =
+            format!("--secret={quote}unfinished --token={quote}synthetic-error-value{quote} tail");
+        let (status, body) = call(
+            &w,
+            Some(OPERATOR),
+            json!({"method": "recompute", "derivation": "synthetic", "from": text}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["outcome"], "refused", "{body}");
+        let reason = body["reason"].as_str().unwrap();
+        assert!(reason.contains("not an RFC 3339 time"), "{body}");
+        assert!(
+            reason.contains("[credential: CLI secret, masked]"),
+            "{body}"
+        );
+        assert!(!reason.contains("synthetic-error-value"), "{body}");
+        let query = format!("events where {text}");
+        let encoded: String = query.bytes().map(|byte| format!("%{byte:02X}")).collect();
+        let request = HttpRequest::get(format!("/v1/follow?query={encoded}"))
+            .header("authorization", format!("Bearer {READ}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = w.app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["outcome"], "refused", "{body}");
+        assert!(
+            !body.to_string().contains("synthetic-error-value"),
+            "{body}"
+        );
+        assert!(
+            body["reason"]
+                .as_str()
+                .unwrap()
+                .contains("[credential: CLI secret, masked]")
+        );
+    }
+    let (_, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "query", "query": "related x"}),
+    )
+    .await;
+    assert_eq!(body["not_built"], true, "{body}");
+}
+
+#[tokio::test]
+async fn nested_credential_keys_refuse_replies_and_complete_follow_pages_without_advancing_cursors()
+{
+    let w = world().await;
+    let req = HttpRequest::get("/v1/follow?query=events%20sort%20when")
+        .header("authorization", format!("Bearer {READ}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = w.app.clone().oneshot(req).await.unwrap();
+    let mut stream = response.into_body();
+    let mut seen = String::new();
+    read_until(&mut stream, &mut seen, "event: notice").await;
+    let key = "--secret=\"unfinished --token=\"synthetic-key-value\" tail";
+    let mut bad = command("late-key-row", 1);
+    bad.payload["extra"] = json!({"nested": [{key: "retained", "ordinary": false}]});
+    let original = bad.payload.clone();
+    admit_events(&w, vec![command("safe-first-row", 0), bad]).await;
+    let before = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
+        .await
+        .unwrap();
+    read_until(&mut stream, &mut seen, "event: error").await;
+    assert!(
+        !seen.contains("safe-first-row"),
+        "a partial successful page escaped: {seen}"
+    );
+    assert!(!seen.contains("late-key-row"));
+    assert!(!seen.contains("synthetic-key-value"));
+    assert!(seen.contains("result contains a credential-shaped object key"));
+    let request = json!({"method": "query", "query": "events sort when"});
+    let (_, refused) = call(&w, Some(READ), request.clone()).await;
+    assert_eq!(refused["outcome"], "refused", "{refused}");
+    assert!(!refused.to_string().contains("synthetic-key-value"));
+    assert!(refused.get("result").is_none());
+    let first = json!({"method": "query", "query": "events sort when", "page": 1});
+    let (_, page) = call(&w, Some(READ), first.clone()).await;
+    assert_eq!(page["outcome"], "ok", "{page}");
+    let cursor = page["result"]["page"]["cursor"].as_str().unwrap();
+    let next = json!({"method": "query", "query": "events sort when", "page": 1, "cursor": cursor});
+    for _ in 0..2 {
+        let (_, reply) = call(&w, Some(READ), next.clone()).await;
+        assert_eq!(reply, refused);
+    }
+    let (_, retry) = call(&w, Some(READ), first).await;
+    assert_eq!(retry["result"]["page"]["cursor"], cursor);
+    let after = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(before, after);
+    let stored = sqlx::query_scalar::<_, Value>(
+        "SELECT payload FROM core.events WHERE payload->>'native_id' = 'n1'",
+    )
+    .fetch_one(&w.reads)
+    .await
+    .unwrap();
+    assert_eq!(stored, original);
+}
+
+#[tokio::test]
+async fn crossing_quoted_credentials_are_masked_in_queries_and_follow_but_not_storage() {
+    let w = world().await;
+    let req = HttpRequest::get("/v1/follow?query=events")
+        .header("authorization", format!("Bearer {READ}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = w.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.into_body();
+    let mut seen = String::new();
+    read_until(&mut stream, &mut seen, "event: notice").await;
+    let texts = [
+        "--secret=\"unfinished --token=\"synthetic-later-value\" tail-double",
+        "--secret='unfinished --token='synthetic-later-value' tail-single",
+    ];
+    admit(&w, &texts, 0).await;
+    for tail in ["tail-double", "tail-single"] {
+        read_until(&mut stream, &mut seen, tail).await;
+    }
+    assert!(!seen.contains("synthetic-later-value"), "{seen}");
+    assert_eq!(seen.matches("[credential: CLI secret, masked]").count(), 2);
+    let (status, body) = call(
+        &w,
+        Some(READ),
+        json!({"method": "query", "query": "events"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["outcome"], "ok", "{body}");
+    assert_eq!(body["result"]["total"], 2);
+    assert!(
+        !body.to_string().contains("synthetic-later-value"),
+        "{body}"
+    );
+    let stored = sqlx::query_scalar::<_, Value>("SELECT payload FROM core.events ORDER BY ts_orig")
+        .fetch_all(&w.reads)
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 2);
+    for (payload, text) in stored.iter().zip(texts) {
+        assert_eq!(payload["command"], text);
+    }
 }
 
 #[tokio::test]

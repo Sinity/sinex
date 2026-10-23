@@ -1,6 +1,6 @@
 //! Masking on every output (architecture §3.5): each string in a result passes
-//! through the shared credential masker, which masks rather than refuses, so a
-//! long token or URL password never reaches a caller in the clear.
+//! through the shared credential masker. Credential-shaped object keys refuse
+//! the result because renaming could change its meaning.
 use credential_masking::Masker;
 use serde_json::Value;
 
@@ -15,15 +15,24 @@ pub fn mask_str(text: &str) -> String {
     String::from_utf8(out).expect("the masker writes UTF-8")
 }
 
-pub fn mask_json(value: Value) -> Value {
-    match value {
+pub fn mask_json(value: Value) -> Result<Value, &'static str> {
+    Ok(match value {
         Value::String(s) => Value::String(mask_str(&s)),
-        Value::Array(items) => Value::Array(items.into_iter().map(mask_json).collect()),
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(mask_json).collect::<Result<_, _>>()?)
+        }
         Value::Object(map) => {
-            Value::Object(map.into_iter().map(|(k, v)| (k, mask_json(v))).collect())
+            let mut output = serde_json::Map::new();
+            for (key, value) in map {
+                if mask_str(&key) != key {
+                    return Err("result contains a credential-shaped object key");
+                }
+                output.insert(key, mask_json(value)?);
+            }
+            Value::Object(output)
         }
         other => other,
-    }
+    })
 }
 
 #[cfg(test)]

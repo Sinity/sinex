@@ -61,6 +61,14 @@ another local implementation. Change an interface with its callers and remove
 the replaced path. Read [AGENTS.md](AGENTS.md) for test placement and focused
 development commands; passing a component test does not qualify a deployment.
 
+Output uses `credential-output-v2`, including independently recognized
+overlapping credentials. Credential-shaped JSON keys refuse the complete
+reply because renaming could change an object's meaning. Follow streams check
+the whole query page before emitting its first row; a refused page emits a
+generic error without the key and leaves stored values and cursors unchanged.
+Refusal reasons and follow-query errors pass through the same masker before
+encoding; their typed refusal flags stay intact.
+
 ## Superseded producer row batches
 
 Polylogue requests physical row-batch retirement on its own NATS retirement
