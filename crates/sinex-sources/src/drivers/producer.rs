@@ -82,14 +82,8 @@ impl Store {
     fn open_upload(&self, name: &str) -> Result<hashed_blobs::PlainReader, String> {
         let invalid = || format!("invalid blob name {name}");
         let hex = name.strip_prefix("blake3:").ok_or_else(invalid)?;
-        if hex.len() != 64 {
-            return Err(invalid());
-        }
-        let mut raw = [0u8; 32];
-        for (i, b) in raw.iter_mut().enumerate() {
-            *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| invalid())?;
-        }
-        let hash = hashed_blobs::Hash(raw);
+        let hash = blake3::Hash::from_hex(hex).map_err(|_| invalid())?;
+        let hash = hashed_blobs::Hash(*hash.as_bytes());
         self.0
             .read_plain(&hash, None, || Ok(()))
             .map_err(|e| e.to_string())

@@ -327,7 +327,14 @@ async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
         .await
         .unwrap()
         .upload_bytes(Store::open(dir.path()).unwrap());
-    for length in [0, 1, CHUNK_BYTES, 2 * CHUNK_BYTES, 2 * CHUNK_BYTES + 19] {
+    for length in [
+        0,
+        1,
+        CHUNK_BYTES,
+        2 * CHUNK_BYTES,
+        2 * CHUNK_BYTES + 19,
+        9 * CHUNK_BYTES + 19,
+    ] {
         let bytes: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
         let path = dir.path().join("input");
         std::fs::write(&path, &bytes).unwrap();
@@ -362,4 +369,18 @@ async fn damaged_producer_material_sends_no_chunks() {
         .upload_bytes(store);
     assert!(producer.upload_blob(&blob).await.is_err());
     assert!(received.lock().unwrap().is_empty());
+}
+
+#[test]
+fn malformed_producer_blob_names_are_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    for name in [
+        format!("blake3:xé{}", "a".repeat(61)),
+        format!("blake3:{}", "g".repeat(64)),
+        "blake3:ab".into(),
+        format!("sha256:{}", "a".repeat(64)),
+    ] {
+        assert!(store.open_upload(&name).is_err(), "{name}");
+    }
 }
