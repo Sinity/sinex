@@ -86,6 +86,7 @@ pub struct Applied {
 
 mod basis;
 mod candidates;
+pub mod sealed;
 pub use candidates::{Candidate, KeyEnvelope, candidate_materials};
 mod source_guard;
 pub use basis::{operations_basis, validate_basis};
