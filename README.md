@@ -27,6 +27,11 @@ boundaries between capture, interpretation, admission and public interfaces.
   history, browsers, desktop and session capture, mail, chat, calendars,
   exports from Google, Samsung, Spotify, Reddit and others, git, the journal,
   file changes, the Sinnix capture lake, and Polylogue's archive.
+  Health records expose concrete Sleep as Android, Google Fit and known Samsung
+  category fields. Their source-normalized `values`, identity and times retain
+  the existing wire shape. Unrecognized categories carry `uninterpreted: true`;
+  unknown fields carry `uninterpreted_fields` JSON pointers outside `values`.
+  Raw captured material remains available for replay after parser upgrades.
   `sinexd backfill --source KIND=PATH` reads sources to the end;
   `sinexd run --sources sources.json` reads configured bindings continuously;
   `sinex-session` and `sinex-capture` capture from the desktop session and

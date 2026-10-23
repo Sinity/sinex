@@ -38,7 +38,7 @@ fn type_line_header_and_rows() {
         "the text is UTC"
     );
     assert_eq!(r.offset_minutes, Some(120));
-    assert_eq!(r.values["score"], json!(7));
+    assert_eq!(serde_json::to_value(r.values()).unwrap()["score"], json!(7));
 }
 
 #[test]

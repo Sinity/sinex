@@ -18,7 +18,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "steps, activity, heart and location samples Fit recorded",
     class: Class::Open,
     parser: "google-fit",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["health.record"],
     framer: frame,
 };
@@ -65,20 +65,23 @@ impl Parser for FitParser {
             }
         }
         Ok((
-            vec![HealthRecord {
-                provider: "google-fit".into(),
-                category,
-                native_id: format!(
-                    "{file}:{}:{}",
-                    start_ns.unwrap_or_default(),
-                    end_ns.unwrap_or_default()
-                ),
-                start: nanos("startTimeNanos")?,
-                end: nanos("endTimeNanos")?,
-                offset_minutes: None,
-                values,
-                events: vec![],
-            }],
+            vec![
+                HealthRecord::new(
+                    "google-fit".into(),
+                    category,
+                    format!(
+                        "{file}:{}:{}",
+                        start_ns.unwrap_or_default(),
+                        end_ns.unwrap_or_default()
+                    ),
+                    nanos("startTimeNanos")?,
+                    nanos("endTimeNanos")?,
+                    None,
+                    values,
+                    vec![],
+                )
+                .map_err(|error| RecordError::new(error.to_string()))?,
+            ],
             (),
         ))
     }

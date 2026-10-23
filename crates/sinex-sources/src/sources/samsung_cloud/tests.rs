@@ -29,12 +29,12 @@ fn health_tables_become_health_records() {
     let SamsungEvent::Health(h) = &out[0] else {
         panic!()
     };
-    assert_eq!(
-        (h.category.as_str(), h.native_id.as_str()),
-        ("Step Count", "e03a")
-    );
+    assert_eq!((h.category(), h.native_id.as_str()), ("Step Count", "e03a"));
     assert_eq!(h.offset_minutes, Some(60));
-    assert_eq!(h.values["count"], json!(21));
+    assert_eq!(
+        serde_json::to_value(h.values()).unwrap()["count"],
+        json!(21)
+    );
     assert_eq!(h.start, fields::rfc3339("2026-03-12T17:23:00Z").ok());
 }
 
@@ -60,4 +60,67 @@ fn other_tables_keep_every_column_with_json_decoded() {
         "/x/samsungcloud_gk1/Samsung Pass/Samsung Pass.csv"
     )));
     assert!(is_table(Path::new("/x/SmartThings_gk1/a.csv")));
+}
+
+#[test]
+fn health_unknown_columns_and_categories_remain_captured() {
+    for category in ["Step Count", "New Health Category"] {
+        let path = format!("/x/samsungcloud_gk1/{category}/{category}.csv");
+        let out = run(
+            &path,
+            &[
+                b"datauuid,count,new_column\n",
+                b"synthetic-id,0042,{\"raw\":true}\n",
+            ],
+        );
+        let SamsungEvent::Health(record) = &out[0] else {
+            panic!("not health")
+        };
+        let wire = serde_json::to_value(record).unwrap();
+        assert_eq!(wire["values"]["count"], json!("0042"));
+        assert_eq!(wire["values"]["new_column"], json!({"raw":true}));
+        if category == "Step Count" {
+            assert_eq!(wire["uninterpreted_fields"], json!(["/values/new_column"]));
+        } else {
+            assert_eq!(wire["uninterpreted"], true);
+        }
+    }
+}
+
+#[test]
+fn malformed_known_health_fields_are_record_failures() {
+    let manifest = json!({"path":"/x/samsungcloud_gk1/Step Count/Step Count.csv"});
+    let context = RecordContext {
+        manifest: &manifest,
+        member: None,
+    };
+    let (_, carry) = SamsungCloudParser
+        .parse(&&b"datauuid,count\n"[..], &Carry::default(), &context)
+        .unwrap();
+    assert!(
+        SamsungCloudParser
+            .parse(&&b"synthetic-id,[]\n"[..], &carry, &context)
+            .is_err()
+    );
+}
+
+#[test]
+fn nul_cleanup_and_numeric_times_keep_the_previous_normalization() {
+    let out = run(
+        "/x/samsungcloud_gk1/Step Count/Step Count.csv",
+        &[
+            b"datauuid,start_time,time_offset,count\n",
+            b"synthetic-id,123,3600000,2\0\n",
+        ],
+    );
+    let SamsungEvent::Health(record) = &out[0] else {
+        panic!("not health")
+    };
+    assert!(record.start.is_none());
+    assert_eq!(record.offset_minutes, Some(60));
+    let wire = serde_json::to_value(record).unwrap();
+    assert_eq!(
+        wire["values"],
+        json!({"datauuid":"synthetic-id","start_time":123,"time_offset":3600000,"count":2,"count__nul_removed":true})
+    );
 }
