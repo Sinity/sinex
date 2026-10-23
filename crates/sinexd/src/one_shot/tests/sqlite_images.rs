@@ -261,11 +261,31 @@ async fn sqlite_physical_images_publish_atomically_and_retry_exact_pending_rows_
         .await
         .unwrap();
     assert_eq!(before, after);
-    let replay=crate::replay::run(&mut ctx.read_conn,&ctx.blobs,&ctx.writer,crate::replay::Options {
-        scope:crate::replay::Scope {binding:Some("images".into()),..Default::default()},compare:true,resume:None,actor:"synthetic".into(),authority:None,
-    }).await.unwrap();
-    assert_eq!(replay.materials,2,"only the retained row parts are parsed");
-    assert_eq!(replay.failures,0);assert!(replay.diff.changed.is_empty());assert!(replay.diff.added.is_empty());assert!(replay.diff.removed.is_empty());
+    let replay = crate::replay::run(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        crate::replay::Options {
+            scope: crate::replay::Scope {
+                binding: Some("images".into()),
+                ..Default::default()
+            },
+            compare: true,
+            resume: None,
+            actor: "synthetic".into(),
+            authority: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        replay.materials, 2,
+        "only the retained row parts are parsed"
+    );
+    assert_eq!(replay.failures, 0);
+    assert!(replay.diff.changed.is_empty());
+    assert!(replay.diff.added.is_empty());
+    assert!(replay.diff.removed.is_empty());
     ctx.close().await.unwrap();
 }
 
