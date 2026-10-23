@@ -3,6 +3,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+/// The source header label and its nullable, normalized sample.
+pub type ActigraphySample = (Option<String>, Option<serde_json::Number>);
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SleepSession {
     #[serde(default, deserialize_with = "supplied")]
@@ -52,7 +55,7 @@ pub struct SleepSession {
     #[serde(default, deserialize_with = "supplied")]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<Option<Vec<(Option<String>, Option<f64>)>>>")]
-    pub actigraphy: Option<Option<Vec<(Option<String>, Option<serde_json::Number>)>>>,
+    pub actigraphy: Option<Option<Vec<ActigraphySample>>>,
     #[serde(flatten)]
     pub(crate) uninterpreted: Map<String, Value>,
 }
