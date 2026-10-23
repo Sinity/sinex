@@ -131,6 +131,18 @@ another local implementation. Change an interface with its callers and remove
 the replaced path. Read [AGENTS.md](AGENTS.md) for test placement and focused
 development commands; passing a component test does not qualify a deployment.
 
+The `shell-sessions` query alias reads the existing `shell.session` derivation;
+its `start` and `observed_until` describe recorded command extent. Its observed
+span includes both endpoints, including a final command with unknown duration.
+It does not supply activity-session depth, project, open state or a proven end.
+The broader `sessions` alias remains planned. `recall last` binds its optional
+session-field filter against `shell-sessions`, selects the latest group through
+the ordinary query compiler, and reads all sources in that observed envelope.
+Selection and rows use the same commit position, including cursor continuations;
+equal starts use the ordinary event-ID tie break. Withheld bounds refuse rather
+than borrowing an older group. No matching group retains the ordinary output
+stages and carries a no-known-session account, not a no-observations claim.
+
 Output uses `credential-output-v2`, including independently recognized
 overlapping credentials. Credential-shaped JSON keys refuse the complete
 reply because renaming could change an object's meaning. Follow streams check

@@ -1,7 +1,7 @@
 //! Recall through the public API, real writer and actual shell derivation.
 use super::*;
 use sinex_derivations::{Env, Keyed, derived_event::derived, session::ShellSessions};
-use sinex_model::event_types::{CommandFused, CommandImported, ShellSession};
+use sinex_model::event_types::{CommandFused, CommandImported};
 
 fn facts(host: &str, rows: &[(i64, &str, Option<i64>)], class: Class) -> Vec<Event> {
     let mut events = Vec::new();
@@ -271,6 +271,18 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence() {
         "no_known_timed_shell_session"
     );
     assert!(none["result"]["recall"]["by_source"].is_null());
+    let (_, counted) = call(
+        &w,
+        Some(READ),
+        json!({"method":"query","query":"recall last count"}),
+    )
+    .await;
+    assert_eq!(counted["result"]["total"], 1, "{counted}");
+    assert_eq!(counted["result"]["rows"][0]["count"], 0, "{counted}");
+    assert_eq!(
+        counted["result"]["recall"]["status"],
+        "no_known_timed_shell_session"
+    );
     let (_, observations) = call(
         &w,
         Some(READ),

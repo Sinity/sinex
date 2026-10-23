@@ -172,56 +172,13 @@ pub async fn run(
             .await?
         }
         Source::Recall { .. } | Source::RecallLast { .. } => {
-            let (from, to, inclusive, anchor) = match &query.source {
-                Source::Recall { from, to } => (*from, *to, false, None),
-                Source::RecallLast { filter } => {
-                    let Some(anchor) = recall::latest(&mut tx, filter.clone(), ctx, seq).await?
-                    else {
-                        return Ok(Answer {
-                            unit,
-                            query: text.to_string(),
-                            read_as: read_as(query),
-                            resolved,
-                            columns: Unit::Events
-                                .default_fields()
-                                .iter()
-                                .map(|s| s.to_string())
-                                .collect(),
-                            rows: Vec::new(),
-                            total: 0,
-                            page: PageInfo { size, cursor: None },
-                            recall: Some(serde_json::json!({
-                                "anchor": null,
-                                "status": "no_known_timed_shell_session",
-                                "reason": "No matching recorded shell group; untimed observations or pending derivations may still exist."
-                            })),
-                        });
-                    };
-                    let time = |field: &str| -> Result<jiff::Timestamp> {
-                        anchor[field].as_str().and_then(|s| s.parse().ok())
-                            .ok_or_else(|| Error::Invalid("selected shell group's observed bounds are unavailable to this caller".into()))
-                    };
-                    (time("start")?, time("observed_until")?, true, Some(anchor))
-                }
-                _ => unreachable!(),
-            };
-            let window = if inclusive {
-                recall::observed_window(from, to)
-            } else {
-                Expr::Within {
-                    lhs: Operand::Field(FieldRef::Field(
-                        Unit::Events.field("when").expect("events have when"),
-                    )),
-                    from,
-                    to,
-                }
-            };
+            let selection = recall::select(&mut tx, &query.source, ctx, seq).await?;
             let as_events = Query {
                 source: Source::Unit {
                     unit: Unit::Events,
                     alias: None,
                 },
-                filter: Some(window),
+                filter: Some(selection.filter()),
                 stages: query.stages.clone(),
                 ranked: query.ranked,
             };
@@ -230,13 +187,7 @@ pub async fn run(
                 &mut tx, rendered, unit, text, query, resolved, seq, offset, size,
             )
             .await?;
-            let mut account = walk::recall_summary(&mut tx, from, to, seq, inclusive).await?;
-            if let Some(anchor) = anchor {
-                account["anchor"] = serde_json::json!({
-                    "kind": "shell_group", "bounds": "observed_envelope", "row": anchor,
-                });
-            }
-            a.recall = Some(account);
+            a.recall = Some(selection.account(&mut tx, seq).await?);
             a
         }
     };
