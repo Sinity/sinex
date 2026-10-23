@@ -26,7 +26,7 @@ impl Default for Limits {
 
 /// Random-access retained records. Implementations keep their verified backing open.
 pub trait RecordRead: Send + Sync {
-    fn len(&self) -> u64;
+    fn length(&self) -> u64;
     fn read_exact_at(&self, start: u64, bytes: &mut [u8]) -> std::io::Result<()>;
 }
 
@@ -186,7 +186,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
         let length = match &input.bytes {
             RecordBytes::Slice(bytes) => bytes.len() as u64,
             RecordBytes::File(file) => file.metadata().map_err(|e| RecordError::new(format!("staged material: {e}")))?.len(),
-            RecordBytes::Reader(reader) => reader.len(),
+            RecordBytes::Reader(reader) => reader.length(),
         };
         if input.records.iter().any(|&(start,end)| start>end || end as u64>length) {
             return Err(RecordError::new("record range exceeds material"));

@@ -69,6 +69,23 @@ retries keep its captured bytes and material identity. A process restart release
 staging and rescans, with ordinary admission suppressing repeats. All material
 sinks must implement file storage explicitly; production sinks stream it.
 
+Retained replay streams verified plain bodies into a scoped unnamed file and
+reads each declared record through the drain. Sealed replay authenticates the
+stream and uses the existing encrypted backing and cached seek reader; it never
+stages plaintext. Source framing declares both its existing slice behavior and
+its reader strategy. Legacy ranges preserve original byte offsets, including
+selected JSON arrays and append records with undecided tails. Malformed final
+JSON documents retain the prior whole-record failure shape. Excision streams
+same-length blanking into the blob writer, preserving untouched bytes and only
+the selected records' closing newlines. Replay still commits one material chain
+atomically, including carry and failure accounting.
+
+Record-range metadata and the shared blob frame index grow with their counts.
+Memory also holds the current decoded record and ordinary drain batches; one
+whole-document record or undecided append prefix can still be large. Legacy
+delta decoding remains a whole-body cost in the shared reader. Unsupported
+compressed export containers retain their explicit replay refusal.
+
 Outside producers install material files through the streaming blob writer and
 upload them from one verified open representation using one 512 KiB plaintext
 buffer, plus the bounded encoded outgoing frame and the shared blob reader's

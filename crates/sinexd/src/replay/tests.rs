@@ -315,7 +315,7 @@ async fn an_excised_record_stays_out_of_a_replay() {
         .await
         .unwrap();
     let bytes = f.ctx.blobs.read(&blob).unwrap();
-    assert!(!bytes.windows(6).any(|w| w == b"secret"));
+    assert_eq!(bytes, b": 1:0;ls\n                \n: 3:0;pwd\n", "only the selected record is blanked, with its closing newline and sibling coordinates intact");
     assert_eq!(bytes.len(), ": 1:0;ls\n: 2:0;cat secret\n: 3:0;pwd\n".len());
 
     let report = run(
@@ -331,4 +331,26 @@ async fn an_excised_record_stays_out_of_a_replay() {
         (2, 2, 0)
     );
     assert_eq!(live_commands(&mut f.ctx.read_conn).await, vec!["ls", "pwd"]);
+}
+
+#[tokio::test]
+async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain() {
+    let mut f=fixture().await;
+    let path=history(&f.dir,": 1:0;first\n");
+    let mut state=AppendState::default();
+    ingest(&mut f.ctx,&path,&mut state).await;
+    std::fs::write(&path,": 1:0;first\n: 2:0;second\n").unwrap();
+    ingest(&mut f.ctx,&path,&mut state).await;
+    let before=live_ids(&mut f.ctx.read_conn).await;
+    assert_eq!(before.len(),2);
+    let blobs:Vec<String>=sqlx::query_scalar("SELECT blob FROM raw.materials ORDER BY part_index").fetch_all(&mut f.ctx.read_conn).await.unwrap();
+    assert_eq!(blobs.len(),2);
+    f.ctx.blobs.delete(&blobs[1]).unwrap();
+    let error=run(&mut f.ctx.read_conn,&f.ctx.blobs,&f.ctx.writer,options(whole_binding(),false)).await.unwrap_err();
+    assert!(error.contains("chain from material"),"{error}");
+    assert_eq!(live_ids(&mut f.ctx.read_conn).await,before);
+    assert_eq!(live_commands(&mut f.ctx.read_conn).await,vec!["first","second"]);
+    let archived:i64=sqlx::query_scalar("SELECT count(*) FROM audit.archived WHERE reason='replay'").fetch_one(&mut f.ctx.read_conn).await.unwrap();
+    let operations:i64=sqlx::query_scalar("SELECT count(*) FROM core.operations WHERE kind='replay'").fetch_one(&mut f.ctx.read_conn).await.unwrap();
+    assert_eq!((archived,operations),(0,0));
 }

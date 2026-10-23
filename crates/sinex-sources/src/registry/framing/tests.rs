@@ -17,6 +17,7 @@ fn reader_framing_keeps_exact_legacy_ranges_across_boundaries() {
         (Framer::incremental(zsh::frame),b": 1:0;first\\\ncontinued\n: 2:0;last\npartial"),
         (Framer::incremental(operator::frame_log),b"front matter\n- **a**\nfirst\n- **b**\nlast\npartial"),
         (Framer::incremental(asciinema::cast_spans),b"{\"version\":2}\n[0,\"o\",\"a\"]\n[1,\"r\",\"80x24\"]\n[2,\"o\",\"b\"]\n"),
+        (crate::sources::raindrop::SPEC.framer,b"title,url\n{csv-cell,https://example.test/\n"),
     ];
     for (framer,bytes) in examples {
         for size in [1,2,7,65536] {
@@ -34,6 +35,7 @@ fn streamed_json_ranges_keep_raw_offsets_and_malformed_document_fallback() {
         (Framer::export(takeout_chrome::frame,Framing::JsonArray("/Browser History")),br#"{"ignore":[1,2],"Browser History": [ {"url":"a"}, {"url":"a"} ]}"#),
         (Framer::export(frame_json_array,Framing::JsonArray("")),b"[{\"a\":1},2,broken tail"),
         (Framer::export(takeout_chrome::frame,Framing::JsonArray("/Browser History")),b"{\"Browser History\":[1],\"Browser History\":[2,3]}"),
+        (Framer::export(takeout_chrome::frame,Framing::JsonArray("/Browser History")),b"{\"Browser History\":{\"wrong\":1},\"Browser History\":[2,3]}"),
     ];
     for (framer,bytes) in cases {
         for size in [1,2,5,65536] {

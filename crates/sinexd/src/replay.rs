@@ -461,7 +461,10 @@ fn read_chain_into(
             let length=blobs.copy_to_checked(&m.blob,&mut file,move || {
                 if sender.is_closed() {Err(std::io::Error::other("the writer stopped reading the chain").into())} else {Ok(())}
             }).map_err(|e|e.to_string())?;
-            crate::retained::Retained::new(file,length)
+            let sender=out.clone();
+            crate::retained::Retained::checked(file,length,move || {
+                if sender.is_closed() {Err(std::io::Error::other("the writer stopped reading the chain"))} else {Ok(())}
+            })
         };
         let records = retained.records(&m.manifest,source.spec().framer)?;
         let order = drivers::reading_order(&m.manifest);

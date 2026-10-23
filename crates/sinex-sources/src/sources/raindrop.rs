@@ -21,7 +21,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "raindrop-export",
     parser_version: 1,
     event_types: &["bookmark.saved"],
-    framer: crate::Framer::incremental(frame),
+    framer: crate::Framer::detected(frame, framing),
 };
 
 /// Raindrop's trash collection.
@@ -191,12 +191,12 @@ fn api_row(row: &Map<String, Value>) -> Result<BookmarkSaved, RecordError> {
 }
 
 /// A stored export's records: JSON lines, or CSV rows.
+fn framing(bytes:&[u8])->Framing {
+    if bytes.trim_ascii_start().starts_with(b"{") {Framing::Lines} else {Framing::Csv}
+}
+
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
-    if bytes.trim_ascii_start().starts_with(b"{") {
-        Framing::Lines.frame(bytes, true)
-    } else {
-        Framing::Csv.frame(bytes, true)
-    }
+    framing(bytes).frame(bytes,true)
 }
 
 pub fn source() -> DeclaredSource<RaindropParser> {

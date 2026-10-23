@@ -192,51 +192,73 @@ fn json_ranges(reader: &mut dyn Read, pointer: &str) -> std::io::Result<Vec<(usi
     let position = std::rc::Rc::new(Position::default());
     let mut counted=Counted {reader: std::io::BufReader::with_capacity(65536,reader),position:position.clone()};
     let path:Vec<_>=pointer.split('/').skip(1).collect();
-    let mut records=Vec::new();
+    let mut selection=Selection::default();
     let mut de=serde_json::Deserializer::from_reader(&mut counted);
-    let parsed=RangesAt {path:&path,position:&position,records:&mut records}.deserialize(&mut de).and_then(|()|de.end());
+    let parsed=RangesAt {path:&path,position:&position,selection:&mut selection}.deserialize(&mut de).and_then(|()|de.end());
     if let Some(error)=position.error.borrow_mut().take() {return Err(error);}
-    if parsed.is_err() {
+    if parsed.is_err() || !selection.valid {
         // Finish the same reader so malformed source syntax still covers all original bytes.
         std::io::copy(&mut counted,&mut std::io::sink())?;
         let length=position.bytes.get();
         return Ok(if length==0 {vec![]} else {vec![(0,length)]});
     }
-    Ok(records)
+    Ok(selection.records)
+}
+
+#[derive(Default)]
+struct Selection {
+    records:Vec<(usize,usize)>,
+    valid:bool,
 }
 
 struct RangesAt<'a,'b> {
     path:&'a [&'a str],
     position:&'a Position,
-    records:&'b mut Vec<(usize,usize)>,
+    selection:&'b mut Selection,
 }
 impl<'de> DeserializeSeed<'de> for RangesAt<'_,'_> {
     type Value=();
     fn deserialize<D:de::Deserializer<'de>>(self,de:D)->Result<(),D::Error> {
-        if self.path.is_empty() {de.deserialize_seq(self)} else {de.deserialize_map(self)}
+        self.selection.records.clear();
+        self.selection.valid=false;
+        de.deserialize_any(self)
     }
 }
 impl<'de> Visitor<'de> for RangesAt<'_,'_> {
     type Value=();
-    fn expecting(&self,f:&mut fmt::Formatter<'_>)->fmt::Result {f.write_str("the selected JSON array")}
+    fn expecting(&self,f:&mut fmt::Formatter<'_>)->fmt::Result {f.write_str("a JSON value")}
+    fn visit_bool<E:de::Error>(self,_v:bool)->Result<(),E> {Ok(())}
+    fn visit_i64<E:de::Error>(self,_v:i64)->Result<(),E> {Ok(())}
+    fn visit_u64<E:de::Error>(self,_v:u64)->Result<(),E> {Ok(())}
+    fn visit_f64<E:de::Error>(self,_v:f64)->Result<(),E> {Ok(())}
+    fn visit_str<E:de::Error>(self,_v:&str)->Result<(),E> {Ok(())}
+    fn visit_unit<E:de::Error>(self)->Result<(),E> {Ok(())}
     fn visit_seq<A:SeqAccess<'de>>(self,mut sequence:A)->Result<(),A::Error> {
-        self.records.clear();
+        if !self.path.is_empty() {
+            while sequence.next_element::<IgnoredAny>()?.is_some() {}
+            return Ok(());
+        }
+        self.selection.valid=true;
         while let Some(raw)=sequence.next_element::<Box<RawValue>>()? {
             // Serde's reader may have peeked one delimiter past a scalar. The raw value
             // excludes that lookahead; structured/string values end at their closing byte.
             let end=self.position.bytes.get()-usize::from(self.position.last.get()!=*raw.get().as_bytes().last().expect("nonempty JSON value"));
-            self.records.push((end-raw.get().len(),end));
+            self.selection.records.push((end-raw.get().len(),end));
         }
         Ok(())
     }
     fn visit_map<A:MapAccess<'de>>(self,mut map:A)->Result<(),A::Error> {
-        let mut found=false;
+        if self.path.is_empty() {
+            while map.next_entry::<IgnoredAny,IgnoredAny>()?.is_some() {}
+            return Ok(());
+        }
         while let Some(key)=map.next_key::<String>()? {
             if key==self.path[0] {
-                found=true;
-                map.next_value_seed(RangesAt {path:&self.path[1..],position:self.position,records:self.records})?;
+                // Legacy slice framing used a map: the final duplicate selected key wins,
+                // including when an earlier value had a different JSON shape.
+                map.next_value_seed(RangesAt {path:&self.path[1..],position:self.position,selection:self.selection})?;
             } else {map.next_value::<IgnoredAny>()?;}
         }
-        if found {Ok(())} else {Err(de::Error::custom("selected JSON array field is absent"))}
+        Ok(())
     }
 }

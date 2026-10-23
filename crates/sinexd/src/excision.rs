@@ -39,7 +39,7 @@ pub async fn excise_with(
         let mut file=tempfile::tempfile().map_err(|e|e.to_string())?;
         let length=blobs.copy_to(&m.blob,&mut file).map_err(|e|e.to_string())?;
         let retained=crate::retained::Retained::new(file,length);
-        let length=usize::try_from(retained.len()).map_err(|_|"material exceeds address space")?;
+        let length=usize::try_from(retained.length()).map_err(|_|"material exceeds address space")?;
         let spans: Vec<(usize, usize)> = if m.whole {
             vec![(0, length)]
         } else {
@@ -67,7 +67,7 @@ pub async fn excise_with(
                 })
                 .collect::<Result<_, _>>()?
         };
-        let reader=crate::retained::Blanked {reader:retained.into_reader()?,spans,position:0};
+        let reader=crate::retained::Blanked {reader:retained.into_reader()?,spans,position:0,first:0};
         rewrites.push(Rewrite {
             material: m.id,
             blob: blobs.put_reader(reader).map_err(|e| e.to_string())?,
