@@ -1,0 +1,421 @@
+use super::*;
+use sinex_model::{BatchKind, MaterialRef};
+use sinex_sources::sources::notes;
+
+#[tokio::test]
+async fn restarted_directory_reader_observes_files_removed_after_its_committed_capture() {
+    use sinex_sources::sources::notes;
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.md"), "alpha").unwrap();
+    std::fs::write(root.join("b.md"), "beta").unwrap();
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let sink = Sink(ctx.blobs.clone());
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let mut bounds = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    let (_stop, stop) = watch::channel(false);
+    let result = read(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        RunId::new(),
+        &sink,
+        &mut bounds,
+        stop.clone(),
+        Access::default(),
+    )
+    .await;
+    for (_, result) in result {
+        result.unwrap();
+    }
+    assert_eq!(current_notes(&mut ctx.read_conn).await.len(), 2);
+    drop(bounds);
+    std::fs::remove_file(root.join("a.md")).unwrap();
+    let mut restarted = vec![Bound::new(&notes::KIND, binding).unwrap()];
+    let result = read(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        RunId::new(),
+        &sink,
+        &mut restarted,
+        stop,
+        Access::default(),
+    )
+    .await;
+    for (_, result) in result {
+        result.unwrap();
+    }
+    let notes = current_notes(&mut ctx.read_conn).await;
+    ctx.close().await.unwrap();
+    assert_eq!(
+        notes
+            .iter()
+            .map(|r| (&*r.0, r.1.clone()))
+            .collect::<Vec<_>>(),
+        vec![("a.md", Value::Null), ("b.md", json!("beta"))]
+    );
+}
+
+async fn turn(ctx: &mut OneShot, bound: &mut [Bound], access: Access<'_>) -> Result<(), String> {
+    let sink = Sink(ctx.blobs.clone());
+    let (_stop, stop) = watch::channel(false);
+    for (_, result) in read(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        RunId::new(),
+        &sink,
+        bound,
+        stop,
+        access,
+    )
+    .await
+    {
+        result?;
+    }
+    Ok(())
+}
+
+async fn prefix(
+    ctx: &mut OneShot,
+    b: &mut Bound,
+    sink: &dyn drivers::MaterialSink,
+    sealing: Option<&crate::one_shot::SealingSink>,
+) -> MaterialRef {
+    crate::backfill::record(&mut ctx.read_conn, &b.binding)
+        .await
+        .unwrap();
+    let (cursor, carry) = positions::load(&mut ctx.read_conn, &b.binding.name)
+        .await
+        .unwrap()
+        .unwrap_or((Value::Null, Value::Null));
+    let acquired = b.reader.poll(&cursor).unwrap();
+    let prepared = drivers::prepare(
+        b.source.as_ref(),
+        &b.binding.name,
+        RunId::new(),
+        acquired,
+        carry,
+        sink,
+        Limits {
+            max_events: 1,
+            max_bytes: 1,
+        },
+    )
+    .unwrap();
+    let batch = prepared.batches().unwrap().next().unwrap().unwrap();
+    let mut one = [batch];
+    if let Some(sealing) = sealing {
+        sealing.seal(&mut one).unwrap();
+    }
+    let BatchKind::Source(progress) = &one[0].kind else {
+        panic!()
+    };
+    let reference = progress.material.as_ref().unwrap().clone();
+    let [batch] = one;
+    ctx.writer
+        .submit(crate::writer::Priority::Bulk, batch)
+        .await
+        .unwrap();
+    reference
+}
+
+#[tokio::test]
+async fn restart_reads_the_retained_suffix_before_missing_source_bytes_and_keeps_empty_prefix() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.md"), b"").unwrap();
+    std::fs::write(root.join("b.md"), b"original beta").unwrap();
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let sink = Sink(ctx.blobs.clone());
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let mut b = Bound::new(&notes::KIND, binding.clone()).unwrap();
+    let reference = prefix(&mut ctx, &mut b, &sink, None).await;
+    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(checkpoint.0["through"], 1);
+    assert!(reference.length > 1);
+    assert_eq!(
+        current_notes(&mut ctx.read_conn)
+            .await
+            .iter()
+            .map(|r| (&*r.0, r.1.clone()))
+            .collect::<Vec<_>>(),
+        vec![("a.md", json!(""))]
+    );
+    drop(b);
+    std::fs::remove_file(root.join("b.md")).unwrap();
+    let mut restarted = vec![Bound::new(&notes::KIND, binding).unwrap()];
+    turn(&mut ctx, &mut restarted, Access::default())
+        .await
+        .unwrap();
+    let rows:Vec<(String,Value,uuid::Uuid,i64)>=sqlx::query_as("SELECT payload->>'path',payload->'text',material_id,anchor FROM core.events WHERE event_type='note.document' ORDER BY commit_seq").fetch_all(&mut ctx.read_conn).await.unwrap();
+    let old = rows
+        .iter()
+        .find(|r| r.0 == "b.md" && r.1 == json!("original beta"))
+        .expect("retained suffix must be interpreted before the current disappearance");
+    assert_eq!(old.2, reference.id.0);
+    assert_eq!(old.3, 2);
+    assert_eq!(
+        current_notes(&mut ctx.read_conn)
+            .await
+            .iter()
+            .map(|r| (&*r.0, r.1.clone()))
+            .collect::<Vec<_>>(),
+        vec![("a.md", json!("")), ("b.md", Value::Null)]
+    );
+    ctx.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn restart_finishes_a_partial_vanished_bundle_before_a_reappeared_file() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    for p in ["a.md", "b.md"] {
+        std::fs::write(root.join(p), p).unwrap();
+    }
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let sink = Sink(ctx.blobs.clone());
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let mut bounds = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    turn(&mut ctx, &mut bounds, Access::default())
+        .await
+        .unwrap();
+    for p in ["a.md", "b.md"] {
+        std::fs::remove_file(root.join(p)).unwrap();
+    }
+    let reference = prefix(&mut ctx, &mut bounds[0], &sink, None).await;
+    let records: Vec<(usize, usize)> =
+        serde_json::from_value(reference.manifest["records"].clone()).unwrap();
+    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(checkpoint.0["through"].as_u64(), Some(records[0].1 as u64));
+    drop(bounds);
+    std::fs::write(root.join("b.md"), "reappeared beta").unwrap();
+    let mut restarted = vec![Bound::new(&notes::KIND, binding).unwrap()];
+    turn(&mut ctx, &mut restarted, Access::default())
+        .await
+        .unwrap();
+    let removed:Option<i64>=sqlx::query_scalar("SELECT anchor FROM core.events WHERE material_id=$1 AND payload->>'path'='b.md' AND record_state='removed'").bind(reference.id.0).fetch_optional(&mut ctx.read_conn).await.unwrap();
+    assert_eq!(removed, Some(records[1].0 as i64));
+    assert_eq!(
+        current_notes(&mut ctx.read_conn)
+            .await
+            .iter()
+            .map(|r| (&*r.0, r.1.clone()))
+            .collect::<Vec<_>>(),
+        vec![("a.md", Value::Null), ("b.md", json!("reappeared beta"))]
+    );
+    ctx.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn sealed_completed_membership_needs_no_private_key_and_never_lowers_its_floor() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.md"), "synthetic sealed alpha").unwrap();
+    let identity = sinex_store::sealed::Identity::generate();
+    let recipient = identity.to_public();
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    sinex_store::privacy::set_source_class(
+        &mut ctx.read_conn,
+        notes::SPEC.name,
+        Class::Sealed,
+        "synthetic",
+    )
+    .await
+    .unwrap();
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let mut bounds = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    turn(
+        &mut ctx,
+        &mut bounds,
+        Access {
+            recipient: Some(&recipient),
+            authority: None,
+        },
+    )
+    .await
+    .unwrap();
+    drop(bounds);
+    std::fs::remove_file(root.join("a.md")).unwrap();
+    let mut restarted = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    turn(
+        &mut ctx,
+        &mut restarted,
+        Access {
+            recipient: Some(&recipient),
+            authority: None,
+        },
+    )
+    .await
+    .unwrap();
+    let states:Vec<(String,String)>=sqlx::query_as("SELECT record_state,class FROM core.events WHERE event_type='note.document' ORDER BY commit_seq").fetch_all(&mut ctx.read_conn).await.unwrap();
+    assert!(states.iter().any(|r| r.0 == "removed"));
+    assert!(states.iter().all(|r| r.1 == "sealed"));
+    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    sinex_store::privacy::set_source_class(
+        &mut ctx.read_conn,
+        notes::SPEC.name,
+        Class::Open,
+        "synthetic",
+    )
+    .await
+    .unwrap();
+    drop(restarted);
+    let mut lowered = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    let error = turn(
+        &mut ctx,
+        &mut lowered,
+        Access {
+            recipient: Some(&recipient),
+            authority: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("lowering its class"), "{error}");
+    assert_eq!(
+        positions::load(&mut ctx.read_conn, &binding.name)
+            .await
+            .unwrap()
+            .unwrap(),
+        checkpoint
+    );
+    let authority =
+        crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60)).unwrap();
+    std::fs::write(root.join("b.md"), "synthetic beta after authorized restart").unwrap();
+    turn(
+        &mut ctx,
+        &mut lowered,
+        Access {
+            recipient: Some(&recipient),
+            authority: Some(&authority),
+        },
+    )
+    .await
+    .unwrap();
+    let open: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.events WHERE event_type='note.document' AND class<>'sealed'",
+    )
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(open, 0);
+    ctx.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn sealed_pending_directory_requires_authority_and_preserves_the_original_suffix() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.md"), "alpha").unwrap();
+    std::fs::write(root.join("b.md"), "synthetic sealed beta").unwrap();
+    let identity = sinex_store::sealed::Identity::generate();
+    let recipient = identity.to_public();
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    sinex_store::privacy::set_source_class(
+        &mut ctx.read_conn,
+        notes::SPEC.name,
+        Class::Sealed,
+        "synthetic",
+    )
+    .await
+    .unwrap();
+    let sealing = crate::one_shot::SealingSink::new(ctx.blobs.clone(), recipient.clone());
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let mut b = Bound::new(&notes::KIND, binding.clone()).unwrap();
+    let reference = prefix(&mut ctx, &mut b, &sealing, Some(&sealing)).await;
+    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(b);
+    std::fs::remove_file(root.join("b.md")).unwrap();
+    let mut restarted = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    let error = turn(
+        &mut ctx,
+        &mut restarted,
+        Access {
+            recipient: Some(&recipient),
+            authority: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("scoped authority"), "{error}");
+    assert_eq!(
+        positions::load(&mut ctx.read_conn, &binding.name)
+            .await
+            .unwrap()
+            .unwrap(),
+        checkpoint
+    );
+    let authority =
+        crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60)).unwrap();
+    turn(
+        &mut ctx,
+        &mut restarted,
+        Access {
+            recipient: Some(&recipient),
+            authority: Some(&authority),
+        },
+    )
+    .await
+    .unwrap();
+    let key = authority
+        .material_key(&mut ctx.read_conn, reference.id)
+        .await
+        .unwrap();
+    let stored: Vec<Value> =
+        sqlx::query_scalar("SELECT payload FROM core.events WHERE material_id=$1 ORDER BY anchor")
+            .bind(reference.id.0)
+            .fetch_all(&mut ctx.read_conn)
+            .await
+            .unwrap();
+    let plain: Vec<_> = stored
+        .iter()
+        .map(|p| sinex_store::sealed::unseal_payload(p, &key.key).unwrap())
+        .collect();
+    assert!(
+        plain
+            .iter()
+            .any(|p| p["path"] == "b.md" && p["text"] == "synthetic sealed beta"),
+        "original pending record interpreted from authenticated retained bytes"
+    );
+    let classes: Vec<String> =
+        sqlx::query_scalar("SELECT class FROM core.events WHERE event_type='note.document'")
+            .fetch_all(&mut ctx.read_conn)
+            .await
+            .unwrap();
+    assert!(classes.iter().all(|c| c == "sealed"));
+    ctx.close().await.unwrap();
+}
