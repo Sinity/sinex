@@ -4308,6 +4308,7 @@ dependencies = [
  "sinex-store",
  "sqlx",
  "tar",
+ "tempfile",
  "thiserror 2.0.21",
  "time",
  "tokio",

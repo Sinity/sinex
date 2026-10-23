@@ -218,7 +218,7 @@ pub const RAW_LOG_KIND: crate::binding::InputKind = crate::binding::InputKind {
     reader: Some(|b| {
         Ok(crate::binding::appended(
             raw_log_driver(b.input.clone(), b.settings.host.clone()),
-            SPEC.framer,
+            RAW_LOG.framer,
         ))
     }),
     capture: None,

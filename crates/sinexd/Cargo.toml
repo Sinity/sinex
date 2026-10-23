@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+tempfile = "3"
 sinex-model.workspace = true
 sinex-schema.workspace = true
 sinex-store.workspace = true
