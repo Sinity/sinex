@@ -1,4 +1,5 @@
 //! A binding owns its parser and cursor; compatible archives share physical traversal.
+mod directory;
 use crate::backfill::{self, Totals};
 use crate::one_shot::{Sink, stored_chain};
 use crate::writer::WriterHandle;
@@ -96,10 +97,14 @@ pub(crate) async fn read(
                         .map_err(|e| e.to_string())?
                         .map(|(cursor, _)| cursor)
                         .unwrap_or(Value::Null);
-                    b.reader
-                        .remember(&stored_chain(conn, blobs, &cursor).await?);
-                    if b.reader.image_policy().is_some() {
-                        restore_sqlite(conn, blobs, b, &cursor).await?;
+                    if b.source.spec().driver == sinex_sources::Driver::DirSnapshot {
+                        directory::restore(conn, blobs, b, &cursor, access, stop.clone()).await?;
+                    } else {
+                        b.reader
+                            .remember(&stored_chain(conn, blobs, &cursor).await?);
+                        if b.reader.image_policy().is_some() {
+                            restore_sqlite(conn, blobs, b, &cursor).await?;
+                        }
                     }
                 }
                 b.remembered = true;

@@ -146,6 +146,18 @@ pub trait Reader: Send {
         Ok(())
     }
 
+    /// Directory membership uses exact accounted anchors; only the current
+    /// incomplete material supplies a retained body for resumption.
+    fn restore_directory(
+        &mut self,
+        _reference: sinex_model::MaterialRef,
+        _admitted: &[usize],
+        _pending: Option<crate::drivers::RetainedRecords>,
+        _cursor: Option<&Value>,
+    ) -> Result<(), DriverError> {
+        Ok(())
+    }
+
     fn remember(&mut self, _stored: &[(MaterialId, Vec<u8>)]) {}
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError>;
@@ -396,8 +408,8 @@ impl Reader for Rows {
 
 /// A directory walked snapshot by snapshot. The supplied committed cursor
 /// confirms file-cache updates; an unfinished bundle is retained for retry.
-/// A restart walks it again;
-/// admission suppresses the repeats.
+/// Restart restores accounted member paths and completes the retained pending
+/// bundle first. Present files are then reread; admission suppresses repeats.
 pub struct Walked {
     driver: DirSnapshot,
     state: DirState,
@@ -411,6 +423,26 @@ pub fn walked(driver: DirSnapshot) -> Box<dyn Reader> {
 }
 
 impl Reader for Walked {
+    fn restore_directory(
+        &mut self,
+        reference: sinex_model::MaterialRef,
+        admitted: &[usize],
+        pending: Option<crate::drivers::RetainedRecords>,
+        cursor: Option<&Value>,
+    ) -> Result<(), DriverError> {
+        if reference.previous_part.is_none() {
+            self.state = DirState::default();
+        }
+        self.state.remember_members(&reference.manifest, admitted)?;
+        match (pending, cursor) {
+            (Some(pending), Some(cursor)) => self.state.restore_pending(reference, pending, cursor),
+            (None, None) => Ok(()),
+            _ => Err(DriverError::Cursor(
+                "directory pending body and cursor must agree".into(),
+            )),
+        }
+    }
+
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
         self.driver.poll(cursor, &mut self.state)
     }
