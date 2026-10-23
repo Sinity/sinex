@@ -194,6 +194,14 @@ fn payload_bool(path: &str) -> String {
 /// A promoted field of an alias.
 pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
     Some(match (alias, name) {
+        ("shell-sessions", "host" | "day") => payload_text(name),
+        ("shell-sessions", "commands" | "failed") => payload_number(name),
+        ("shell-sessions", "start") => payload_time("started_at"),
+        ("shell-sessions", "observed_until") => payload_time("ended_at"),
+        ("shell-sessions", "duration") => format!(
+            "extract(epoch from ({} - {}))", payload_time("ended_at"), payload_time("started_at")
+        ),
+        ("shell-sessions", "cwds") => "(CASE WHEN jsonb_typeof({t}.payload -> 'cwds') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text({t}.payload -> 'cwds')) END)".to_string(),
         ("commands", "command") => payload_text("command"),
         ("commands", "cwd") => payload_text("cwd"),
         ("commands", "exit_code") => payload_number("exit_code"),
@@ -231,11 +239,22 @@ pub(crate) fn alias_field(alias: &str, name: &str) -> Option<String> {
 }
 
 /// The span of a row, for `during` and `containing`: `(start, end)`. An end
-/// that is unknown is an open span.
-pub(crate) fn span(unit: Unit, alias: Option<&str>) -> Option<(String, String)> {
+/// that is unknown is an open span. The boolean marks an included upper bound.
+pub(crate) fn span(unit: Unit, alias: Option<&str>) -> Option<(String, String, bool)> {
     match (unit, alias) {
-        (Unit::Events, Some(a)) => Some((alias_field(a, "start")?, alias_field(a, "end")?)),
-        (Unit::Runs, None) => Some(("{t}.started_at".into(), "{t}.ended_at".into())),
+        (Unit::Events, Some(a)) => Some((
+            alias_field(a, "start")?,
+            alias_field(
+                a,
+                if a == "shell-sessions" {
+                    "observed_until"
+                } else {
+                    "end"
+                },
+            )?,
+            a == "shell-sessions",
+        )),
+        (Unit::Runs, None) => Some(("{t}.started_at".into(), "{t}.ended_at".into(), false)),
         _ => None,
     }
 }

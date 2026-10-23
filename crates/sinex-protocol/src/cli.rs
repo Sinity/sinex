@@ -13,8 +13,10 @@ pub fn subcommand(c: &Command) -> clap::Command {
         arg = match (a.kind, a.positional) {
             (ArgKind::Rest, _) => arg
                 .num_args(1..)
-                .trailing_var_arg(true)
-                .allow_hyphen_values(true),
+                // Recall has an optional time expression, followed by options
+                // such as `last --cwd PATH`. Query/search keep their raw tail.
+                .trailing_var_arg(c.name != "recall")
+                .allow_hyphen_values(c.name != "recall"),
             (ArgKind::Bool, _) => arg.long(a.name).action(ArgAction::SetTrue).required(false),
             (ArgKind::List, _) => arg.long(a.name).action(ArgAction::Append),
             (ArgKind::Integer, false) => arg.long(a.name).value_parser(clap::value_parser!(u64)),

@@ -265,13 +265,23 @@ impl Api {
             }
             Request::Recall {
                 around,
+                cwd,
                 page,
                 cursor,
             } => {
-                let text = match around.as_deref().map(str::trim) {
+                let mut text = match around.as_deref().map(str::trim) {
                     Some(a) if !a.is_empty() => format!("recall {a}"),
                     _ => "recall".to_string(),
                 };
+                if let Some(cwd) = cwd {
+                    if around.as_deref().map(str::trim) != Some("last") {
+                        return refused(
+                            "cwd applies only to recall last; use a session-field query for other filters",
+                        );
+                    }
+                    text.push_str(" where cwds ^ ");
+                    text.push_str(&serde_json::to_string(&cwd).expect("strings serialize"));
+                }
                 self.query(caller, &text, Page { size: page, cursor }).await
             }
             Request::Trace {

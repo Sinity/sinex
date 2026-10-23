@@ -5,6 +5,7 @@
 //! unit's field names; times are UTC.
 mod compile;
 mod fields;
+mod recall;
 mod sql;
 mod walk;
 
@@ -135,7 +136,7 @@ pub async fn run(
         Source::Unit { alias: Some(a), .. } => a.name.to_string(),
         Source::Unit { unit, .. } => unit.name().to_string(),
         Source::Walk { walk, .. } => format!("{walk:?}").to_lowercase(),
-        Source::Recall { .. } => "recall".to_string(),
+        Source::Recall { .. } | Source::RecallLast { .. } => "recall".to_string(),
     };
     let mut answer = match &query.source {
         Source::Walk { walk, reference } => {
@@ -170,22 +171,14 @@ pub async fn run(
             )
             .await?
         }
-        Source::Recall { from, to } => {
-            // Recall is a fixed query: live events of every source in the
-            // window, plus what each source contributed.
-            let window = Expr::Within {
-                lhs: Operand::Field(FieldRef::Field(
-                    Unit::Events.field("when").expect("events have when"),
-                )),
-                from: *from,
-                to: *to,
-            };
+        Source::Recall { .. } | Source::RecallLast { .. } => {
+            let selection = recall::select(&mut tx, &query.source, ctx, seq).await?;
             let as_events = Query {
                 source: Source::Unit {
                     unit: Unit::Events,
                     alias: None,
                 },
-                filter: Some(window),
+                filter: Some(selection.filter()),
                 stages: query.stages.clone(),
                 ranked: query.ranked,
             };
@@ -194,7 +187,7 @@ pub async fn run(
                 &mut tx, rendered, unit, text, query, resolved, seq, offset, size,
             )
             .await?;
-            a.recall = Some(walk::recall_summary(&mut tx, *from, *to, seq).await?);
+            a.recall = Some(selection.account(&mut tx, seq).await?);
             a
         }
     };
@@ -326,6 +319,12 @@ async fn check_kinds(conn: &mut PgConnection, query: &Query) -> Result<()> {
 }
 
 fn collect_aliases(q: &Query, out: &mut Vec<&'static sinex_model::query::Alias>) {
+    if matches!(q.source, Source::RecallLast { .. }) {
+        out.push(
+            sinex_model::query::Alias::from_name("shell-sessions")
+                .expect("shell sessions declared"),
+        );
+    }
     if let Source::Unit { alias: Some(a), .. } = &q.source {
         out.push(a);
     }

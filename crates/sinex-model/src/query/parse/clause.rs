@@ -22,10 +22,17 @@ impl Parser<'_> {
             });
         };
         let word = t.text.to_ascii_lowercase();
-        if matches!(word.as_str(), "last" | "mark") {
+        if word == "last" {
+            self.at += 1;
+            let alias = Alias::from_name("shell-sessions").expect("shell sessions are declared");
+            return Ok(Source::RecallLast {
+                filter: self.unit_filter(&Scope::rows(Unit::Events, Some(alias)))?,
+            });
+        }
+        if word == "mark" {
             return Err(QueryError::not_built(
                 t.at,
-                format!("`recall {word}` needs sessions and moment marks, which are not built yet"),
+                format!("`recall {word}` needs moment marks, which are not built yet"),
             ));
         }
         if CLAUSE_WORDS.contains(&word.as_str()) {

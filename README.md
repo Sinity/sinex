@@ -76,8 +76,22 @@ boundaries between capture, interpretation, admission and public interfaces.
 CLI help, `/v1/commands` and MCP list implemented operations. Planned command
 work includes `stage`, duplicate decisions (`same`/`distinct`) and moment marks
 (`mark`).
-Recall supports a time, day or the default current-time window; `last` and
-`mark` recall shapes remain unsupported.
+Recall supports a time, day, the default current-time window, or `last` for the
+latest recorded shell command group. `mark` remains planned. For example:
+
+```sh
+sinexctl query 'shell-sessions where cwds ^ /src/tide sort start desc'
+sinexctl recall last --cwd '/src/tide (notes)'
+sinexctl query 'recall last where cwds ^ /src/tide'
+```
+
+`--cwd` selects a group with a recorded member directory at or below that path;
+it keeps context from other directories and sources in the selected window.
+It applies only to `last`. Shell groups use recorded command extents, including
+both endpoints; `observed_until` does not prove that activity ended. Unknown
+durations count as points. The broader activity `sessions` alias remains
+unsupported. If no matching timed group is known, recall says so without
+claiming that no observations exist.
 
 ## Build and test
 

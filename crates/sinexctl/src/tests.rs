@@ -70,8 +70,47 @@ fn cli_discovery_omits_unimplemented_operations_and_keeps_recall() {
         request,
         Request::Recall {
             around: Some("yesterday".into()),
+            cwd: None,
             page: None,
             cursor: None
         }
+    );
+}
+
+#[test]
+fn recall_cwd_can_follow_last_and_preserves_path_text() {
+    let path = "/src/tide (notes) \" where cwds = /else";
+    for words in [
+        vec!["sinexctl", "recall", "last", "--cwd", path],
+        vec!["sinexctl", "recall", "--cwd", path, "last"],
+    ] {
+        let matches = cli().try_get_matches_from(words).unwrap();
+        let (name, args) = matches.subcommand().unwrap();
+        let request = Request::from_args(
+            name,
+            arguments(sinex_protocol::command(name).unwrap(), args),
+        )
+        .unwrap();
+        assert_eq!(
+            request,
+            Request::Recall {
+                around: Some("last".into()),
+                cwd: Some(path.into()),
+                page: None,
+                cursor: None
+            }
+        );
+    }
+    let matches = cli()
+        .try_get_matches_from(["sinexctl", "recall", "2026-09-14", "08:00", "±90s"])
+        .unwrap();
+    let (name, args) = matches.subcommand().unwrap();
+    let request = Request::from_args(
+        name,
+        arguments(sinex_protocol::command(name).unwrap(), args),
+    )
+    .unwrap();
+    assert!(
+        matches!(request, Request::Recall {around: Some(ref s), cwd: None, ..} if s == "2026-09-14 08:00 ±90s")
     );
 }

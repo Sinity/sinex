@@ -218,6 +218,7 @@ pub(crate) async fn recall_summary(
     from: jiff::Timestamp,
     to: jiff::Timestamp,
     seq: i64,
+    inclusive_end: bool,
 ) -> Result<Json> {
     let convert = |t: jiff::Timestamp| {
         time::OffsetDateTime::from_unix_timestamp_nanos(t.as_nanosecond())
@@ -227,12 +228,13 @@ pub(crate) async fn recall_summary(
     let by_source = sqlx::query!(
         r#"SELECT e.source, count(*) AS "events!", min(e.ts_orig) AS first, max(e.ts_orig) AS last
            FROM core.events e
-           WHERE e.ts_orig >= $1 AND e.ts_orig < $2 AND e.commit_seq <= $3
+           WHERE e.ts_orig >= $1 AND (e.ts_orig < $2 OR ($4 AND e.ts_orig = $2)) AND e.commit_seq <= $3
            AND NOT EXISTS (SELECT 1 FROM audit.archived x WHERE x.event_id = e.id AND x.archived_seq <= $3)
            GROUP BY e.source ORDER BY e.source"#,
         f,
         t,
-        seq
+        seq,
+        inclusive_end
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -261,6 +263,7 @@ pub(crate) async fn recall_summary(
     Ok(json!({
         "from": from.to_string(),
         "to": to.to_string(),
+        "inclusive_end": inclusive_end,
         "by_source": by_source.iter().map(|r| json!({
             "source": r.source,
             "events": r.events,

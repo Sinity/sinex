@@ -309,7 +309,10 @@ impl Parser<'_> {
             Operand::Field(FieldRef::Group(_)) => Ok(infer(&raw, quoted, op)),
             Operand::Field(FieldRef::Payload(_)) => Ok(infer(&raw, quoted, op)),
             Operand::Field(FieldRef::Field(f)) => {
-                let text_like = matches!(f.ty, FieldType::Text | FieldType::Path);
+                let text_like = matches!(
+                    f.ty,
+                    FieldType::Text | FieldType::Path | FieldType::PathList
+                );
                 if matches!(op, Op::Contains | Op::Prefix) && !text_like {
                     return Err(QueryError::at(
                         at,
@@ -326,6 +329,7 @@ impl Parser<'_> {
                         f.ty,
                         FieldType::Id
                             | FieldType::IdList
+                            | FieldType::PathList
                             | FieldType::Bool
                             | FieldType::Enum(_)
                             | FieldType::Json
@@ -392,10 +396,15 @@ impl Parser<'_> {
                         at,
                         "compare a payload field by its path: `payload.<field>`",
                     )),
-                    FieldType::Text | FieldType::Path => {
+                    FieldType::Text | FieldType::Path | FieldType::PathList => {
+                        if f.ty == FieldType::PathList
+                            && !matches!(op, Op::Eq | Op::Ne | Op::Prefix)
+                        {
+                            return Err(QueryError::at(at, "path lists compare with = != or ^"));
+                        }
                         if !quoted && raw.contains('*') && matches!(op, Op::Eq | Op::Ne) {
                             Ok(Value::Glob(raw))
-                        } else if f.ty == FieldType::Path
+                        } else if matches!(f.ty, FieldType::Path | FieldType::PathList)
                             && op == Op::Prefix
                             && !raw.starts_with('/')
                         {

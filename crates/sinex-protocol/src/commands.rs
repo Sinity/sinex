@@ -113,16 +113,21 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "recall",
-        summary: "What every source recorded around a time (default now ±30m), a day, or a time ±window.",
+        summary: "What sources recorded around a time/day, or in the latest shell group (last).",
         args: &[
             Arg {
                 required: false,
                 ..pos(
                     "around",
                     ArgKind::Rest,
-                    "a time (2026-03-02 14:05 ±20m), a day (yesterday) or nothing for now",
+                    "last, a time (2026-03-02 14:05 ±20m), a day (yesterday) or nothing for now",
                 )
             },
+            opt(
+                "cwd",
+                ArgKind::Text,
+                "with last: select a shell group with a member in this directory or below",
+            ),
             PAGE,
             CURSOR,
         ],

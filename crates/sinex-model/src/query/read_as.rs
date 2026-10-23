@@ -98,6 +98,15 @@ fn source(s: &Source) -> String {
                 format!("{what} {r}")
             }
         }
+        Source::RecallLast { filter } => {
+            let mut s =
+                "everything in the latest recorded shell group's observed envelope".to_string();
+            if let Some(f) = filter {
+                s.push_str(" whose ");
+                s.push_str(&expr(f));
+            }
+            s
+        }
         Source::Recall { from, to } => {
             format!("everything recorded from {} until {}", time(from), time(to))
         }
