@@ -55,6 +55,11 @@ pub struct Material {
 pub struct Plan {
     pub events: BTreeSet<Uuid>,
     pub materials: Vec<Material>,
+    pub seeds: Vec<Uuid>,
+    pub extra_records: BTreeMap<MaterialId, BTreeSet<i64>>,
+    pub candidate_source: Option<String>,
+    pub candidate_parser: Option<String>,
+    pub candidates: Vec<Candidate>,
 }
 
 /// A material's replacement bytes, written to the content store before the
@@ -80,6 +85,8 @@ pub struct Applied {
 }
 
 mod basis;
+mod candidates;
+pub use candidates::{Candidate, KeyEnvelope, candidate_materials};
 mod source_guard;
 pub use basis::{operations_basis, validate_basis};
 pub use source_guard::{lock_source, unsupported_ingress};
@@ -119,6 +126,20 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
             .await?
         }
     };
+    plan_records(conn, target, &seeds, &BTreeMap::new()).await
+}
+
+/// Native record selection is prepared by the source adapter; the Writer
+/// revalidates its immutable body/key candidates and event closure.
+pub async fn plan_records(
+    conn: &mut PgConnection,
+    target: Target,
+    seeds: &[Uuid],
+    extra_records: &BTreeMap<MaterialId, BTreeSet<i64>>,
+) -> Result<Plan> {
+    let mut seeds = seeds.to_vec();
+    seeds.sort_unstable();
+    seeds.dedup();
     // A record's bytes hold all its events, so every event read from the same
     // record goes too; then every derived event that descends from any of them.
     let events = sqlx::query_scalar!(
@@ -195,6 +216,32 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
             },
         );
     }
+    for (id, anchors) in extra_records {
+        if let Some(material) = materials.get_mut(&id.0) {
+            if !material.whole {
+                material.anchors.extend(anchors);
+            }
+        } else {
+            let r = sqlx::query!(
+                r#"SELECT m.blob,m.parser,m.manifest,i.host AS "host?",(k.material_id IS NOT NULL) AS "sealed!"
+                   FROM raw.materials m LEFT JOIN raw.inputs i ON i.id=m.input_id
+                   LEFT JOIN privacy.material_keys k ON k.material_id=m.id WHERE m.id=$1"#, id.0
+            ).fetch_one(&mut *conn).await?;
+            materials.insert(
+                id.0,
+                Material {
+                    id: *id,
+                    blob: r.blob,
+                    parser: r.parser,
+                    host: r.host.unwrap_or_default(),
+                    manifest: r.manifest,
+                    anchors: anchors.clone(),
+                    whole: matches!(target,Target::Material(m) if m==*id),
+                    sealed: r.sealed,
+                },
+            );
+        }
+    }
     // Record bodies do not replace their original archive. Blanking a decoded
     // part alone would leave the same private bytes in its captured ancestor.
     let material_ids: Vec<Uuid> = materials.keys().copied().collect();
@@ -226,6 +273,11 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     Ok(Plan {
         events,
         materials: materials.into_values().collect(),
+        seeds,
+        extra_records: extra_records.clone(),
+        candidate_source: None,
+        candidate_parser: None,
+        candidates: Vec::new(),
     })
 }
 
@@ -254,7 +306,14 @@ pub async fn apply(
     actor: &str,
     keys: &dyn DirtyKeys,
 ) -> Result<Applied> {
-    let now = self::plan(conn, target).await?;
+    let mut current_seeds = self::plan(conn, target).await?.seeds;
+    current_seeds.extend(&plan.seeds);
+    let mut now = self::plan_records(conn, target, &current_seeds, &plan.extra_records).await?;
+    now.candidate_source = plan.candidate_source.clone();
+    now.candidate_parser = plan.candidate_parser.clone();
+    if let (Some(source), Some(parser)) = (&plan.candidate_source, &plan.candidate_parser) {
+        now.candidates = candidate_materials(conn, source, parser).await?;
+    }
     if now != *plan {
         return Err(Error::Invalid(
             "the readings to excise changed after planning; plan the excision again".into(),
