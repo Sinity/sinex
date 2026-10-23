@@ -16,6 +16,17 @@ to the writer. A source cursor describes admitted progress; obtaining bytes
 alone does not mean their records were interpreted successfully. Archive
 capture and replay have additional open acceptance criteria in Beads.
 
+The outside producers use `sinex-sources::live::run` to start capture threads
+and publish their spools under one lifetime. Signal handlers are registered
+before capture begins. Deadline, production failure, interrupt and termination
+stop every capture before joining their threads. `capture::Control` owns
+interruptible waits, socket read shutdown and child process groups. It interrupts
+groups, escalates after 250 ms, and reaps their children, including adopted
+descendants through Linux subreaper support; error and panic
+unwinding also kill and reap an owned child. Capture spawns and the final group drain are serialized; process identities
+remain registered until reaping, so a delayed stop cannot signal a reused PID. The direct
+`sinex-session capture` command uses the same lifetime.
+
 ## Persistence and derived work
 
 `sinex-store` owns PostgreSQL access, content storage and admission. The daemon's

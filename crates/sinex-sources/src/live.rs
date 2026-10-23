@@ -4,17 +4,40 @@
 //! NATS ingress. Both programs build their sources from the registry's kinds
 //! and share this loop.
 use crate::binding::{Binding, InputKind, Reader, Settings};
+use crate::capture::Control;
 use crate::drivers::producer::{Position, Producer, Store};
 use crate::{Source, sources};
 use serde_json::Value;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// One live source being captured and produced.
-pub struct Live {
-    pub source: Box<dyn Source>,
-    pub binding: Binding,
-    pub reader: Box<dyn Reader>,
+struct Live {
+    source: Box<dyn Source>,
+    binding: Binding,
+    reader: Box<dyn Reader>,
+    capture: CaptureTask,
+}
+
+struct CaptureTask {
+    control: Arc<Control>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl CaptureTask {
+    fn stop(&mut self) {
+        self.control.stop();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for CaptureTask {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 /// The binding of the live source `kind` on `spool`.
@@ -42,32 +65,79 @@ pub fn binding(
 /// Start capturing `kind` into `spool` on its own thread, and return how it
 /// is produced. A capture that ends is reported; production of what it
 /// already spooled goes on.
-pub fn start(kind: &str, spool: &Path, host: &str, options: Value) -> Result<Live, String> {
-    let (k, binding) = binding(kind, spool, host, options)?;
+fn start(k: &'static InputKind, binding: Binding) -> Result<Live, String> {
     let capture = k.capture.expect("live kinds capture");
+    // Construct fallible readers before starting a capture that must be joined.
+    let reader = (k
+        .reader
+        .ok_or_else(|| format!("{}: no spool reader", k.name))?)(&binding)?;
+    let source = (k.source)(&binding)?;
+    let control = Arc::new(Control::new(None));
     let b = binding.clone();
-    std::thread::spawn(move || {
-        if let Err(e) = capture(&b, None) {
-            eprintln!("{} capture: {e}", b.name);
-        }
-    });
-    let reader = (k.reader.ok_or_else(|| format!("{kind}: no spool reader"))?)(&binding)?;
+    let stop = control.clone();
+    let thread = std::thread::Builder::new()
+        .spawn(move || {
+            if let Err(e) = capture(&b, &stop) {
+                eprintln!("{} capture: {e}", b.name);
+            }
+        })
+        .map_err(|e| e.to_string())?;
     Ok(Live {
-        source: (k.source)(&binding)?,
+        source,
         binding,
         reader,
+        capture: CaptureTask {
+            control,
+            thread: Some(thread),
+        },
     })
 }
 
 /// Produce what every spool holds, every `every`, until `until` (forever
 /// otherwise). Private mode pauses capture and production until it is off.
-pub async fn produce(
+pub async fn run(
+    producer: &mut Producer,
+    store: &Store,
+    positions: &Path,
+    bindings: Vec<(&'static InputKind, Binding)>,
+    every: Duration,
+    until: Option<Instant>,
+) -> Result<(), String> {
+    // Register before any capture thread or child can start.
+    let shutdown = crate::capture::shutdown_signal().map_err(|e| e.to_string())?;
+    let mut lives = bindings
+        .into_iter()
+        .map(|(kind, binding)| start(kind, binding))
+        .collect::<Result<Vec<_>, _>>()?;
+    let deadline = async {
+        match until {
+            Some(until) => {
+                tokio::time::sleep(until.saturating_duration_since(Instant::now())).await
+            }
+            None => std::future::pending::<()>().await,
+        }
+    };
+    let result = tokio::select! {
+        result = produce_spools(producer, store, positions, &mut lives, every) => result,
+        _ = shutdown => Ok(()),
+        _ = deadline => Ok(()),
+    };
+    // Interrupt every source before joining any one blocked reader.
+    for live in &lives {
+        live.capture.control.stop();
+    }
+    for live in &mut lives {
+        live.capture.stop();
+    }
+    result
+}
+
+async fn produce_spools(
     producer: &mut Producer,
     store: &Store,
     positions: &Path,
     lives: &mut [Live],
     every: Duration,
-    until: Option<Instant>,
 ) -> Result<(), String> {
     let private = sinex_protocol::private_mode::PrivateMode::default();
     loop {
@@ -112,9 +182,6 @@ pub async fn produce(
                     break;
                 }
             }
-        }
-        if until.is_some_and(|d| Instant::now() >= d) {
-            return Ok(());
         }
         tokio::time::sleep(every).await;
     }

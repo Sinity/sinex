@@ -183,6 +183,15 @@ pub enum Start<'a> {
 /// child exits; without, it stops at the end of the journal. Returns the number
 /// of entries captured.
 pub fn capture(spool: &Path, follow: bool, start: Start<'_>) -> std::io::Result<u64> {
+    capture_with_control(spool, follow, start, &crate::capture::Control::new(None))
+}
+
+fn capture_with_control(
+    spool: &Path,
+    follow: bool,
+    start: Start<'_>,
+    control: &crate::capture::Control,
+) -> std::io::Result<u64> {
     let mut command = Command::new("journalctl");
     command.args(["--output=json", "--all", "--no-pager", "--quiet"]);
     match last_spooled_cursor(spool)? {
@@ -199,8 +208,11 @@ pub fn capture(spool: &Path, follow: bool, start: Start<'_>) -> std::io::Result<
     if follow {
         command.args(["--follow", "--lines=all"]);
     }
-    let mut child = command.stdout(Stdio::piped()).spawn()?;
-    let stdout = child.stdout.take().expect("piped stdout");
+    command.stdout(Stdio::piped());
+    let Some(mut child) = control.spawn(&mut command)? else {
+        return Ok(0);
+    };
+    let stdout = child.stdout().expect("piped stdout");
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     let count = live_stream::capture_lines(
         BufReader::with_capacity(1 << 20, stdout),
@@ -208,7 +220,7 @@ pub fn capture(spool: &Path, follow: bool, start: Start<'_>) -> std::io::Result<
         Duration::from_secs(1),
     )?;
     let status = child.wait()?;
-    if !status.success() {
+    if !status.success() && !control.stopped() {
         return Err(std::io::Error::other(format!(
             "journalctl exited with {status}"
         )));
@@ -230,7 +242,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
             b.settings.host.clone(),
         )))
     }),
-    capture: Some(|b, _stop| {
+    capture: Some(|b, stop| {
         let start = match b.settings.option("since") {
             Some(s) => Start::Since(s),
             None => Start::Beginning,
@@ -241,7 +253,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
             .get("follow")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        capture(&b.input, follow, start).map_err(|e| e.to_string())
+        capture_with_control(&b.input, follow, start, stop).map_err(|e| e.to_string())
     }),
 };
 

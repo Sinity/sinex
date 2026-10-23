@@ -262,7 +262,16 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 /// Capture the socket into `spool` until the socket closes (Hyprland exited).
 /// Returns the number of lines captured.
 pub fn capture(socket: &Path, spool: &Path) -> std::io::Result<u64> {
+    capture_with_control(socket, spool, &crate::capture::Control::new(None))
+}
+
+fn capture_with_control(
+    socket: &Path,
+    spool: &Path,
+    control: &crate::capture::Control,
+) -> std::io::Result<u64> {
     let stream = UnixStream::connect(socket)?;
+    control.shutdown_on_stop(&stream)?;
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     live_stream::capture_lines(BufReader::new(stream), &mut writer, Duration::from_secs(1))
 }
@@ -283,20 +292,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
         let socket = socket_path().ok_or(
             "no Hyprland instance in this environment (HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset)",
         )?;
-        let spool = b.input.clone();
-        let reader = std::thread::spawn(move || capture(&socket, &spool));
-        match stop {
-            // Everything read is already in the spool; leaving the reader
-            // mid-wait loses nothing.
-            Some(stop) => {
-                std::thread::sleep(stop);
-                Ok(0)
-            }
-            None => reader
-                .join()
-                .map_err(|_| "capture thread panicked".to_owned())?
-                .map_err(|e| e.to_string()),
-        }
+        capture_with_control(&socket, &b.input, stop).map_err(|e| e.to_string())
     }),
 };
 

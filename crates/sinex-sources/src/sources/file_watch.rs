@@ -61,10 +61,21 @@ fn path_json(path: &Path) -> Value {
 /// following symlinks. Directories that cannot be read are returned
 /// separately, so capture can record them.
 pub fn directories(dir: &Path, skip: &[String]) -> (Vec<PathBuf>, Vec<(PathBuf, String)>) {
+    directories_until(dir, skip, || false)
+}
+
+fn directories_until(
+    dir: &Path,
+    skip: &[String],
+    mut stopped: impl FnMut() -> bool,
+) -> (Vec<PathBuf>, Vec<(PathBuf, String)>) {
     let mut out = Vec::new();
     let mut unreadable = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
+        if stopped() {
+            break;
+        }
         let entries = match std::fs::read_dir(&d) {
             Ok(e) => e,
             Err(e) => {
@@ -74,6 +85,9 @@ pub fn directories(dir: &Path, skip: &[String]) -> (Vec<PathBuf>, Vec<(PathBuf, 
         };
         out.push(d);
         for entry in entries.flatten() {
+            if stopped() {
+                break;
+            }
             let Ok(kind) = entry.file_type() else {
                 continue;
             };
@@ -117,6 +131,14 @@ fn spool_line(spool: &mut SpoolWriter, line: &Value) -> std::io::Result<()> {
 /// Watch `roots` and spool every change until `stop` elapses (forever when
 /// `None`). Returns the number of records spooled.
 pub fn capture(roots: &Roots, spool: &Path, stop: Option<Duration>) -> std::io::Result<u64> {
+    capture_with_control(roots, spool, &crate::capture::Control::new(stop))
+}
+
+fn capture_with_control(
+    roots: &Roots,
+    spool: &Path,
+    stop: &crate::capture::Control,
+) -> std::io::Result<u64> {
     let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let mut watcher = notify::recommended_watcher(tx).map_err(std::io::Error::other)?;
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
@@ -126,8 +148,11 @@ pub fn capture(roots: &Roots, spool: &Path, stop: Option<Duration>) -> std::io::
         .map(|s| s.trim().to_owned());
     let mut watch_tree =
         |dir: &Path, writer: &mut SpoolWriter, count: &mut u64| -> std::io::Result<()> {
-            let (dirs, unreadable) = directories(dir, &roots.skip);
+            let (dirs, unreadable) = directories_until(dir, &roots.skip, || stop.stopped());
             for d in dirs {
+                if stop.stopped() {
+                    return Ok(());
+                }
                 if let Err(e) = watcher.watch(&d, RecursiveMode::NonRecursive) {
                     let note = match e.kind {
                         notify::ErrorKind::MaxFilesWatch => format!(
@@ -156,16 +181,12 @@ pub fn capture(roots: &Roots, spool: &Path, stop: Option<Duration>) -> std::io::
         watch_tree(root, &mut writer, &mut count)?;
     }
     writer.sync()?;
-    let deadline = stop.map(|d| Instant::now() + d);
     let mut last_sync = Instant::now();
     loop {
-        let wait = match deadline {
-            Some(d) => match d.checked_duration_since(Instant::now()) {
-                Some(left) => left.min(Duration::from_secs(1)),
-                None => break,
-            },
-            None => Duration::from_secs(1),
-        };
+        if stop.stopped() {
+            break;
+        }
+        let wait = Duration::from_millis(100);
         match rx.recv_timeout(wait) {
             Ok(Ok(event)) => {
                 let Some((change, is_dir)) = change_of(&event.kind) else {
@@ -329,7 +350,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
         if roots.roots.is_empty() {
             return Err("file-watch: no `roots` to watch".into());
         }
-        capture(&roots, &b.input, stop).map_err(|e| e.to_string())
+        capture_with_control(&roots, &b.input, stop).map_err(|e| e.to_string())
     }),
 };
 

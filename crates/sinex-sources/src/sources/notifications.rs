@@ -16,7 +16,6 @@ use sinex_model::event_types::session::{
     NotificationAction, NotificationClosed, NotificationShown,
 };
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.notifications",
@@ -150,8 +149,8 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     dbus::driver(spool, host, "dbus:session:org.freedesktop.Notifications")
 }
 
-pub fn capture(spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
-    dbus::capture(MATCHES, &[], spool, seconds)
+pub fn capture(spool: &Path, control: &crate::capture::Control) -> std::io::Result<u64> {
+    dbus::capture(MATCHES, &[], spool, control)
 }
 
 /// `--source notifications=SPOOL`: desktop notifications on the session

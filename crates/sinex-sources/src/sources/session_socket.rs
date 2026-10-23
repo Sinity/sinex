@@ -18,7 +18,7 @@ use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "session.producers",
@@ -56,6 +56,14 @@ pub fn default_path() -> Option<PathBuf> {
 /// `seconds` pass (forever otherwise). Stopping closes reception on accepted
 /// connections and drains their queued bytes before returning the lines captured.
 pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
+    capture_with_control(socket, spool, &crate::capture::Control::new(seconds))
+}
+
+fn capture_with_control(
+    socket: &Path,
+    spool: &Path,
+    control: &crate::capture::Control,
+) -> std::io::Result<u64> {
     if let Some(dir) = socket.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -66,10 +74,7 @@ pub fn capture(socket: &Path, spool: &Path, seconds: Option<Duration>) -> std::i
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
         let writer = Arc::new(Mutex::new(SpoolWriter::open(spool, Rotation::default())?));
-        let deadline = seconds.map(|s| Instant::now() + s);
-        capture_connections(listener, writer, || {
-            deadline.is_some_and(|d| Instant::now() >= d)
-        })
+        capture_connections(listener, writer, || control.stopped())
     })();
     let cleanup = std::fs::remove_file(socket);
     match result {
@@ -304,7 +309,7 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
             .map(PathBuf::from)
             .or_else(default_path)
             .ok_or("no producer socket path (XDG_RUNTIME_DIR unset)")?;
-        capture(&socket, &b.input, stop).map_err(|e| e.to_string())
+        capture_with_control(&socket, &b.input, stop).map_err(|e| e.to_string())
     }),
 };
 

@@ -101,14 +101,14 @@ fn stem(start: Timestamp, end: Timestamp, kind: &str) -> String {
 
 /// Outputs (monitors) and their pixel sizes, from Hyprland.
 pub fn outputs() -> Vec<(String, u32, u32)> {
-    let Ok(out) = Command::new("hyprctl")
-        .args(["monitors", "-j"])
-        .stderr(Stdio::null())
-        .output()
-    else {
+    outputs_with_control(&crate::capture::Control::new(None))
+}
+
+fn outputs_with_control(control: &crate::capture::Control) -> Vec<(String, u32, u32)> {
+    let Ok(Some(out)) = control.output(Command::new("hyprctl").args(["monitors", "-j"])) else {
         return Vec::new();
     };
-    serde_json::from_slice::<Vec<Value>>(&out.stdout)
+    serde_json::from_slice::<Vec<Value>>(&out)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|m| {
@@ -124,21 +124,19 @@ fn private_on() -> bool {
     sinex_protocol::private_mode::PrivateMode::default().on()
 }
 
-/// Take a still of every output each `every`, for `seconds` (forever
-/// otherwise). Returns the stills written.
+/// Take a still of every output each `every`, until capture stops. Returns the stills written.
 pub fn capture_screen(
     spool: &Path,
     every: Duration,
-    seconds: Option<Duration>,
+    control: &crate::capture::Control,
 ) -> std::io::Result<u64> {
     std::fs::create_dir_all(spool)?;
-    let deadline = seconds.map(|s| Instant::now() + s);
     let mut n = 0;
-    loop {
+    while !control.stopped() {
         let tick = Instant::now();
         if !private_on() {
             // Without Hyprland to name the outputs, one still of everything.
-            let mut targets: Vec<(Option<String>, u32, u32)> = outputs()
+            let mut targets: Vec<(Option<String>, u32, u32)> = outputs_with_control(control)
                 .into_iter()
                 .map(|(n, w, h)| (Some(n), w, h))
                 .collect();
@@ -154,12 +152,12 @@ pub fn capture_screen(
                 if let Some(o) = &output {
                     grim.args(["-o", o]);
                 }
-                let ok = grim
-                    .args(["-t", "jpeg", "-q", "75"])
+                grim.args(["-t", "jpeg", "-q", "75"])
                     .arg(&partial)
-                    .stderr(Stdio::null())
-                    .status()
-                    .is_ok_and(|s| s.success());
+                    .stderr(Stdio::null());
+                let ok = control
+                    .status(&mut grim)
+                    .is_ok_and(|s| s.is_some_and(|s| s.success()));
                 if !ok {
                     let _ = std::fs::remove_file(&partial);
                     continue;
@@ -179,54 +177,47 @@ pub fn capture_screen(
                 n += 1;
             }
         }
-        if deadline.is_some_and(|d| Instant::now() >= d) {
-            return Ok(n);
-        }
-        std::thread::sleep(every.saturating_sub(tick.elapsed()));
+        control.wait(every.saturating_sub(tick.elapsed()));
     }
+    Ok(n)
 }
 
-/// Record the default audio source in segments of `segment`, for `seconds`
-/// (forever otherwise). Returns the segments written.
+/// Record the default audio source in segments of `segment`, until capture stops. Returns the segments written.
 pub fn capture_audio(
     spool: &Path,
     segment: Duration,
-    seconds: Option<Duration>,
+    control: &crate::capture::Control,
 ) -> std::io::Result<u64> {
     std::fs::create_dir_all(spool)?;
-    let deadline = seconds.map(|s| Instant::now() + s);
-    let encode = Command::new("ffmpeg")
-        .arg("-version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok();
+    let encode = control
+        .status(
+            Command::new("ffmpeg")
+                .arg("-version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
+        .is_ok_and(|status| status.is_some_and(|s| s.success()));
     let mut n = 0;
-    while deadline.is_none_or(|d| Instant::now() < d) {
+    while !control.stopped() {
         if private_on() {
-            std::thread::sleep(Duration::from_secs(1));
+            control.wait(Duration::from_secs(1));
             continue;
-        }
-        let length = deadline.map_or(segment, |d| {
-            segment.min(d.saturating_duration_since(Instant::now()))
-        });
-        if length < Duration::from_secs(1) {
-            break;
         }
         let start = Timestamp::now();
         let wav = spool.join(format!(".{}.wav.partial", start.unix_ns()));
-        let mut child = Command::new("pw-record")
+        let mut command = Command::new("pw-record");
+        command
             .args(["--rate", "16000", "--channels", "1", "--format", "s16"])
             .arg(&wav)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
-        std::thread::sleep(length);
-        let _ = Command::new("kill")
-            .args(["-INT", &child.id().to_string()])
-            .status();
-        let _ = child.wait();
+            .stderr(Stdio::null());
+        let Some(mut child) = control.spawn(&mut command)? else {
+            break;
+        };
+        control.wait(segment);
+        child.interrupt();
+        child.wait()?;
         let end = Timestamp::now();
         if !wav.exists() {
             continue;
@@ -234,13 +225,15 @@ pub fn capture_audio(
         let st = stem(start, end, "audio");
         let (file, ext, mime) = if encode {
             let ogg = spool.join(format!(".{}.ogg.partial", start.unix_ns()));
-            let ok = Command::new("ffmpeg")
+            let mut command = Command::new("ffmpeg");
+            command
                 .args(["-loglevel", "error", "-y", "-i"])
                 .arg(&wav)
                 .args(["-c:a", "libopus", "-b:a", "24k", "-f", "ogg"])
-                .arg(&ogg)
-                .status()
-                .is_ok_and(|s| s.success());
+                .arg(&ogg);
+            let ok = control
+                .status(&mut command)
+                .is_ok_and(|s| s.is_some_and(|s| s.success()));
             if ok {
                 std::fs::remove_file(&wav)?;
                 (ogg, "ogg", "audio/ogg")
