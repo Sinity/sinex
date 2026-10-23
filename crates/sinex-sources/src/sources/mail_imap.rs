@@ -280,21 +280,17 @@ impl ImapMail {
         };
         let mut c = Connection::open(&self.config)?;
         self.login(&mut c)?;
-        let selected = c.run(&format!("SELECT {}", quote(&self.config.mailbox)), "select")?;
-        let uid_validity = selected
-            .iter()
-            .find_map(|l| number_after(&l.text, "UIDVALIDITY"));
+        let mut selected = c.run(&format!("SELECT {}", quote(&self.config.mailbox)), "select")?;
         let server_next = selected
             .iter()
             .find_map(|l| number_after(&l.text, "UIDNEXT"));
-        // A renumbered mailbox: start over.
-        let start = if previous.uid_validity.is_some() && previous.uid_validity != uid_validity {
-            1
-        } else {
-            previous.uid_next.max(1)
-        };
-        let mut have_new = server_next.is_none_or(|n| n > start);
-        if !have_new && self.config.idle_seconds > 0 {
+        let selected_validity = selected
+            .iter()
+            .find_map(|l| number_after(&l.text, "UIDVALIDITY"));
+        if server_next.is_some_and(|n| n <= previous.uid_next.max(1))
+            && (previous.uid_validity.is_none() || previous.uid_validity == selected_validity)
+            && self.config.idle_seconds > 0
+        {
             let tag = c.send("IDLE")?;
             let _continuation = c.read_line()?;
             let deadline =
@@ -302,7 +298,6 @@ impl ImapMail {
             while std::time::Instant::now() < deadline {
                 match c.read_line() {
                     Ok(l) if l.text.contains("EXISTS") => {
-                        have_new = true;
                         break;
                     }
                     Ok(_) => {}
@@ -316,30 +311,47 @@ impl ImapMail {
                     break;
                 }
             }
+            selected = c.run(&format!("SELECT {}", quote(&self.config.mailbox)), "select")?;
         }
+        let uid_validity = selected
+            .iter()
+            .find_map(|l| number_after(&l.text, "UIDVALIDITY"));
+        let server_next = selected
+            .iter()
+            .find_map(|l| number_after(&l.text, "UIDNEXT"));
+        // A renumbered mailbox: start over.
+        let start = if previous.uid_validity.is_some() && previous.uid_validity != uid_validity {
+            1
+        } else {
+            previous.uid_next.max(1)
+        };
+        let window_end = start.saturating_add(self.config.batch.max(1) - 1);
+        let known_next = server_next.filter(|n| *n > start);
+        let end = known_next.map_or(window_end, |n| window_end.min(n - 1));
         let mut messages: Vec<(u32, Vec<u8>)> = Vec::new();
-        if have_new {
-            let end = start.saturating_add(self.config.batch.max(1) - 1);
-            for line in c.run(
-                &format!("UID FETCH {start}:{end} (UID BODY.PEEK[])"),
-                "fetch",
-            )? {
-                if let (Some(uid), Some(body)) = (
-                    number_after(&line.text, "UID"),
-                    line.literals.into_iter().next(),
-                ) && uid >= start
-                {
-                    messages.push((uid, body));
-                }
+        for line in c.run(
+            &format!("UID FETCH {start}:{end} (UID BODY.PEEK[])"),
+            "fetch",
+        )? {
+            if let (Some(uid), Some(body)) = (
+                number_after(&line.text, "UID"),
+                line.literals.into_iter().next(),
+            ) && uid >= start
+                && uid <= end
+            {
+                messages.push((uid, body));
             }
         }
+        // Only an advertised assigned range permits skipping absent UIDs.
+        // Without it, future messages could still receive those identifiers.
+        let examined_next = known_next.map_or(start, |_| end.saturating_add(1));
         let _ = c.run("LOGOUT", "logout");
         messages.sort_by_key(|(uid, _)| *uid);
         let now = Timestamp::now();
         let Some(last_uid) = messages.last().map(|(u, _)| *u) else {
             let next = Cursor {
                 uid_validity,
-                uid_next: start,
+                uid_next: examined_next,
                 ..previous
             };
             return Ok(Acquired {
@@ -377,11 +389,12 @@ impl ImapMail {
         };
         let next = Cursor {
             uid_validity,
-            uid_next: last_uid + 1,
+            uid_next: examined_next.max(last_uid.saturating_add(1)),
             material: Some(id),
             part_index,
         };
-        let size = bytes.len() as u64;
+        let length = bytes.len();
+        let size = length as u64;
         Ok(Acquired {
             image: None,
             input: self.input(),
@@ -401,8 +414,12 @@ impl ImapMail {
                 previous_part: previous.material,
                 reading_order: crate::drivers::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new(move |_| {
-                    serde_json::to_value(&next).expect("cursor serializes")
+                cursor_at: Box::new(move |end| {
+                    let mut cursor = next.clone();
+                    if end < length {
+                        cursor.uid_next = start;
+                    }
+                    serde_json::to_value(cursor).expect("cursor serializes")
                 }),
                 aligned: false,
                 vanished: Vec::new(),
