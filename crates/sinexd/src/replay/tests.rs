@@ -348,11 +348,10 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain() {
     ingest(&mut f.ctx, &path, &mut state).await;
     let before = live_ids(&mut f.ctx.read_conn).await;
     assert_eq!(before.len(), 2);
-    let parts: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM raw.materials ORDER BY part_index")
-            .fetch_all(&mut f.ctx.read_conn)
-            .await
-            .unwrap();
+    let parts: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM raw.materials ORDER BY part_index")
+        .fetch_all(&mut f.ctx.read_conn)
+        .await
+        .unwrap();
     assert_eq!(parts.len(), 2);
     // The first part is read and sent normally. The next part cannot supply
     // its declared range, after the replay transaction has begun.
