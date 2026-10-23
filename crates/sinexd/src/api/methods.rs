@@ -353,12 +353,14 @@ impl Api {
                 reference,
                 material,
                 dry_run,
+                sealed,
             } => {
                 self.excise(
                     caller,
                     reference.as_deref(),
                     material.as_deref(),
                     dry_run.unwrap_or(false),
+                    sealed.unwrap_or(false),
                     actor,
                 )
                 .await

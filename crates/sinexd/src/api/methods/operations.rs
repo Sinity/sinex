@@ -10,8 +10,28 @@ impl Api {
         reference: Option<&str>,
         material: Option<&str>,
         dry_run: bool,
+        sealed: bool,
         actor: &str,
     ) -> Reply {
+        let authority = if sealed {
+            if caller.actor != "operator"
+                || !caller.grants.split(',').any(|grant| grant == "sealed")
+            {
+                return refused(
+                    "sealed excision requires current operator unlock and explicit --sealed intent",
+                );
+            }
+            let unlocked = self.unlock.lock().await;
+            let Some(session) = unlocked.as_ref() else {
+                return refused("sealed excision is pending explicit operator unlock");
+            };
+            if let Err(error) = session.authority.check() {
+                return refused(error);
+            }
+            Some(session.authority.clone())
+        } else {
+            None
+        };
         let Some(writer) = &self.writer else {
             return refused("this daemon has no writer; writes go through `sinexd run`");
         };
@@ -36,6 +56,9 @@ impl Api {
             },
             _ => return refused("excise needs exactly one of an event reference or --material"),
         };
+        if authority.is_some() {
+            return refused("scoped sealed excision preparation is not available yet");
+        }
         if dry_run {
             return match sinex_store::excision::plan(&mut conn, target).await {
                 Ok(plan) => Reply::Ok {
