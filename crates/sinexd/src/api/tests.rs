@@ -667,6 +667,27 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
     assert_eq!(body["outcome"], json!("ok"), "{body}");
     let (_, open) = call(&w, Some(OPERATOR), query.clone()).await;
     assert!(first(&open).contains("diary"), "unlocked operator: {open}");
+    // A cached data key cannot survive replacement by a naming-only capability.
+    let naming = sealed::MaterialSecrets::from_data_key(&key).naming_only();
+    let wrapped = sealed::wrap_secrets(&naming, &identity.to_public()).unwrap();
+    sqlx::query("UPDATE privacy.material_keys SET wrapped_key=$1 WHERE material_id=$2")
+        .bind(wrapped)
+        .bind(material.0)
+        .execute(&w.reads)
+        .await
+        .unwrap();
+    let (_, retired) = call(&w, Some(OPERATOR), query.clone()).await;
+    assert_eq!(retired["outcome"], json!("refused"), "{retired}");
+    assert!(!retired.to_string().contains("diary"));
+    let wrapped = sealed::wrap(&key, &identity.to_public()).unwrap();
+    sqlx::query("UPDATE privacy.material_keys SET wrapped_key=$1 WHERE material_id=$2")
+        .bind(wrapped)
+        .bind(material.0)
+        .execute(&w.reads)
+        .await
+        .unwrap();
+    let (_, restored) = call(&w, Some(OPERATOR), query.clone()).await;
+    assert!(first(&restored).contains("diary"), "restored: {restored}");
     let (_, agent) = call(&w, Some(AGENT), query.clone()).await;
     assert!(
         !first(&agent).contains("diary"),
