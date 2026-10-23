@@ -679,7 +679,6 @@ async fn read_archive(
             };
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
             backfill::submit(
-                conn,
                 writer,
                 run,
                 b.source.as_ref(),

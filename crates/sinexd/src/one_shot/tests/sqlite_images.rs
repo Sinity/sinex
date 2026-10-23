@@ -261,6 +261,11 @@ async fn sqlite_physical_images_publish_atomically_and_retry_exact_pending_rows_
         .await
         .unwrap();
     assert_eq!(before, after);
+    let replay=crate::replay::run(&mut ctx.read_conn,&ctx.blobs,&ctx.writer,crate::replay::Options {
+        scope:crate::replay::Scope {binding:Some("images".into()),..Default::default()},compare:true,resume:None,actor:"synthetic".into(),authority:None,
+    }).await.unwrap();
+    assert_eq!(replay.materials,2,"only the retained row parts are parsed");
+    assert_eq!(replay.failures,0);assert!(replay.diff.changed.is_empty());assert!(replay.diff.added.is_empty());assert!(replay.diff.removed.is_empty());
     ctx.close().await.unwrap();
 }
 
@@ -367,7 +372,7 @@ async fn sealed_sqlite_image_and_row_keys_commit_together_without_plain_digests(
     )
     .unwrap();
     let mut batches: Vec<_> = prepared.batches().unwrap().map(Result::unwrap).collect();
-    sink.seal(&mut ctx.read_conn, &mut batches).await.unwrap();
+    sink.seal(&mut batches).unwrap();
     let sinex_model::BatchKind::Source(progress) = &batches[0].kind else {
         panic!()
     };

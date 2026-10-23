@@ -179,11 +179,7 @@ impl SealingSink {
 
     /// Seal events and carry with their material key. The wrapped key travels
     /// with source progress so its row and the material commit atomically.
-    pub async fn seal(
-        &self,
-        _read_conn: &mut PgConnection,
-        batches: &mut [sinex_model::Batch],
-    ) -> Result<(), String> {
+    pub fn seal(&self, batches: &mut [sinex_model::Batch]) -> Result<(), String> {
         for batch in batches {
             let material = match &batch.kind {
                 sinex_model::BatchKind::Source(p) => p.material.clone(),

@@ -295,7 +295,6 @@ pub(crate) async fn drive(
         }
         let had_material = acquired.material.is_some();
         submit(
-            read_conn,
             handle,
             run,
             source,
@@ -319,7 +318,6 @@ pub(crate) async fn drive(
 /// Submit one acquisition through the same drain and writer in every binding reader.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn submit(
-    read_conn: &mut PgConnection,
     handle: &writer::WriterHandle,
     run: RunId,
     source: &dyn Source,
@@ -358,7 +356,7 @@ pub(crate) async fn submit(
     for batch in prepared.batches().map_err(|e| e.to_string())? {
         let mut one = [batch.map_err(|e| e.to_string())?];
         if let Some(s) = sealing {
-            s.seal(read_conn, &mut one).await?;
+            s.seal(&mut one)?;
         }
         if let Some(authority) = authority {
             authority.check()?;
