@@ -275,3 +275,5 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
     ctx.close().await.unwrap();
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+mod sqlite_rows;

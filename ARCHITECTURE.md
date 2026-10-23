@@ -37,6 +37,16 @@ to the writer. A source cursor describes admitted progress; obtaining bytes
 alone does not mean their records were interpreted successfully. Archive
 capture and replay have additional open acceptance criteria in Beads.
 
+SQLite row snapshots use one read transaction across schema inspection and row
+selection, so SQLite supplies committed rollback-journal and WAL visibility.
+A locked source remains unavailable; stable main-file metadata cannot prove a
+committed view. Changed rows stream into an unnamed staged JSONL material.
+Retries retain its identity, byte ranges and reading orders until its final
+admitted cursor confirms the changed-row hash cache. Partial cursors resume the
+retained snapshot before observing newer source values. Restart rebuilds hashes
+from admitted retained parts and rereads the source. Physical database snapshot
+retention remains planned separately.
+
 Directory snapshots stream changed files into an unnamed staged bundle. The
 version 2 bundle prefixes each record with one structural byte outside its source
 range. Even empty files then have distinct byte anchors and advancing cursor
