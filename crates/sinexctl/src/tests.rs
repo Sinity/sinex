@@ -49,3 +49,29 @@ fn the_cli_is_generated_from_the_table() {
         }
     );
 }
+
+#[test]
+fn cli_discovery_omits_unimplemented_operations_and_keeps_recall() {
+    for name in ["stage", "same", "distinct", "mark"] {
+        assert!(cli().find_subcommand(name).is_none(), "{name}");
+        let error = cli().try_get_matches_from(["sinexctl", name]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+    }
+    let matches = cli()
+        .try_get_matches_from(["sinexctl", "recall", "yesterday"])
+        .unwrap();
+    let (name, args) = matches.subcommand().unwrap();
+    let request = Request::from_args(
+        name,
+        arguments(sinex_protocol::command(name).unwrap(), args),
+    )
+    .unwrap();
+    assert_eq!(
+        request,
+        Request::Recall {
+            around: Some("yesterday".into()),
+            page: None,
+            cursor: None
+        }
+    );
+}

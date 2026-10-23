@@ -73,6 +73,12 @@ boundaries between capture, interpretation, admission and public interfaces.
   properties, collections, ratings and pairwise ranking.
 - **NixOS module.** `nix/` holds a NixOS module and its VM tests.
 
+CLI help, `/v1/commands` and MCP list implemented operations. Planned command
+work includes `stage`, duplicate decisions (`same`/`distinct`) and moment marks
+(`mark`).
+Recall supports a time, day or the default current-time window; `last` and
+`mark` recall shapes remain unsupported.
+
 ## Build and test
 
 ```bash

@@ -64,3 +64,18 @@ fn missing_and_unknown_arguments_are_refused() {
             .contains("commands:")
     );
 }
+
+#[test]
+fn unadvertised_requests_keep_wire_decoding_and_explicit_write_access() {
+    for value in [
+        json!({"method":"stage", "path":"/synthetic/input"}),
+        json!({"method":"same", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
+        json!({"method":"distinct", "a":"sinex:ev/a", "b":"sinex:ev/b"}),
+        json!({"method":"mark", "text":"synthetic moment"}),
+    ] {
+        let request: Request = serde_json::from_value(value).unwrap();
+        assert!(command(request.method()).is_none());
+        assert_eq!(request.access(), Access::Agent);
+        assert!(Request::from_args(request.method(), Map::new()).is_err());
+    }
+}

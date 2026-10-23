@@ -1,6 +1,5 @@
-//! The command table: every command the CLI, the API and MCP offer, with its
-//! arguments and the access it needs. The three surfaces are generated from
-//! this one list, so they cannot drift apart.
+//! Implemented commands advertised by the CLI, API and MCP, with their
+//! arguments and required access. All three surfaces use this list.
 use serde::{Deserialize, Serialize};
 
 /// Who may call a command. Each of the three fixed tokens grants one level
@@ -9,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum Access {
     Read,
-    /// Writes attributed records: hide, notes, decisions, staging.
+    /// Writes attributed to a caller.
     Agent,
     /// Permanent changes: excision.
     Operator,
@@ -84,7 +83,7 @@ const fn opt(name: &'static str, kind: ArgKind, help: &'static str) -> Arg {
 const PAGE: Arg = opt("page", ArgKind::Integer, "rows per page (default 50)");
 const CURSOR: Arg = opt("cursor", ArgKind::Text, "the cursor from the previous page");
 
-/// Every command. The CLI, the API and MCP are generated from this list, so
+/// Advertised commands. The CLI, API discovery and MCP use this list, so
 /// they cannot drift apart.
 pub const COMMANDS: &[Command] = &[
     Command {
@@ -160,16 +159,6 @@ pub const COMMANDS: &[Command] = &[
         summary: "Stream new events matching a query as they are committed.",
         args: &[pos("query", ArgKind::Rest, "the query text")],
         access: Access::Read,
-        mcp: false,
-    },
-    Command {
-        name: "stage",
-        summary: "Store a file's exact bytes and read it with a parser (one-shot import).",
-        args: &[
-            pos("path", ArgKind::Text, "the file"),
-            opt("parser", ArgKind::Text, "the parser to read it with"),
-        ],
-        access: Access::Agent,
         mcp: false,
     },
     Command {
@@ -324,36 +313,6 @@ pub const COMMANDS: &[Command] = &[
         ],
         access: Access::Operator,
         mcp: false,
-    },
-    Command {
-        name: "same",
-        summary: "Record that two events describe the same thing (reversible).",
-        args: &[
-            pos("a", ArgKind::Reference, "the first event"),
-            pos("b", ArgKind::Reference, "the second event"),
-        ],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        name: "distinct",
-        summary: "Record that two events describe different things.",
-        args: &[
-            pos("a", ArgKind::Reference, "the first event"),
-            pos("b", ArgKind::Reference, "the second event"),
-        ],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        name: "mark",
-        summary: "Record a moment mark now, with an optional note.",
-        args: &[Arg {
-            required: false,
-            ..pos("text", ArgKind::Rest, "a note")
-        }],
-        access: Access::Agent,
-        mcp: true,
     },
     Command {
         name: "privacy-rules",
