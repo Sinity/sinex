@@ -343,6 +343,7 @@ impl ImapMail {
                 ..previous
             };
             return Ok(Acquired {
+            image: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     observed_at: Some(now),
@@ -382,6 +383,7 @@ impl ImapMail {
         };
         let size = bytes.len() as u64;
         Ok(Acquired {
+            image: None,
             input: self.input(),
             observation: ObservationFacts {
                 observed_at: Some(now),

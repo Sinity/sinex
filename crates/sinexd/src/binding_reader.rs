@@ -26,9 +26,11 @@ impl Bound {
         let reader = kind
             .reader
             .ok_or_else(|| format!("{} is not read by a driver", kind.name))?;
+        let mut reader=reader(&binding)?;
+        reader.configure(&binding.settings)?;
         Ok(Self {
             source: (kind.source)(&binding)?,
-            reader: reader(&binding)?,
+            reader,
             binding,
             remembered: false,
         })
@@ -70,6 +72,12 @@ pub(crate) async fn read(
     for (index, b) in bound.iter_mut().enumerate() {
         let init = async {
             if !b.remembered {
+                if let Some(policy)=b.reader.image_policy() {
+                    let rules=sinex_store::privacy::load(conn,std::iter::once(b.source.spec().name)).await.map_err(|e|e.to_string())?;
+                    let class=b.source.spec().class.max(rules.floors.get(b.source.spec().name).copied().unwrap_or_default());
+                    let class=rules.rules.iter().fold(class,|c,r|c.max(r.class));
+                    if policy.class<class {return Err("whole-database image class is below a configured source/field class".into());}
+                }
                 backfill::record(conn, &b.binding).await?;
                 // Export drivers have no memory derived from old material bodies.
                 if b.reader.export_archive().is_none() {
@@ -78,8 +86,10 @@ pub(crate) async fn read(
                         .map_err(|e| e.to_string())?
                         .map(|(cursor, _)| cursor)
                         .unwrap_or(Value::Null);
-                    b.reader
-                        .remember(&stored_chain(conn, blobs, &cursor).await?);
+                    b.reader.remember(&stored_chain(conn, blobs, &cursor).await?);
+                    if b.reader.image_policy().is_some() {
+                        restore_sqlite(conn,blobs,b,&cursor).await?;
+                    }
                 }
                 b.remembered = true;
             }
@@ -155,7 +165,10 @@ pub(crate) async fn read(
                 b.source.as_ref(),
                 &b.binding.name,
                 sink,
-                |cursor| b.reader.poll(cursor),
+                |cursor| {
+                    if *stop.borrow() {b.reader.cancel_pending();return Err(drivers::DriverError::Cancelled);}
+                    b.reader.poll(cursor)
+                },
             )
             .await;
             let result = match result {
@@ -204,6 +217,31 @@ pub(crate) async fn read(
     }
     results
 }
+async fn restore_sqlite(conn:&mut PgConnection,blobs:&Blobs,b:&mut Bound,cursor:&Value)->Result<(),String> {
+    if let Some(value)=cursor.get("image").filter(|v|!v.is_null()) {
+        let saved:drivers::sqlite_rows::ImageCursor=serde_json::from_value(value.clone()).map_err(|e|e.to_string())?;
+        let (metadata,extents,material)=sinex_store::sqlite_images::load(conn,saved.material).await.map_err(|e|e.to_string())?.ok_or("retained SQLite image is missing")?;
+        if metadata.revision!=saved.revision {return Err("SQLite image cursor differs from retained revision".into());}
+        let map=if metadata.class==Class::Sealed {None} else {
+            let mut file=tempfile::tempfile().map_err(|e|e.to_string())?;
+            let map=[sinex_model::ImageExtent {blob:material.blob,offset:metadata.map_offset,length:metadata.map_bytes}];
+            let copied=std::io::copy(&mut blobs.assemble(&map).map_err(|e|e.to_string())?,&mut file).map_err(|e|e.to_string())?;
+            if copied!=metadata.map_bytes {return Err("retained SQLite page map is short".into());}
+            Some(Arc::new(file))
+        };
+        b.reader.restore_image(drivers::sqlite_image::Previous {metadata,extents,map});
+    }
+    let Some(id)=cursor.get("material").and_then(Value::as_str).and_then(|s|uuid::Uuid::parse_str(s).ok().map(sinex_model::MaterialId)) else {return Ok(())};
+    let reference=sinex_store::material_bytes::reference(conn,id).await.map_err(|e|e.to_string())?.ok_or("SQLite cursor material is missing")?;
+    if cursor["through"].as_u64().unwrap_or(0)>=reference.length {return Ok(());}
+    if blobs.is_sealed(&reference.blob).map_err(|e|e.to_string())? {return Err("retained sealed SQLite rows are pending explicit operator unlock".into());}
+    let mut file=tempfile::tempfile().map_err(|e|e.to_string())?;
+    let copied=blobs.copy_to(&reference.blob,&mut file).map_err(|e|e.to_string())?;
+    if copied!=reference.length {return Err("retained SQLite row length differs".into());}
+    let retained=drivers::RetainedRecords {blob:reference.blob.clone(),bytes:Arc::new(crate::retained::Retained::new(file,reference.length))};
+    b.reader.restore_rows(reference,retained,cursor).map_err(|e|e.to_string())
+}
+
 fn same_file(a: &ObservationFacts, b: &ObservationFacts) -> bool {
     a.size == b.size
         && a.mtime_ns == b.mtime_ns

@@ -318,6 +318,7 @@ impl LibraryScan {
             Err(e) => {
                 // An inaccessible root never means deletion.
                 return Ok(Acquired {
+            image: None,
                     input: self.input(),
                     observation: ObservationFacts {
                         unavailable: Some(format!("{}: {e}", self.root.display())),
@@ -480,6 +481,7 @@ impl LibraryScan {
         if records.is_empty() {
             facts.changed = false;
             return Ok(Acquired {
+            image: None,
                 input: self.input(),
                 observation: facts,
                 revision: RevisionChange::Same,
@@ -503,6 +505,7 @@ impl LibraryScan {
             0
         };
         Ok(Acquired {
+            image: None,
             input: self.input(),
             observation: facts,
             revision: RevisionChange::Snapshot,
@@ -915,6 +918,7 @@ pub fn request_material(
     let manifest = request_manifest(actor, host, at, action);
     let order = i64::try_from(at.unix_ns()).unwrap_or(i64::MAX);
     Acquired {
+            image: None,
         input: InputRef {
             kind: "operator".into(),
             locator: "library".into(),

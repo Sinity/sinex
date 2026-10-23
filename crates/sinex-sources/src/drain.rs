@@ -244,7 +244,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
                 // A record shape's own hash that panics falls back to the
                 // bytes' hash rather than stopping the run.
                 let hash = std::panic::catch_unwind(|| {
-                    <P::Record<'_> as RecordShape>::hash(raw, P::VOLATILE)
+                    <P::Record<'_> as RecordShape>::hash_context(raw, P::VOLATILE, &context)
                 })
                 .unwrap_or_else(|_| *blake3::hash(raw).as_bytes());
                 let order = (input.reading_order)(start);
@@ -397,7 +397,7 @@ fn parse_one<P: Parser>(
     // Decoding is the parser's code too: a panic there fails this record,
     // never the run.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let record = <P::Record<'_> as RecordShape>::decode(raw)?;
+        let record = <P::Record<'_> as RecordShape>::decode_context(raw, context)?;
         parser.parse(&record, carry, context)
     })) {
         Ok(result) => result,

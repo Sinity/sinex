@@ -59,6 +59,7 @@ impl<A: Api> ApiCursor<A> {
                 ..previous
             };
             return Ok(Acquired {
+            image: None,
                 input: self.api.input(),
                 observation,
                 revision: RevisionChange::Same,
@@ -104,6 +105,7 @@ impl<A: Api> ApiCursor<A> {
             .expect("cursor serializes")
         };
         Ok(Acquired {
+            image: None,
             input: self.api.input(),
             observation,
             revision: RevisionChange::Snapshot,

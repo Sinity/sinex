@@ -79,6 +79,9 @@ pub enum RecordOutcome {
 #[derive(Clone, Debug)]
 pub struct SourceProgress {
     pub binding: String,
+    pub image: Option<crate::SqliteImagePublication>,
+    pub image_revision: Option<crate::RevisionId>,
+    pub material_keys: Vec<crate::WrappedMaterialKey>,
     pub input: InputRef,
     pub observation: ObservationFacts,
     pub revision: RevisionChange,
@@ -133,6 +136,7 @@ pub enum RevisionChange {
 pub enum MaterialRole {
     Input,
     OriginalArchive,
+    SqliteImage,
     Records,
 }
 

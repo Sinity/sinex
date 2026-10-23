@@ -426,7 +426,7 @@ fn read_chain_into(
     for (m, source) in chain.iter().zip(parsers) {
         let role = sinex_model::MaterialRole::of(&m.manifest)
             .map_err(|e| format!("material {}: {e}", m.id))?;
-        if role == sinex_model::MaterialRole::OriginalArchive {
+        if matches!(role,sinex_model::MaterialRole::OriginalArchive|sinex_model::MaterialRole::SqliteImage) {
             continue;
         }
         // A compressed export's records are in its decoded member stream

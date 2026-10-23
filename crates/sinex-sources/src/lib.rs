@@ -41,6 +41,8 @@ impl RecordError {
 /// How a framed record's bytes become the parser's input.
 pub trait RecordShape<'a>: Sized {
     fn decode(raw: &'a [u8]) -> Result<Self, RecordError>;
+    fn decode_context(raw:&'a [u8], _context:&RecordContext<'_>)->Result<Self,RecordError> {Self::decode(raw)}
+    fn hash_context(raw:&[u8],volatile:&[&str],_context:&RecordContext<'_>)->[u8;32] {Self::hash(raw,volatile)}
 
     /// BLAKE3 of the record as read, without the parser's declared volatile
     /// fields. Equal hashes make a later reading a repeat.
@@ -61,6 +63,20 @@ impl<'a> RecordShape<'a> for serde_json::Map<String, serde_json::Value> {
     fn decode(raw: &'a [u8]) -> Result<Self, RecordError> {
         serde_json::from_slice(raw)
             .map_err(|e| RecordError::new(format!("record is not a JSON object: {e}")))
+    }
+
+    fn decode_context(raw:&'a [u8],context:&RecordContext<'_>)->Result<Self,RecordError> {
+        let mut object=Self::decode(raw)?;
+        if context.manifest["row_format"]==2 {
+            object=object.remove("row").and_then(|r|r.as_object().cloned()).ok_or_else(||RecordError::new("SQLite row envelope has no native row"))?;
+        }
+        Ok(object)
+    }
+    fn hash_context(raw:&[u8],volatile:&[&str],context:&RecordContext<'_>)->[u8;32] {
+        if context.manifest["row_format"]!=2 {return Self::hash(raw,volatile);}
+        let Ok(mut object)=Self::decode_context(raw,context) else {return *blake3::hash(raw).as_bytes();};
+        for field in volatile {object.remove(*field);}
+        *blake3::hash(serde_json::Value::Object(object).to_string().as_bytes()).as_bytes()
     }
 
     fn hash(raw: &[u8], volatile: &[&str]) -> [u8; 32] {

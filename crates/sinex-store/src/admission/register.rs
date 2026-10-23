@@ -57,7 +57,37 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     )
     .fetch_optional(&mut *conn)
     .await?;
-    let revision = match (p.revision, current) {
+    for key in &p.material_keys {
+        crate::sealed::store_key(conn,key.material,&key.key_ref,&key.wrapped).await?;
+    }
+    let revision = if let Some(image)=&p.image {
+        let m=&image.metadata;
+        m.validate(&image.extents).map_err(Error::Invalid)?;
+        if p.image_revision!=Some(m.revision) || m.host!=p.input.host || image.material.id!=m.material || image.material.length!=m.evidence_bytes {
+            return Err(Error::Invalid("SQLite image publication does not match source progress".into()));
+        }
+        let existing=sqlx::query_scalar!("SELECT input_id FROM raw.revisions WHERE id=$1",m.revision.0).fetch_optional(&mut *conn).await?;
+        if existing.is_some_and(|id|id!=input) {return Err(Error::Invalid("SQLite image revision belongs to another input".into()));}
+        // Logical-only row polls can open intervening revisions; the physical
+        // predecessor is checked independently by canonical DB lineage.
+        let previous=sqlx::query_scalar!("SELECT revision_id FROM raw.sqlite_images WHERE host=$1 AND database=$2 ORDER BY metadata->>'captured_at' DESC, revision_id DESC LIMIT 1",m.host,m.database).fetch_optional(&mut *conn).await?;
+        if existing.is_none() && previous!=m.previous.map(|id|id.0) {return Err(Error::Invalid("SQLite image predecessor changed before admission".into()));}
+        sqlx::query!("INSERT INTO raw.revisions (id,input_id,previous_id,kind) VALUES ($1,$2,$3,'snapshot') ON CONFLICT (id) DO NOTHING",m.revision.0,input,current).execute(&mut *conn).await?;
+        material(conn,input,m.revision.0,&image.material).await?;
+        if let Some(key)=&image.key {crate::sealed::store_key(conn,key.material,&key.key_ref,&key.wrapped).await?;}
+        let metadata=serde_json::to_value(m).map_err(|e|Error::Invalid(e.to_string()))?;
+        sqlx::query!("INSERT INTO raw.sqlite_images (revision_id,material_id,database,host,metadata) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (revision_id) DO NOTHING",m.revision.0,m.material.0,m.database,m.host,metadata).execute(&mut *conn).await?;
+        let actual=sqlx::query_scalar!("SELECT metadata FROM raw.sqlite_images WHERE revision_id=$1",m.revision.0).fetch_one(&mut *conn).await?;
+        if actual!=metadata {return Err(Error::Invalid("SQLite image revision metadata changed".into()));}
+        for (position,e) in image.extents.iter().enumerate() {
+            sqlx::query!("INSERT INTO raw.revision_extents (revision_id,position,blob,blob_offset,length) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (revision_id,position) DO NOTHING",m.revision.0,i32::try_from(position).map_err(|_|Error::Invalid("too many SQLite extents".into()))?,e.blob,i64::try_from(e.offset).map_err(|_|Error::Invalid("SQLite extent offset beyond i64".into()))?,i64::try_from(e.length).map_err(|_|Error::Invalid("SQLite extent length beyond i64".into()))?).execute(&mut *conn).await?;
+        }
+        m.revision.0
+    } else if let Some(revision)=p.image_revision {
+        let owner=sqlx::query_scalar!("SELECT input_id FROM raw.revisions WHERE id=$1",revision.0).fetch_one(&mut *conn).await?;
+        if owner!=input {return Err(Error::Invalid("SQLite image continuation belongs to another input".into()));}
+        revision.0
+    } else { match (p.revision, current) {
         (RevisionChange::Same | RevisionChange::Appended, Some(current)) => current,
         (change, previous) => {
             let kind = match change {
@@ -77,9 +107,29 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
             .fetch_one(&mut *conn)
             .await?
         }
-    };
+    }};
 
     let Some(m) = &p.material else { return Ok(()) };
+    material(conn,input,revision,m).await?;
+    let role = sinex_model::MaterialRole::of(&m.manifest)
+        .map_err(|e| Error::Invalid(format!("material {}: {e}", m.id)))?;
+    // Decoded record parts retain parser coordinates, not additional input bytes.
+    if matches!(role,sinex_model::MaterialRole::Records|sinex_model::MaterialRole::SqliteImage) {
+        return Ok(());
+    }
+    sqlx::query!(
+        r#"INSERT INTO raw.revision_extents (revision_id, position, blob, blob_offset, length)
+           VALUES ($1, (SELECT coalesce(max(position) + 1, 0) FROM raw.revision_extents WHERE revision_id = $1), $2, 0, $3)"#,
+        revision,
+        m.blob,
+        length,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn material(conn:&mut PgConnection,input:Uuid,revision:Uuid,m:&sinex_model::MaterialRef)->Result<()> {
     let length =
         i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
     sqlx::query!(
@@ -103,21 +153,6 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
         m.manifest,
         m.parser,
         i32::try_from(m.parser_version).map_err(|_| Error::Invalid("parser version beyond i32".into()))?,
-    )
-    .execute(&mut *conn)
-    .await?;
-    let role = sinex_model::MaterialRole::of(&m.manifest)
-        .map_err(|e| Error::Invalid(format!("material {}: {e}", m.id)))?;
-    // Decoded record parts retain parser coordinates, not additional input bytes.
-    if role == sinex_model::MaterialRole::Records {
-        return Ok(());
-    }
-    sqlx::query!(
-        r#"INSERT INTO raw.revision_extents (revision_id, position, blob, blob_offset, length)
-           VALUES ($1, (SELECT coalesce(max(position) + 1, 0) FROM raw.revision_extents WHERE revision_id = $1), $2, 0, $3)"#,
-        revision,
-        m.blob,
-        length,
     )
     .execute(&mut *conn)
     .await?;
