@@ -3,7 +3,11 @@ use crate::{Error, Result};
 use sinex_model::{ImageExtent, MaterialId, SqliteImageMeta};
 use sqlx::PgConnection;
 
-pub async fn latest(conn:&mut PgConnection,database:&str,host:&str)->Result<Option<MaterialId>> {
+pub async fn latest(
+    conn: &mut PgConnection,
+    database: &str,
+    host: &str,
+) -> Result<Option<MaterialId>> {
     Ok(sqlx::query_scalar!("SELECT material_id FROM raw.sqlite_images WHERE database=$1 AND host=$2 ORDER BY (metadata->>'captured_at')::timestamptz DESC,revision_id DESC LIMIT 1",database,host).fetch_optional(conn).await?.map(MaterialId))
 }
 

@@ -497,9 +497,11 @@ impl SqliteRows {
                     continue;
                 }
                 hashes.push((rowid, hash));
-                let line=if state.image_policy.is_some() {
-                    let mut envelope=json!({"_sinex_rowid":rowid,"row":native});
-                    if let Some(image)=&image {envelope["_from"]=json!({"snapshot":image.metadata.material,"revision":image.metadata.revision,"table":self.table,"rowid":rowid});}
+                let line = if state.image_policy.is_some() {
+                    let mut envelope = json!({"_sinex_rowid":rowid,"row":native});
+                    if let Some(image) = &image {
+                        envelope["_from"] = json!({"snapshot":image.metadata.material,"revision":image.metadata.revision,"table":self.table,"rowid":rowid});
+                    }
                     envelope.to_string()
                 } else {
                     native.to_string()

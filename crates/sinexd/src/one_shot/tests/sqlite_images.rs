@@ -1,8 +1,8 @@
 //! Synthetic whole-image capture through the actual row reader and writer.
 use super::*;
 use sinex_model::{Class, RunId};
-use sinex_sources::{Settings,binding,drivers,sources::atuin};
-use std::io::{Read,Write};
+use sinex_sources::{Settings, binding, drivers, sources::atuin};
+use std::io::{Read, Write};
 
 fn database(path: &std::path::Path) -> rusqlite::Connection {
     let c = rusqlite::Connection::open(path).unwrap();
@@ -280,30 +280,113 @@ async fn sqlite_image_branches_preserve_capture_order_when_an_older_pending_view
 
 #[tokio::test]
 async fn sealed_sqlite_image_and_row_keys_commit_together_without_plain_digests() {
-    let (_db,url,_)=crate::testdb::fresh().await;let dir=tempfile::tempdir().unwrap();let path=dir.path().join("source.db");let _provider=database(&path);
-    let mut ctx=OneShot::open(&url,&dir.path().join("store")).await.unwrap();let mut r=reader(&path,Class::Sealed);let acquired=poll(r.as_mut(),&Value::Null);
-    let identity=sinex_store::sealed::Identity::generate();let sink=SealingSink::new(ctx.blobs.clone(),identity.to_public());let source=atuin::source();
-    let prepared=drivers::prepare(&source,"sealed-images",RunId::new(),acquired,Value::Null,&sink,Limits::default()).unwrap();
-    let mut batches:Vec<_>=prepared.batches().unwrap().map(Result::unwrap).collect();sink.seal(&mut ctx.read_conn,&mut batches).await.unwrap();
-    let sinex_model::BatchKind::Source(progress)=&batches[0].kind else {panic!()};let published=progress.image.as_ref().unwrap().clone();
-    assert_eq!(progress.material_keys.len(),1);assert_ne!(progress.material_keys[0].key_ref,published.key.as_ref().unwrap().key_ref);assert!(published.metadata.full);
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("source.db");
+    let _provider = database(&path);
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let mut r = reader(&path, Class::Sealed);
+    let acquired = poll(r.as_mut(), &Value::Null);
+    let identity = sinex_store::sealed::Identity::generate();
+    let sink = SealingSink::new(ctx.blobs.clone(), identity.to_public());
+    let source = atuin::source();
+    let prepared = drivers::prepare(
+        &source,
+        "sealed-images",
+        RunId::new(),
+        acquired,
+        Value::Null,
+        &sink,
+        Limits::default(),
+    )
+    .unwrap();
+    let mut batches: Vec<_> = prepared.batches().unwrap().map(Result::unwrap).collect();
+    sink.seal(&mut ctx.read_conn, &mut batches).await.unwrap();
+    let sinex_model::BatchKind::Source(progress) = &batches[0].kind else {
+        panic!()
+    };
+    let published = progress.image.as_ref().unwrap().clone();
+    assert_eq!(progress.material_keys.len(), 1);
+    assert_ne!(
+        progress.material_keys[0].key_ref,
+        published.key.as_ref().unwrap().key_ref
+    );
+    assert!(published.metadata.full);
     assert!(ctx.blobs.read(&published.material.blob).is_err());
-    let keys:i64=sqlx::query_scalar("SELECT count(*) FROM privacy.material_keys").fetch_one(&mut ctx.read_conn).await.unwrap();assert_eq!(keys,0);
+    let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM privacy.material_keys")
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(keys, 0);
     sqlx::query("CREATE FUNCTION reject_sealed_image() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic sealed image failure'; END $$").execute(&mut ctx.read_conn).await.unwrap();
     sqlx::query("CREATE TRIGGER reject_sealed_image BEFORE INSERT ON core.events FOR EACH ROW EXECUTE FUNCTION reject_sealed_image()").execute(&mut ctx.read_conn).await.unwrap();
-    assert!(ctx.writer.submit(crate::writer::Priority::Bulk,batches[0].clone()).await.is_err());
-    let keys:i64=sqlx::query_scalar("SELECT count(*) FROM privacy.material_keys").fetch_one(&mut ctx.read_conn).await.unwrap();assert_eq!(keys,0);
-    sqlx::query("DROP TRIGGER reject_sealed_image ON core.events").execute(&mut ctx.read_conn).await.unwrap();
-    for batch in batches {admit(&mut ctx,batch).await;}
-    let keys:i64=sqlx::query_scalar("SELECT count(*) FROM privacy.material_keys").fetch_one(&mut ctx.read_conn).await.unwrap();assert_eq!(keys,2);
-    let wrapped=published.key.unwrap();let key=sinex_store::sealed::DataKey {key_ref:wrapped.key_ref,key:sinex_store::sealed::unwrap(&wrapped.wrapped,&identity).unwrap()};
-    let mut input=ctx.blobs.read_sealed(&published.material.blob,Some(published.material.length),&key,crate::sealed_access::read_limits(published.material.length).unwrap(),||Ok(())).unwrap();
-    let mut bytes=Vec::new();input.read_to_end(&mut bytes).unwrap();let meta=published.metadata;
-    assert_eq!(read_image(&bytes[..meta.image_bytes as usize],dir.path()),"second");
-    assert_ne!(meta.image_hash,format!("blake3:{}",blake3::hash(&bytes[..meta.image_bytes as usize]).to_hex()));
-    assert_ne!(&bytes[meta.map_offset as usize..meta.map_offset as usize+32],blake3::hash(&bytes[..meta.page_size as usize]).as_bytes());
+    assert!(
+        ctx.writer
+            .submit(crate::writer::Priority::Bulk, batches[0].clone())
+            .await
+            .is_err()
+    );
+    let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM privacy.material_keys")
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(keys, 0);
+    sqlx::query("DROP TRIGGER reject_sealed_image ON core.events")
+        .execute(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    for batch in batches {
+        admit(&mut ctx, batch).await;
+    }
+    let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM privacy.material_keys")
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(keys, 2);
+    let wrapped = published.key.unwrap();
+    let key = sinex_store::sealed::DataKey {
+        key_ref: wrapped.key_ref,
+        key: sinex_store::sealed::unwrap(&wrapped.wrapped, &identity).unwrap(),
+    };
+    let mut input = ctx
+        .blobs
+        .read_sealed(
+            &published.material.blob,
+            Some(published.material.length),
+            &key,
+            crate::sealed_access::read_limits(published.material.length).unwrap(),
+            || Ok(()),
+        )
+        .unwrap();
+    let mut bytes = Vec::new();
+    input.read_to_end(&mut bytes).unwrap();
+    let meta = published.metadata;
+    assert_eq!(
+        read_image(&bytes[..meta.image_bytes as usize], dir.path()),
+        "second"
+    );
+    assert_ne!(
+        meta.image_hash,
+        format!(
+            "blake3:{}",
+            blake3::hash(&bytes[..meta.image_bytes as usize]).to_hex()
+        )
+    );
+    assert_ne!(
+        &bytes[meta.map_offset as usize..meta.map_offset as usize + 32],
+        blake3::hash(&bytes[..meta.page_size as usize]).as_bytes()
+    );
     // Locked restart remains a refusal; it cannot borrow the test's identity.
-    let (cursor,_)=sinex_store::positions::load(&mut ctx.read_conn,"sealed-images").await.unwrap().unwrap();
-    assert!(stored_chain(&mut ctx.read_conn,&ctx.blobs,&cursor).await.is_err());
+    let (cursor, _) = sinex_store::positions::load(&mut ctx.read_conn, "sealed-images")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        stored_chain(&mut ctx.read_conn, &ctx.blobs, &cursor)
+            .await
+            .is_err()
+    );
     ctx.close().await.unwrap();
 }

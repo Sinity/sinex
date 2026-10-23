@@ -10,10 +10,10 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::FileExt;
 use std::sync::{Arc, Mutex};
 
-pub type PageHash=Arc<dyn Fn(&[u8;32])->[u8;32]+Send+Sync>;
-pub type Check=Arc<dyn Fn()->Result<(),String>+Send+Sync>;
+pub type PageHash = Arc<dyn Fn(&[u8; 32]) -> [u8; 32] + Send + Sync>;
+pub type Check = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
-#[derive(Clone,Debug,Deserialize,Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub scope: String,
@@ -240,13 +240,13 @@ fn io(error: impl std::fmt::Display) -> DriverError {
 }
 
 pub struct Image {
-    pub metadata:SqliteImageMeta,
-    pub changed:Arc<Vec<u64>>,
-    pub previous:Option<Previous>,
-    pub map:Option<Arc<File>>,
-    view:Mutex<Option<Arc<View>>>,
-    stored:Mutex<Option<SqliteImagePublication>>,
-    check:Mutex<Option<Check>>,
+    pub metadata: SqliteImageMeta,
+    pub changed: Arc<Vec<u64>>,
+    pub previous: Option<Previous>,
+    pub map: Option<Arc<File>>,
+    view: Mutex<Option<Arc<View>>>,
+    stored: Mutex<Option<SqliteImagePublication>>,
+    check: Mutex<Option<Check>>,
 }
 impl std::fmt::Debug for Image {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -256,18 +256,68 @@ impl std::fmt::Debug for Image {
     }
 }
 impl Image {
-    pub fn checker(&self)->Result<Check,String> {Ok(self.check.lock().map_err(|_|"SQLite image check poisoned")?.clone().unwrap_or_else(||Arc::new(||Ok(()))))}
-    pub fn set_check(&self,check:Check)->Result<(),String> {*self.check.lock().map_err(|_|"SQLite image check poisoned")?=Some(check);Ok(())}
-
-    pub fn view(&self)->Result<Arc<View>,DriverError> {self.view.lock().map_err(|_|io("SQLite image poisoned"))?.clone().ok_or_else(||io("SQLite view already released"))}
-    pub fn stored(&self)->Result<Option<SqliteImagePublication>,String> {Ok(self.stored.lock().map_err(|_|"SQLite image poisoned")?.clone())}
-    pub fn retain(&self,publication:SqliteImagePublication)->Result<(),String> {
-        *self.stored.lock().map_err(|_|"SQLite image poisoned")?=Some(publication);
-        self.view.lock().map_err(|_|"SQLite image poisoned")?.take();
+    pub fn checker(&self) -> Result<Check, String> {
+        Ok(self
+            .check
+            .lock()
+            .map_err(|_| "SQLite image check poisoned")?
+            .clone()
+            .unwrap_or_else(|| Arc::new(|| Ok(()))))
+    }
+    pub fn set_check(&self, check: Check) -> Result<(), String> {
+        *self
+            .check
+            .lock()
+            .map_err(|_| "SQLite image check poisoned")? = Some(check);
         Ok(())
     }
-    pub fn reader(&self,map_hash:PageHash,full_data_only:bool)->Result<ImageReader,DriverError> {
-        Ok(ImageReader {view:self.view()?,map:self.map.clone(),map_hash,size:self.metadata.page_size,count:self.metadata.page_count,changed:if self.metadata.full || full_data_only {None} else {Some(self.changed.clone())},position:0,include_map:!full_data_only,check:self.check.lock().map_err(|_|io("SQLite image check poisoned"))?.clone()})
+
+    pub fn view(&self) -> Result<Arc<View>, DriverError> {
+        self.view
+            .lock()
+            .map_err(|_| io("SQLite image poisoned"))?
+            .clone()
+            .ok_or_else(|| io("SQLite view already released"))
+    }
+    pub fn stored(&self) -> Result<Option<SqliteImagePublication>, String> {
+        Ok(self
+            .stored
+            .lock()
+            .map_err(|_| "SQLite image poisoned")?
+            .clone())
+    }
+    pub fn retain(&self, publication: SqliteImagePublication) -> Result<(), String> {
+        *self.stored.lock().map_err(|_| "SQLite image poisoned")? = Some(publication);
+        self.view
+            .lock()
+            .map_err(|_| "SQLite image poisoned")?
+            .take();
+        Ok(())
+    }
+    pub fn reader(
+        &self,
+        map_hash: PageHash,
+        full_data_only: bool,
+    ) -> Result<ImageReader, DriverError> {
+        Ok(ImageReader {
+            view: self.view()?,
+            map: self.map.clone(),
+            map_hash,
+            size: self.metadata.page_size,
+            count: self.metadata.page_count,
+            changed: if self.metadata.full || full_data_only {
+                None
+            } else {
+                Some(self.changed.clone())
+            },
+            position: 0,
+            include_map: !full_data_only,
+            check: self
+                .check
+                .lock()
+                .map_err(|_| io("SQLite image check poisoned"))?
+                .clone(),
+        })
     }
     pub fn stored(&self) -> Result<Option<SqliteImagePublication>, String> {
         Ok(self
@@ -446,7 +496,15 @@ fn push(out: &mut Vec<ImageExtent>, extent: ImageExtent) {
 }
 
 pub struct ImageReader {
-    view:Arc<View>,map:Option<Arc<File>>,map_hash:PageHash,size:u32,count:u64,changed:Option<Arc<Vec<u64>>>,position:u64,include_map:bool,check:Option<Check>,
+    view: Arc<View>,
+    map: Option<Arc<File>>,
+    map_hash: PageHash,
+    size: u32,
+    count: u64,
+    changed: Option<Arc<Vec<u64>>>,
+    position: u64,
+    include_map: bool,
+    check: Option<Check>,
 }
 impl ImageReader {
     pub fn data_length(&self) -> u64 {

@@ -40,30 +40,71 @@ pub(crate) fn store(
     // and each dense map entry against the corresponding page. Hashes alone do not
     // establish that a patch's extent layout selects the right bytes.
     if key.is_none() {
-        let check=image.checker()?;
-        drop(blobs.read_plain(&blob,Some(meta.evidence_bytes),move ||check().map_err(|e|std::io::Error::other(e).into())).map_err(err)?);
+        let check = image.checker()?;
+        drop(
+            blobs
+                .read_plain(&blob, Some(meta.evidence_bytes), move || {
+                    check().map_err(|e| std::io::Error::other(e).into())
+                })
+                .map_err(err)?,
+        );
     }
-    let evidence_extent=[sinex_model::ImageExtent {blob:blob.clone(),offset:0,length:meta.evidence_bytes}];
-    let mut evidence:Box<dyn sinex_sources::drivers::export_archive::group::ReadSeek + '_>=match &key {
-        Some(k)=>Box::new(blobs.read_sealed(&blob,Some(meta.evidence_bytes),k,crate::sealed_access::read_limits(meta.evidence_bytes)?,||Ok(())).map_err(err)?),
-        None=>Box::new(blobs.assemble(&evidence_extent).map_err(err)?),
+    let evidence_extent = [sinex_model::ImageExtent {
+        blob: blob.clone(),
+        offset: 0,
+        length: meta.evidence_bytes,
+    }];
+    let mut evidence: Box<dyn sinex_sources::drivers::export_archive::group::ReadSeek + '_> =
+        match &key {
+            Some(k) => Box::new(
+                blobs
+                    .read_sealed(
+                        &blob,
+                        Some(meta.evidence_bytes),
+                        k,
+                        crate::sealed_access::read_limits(meta.evidence_bytes)?,
+                        || Ok(()),
+                    )
+                    .map_err(err)?,
+            ),
+            None => Box::new(blobs.assemble(&evidence_extent).map_err(err)?),
+        };
+    evidence
+        .seek(SeekFrom::Start(meta.map_offset))
+        .map_err(err)?;
+    let mut full_hash = match naming {
+        Some(k) => blake3::Hasher::new_keyed(&k),
+        None => blake3::Hasher::new(),
     };
-    evidence.seek(SeekFrom::Start(meta.map_offset)).map_err(err)?;
-    let mut full_hash=match naming {Some(k)=>blake3::Hasher::new_keyed(&k),None=>blake3::Hasher::new()};
-    let mut source=image.reader(page_hash.clone(),true).map_err(err)?;
-    let mut full:Box<dyn Read + '_>=match &key {
-        Some(k)=>Box::new(blobs.read_sealed(&blob,Some(meta.evidence_bytes),k,crate::sealed_access::read_limits(meta.evidence_bytes)?,||Ok(())).map_err(err)?),
-        None=>Box::new(blobs.assemble(&extents).map_err(err)?),
+    let mut source = image.reader(page_hash.clone(), true).map_err(err)?;
+    let mut full: Box<dyn Read + '_> = match &key {
+        Some(k) => Box::new(
+            blobs
+                .read_sealed(
+                    &blob,
+                    Some(meta.evidence_bytes),
+                    k,
+                    crate::sealed_access::read_limits(meta.evidence_bytes)?,
+                    || Ok(()),
+                )
+                .map_err(err)?,
+        ),
+        None => Box::new(blobs.assemble(&extents).map_err(err)?),
     };
-    let mut expected=vec![0;meta.page_size as usize];
-    let mut actual=vec![0;meta.page_size as usize];
+    let mut expected = vec![0; meta.page_size as usize];
+    let mut actual = vec![0; meta.page_size as usize];
     for _ in 0..meta.page_count {
         source.read_exact(&mut expected).map_err(err)?;
         full.read_exact(&mut actual).map_err(err)?;
-        if actual!=expected {return Err("SQLite retained extents differ from the pinned image".into());}
+        if actual != expected {
+            return Err("SQLite retained extents differ from the pinned image".into());
+        }
         full_hash.update(&actual);
-        let mut stored=[0;32]; evidence.read_exact(&mut stored).map_err(err)?;
-        if stored!=page_hash(blake3::hash(&actual).as_bytes()) {return Err("SQLite page map differs from retained image".into());}
+        let mut stored = [0; 32];
+        evidence.read_exact(&mut stored).map_err(err)?;
+        if stored != page_hash(blake3::hash(&actual).as_bytes()) {
+            return Err("SQLite page map differs from retained image".into());
+        }
     }
     let hash = format!("blake3:{}", full_hash.finalize().to_hex());
     if key.is_none() && meta.image_hash != hash {

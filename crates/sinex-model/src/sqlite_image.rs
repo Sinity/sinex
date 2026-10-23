@@ -102,8 +102,16 @@ impl SqliteImagePublication {
     pub fn validate(&self) -> Result<(), String> {
         let m = &self.metadata;
         m.validate(&self.extents)?;
-        if self.material.manifest["sqlite_image"]!=serde_json::to_value(m).map_err(|e|e.to_string())? {return Err("SQLite image manifest differs from its publication".into());}
-        if self.material.id!=m.material || self.material.length!=m.evidence_bytes || crate::MaterialRole::of(&self.material.manifest).map_err(|e|e.to_string())?!=crate::MaterialRole::SqliteImage {
+        if self.material.manifest["sqlite_image"]
+            != serde_json::to_value(m).map_err(|e| e.to_string())?
+        {
+            return Err("SQLite image manifest differs from its publication".into());
+        }
+        if self.material.id != m.material
+            || self.material.length != m.evidence_bytes
+            || crate::MaterialRole::of(&self.material.manifest).map_err(|e| e.to_string())?
+                != crate::MaterialRole::SqliteImage
+        {
             return Err("SQLite image material differs from its evidence layout".into());
         }
         if (m.class == Class::Sealed) != self.key.is_some()
