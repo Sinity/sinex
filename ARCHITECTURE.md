@@ -68,10 +68,13 @@ Changed-page indices and extent plans also consume memory proportional to change
 pages/spans. Rebase occurs after more than half of pages change, accumulated
 compressed patch cost exceeds the configured base multiple, or unique referenced
 compressed bytes exceed twice the compressed base. This footprint is not a
-measurement of decoder I/O: the current shared v0.5.15 assembled reader can
-reverify a whole base each time sparse extents switch between base and patch
-blobs. Its operation-scoped reader reuse is a separate shared follow-up. Sealed images use fresh encrypted
-full bases at cadence with keyed digests and no cross-image page reuse. Provider
+measurement of decoder I/O. The shared v0.5.16 assembler retains at most four
+verified plain opens and their seek tables, with one decoded frame shared across
+them. Returning to a retained base reuses whole-name verification; alternating
+sources can still decode their selected frames repeatedly, and evicted sources
+are verified again. Referenced footprint and actual read/decode work therefore
+remain separate. Sealed images use fresh encrypted full bases at cadence with
+keyed digests and no cross-image page reuse. Provider
 page readers feed encryption directly; sealed retained input is never staged as
 plaintext or opened with borrowed operator authority.
 
