@@ -39,9 +39,9 @@ pub(crate) async fn validate_batch(conn: &mut PgConnection, batch: &Batch) -> Re
     }
     for (reference, locations) in references {
         let row = sqlx::query!(
-            "SELECT k.material_id,k.role,k.class,i.binding FROM privacy.material_keys k
+            r#"SELECT k.material_id,k.role,k.class,i.binding AS "binding?" FROM privacy.material_keys k
              LEFT JOIN raw.materials m ON m.id=k.material_id
-             LEFT JOIN raw.inputs i ON i.id=m.input_id WHERE k.key_ref=$1",
+             LEFT JOIN raw.inputs i ON i.id=m.input_id WHERE k.key_ref=$1"#,
             reference,
         )
         .fetch_optional(&mut *conn)
