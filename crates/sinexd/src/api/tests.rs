@@ -714,11 +714,13 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
     admit_events(&w, vec![fresh_event]).await;
     let (_, changed) = call(&w, Some(OPERATOR), query.clone()).await;
     assert!(
-        rows(&changed).contains("synthetic fresh protected value"),
+        changed["result"]["rows"]
+            .to_string()
+            .contains("synthetic fresh protected value"),
         "fresh: {changed}"
     );
     assert!(
-        !rows(&changed).contains("diary"),
+        !changed["result"]["rows"].to_string().contains("diary"),
         "old content remains encrypted: {changed}"
     );
     let wrapped = sealed::wrap(&key, &identity.to_public()).unwrap();
