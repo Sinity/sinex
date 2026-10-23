@@ -16,13 +16,15 @@ use base64::Engine;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use serde_json::{Value, json};
-use sinex_model::{Class, EquivalenceKey, Event, MaterialId};
+use sinex_model::{Class, Event, MaterialId};
 use sqlx::PgConnection;
 
 pub use age::x25519::{Identity, Recipient};
 pub use hashed_blobs::DataKey;
 mod secrets;
+mod validation;
 pub use secrets::{MaterialSecrets, SecretRole, unwrap_secrets, wrap_secrets};
+pub(crate) use validation::validate_batch;
 
 /// A fresh data key, named by a new key reference.
 pub fn new_key() -> Result<DataKey> {
@@ -99,14 +101,10 @@ pub fn seal_event_with_secrets(
 ) -> Result<()> {
     secrets.require_data_key(key)?;
     event.payload = seal_value(&event.payload, key)?;
-    let naming = secrets.record_naming();
     if let Some(k) = &event.equivalence_key {
-        event.equivalence_key = Some(EquivalenceKey(format!(
-            "sealed:{}",
-            blake3::keyed_hash(naming, k.0.as_bytes()).to_hex()
-        )));
+        event.equivalence_key = Some(secrets.name_equivalence(&k.0));
     }
-    event.record_hash = *blake3::keyed_hash(naming, &event.record_hash).as_bytes();
+    event.record_hash = secrets.name_record_hash(&event.record_hash);
     event.class = Class::Sealed;
     Ok(())
 }
@@ -171,13 +169,13 @@ pub async fn store_key(
     )
     .execute(&mut *conn)
     .await?;
-    let actual = sqlx::query_scalar!(
-        "SELECT key_ref FROM privacy.material_keys WHERE material_id=$1",
+    let actual = sqlx::query!(
+        "SELECT key_ref,role FROM privacy.material_keys WHERE material_id=$1",
         material.0
     )
     .fetch_one(conn)
     .await?;
-    if actual != key_ref {
+    if actual.key_ref != key_ref || actual.role != SecretRole::DataAndRecordNaming.as_str() {
         return Err(Error::Invalid(
             "material is already bound to a different sealed key".into(),
         ));
@@ -188,7 +186,7 @@ pub async fn store_key(
 /// A wrapped key by its reference; `None` once excised.
 pub async fn wrapped_key(conn: &mut PgConnection, key_ref: &str) -> Result<Option<Vec<u8>>> {
     Ok(sqlx::query_scalar!(
-        "SELECT wrapped_key FROM privacy.material_keys WHERE key_ref = $1 AND class = 'sealed'",
+        "SELECT wrapped_key FROM privacy.material_keys WHERE key_ref = $1 AND class = 'sealed' AND role = 'data-and-record-naming'",
         key_ref
     )
     .fetch_optional(&mut *conn)

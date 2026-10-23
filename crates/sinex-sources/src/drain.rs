@@ -344,6 +344,25 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
             // An excision blanks a record to spaces (its newline kept): no
             // record is left there, so nothing is read and nothing fails.
             if is_blanked(&raw) {
+                if let Some(transition) = self
+                    .input
+                    .manifest
+                    .get("erase_transitions")
+                    .and_then(|transitions| transitions.get(start.to_string()))
+                {
+                    let context = RecordContext {
+                        manifest: self.input.manifest,
+                        member: member_at(self.input.manifest, start),
+                    };
+                    self.carry = match self.parser.skip_erased(&self.carry, transition, &context) {
+                        Ok(carry) => carry,
+                        Err(error) => {
+                            self.finished = true;
+                            return Some(Err(error));
+                        }
+                    };
+                    chunk_carry = Some(self.carry.clone());
+                }
                 current.end = end;
                 continue;
             }

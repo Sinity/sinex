@@ -93,6 +93,16 @@ impl<R> Blanked<R> {
         }
     }
 }
+impl<R: Seek> Seek for Blanked<R> {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        let position = self.reader.seek(from)?;
+        self.position = usize::try_from(position)
+            .map_err(|_| std::io::Error::other("material exceeds address space"))?;
+        self.first = self.spans.partition_point(|(_, end)| *end <= self.position);
+        Ok(position)
+    }
+}
+
 impl<R: Read> Read for Blanked<R> {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
         let n = self.reader.read(out)?;

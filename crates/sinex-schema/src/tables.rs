@@ -408,6 +408,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   key_ref text NOT NULL UNIQUE,
   class text NOT NULL,
   wrapped_key bytea NOT NULL,
+  role text NOT NULL DEFAULT 'data-and-record-naming'
+    CHECK (role IN ('data-and-record-naming', 'record-naming-only')),
   created_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         // Full-text search read model (spec `query.md` §5, `storage.md`

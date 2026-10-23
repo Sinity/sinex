@@ -102,6 +102,7 @@ pub async fn admit(
         }
         BatchKind::Derived { .. } | BatchKind::Api { .. } | BatchKind::Replay { .. } => {}
     }
+    crate::sealed::validate_batch(conn, batch).await?;
     for request in &batch.archive {
         if let ArchiveRequest::Replay { scope, operation } = request {
             let (archived, dirty) = archive::replay_scope(conn, scope, *operation, keys).await?;

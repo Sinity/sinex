@@ -45,6 +45,31 @@ impl Parser for AtuinParser {
     type Carry = ();
     type Payload = CommandExecuted;
 
+    fn erase_record(
+        &self,
+        _raw: &[u8],
+        _: &(),
+        _: &crate::RecordContext<'_>,
+    ) -> Result<crate::Erased<()>, RecordError> {
+        Ok(crate::Erased {
+            carry: (),
+            replay: None,
+        })
+    }
+
+    fn skip_erased(
+        &self,
+        _: &(),
+        transition: &Value,
+        _: &crate::RecordContext<'_>,
+    ) -> Result<(), RecordError> {
+        if transition.is_null() {
+            Ok(())
+        } else {
+            Err(RecordError::new("stateless Atuin has no replay transition"))
+        }
+    }
+
     fn parse(
         &self,
         row: &Map<String, Value>,

@@ -78,7 +78,7 @@ impl Authority {
     ) -> Result<(String, MaterialSecrets), String> {
         self.check()?;
         let row = sqlx::query!(
-            "SELECT key_ref,class,wrapped_key FROM privacy.material_keys WHERE material_id=$1",
+            "SELECT key_ref,class,wrapped_key,role FROM privacy.material_keys WHERE material_id=$1",
             material.0
         )
         .fetch_optional(conn)
@@ -88,7 +88,11 @@ impl Authority {
         if row.class != "sealed" {
             return Err("wrapped capability belongs to a different material class".into());
         }
-        Ok((row.key_ref, self.unwrap_secrets(&row.wrapped_key)?))
+        let secrets = self.unwrap_secrets(&row.wrapped_key)?;
+        if secrets.role().as_str() != row.role {
+            return Err("wrapped capability role does not match material key metadata".into());
+        }
+        Ok((row.key_ref, secrets))
     }
     /// Call only for material IDs in the explicit operation's resolved scope.
     pub async fn material_key(
