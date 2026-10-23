@@ -15,7 +15,6 @@ use sinex_model::Class;
 use sinex_model::event_types::session::PlayerChanged;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "media.mpris",
@@ -156,11 +155,16 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 
 /// One snapshot line per player on the bus now.
 pub fn snapshot() -> Vec<Vec<u8>> {
-    dbus::names()
+    snapshot_with_control(&crate::capture::Control::new(None))
+}
+
+fn snapshot_with_control(control: &crate::capture::Control) -> Vec<Vec<u8>> {
+    dbus::names_with_control(control)
         .into_iter()
         .filter(|n| n.starts_with(PREFIX))
         .filter_map(|name| {
-            let owner = dbus::call(
+            let owner = dbus::call_with_control(
+                control,
                 "org.freedesktop.DBus",
                 "/org/freedesktop/DBus",
                 "org.freedesktop.DBus",
@@ -168,7 +172,8 @@ pub fn snapshot() -> Vec<Vec<u8>> {
                 &["s", &name],
             )
             .and_then(|v| v.get(0).and_then(Value::as_str).map(str::to_owned))?;
-            let properties = dbus::call(
+            let properties = dbus::call_with_control(
+                control,
                 &name,
                 "/org/mpris/MediaPlayer2",
                 "org.freedesktop.DBus.Properties",
@@ -185,8 +190,8 @@ pub fn snapshot() -> Vec<Vec<u8>> {
         .collect()
 }
 
-pub fn capture(spool: &Path, seconds: Option<Duration>) -> std::io::Result<u64> {
-    dbus::capture(MATCHES, &snapshot(), spool, seconds)
+pub fn capture(spool: &Path, control: &crate::capture::Control) -> std::io::Result<u64> {
+    dbus::capture(MATCHES, &snapshot_with_control(control), spool, control)
 }
 
 /// `--source players=SPOOL`: media players (MPRIS), captured into SPOOL.

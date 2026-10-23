@@ -120,7 +120,10 @@ fn main() -> ExitCode {
                 Err(e) => fail(e.to_string()),
             }
         }
-        Command::Capture(live) => match capture(live) {
+        Command::Capture(live) => match tokio::runtime::Runtime::new()
+            .expect("tokio runtime")
+            .block_on(capture(live))
+        {
             Ok(n) => {
                 println!("captured {n}");
                 ExitCode::SUCCESS
@@ -139,14 +142,30 @@ fn secs(s: Option<u64>) -> Option<Duration> {
     s.map(Duration::from_secs)
 }
 
-fn capture(live: Live) -> Result<u64, String> {
+async fn capture(live: Live) -> Result<u64, String> {
+    let shutdown = sinex_sources::capture::shutdown_signal().map_err(|e| e.to_string())?;
+    let control = std::sync::Arc::new(sinex_sources::capture::Control::new(secs(live.seconds)));
+    let stop = control.clone();
+    let mut task = tokio::task::spawn_blocking(move || capture_source(live, &stop));
+    let result = tokio::select! {
+        result = &mut task => result.map_err(|e| e.to_string())?,
+        _ = shutdown => {
+            control.stop();
+            task.await.map_err(|e| e.to_string())?
+        }
+    };
+    control.stop();
+    result
+}
+
+fn capture_source(live: Live, control: &sinex_sources::capture::Control) -> Result<u64, String> {
     let (kind, binding) = live::binding(
         &live.kind,
         &live.spool,
         "localhost",
         live::options(&live.options)?,
     )?;
-    (kind.capture.expect("live kinds capture"))(&binding, secs(live.seconds))
+    (kind.capture.expect("live kinds capture"))(&binding, control)
 }
 
 /// The live sources `run` asks for, as kinds and their options.
@@ -214,21 +233,21 @@ async fn produce(run: Run) -> Result<(), String> {
     )
     .await
     .map_err(|e| e.to_string())?;
-    let mut lives = requested(&run)
+    let bindings = requested(&run)
         .into_iter()
-        .map(|(kind, spool, options)| live::start(kind, &spools.join(spool), &run.host, options))
+        .map(|(kind, spool, options)| live::binding(kind, &spools.join(spool), &run.host, options))
         .collect::<Result<Vec<_>, _>>()?;
-    if lives.is_empty() {
+    if bindings.is_empty() {
         return Err("nothing to capture: pass at least one source flag".into());
     }
     let until = run
         .seconds
         .map(|s| std::time::Instant::now() + Duration::from_secs(s));
-    live::produce(
+    live::run(
         &mut producer,
         &store,
         &run.state.join("positions"),
-        &mut lives,
+        bindings,
         Duration::from_secs(run.every),
         until,
     )

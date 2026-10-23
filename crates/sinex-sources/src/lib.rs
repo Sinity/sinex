@@ -10,6 +10,7 @@
 //! batch with the new cursor. A parser cannot drop or mislabel a record,
 //! because it never sees the bookkeeping.
 pub mod binding;
+pub mod capture;
 pub mod drain;
 pub mod drivers;
 pub mod live;

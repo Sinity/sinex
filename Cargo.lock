@@ -4188,10 +4188,12 @@ name = "sinex-session"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "devkit",
  "serde_json",
  "sinex-model",
  "sinex-protocol",
  "sinex-sources",
+ "tempfile",
  "tokio",
 ]
 
@@ -4216,6 +4218,7 @@ dependencies = [
  "notify",
  "proptest",
  "rusqlite",
+ "rustix",
  "rustls",
  "serde",
  "serde_json",

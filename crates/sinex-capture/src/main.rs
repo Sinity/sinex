@@ -97,15 +97,15 @@ async fn run(cli: Cli) -> Result<(), String> {
     if requested.is_empty() {
         return Err("nothing to capture: pass --journald and/or --watch".into());
     }
-    let mut lives = requested
+    let bindings = requested
         .into_iter()
-        .map(|(kind, spool, options)| live::start(kind, &spools.join(spool), &cli.host, options))
+        .map(|(kind, spool, options)| live::binding(kind, &spools.join(spool), &cli.host, options))
         .collect::<Result<Vec<_>, _>>()?;
-    live::produce(
+    live::run(
         &mut producer,
         &store,
         &positions,
-        &mut lives,
+        bindings,
         Duration::from_secs(cli.every),
         None,
     )

@@ -92,35 +92,30 @@ pub fn print_frame(selection: &str) -> std::io::Result<()> {
     out.flush()
 }
 
-/// Spool changes of `selection` until `seconds` pass (or `wl-paste` ends).
+/// Spool changes of `selection` until stopped (or `wl-paste` ends).
 /// `helper` is the command that prints a frame (`sinex-session
 /// clipboard-frame --selection <selection>`).
 pub fn capture(
     selection: &str,
     helper: &[OsString],
     spool: &Path,
-    seconds: Option<Duration>,
+    control: &crate::capture::Control,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     let mut command = Command::new("wl-paste");
     if selection == "primary" {
         command.arg("--primary");
     }
-    let mut child = command
+    command
         .arg("--watch")
         .args(helper)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let stdout = child.stdout.take().expect("piped stdout");
-    let pid = child.id();
-    if let Some(seconds) = seconds {
-        std::thread::spawn(move || {
-            std::thread::sleep(seconds);
-            let _ = Command::new("kill").arg(pid.to_string()).status();
-        });
-    }
+        .stderr(Stdio::null());
+    let Some(mut child) = control.spawn(&mut command)? else {
+        return Ok(0);
+    };
+    let stdout = child.stdout().expect("piped stdout");
     let n =
         live_stream::capture_lines(BufReader::new(stdout), &mut writer, Duration::from_secs(1))?;
     let _ = child.wait();

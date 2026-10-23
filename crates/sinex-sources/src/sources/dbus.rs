@@ -26,12 +26,12 @@ pub fn driver(spool: PathBuf, host: String, locator: &str) -> LiveStream {
 /// Spool `busctl monitor` output for `matches` (D-Bus match rules), after the
 /// `initial` lines (a source's reading of current state, written first so the
 /// spool holds what was observed at capture start). Runs until the monitor
-/// ends or `seconds` pass. Returns the number of lines captured.
+/// ends or capture stops. Returns the number of lines captured.
 pub fn capture(
     matches: &[&str],
     initial: &[Vec<u8>],
     spool: &Path,
-    seconds: Option<Duration>,
+    control: &crate::capture::Control,
 ) -> std::io::Result<u64> {
     let mut writer = SpoolWriter::open(spool, Rotation::default())?;
     for line in initial {
@@ -43,21 +43,14 @@ pub fn capture(
     for m in matches {
         command.arg("--match").arg(m);
     }
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let stdout = child.stdout.take().expect("piped stdout");
-    let pid = child.id();
-    if let Some(seconds) = seconds {
-        std::thread::spawn(move || {
-            std::thread::sleep(seconds);
-            // Ending the monitor ends its output; everything it printed is
-            // already in the spool.
-            let _ = Command::new("kill").arg(pid.to_string()).status();
-        });
-    }
+        .stderr(Stdio::null());
+    let Some(mut child) = control.spawn(&mut command)? else {
+        return Ok(initial.len() as u64);
+    };
+    let stdout = child.stdout().expect("piped stdout");
     let n =
         live_stream::capture_lines(BufReader::new(stdout), &mut writer, Duration::from_secs(1))?;
     let _ = child.wait();
@@ -73,37 +66,55 @@ pub fn call(
     method: &str,
     args: &[&str],
 ) -> Option<Value> {
-    let out = Command::new("busctl")
-        .args([
-            "--user",
-            "--json=short",
-            "call",
-            destination,
-            path,
-            interface,
-            method,
-        ])
-        .args(args)
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let reply: Value = serde_json::from_slice(&out.stdout).ok()?;
+    call_with_control(
+        &crate::capture::Control::new(None),
+        destination,
+        path,
+        interface,
+        method,
+        args,
+    )
+}
+
+pub(crate) fn call_with_control(
+    control: &crate::capture::Control,
+    destination: &str,
+    path: &str,
+    interface: &str,
+    method: &str,
+    args: &[&str],
+) -> Option<Value> {
+    let out = control
+        .output(
+            Command::new("busctl")
+                .args([
+                    "--user",
+                    "--json=short",
+                    "call",
+                    destination,
+                    path,
+                    interface,
+                    method,
+                ])
+                .args(args),
+        )
+        .ok()??;
+    let reply: Value = serde_json::from_slice(&out).ok()?;
     Some(decode(reply.get("data")?))
 }
 
 /// Names on the session bus.
 pub fn names() -> Vec<String> {
-    let Ok(out) = Command::new("busctl")
-        .args(["--user", "--json=short", "list"])
-        .stderr(Stdio::null())
-        .output()
+    names_with_control(&crate::capture::Control::new(None))
+}
+
+pub(crate) fn names_with_control(control: &crate::capture::Control) -> Vec<String> {
+    let Ok(Some(out)) =
+        control.output(Command::new("busctl").args(["--user", "--json=short", "list"]))
     else {
         return Vec::new();
     };
-    serde_json::from_slice::<Vec<Map<String, Value>>>(&out.stdout)
+    serde_json::from_slice::<Vec<Map<String, Value>>>(&out)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|n| n.get("name").and_then(Value::as_str).map(str::to_owned))

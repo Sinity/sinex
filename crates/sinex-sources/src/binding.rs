@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::MaterialId;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 /// The zone named `name` (an IANA name such as `Europe/Warsaw`), or this
 /// system's zone.
@@ -142,9 +141,9 @@ pub type Plan = fn(&Path, &Settings) -> Result<Vec<Binding>, String>;
 pub type SourceFor = fn(&Binding) -> Result<Box<dyn Source>, String>;
 /// The driver of one binding.
 pub type ReaderFor = fn(&Binding) -> Result<Box<dyn Reader>, String>;
-/// Live capture of one binding into its spool, for `stop` or until the
+/// Live capture of one binding into its spool, until stopped or until the
 /// source ends; the number of captured lines or segments.
-pub type Capture = fn(&Binding, Option<Duration>) -> Result<u64, String>;
+pub type Capture = fn(&Binding, &crate::capture::Control) -> Result<u64, String>;
 
 /// A kind of input and the sources that read it: what `--source KIND=PATH`,
 /// `sources.json` and `sinex-session` name.
