@@ -188,7 +188,7 @@ pub async fn store_key(
 /// A wrapped key by its reference; `None` once excised.
 pub async fn wrapped_key(conn: &mut PgConnection, key_ref: &str) -> Result<Option<Vec<u8>>> {
     Ok(sqlx::query_scalar!(
-        "SELECT wrapped_key FROM privacy.material_keys WHERE key_ref = $1",
+        "SELECT wrapped_key FROM privacy.material_keys WHERE key_ref = $1 AND class = 'sealed'",
         key_ref
     )
     .fetch_optional(&mut *conn)
