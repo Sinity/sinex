@@ -28,13 +28,15 @@ fn history() -> PathBuf {
 fn rows(d: &SqliteRows) -> (Vec<Map<String, Value>>, Value) {
     let a = d.poll(&Value::Null, &mut RowState::default()).unwrap();
     let m = a.material.unwrap();
-    let crate::drivers::StoredBytes::FramedFile(file) = m.stored.as_ref().unwrap() else { panic!("rows use staged bytes") };
+    let crate::drivers::StoredBytes::FramedFile(file) = m.stored.as_ref().unwrap() else {
+        panic!("rows use staged bytes")
+    };
     use std::os::unix::fs::FileExt;
     let rows = m
         .records
         .iter()
         .map(|(s, e)| {
-            let mut bytes = vec![0; e-s];
+            let mut bytes = vec![0; e - s];
             file.read_exact_at(&mut bytes, *s as u64).unwrap();
             serde_json::from_slice(&bytes).unwrap()
         })

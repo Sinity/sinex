@@ -167,14 +167,21 @@ fn reading_orders_only_grow() {
 fn locked_rollback_spill_is_unavailable_until_rollback() {
     let path = db();
     let holder = Connection::open(&path).unwrap();
-    holder.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA cache_size=5; PRAGMA cache_spill=ON; DELETE FROM t;
+    holder
+        .execute_batch(
+            "PRAGMA journal_mode=DELETE; PRAGMA cache_size=5; PRAGMA cache_spill=ON; DELETE FROM t;
         WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<200)
         INSERT INTO t SELECT 'committed', x, zeroblob(4000) FROM n;
-        BEGIN EXCLUSIVE; UPDATE t SET id='UNCOMMITTED';").unwrap();
+        BEGIN EXCLUSIVE; UPDATE t SET id='UNCOMMITTED';",
+        )
+        .unwrap();
     let d = driver(path);
     let mut state = RowState::default();
     let a = d.poll(&Value::Null, &mut state).unwrap();
-    assert!(a.observation.unavailable.is_some(), "locked source must not expose spilled uncommitted pages");
+    assert!(
+        a.observation.unavailable.is_some(),
+        "locked source must not expose spilled uncommitted pages"
+    );
     assert!(a.material.is_none());
     assert_eq!(a.cursor_unchanged, Value::Null);
     assert!(state.is_empty());
@@ -194,7 +201,10 @@ fn failed_poll_retries_same_material_before_reading_source_changes() {
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let first_material = first.material.as_ref().unwrap();
     let original = lines(&first);
-    Connection::open(&path).unwrap().execute_batch("UPDATE t SET n=99;").unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("UPDATE t SET n=99;")
+        .unwrap();
     let retry = d.poll(&Value::Null, &mut state).unwrap();
     assert_eq!(retry.material.as_ref().unwrap().id, first_material.id);
     assert_eq!(lines(&retry), original);
@@ -224,8 +234,8 @@ fn wal_reads_committed_rows_while_writer_has_uncommitted_changes() {
     let a = d.poll(&Value::Null, &mut RowState::default()).unwrap();
     assert!(a.observation.unavailable.is_none());
     let rows = lines(&a);
-    assert_eq!(rows.len(),3);
-    assert_eq!(rows[2]["id"],"wal-committed");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[2]["id"], "wal-committed");
     assert!(rows.iter().all(|r| r["id"] != "uncommitted"));
     writer.execute_batch("ROLLBACK").unwrap();
 }
@@ -233,9 +243,11 @@ fn wal_reads_committed_rows_while_writer_has_uncommitted_changes() {
 #[test]
 fn missing_database_stays_unavailable_without_creating_a_file() {
     let path = db().with_file_name("absent.db");
-    let a = driver(path.clone()).poll(&Value::Null,&mut RowState::default()).unwrap();
+    let a = driver(path.clone())
+        .poll(&Value::Null, &mut RowState::default())
+        .unwrap();
     assert!(a.observation.unavailable.is_some());
     assert!(a.material.is_none());
-    assert_eq!(a.cursor_unchanged,Value::Null);
+    assert_eq!(a.cursor_unchanged, Value::Null);
     assert!(!path.exists());
 }

@@ -22,9 +22,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::fs::File;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct SqliteRows {
@@ -99,8 +99,17 @@ struct Pending {
 
 impl Pending {
     fn acquired(&self, input: InputRef, cursor: &Cursor) -> Acquired {
-        let through = if cursor.material == Some(self.id) { cursor.through } else { 0 };
-        let records = self.records.iter().copied().filter(|&(_, end)| end > through).collect();
+        let through = if cursor.material == Some(self.id) {
+            cursor.through
+        } else {
+            0
+        };
+        let records = self
+            .records
+            .iter()
+            .copied()
+            .filter(|&(_, end)| end > through)
+            .collect();
         let previous = self.previous.clone();
         let scanned = self.scanned.clone();
         let ends = self.ends.clone();
@@ -120,15 +129,29 @@ impl Pending {
                 reading_order: super::reading_order(&self.manifest),
                 manifest: self.manifest.clone(),
                 cursor_at: Box::new(move |end| {
-                    let upto = ends.iter().take_while(|(e, _)| *e <= end).map(|(_, r)| *r).max().unwrap_or(previous.max_rowid);
+                    let upto = ends
+                        .iter()
+                        .take_while(|(e, _)| *e <= end)
+                        .map(|(_, r)| *r)
+                        .max()
+                        .unwrap_or(previous.max_rowid);
                     serde_json::to_value(Cursor {
                         max_rowid: upto.max(previous.max_rowid),
-                        last_full_pass_ns: if end == length { scanned.last_full_pass_ns } else { previous.last_full_pass_ns },
+                        last_full_pass_ns: if end == length {
+                            scanned.last_full_pass_ns
+                        } else {
+                            previous.last_full_pass_ns
+                        },
                         last_order: base.saturating_add(end as i64),
-                        open: if end == length { scanned.open.clone() } else { previous.open.clone() },
+                        open: if end == length {
+                            scanned.open.clone()
+                        } else {
+                            previous.open.clone()
+                        },
                         through: end,
                         ..scanned.clone()
-                    }).expect("cursor serializes")
+                    })
+                    .expect("cursor serializes")
                 }),
                 aligned: false,
                 vanished: Vec::new(),
@@ -302,9 +325,13 @@ impl SqliteRows {
                 }
                 hashes.push((rowid, hash));
                 let start = length;
-                staged.write_all(line.as_bytes()).and_then(|_| staged.write_all(b"\n"))
+                staged
+                    .write_all(line.as_bytes())
+                    .and_then(|_| staged.write_all(b"\n"))
                     .map_err(|e| DriverError::Io(e.to_string()))?;
-                length = length.checked_add(line.len() + 1).ok_or_else(|| DriverError::Io("row material exceeds addressable size".into()))?;
+                length = length.checked_add(line.len() + 1).ok_or_else(|| {
+                    DriverError::Io("row material exceeds addressable size".into())
+                })?;
                 records.push((start, length));
                 ends.push((length, rowid));
             }
@@ -379,10 +406,15 @@ impl SqliteRows {
 /// A locked database is unavailable: a stable main file may contain spilled
 /// uncommitted pages, so copying it cannot replace a read transaction.
 fn open_for_read(path: &std::path::Path) -> Result<Connection, String> {
-    let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-        .map_err(|e| format!("cannot open read-only: {e}"))?;
-    c.busy_timeout(std::time::Duration::from_secs(2)).map_err(|e| e.to_string())?;
-    c.execute_batch("BEGIN").map_err(|e| format!("cannot begin committed read: {e}"))?;
+    let c = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| format!("cannot open read-only: {e}"))?;
+    c.busy_timeout(std::time::Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
+    c.execute_batch("BEGIN")
+        .map_err(|e| format!("cannot begin committed read: {e}"))?;
     // Establish the snapshot before inspecting its schema and rows.
     c.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
         .map_err(|e| format!("cannot read committed snapshot: {e}"))?;
