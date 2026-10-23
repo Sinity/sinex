@@ -33,6 +33,10 @@ impl Parser for Counting {
 
 struct Discard;
 impl MaterialSink for Discard {
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
+        self.put(&std::fs::read(path).map_err(|e| e.to_string())?)
+    }
+
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         Ok(format!("blake3:{}", blake3::hash(bytes).to_hex()))
     }
@@ -113,14 +117,14 @@ fn batches_are_drained_lazily() {
     )
     .unwrap();
     let mut batches = prepared.batches().unwrap();
-    let first = batches.next().unwrap();
+    let first = batches.next().unwrap().unwrap();
     assert_eq!(first.event_count(), 1_000);
     assert!(
         PARSED.load(Ordering::SeqCst) <= 2_001,
         "taking one batch parsed {} records",
         PARSED.load(Ordering::SeqCst)
     );
-    let rest: Vec<Batch> = batches.collect();
+    let rest: Vec<Batch> = batches.collect::<Result<_, _>>().unwrap();
     assert_eq!(1 + rest.len(), records / 1_000);
     let BatchKind::Source(last) = &rest.last().unwrap().kind else {
         panic!()
@@ -200,6 +204,7 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
         )
         .unwrap();
         for batch in prepared.batches().unwrap() {
+            let batch = batch.unwrap();
             events += batch.event_count();
             let BatchKind::Source(p) = &batch.kind else {
                 panic!()
@@ -225,5 +230,70 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
         later < 8 << 20,
         "peak RSS grew {} MiB more after the first part",
         later >> 20
+    );
+}
+
+#[test]
+fn retained_original_length_does_not_replace_decoded_record_coordinates() {
+    let source = DeclaredSource {
+        spec: SourceSpec {
+            name: "test.counting",
+            driver: Driver::ExportArchive,
+            consumer: "test",
+            class: Class::Open,
+            parser: "counting",
+            parser_version: 1,
+            event_types: &["command.imported"],
+            framer: lines,
+        },
+        parser: Counting,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("original");
+    std::fs::write(&path, b"synthetic retained archive envelope").unwrap();
+    let bytes = b"decoded\n".to_vec();
+    let decoded_len = bytes.len();
+    let acquired = Acquired {
+        input: InputRef {
+            kind: "file".into(),
+            locator: "/t".into(),
+            host: "h".into(),
+        },
+        observation: ObservationFacts::default(),
+        revision: RevisionChange::Snapshot,
+        material: Some(NewMaterial {
+            id: MaterialId::new(),
+            records: lines(&bytes).0,
+            bytes,
+            stored: Some(StoredBytes::File(path)),
+            part_index: 0,
+            previous_part: None,
+            manifest: serde_json::json!({}),
+            reading_order: Box::new(|a| ReadingOrder(a as i64)),
+            cursor_at: Box::new(|end| serde_json::json!({"end": end})),
+            aligned: false,
+            vanished: vec![],
+        }),
+        cursor_unchanged: Value::Null,
+    };
+    let prepared = prepare(
+        &source,
+        "b",
+        RunId::new(),
+        acquired,
+        Value::Null,
+        &Discard,
+        Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(prepared.material_len(), Some(decoded_len));
+    let batch = prepared.batches().unwrap().next().unwrap().unwrap();
+    let BatchKind::Source(progress) = batch.kind else {
+        panic!()
+    };
+    assert_eq!(progress.cursor["end"], decoded_len);
+    assert_eq!(
+        progress.material.unwrap().length,
+        b"synthetic retained archive envelope".len() as u64
     );
 }

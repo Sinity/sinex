@@ -49,14 +49,16 @@ pub struct DeclaredSource<P> {
 /// in one list.
 pub trait Source: Send + Sync {
     fn spec(&self) -> &SourceSpec;
-    /// Drain a material one chunk at a time: memory holds one chunk.
+    /// Drain one batch at a time, retaining the current record and batch.
+    /// Parser errors are accounted record outcomes; material read errors stop
+    /// iteration without admitting the failed range.
     fn drainer<'a>(
         &'a self,
         input: DrainInput<'a>,
-    ) -> Result<Box<dyn Iterator<Item = DrainOutput> + Send + 'a>, RecordError>;
+    ) -> Result<Box<dyn Iterator<Item = Result<DrainOutput, RecordError>> + Send + 'a>, RecordError>;
 
     fn drain(&self, input: DrainInput<'_>) -> Result<Vec<DrainOutput>, RecordError> {
-        Ok(self.drainer(input)?.collect())
+        self.drainer(input)?.collect()
     }
 }
 
@@ -68,7 +70,8 @@ impl<P: Parser> Source for DeclaredSource<P> {
     fn drainer<'a>(
         &'a self,
         input: DrainInput<'a>,
-    ) -> Result<Box<dyn Iterator<Item = DrainOutput> + Send + 'a>, RecordError> {
+    ) -> Result<Box<dyn Iterator<Item = Result<DrainOutput, RecordError>> + Send + 'a>, RecordError>
+    {
         Ok(Box::new(crate::drain::Drainer::new(&self.parser, input)?))
     }
 }

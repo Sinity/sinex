@@ -37,6 +37,16 @@ to the writer. A source cursor describes admitted progress; obtaining bytes
 alone does not mean their records were interpreted successfully. Archive
 capture and replay have additional open acceptance criteria in Beads.
 
+Directory snapshots stream changed files into an unnamed staged bundle. The
+existing drain reads its declared file ranges, preserving member anchors, hashes,
+carry and ordinary batch limits. Memory holds the current file record and batch;
+a single oversized note or message still requires that whole decoded record.
+File-read failures stop draining without advancing the failed range. The committed
+cursor confirms file-cache changes only at the bundle's final byte; earlier
+retries keep its captured bytes and material identity. A process restart releases
+staging and rescans, with ordinary admission suppressing repeats. All material
+sinks must implement file storage explicitly; production sinks stream it.
+
 Outside producers install material files through the streaming blob writer and
 upload them from one verified open representation using one 512 KiB plaintext
 buffer, plus the bounded encoded outgoing frame and the shared blob reader's

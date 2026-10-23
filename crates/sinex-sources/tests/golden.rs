@@ -57,7 +57,7 @@ fn run_case(parser: &str, dir: &Path) -> Value {
             source: source.spec().name,
             class: source.spec().class,
             material: MaterialId::new(),
-            bytes: &bytes,
+            bytes: bytes.as_slice().into(),
             records: &records,
             carry: Value::Null,
             reading_order: &order,

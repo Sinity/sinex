@@ -2,23 +2,28 @@
 //! Maildir), architecture §5.3.
 //!
 //! Each poll walks the tree comparing file facts with what was already read.
-//! New and changed files are read in full and stored together as one material:
-//! their exact bytes one after another, with a manifest member per file
+//! New and changed files stream into an unnamed staged bundle, stored as one
+//! material: their exact bytes one after another, with a manifest member per file
 //! (path, range in the material, size, modification time). One file is one
-//! record. A file whose facts changed but whose bytes did not is skipped.
+//! record. Draining reads one record at a time; an oversized single file still
+//! needs its complete decoded record in memory. Unchanged content is skipped.
 //!
 //! When a walk completes without reaching the part size, files read before but
 //! not seen now are recorded as vanished: a member holding a short marker line,
 //! so each has its own record location and the parser reads the removal.
 //!
-//! The state of what was read lives for the source task. After a restart the
+//! The admitted cursor confirms cached file facts. Until its final byte commits,
+//! retries retain the staged bundle and its identity. After a restart the
 //! first walk reads everything again and admission suppresses the repeats.
-use super::{Acquired, DriverError, NewMaterial, file_facts};
+use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs::File;
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct DirSnapshot {
     pub root: PathBuf,
@@ -35,12 +40,82 @@ pub struct Cursor {
     pub part_index: u32,
     /// When the last walk that saw every file finished.
     pub last_complete_scan_ns: Option<i128>,
+    /// Admitted byte end within the current bundle. Older cursors predate
+    /// staged retry and are reread normally after a process restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<usize>,
 }
 
 /// What was already read, by relative path: size, modification time, hash.
 #[derive(Default)]
 pub struct DirState {
     files: HashMap<String, (u64, i128, [u8; 32])>,
+    pending: Option<Pending>,
+}
+
+struct Pending {
+    file: Arc<File>,
+    length: usize,
+    records: Vec<(usize, usize)>,
+    manifest: Value,
+    id: MaterialId,
+    part_index: u32,
+    previous: Cursor,
+    scanned: Cursor,
+    files: HashMap<String, (u64, i128, [u8; 32])>,
+    observation: ObservationFacts,
+}
+
+impl Pending {
+    fn acquired(&self, input: InputRef, cursor: &Cursor) -> Acquired {
+        let through = if cursor.material == Some(self.id) {
+            cursor.through.unwrap_or(0)
+        } else {
+            0
+        };
+        let records = self
+            .records
+            .iter()
+            .copied()
+            .filter(|&(_, end)| end > through || end == 0)
+            .collect();
+        let id = self.id;
+        let part_index = self.part_index;
+        let length = self.length;
+        let scanned = self.scanned.clone();
+        let previous_scan = self.previous.last_complete_scan_ns;
+        Acquired {
+            input,
+            observation: self.observation.clone(),
+            revision: RevisionChange::Snapshot,
+            material: Some(NewMaterial {
+                id,
+                bytes: Vec::new(),
+                stored: Some(StoredBytes::FramedFile(self.file.clone())),
+                records,
+                part_index,
+                previous_part: self.previous.material,
+                reading_order: super::reading_order(&self.manifest),
+                manifest: self.manifest.clone(),
+                cursor_at: Box::new(move |end| {
+                    serde_json::to_value(Cursor {
+                        material: Some(id),
+                        part_index,
+                        through: Some(end),
+                        last_complete_scan_ns: if end == length {
+                            scanned.last_complete_scan_ns
+                        } else {
+                            previous_scan
+                        },
+                    })
+                    .expect("cursor serializes")
+                }),
+                aligned: false,
+                vanished: Vec::new(),
+            }),
+            cursor_unchanged: Value::Null,
+        }
+    }
 }
 
 /// The marker a vanished file's member holds.
@@ -66,6 +141,15 @@ impl DirSnapshot {
             serde_json::from_value(cursor.clone())
                 .map_err(|e| DriverError::Cursor(e.to_string()))?
         };
+        if let Some(pending) = state.pending.take() {
+            if previous.material == Some(pending.id) && previous.through == Some(pending.length) {
+                state.files = pending.files;
+            } else {
+                let acquired = pending.acquired(self.input(), &previous);
+                state.pending = Some(pending);
+                return Ok(acquired);
+            }
+        }
         let mut facts = match file_facts(&self.root) {
             Ok(f) => f,
             Err(e) => {
@@ -88,7 +172,9 @@ impl DirSnapshot {
         let mut found = BTreeMap::new();
         walk(&self.root, &self.root, self.select, &mut found)?;
 
-        let mut bytes = Vec::new();
+        let mut staged = tempfile::tempfile().map_err(io)?;
+        let mut length = 0usize;
+        let mut next_files = state.files.clone();
         let mut records = Vec::new();
         let mut members = Vec::new();
         let mut complete = true;
@@ -101,34 +187,51 @@ impl DirSnapshot {
             {
                 continue;
             }
-            if !bytes.is_empty() && bytes.len() + *size as usize > self.part_bytes {
+            if length > 0 && (*size > self.part_bytes.saturating_sub(length) as u64) {
                 complete = false;
                 break;
             }
-            let data = match std::fs::read(self.root.join(relative)) {
-                Ok(d) => d,
-                // Gone or unreadable between the walk and the read: the next
-                // walk sees it again.
-                Err(_) => continue,
-            };
-            let hash = *blake3::hash(&data).as_bytes();
+            let mut file = File::open(self.root.join(relative))
+                .map_err(|error| DriverError::Io(format!("{relative}: {error}")))?;
+            let before = file.metadata().map_err(io)?;
+            let (actual_size, hash) = stage(&mut file, &mut staged).map_err(io)?;
+            let after = file.metadata().map_err(io)?;
+            if !same_file(&before, &after)
+                || actual_size != *size
+                || metadata_mtime(&before) != *mtime
+            {
+                return Err(DriverError::Io(format!(
+                    "{relative}: changed during capture"
+                )));
+            }
             let same = state
                 .files
                 .get(relative)
                 .is_some_and(|(_, _, h)| *h == hash);
-            state.files.insert(relative.clone(), (*size, *mtime, hash));
+            next_files.insert(relative.clone(), (*size, *mtime, hash));
             if same {
+                staged.set_len(length as u64).map_err(io)?;
+                staged
+                    .seek(std::io::SeekFrom::Start(length as u64))
+                    .map_err(io)?;
                 continue;
             }
-            let offset = bytes.len();
+            let offset = length;
             members.push(json!({
                 "path": relative,
                 "stream_offset": offset,
-                "length": data.len(),
+                "length": actual_size,
                 "mtime_ns": mtime.to_string(),
             }));
-            records.push((offset, offset + data.len()));
-            bytes.extend_from_slice(&data);
+            length =
+                length
+                    .checked_add(usize::try_from(actual_size).map_err(|_| {
+                        DriverError::Io("file exceeds addressable record size".into())
+                    })?)
+                    .ok_or_else(|| {
+                        DriverError::Io("directory bundle exceeds addressable size".into())
+                    })?;
+            records.push((offset, length));
         }
         if complete {
             let mut gone: Vec<String> = state
@@ -139,9 +242,9 @@ impl DirSnapshot {
                 .collect();
             gone.sort();
             for relative in gone {
-                state.files.remove(&relative);
+                next_files.remove(&relative);
                 let marker = vanished_marker(&relative);
-                let offset = bytes.len();
+                let offset = length;
                 members.push(json!({
                     "path": relative,
                     "stream_offset": offset,
@@ -149,7 +252,8 @@ impl DirSnapshot {
                     "vanished_at_ns": now.unix_ns().to_string(),
                 }));
                 records.push((offset, offset + marker.len()));
-                bytes.extend_from_slice(&marker);
+                staged.write_all(&marker).map_err(io)?;
+                length += marker.len();
             }
         }
         let scanned = Cursor {
@@ -161,6 +265,7 @@ impl DirSnapshot {
             ..previous.clone()
         };
         if records.is_empty() {
+            state.files = next_files;
             facts.changed = false;
             return Ok(Acquired {
                 input: self.input(),
@@ -187,34 +292,60 @@ impl DirSnapshot {
         } else {
             0
         };
-        let cursor_at = move |_end: usize| -> Value {
-            serde_json::to_value(Cursor {
-                material: Some(id),
-                part_index,
-                ..scanned.clone()
-            })
-            .expect("cursor serializes")
-        };
-        Ok(Acquired {
-            input: self.input(),
+        let pending = Pending {
+            file: Arc::new(staged),
+            length,
+            records,
+            manifest,
+            id,
+            part_index,
+            previous,
+            scanned,
+            files: next_files,
             observation: facts,
-            revision: RevisionChange::Snapshot,
-            material: Some(NewMaterial {
-                id,
-                bytes,
-                stored: None,
-                records,
-                part_index,
-                previous_part: previous.material,
-                reading_order: super::reading_order(&manifest),
-                manifest,
-                cursor_at: Box::new(cursor_at),
-                aligned: false,
-                vanished: Vec::new(),
-            }),
-            cursor_unchanged: Value::Null,
-        })
+        };
+        let acquired = pending.acquired(self.input(), &Cursor::default());
+        state.pending = Some(pending);
+        Ok(acquired)
     }
+}
+
+fn io(error: std::io::Error) -> DriverError {
+    DriverError::Io(error.to_string())
+}
+
+fn stage(input: &mut File, output: &mut File) -> std::io::Result<(u64, [u8; 32])> {
+    let mut hash = blake3::Hasher::new();
+    let mut length = 0u64;
+    let mut bytes = [0; 64 * 1024];
+    loop {
+        let count = match input.read(&mut bytes) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if count == 0 {
+            return Ok((length, *hash.finalize().as_bytes()));
+        }
+        output.write_all(&bytes[..count])?;
+        hash.update(&bytes[..count]);
+        length += count as u64;
+    }
+}
+
+fn metadata_mtime(metadata: &std::fs::Metadata) -> i128 {
+    use std::os::unix::fs::MetadataExt;
+    i128::from(metadata.mtime()) * 1_000_000_000 + i128::from(metadata.mtime_nsec())
+}
+
+fn same_file(before: &std::fs::Metadata, after: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    before.dev() == after.dev()
+        && before.ino() == after.ino()
+        && before.len() == after.len()
+        && before.mtime() == after.mtime()
+        && before.mtime_nsec() == after.mtime_nsec()
+        && before.ctime() == after.ctime()
+        && before.ctime_nsec() == after.ctime_nsec()
 }
 
 fn walk(
@@ -226,10 +357,8 @@ fn walk(
     let entries =
         std::fs::read_dir(dir).map_err(|e| DriverError::Io(format!("{}: {e}", dir.display())))?;
     for entry in entries {
-        let Ok(entry) = entry else { continue };
-        let Ok(kind) = entry.file_type() else {
-            continue;
-        };
+        let entry = entry.map_err(io)?;
+        let kind = entry.file_type().map_err(io)?;
         let path = entry.path();
         if kind.is_dir() {
             walk(root, &path, select, found)?;
@@ -241,9 +370,11 @@ fn walk(
             if !select(&relative) {
                 continue;
             }
-            if let Ok(f) = file_facts(&path) {
-                found.insert(relative, (f.size.unwrap_or(0), f.mtime_ns.unwrap_or(0)));
-            }
+            let facts = file_facts(&path).map_err(io)?;
+            found.insert(
+                relative,
+                (facts.size.unwrap_or(0), facts.mtime_ns.unwrap_or(0)),
+            );
         }
     }
     Ok(())

@@ -474,7 +474,7 @@ fn read_chain_into(
                 source: source.spec().name,
                 class: source.spec().class,
                 material: MaterialId(m.id),
-                bytes: &bytes,
+                bytes: bytes.as_slice().into(),
                 records: &records,
                 carry: carry.clone(),
                 reading_order: &*order,
@@ -487,6 +487,7 @@ fn read_chain_into(
             report.materials += 1;
         }
         for chunk in chunks {
+            let chunk = chunk.map_err(|e| format!("material {}: {e}", m.id))?;
             carry = chunk.carry.clone();
             if !scoped {
                 continue;

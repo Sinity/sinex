@@ -53,7 +53,7 @@ fn run(bytes: &[u8], carry: Value, limits: Limits) -> Vec<DrainOutput> {
             source: "t",
             class: Class::Open,
             material: MaterialId(uuid::Uuid::nil()),
-            bytes,
+            bytes: bytes.into(),
             records: &records,
             carry,
             reading_order: &|a| ReadingOrder(a as i64),
@@ -174,4 +174,135 @@ fn records_find_their_member() {
 fn nul_payloads_become_failures() {
     let out = run(b"a\0b\n", Value::Null, Limits::default());
     assert!(matches!(out[0].outcomes[0], RecordOutcome::Failure { .. }));
+}
+
+#[test]
+fn staged_records_match_slice_hashes_locations_carry_and_limits() {
+    use std::io::Write;
+    let bytes = b"alpha\nbad\n \nthird\npanic\nlast\n";
+    let mut file = tempfile::tempfile().unwrap();
+    file.write_all(bytes).unwrap();
+    let records = lines(bytes);
+    for max_events in [1, 2, 100] {
+        for max_bytes in [1, 10, 1000] {
+            let limits = Limits {
+                max_events,
+                max_bytes,
+            };
+            let expected = run(bytes, Value::Null, limits);
+            let actual = drain(
+                &Lines,
+                DrainInput {
+                    source: "t",
+                    class: Class::Open,
+                    material: MaterialId(uuid::Uuid::nil()),
+                    bytes: RecordBytes::File(&file),
+                    records: &records,
+                    carry: Value::Null,
+                    reading_order: &|a| ReadingOrder(a as i64),
+                    limits,
+                    manifest: &Value::Null,
+                },
+            )
+            .unwrap();
+            assert_eq!(actual.len(), expected.len());
+            for (actual, expected) in actual.iter().zip(&expected) {
+                assert_eq!(actual.end, expected.end);
+                assert_eq!(actual.carry, expected.carry);
+                assert_eq!(actual.events, expected.events);
+                assert_eq!(actual.failures, expected.failures);
+                assert_eq!(actual.outcomes.len(), expected.outcomes.len());
+                for (actual, expected) in actual.outcomes.iter().zip(&expected.outcomes) {
+                    match (actual, expected) {
+                        (
+                            RecordOutcome::Failure {
+                                location: a,
+                                reason: ar,
+                            },
+                            RecordOutcome::Failure {
+                                location: b,
+                                reason: br,
+                            },
+                        ) => {
+                            assert_eq!(a, b);
+                            assert_eq!(ar, br);
+                        }
+                        (
+                            RecordOutcome::Events {
+                                location: a,
+                                events: ae,
+                            },
+                            RecordOutcome::Events {
+                                location: b,
+                                events: be,
+                            },
+                        ) => {
+                            assert_eq!(a, b);
+                            assert_eq!(ae.len(), be.len());
+                            for (a, b) in ae.iter().zip(be) {
+                                let mut a = a.clone();
+                                a.id = b.id;
+                                assert_eq!(&a, b);
+                            }
+                        }
+                        _ => panic!("record outcome differs"),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn staged_read_failure_stops_before_a_false_progress_chunk() {
+    use std::io::Write;
+    let bytes = b"alpha\nbeta\ngamma\ndelta\n";
+    let mut file = tempfile::tempfile().unwrap();
+    file.write_all(bytes).unwrap();
+    let records = lines(bytes);
+    let mut chunks = Drainer::new(
+        &Lines,
+        DrainInput {
+            source: "t",
+            class: Class::Open,
+            material: MaterialId::new(),
+            bytes: RecordBytes::File(&file),
+            records: &records,
+            carry: Value::Null,
+            reading_order: &|a| ReadingOrder(a as i64),
+            limits: Limits {
+                max_events: 1,
+                max_bytes: 1000,
+            },
+            manifest: &Value::Null,
+        },
+    )
+    .unwrap();
+    let first = chunks.next().unwrap().unwrap();
+    assert_eq!(first.end, 6);
+    file.set_len(11).unwrap();
+    assert!(chunks.next().unwrap().is_err());
+    assert!(chunks.next().is_none());
+}
+
+#[test]
+fn invalid_staged_ranges_are_refused_before_record_allocation() {
+    let file = tempfile::tempfile().unwrap();
+    assert!(
+        Drainer::new(
+            &Lines,
+            DrainInput {
+                source: "t",
+                class: Class::Open,
+                material: MaterialId::new(),
+                bytes: RecordBytes::File(&file),
+                records: &[(0, usize::MAX)],
+                carry: Value::Null,
+                reading_order: &|_| ReadingOrder(0),
+                limits: Limits::default(),
+                manifest: &Value::Null,
+            }
+        )
+        .is_err()
+    );
 }

@@ -343,7 +343,9 @@ impl Reader for Rows {
     }
 }
 
-/// A directory walked snapshot by snapshot. A restart walks it again;
+/// A directory walked snapshot by snapshot. The supplied committed cursor
+/// confirms file-cache updates; an unfinished bundle is retained for retry.
+/// A restart walks it again;
 /// admission suppresses the repeats.
 pub struct Walked {
     driver: DirSnapshot,

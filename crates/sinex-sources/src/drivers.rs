@@ -26,13 +26,8 @@ pub trait MaterialSink: Send + Sync {
     /// Store `bytes` and return their name, `blake3:<hex>`.
     fn put(&self, bytes: &[u8]) -> Result<String, String>;
 
-    /// Store a file's bytes as they are and return their name. Sinks that can
-    /// stream override this, so an archive of any size is stored without
-    /// holding it in memory.
-    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        self.put(&bytes)
-    }
+    /// Store a file's bytes without holding the complete file in memory.
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -67,16 +62,23 @@ pub struct Acquired {
 #[derive(Clone, Debug)]
 pub enum StoredBytes {
     File(std::path::PathBuf),
-    Blob { name: String, length: u64 },
+    /// Authoritative framed bytes, staged in an unnamed owned file. The
+    /// decoded record body is read from this file, not `NewMaterial::bytes`.
+    FramedFile(std::sync::Arc<std::fs::File>),
+    Blob {
+        name: String,
+        length: u64,
+    },
 }
 
 pub struct NewMaterial {
     pub id: MaterialId,
-    /// The bytes the records index into.
+    /// In-memory decoded record bytes. `FramedFile` supplies these ranges
+    /// from its owned file instead; its `bytes` vector stays empty.
     pub bytes: Vec<u8>,
-    /// When set, the material stored is this file as received (an export
-    /// archive) and `bytes` is the stream decoded from it as the manifest
-    /// describes, so a replay decodes the stored file the same way.
+    /// Retained backing. `File` and `Blob` may hold an original export while
+    /// `bytes` holds its decoded stream. `FramedFile` supplies both the stored
+    /// body and the record ranges, without a second in-memory copy.
     pub stored: Option<StoredBytes>,
     pub records: Vec<(usize, usize)>,
     pub part_index: u32,
@@ -96,6 +98,22 @@ pub struct NewMaterial {
     pub vanished: Vec<sinex_model::RecordLocation>,
 }
 
+impl NewMaterial {
+    fn decoded_len(&self, retained_len: u64) -> usize {
+        match self.stored {
+            Some(StoredBytes::FramedFile(_)) => retained_len as usize,
+            _ => self.bytes.len(),
+        }
+    }
+
+    pub(crate) fn record_bytes(&self) -> crate::drain::RecordBytes<'_> {
+        match &self.stored {
+            Some(StoredBytes::FramedFile(file)) => crate::drain::RecordBytes::File(file),
+            _ => self.bytes.as_slice().into(),
+        }
+    }
+}
+
 /// Turn one poll into admission batches. The material's bytes go to the
 /// content store first; the first batch registers the material, and every
 /// batch carries the cursor and carry after its last record, so a crash
@@ -112,7 +130,7 @@ pub fn batches(
     limits: Limits,
 ) -> Result<Vec<Batch>, DriverError> {
     let prepared = prepare(source, binding, run, acquired, carry, sink, limits)?;
-    Ok(prepared.batches()?.collect())
+    prepared.batches()?.collect()
 }
 
 /// One poll with its material stored, ready to be drained into batches.
@@ -158,6 +176,18 @@ pub fn prepare<'s>(
                         .len();
                     (sink.put_file(path).map_err(DriverError::Store)?, length)
                 }
+                Some(StoredBytes::FramedFile(file)) => {
+                    use std::os::fd::AsRawFd;
+                    let length = file
+                        .metadata()
+                        .map_err(|e| DriverError::Io(e.to_string()))?
+                        .len();
+                    // Linux exposes the live unnamed file without giving it a crash-leaking
+                    // directory entry. The Arc retains it through storage and draining.
+                    let path =
+                        std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+                    (sink.put_file(&path).map_err(DriverError::Store)?, length)
+                }
                 Some(StoredBytes::Blob { name, length }) => (name.clone(), *length),
                 None => (
                     sink.put(&m.bytes).map_err(DriverError::Store)?,
@@ -193,9 +223,11 @@ pub fn prepare<'s>(
 }
 
 impl Prepared<'_> {
-    /// The material's bytes, if the poll produced one.
+    /// The decoded record body length, if the poll produced a material.
     pub fn material_len(&self) -> Option<usize> {
-        self.material.as_ref().map(|(m, _)| m.bytes.len())
+        self.material
+            .as_ref()
+            .map(|(material, reference)| material.decoded_len(reference.length))
     }
 
     fn progress(
@@ -218,7 +250,9 @@ impl Prepared<'_> {
     }
 
     /// The admission batches, produced one at a time as they are taken.
-    pub fn batches(&self) -> Result<Box<dyn Iterator<Item = Batch> + Send + '_>, DriverError> {
+    pub fn batches(
+        &self,
+    ) -> Result<Box<dyn Iterator<Item = Result<Batch, DriverError>> + Send + '_>, DriverError> {
         let Some((m, material)) = &self.material else {
             let batch = Batch {
                 run: self.run,
@@ -232,7 +266,7 @@ impl Prepared<'_> {
                 records: vec![],
                 archive: vec![],
             };
-            return Ok(Box::new(std::iter::once(batch)));
+            return Ok(Box::new(std::iter::once(Ok(batch))));
         };
         let spec = self.source.spec();
         let limits = if m.aligned {
@@ -249,7 +283,7 @@ impl Prepared<'_> {
                 source: spec.name,
                 class: spec.class,
                 material: m.id,
-                bytes: &m.bytes,
+                bytes: m.record_bytes(),
                 records: &m.records,
                 carry: self.carry.clone(),
                 reading_order: &*m.reading_order,
@@ -263,11 +297,14 @@ impl Prepared<'_> {
         let last_end = m.records.last().map_or(0, |r| r.1);
         let mut first = true;
         Ok(Box::new(std::iter::from_fn(move || {
-            let chunk = chunks.next()?;
+            let chunk = match chunks.next()? {
+                Ok(chunk) => chunk,
+                Err(error) => return Some(Err(DriverError::Io(error.to_string()))),
+            };
             // After the last chunk the whole material is read, records
             // skipped as already read included.
             let end = if chunk.end >= last_end {
-                m.bytes.len()
+                m.decoded_len(material.length)
             } else {
                 chunk.end
             };
@@ -301,7 +338,7 @@ impl Prepared<'_> {
                 },
             };
             first = false;
-            Some(batch)
+            Some(Ok(batch))
         })))
     }
 }
