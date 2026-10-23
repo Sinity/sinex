@@ -351,7 +351,7 @@ pub fn overlay(
         return Err("invalid SQLite image length/page size".into());
     }
     let old_length = previous.iter().try_fold(0u64, |n, e| {
-        if e.length == 0 || !e.offset.is_multiple_of(size) || e.!length.is_multiple_of(size) {
+        if e.length == 0 || !e.offset.is_multiple_of(size) || !e.length.is_multiple_of(size) {
             return Err("unaligned SQLite extent");
         }
         e.offset
