@@ -303,8 +303,8 @@ impl<'de> Visitor<'de> for RangesAt<'_, '_> {
         }
         while let Some(key) = map.next_key::<String>()? {
             if key == self.path[0] {
-                // Legacy slice framing used a map: the final duplicate selected key wins,
-                // including when an earlier value had a different JSON shape.
+                // The final duplicate selected key wins, matching slice framing,
+                // including when an earlier value has a different JSON shape.
                 map.next_value_seed(RangesAt {
                     path: &self.path[1..],
                     position: self.position,

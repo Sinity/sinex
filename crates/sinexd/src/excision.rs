@@ -70,12 +70,7 @@ pub async fn excise_with(
                 })
                 .collect::<Result<_, _>>()?
         };
-        let reader = crate::retained::Blanked {
-            reader: retained.into_reader()?,
-            spans,
-            position: 0,
-            first: 0,
-        };
+        let reader = crate::retained::Blanked::new(retained.into_reader()?, spans);
         rewrites.push(Rewrite {
             material: m.id,
             blob: blobs.put_reader(reader).map_err(|e| e.to_string())?,

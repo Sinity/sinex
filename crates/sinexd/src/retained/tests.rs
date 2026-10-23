@@ -8,12 +8,7 @@ fn streamed_blanking_matches_original_bytes_across_small_buffers_and_overlaps() 
     let mut expected = original.to_vec();
     sinex_store::excision::blank(&mut expected, &spans);
     for size in [1, 2, 3, 7, 64] {
-        let mut reader = Blanked {
-            reader: Cursor::new(original),
-            spans: spans.clone(),
-            position: 0,
-            first: 0,
-        };
+        let mut reader = Blanked::new(Cursor::new(original), spans.clone());
         let mut actual = Vec::new();
         let mut block = vec![0; size];
         loop {

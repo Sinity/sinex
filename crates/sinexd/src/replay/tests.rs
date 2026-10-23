@@ -348,13 +348,16 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain() {
     ingest(&mut f.ctx, &path, &mut state).await;
     let before = live_ids(&mut f.ctx.read_conn).await;
     assert_eq!(before.len(), 2);
-    let blobs: Vec<String> =
-        sqlx::query_scalar("SELECT blob FROM raw.materials ORDER BY part_index")
+    let parts: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM raw.materials ORDER BY part_index")
             .fetch_all(&mut f.ctx.read_conn)
             .await
             .unwrap();
-    assert_eq!(blobs.len(), 2);
-    f.ctx.blobs.delete(&blobs[1]).unwrap();
+    assert_eq!(parts.len(), 2);
+    // The first part is read and sent normally. The next part cannot supply
+    // its declared range, after the replay transaction has begun.
+    sqlx::query("UPDATE raw.materials SET manifest=jsonb_set(manifest,'{records}','[[0,99999]]') WHERE id=$1")
+        .bind(parts[1]).execute(&mut f.ctx.read_conn).await.unwrap();
     let error = run(
         &mut f.ctx.read_conn,
         &f.ctx.blobs,
@@ -363,7 +366,7 @@ async fn a_later_material_read_failure_rolls_back_the_entire_replay_chain() {
     )
     .await
     .unwrap_err();
-    assert!(error.contains("chain from material"), "{error}");
+    assert!(error.contains("record range exceeds material"), "{error}");
     assert_eq!(live_ids(&mut f.ctx.read_conn).await, before);
     assert_eq!(
         live_commands(&mut f.ctx.read_conn).await,

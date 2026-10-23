@@ -77,10 +77,16 @@ impl<R: Seek, C: FnMut() -> std::io::Result<()>> Seek for Checked<R, C> {
 /// Same-length rewrite; preserve only each selected span's actual closing newline.
 /// Reading in small buffers must not preserve a newline merely because a buffer ends.
 pub(crate) struct Blanked<R> {
-    pub reader: R,
-    pub spans: Vec<(usize, usize)>,
-    pub position: usize,
-    pub first: usize,
+    reader: R,
+    spans: Vec<(usize, usize)>,
+    position: usize,
+    first: usize,
+}
+impl<R> Blanked<R> {
+    pub fn new(reader: R, mut spans: Vec<(usize, usize)>) -> Self {
+        spans.sort_unstable();
+        Self { reader, spans, position: 0, first: 0 }
+    }
 }
 impl<R: Read> Read for Blanked<R> {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
