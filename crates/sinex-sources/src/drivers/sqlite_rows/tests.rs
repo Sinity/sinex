@@ -152,24 +152,43 @@ fn reading_orders_only_grow() {
 }
 
 #[test]
-fn a_locked_database_is_read_from_a_verified_copy() {
+fn locked_rollback_spill_is_unavailable_until_rollback() {
     let path = db();
     let holder = Connection::open(&path).unwrap();
-    holder
-        .execute_batch("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; UPDATE t SET n = n;")
-        .unwrap();
-    let a = driver(path)
-        .poll(&Value::Null, &mut RowState::default())
-        .unwrap();
-    assert!(
-        a.observation.unavailable.is_none(),
-        "{:?}",
-        a.observation.unavailable
-    );
-    let m = a.material.as_ref().unwrap();
-    assert_eq!(m.records.len(), 2);
-    assert_eq!(m.manifest["read_from"], "verified copy");
-    drop(holder);
+    holder.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA cache_size=5; PRAGMA cache_spill=ON; DELETE FROM t;
+        WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<200)
+        INSERT INTO t SELECT 'committed', x, zeroblob(4000) FROM n;
+        BEGIN EXCLUSIVE; UPDATE t SET id='UNCOMMITTED';").unwrap();
+    let d = driver(path);
+    let mut state = RowState::default();
+    let a = d.poll(&Value::Null, &mut state).unwrap();
+    assert!(a.observation.unavailable.is_some(), "locked source must not expose spilled uncommitted pages");
+    assert!(a.material.is_none());
+    assert_eq!(a.cursor_unchanged, Value::Null);
+    assert!(state.is_empty());
+    holder.execute_batch("ROLLBACK").unwrap();
+    let after = d.poll(&Value::Null, &mut state).unwrap();
+    let rows = lines(&after);
+    assert_eq!(rows.len(), 200);
+    assert!(rows.iter().all(|r| r["id"] == "committed"));
+}
+
+#[test]
+fn failed_poll_retries_same_material_before_reading_source_changes() {
+    let path = db();
+    let d = driver(path.clone());
+    let mut state = RowState::default();
+    let first = d.poll(&Value::Null, &mut state).unwrap();
+    let first_material = first.material.as_ref().unwrap();
+    let original = lines(&first);
+    Connection::open(&path).unwrap().execute_batch("UPDATE t SET n=99;").unwrap();
+    let retry = d.poll(&Value::Null, &mut state).unwrap();
+    assert_eq!(retry.material.as_ref().unwrap().id, first_material.id);
+    assert_eq!(lines(&retry), original);
+    let end = first_material.records.last().unwrap().1;
+    let committed = (first_material.cursor_at)(end);
+    let changed = d.poll(&committed, &mut state).unwrap();
+    assert!(lines(&changed).iter().all(|r| r["n"] == 99));
 }
 
 #[test]
