@@ -301,6 +301,7 @@ impl Prepared<'_> {
         first: bool,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
+            excision_basis: None,
             image: if first { self.image.clone() } else { None },
             image_revision: self.image_revision,
             material_keys: Vec::new(),

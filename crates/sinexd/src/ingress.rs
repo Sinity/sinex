@@ -300,6 +300,7 @@ impl Ingest {
         }
         Ok((
             Some(SourceProgress {
+                excision_basis: None,
                 image: None,
                 image_revision: None,
                 material_keys: Vec::new(),

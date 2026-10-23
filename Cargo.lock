@@ -4305,6 +4305,7 @@ dependencies = [
  "blake3",
  "chacha20poly1305",
  "devkit",
+ "futures",
  "getrandom 0.3.4",
  "hashed-blobs",
  "jiff",

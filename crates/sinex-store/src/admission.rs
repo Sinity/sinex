@@ -93,6 +93,7 @@ pub async fn admit(
     // reading it repeats when suppressed. A derived batch's keys own these.
     let mut resolved: Vec<Option<Uuid>> = Vec::new();
 
+    crate::excision::validate_basis(conn, batch).await?;
     match &batch.kind {
         BatchKind::Source(progress) => register::source(conn, progress).await?,
         BatchKind::Ingress(frame) => {

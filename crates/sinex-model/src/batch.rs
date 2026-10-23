@@ -75,9 +75,18 @@ pub enum RecordOutcome {
     },
 }
 
+/// The complete source-specific excision operation set used during acquisition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExcisionBasis {
+    pub source: String,
+    pub operations: [u8; 32],
+    pub count: u64,
+}
+
 /// Progress of one source binding, committed with the batch's events.
 #[derive(Clone, Debug)]
 pub struct SourceProgress {
+    pub excision_basis: Option<ExcisionBasis>,
     pub binding: String,
     pub image: Option<crate::SqliteImagePublication>,
     pub image_revision: Option<crate::RevisionId>,

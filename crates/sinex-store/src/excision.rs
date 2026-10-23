@@ -79,6 +79,9 @@ pub struct Applied {
     pub delete_after_commit: Vec<String>,
 }
 
+mod basis;
+pub use basis::{operations_basis, validate_basis};
+
 /// Find every reading the excision of `target` removes. Read-only.
 pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     let seeds: Vec<Uuid> = match target {
