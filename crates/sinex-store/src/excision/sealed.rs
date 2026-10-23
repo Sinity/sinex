@@ -54,7 +54,13 @@ fn invalid(message: &str) -> Error {
 }
 
 /// Stage and revalidate before the Writer changes any material, event or key.
-pub async fn stage(conn: &mut PgConnection, plan: &Plan, prepared: &PreparedSealed) -> Result<()> {
+pub async fn stage(
+    conn: &mut PgConnection,
+    plan: &Plan,
+    prepared: &PreparedSealed,
+    check: &(dyn Fn() -> Result<()> + Send + Sync),
+) -> Result<()> {
+    check()?;
     if prepared.rotations.len() != plan.materials.iter().filter(|m| m.sealed).count()
         || prepared.rotations.iter().any(|r| {
             !plan
@@ -83,6 +89,7 @@ pub async fn stage(conn: &mut PgConnection, plan: &Plan, prepared: &PreparedSeal
     .execute(&mut *conn)
     .await?;
     for rotation in &prepared.rotations {
+        check()?;
         let whole = plan
             .materials
             .iter()
@@ -132,6 +139,7 @@ pub async fn stage(conn: &mut PgConnection, plan: &Plan, prepared: &PreparedSeal
     file.rewind()
         .map_err(|_| invalid("prepared ciphertext stream cannot rewind"))?;
     for line in BufReader::new(file).lines() {
+        check()?;
         let line = line.map_err(|_| invalid("prepared ciphertext stream cannot be read"))?;
         let change: CiphertextChange = serde_json::from_str(&line)
             .map_err(|_| invalid("invalid prepared ciphertext stream"))?;
@@ -311,8 +319,13 @@ pub async fn stage(conn: &mut PgConnection, plan: &Plan, prepared: &PreparedSeal
 }
 
 /// Called only after ordinary excision selection is recorded, in its transaction.
-pub async fn apply(conn: &mut PgConnection, prepared: &PreparedSealed) -> Result<usize> {
+pub async fn apply(
+    conn: &mut PgConnection,
+    prepared: &PreparedSealed,
+    check: &(dyn Fn() -> Result<()> + Send + Sync),
+) -> Result<usize> {
     for rotation in &prepared.rotations {
+        check()?;
         let rows = sqlx::query(
             "UPDATE privacy.material_keys SET key_ref=$2,wrapped_key=$3,class='sealed',role=$4
             WHERE material_id=$1 AND key_ref=$5 AND wrapped_key=$6 AND role=$7",
@@ -331,6 +344,7 @@ pub async fn apply(conn: &mut PgConnection, prepared: &PreparedSealed) -> Result
         }
     }
     for table in ["core.events", "telemetry.events"] {
+        check()?;
         sqlx::query(&format!(
             "UPDATE {table} e SET payload=s.replacement FROM excision_rekeys s
             WHERE s.kind=$1 AND s.row_id=e.id::text AND s.replacement IS NOT NULL"
@@ -339,6 +353,7 @@ pub async fn apply(conn: &mut PgConnection, prepared: &PreparedSealed) -> Result
         .execute(&mut *conn)
         .await?;
     }
+    check()?;
     sqlx::query("DELETE FROM raw.failures f USING excision_rekeys s WHERE s.kind='failure' AND s.row_id=f.id::text AND s.replacement IS NULL")
         .execute(&mut *conn).await?;
     sqlx::query(
@@ -347,6 +362,7 @@ pub async fn apply(conn: &mut PgConnection, prepared: &PreparedSealed) -> Result
     )
     .execute(&mut *conn)
     .await?;
+    check()?;
     sqlx::query(
         "UPDATE raw.positions p SET carry=s.replacement FROM excision_rekeys s
         WHERE s.kind='position' AND s.row_id=p.binding",

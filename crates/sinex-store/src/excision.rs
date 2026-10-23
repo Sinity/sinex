@@ -69,11 +69,13 @@ pub struct Rewrite {
     pub material: MaterialId,
     pub blob: String,
     pub length: u64,
+    pub manifest: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Applied {
     pub events: usize,
+    pub failures_removed: usize,
     pub materials_rewritten: usize,
     pub keys_destroyed: usize,
     /// Stored bytes the excised events owned that nothing else refers to.
@@ -307,6 +309,31 @@ pub async fn apply(
     actor: &str,
     keys: &dyn DirtyKeys,
 ) -> Result<Applied> {
+    apply_prepared(
+        conn,
+        target,
+        plan,
+        rewrites,
+        operation,
+        actor,
+        keys,
+        None,
+        &|| Ok(()),
+    )
+    .await
+}
+
+pub async fn apply_prepared(
+    conn: &mut PgConnection,
+    target: Target,
+    plan: &Plan,
+    rewrites: &[Rewrite],
+    operation: OperationId,
+    actor: &str,
+    keys: &dyn DirtyKeys,
+    prepared: Option<&sealed::PreparedSealed>,
+    check: &(dyn Fn() -> Result<()> + Send + Sync),
+) -> Result<Applied> {
     let mut current_seeds = self::plan(conn, target).await?.seeds;
     current_seeds.extend(&plan.seeds);
     let mut now = self::plan_records(conn, target, &current_seeds, &plan.extra_records).await?;
@@ -320,17 +347,48 @@ pub async fn apply(
             "the readings to excise changed after planning; plan the excision again".into(),
         ));
     }
+    if let Some(prepared) = prepared {
+        sealed::stage(conn, plan, prepared, check).await?;
+    } else if plan.materials.iter().any(|m| m.sealed) {
+        return Err(Error::Invalid(
+            "sealed excision needs scoped prepared key and body replacements".into(),
+        ));
+    }
+    check()?;
     let ids: Vec<Uuid> = plan.events.iter().copied().collect();
     let mut applied = Applied::default();
 
+    let mut sources = sqlx::query_scalar!(
+        "SELECT DISTINCT source FROM core.events WHERE id=ANY($1) ORDER BY source",
+        &ids
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    if let Some(source) = &plan.candidate_source {
+        sources.push(source.clone());
+    }
+    sources.sort();
+    sources.dedup();
+    let mut scope = match target {
+        Target::Event(e) => serde_json::json!({"event":e.0}),
+        Target::Material(m) => serde_json::json!({"material":m.0}),
+    };
+    scope["sources"] = serde_json::json!(sources);
+    scope["materials"] = serde_json::json!(plan.materials.iter().map(|m| m.id).collect::<Vec<_>>());
+    scope["record_domains"] = serde_json::json!(
+        plan.materials
+            .iter()
+            .map(|m| serde_json::json!({
+                "material":m.id,"naming":if m.sealed {"sealed"} else {"plain"}
+            }))
+            .collect::<Vec<_>>()
+    );
+    scope["record_domains_version"] = serde_json::json!(1);
     sqlx::query!(
-        "INSERT INTO core.operations (id, kind, actor, scope) VALUES ($1, 'excise', $2, $3)",
+        "INSERT INTO core.operations (id,kind,actor,scope) VALUES($1,'excise',$2,$3)",
         operation.0,
         actor,
-        match target {
-            Target::Event(e) => serde_json::json!({"event": e.0}),
-            Target::Material(m) => serde_json::json!({"material": m.0}),
-        },
+        scope
     )
     .execute(&mut *conn)
     .await?;
@@ -412,9 +470,6 @@ pub async fn apply(
     let deleted = sqlx::query!("DELETE FROM core.events WHERE id = ANY($1)", &ids)
         .execute(&mut *conn)
         .await?;
-    sqlx::query!("SELECT set_config('sinex.excise_operation', '', true)")
-        .fetch_one(&mut *conn)
-        .await?;
     applied.events = usize::try_from(deleted.rows_affected()).unwrap_or(usize::MAX);
 
     // Bytes the excised events owned: gone with them unless something else
@@ -440,14 +495,26 @@ pub async fn apply(
     }
 
     for m in &plan.materials {
-        if m.sealed {
-            let gone = sqlx::query!(
-                "DELETE FROM privacy.material_keys WHERE material_id = $1",
-                m.id.0
+        let anchors: Vec<i64> = m.anchors.iter().copied().collect();
+        let removed = sqlx::query!(
+            "DELETE FROM raw.failures WHERE material_id=$1 AND ($2 OR anchor=ANY($3))",
+            m.id.0,
+            m.whole,
+            &anchors
+        )
+        .execute(&mut *conn)
+        .await?;
+        applied.failures_removed += usize::try_from(removed.rows_affected()).unwrap_or(usize::MAX);
+        if m.sealed && m.whole {
+            let mut manifest = m.manifest.clone();
+            manifest["excised_whole"] = serde_json::json!(operation.0);
+            sqlx::query!(
+                "UPDATE raw.materials SET manifest=$2 WHERE id=$1",
+                m.id.0,
+                manifest
             )
             .execute(&mut *conn)
             .await?;
-            applied.keys_destroyed += usize::try_from(gone.rows_affected()).unwrap_or(0);
             continue;
         }
         let rewrite = rewrites
@@ -473,9 +540,10 @@ pub async fn apply(
         .execute(&mut *conn)
         .await?;
         sqlx::query!(
-            "UPDATE raw.materials SET blob = $2 WHERE id = $1",
+            "UPDATE raw.materials SET blob = $2, manifest=COALESCE($3,manifest) WHERE id = $1",
             m.id.0,
-            rewrite.blob
+            rewrite.blob,
+            rewrite.manifest.clone(),
         )
         .execute(&mut *conn)
         .await?;
@@ -492,6 +560,14 @@ pub async fn apply(
             applied.delete_after_commit.push(m.blob.clone());
         }
     }
+    check()?;
+    if let Some(prepared) = prepared {
+        applied.keys_destroyed = sealed::apply(conn, prepared, check).await?;
+    }
+    check()?;
+    sqlx::query!("SELECT set_config('sinex.excise_operation', '', true)")
+        .fetch_one(&mut *conn)
+        .await?;
     Ok(applied)
 }
 

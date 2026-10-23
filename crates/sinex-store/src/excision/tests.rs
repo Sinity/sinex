@@ -185,6 +185,7 @@ async fn rewrites_for(_conn: &mut PgConnection, store: &Store, plan: &Plan) -> V
         };
         blank(&mut bytes, &spans);
         rewrites.push(Rewrite {
+            manifest: None,
             material: m.id,
             blob: store.blobs.put(&bytes).unwrap(),
             length: bytes.len() as u64,

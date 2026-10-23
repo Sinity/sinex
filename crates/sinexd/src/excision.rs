@@ -6,6 +6,8 @@ use sinex_sources::sources;
 use sinex_store::Blobs;
 use sinex_store::excision::{self, Plan, Rewrite, Target};
 use sqlx::PgConnection;
+mod guard;
+pub(crate) use guard::ExcisionGuard;
 
 pub fn describe(plan: &Plan) -> String {
     let records: usize = plan.materials.iter().map(|m| m.anchors.len()).sum();
@@ -72,6 +74,7 @@ pub async fn excise_with(
         };
         let reader = crate::retained::Blanked::new(retained.into_reader()?, spans);
         rewrites.push(Rewrite {
+            manifest: None,
             material: m.id,
             blob: blobs.put_reader(reader).map_err(|e| e.to_string())?,
             length: length as u64,
@@ -79,6 +82,10 @@ pub async fn excise_with(
     }
     let done = writer
         .excise(Excision {
+            sealed: None,
+            authority: None,
+            guard: None,
+            cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             target,
             plan,
             rewrites,

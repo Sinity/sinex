@@ -51,6 +51,10 @@ pub struct ReplayChain {
 
 /// An excision, planned and with its replacement bytes already stored.
 pub struct Excision {
+    pub sealed: Option<excision::sealed::PreparedSealed>,
+    pub authority: Option<crate::sealed_access::Authority>,
+    pub guard: Option<crate::excision::ExcisionGuard>,
+    pub cancelled: Arc<std::sync::atomic::AtomicBool>,
     pub target: Target,
     pub plan: Plan,
     pub rewrites: Vec<Rewrite>,
@@ -261,7 +265,7 @@ pub async fn run_notifying(
                     .map(Done::Retired)
                     .map_err(WriteError::Refused)
             }
-            Work::Excise(excision) => excise(&mut connection, &excision, keys.as_ref())
+            Work::Excise(mut excision) => excise(&mut connection, &mut excision, keys.as_ref())
                 .await
                 .map(Done::Excised),
         };
@@ -290,10 +294,44 @@ async fn admit(
     keys: &dyn DirtyKeys,
 ) -> Result<Outcome, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
+    if let Some(prepared) = &e.sealed {
+        let guard = e.guard.as_mut().ok_or_else(|| {
+            WriteError::Refused("sealed excision has no owned source guard".into())
+        })?;
+        if guard.source() != prepared.source {
+            return Err(WriteError::Refused(
+                "sealed excision source guard does not match preparation".into(),
+            ));
+        }
+        guard.check().await.map_err(WriteError::Refused)?;
+        e.authority
+            .as_ref()
+            .ok_or_else(|| WriteError::Refused("sealed excision requires scoped authority".into()))?
+            .check()
+            .map_err(WriteError::Refused)?;
+    }
+    let authority = e.authority.as_ref();
+    let cancelled = &e.cancelled;
+    let check = || {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(sinex_store::Error::Invalid(
+                "sealed excision was cancelled".into(),
+            ));
+        }
+        if let Some(authority) = authority {
+            authority.check().map_err(sinex_store::Error::Invalid)?;
+        }
+        Ok(())
+    };
+    check().map_err(|e| refuse(&e))?;
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
     let outcome = sinex_store::admit(&mut tx, batch, keys)
         .await
         .map_err(|e| refuse(&e))?;
+    check().map_err(|e| refuse(&e))?;
+    if let Some(guard) = e.guard.as_mut() {
+        guard.check().await.map_err(WriteError::Refused)?;
+    }
     tx.commit().await.map_err(|e| refuse(&e))?;
     Ok(outcome)
 }
@@ -337,12 +375,12 @@ async fn replay_chain(
 
 async fn excise(
     connection: &mut PgConnection,
-    e: &Excision,
+    e: &mut Excision,
     keys: &dyn DirtyKeys,
 ) -> Result<Excised, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
-    let applied = excision::apply(
+    let applied = excision::apply_prepared(
         &mut tx,
         e.target,
         &e.plan,
@@ -350,10 +388,15 @@ async fn excise(
         e.operation,
         &e.actor,
         keys,
+        e.sealed.as_ref(),
+        &check,
     )
     .await
     .map_err(|e| refuse(&e))?;
     tx.commit().await.map_err(|e| refuse(&e))?;
+    if let Some(guard) = e.guard.take() {
+        guard.release().await.map_err(WriteError::Refused)?;
+    }
     let (_, files_left) = excision::finish_deletions(connection, &e.blobs)
         .await
         .map_err(|e| refuse(&e))?;
