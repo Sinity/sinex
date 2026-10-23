@@ -18,13 +18,18 @@ pub mod export_archive;
 pub mod live_stream;
 pub mod media;
 pub mod producer;
-pub mod sqlite_rows;
 pub mod sqlite_image;
+pub mod sqlite_rows;
 
 /// Where drivers put a material's bytes: the content store. Implemented by the
 /// daemon over `sinex-store`'s `Blobs`, so this crate does no database IO.
 pub trait MaterialSink: Send + Sync {
-    fn put_image(&self, _image: &sqlite_image::Image) -> Result<sinex_model::SqliteImagePublication, String> { Err("sink does not support SQLite physical images".into()) }
+    fn put_image(
+        &self,
+        _image: &sqlite_image::Image,
+    ) -> Result<sinex_model::SqliteImagePublication, String> {
+        Err("sink does not support SQLite physical images".into())
+    }
     /// Store `bytes` and return their name, `blake3:<hex>`.
     fn put(&self, bytes: &[u8]) -> Result<String, String>;
 
@@ -79,11 +84,16 @@ pub enum StoredBytes {
 
 #[derive(Clone)]
 pub struct RetainedRecords {
-    pub blob:String,
-    pub bytes:std::sync::Arc<dyn crate::drain::RecordRead>,
+    pub blob: String,
+    pub bytes: std::sync::Arc<dyn crate::drain::RecordRead>,
 }
 impl std::fmt::Debug for RetainedRecords {
-    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("RetainedRecords").field("blob",&self.blob).field("length",&self.bytes.length()).finish()}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RetainedRecords")
+            .field("blob", &self.blob)
+            .field("length", &self.bytes.length())
+            .finish()
+    }
 }
 
 pub struct NewMaterial {
@@ -116,7 +126,9 @@ pub struct NewMaterial {
 impl NewMaterial {
     fn decoded_len(&self, retained_len: u64) -> usize {
         match self.stored {
-            Some(StoredBytes::FramedFile(_) | StoredBytes::FramedReader(_)) => retained_len as usize,
+            Some(StoredBytes::FramedFile(_) | StoredBytes::FramedReader(_)) => {
+                retained_len as usize
+            }
             _ => self.bytes.len(),
         }
     }
@@ -124,7 +136,9 @@ impl NewMaterial {
     pub(crate) fn record_bytes(&self) -> crate::drain::RecordBytes<'_> {
         match &self.stored {
             Some(StoredBytes::FramedFile(file)) => crate::drain::RecordBytes::File(file),
-            Some(StoredBytes::FramedReader(retained)) => crate::drain::RecordBytes::Reader(retained.bytes.as_ref()),
+            Some(StoredBytes::FramedReader(retained)) => {
+                crate::drain::RecordBytes::Reader(retained.bytes.as_ref())
+            }
             _ => self.bytes.as_slice().into(),
         }
     }
@@ -162,7 +176,7 @@ pub struct Prepared<'s> {
     limits: Limits,
     material: Option<(NewMaterial, MaterialRef)>,
     image: Option<sinex_model::SqliteImagePublication>,
-    image_revision:Option<sinex_model::RevisionId>,
+    image_revision: Option<sinex_model::RevisionId>,
 }
 
 /// Store the poll's material (if any) and return it ready to drain.
@@ -176,15 +190,26 @@ pub fn prepare<'s>(
     limits: Limits,
 ) -> Result<Prepared<'s>, DriverError> {
     let spec = source.spec();
-    let image = acquired.image.as_ref().map(|image| {
-        if let Some(stored)=image.stored().map_err(DriverError::Store)? { return Ok(stored); }
-        let mut stored=sink.put_image(image).map_err(DriverError::Store)?;
-        stored.material.parser=spec.parser.to_owned();
-        stored.material.parser_version=spec.parser_version;
-        image.retain(stored.clone()).map_err(DriverError::Store)?;
-        Ok(stored)
-    }).transpose()?;
-    let image_revision=image.as_ref().map(|i|i.metadata.revision).or_else(||acquired.material.as_ref().and_then(|m|serde_json::from_value(m.manifest["image_revision"].clone()).ok()));
+    let image = acquired
+        .image
+        .as_ref()
+        .map(|image| {
+            if let Some(stored) = image.stored().map_err(DriverError::Store)? {
+                return Ok(stored);
+            }
+            let mut stored = sink.put_image(image).map_err(DriverError::Store)?;
+            stored.material.parser = spec.parser.to_owned();
+            stored.material.parser_version = spec.parser_version;
+            image.retain(stored.clone()).map_err(DriverError::Store)?;
+            Ok(stored)
+        })
+        .transpose()?;
+    let image_revision = image.as_ref().map(|i| i.metadata.revision).or_else(|| {
+        acquired
+            .material
+            .as_ref()
+            .and_then(|m| serde_json::from_value(m.manifest["image_revision"].clone()).ok())
+    });
     let reset = acquired
         .material
         .as_ref()
@@ -215,7 +240,9 @@ pub fn prepare<'s>(
                         std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
                     (sink.put_file(&path).map_err(DriverError::Store)?, length)
                 }
-                Some(StoredBytes::FramedReader(retained))=>(retained.blob.clone(),retained.bytes.length()),
+                Some(StoredBytes::FramedReader(retained)) => {
+                    (retained.blob.clone(), retained.bytes.length())
+                }
                 Some(StoredBytes::Blob { name, length }) => (name.clone(), *length),
                 None => (
                     sink.put(&m.bytes).map_err(DriverError::Store)?,
@@ -253,7 +280,9 @@ pub fn prepare<'s>(
 }
 
 impl Prepared<'_> {
-    pub fn image_meta(&self)->Option<&sinex_model::SqliteImageMeta> {self.image.as_ref().map(|i|&i.metadata)}
+    pub fn image_meta(&self) -> Option<&sinex_model::SqliteImageMeta> {
+        self.image.as_ref().map(|i| &i.metadata)
+    }
 
     /// The decoded record body length, if the poll produced a material.
     pub fn material_len(&self) -> Option<usize> {
@@ -272,9 +301,9 @@ impl Prepared<'_> {
         first: bool,
     ) -> BatchKind {
         BatchKind::Source(Box::new(SourceProgress {
-                image: if first {self.image.clone()} else {None},
-                image_revision: self.image_revision,
-                material_keys: Vec::new(),
+            image: if first { self.image.clone() } else { None },
+            image_revision: self.image_revision,
+            material_keys: Vec::new(),
             binding: self.binding.clone(),
             input: self.input.clone(),
             observation,

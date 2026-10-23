@@ -110,8 +110,13 @@ pub async fn admit(
 
     let mut events: Vec<Event> = batch.events().cloned().collect();
     apply_privacy(conn, batch, &mut events).await?;
-    if let BatchKind::Source(p)=&batch.kind && let Some(image)=&p.image && events.iter().any(|e|e.class>image.metadata.class) {
-        return Err(crate::Error::Invalid("whole-database image class is below its classified row event".into()));
+    if let BatchKind::Source(p) = &batch.kind
+        && let Some(image) = &p.image
+        && events.iter().any(|e| e.class > image.metadata.class)
+    {
+        return Err(crate::Error::Invalid(
+            "whole-database image class is below its classified row event".into(),
+        ));
     }
     removed_at_source(conn, batch, &mut events).await?;
 

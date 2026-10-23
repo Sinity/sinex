@@ -45,10 +45,10 @@ pub fn kind_names() -> Vec<&'static str> {
 pub(crate) struct Totals {
     polls: usize,
     materials: usize,
-    physical_images:u64,
-    physical_evidence_bytes:u64,
-    physical_database_bytes:u64,
-    physical_map_bytes:u64,
+    physical_images: u64,
+    physical_evidence_bytes: u64,
+    physical_database_bytes: u64,
+    physical_map_bytes: u64,
     material_bytes: usize,
     batches: usize,
     events_offered: usize,
@@ -276,8 +276,11 @@ pub(crate) async fn drive(
             .map_err(|e| e.to_string())?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
         let acquired = match poll(&cursor) {
-            Err(drivers::DriverError::Pending)=>{tokio::task::yield_now().await;continue;}
-            result=>result.map_err(|e|e.to_string())?,
+            Err(drivers::DriverError::Pending) => {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            result => result.map_err(|e| e.to_string())?,
         };
         let carry = if acquired.material.is_some() {
             match &sealing {
@@ -341,11 +344,11 @@ pub(crate) async fn submit(
         Limits::default(),
     )
     .map_err(|e| e.to_string())?;
-    if let Some(image)=prepared.image_meta() {
-        totals.physical_images+=1;
-        totals.physical_evidence_bytes+=image.evidence_bytes;
-        totals.physical_database_bytes+=image.image_bytes;
-        totals.physical_map_bytes+=image.map_bytes;
+    if let Some(image) = prepared.image_meta() {
+        totals.physical_images += 1;
+        totals.physical_evidence_bytes += image.evidence_bytes;
+        totals.physical_database_bytes += image.image_bytes;
+        totals.physical_map_bytes += image.map_bytes;
     }
     let had_material = prepared.material_len();
     if let Some(bytes) = had_material {
@@ -435,10 +438,10 @@ impl Totals {
         self.archive_decoded_bytes += o.archive_decoded_bytes;
         self.archive_record_bytes += o.archive_record_bytes;
         self.materials += o.materials;
-        self.physical_images+=o.physical_images;
-        self.physical_evidence_bytes+=o.physical_evidence_bytes;
-        self.physical_database_bytes+=o.physical_database_bytes;
-        self.physical_map_bytes+=o.physical_map_bytes;
+        self.physical_images += o.physical_images;
+        self.physical_evidence_bytes += o.physical_evidence_bytes;
+        self.physical_database_bytes += o.physical_database_bytes;
+        self.physical_map_bytes += o.physical_map_bytes;
         self.material_bytes += o.material_bytes;
         self.batches += o.batches;
         self.events_offered += o.events_offered;

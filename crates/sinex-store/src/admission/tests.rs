@@ -414,9 +414,9 @@ async fn a_dropped_record_gets_a_removed_reading_once() {
 async fn events_and_progress_commit_together() {
     let (_db, mut conn) = testdb::fresh().await;
     let progress = |cursor: i64| SourceProgress {
-                image: None,
-                image_revision: None,
-                material_keys: Vec::new(),
+        image: None,
+        image_revision: None,
+        material_keys: Vec::new(),
         binding: "b".into(),
         input: InputRef {
             kind: "file".into(),

@@ -343,7 +343,7 @@ impl ImapMail {
                 ..previous
             };
             return Ok(Acquired {
-            image: None,
+                image: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     observed_at: Some(now),

@@ -57,7 +57,17 @@ impl OneShot {
 pub struct Sink(pub Blobs);
 
 impl MaterialSink for Sink {
-    fn put_image(&self,image:&sinex_sources::drivers::sqlite_image::Image)->Result<sinex_model::SqliteImagePublication,String> {let recipient=if image.metadata.class==sinex_model::Class::Sealed {class_key()?} else {None};crate::sqlite_images::store(&self.0,image,recipient.as_ref())}
+    fn put_image(
+        &self,
+        image: &sinex_sources::drivers::sqlite_image::Image,
+    ) -> Result<sinex_model::SqliteImagePublication, String> {
+        let recipient = if image.metadata.class == sinex_model::Class::Sealed {
+            class_key()?
+        } else {
+            None
+        };
+        crate::sqlite_images::store(&self.0, image, recipient.as_ref())
+    }
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         self.0.put(bytes).map_err(|e| e.to_string())
     }
@@ -185,8 +195,14 @@ impl SealingSink {
                 let key = self.key(&material.blob)?;
                 let wrapped =
                     sinex_store::sealed::wrap(&key, &self.recipient).map_err(|e| e.to_string())?;
-                let wrapped=sinex_model::WrappedMaterialKey {material:material.id,key_ref:key.key_ref.clone(),wrapped};
-                if let sinex_model::BatchKind::Source(progress)=&mut batch.kind {progress.material_keys.push(wrapped);}
+                let wrapped = sinex_model::WrappedMaterialKey {
+                    material: material.id,
+                    key_ref: key.key_ref.clone(),
+                    wrapped,
+                };
+                if let sinex_model::BatchKind::Source(progress) = &mut batch.kind {
+                    progress.material_keys.push(wrapped);
+                }
                 let mut state = self.state.lock().expect("sealing state");
                 state.pending.remove(&material.blob);
                 state.current = Some((material.id, material.blob.clone(), key));
@@ -250,7 +266,12 @@ impl SealingSink {
 }
 
 impl MaterialSink for SealingSink {
-    fn put_image(&self,image:&sinex_sources::drivers::sqlite_image::Image)->Result<sinex_model::SqliteImagePublication,String> {crate::sqlite_images::store(&self.blobs,image,Some(&self.recipient))}
+    fn put_image(
+        &self,
+        image: &sinex_sources::drivers::sqlite_image::Image,
+    ) -> Result<sinex_model::SqliteImagePublication, String> {
+        crate::sqlite_images::store(&self.blobs, image, Some(&self.recipient))
+    }
     fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         self.put_reader(file)

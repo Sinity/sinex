@@ -262,44 +262,115 @@ fn missing_database_stays_unavailable_without_creating_a_file() {
 fn pinned_dbpage_reads_match_rows_and_include_committed_wal_pages() {
     let path = db();
     let writer = Connection::open(&path).unwrap();
-    writer.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;").unwrap();
+    writer
+        .execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+        .unwrap();
     let read = open_for_read(&path).unwrap();
     let pages = |connection: &Connection| -> Vec<Vec<u8>> {
-        connection.prepare("SELECT data FROM sqlite_dbpage('main') ORDER BY pgno").unwrap()
-            .query_map([], |row| row.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+        connection
+            .prepare("SELECT data FROM sqlite_dbpage('main') ORDER BY pgno")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
     };
     let before = pages(&read);
-    assert!(!before.is_empty(), "the pinned rusqlite build must provide dbpage");
-    writer.execute_batch("UPDATE t SET n=99 WHERE id='a'").unwrap();
-    assert_eq!(read.query_row("SELECT n FROM t WHERE id='a'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
-    assert_eq!(pages(&read), before, "page reads and rows stay on the pinned view");
+    assert!(
+        !before.is_empty(),
+        "the pinned rusqlite build must provide dbpage"
+    );
+    writer
+        .execute_batch("UPDATE t SET n=99 WHERE id='a'")
+        .unwrap();
+    assert_eq!(
+        read.query_row("SELECT n FROM t WHERE id='a'", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        pages(&read),
+        before,
+        "page reads and rows stay on the pinned view"
+    );
     drop(read);
     let next = open_for_read(&path).unwrap();
-    assert_eq!(next.query_row("SELECT n FROM t WHERE id='a'", [], |r| r.get::<_, i64>(0)).unwrap(), 99);
-    assert_ne!(pages(&next), before, "the next view includes the WAL commit");
+    assert_eq!(
+        next.query_row("SELECT n FROM t WHERE id='a'", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        99
+    );
+    assert_ne!(
+        pages(&next),
+        before,
+        "the next view includes the WAL commit"
+    );
 }
 
 #[test]
 fn periodic_sqlite_image_turns_pin_rows_and_can_cancel_before_publication() {
-    let path=db();let writer=Connection::open(&path).unwrap();writer.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE extra(x); INSERT INTO extra VALUES(zeroblob(20000));").unwrap();
-    let d=driver(path.clone());let mut state=RowState {image_policy:Some(Policy {scope:"whole_database".into(),class:sinex_model::Class::Open,interval_secs:3600,turn_pages:1,rebase_threshold:1.0}),..Default::default()};
-    assert!(matches!(d.poll(&Value::Null,&mut state),Err(DriverError::Pending)));
-    writer.execute_batch("UPDATE t SET id='new' WHERE rowid=1").unwrap();
-    let acquired=loop {match d.poll(&Value::Null,&mut state) {Err(DriverError::Pending)=>{},result=>break result.unwrap()}};
-    assert!(acquired.image.is_some());assert_eq!(lines(&acquired)[0]["row"]["id"],"a");
+    let path = db();
+    let writer = Connection::open(&path).unwrap();
+    writer.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE extra(x); INSERT INTO extra VALUES(zeroblob(20000));").unwrap();
+    let d = driver(path.clone());
+    let mut state = RowState {
+        image_policy: Some(Policy {
+            scope: "whole_database".into(),
+            class: sinex_model::Class::Open,
+            interval_secs: 3600,
+            turn_pages: 1,
+            rebase_threshold: 1.0,
+        }),
+        ..Default::default()
+    };
+    assert!(matches!(
+        d.poll(&Value::Null, &mut state),
+        Err(DriverError::Pending)
+    ));
+    writer
+        .execute_batch("UPDATE t SET id='new' WHERE rowid=1")
+        .unwrap();
+    let acquired = loop {
+        match d.poll(&Value::Null, &mut state) {
+            Err(DriverError::Pending) => {}
+            result => break result.unwrap(),
+        }
+    };
+    assert!(acquired.image.is_some());
+    assert_eq!(lines(&acquired)[0]["row"]["id"], "a");
     // Dropping a scan releases its read view; a fresh scan observes a new commit.
-    let mut state=RowState {image_policy:state.image_policy.clone(),..Default::default()};
-    assert!(matches!(d.poll(&Value::Null,&mut state),Err(DriverError::Pending)));
-    state.cancel_scan();writer.execute_batch("UPDATE t SET id='after cancel' WHERE rowid=1").unwrap();
-    let acquired=loop {match d.poll(&Value::Null,&mut state) {Err(DriverError::Pending)=>{},result=>break result.unwrap()}};
-    assert_eq!(lines(&acquired)[0]["row"]["id"],"after cancel");
+    let mut state = RowState {
+        image_policy: state.image_policy.clone(),
+        ..Default::default()
+    };
+    assert!(matches!(
+        d.poll(&Value::Null, &mut state),
+        Err(DriverError::Pending)
+    ));
+    state.cancel_scan();
+    writer
+        .execute_batch("UPDATE t SET id='after cancel' WHERE rowid=1")
+        .unwrap();
+    let acquired = loop {
+        match d.poll(&Value::Null, &mut state) {
+            Err(DriverError::Pending) => {}
+            result => break result.unwrap(),
+        }
+    };
+    assert_eq!(lines(&acquired)[0]["row"]["id"], "after cancel");
     std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 
 #[test]
 fn whole_database_image_policy_requires_explicit_scope_and_class() {
-    for value in [json!({"scope":"selected_tables","class":"open","interval_secs":3600}),json!({"scope":"whole_database","interval_secs":3600}),json!({"scope":"whole_database","class":"open","interval_secs":0})] {
-        let mut reader=crate::binding::rows(driver(PathBuf::from("/synthetic/not-opened")));
-        let mut settings=crate::Settings::new("h");settings.options=json!({"sqlite_images":value});assert!(reader.configure(&settings).is_err());
+    for value in [
+        json!({"scope":"selected_tables","class":"open","interval_secs":3600}),
+        json!({"scope":"whole_database","interval_secs":3600}),
+        json!({"scope":"whole_database","class":"open","interval_secs":0}),
+    ] {
+        let mut reader = crate::binding::rows(driver(PathBuf::from("/synthetic/not-opened")));
+        let mut settings = crate::Settings::new("h");
+        settings.options = json!({"sqlite_images":value});
+        assert!(reader.configure(&settings).is_err());
     }
 }

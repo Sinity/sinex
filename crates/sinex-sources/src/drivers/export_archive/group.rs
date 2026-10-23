@@ -627,7 +627,7 @@ impl Context<'_, '_> {
                 "framing": state.driver.framing.name(), "records": records, "order_base": after.capture.reading_order_base.saturating_add(i64::try_from(after.order_offset.saturating_add(part_offset)).unwrap_or(i64::MAX)),
                 "members": [{"path": path, "stream_offset": 0, "length": bytes.len(), "record_start": after.part_start}]});
             let acquired = Acquired {
-            image: None,
+                image: None,
                 input: state.driver.input(),
                 observation: ObservationFacts {
                     changed: false,

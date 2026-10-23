@@ -120,9 +120,13 @@ impl Binding {
 /// state rebuilt from the stored materials before the first poll, so a
 /// restart reads only what changed.
 pub trait Reader: Send {
-    fn configure(&mut self,_settings:&Settings)->Result<(),String> {Ok(())}
-    fn image_policy(&self)->Option<&crate::drivers::sqlite_image::Policy> {None}
-    fn restore_image(&mut self,_previous:crate::drivers::sqlite_image::Previous) {}
+    fn configure(&mut self, _settings: &Settings) -> Result<(), String> {
+        Ok(())
+    }
+    fn image_policy(&self) -> Option<&crate::drivers::sqlite_image::Policy> {
+        None
+    }
+    fn restore_image(&mut self, _previous: crate::drivers::sqlite_image::Previous) {}
     fn cancel_pending(&mut self) {}
 
     /// The export declaration, when this reader can share a physical archive traversal.
@@ -130,7 +134,14 @@ pub trait Reader: Send {
         None
     }
 
-    fn restore_rows(&mut self,_reference:sinex_model::MaterialRef,_stored:crate::drivers::RetainedRecords,_cursor:&Value)->Result<(),DriverError> {Ok(())}
+    fn restore_rows(
+        &mut self,
+        _reference: sinex_model::MaterialRef,
+        _stored: crate::drivers::RetainedRecords,
+        _cursor: &Value,
+    ) -> Result<(), DriverError> {
+        Ok(())
+    }
 
     fn remember(&mut self, _stored: &[(MaterialId, Vec<u8>)]) {}
 
@@ -341,23 +352,38 @@ pub fn rows(driver: SqliteRows) -> Box<dyn Reader> {
 }
 
 impl Reader for Rows {
-    fn restore_rows(&mut self,reference:sinex_model::MaterialRef,stored:crate::drivers::RetainedRecords,cursor:&Value)->Result<(),DriverError> {self.state.restore_pending(reference,stored,cursor)}
+    fn restore_rows(
+        &mut self,
+        reference: sinex_model::MaterialRef,
+        stored: crate::drivers::RetainedRecords,
+        cursor: &Value,
+    ) -> Result<(), DriverError> {
+        self.state.restore_pending(reference, stored, cursor)
+    }
 
-    fn configure(&mut self,settings:&Settings)->Result<(),String> {
-        if let Some(value)=settings.options.get("sqlite_images") {
-            let policy:crate::drivers::sqlite_image::Policy=serde_json::from_value(value.clone()).map_err(|e|e.to_string())?;
-            policy.validate()?;self.state.image_policy=Some(policy);
+    fn configure(&mut self, settings: &Settings) -> Result<(), String> {
+        if let Some(value) = settings.options.get("sqlite_images") {
+            let policy: crate::drivers::sqlite_image::Policy =
+                serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+            policy.validate()?;
+            self.state.image_policy = Some(policy);
         }
         Ok(())
     }
-    fn image_policy(&self)->Option<&crate::drivers::sqlite_image::Policy> {self.state.image_policy.as_ref()}
-    fn restore_image(&mut self,previous:crate::drivers::sqlite_image::Previous) {self.state.previous_image=Some(previous);}
-    fn cancel_pending(&mut self) {self.state.cancel_scan();}
+    fn image_policy(&self) -> Option<&crate::drivers::sqlite_image::Policy> {
+        self.state.image_policy.as_ref()
+    }
+    fn restore_image(&mut self, previous: crate::drivers::sqlite_image::Previous) {
+        self.state.previous_image = Some(previous);
+    }
+    fn cancel_pending(&mut self) {
+        self.state.cancel_scan();
+    }
 
     fn remember(&mut self, stored: &[(MaterialId, Vec<u8>)]) {
-        let policy=self.state.image_policy.take();
+        let policy = self.state.image_policy.take();
         self.state = RowState::rebuild(stored.iter().map(|(_, b)| b.as_slice()));
-        self.state.image_policy=policy;
+        self.state.image_policy = policy;
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
