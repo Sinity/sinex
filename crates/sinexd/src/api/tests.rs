@@ -261,7 +261,12 @@ async fn nested_credential_keys_refuse_replies_and_complete_follow_pages_without
         assert_eq!(reply, refused);
     }
     let (_, retry) = call(&w, Some(READ), first).await;
-    assert_eq!(retry["result"]["page"]["cursor"], cursor);
+    assert_eq!(retry["result"]["rows"], page["result"]["rows"]);
+    assert_eq!(retry["result"]["total"], page["result"]["total"]);
+    assert_eq!(
+        retry["result"]["resolved"]["commit_seq"],
+        page["result"]["resolved"]["commit_seq"]
+    );
     let after = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())
         .await
         .unwrap();
@@ -872,3 +877,5 @@ async fn analysis_panel_why_and_results_answer_through_the_api() {
 mod discovery;
 
 mod recall;
+
+mod cursor;
