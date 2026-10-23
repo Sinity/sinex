@@ -78,7 +78,7 @@ pub async fn stage(conn: &mut PgConnection, plan: &Plan, prepared: &PreparedSeal
     sqlx::query(
         "CREATE TEMP TABLE excision_rekey_keys (
         material_id uuid PRIMARY KEY, old_ref text NOT NULL, replacement_ref text NOT NULL,
-        replacement_role text NOT NULL) ON COMMIT DROP",
+        replacement_role text NOT NULL, old_role text NOT NULL) ON COMMIT DROP",
     )
     .execute(&mut *conn)
     .await?;
@@ -119,11 +119,12 @@ pub async fn stage(conn: &mut PgConnection, plan: &Plan, prepared: &PreparedSeal
         if !present {
             return Err(invalid("sealed material key changed after preparation"));
         }
-        sqlx::query("INSERT INTO excision_rekey_keys VALUES($1,$2,$3,$4)")
+        sqlx::query("INSERT INTO excision_rekey_keys VALUES($1,$2,$3,$4,$5)")
             .bind(rotation.material.0)
             .bind(&rotation.old.reference)
             .bind(&rotation.replacement.reference)
             .bind(&rotation.replacement.role)
+            .bind(&rotation.old.role)
             .execute(&mut *conn)
             .await?;
     }
