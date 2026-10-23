@@ -605,5 +605,11 @@ async fn untimed_zsh_occurrences_coexist_and_only_same_locations_repeat() {
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(live, 4);
+    assert_eq!(live, 3);
+    let timed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.live_equivalence WHERE source = 'zsh'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(timed, 1);
 }

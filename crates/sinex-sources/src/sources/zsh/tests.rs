@@ -205,6 +205,7 @@ fn observations(
         },
     )
     .unwrap();
+    assert_eq!(chunks.last().unwrap().end, frame(bytes).1);
     let mut out = Vec::new();
     for chunk in &chunks {
         for outcome in &chunk.outcomes {
@@ -244,11 +245,12 @@ fn observations(
 fn mixed_history_append_cuts_keep_carry_coordinates_and_failures() {
     let file = b"pwd\n: 10:0;pwd\npwd\n\n: invalid\n: 10:2;pwd\nprintf a\\\nb\n\\: literal\npwd\n: 10:0;pwd\n";
     let (whole, state) = observations(file, 0, serde_json::Value::Null);
-    assert_eq!(whole.len(), 10);
+    // The shared drain accounts blank/excised records without emitting an outcome.
+    assert_eq!(whole.len(), 9);
     assert_eq!(whole[0][3], "unknown");
     assert_eq!(whole[1][1]["n"], 0);
-    assert_eq!(whole[5][1]["n"], 1);
-    assert_eq!(whole[9][1]["n"], 2);
+    assert_eq!(whole[4][1]["n"], 1);
+    assert_eq!(whole[8][1]["n"], 2);
     for cut in 0..=file.len() {
         let (_, consumed) = frame(&file[..cut]);
         let (mut parts, carry) = observations(&file[..consumed], 0, serde_json::Value::Null);
