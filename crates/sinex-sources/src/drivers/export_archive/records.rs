@@ -1,8 +1,8 @@
 //! Record framing over a member reader. JSON arrays use Serde's streaming visitor;
 //! other formats retain only a part and the current incomplete record.
 use super::{DriverError, Framing, io};
-use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
+use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::value::RawValue;
 use std::fmt;
 use std::io::Read;
@@ -208,7 +208,9 @@ impl Read for Counted<'_> {
 
 fn json_ranges(reader: &mut dyn Read, pointer: &str) -> std::io::Result<Vec<(usize, usize)>> {
     let position = std::rc::Rc::new(Position::default());
-    let input = std::rc::Rc::new(std::cell::RefCell::new(std::io::BufReader::with_capacity(65536, reader)));
+    let input = std::rc::Rc::new(std::cell::RefCell::new(std::io::BufReader::with_capacity(
+        65536, reader,
+    )));
     let mut counted = Counted {
         reader: input.clone(),
         position: position.clone(),
@@ -240,25 +242,36 @@ fn json_ranges(reader: &mut dyn Read, pointer: &str) -> std::io::Result<Vec<(usi
     Ok(selection.records)
 }
 
-fn peek_value(input:&Input<'_>,position:&Position)->std::io::Result<Option<u8>> {
+fn peek_value(input: &Input<'_>, position: &Position) -> std::io::Result<Option<u8>> {
     use std::io::BufRead;
     loop {
-        let mut reader=input.borrow_mut();
-        let (spaces,next,last)=match reader.fill_buf() {
-            Ok(bytes)=> {
-                let spaces=bytes.iter().take_while(|b|matches!(**b,b' '|b'\n'|b'\r'|b'\t')).count();
-                (spaces,bytes.get(spaces).copied(),spaces.checked_sub(1).map(|i|bytes[i]))
+        let mut reader = input.borrow_mut();
+        let (spaces, next, last) = match reader.fill_buf() {
+            Ok(bytes) => {
+                let spaces = bytes
+                    .iter()
+                    .take_while(|b| matches!(**b, b' ' | b'\n' | b'\r' | b'\t'))
+                    .count();
+                (
+                    spaces,
+                    bytes.get(spaces).copied(),
+                    spaces.checked_sub(1).map(|i| bytes[i]),
+                )
             }
-            Err(error)=> {
-                let message=error.to_string();
-                *position.error.borrow_mut()=Some(error);
+            Err(error) => {
+                let message = error.to_string();
+                *position.error.borrow_mut() = Some(error);
                 return Err(std::io::Error::other(message));
             }
         };
         reader.consume(spaces);
-        position.bytes.set(position.bytes.get()+spaces);
-        if let Some(last)=last {position.last.set(last);}
-        if next.is_some() || spaces==0 {return Ok(next);}
+        position.bytes.set(position.bytes.get() + spaces);
+        if let Some(last) = last {
+            position.last.set(last);
+        }
+        if next.is_some() || spaces == 0 {
+            return Ok(next);
+        }
     }
 }
 
@@ -281,10 +294,10 @@ impl<'de> DeserializeSeed<'de> for RangesAt<'_, '_, '_> {
         self.selection.valid = false;
         // A map value seed follows the consumed colon; the root seed precedes any
         // lookahead. Peek through the shared buffer before selecting a typed visitor.
-        let head=peek_value(self.input,self.position).map_err(de::Error::custom)?;
-        let expected=if self.path.is_empty() {b'['} else {b'{'};
-        if head!=Some(expected) {
-            IgnoredAny::deserialize(de).map(|_|())
+        let head = peek_value(self.input, self.position).map_err(de::Error::custom)?;
+        let expected = if self.path.is_empty() { b'[' } else { b'{' };
+        if head != Some(expected) {
+            IgnoredAny::deserialize(de).map(|_| ())
         } else if self.path.is_empty() {
             de.deserialize_seq(self)
         } else {
