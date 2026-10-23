@@ -59,7 +59,7 @@ impl<A: Api> ApiCursor<A> {
                 ..previous
             };
             return Ok(Acquired {
-            image: None,
+                image: None,
                 input: self.api.input(),
                 observation,
                 revision: RevisionChange::Same,

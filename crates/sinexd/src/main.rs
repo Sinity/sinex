@@ -22,8 +22,8 @@ mod retained;
 mod row_retirement;
 mod screen_text;
 mod sealed_access;
-mod sqlite_images;
 mod source_runner;
+mod sqlite_images;
 mod writer;
 
 #[cfg(test)]

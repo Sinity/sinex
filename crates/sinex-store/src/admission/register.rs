@@ -58,47 +58,92 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     .fetch_optional(&mut *conn)
     .await?;
     for key in &p.material_keys {
-        crate::sealed::store_key(conn,key.material,&key.key_ref,&key.wrapped).await?;
+        crate::sealed::store_key(conn, key.material, &key.key_ref, &key.wrapped).await?;
     }
-    let revision = if let Some(image)=&p.image {
-        let m=&image.metadata;
+    let revision = if let Some(image) = &p.image {
+        let m = &image.metadata;
         image.validate().map_err(Error::Invalid)?;
-        if p.image_revision!=Some(m.revision) || m.host!=p.input.host || image.material.id!=m.material || image.material.length!=m.evidence_bytes {
-            return Err(Error::Invalid("SQLite image publication does not match source progress".into()));
+        if p.image_revision != Some(m.revision)
+            || m.host != p.input.host
+            || image.material.id != m.material
+            || image.material.length != m.evidence_bytes
+        {
+            return Err(Error::Invalid(
+                "SQLite image publication does not match source progress".into(),
+            ));
         }
-        let existing=sqlx::query_scalar!("SELECT input_id FROM raw.revisions WHERE id=$1",m.revision.0).fetch_optional(&mut *conn).await?;
-        if existing.is_some_and(|id|id!=input) {return Err(Error::Invalid("SQLite image revision belongs to another input".into()));}
-        if let Some(previous)=m.previous {
-            let id=sqlx::query_scalar!("SELECT material_id FROM raw.sqlite_images WHERE revision_id=$1",previous.0).fetch_optional(&mut *conn).await?.ok_or_else(||Error::Invalid("SQLite image predecessor missing".into()))?;
-            let (metadata,extents,_)=crate::sqlite_images::load(conn,sinex_model::MaterialId(id)).await?.ok_or_else(||Error::Invalid("SQLite image predecessor missing".into()))?;
-            image.validate_predecessor(&metadata,&extents).map_err(Error::Invalid)?;
+        let existing = sqlx::query_scalar!(
+            "SELECT input_id FROM raw.revisions WHERE id=$1",
+            m.revision.0
+        )
+        .fetch_optional(&mut *conn)
+        .await?;
+        if existing.is_some_and(|id| id != input) {
+            return Err(Error::Invalid(
+                "SQLite image revision belongs to another input".into(),
+            ));
+        }
+        if let Some(previous) = m.previous {
+            let id = sqlx::query_scalar!(
+                "SELECT material_id FROM raw.sqlite_images WHERE revision_id=$1",
+                previous.0
+            )
+            .fetch_optional(&mut *conn)
+            .await?
+            .ok_or_else(|| Error::Invalid("SQLite image predecessor missing".into()))?;
+            let (metadata, extents, _) =
+                crate::sqlite_images::load(conn, sinex_model::MaterialId(id))
+                    .await?
+                    .ok_or_else(|| Error::Invalid("SQLite image predecessor missing".into()))?;
+            image
+                .validate_predecessor(&metadata, &extents)
+                .map_err(Error::Invalid)?;
         }
         sqlx::query!("INSERT INTO raw.revisions (id,input_id,previous_id,kind) VALUES ($1,$2,$3,'snapshot') ON CONFLICT (id) DO NOTHING",m.revision.0,input,current).execute(&mut *conn).await?;
-        material(conn,input,m.revision.0,&image.material).await?;
-        if let Some(key)=&image.key {crate::sealed::store_key(conn,key.material,&key.key_ref,&key.wrapped).await?;}
-        let metadata=serde_json::to_value(m).map_err(|e|Error::Invalid(e.to_string()))?;
+        material(conn, input, m.revision.0, &image.material).await?;
+        if let Some(key) = &image.key {
+            crate::sealed::store_key(conn, key.material, &key.key_ref, &key.wrapped).await?;
+        }
+        let metadata = serde_json::to_value(m).map_err(|e| Error::Invalid(e.to_string()))?;
         sqlx::query!("INSERT INTO raw.sqlite_images (revision_id,material_id,database,host,metadata) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (revision_id) DO NOTHING",m.revision.0,m.material.0,m.database,m.host,metadata).execute(&mut *conn).await?;
-        let actual=sqlx::query_scalar!("SELECT metadata FROM raw.sqlite_images WHERE revision_id=$1",m.revision.0).fetch_one(&mut *conn).await?;
-        if actual!=metadata {return Err(Error::Invalid("SQLite image revision metadata changed".into()));}
-        for (position,e) in image.extents.iter().enumerate() {
+        let actual = sqlx::query_scalar!(
+            "SELECT metadata FROM raw.sqlite_images WHERE revision_id=$1",
+            m.revision.0
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        if actual != metadata {
+            return Err(Error::Invalid(
+                "SQLite image revision metadata changed".into(),
+            ));
+        }
+        for (position, e) in image.extents.iter().enumerate() {
             sqlx::query!("INSERT INTO raw.revision_extents (revision_id,position,blob,blob_offset,length) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (revision_id,position) DO NOTHING",m.revision.0,i32::try_from(position).map_err(|_|Error::Invalid("too many SQLite extents".into()))?,e.blob,i64::try_from(e.offset).map_err(|_|Error::Invalid("SQLite extent offset beyond i64".into()))?,i64::try_from(e.length).map_err(|_|Error::Invalid("SQLite extent length beyond i64".into()))?).execute(&mut *conn).await?;
         }
         m.revision.0
-    } else if let Some(revision)=p.image_revision {
-        let owner=sqlx::query_scalar!("SELECT input_id FROM raw.revisions WHERE id=$1",revision.0).fetch_one(&mut *conn).await?;
-        if owner!=input {return Err(Error::Invalid("SQLite image continuation belongs to another input".into()));}
+    } else if let Some(revision) = p.image_revision {
+        let owner =
+            sqlx::query_scalar!("SELECT input_id FROM raw.revisions WHERE id=$1", revision.0)
+                .fetch_one(&mut *conn)
+                .await?;
+        if owner != input {
+            return Err(Error::Invalid(
+                "SQLite image continuation belongs to another input".into(),
+            ));
+        }
         revision.0
-    } else { match (p.revision, current) {
-        (RevisionChange::Same | RevisionChange::Appended, Some(current)) => current,
-        (change, previous) => {
-            let kind = match change {
-                RevisionChange::Same | RevisionChange::Appended => "appended",
-                RevisionChange::Rewritten => "rewritten",
-                RevisionChange::Replaced => "replaced",
-                RevisionChange::Truncated => "truncated",
-                RevisionChange::Snapshot => "snapshot",
-            };
-            sqlx::query_scalar!(
+    } else {
+        match (p.revision, current) {
+            (RevisionChange::Same | RevisionChange::Appended, Some(current)) => current,
+            (change, previous) => {
+                let kind = match change {
+                    RevisionChange::Same | RevisionChange::Appended => "appended",
+                    RevisionChange::Rewritten => "rewritten",
+                    RevisionChange::Replaced => "replaced",
+                    RevisionChange::Truncated => "truncated",
+                    RevisionChange::Snapshot => "snapshot",
+                };
+                sqlx::query_scalar!(
                 "INSERT INTO raw.revisions (id, input_id, previous_id, kind) VALUES ($1, $2, $3, $4) RETURNING id",
                 RevisionId::new().0,
                 input,
@@ -107,15 +152,19 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
             )
             .fetch_one(&mut *conn)
             .await?
+            }
         }
-    }};
+    };
 
     let Some(m) = &p.material else { return Ok(()) };
-    material(conn,input,revision,m).await?;
+    material(conn, input, revision, m).await?;
     let role = sinex_model::MaterialRole::of(&m.manifest)
         .map_err(|e| Error::Invalid(format!("material {}: {e}", m.id)))?;
     // Decoded record parts retain parser coordinates, not additional input bytes.
-    if matches!(role,sinex_model::MaterialRole::Records|sinex_model::MaterialRole::SqliteImage) {
+    if matches!(
+        role,
+        sinex_model::MaterialRole::Records | sinex_model::MaterialRole::SqliteImage
+    ) {
         return Ok(());
     }
     let length=i64::try_from(m.length).map_err(|_|Error::Invalid("material length beyond i64".into()))?;
@@ -131,7 +180,12 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     Ok(())
 }
 
-async fn material(conn:&mut PgConnection,input:Uuid,revision:Uuid,m:&sinex_model::MaterialRef)->Result<()> {
+async fn material(
+    conn: &mut PgConnection,
+    input: Uuid,
+    revision: Uuid,
+    m: &sinex_model::MaterialRef,
+) -> Result<()> {
     let length =
         i64::try_from(m.length).map_err(|_| Error::Invalid("material length beyond i64".into()))?;
     sqlx::query!(

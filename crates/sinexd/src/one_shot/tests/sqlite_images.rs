@@ -4,96 +4,277 @@ use sinex_model::{Class, RunId};
 use sinex_sources::{Settings,binding,drivers,sources::atuin};
 use std::io::{Read,Write};
 
-fn database(path:&std::path::Path)->rusqlite::Connection {
-    let c=rusqlite::Connection::open(path).unwrap();
+fn database(path: &std::path::Path) -> rusqlite::Connection {
+    let c = rusqlite::Connection::open(path).unwrap();
     c.execute_batch("PRAGMA page_size=1024; PRAGMA journal_mode=WAL;
       CREATE TABLE history(id TEXT,timestamp INTEGER,duration INTEGER,exit INTEGER,command TEXT,cwd TEXT,session TEXT,hostname TEXT,_from TEXT,_rowid TEXT);
       INSERT INTO history VALUES ('a',1,-1,-1,'first','/synthetic','s','h','native origin','native row'),('b',2,-1,-1,'second','/synthetic','s','h',NULL,NULL);
-      CREATE TABLE unselected(x BLOB); INSERT INTO unselected VALUES(zeroblob(20000));").unwrap();c
+      CREATE TABLE unselected(x BLOB); INSERT INTO unselected VALUES(zeroblob(20000));").unwrap();
+    c
 }
-fn reader(path:&std::path::Path,class:Class)->Box<dyn sinex_sources::Reader> {
-    let mut r=binding::rows(atuin::driver(path.to_path_buf(),"synthetic".into()));
-    let mut settings=Settings::new("synthetic");
-    settings.options=serde_json::json!({"sqlite_images":{"scope":"whole_database","class":class,"interval_secs":3600,"turn_pages":1}});
-    r.configure(&settings).unwrap();r
+fn reader(path: &std::path::Path, class: Class) -> Box<dyn sinex_sources::Reader> {
+    let mut r = binding::rows(atuin::driver(path.to_path_buf(), "synthetic".into()));
+    let mut settings = Settings::new("synthetic");
+    settings.options = serde_json::json!({"sqlite_images":{"scope":"whole_database","class":class,"interval_secs":3600,"turn_pages":1}});
+    r.configure(&settings).unwrap();
+    r
 }
-fn poll(reader:&mut dyn sinex_sources::Reader,cursor:&Value)->drivers::Acquired {
-    loop {match reader.poll(cursor) {Err(drivers::DriverError::Pending)=>{},other=>return other.unwrap()}}
+fn poll(reader: &mut dyn sinex_sources::Reader, cursor: &Value) -> drivers::Acquired {
+    loop {
+        match reader.poll(cursor) {
+            Err(drivers::DriverError::Pending) => {}
+            other => return other.unwrap(),
+        }
+    }
 }
-async fn submit(ctx:&mut OneShot,binding:&str,acquired:drivers::Acquired,limit:usize)->Vec<sinex_model::Batch> {
-    let source=atuin::source();let sink=Sink(ctx.blobs.clone());
-    let prepared=drivers::prepare(&source,binding,RunId::new(),acquired,Value::Null,&sink,Limits {max_events:limit,max_bytes:usize::MAX}).unwrap();
+async fn submit(
+    ctx: &mut OneShot,
+    binding: &str,
+    acquired: drivers::Acquired,
+    limit: usize,
+) -> Vec<sinex_model::Batch> {
+    let source = atuin::source();
+    let sink = Sink(ctx.blobs.clone());
+    let prepared = drivers::prepare(
+        &source,
+        binding,
+        RunId::new(),
+        acquired,
+        Value::Null,
+        &sink,
+        Limits {
+            max_events: limit,
+            max_bytes: usize::MAX,
+        },
+    )
+    .unwrap();
     prepared.batches().unwrap().map(Result::unwrap).collect()
 }
-async fn admit(ctx:&mut OneShot,batch:sinex_model::Batch) {ctx.writer.submit(crate::writer::Priority::Bulk,batch).await.unwrap();}
-async fn image(ctx:&mut OneShot,id:sinex_model::MaterialId)->(sinex_model::SqliteImageMeta,Vec<u8>) {
-    let (meta,extents,_)=sinex_store::sqlite_images::load(&mut ctx.read_conn,id).await.unwrap().unwrap();
-    let mut bytes=Vec::new();ctx.blobs.assemble(&extents).unwrap().read_to_end(&mut bytes).unwrap();(meta,bytes)
+async fn admit(ctx: &mut OneShot, batch: sinex_model::Batch) {
+    ctx.writer
+        .submit(crate::writer::Priority::Bulk, batch)
+        .await
+        .unwrap();
 }
-fn read_image(bytes:&[u8],dir:&std::path::Path)->String {
-    let mut f=tempfile::NamedTempFile::new_in(dir).unwrap();f.write_all(bytes).unwrap();
-    let c=rusqlite::Connection::open_with_flags(f.path(),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    c.query_row("SELECT command FROM history WHERE id='b'",[],|r|r.get(0)).unwrap()
+async fn image(
+    ctx: &mut OneShot,
+    id: sinex_model::MaterialId,
+) -> (sinex_model::SqliteImageMeta, Vec<u8>) {
+    let (meta, extents, _) = sinex_store::sqlite_images::load(&mut ctx.read_conn, id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut bytes = Vec::new();
+    ctx.blobs
+        .assemble(&extents)
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    (meta, bytes)
+}
+fn read_image(bytes: &[u8], dir: &std::path::Path) -> String {
+    let mut f = tempfile::NamedTempFile::new_in(dir).unwrap();
+    f.write_all(bytes).unwrap();
+    let c =
+        rusqlite::Connection::open_with_flags(f.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    c.query_row("SELECT command FROM history WHERE id='b'", [], |r| r.get(0))
+        .unwrap()
 }
 
 #[tokio::test]
 async fn sqlite_physical_images_publish_atomically_and_retry_exact_pending_rows_after_restart() {
-    let (_db,url,_)=crate::testdb::fresh().await;let dir=tempfile::tempdir().unwrap();let path=dir.path().join("source.db");let provider=database(&path);
-    let mut ctx=OneShot::open(&url,&dir.path().join("store")).await.unwrap();let mut original=reader(&path,Class::Guarded);
-    let acquired=poll(original.as_mut(),&Value::Null);let row_id=acquired.material.as_ref().unwrap().id;let image_id=acquired.image.as_ref().unwrap().metadata.material;
-    let mut batches=submit(&mut ctx,"images",acquired,1).await;assert_eq!(batches.len(),2);
-    let first=batches.remove(0);
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("source.db");
+    let provider = database(&path);
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let mut original = reader(&path, Class::Guarded);
+    let acquired = poll(original.as_mut(), &Value::Null);
+    let row_id = acquired.material.as_ref().unwrap().id;
+    let image_id = acquired.image.as_ref().unwrap().metadata.material;
+    let mut batches = submit(&mut ctx, "images", acquired, 1).await;
+    assert_eq!(batches.len(), 2);
+    let first = batches.remove(0);
     // An admission failure must leave neither a companion image nor a cursor.
     sqlx::query("CREATE FUNCTION reject_image_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic image failure'; END $$").execute(&mut ctx.read_conn).await.unwrap();
     sqlx::query("CREATE TRIGGER reject_image_row BEFORE INSERT ON core.events FOR EACH ROW EXECUTE FUNCTION reject_image_row()").execute(&mut ctx.read_conn).await.unwrap();
-    assert!(ctx.writer.submit(crate::writer::Priority::Bulk,first.clone()).await.is_err());
-    let count:i64=sqlx::query_scalar("SELECT count(*) FROM raw.sqlite_images").fetch_one(&mut ctx.read_conn).await.unwrap();assert_eq!(count,0);
-    assert!(sinex_store::positions::load(&mut ctx.read_conn,"images").await.unwrap().is_none());
-    sqlx::query("DROP TRIGGER reject_image_row ON core.events").execute(&mut ctx.read_conn).await.unwrap();
-    provider.execute_batch("UPDATE history SET command='edited after capture' WHERE id='b'").unwrap();
-    admit(&mut ctx,first).await;
-    let (cursor,_)=sinex_store::positions::load(&mut ctx.read_conn,"images").await.unwrap().unwrap();
-    let (meta,bytes)=image(&mut ctx,image_id).await;assert_eq!(read_image(&bytes,dir.path()),"second");assert!(meta.evidence_bytes>meta.image_bytes);
+    assert!(
+        ctx.writer
+            .submit(crate::writer::Priority::Bulk, first.clone())
+            .await
+            .is_err()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.sqlite_images")
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    assert!(
+        sinex_store::positions::load(&mut ctx.read_conn, "images")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    sqlx::query("DROP TRIGGER reject_image_row ON core.events")
+        .execute(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    provider
+        .execute_batch("UPDATE history SET command='edited after capture' WHERE id='b'")
+        .unwrap();
+    admit(&mut ctx, first).await;
+    let (cursor, _) = sinex_store::positions::load(&mut ctx.read_conn, "images")
+        .await
+        .unwrap()
+        .unwrap();
+    let (meta, bytes) = image(&mut ctx, image_id).await;
+    assert_eq!(read_image(&bytes, dir.path()), "second");
+    assert!(meta.evidence_bytes > meta.image_bytes);
     // A fresh reader restores the entire retained JSONL part, not source bytes.
-    let mut resumed=reader(&path,Class::Guarded);
-    let reference=sinex_store::material_bytes::reference(&mut ctx.read_conn,row_id).await.unwrap().unwrap();
-    let mut file=tempfile::tempfile().unwrap();ctx.blobs.copy_to(&reference.blob,&mut file).unwrap();
-    resumed.restore_rows(reference.clone(),drivers::RetainedRecords {blob:reference.blob,bytes:std::sync::Arc::new(crate::retained::Retained::new(file,reference.length))},&cursor).unwrap();
-    let acquired=poll(resumed.as_mut(),&cursor);assert_eq!(acquired.material.as_ref().unwrap().id,row_id);
-    let pending=submit(&mut ctx,"images",acquired,1).await;assert_eq!(pending.len(),1);admit(&mut ctx,pending.into_iter().next().unwrap()).await;
-    let commands:Vec<String>=sqlx::query_scalar("SELECT payload->>'command' FROM core.events ORDER BY anchor").fetch_all(&mut ctx.read_conn).await.unwrap();assert_eq!(commands,vec!["first","second"]);
-    let extras:Value=sqlx::query_scalar("SELECT payload->'extra' FROM core.events WHERE payload->>'native_id'='a'").fetch_one(&mut ctx.read_conn).await.unwrap();assert_eq!(extras["_from"],"native origin");assert_eq!(extras["_rowid"],"native row");
+    let mut resumed = reader(&path, Class::Guarded);
+    let reference = sinex_store::material_bytes::reference(&mut ctx.read_conn, row_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut file = tempfile::tempfile().unwrap();
+    ctx.blobs.copy_to(&reference.blob, &mut file).unwrap();
+    resumed
+        .restore_rows(
+            reference.clone(),
+            drivers::RetainedRecords {
+                blob: reference.blob,
+                bytes: std::sync::Arc::new(crate::retained::Retained::new(file, reference.length)),
+            },
+            &cursor,
+        )
+        .unwrap();
+    let acquired = poll(resumed.as_mut(), &cursor);
+    assert_eq!(acquired.material.as_ref().unwrap().id, row_id);
+    let pending = submit(&mut ctx, "images", acquired, 1).await;
+    assert_eq!(pending.len(), 1);
+    admit(&mut ctx, pending.into_iter().next().unwrap()).await;
+    let commands: Vec<String> =
+        sqlx::query_scalar("SELECT payload->>'command' FROM core.events ORDER BY anchor")
+            .fetch_all(&mut ctx.read_conn)
+            .await
+            .unwrap();
+    assert_eq!(commands, vec!["first", "second"]);
+    let extras: Value = sqlx::query_scalar(
+        "SELECT payload->'extra' FROM core.events WHERE payload->>'native_id'='a'",
+    )
+    .fetch_one(&mut ctx.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(extras["_from"], "native origin");
+    assert_eq!(extras["_rowid"], "native row");
     // Excision remains refused before any mutation, including the row without
     // an exact-image pointer that a later logical-only poll produces.
-    let (cursor,_)=sinex_store::positions::load(&mut ctx.read_conn,"images").await.unwrap().unwrap();
-    resumed.restore_image(drivers::sqlite_image::Previous {metadata:meta.clone(),extents:sinex_store::sqlite_images::load(&mut ctx.read_conn,image_id).await.unwrap().unwrap().1,map:None});
-    let next=poll(resumed.as_mut(),&cursor);assert!(next.image.is_none());let id=next.material.as_ref().unwrap().id;
-    for batch in submit(&mut ctx,"images",next,1).await {admit(&mut ctx,batch).await;}
-    let before:i64=sqlx::query_scalar("SELECT count(*) FROM core.events").fetch_one(&mut ctx.read_conn).await.unwrap();
-    let err=sinex_store::excision::plan(&mut ctx.read_conn,sinex_store::excision::Target::Material(id)).await.unwrap_err();assert!(err.to_string().contains("database lineage"));
-    let after:i64=sqlx::query_scalar("SELECT count(*) FROM core.events").fetch_one(&mut ctx.read_conn).await.unwrap();assert_eq!(before,after);
+    let (cursor, _) = sinex_store::positions::load(&mut ctx.read_conn, "images")
+        .await
+        .unwrap()
+        .unwrap();
+    resumed.restore_image(drivers::sqlite_image::Previous {
+        metadata: meta.clone(),
+        extents: sinex_store::sqlite_images::load(&mut ctx.read_conn, image_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .1,
+        map: None,
+    });
+    let next = poll(resumed.as_mut(), &cursor);
+    assert!(next.image.is_none());
+    let id = next.material.as_ref().unwrap().id;
+    for batch in submit(&mut ctx, "images", next, 1).await {
+        admit(&mut ctx, batch).await;
+    }
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    let err = sinex_store::excision::plan(
+        &mut ctx.read_conn,
+        sinex_store::excision::Target::Material(id),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("database lineage"));
+    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap();
+    assert_eq!(before, after);
     ctx.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn sqlite_image_branches_preserve_capture_order_when_an_older_pending_view_commits_late() {
-    let (_db,url,_)=crate::testdb::fresh().await;let dir=tempfile::tempdir().unwrap();let path=dir.path().join("source.db");let provider=database(&path);
-    let mut ctx=OneShot::open(&url,&dir.path().join("store")).await.unwrap();
-    let mut seed=reader(&path,Class::Open);let captured=poll(seed.as_mut(),&Value::Null);
-    let seed_id=captured.image.as_ref().unwrap().metadata.material;let map=captured.image.as_ref().unwrap().map.clone();
-    for batch in submit(&mut ctx,"binding-base",captured,20).await {admit(&mut ctx,batch).await;}
-    let (metadata,extents,_)=sinex_store::sqlite_images::load(&mut ctx.read_conn,seed_id).await.unwrap().unwrap();
-    let previous=drivers::sqlite_image::Previous {metadata,extents,map};
-    let mut a=reader(&path,Class::Open);a.restore_image(previous.clone());let pending_a=poll(a.as_mut(),&Value::Null);let a_id=pending_a.image.as_ref().unwrap().metadata.material;
-    provider.execute_batch("UPDATE history SET command='new view' WHERE id='b'").unwrap();
-    let mut b=reader(&path,Class::Open);b.restore_image(previous);let pending_b=poll(b.as_mut(),&Value::Null);let b_id=pending_b.image.as_ref().unwrap().metadata.material;
-    for batch in submit(&mut ctx,"binding-b",pending_b,20).await {admit(&mut ctx,batch).await;}
-    for batch in submit(&mut ctx,"binding-a",pending_a,20).await {admit(&mut ctx,batch).await;}
-    let (_,a_bytes)=image(&mut ctx,a_id).await;let (_,b_bytes)=image(&mut ctx,b_id).await;assert_eq!(read_image(&a_bytes,dir.path()),"second");assert_eq!(read_image(&b_bytes,dir.path()),"new view");
-    let canonical=path.canonicalize().unwrap().display().to_string();assert_eq!(sinex_store::sqlite_images::latest(&mut ctx.read_conn,&canonical,"synthetic").await.unwrap(),Some(b_id));
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("source.db");
+    let provider = database(&path);
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let mut seed = reader(&path, Class::Open);
+    let captured = poll(seed.as_mut(), &Value::Null);
+    let seed_id = captured.image.as_ref().unwrap().metadata.material;
+    let map = captured.image.as_ref().unwrap().map.clone();
+    for batch in submit(&mut ctx, "binding-base", captured, 20).await {
+        admit(&mut ctx, batch).await;
+    }
+    let (metadata, extents, _) = sinex_store::sqlite_images::load(&mut ctx.read_conn, seed_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let previous = drivers::sqlite_image::Previous {
+        metadata,
+        extents,
+        map,
+    };
+    let mut a = reader(&path, Class::Open);
+    a.restore_image(previous.clone());
+    let pending_a = poll(a.as_mut(), &Value::Null);
+    let a_id = pending_a.image.as_ref().unwrap().metadata.material;
+    provider
+        .execute_batch("UPDATE history SET command='new view' WHERE id='b'")
+        .unwrap();
+    let mut b = reader(&path, Class::Open);
+    b.restore_image(previous);
+    let pending_b = poll(b.as_mut(), &Value::Null);
+    let b_id = pending_b.image.as_ref().unwrap().metadata.material;
+    for batch in submit(&mut ctx, "binding-b", pending_b, 20).await {
+        admit(&mut ctx, batch).await;
+    }
+    for batch in submit(&mut ctx, "binding-a", pending_a, 20).await {
+        admit(&mut ctx, batch).await;
+    }
+    let (_, a_bytes) = image(&mut ctx, a_id).await;
+    let (_, b_bytes) = image(&mut ctx, b_id).await;
+    assert_eq!(read_image(&a_bytes, dir.path()), "second");
+    assert_eq!(read_image(&b_bytes, dir.path()), "new view");
+    let canonical = path.canonicalize().unwrap().display().to_string();
+    assert_eq!(
+        sinex_store::sqlite_images::latest(&mut ctx.read_conn, &canonical, "synthetic")
+            .await
+            .unwrap(),
+        Some(b_id)
+    );
     // A separate binding's logical rows share the excision guard.
     let row:uuid::Uuid=sqlx::query_scalar("SELECT m.id FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding='binding-a' AND m.manifest->>'role'='records'").fetch_one(&mut ctx.read_conn).await.unwrap();
-    assert!(sinex_store::excision::plan(&mut ctx.read_conn,sinex_store::excision::Target::Material(sinex_model::MaterialId(row))).await.unwrap_err().to_string().contains("database lineage"));
+    assert!(
+        sinex_store::excision::plan(
+            &mut ctx.read_conn,
+            sinex_store::excision::Target::Material(sinex_model::MaterialId(row))
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("database lineage")
+    );
     ctx.close().await.unwrap();
 }
 

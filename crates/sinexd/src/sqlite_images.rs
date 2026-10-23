@@ -7,21 +7,34 @@ use std::sync::Arc;
 
 type PageHash = Arc<dyn Fn(&[u8; 32]) -> [u8; 32] + Send + Sync>;
 
-pub(crate) fn store(blobs: &Blobs, image: &Image, recipient: Option<&sealed::Recipient>) -> Result<SqliteImagePublication, String> {
-    let mut meta=image.metadata.clone();
-    let key=if meta.class==Class::Sealed {Some(sealed::new_key().map_err(err)?)} else {None};
-    if key.is_some() && recipient.is_none() {return Err("sealed SQLite image needs the configured public recipient".into());}
-    let naming=key.as_ref().map(|k|blake3::derive_key("sinex 2026 SQLite image naming key",&k.key));
-    let page_hash:PageHash=match naming {
-        Some(k)=>Arc::new(move |h|*blake3::keyed_hash(&k,h).as_bytes()),
-        None=>Arc::new(|h|*h),
+pub(crate) fn store(
+    blobs: &Blobs,
+    image: &Image,
+    recipient: Option<&sealed::Recipient>,
+) -> Result<SqliteImagePublication, String> {
+    let mut meta = image.metadata.clone();
+    let key = if meta.class == Class::Sealed {
+        Some(sealed::new_key().map_err(err)?)
+    } else {
+        None
     };
-    let reader=image.reader(page_hash.clone(),false).map_err(err)?;
-    let blob=match &key {
-        Some(k)=>blobs.put_sealed_reader(reader,k),
-        None=>blobs.put_reader(reader),
-    }.map_err(err)?;
-    let extents=image.extents(&blob)?;
+    if key.is_some() && recipient.is_none() {
+        return Err("sealed SQLite image needs the configured public recipient".into());
+    }
+    let naming = key
+        .as_ref()
+        .map(|k| blake3::derive_key("sinex 2026 SQLite image naming key", &k.key));
+    let page_hash: PageHash = match naming {
+        Some(k) => Arc::new(move |h| *blake3::keyed_hash(&k, h).as_bytes()),
+        None => Arc::new(|h| *h),
+    };
+    let reader = image.reader(page_hash.clone(), false).map_err(err)?;
+    let blob = match &key {
+        Some(k) => blobs.put_sealed_reader(reader, k),
+        None => blobs.put_reader(reader),
+    }
+    .map_err(err)?;
+    let extents = image.extents(&blob)?;
     meta.validate(&extents)?;
     // Verify exact reconstructed pages against the still-pinned acquisition view,
     // and each dense map entry against the corresponding page. Hashes alone do not
@@ -52,22 +65,65 @@ pub(crate) fn store(blobs: &Blobs, image: &Image, recipient: Option<&sealed::Rec
         let mut stored=[0;32]; evidence.read_exact(&mut stored).map_err(err)?;
         if stored!=page_hash(blake3::hash(&actual).as_bytes()) {return Err("SQLite page map differs from retained image".into());}
     }
-    let hash=format!("blake3:{}",full_hash.finalize().to_hex());
-    if key.is_none() && meta.image_hash!=hash {return Err("SQLite image digest differs after storage".into());}
-    meta.image_hash=hash;
-    let stored=blobs.stored_size(&blob).map_err(err)?;
-    if meta.full {meta.base_stored_bytes=stored;meta.patch_stored_bytes=0;} else {
-        let previous=&image.previous.as_ref().ok_or("SQLite patch has no previous image")?.metadata;
-        meta.base_stored_bytes=previous.base_stored_bytes;
-        meta.patch_stored_bytes=previous.patch_stored_bytes.checked_add(stored).ok_or("SQLite stored patch cost overflow")?;
+    let hash = format!("blake3:{}", full_hash.finalize().to_hex());
+    if key.is_none() && meta.image_hash != hash {
+        return Err("SQLite image digest differs after storage".into());
     }
-    let mut unique=std::collections::BTreeSet::new();
-    for e in &extents {unique.insert(&e.blob);}
-    meta.read_stored_bytes=unique.into_iter().try_fold(0u64,|sum,name|sum.checked_add(blobs.stored_size(name).map_err(err)?).ok_or_else(||"SQLite read cost overflow".to_owned()))?;
-    let wrapped=key.as_ref().map(|k|Ok::<_,String>(WrappedMaterialKey {material:meta.material,key_ref:k.key_ref.clone(),wrapped:sealed::wrap(k,recipient.expect("checked recipient")).map_err(err)?})).transpose()?;
-    let material=MaterialRef {id:meta.material,input:None,blob,length:meta.evidence_bytes,part_index:0,previous_part:None,parser:"sqlite-image".into(),parser_version:1,manifest:serde_json::json!({"role":"sqlite-image","sqlite_database":meta.database,"sqlite_image":meta})};
-    let publication=SqliteImagePublication {metadata:meta,material,extents,key:wrapped};
+    meta.image_hash = hash;
+    let stored = blobs.stored_size(&blob).map_err(err)?;
+    if meta.full {
+        meta.base_stored_bytes = stored;
+        meta.patch_stored_bytes = 0;
+    } else {
+        let previous = &image
+            .previous
+            .as_ref()
+            .ok_or("SQLite patch has no previous image")?
+            .metadata;
+        meta.base_stored_bytes = previous.base_stored_bytes;
+        meta.patch_stored_bytes = previous
+            .patch_stored_bytes
+            .checked_add(stored)
+            .ok_or("SQLite stored patch cost overflow")?;
+    }
+    let mut unique = std::collections::BTreeSet::new();
+    for e in &extents {
+        unique.insert(&e.blob);
+    }
+    meta.read_stored_bytes = unique.into_iter().try_fold(0u64, |sum, name| {
+        sum.checked_add(blobs.stored_size(name).map_err(err)?)
+            .ok_or_else(|| "SQLite read cost overflow".to_owned())
+    })?;
+    let wrapped = key
+        .as_ref()
+        .map(|k| {
+            Ok::<_, String>(WrappedMaterialKey {
+                material: meta.material,
+                key_ref: k.key_ref.clone(),
+                wrapped: sealed::wrap(k, recipient.expect("checked recipient")).map_err(err)?,
+            })
+        })
+        .transpose()?;
+    let material = MaterialRef {
+        id: meta.material,
+        input: None,
+        blob,
+        length: meta.evidence_bytes,
+        part_index: 0,
+        previous_part: None,
+        parser: "sqlite-image".into(),
+        parser_version: 1,
+        manifest: serde_json::json!({"role":"sqlite-image","sqlite_database":meta.database,"sqlite_image":meta}),
+    };
+    let publication = SqliteImagePublication {
+        metadata: meta,
+        material,
+        extents,
+        key: wrapped,
+    };
     publication.validate()?;
     Ok(publication)
 }
-fn err(e:impl std::fmt::Display)->String {e.to_string()}
+fn err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}

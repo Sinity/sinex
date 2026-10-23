@@ -79,7 +79,7 @@ fn batches_are_drained_lazily() {
     let (framed, _) = lines(&bytes);
     let total = bytes.len();
     let acquired = Acquired {
-            image: None,
+        image: None,
         input: InputRef {
             kind: "file".into(),
             locator: "/t".into(),
@@ -255,7 +255,7 @@ fn retained_original_length_does_not_replace_decoded_record_coordinates() {
     let bytes = b"decoded\n".to_vec();
     let decoded_len = bytes.len();
     let acquired = Acquired {
-            image: None,
+        image: None,
         input: InputRef {
             kind: "file".into(),
             locator: "/t".into(),
