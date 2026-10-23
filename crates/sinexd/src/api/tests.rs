@@ -805,3 +805,5 @@ async fn analysis_panel_why_and_results_answer_through_the_api() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["result"]["results"], json!([]));
 }
+
+mod discovery;
