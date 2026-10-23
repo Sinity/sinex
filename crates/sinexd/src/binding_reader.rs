@@ -483,15 +483,17 @@ async fn read_archive(
                 let original = cursor.original_material.ok_or(
                     "sealed cursor has no original material identity; explicit migration required",
                 )?;
-                let original_key = authority.material_key(conn, original).await?;
-                sealing.restore_key(cursor.capture.blob.clone(), original_key);
+                let (key_ref, secrets) = authority.material_secrets(conn, original).await?;
+                let original_key = secrets.data_key(key_ref).map_err(|e| e.to_string())?;
+                sealing.restore_secrets(cursor.capture.blob.clone(), original_key, secrets);
                 if let Some(material) = cursor.material {
                     let reference = sinex_store::material_bytes::reference(conn, material)
                         .await
                         .map_err(|e| e.to_string())?
                         .ok_or("sealed cursor material is missing")?;
-                    let key = authority.material_key(conn, material).await?;
-                    sealing.restore_current(material, reference.blob, key);
+                    let (key_ref, secrets) = authority.material_secrets(conn, material).await?;
+                    let key = secrets.data_key(key_ref).map_err(|e| e.to_string())?;
+                    sealing.restore_current(material, reference.blob, key, secrets);
                 }
             }
             let pending = if let Some(id) = saved

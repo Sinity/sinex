@@ -1,6 +1,6 @@
 //! Explicit, operation-scoped use of the operator's unlock authority.
 use sinex_model::MaterialId;
-use sinex_store::sealed::{DataKey, Identity};
+use sinex_store::sealed::{DataKey, Identity, MaterialSecrets};
 use sqlx::PgConnection;
 use std::sync::{
     Arc,
@@ -59,25 +59,45 @@ impl Authority {
         self.check()?;
         Ok(key)
     }
+    pub fn unwrap_secrets(&self, wrapped: &[u8]) -> Result<MaterialSecrets, String> {
+        self.check()?;
+        let secrets = sinex_store::sealed::unwrap_secrets(
+            wrapped,
+            &self.identity,
+            sinex_model::Class::Sealed,
+        )
+        .map_err(|e| e.to_string())?;
+        self.check()?;
+        Ok(secrets)
+    }
     /// Call only for material IDs in the explicit operation's resolved scope.
-    pub async fn material_key(
+    pub async fn material_secrets(
         &self,
         conn: &mut PgConnection,
         material: MaterialId,
-    ) -> Result<DataKey, String> {
+    ) -> Result<(String, MaterialSecrets), String> {
         self.check()?;
         let row = sqlx::query!(
-            "SELECT key_ref,wrapped_key FROM privacy.material_keys WHERE material_id=$1",
+            "SELECT key_ref,class,wrapped_key FROM privacy.material_keys WHERE material_id=$1",
             material.0
         )
         .fetch_optional(conn)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("material {material}: sealed key unavailable or destroyed"))?;
-        Ok(DataKey {
-            key_ref: row.key_ref,
-            key: self.unwrap(&row.wrapped_key)?,
-        })
+        if row.class != "sealed" {
+            return Err("wrapped capability belongs to a different material class".into());
+        }
+        Ok((row.key_ref, self.unwrap_secrets(&row.wrapped_key)?))
+    }
+    /// Call only for material IDs in the explicit operation's resolved scope.
+    pub async fn material_key(
+        &self,
+        conn: &mut PgConnection,
+        material: MaterialId,
+    ) -> Result<DataKey, String> {
+        let (reference, secrets) = self.material_secrets(conn, material).await?;
+        secrets.data_key(reference).map_err(|e| e.to_string())
     }
 }
 

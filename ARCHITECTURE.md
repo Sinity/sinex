@@ -239,3 +239,14 @@ This producer grant performs cleanup of already confirmed excision metadata; it
 does not grant general material excision. Operator excision retains its existing
 access gate. Older servers have no retirement responder, allowing callers to
 report unsupported physical retirement immediately.
+
+Sealed material keys contain authenticated, versioned capability roles inside
+class-wrapped age envelopes. Exact 32-byte predecessor envelopes decode as data
+keys. Data-and-record-naming envelopes can decrypt content; record-naming-only
+envelopes cannot enter blob or payload decryption, including through legacy
+unwrap callers. Record naming and blob naming remain separate domains. Scoped
+class holders with a naming capability can test candidate equivalence keys and
+record hashes, but cannot decrypt old content with that capability. Replay and
+restart restore the retained naming capability rather than derive identities
+from a replacement data key. Partial sealed excision still refuses until its
+body, dependent values and format-owned carry redaction are implemented together.
