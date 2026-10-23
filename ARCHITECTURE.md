@@ -202,6 +202,16 @@ equal starts use the ordinary event-ID tie break. Withheld bounds refuse rather
 than borrowing an older group. No matching group retains the ordinary output
 stages and carries a no-known-session account, not a no-observations claim.
 
+Query continuations bind the actual question and caller visibility, the first
+resolved clock, time-zone/day settings and event commit position. Count and
+rows share one repeatable-read transaction. Each continuation compares a
+fixed-size fingerprint of the visible ordered answer, including columns and
+recall metadata. New events beyond the original position can leave that answer
+unchanged; removals or mutable metadata changes require a fresh query when they
+change it. Fingerprints detect ordinary changes and grant no authority. Every
+page still uses current visible views and the final masking/unseal checks.
+Changing page size is allowed; obsolete or malformed cursors are refused.
+
 Output uses `credential-output-v2`, including independently recognized
 overlapping credentials. Credential-shaped JSON keys refuse the complete
 reply because renaming could change an object's meaning. Follow streams check

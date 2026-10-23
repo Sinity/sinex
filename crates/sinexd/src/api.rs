@@ -322,14 +322,7 @@ async fn follow(
                 let Ok(mut conn) = api.acquire(&caller).await else {
                     return;
                 };
-                let answer = match sinex_store::query::run(
-                    &mut conn,
-                    &text,
-                    &q,
-                    &api.context(),
-                    &page,
-                )
-                .await
+                let answer = match sinex_store::query::run(&mut conn, &text, &q, &ctx, &page).await
                 {
                     Ok(a) => a,
                     Err(e) => {

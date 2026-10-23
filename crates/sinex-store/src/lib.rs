@@ -41,6 +41,8 @@ pub enum Error {
     Blob(#[from] hashed_blobs::Error),
     #[error("{0}")]
     Invalid(String),
+    #[error("query result changed; start the query again")]
+    StaleCursor,
     #[error(
         "{0}: its class is sealed, so it must be sealed where its material is stored; it arrived unsealed"
     )]

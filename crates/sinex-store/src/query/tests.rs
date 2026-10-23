@@ -518,3 +518,5 @@ async fn excision_removes_search_text() {
     .unwrap();
     assert_eq!(left, 0);
 }
+
+mod cursor;

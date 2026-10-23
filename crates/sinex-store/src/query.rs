@@ -1,9 +1,10 @@
 //! Running queries (architecture §7.1; spec `query.md`): the language
 //! compiled to SQL, provenance walks, recall, `show`, and read-only SQL.
-//! Every read runs in a read-only transaction at one commit position, so the
-//! pages of an answer agree, and its rows come back as JSON objects with the
-//! unit's field names; times are UTC.
+//! Each page uses one read-only repeatable snapshot. Continuations retain the
+//! original question, clock and event position; a changed visible ordered
+//! answer requires a fresh query. Rows use the unit's field names; times are UTC.
 mod compile;
+mod cursor;
 mod fields;
 mod recall;
 mod sql;
@@ -21,6 +22,7 @@ use sinex_model::query::{
 use sql::Frag;
 use sqlx::{Connection, PgConnection};
 
+pub use cursor::context_for_page;
 pub use walk::{resolve, show};
 
 /// Which page of an answer to return.
@@ -69,24 +71,6 @@ pub struct PageInfo {
     pub cursor: Option<String>,
 }
 
-/// A cursor: the commit position the answer is read at and the rows already
-/// returned.
-fn encode_cursor(seq: i64, offset: u64) -> String {
-    format!("{seq}.{offset}")
-}
-
-fn decode_cursor(c: &str) -> Result<(i64, u64)> {
-    let (s, o) = c
-        .split_once('.')
-        .ok_or_else(|| Error::Invalid(format!("`{c}` is not a cursor")))?;
-    Ok((
-        s.parse()
-            .map_err(|_| Error::Invalid(format!("`{c}` is not a cursor")))?,
-        o.parse()
-            .map_err(|_| Error::Invalid(format!("`{c}` is not a cursor")))?,
-    ))
-}
-
 /// The newest commit position.
 pub async fn current_seq(conn: &mut PgConnection) -> Result<i64> {
     Ok(
@@ -105,16 +89,40 @@ pub async fn run(
     page: &Page,
 ) -> Result<Answer> {
     let mut tx = conn.begin().await?;
-    sqlx::query!("SET TRANSACTION READ ONLY")
+    sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
     sqlx::query!("SET LOCAL TimeZone = 'UTC'")
         .execute(&mut *tx)
         .await?;
     let size = page.size.unwrap_or(DEFAULT_PAGE).max(1);
-    let (mut seq, offset) = match &page.cursor {
-        Some(c) => decode_cursor(c)?,
-        None => (current_seq(&mut tx).await?, 0),
+    if size > i64::MAX as u64 {
+        return Err(Error::Invalid("page size is out of range".into()));
+    }
+    let ctx = context_for_page(ctx, page)?;
+    let scope: (String, String) = sqlx::query_as(
+        "SELECT current_user::text, coalesce(current_setting('sinex.grants', true), '')",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    let question = cursor::question(text, query, &ctx, &scope)?;
+    let current = current_seq(&mut tx).await?;
+    let prior = page
+        .cursor
+        .as_deref()
+        .map(cursor::Cursor::decode)
+        .transpose()?;
+    let (mut seq, offset) = match &prior {
+        Some(cursor) => {
+            cursor.check_question(&question)?;
+            if cursor.seq > current {
+                return Err(Error::Invalid(
+                    "query cursor is ahead of the archive".into(),
+                ));
+            }
+            (cursor.seq, cursor.offset)
+        }
+        None => (current, 0),
     };
     if page.cursor.is_none() {
         for stage in &query.stages {
@@ -124,6 +132,11 @@ pub async fn run(
                 _ => {}
             }
         }
+    }
+    if seq < 0 || seq > current {
+        return Err(Error::Invalid(
+            "as-of position is outside the known archive".into(),
+        ));
     }
     check_kinds(&mut tx, query).await?;
     let resolved = Resolved {
@@ -147,8 +160,29 @@ pub async fn run(
                 .and_then(Json::as_object)
                 .map(|o| o.keys().cloned().collect())
                 .unwrap_or_default();
+            let interpretation = read_as(query);
+            let mut hash = blake3::Hasher::new();
+            for (ordinal, row) in rows.iter().enumerate() {
+                let bytes = serde_json::to_vec(row)
+                    .map_err(|_| Error::Invalid("query row cannot be encoded".into()))?;
+                hash.update(&(ordinal as u64).to_le_bytes());
+                hash.update(&(bytes.len() as u64).to_le_bytes());
+                hash.update(&bytes);
+            }
+            let view = cursor::digest(&serde_json::json!([
+                unit,
+                interpretation,
+                columns,
+                total,
+                hash.finalize().to_hex().to_string()
+            ]))?;
+            if let Some(cursor) = &prior {
+                cursor.check_view(&view, total)?;
+            }
             let start = (offset as usize).min(rows.len());
-            let end = (start + size as usize).min(rows.len());
+            let end = start
+                .saturating_add(usize::try_from(size).unwrap_or(usize::MAX))
+                .min(rows.len());
             Answer {
                 unit,
                 query: text.to_string(),
@@ -159,20 +193,34 @@ pub async fn run(
                 total,
                 page: PageInfo {
                     size,
-                    cursor: (end < rows.len()).then(|| encode_cursor(seq, end as u64)),
+                    cursor: (end < rows.len())
+                        .then(|| cursor::Cursor::encode(&question, &ctx, seq, end as u64, &view))
+                        .transpose()?,
                 },
                 recall: None,
             }
         }
         Source::Unit { .. } => {
-            let rendered = render_page(Compiler::new(ctx, seq).compile(query)?, offset, size);
+            let rendered = render_page(Compiler::new(&ctx, seq).compile(query)?, offset, size);
             page_of(
-                &mut tx, rendered, unit, text, query, resolved, seq, offset, size,
+                &mut tx,
+                rendered,
+                unit,
+                text,
+                query,
+                resolved,
+                seq,
+                offset,
+                size,
+                &question,
+                &ctx,
+                prior.as_ref(),
+                None,
             )
             .await?
         }
         Source::Recall { .. } | Source::RecallLast { .. } => {
-            let selection = recall::select(&mut tx, &query.source, ctx, seq).await?;
+            let selection = recall::select(&mut tx, &query.source, &ctx, seq).await?;
             let as_events = Query {
                 source: Source::Unit {
                     unit: Unit::Events,
@@ -182,13 +230,24 @@ pub async fn run(
                 stages: query.stages.clone(),
                 ranked: query.ranked,
             };
-            let rendered = render_page(Compiler::new(ctx, seq).compile(&as_events)?, offset, size);
-            let mut a = page_of(
-                &mut tx, rendered, unit, text, query, resolved, seq, offset, size,
+            let rendered = render_page(Compiler::new(&ctx, seq).compile(&as_events)?, offset, size);
+            let account = selection.account(&mut tx, seq).await?;
+            page_of(
+                &mut tx,
+                rendered,
+                unit,
+                text,
+                query,
+                resolved,
+                seq,
+                offset,
+                size,
+                &question,
+                &ctx,
+                prior.as_ref(),
+                Some(account),
             )
-            .await?;
-            a.recall = Some(selection.account(&mut tx, seq).await?);
-            a
+            .await?
         }
     };
     answer.read_as = read_as(query);
@@ -205,7 +264,14 @@ struct Rendered {
 }
 
 fn render_page(compiled: Compiled, offset: u64, size: u64) -> Rendered {
-    let mut total = Frag::text("SELECT count(*) FROM (");
+    let object = json_object(&compiled.columns);
+    // Ordinary change detection, never an authority or integrity proof. Two
+    // seeded row hashes keep constant aggregate state; including _n avoids XOR
+    // cancellation when projected rows happen to be equal.
+    let row = format!("q.\"_n\"::text || ':' || ({object})::text");
+    let mut total = Frag::text(format!(
+        "SELECT jsonb_build_array(count(*), coalesce(bit_xor(hashtextextended(({row}) COLLATE \"C\", 0)), 0), coalesce(bit_xor(hashtextextended(({row}) COLLATE \"C\", 982451653)), 0)) FROM ("
+    ));
     total.append(compiled.answer.clone()).push(") q");
     let object = json_object(&compiled.columns);
     let mut rows = Frag::text(format!("SELECT {object} FROM ("));
@@ -232,11 +298,28 @@ async fn page_of(
     seq: i64,
     offset: u64,
     size: u64,
+    question: &str,
+    ctx: &Context,
+    prior: Option<&cursor::Cursor>,
+    recall: Option<Json>,
 ) -> Result<Answer> {
     let (sql_text, values) = rendered.total;
-    let total: i64 = sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
-        .fetch_one(&mut *tx)
-        .await?;
+    let sqlx::types::Json((total, first, second)): sqlx::types::Json<(i64, i64, i64)> =
+        sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
+            .fetch_one(&mut *tx)
+            .await?;
+    let view = cursor::digest(&serde_json::json!([
+        unit,
+        read_as(query),
+        rendered.columns,
+        total,
+        first,
+        second,
+        recall
+    ]))?;
+    if let Some(cursor) = prior {
+        cursor.check_view(&view, total)?;
+    }
     let (sql_text, values) = rendered.rows;
     let rows: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
         .fetch_all(&mut *tx)
@@ -252,9 +335,11 @@ async fn page_of(
         total,
         page: PageInfo {
             size,
-            cursor: ((next as i64) < total).then(|| encode_cursor(seq, next)),
+            cursor: ((next as i64) < total)
+                .then(|| cursor::Cursor::encode(question, ctx, seq, next, &view))
+                .transpose()?,
         },
-        recall: None,
+        recall,
     })
 }
 

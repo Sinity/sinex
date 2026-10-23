@@ -545,7 +545,10 @@ impl Api {
     }
 
     async fn query(&self, caller: &Caller, text: &str, page: Page) -> Reply {
-        let ctx = self.context();
+        let ctx = match sinex_store::query::context_for_page(&self.context(), &page) {
+            Ok(ctx) => ctx,
+            Err(e) => return refused(e.to_string()),
+        };
         let bound = match query::bind(text, &ctx) {
             Ok(q) => q,
             Err(e) => return query_refusal(text, e),
