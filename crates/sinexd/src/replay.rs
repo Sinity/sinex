@@ -192,9 +192,7 @@ pub async fn run(
         let parsers = sources_of(read_conn, &chain).await?;
         let mut keys = HashMap::new();
         for material in &chain {
-            if sinex_model::MaterialRole::of(&material.manifest).map_err(|e| e.to_string())?
-                == sinex_model::MaterialRole::OriginalArchive
-            {
+            if matches!(sinex_model::MaterialRole::of(&material.manifest).map_err(|e| e.to_string())?,sinex_model::MaterialRole::OriginalArchive|sinex_model::MaterialRole::SqliteImage) {
                 continue;
             }
             if blobs.is_sealed(&material.blob).map_err(|e| e.to_string())? {

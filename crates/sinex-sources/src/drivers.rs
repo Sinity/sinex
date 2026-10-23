@@ -178,7 +178,9 @@ pub fn prepare<'s>(
     let spec = source.spec();
     let image = acquired.image.as_ref().map(|image| {
         if let Some(stored)=image.stored().map_err(DriverError::Store)? { return Ok(stored); }
-        let stored=sink.put_image(image).map_err(DriverError::Store)?;
+        let mut stored=sink.put_image(image).map_err(DriverError::Store)?;
+        stored.material.parser=spec.parser.to_owned();
+        stored.material.parser_version=spec.parser_version;
         image.retain(stored.clone()).map_err(DriverError::Store)?;
         Ok(stored)
     }).transpose()?;
@@ -251,6 +253,8 @@ pub fn prepare<'s>(
 }
 
 impl Prepared<'_> {
+    pub fn image_meta(&self)->Option<&sinex_model::SqliteImageMeta> {self.image.as_ref().map(|i|&i.metadata)}
+
     /// The decoded record body length, if the poll produced a material.
     pub fn material_len(&self) -> Option<usize> {
         self.material

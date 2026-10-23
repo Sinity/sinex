@@ -44,3 +44,8 @@ pub async fn load(conn: &mut PgConnection, binding: &str) -> Result<Option<Store
     .fetch_optional(&mut *conn)
     .await?)
 }
+
+/// Configured bindings, including sources not active in this polling round.
+pub async fn list(conn:&mut PgConnection)->Result<Vec<Stored>> {
+    Ok(sqlx::query_as!(Stored,"SELECT binding,source,input,settings FROM raw.bindings ORDER BY binding").fetch_all(conn).await?)
+}

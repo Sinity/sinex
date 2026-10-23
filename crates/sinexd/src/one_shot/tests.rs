@@ -277,3 +277,5 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
 }
 
 mod sqlite_rows;
+
+mod sqlite_images;

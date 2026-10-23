@@ -103,7 +103,7 @@ impl Scan {
         self.meta.map_offset=if self.meta.full {self.meta.image_bytes} else {(self.changed.len() as u64).checked_mul(u64::from(self.meta.page_size)).ok_or_else(||io("SQLite patch length overflow"))?};
         self.meta.evidence_bytes=self.meta.map_offset.checked_add(self.meta.map_bytes).ok_or_else(||io("SQLite evidence length overflow"))?;
         if self.meta.class!=Class::Sealed {self.meta.image_hash=format!("blake3:{}",self.hash.finalize().to_hex());}
-        Ok(Arc::new(Image {metadata:self.meta,changed:Arc::new(self.changed),previous:self.previous,map:self.map.map(Arc::new),view:Mutex::new(Some(self.view)),stored:Mutex::new(None)}))
+        Ok(Arc::new(Image {metadata:self.meta,changed:Arc::new(self.changed),previous:self.previous,map:self.map.map(Arc::new),view:Mutex::new(Some(self.view)),stored:Mutex::new(None),check:Mutex::new(None)}))
     }
 }
 fn io(error:impl std::fmt::Display)->DriverError {DriverError::Io(error.to_string())}
@@ -115,11 +115,14 @@ pub struct Image {
     pub map:Option<Arc<File>>,
     view:Mutex<Option<Arc<View>>>,
     stored:Mutex<Option<SqliteImagePublication>>,
+    check:Mutex<Option<Arc<dyn Fn()->Result<(),String>+Send+Sync>>>,
 }
 impl std::fmt::Debug for Image {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("SqliteImage").field("metadata",&self.metadata).finish()}
 }
 impl Image {
+    pub fn set_check(&self,check:Arc<dyn Fn()->Result<(),String>+Send+Sync>)->Result<(),String> {*self.check.lock().map_err(|_|"SQLite image check poisoned")?=Some(check);Ok(())}
+
     pub fn view(&self)->Result<Arc<View>,DriverError> {self.view.lock().map_err(|_|io("SQLite image poisoned"))?.clone().ok_or_else(||io("SQLite view already released"))}
     pub fn stored(&self)->Result<Option<SqliteImagePublication>,String> {Ok(self.stored.lock().map_err(|_|"SQLite image poisoned")?.clone())}
     pub fn retain(&self,publication:SqliteImagePublication)->Result<(),String> {
@@ -128,7 +131,7 @@ impl Image {
         Ok(())
     }
     pub fn reader(&self,map_hash:Arc<dyn Fn(&[u8;32])->[u8;32]+Send+Sync>,full_data_only:bool)->Result<ImageReader,DriverError> {
-        Ok(ImageReader {view:self.view()?,map:self.map.clone(),map_hash,size:self.metadata.page_size,count:self.metadata.page_count,changed:if self.metadata.full || full_data_only {None} else {Some(self.changed.clone())},position:0,include_map:!full_data_only})
+        Ok(ImageReader {view:self.view()?,map:self.map.clone(),map_hash,size:self.metadata.page_size,count:self.metadata.page_count,changed:if self.metadata.full || full_data_only {None} else {Some(self.changed.clone())},position:0,include_map:!full_data_only,check:self.check.lock().map_err(|_|io("SQLite image check poisoned"))?.clone()})
     }
     pub fn extents(&self,blob:&str)->Result<Vec<ImageExtent>,String> {
         if self.metadata.full {return Ok(vec![ImageExtent {blob:blob.into(),offset:0,length:self.metadata.image_bytes}]);}
@@ -183,7 +186,7 @@ fn push(out:&mut Vec<ImageExtent>,extent:ImageExtent) {
 }
 
 pub struct ImageReader {
-    view:Arc<View>,map:Option<Arc<File>>,map_hash:Arc<dyn Fn(&[u8;32])->[u8;32]+Send+Sync>,size:u32,count:u64,changed:Option<Arc<Vec<u64>>>,position:u64,include_map:bool,
+    view:Arc<View>,map:Option<Arc<File>>,map_hash:Arc<dyn Fn(&[u8;32])->[u8;32]+Send+Sync>,size:u32,count:u64,changed:Option<Arc<Vec<u64>>>,position:u64,include_map:bool,check:Option<Arc<dyn Fn()->Result<(),String>+Send+Sync>>,
 }
 impl ImageReader {
     pub fn data_length(&self)->u64 {self.changed.as_ref().map_or(self.count,|c|c.len() as u64)*u64::from(self.size)}
@@ -191,6 +194,7 @@ impl ImageReader {
 }
 impl Read for ImageReader {
     fn read(&mut self,out:&mut[u8])->std::io::Result<usize> {
+        if let Some(check)=&self.check {check().map_err(std::io::Error::other)?;}
         if out.is_empty() || self.position>=self.length() {return Ok(0);}
         let data=self.data_length();
         let (bytes,within)=if self.position<data {
@@ -208,6 +212,7 @@ impl Read for ImageReader {
 }
 impl Seek for ImageReader {
     fn seek(&mut self,from:SeekFrom)->std::io::Result<u64> {
+        if let Some(check)=&self.check {check().map_err(std::io::Error::other)?;}
         let at=match from {SeekFrom::Start(n)=>i128::from(n),SeekFrom::Current(n)=>i128::from(self.position)+i128::from(n),SeekFrom::End(n)=>i128::from(self.length())+i128::from(n)};
         self.position=u64::try_from(at).map_err(|_|std::io::Error::other("SQLite image seek outside address range"))?;Ok(self.position)
     }

@@ -3,6 +3,10 @@ use crate::{Error,Result};
 use sinex_model::{ImageExtent,MaterialId,SqliteImageMeta};
 use sqlx::PgConnection;
 
+pub async fn latest(conn:&mut PgConnection,database:&str,host:&str)->Result<Option<MaterialId>> {
+    Ok(sqlx::query_scalar!("SELECT material_id FROM raw.sqlite_images WHERE database=$1 AND host=$2 ORDER BY revision_id DESC LIMIT 1",database,host).fetch_optional(conn).await?.map(MaterialId))
+}
+
 pub async fn load(conn:&mut PgConnection,material:MaterialId)->Result<Option<(SqliteImageMeta,Vec<ImageExtent>,sinex_model::MaterialRef)>> {
     let Some(row)=sqlx::query!("SELECT revision_id,metadata FROM raw.sqlite_images WHERE material_id=$1",material.0).fetch_optional(&mut *conn).await? else {return Ok(None)};
     let metadata:SqliteImageMeta=serde_json::from_value(row.metadata).map_err(|e|Error::Invalid(e.to_string()))?;

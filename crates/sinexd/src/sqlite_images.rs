@@ -63,6 +63,8 @@ pub(crate) fn store(blobs: &Blobs, image: &Image, recipient: Option<&sealed::Rec
     meta.read_stored_bytes=unique.into_iter().try_fold(0u64,|sum,name|sum.checked_add(blobs.stored_size(name).map_err(err)?).ok_or_else(||"SQLite read cost overflow".to_owned()))?;
     let wrapped=key.as_ref().map(|k|Ok::<_,String>(WrappedMaterialKey {material:meta.material,key_ref:k.key_ref.clone(),wrapped:sealed::wrap(k,recipient.expect("checked recipient")).map_err(err)?})).transpose()?;
     let material=MaterialRef {id:meta.material,input:None,blob,length:meta.evidence_bytes,part_index:0,previous_part:None,parser:"sqlite-image".into(),parser_version:1,manifest:serde_json::json!({"role":"sqlite-image","sqlite_database":meta.database,"sqlite_image":meta})};
-    Ok(SqliteImagePublication {metadata:meta,material,extents,key:wrapped})
+    let publication=SqliteImagePublication {metadata:meta,material,extents,key:wrapped};
+    publication.validate()?;
+    Ok(publication)
 }
 fn err(e:impl std::fmt::Display)->String {e.to_string()}

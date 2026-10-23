@@ -62,16 +62,17 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     }
     let revision = if let Some(image)=&p.image {
         let m=&image.metadata;
-        m.validate(&image.extents).map_err(Error::Invalid)?;
+        image.validate().map_err(Error::Invalid)?;
         if p.image_revision!=Some(m.revision) || m.host!=p.input.host || image.material.id!=m.material || image.material.length!=m.evidence_bytes {
             return Err(Error::Invalid("SQLite image publication does not match source progress".into()));
         }
         let existing=sqlx::query_scalar!("SELECT input_id FROM raw.revisions WHERE id=$1",m.revision.0).fetch_optional(&mut *conn).await?;
         if existing.is_some_and(|id|id!=input) {return Err(Error::Invalid("SQLite image revision belongs to another input".into()));}
-        // Logical-only row polls can open intervening revisions; the physical
-        // predecessor is checked independently by canonical DB lineage.
-        let previous=sqlx::query_scalar!("SELECT revision_id FROM raw.sqlite_images WHERE host=$1 AND database=$2 ORDER BY metadata->>'captured_at' DESC, revision_id DESC LIMIT 1",m.host,m.database).fetch_optional(&mut *conn).await?;
-        if existing.is_none() && previous!=m.previous.map(|id|id.0) {return Err(Error::Invalid("SQLite image predecessor changed before admission".into()));}
+        if let Some(previous)=m.previous {
+            let id=sqlx::query_scalar!("SELECT material_id FROM raw.sqlite_images WHERE revision_id=$1",previous.0).fetch_optional(&mut *conn).await?.ok_or_else(||Error::Invalid("SQLite image predecessor missing".into()))?;
+            let (metadata,extents,_)=crate::sqlite_images::load(conn,sinex_model::MaterialId(id)).await?.ok_or_else(||Error::Invalid("SQLite image predecessor missing".into()))?;
+            image.validate_predecessor(&metadata,&extents).map_err(Error::Invalid)?;
+        }
         sqlx::query!("INSERT INTO raw.revisions (id,input_id,previous_id,kind) VALUES ($1,$2,$3,'snapshot') ON CONFLICT (id) DO NOTHING",m.revision.0,input,current).execute(&mut *conn).await?;
         material(conn,input,m.revision.0,&image.material).await?;
         if let Some(key)=&image.key {crate::sealed::store_key(conn,key.material,&key.key_ref,&key.wrapped).await?;}

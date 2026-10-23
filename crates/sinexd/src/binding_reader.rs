@@ -69,15 +69,12 @@ pub(crate) async fn read(
 ) -> Vec<(String, Result<Totals, String>)> {
     let mut results = Vec::new();
     let mut archives: Vec<Archive> = Vec::new();
+    let mut known=match sinex_store::bindings::list(conn).await {Ok(known)=>known,Err(e)=>return bound.iter().map(|b|(b.binding.source.clone(),Err(e.to_string()))).collect()};
+    known.extend(bound.iter().map(|b|sinex_store::bindings::Stored {binding:b.binding.name.clone(),source:b.binding.source.clone(),input:b.binding.input.display().to_string(),settings:serde_json::to_value(&b.binding.settings).expect("settings serialize")}));
     for (index, b) in bound.iter_mut().enumerate() {
         let init = async {
+            check_image_class(conn,b,&known).await?;
             if !b.remembered {
-                if let Some(policy)=b.reader.image_policy() {
-                    let rules=sinex_store::privacy::load(conn,std::iter::once(b.source.spec().name)).await.map_err(|e|e.to_string())?;
-                    let class=b.source.spec().class.max(rules.floors.get(b.source.spec().name).copied().unwrap_or_default());
-                    let class=rules.rules.iter().fold(class,|c,r|c.max(r.class));
-                    if policy.class<class {return Err("whole-database image class is below a configured source/field class".into());}
-                }
                 backfill::record(conn, &b.binding).await?;
                 // Export drivers have no memory derived from old material bodies.
                 if b.reader.export_archive().is_none() {
@@ -167,7 +164,15 @@ pub(crate) async fn read(
                 sink,
                 |cursor| {
                     if *stop.borrow() {b.reader.cancel_pending();return Err(drivers::DriverError::Cancelled);}
-                    b.reader.poll(cursor)
+                    let acquired=b.reader.poll(cursor)?;
+                    if let Some(image)=&acquired.image {
+                        let stop=stop.clone();
+                        image.set_check(Arc::new(move || {
+                            if *stop.borrow() || sinex_protocol::private_mode::PrivateMode::default().on() {return Err("SQLite image capture cancelled".into());}
+                            Ok(())
+                        })).map_err(drivers::DriverError::Io)?;
+                    }
+                    Ok(acquired)
                 },
             )
             .await;
@@ -217,11 +222,32 @@ pub(crate) async fn read(
     }
     results
 }
+async fn check_image_class(conn:&mut PgConnection,b:&Bound,known:&[sinex_store::bindings::Stored])->Result<(),String> {
+    let Some(policy)=b.reader.image_policy() else {return Ok(())};
+    let mut classes=std::collections::HashMap::new();
+    for input in known {
+        let host=input.settings["host"].as_str().unwrap_or_default();
+        if host!=b.binding.settings.host || !same_database(&b.binding.input,std::path::Path::new(&input.input)) {continue;}
+        let class=sinex_sources::sources::spec(&input.source).map(|s|s.class).ok_or("configured database binding has no known source class")?;
+        classes.entry(input.source.clone()).and_modify(|c:&mut Class|*c=(*c).max(class)).or_insert(class);
+    }
+    let rules=sinex_store::privacy::load(conn,classes.keys().map(String::as_str)).await.map_err(|e|e.to_string())?;
+    let class=classes.into_iter().fold(b.source.spec().class,|c,(name,declared)|c.max(declared).max(rules.floors.get(&name).copied().unwrap_or_default()));
+    let class=rules.rules.iter().fold(class,|c,r|c.max(r.class));
+    if policy.class<class {return Err("whole-database image class is below a configured source/field class".into());}
+    Ok(())
+}
+fn same_database(a:&std::path::Path,b:&std::path::Path)->bool {
+    use std::os::unix::fs::MetadataExt;
+    if a==b {return true;}
+    if let (Ok(a),Ok(b))=(a.metadata(),b.metadata()) {return a.dev()==b.dev() && a.ino()==b.ino();}
+    false
+}
+
 async fn restore_sqlite(conn:&mut PgConnection,blobs:&Blobs,b:&mut Bound,cursor:&Value)->Result<(),String> {
-    if let Some(value)=cursor.get("image").filter(|v|!v.is_null()) {
-        let saved:drivers::sqlite_rows::ImageCursor=serde_json::from_value(value.clone()).map_err(|e|e.to_string())?;
-        let (metadata,extents,material)=sinex_store::sqlite_images::load(conn,saved.material).await.map_err(|e|e.to_string())?.ok_or("retained SQLite image is missing")?;
-        if metadata.revision!=saved.revision {return Err("SQLite image cursor differs from retained revision".into());}
+    let database=b.binding.input.canonicalize().map_err(|e|e.to_string())?.display().to_string();
+    if let Some(id)=sinex_store::sqlite_images::latest(conn,&database,&b.binding.settings.host).await.map_err(|e|e.to_string())? {
+        let (metadata,extents,material)=sinex_store::sqlite_images::load(conn,id).await.map_err(|e|e.to_string())?.ok_or("retained SQLite image is missing")?;
         let map=if metadata.class==Class::Sealed {None} else {
             let mut file=tempfile::tempfile().map_err(|e|e.to_string())?;
             let map=[sinex_model::ImageExtent {blob:material.blob,offset:metadata.map_offset,length:metadata.map_bytes}];
