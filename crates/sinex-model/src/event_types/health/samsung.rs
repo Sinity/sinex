@@ -506,13 +506,13 @@ pub struct Bin {
     pub(crate) uninterpreted: Map<String, Value>,
 }
 
-/// A companion-file reference or decoded source bins. Other JSON shapes remain explicit.
+/// A companion-file reference, decoded source bins, or an unrecognized object.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Binning {
     Reference(String),
     Rows(Vec<Bin>),
-    Uninterpreted(Value),
+    UninterpretedObject(Map<String, Value>),
 }
 impl<'de> Deserialize<'de> for Binning {
     fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
@@ -522,7 +522,10 @@ impl<'de> Deserialize<'de> for Binning {
             Value::Array(_) => serde_json::from_value(value)
                 .map(Self::Rows)
                 .map_err(serde::de::Error::custom),
-            other => Ok(Self::Uninterpreted(other)),
+            Value::Object(object) => Ok(Self::UninterpretedObject(object)),
+            _ => Err(serde::de::Error::custom(
+                "binning_data must be a reference, bin array or unknown object",
+            )),
         }
     }
 }
@@ -530,7 +533,7 @@ impl<'de> Deserialize<'de> for Binning {
 impl Binning {
     pub(crate) fn uninterpreted_fields(&self) -> Vec<String> {
         match self {
-            Self::Uninterpreted(_) => vec!["/values/binning_data".into()],
+            Self::UninterpretedObject(_) => vec!["/values/binning_data".into()],
             Self::Reference(_) => vec![],
             Self::Rows(rows) => rows
                 .iter()

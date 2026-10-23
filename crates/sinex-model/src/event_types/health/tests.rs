@@ -277,3 +277,30 @@ fn registration_keeps_identity_time_and_validates_known_payloads() {
         .is_err()
     );
 }
+
+#[test]
+fn unrecognized_bin_objects_are_explicit_but_invalid_scalar_bins_fail() {
+    let original = row(
+        "samsung-health-cloud",
+        "Health HRV",
+        json!({"binning_data":{"new_layout":[1,2]}}),
+    );
+    let output =
+        serde_json::to_value(serde_json::from_value::<HealthRecord>(original.clone()).unwrap())
+            .unwrap();
+    assert_eq!(output["values"], original["values"]);
+    assert_eq!(
+        output["uninterpreted_fields"],
+        json!(["/values/binning_data"])
+    );
+    for invalid in [json!(true), json!(4)] {
+        assert!(
+            serde_json::from_value::<HealthRecord>(row(
+                "samsung-health-cloud",
+                "Health HRV",
+                json!({"binning_data":invalid})
+            ))
+            .is_err()
+        );
+    }
+}
