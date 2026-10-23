@@ -36,7 +36,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "what the operator's Samsung account kept: health sync, settings, backups",
     class: Class::Open,
     parser: "samsung-account-export",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &["health.record", "account.record"],
     framer: frame,
 };
@@ -120,16 +120,19 @@ impl Parser for SamsungCloudParser {
                 .and_then(Value::as_i64)
                 .and_then(|ms| i32::try_from(ms / 60_000).ok());
             return Ok((
-                vec![SamsungEvent::Health(HealthRecord {
-                    provider: "samsung-health-cloud".into(),
-                    category: table,
-                    native_id,
-                    start,
-                    end,
-                    offset_minutes,
-                    values,
-                    events: vec![],
-                })],
+                vec![SamsungEvent::Health(
+                    HealthRecord::new(
+                        "samsung-health-cloud".into(),
+                        table,
+                        native_id,
+                        start,
+                        end,
+                        offset_minutes,
+                        values,
+                        vec![],
+                    )
+                    .map_err(|error| RecordError::new(error.to_string()))?,
+                )],
                 carry.clone(),
             ));
         }

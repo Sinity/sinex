@@ -28,7 +28,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "sleep sessions and their phases",
     class: Class::Open,
     parser: "sleep-as-android",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &["health.record"],
     framer: frame,
 };
@@ -125,16 +125,19 @@ impl Parser for SleepParser {
             values.insert("actigraphy".into(), Value::Array(actigraphy));
         }
         Ok((
-            vec![HealthRecord {
-                provider: "sleep-as-android".into(),
-                category: "sleep".into(),
-                native_id: id_ms.to_string(),
-                start: Some(start),
-                end,
-                offset_minutes: Some((offset_secs / 60) as i32),
-                values,
-                events,
-            }],
+            vec![
+                HealthRecord::new(
+                    "sleep-as-android".into(),
+                    "sleep".into(),
+                    id_ms.to_string(),
+                    Some(start),
+                    end,
+                    Some((offset_secs / 60) as i32),
+                    values,
+                    events,
+                )
+                .map_err(|error| RecordError::new(error.to_string()))?,
+            ],
             Carry {
                 header: header.clone(),
                 session: Some((id_ms, start, end, (offset_secs / 60) as i32)),
@@ -161,16 +164,19 @@ fn noise(cells: &[String], carry: &Carry) -> Result<(Vec<HealthRecord>, Carry), 
     let mut values = Map::new();
     values.insert("noise".into(), Value::Array(samples));
     Ok((
-        vec![HealthRecord {
-            provider: "sleep-as-android".into(),
-            category: "sleep-noise".into(),
-            native_id: format!("{id_ms}:noise"),
-            start: Some(start),
-            end,
-            offset_minutes: Some(offset),
-            values,
-            events: vec![],
-        }],
+        vec![
+            HealthRecord::new(
+                "sleep-as-android".into(),
+                "sleep-noise".into(),
+                format!("{id_ms}:noise"),
+                Some(start),
+                end,
+                Some(offset),
+                values,
+                vec![],
+            )
+            .map_err(|error| RecordError::new(error.to_string()))?,
+        ],
         Carry {
             header: carry.header.clone(),
             session: None,

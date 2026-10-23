@@ -26,7 +26,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "sleep, heart, activity and body measurements",
     class: Class::Open,
     parser: "samsung-health-export",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["health.record"],
     framer: frame,
 };
@@ -112,16 +112,19 @@ impl Parser for SamsungParser {
             .and_then(Value::as_str)
             .and_then(offset);
         Ok((
-            vec![HealthRecord {
-                provider: "samsung-health".into(),
-                category: carry.category.clone(),
-                native_id,
-                start,
-                end,
-                offset_minutes,
-                values,
-                events: vec![],
-            }],
+            vec![
+                HealthRecord::new(
+                    "samsung-health".into(),
+                    carry.category.clone(),
+                    native_id,
+                    start,
+                    end,
+                    offset_minutes,
+                    values,
+                    vec![],
+                )
+                .map_err(|error| RecordError::new(error.to_string()))?,
+            ],
             carry.clone(),
         ))
     }

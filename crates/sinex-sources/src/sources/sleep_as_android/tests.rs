@@ -19,10 +19,20 @@ fn derives_the_offset_from_from_and_id_and_drops_sentinels() {
         r.end.unwrap().unix_ns() - r.start.unwrap().unix_ns(),
         (2 * 3600 + 4 * 60) as i128 * 1_000_000_000
     );
-    assert_eq!(r.values["snore"], Value::Null, "-1 is absent");
-    assert_eq!(r.values["cycles"], json!(3.0));
+    assert_eq!(
+        serde_json::to_value(r.values()).unwrap()["snore"],
+        Value::Null,
+        "-1 is absent"
+    );
+    assert_eq!(
+        serde_json::to_value(r.values()).unwrap()["cycles"],
+        json!(3.0)
+    );
     assert_eq!(r.events.len(), 2);
-    assert_eq!(r.events[1]["value"], json!(88.0));
+    assert_eq!(
+        serde_json::to_value(&r.events[1]).unwrap()["value"],
+        json!(88.0)
+    );
 }
 
 #[test]
@@ -51,9 +61,12 @@ fn a_noise_row_belongs_to_the_session_before_it() {
     let (out, after) = SleepParser
         .parse(&&noise[..], &after, &crate::RecordContext::none())
         .unwrap();
-    assert_eq!(out[0].category, "sleep-noise");
+    assert_eq!(out[0].category(), "sleep-noise");
     assert_eq!(out[0].native_id, "1759632540000:noise");
-    assert_eq!(out[0].values["noise"], json!([20643.4, 287.5]));
+    assert_eq!(
+        serde_json::to_value(out[0].values()).unwrap()["noise"],
+        json!([20643.4, 287.5])
+    );
     assert!(
         SleepParser
             .parse(&&noise[..], &after, &crate::RecordContext::none())
