@@ -284,3 +284,25 @@ fn staged_read_failure_stops_before_a_false_progress_chunk() {
     assert!(chunks.next().unwrap().is_err());
     assert!(chunks.next().is_none());
 }
+
+#[test]
+fn invalid_staged_ranges_are_refused_before_record_allocation() {
+    let file = tempfile::tempfile().unwrap();
+    assert!(
+        Drainer::new(
+            &Lines,
+            DrainInput {
+                source: "t",
+                class: Class::Open,
+                material: MaterialId::new(),
+                bytes: RecordBytes::File(&file),
+                records: &[(0, usize::MAX)],
+                carry: Value::Null,
+                reading_order: &|_| ReadingOrder(0),
+                limits: Limits::default(),
+                manifest: &Value::Null,
+            }
+        )
+        .is_err()
+    );
+}

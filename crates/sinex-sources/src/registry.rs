@@ -49,7 +49,9 @@ pub struct DeclaredSource<P> {
 /// in one list.
 pub trait Source: Send + Sync {
     fn spec(&self) -> &SourceSpec;
-    /// Drain a material one chunk at a time: memory holds one chunk.
+    /// Drain one batch at a time, retaining the current record and batch.
+    /// Parser errors are accounted record outcomes; material read errors stop
+    /// iteration without admitting the failed range.
     fn drainer<'a>(
         &'a self,
         input: DrainInput<'a>,

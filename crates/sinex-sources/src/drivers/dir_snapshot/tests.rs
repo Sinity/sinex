@@ -285,3 +285,17 @@ fn bundle_staging_does_not_hold_whole_file_bodies() {
         "acquisition retained the bundle body"
     );
 }
+
+#[test]
+fn missing_directory_is_unavailable_and_accessible_empty_is_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = driver(dir.path().join("missing"), 1024);
+    let missing = d.poll(&Value::Null, &mut DirState::default()).unwrap();
+    assert!(missing.observation.unavailable.is_some());
+    assert!(missing.material.is_none());
+    let d = driver(dir.path().to_owned(), 1024);
+    let empty = d.poll(&Value::Null, &mut DirState::default()).unwrap();
+    assert!(empty.observation.unavailable.is_none());
+    assert!(empty.material.is_none());
+    assert!(empty.cursor_unchanged["last_complete_scan_ns"].is_number());
+}

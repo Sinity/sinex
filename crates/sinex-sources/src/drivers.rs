@@ -98,6 +98,13 @@ pub struct NewMaterial {
 }
 
 impl NewMaterial {
+    fn decoded_len(&self, retained_len: u64) -> usize {
+        match self.stored {
+            Some(StoredBytes::FramedFile(_)) => retained_len as usize,
+            _ => self.bytes.len(),
+        }
+    }
+
     pub(crate) fn record_bytes(&self) -> crate::drain::RecordBytes<'_> {
         match &self.stored {
             Some(StoredBytes::FramedFile(file)) => crate::drain::RecordBytes::File(file),
@@ -219,7 +226,7 @@ impl Prepared<'_> {
     pub fn material_len(&self) -> Option<usize> {
         self.material
             .as_ref()
-            .map(|(_, reference)| reference.length as usize)
+            .map(|(material, reference)| material.decoded_len(reference.length))
     }
 
     fn progress(
@@ -296,7 +303,7 @@ impl Prepared<'_> {
             // After the last chunk the whole material is read, records
             // skipped as already read included.
             let end = if chunk.end >= last_end {
-                material.length as usize
+                m.decoded_len(material.length)
             } else {
                 chunk.end
             };

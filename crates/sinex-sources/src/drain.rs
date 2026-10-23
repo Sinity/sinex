@@ -37,7 +37,10 @@ impl<'a> From<&'a [u8]> for RecordBytes<'a> {
 impl<'a> RecordBytes<'a> {
     fn record(&self, start: usize, end: usize) -> std::io::Result<std::borrow::Cow<'a, [u8]>> {
         match self {
-            Self::Slice(bytes) => Ok(std::borrow::Cow::Borrowed(&bytes[start..end])),
+            Self::Slice(bytes) => bytes
+                .get(start..end)
+                .map(std::borrow::Cow::Borrowed)
+                .ok_or_else(|| std::io::Error::other("record range exceeds material")),
             Self::File(file) => {
                 use std::os::unix::fs::FileExt;
                 let length = end
@@ -159,6 +162,19 @@ pub struct Drainer<'a, P: Parser> {
 
 impl<'a, P: Parser> Drainer<'a, P> {
     pub fn new(parser: &'a P, input: DrainInput<'a>) -> Result<Self, RecordError> {
+        if let RecordBytes::File(file) = input.bytes {
+            let length = file
+                .metadata()
+                .map_err(|e| RecordError::new(format!("staged material: {e}")))?
+                .len();
+            if input
+                .records
+                .iter()
+                .any(|&(start, end)| start > end || end as u64 > length)
+            {
+                return Err(RecordError::new("record range exceeds staged material"));
+            }
+        }
         let carry: P::Carry = if input.carry.is_null() {
             P::Carry::default()
         } else {
