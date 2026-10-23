@@ -290,7 +290,7 @@ fn idle_refreshes_uidnext_and_validity_before_the_next_fetch() {
 }
 
 #[test]
-fn returned_uids_allow_progress_without_an_usable_uidnext() {
+fn returned_uids_allow_progress_without_a_usable_uidnext() {
     for boundary in [None, Some(0), Some(1)] {
         let (port, server) = scripted(vec![
             ("LOGIN \"me@x\" \"secret\"", "{tag} OK login\r\n".into()),
@@ -307,4 +307,39 @@ fn returned_uids_allow_progress_without_an_usable_uidnext() {
         assert_eq!((material.cursor_at)(material.bytes.len())["uid_next"], 5);
         server.join().unwrap();
     }
+}
+
+
+#[test]
+fn partial_admission_keeps_unfed_uids_available_for_retry() {
+    struct Discard;
+    impl crate::drivers::MaterialSink for Discard {
+        fn put(&self, bytes: &[u8]) -> Result<String, String> {
+            Ok(format!("blake3:{}", blake3::hash(bytes).to_hex()))
+        }
+        fn put_file(&self, _: &std::path::Path) -> Result<String, String> {
+            panic!("IMAP supplies an in-memory answer")
+        }
+    }
+    let port = server(vec![(4, M1), (7, M2)], 99, false);
+    let imap = mail(port, Some("secret"), None);
+    let acquired = imap.poll(&Value::Null).unwrap();
+    let source = source();
+    let prepared = crate::drivers::prepare(
+        &source, "imap-test", sinex_model::RunId::new(), acquired, Value::Null,
+        &Discard, crate::Limits { max_events: 1, max_bytes: usize::MAX },
+    ).unwrap();
+    let batches = prepared.batches().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    assert_eq!(batches.len(), 2);
+    let progress = |batch: &sinex_model::Batch| {
+        let sinex_model::BatchKind::Source(progress) = &batch.kind else { panic!() };
+        progress.cursor.clone()
+    };
+    let partial = progress(&batches[0]);
+    assert_eq!(partial["uid_next"], 1);
+    let repeated = imap.poll(&partial).unwrap().material.unwrap();
+    assert_eq!(repeated.manifest["uids"], json!([4, 7]));
+    let complete = progress(&batches[1]);
+    assert_eq!(complete["uid_next"], 8);
+    assert!(imap.poll(&complete).unwrap().material.is_none());
 }

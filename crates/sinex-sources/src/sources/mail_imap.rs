@@ -393,7 +393,8 @@ impl ImapMail {
             material: Some(id),
             part_index,
         };
-        let size = bytes.len() as u64;
+        let length = bytes.len();
+        let size = length as u64;
         Ok(Acquired {
             image: None,
             input: self.input(),
@@ -413,8 +414,12 @@ impl ImapMail {
                 previous_part: previous.material,
                 reading_order: crate::drivers::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new(move |_| {
-                    serde_json::to_value(&next).expect("cursor serializes")
+                cursor_at: Box::new(move |end| {
+                    let mut cursor = next.clone();
+                    if end < length {
+                        cursor.uid_next = start;
+                    }
+                    serde_json::to_value(cursor).expect("cursor serializes")
                 }),
                 aligned: false,
                 vanished: Vec::new(),
