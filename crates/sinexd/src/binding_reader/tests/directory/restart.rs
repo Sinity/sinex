@@ -1,6 +1,6 @@
 use super::*;
 use sinex_model::{BatchKind, MaterialRef};
-use sinex_sources::sources::notes;
+use sinex_sources::{Limits, sources::notes};
 
 #[tokio::test]
 async fn restarted_directory_reader_observes_files_removed_after_its_committed_capture() {
