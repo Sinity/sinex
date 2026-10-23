@@ -182,9 +182,18 @@ fn the_driver_reads_the_join_and_sees_heartbeat_growth() {
     let mut state = RowState::default();
     let first = d.poll(&Value::Null, &mut state).unwrap();
     let m = first.material.as_ref().unwrap();
-    let cursor = (m.cursor_at)(m.bytes.len());
-    let r: Map<String, Value> =
-        serde_json::from_slice(&m.bytes[m.records[0].0..m.records[0].1]).unwrap();
+    let read_row = |material: &crate::drivers::NewMaterial| -> Map<String, Value> {
+        use std::os::unix::fs::FileExt;
+        let Some(crate::drivers::StoredBytes::FramedFile(file)) = &material.stored else {
+            panic!("SQLite rows use staged bytes")
+        };
+        let (start, end) = material.records[0];
+        let mut bytes = vec![0; end - start];
+        file.read_exact_at(&mut bytes, start as u64).unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    };
+    let cursor = (m.cursor_at)(m.records.last().unwrap().1);
+    let r = read_row(m);
     assert_eq!(r["bucket"], json!("aw-watcher-window_h"));
     c.execute_batch(&format!(
         "UPDATE events SET endtime = {} WHERE id = 1",
@@ -192,9 +201,11 @@ fn the_driver_reads_the_join_and_sees_heartbeat_growth() {
     ))
     .unwrap();
     let next = d.poll(&cursor, &mut state).unwrap();
-    assert_eq!(
-        next.material.unwrap().records.len(),
-        1,
-        "the grown row is read again"
-    );
+    let grown = next.material.unwrap();
+    assert_ne!(grown.id, m.id, "the completed snapshot was confirmed");
+    assert_eq!(grown.records.len(), 1, "the grown row is read again");
+    let grown_row = read_row(&grown);
+    assert_eq!(grown_row["bucket"], r["bucket"]);
+    assert_eq!(grown_row["_rowid"], r["_rowid"]);
+    assert_eq!(grown_row["endtime"], json!(now + 5_000_000_000));
 }
