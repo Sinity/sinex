@@ -45,6 +45,10 @@ pub fn kind_names() -> Vec<&'static str> {
 pub(crate) struct Totals {
     polls: usize,
     materials: usize,
+    physical_images: u64,
+    physical_evidence_bytes: u64,
+    physical_database_bytes: u64,
+    physical_map_bytes: u64,
     material_bytes: usize,
     batches: usize,
     events_offered: usize,
@@ -271,7 +275,13 @@ pub(crate) async fn drive(
             .await
             .map_err(|e| e.to_string())?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
-        let acquired = poll(&cursor).map_err(|e| e.to_string())?;
+        let acquired = match poll(&cursor) {
+            Err(drivers::DriverError::Pending) => {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            result => result.map_err(|e| e.to_string())?,
+        };
         let carry = if acquired.material.is_some() {
             match &sealing {
                 Some(s) => s.open_carry(&carry)?,
@@ -285,7 +295,6 @@ pub(crate) async fn drive(
         }
         let had_material = acquired.material.is_some();
         submit(
-            read_conn,
             handle,
             run,
             source,
@@ -309,7 +318,6 @@ pub(crate) async fn drive(
 /// Submit one acquisition through the same drain and writer in every binding reader.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn submit(
-    read_conn: &mut PgConnection,
     handle: &writer::WriterHandle,
     run: RunId,
     source: &dyn Source,
@@ -334,6 +342,12 @@ pub(crate) async fn submit(
         Limits::default(),
     )
     .map_err(|e| e.to_string())?;
+    if let Some(image) = prepared.image_meta() {
+        totals.physical_images += 1;
+        totals.physical_evidence_bytes += image.evidence_bytes;
+        totals.physical_database_bytes += image.image_bytes;
+        totals.physical_map_bytes += image.map_bytes;
+    }
     let had_material = prepared.material_len();
     if let Some(bytes) = had_material {
         totals.materials += 1;
@@ -342,7 +356,7 @@ pub(crate) async fn submit(
     for batch in prepared.batches().map_err(|e| e.to_string())? {
         let mut one = [batch.map_err(|e| e.to_string())?];
         if let Some(s) = sealing {
-            s.seal(read_conn, &mut one).await?;
+            s.seal(&mut one)?;
         }
         if let Some(authority) = authority {
             authority.check()?;
@@ -392,6 +406,10 @@ impl Totals {
             "archive_decoded_bytes": self.archive_decoded_bytes,
             "archive_record_bytes": self.archive_record_bytes,
             "materials": self.materials,
+            "physical_images":self.physical_images,
+            "physical_evidence_bytes":self.physical_evidence_bytes,
+            "physical_database_bytes":self.physical_database_bytes,
+            "physical_map_bytes":self.physical_map_bytes,
             "material_bytes": self.material_bytes,
             "batches": self.batches,
             "events_offered": self.events_offered,
@@ -418,6 +436,10 @@ impl Totals {
         self.archive_decoded_bytes += o.archive_decoded_bytes;
         self.archive_record_bytes += o.archive_record_bytes;
         self.materials += o.materials;
+        self.physical_images += o.physical_images;
+        self.physical_evidence_bytes += o.physical_evidence_bytes;
+        self.physical_database_bytes += o.physical_database_bytes;
+        self.physical_map_bytes += o.physical_map_bytes;
         self.material_bytes += o.material_bytes;
         self.batches += o.batches;
         self.events_offered += o.events_offered;

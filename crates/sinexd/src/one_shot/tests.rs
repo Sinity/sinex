@@ -37,7 +37,7 @@ async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline()
             expected_carry = progress.carry.clone();
         }
         let mut batch = [batch];
-        sink.seal(&mut ctx.read_conn, &mut batch).await.unwrap();
+        sink.seal(&mut batch).unwrap();
         ctx.writer
             .submit(
                 crate::writer::Priority::Bulk,
@@ -122,7 +122,7 @@ async fn sealed_failure_details_are_encrypted_and_exactly_recoverable() {
         progress.carry = literal_envelope.clone();
     }
     let mut batch = [batch];
-    sink.seal(&mut ctx.read_conn, &mut batch).await.unwrap();
+    sink.seal(&mut batch).unwrap();
     ctx.writer
         .submit(
             crate::writer::Priority::Bulk,
@@ -277,3 +277,5 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
 }
 
 mod sqlite_rows;
+
+mod sqlite_images;

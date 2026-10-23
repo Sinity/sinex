@@ -218,6 +218,25 @@ impl Blobs {
         }
     }
 
+    pub fn stored_size(&self, name: &str) -> Result<u64> {
+        Ok(self.0.stored_size(&parse(name)?)?)
+    }
+
+    /// Assemble only declared image byte extents; map bytes remain outside this stream.
+    pub fn assemble(&self, extents: &[sinex_model::ImageExtent]) -> Result<impl Read + Seek + '_> {
+        let extents = extents
+            .iter()
+            .map(|e| {
+                Ok(hashed_blobs::Extent {
+                    blob: parse(&e.blob)?,
+                    offset: e.offset,
+                    len: e.length,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(self.0.assemble(&extents)?)
+    }
+
     /// Read a blob back and check it against its name.
     pub fn verify(&self, name: &str) -> Result<hashed_blobs::Verified> {
         Ok(self.0.verify(&parse(name)?)?)

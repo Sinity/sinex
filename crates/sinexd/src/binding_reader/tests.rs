@@ -650,3 +650,5 @@ async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
 }
 
 mod directory;
+
+mod sqlite_images;

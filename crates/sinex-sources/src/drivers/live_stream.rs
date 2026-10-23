@@ -261,6 +261,7 @@ impl LiveStream {
         let Some(first) = present.first() else {
             // Capture has not written anything yet: an unchanged look.
             return Ok(Acquired {
+                image: None,
                 input: self.input.clone(),
                 observation: sinex_model::ObservationFacts {
                     observed_at: Some(Timestamp::now()),

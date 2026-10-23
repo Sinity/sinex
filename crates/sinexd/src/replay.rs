@@ -192,9 +192,10 @@ pub async fn run(
         let parsers = sources_of(read_conn, &chain).await?;
         let mut keys = HashMap::new();
         for material in &chain {
-            if sinex_model::MaterialRole::of(&material.manifest).map_err(|e| e.to_string())?
-                == sinex_model::MaterialRole::OriginalArchive
-            {
+            if matches!(
+                sinex_model::MaterialRole::of(&material.manifest).map_err(|e| e.to_string())?,
+                sinex_model::MaterialRole::OriginalArchive | sinex_model::MaterialRole::SqliteImage
+            ) {
                 continue;
             }
             if blobs.is_sealed(&material.blob).map_err(|e| e.to_string())? {
@@ -426,7 +427,10 @@ fn read_chain_into(
     for (m, source) in chain.iter().zip(parsers) {
         let role = sinex_model::MaterialRole::of(&m.manifest)
             .map_err(|e| format!("material {}: {e}", m.id))?;
-        if role == sinex_model::MaterialRole::OriginalArchive {
+        if matches!(
+            role,
+            sinex_model::MaterialRole::OriginalArchive | sinex_model::MaterialRole::SqliteImage
+        ) {
             continue;
         }
         // A compressed export's records are in its decoded member stream

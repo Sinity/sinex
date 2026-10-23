@@ -90,6 +90,7 @@ impl Pending {
         let scanned = self.scanned.clone();
         let previous_scan = self.previous.last_complete_scan_ns;
         Acquired {
+            image: None,
             input,
             observation: self.observation.clone(),
             revision: RevisionChange::Snapshot,
@@ -159,6 +160,7 @@ impl DirSnapshot {
             Ok(f) => f,
             Err(e) => {
                 return Ok(Acquired {
+                    image: None,
                     input: self.input(),
                     observation: ObservationFacts {
                         unavailable: Some(format!("{}: {e}", self.root.display())),
@@ -279,6 +281,7 @@ impl DirSnapshot {
             state.files = next_files;
             facts.changed = false;
             return Ok(Acquired {
+                image: None,
                 input: self.input(),
                 observation: facts,
                 revision: RevisionChange::Same,

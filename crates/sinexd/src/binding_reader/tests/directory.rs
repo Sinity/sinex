@@ -183,6 +183,7 @@ async fn legacy_empty_tail_commits_with_its_shared_checkpoint_and_retries_exactl
         {"path":"a.md","stream_offset":0,"length":5}, {"path":"b.md","stream_offset":5,"length":0}
     ]});
     let acquired = |id: MaterialId, manifest: Value| Acquired {
+        image: None,
         input: InputRef {
             kind: "directory".into(),
             locator: "synthetic-vault".into(),

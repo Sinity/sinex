@@ -32,3 +32,6 @@ pub mod __private {
     pub use schemars;
     pub use serde_json;
 }
+
+pub mod sqlite_image;
+pub use sqlite_image::{ImageExtent, SqliteImageMeta, SqliteImagePublication, WrappedMaterialKey};

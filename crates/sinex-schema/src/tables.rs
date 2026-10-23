@@ -240,6 +240,14 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   parser_version integer NOT NULL
 )".into(),
         "CREATE INDEX materials_input ON raw.materials (input_id, part_index)".into(),
+        "CREATE TABLE raw.sqlite_images (
+  revision_id uuid PRIMARY KEY REFERENCES raw.revisions(id),
+  material_id uuid UNIQUE NOT NULL REFERENCES raw.materials(id),
+  database text NOT NULL,
+  host text NOT NULL,
+  metadata jsonb NOT NULL
+)".into(),
+        "CREATE INDEX sqlite_images_lineage ON raw.sqlite_images (host, database)".into(),
         // One row per record a parser could not read; the bytes stay in the
         // material, so a retry is a replay of exactly those bytes.
         "CREATE TABLE raw.failures (

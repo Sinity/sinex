@@ -193,6 +193,7 @@ pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
     // Record bodies do not replace their original archive. Blanking a decoded
     // part alone would leave the same private bytes in its captured ancestor.
     let material_ids: Vec<Uuid> = materials.keys().copied().collect();
+    crate::sqlite_images::guard_excision(conn, &material_ids).await?;
     let retained_archive = sqlx::query_scalar!(
         r#"WITH RECURSIVE ancestors AS (
              SELECT id, previous_part_id, manifest FROM raw.materials WHERE id = ANY($1)

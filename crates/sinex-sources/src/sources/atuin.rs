@@ -49,7 +49,7 @@ impl Parser for AtuinParser {
         &self,
         row: &Map<String, Value>,
         _: &(),
-        _context: &crate::RecordContext<'_>,
+        context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<CommandExecuted>, ()), RecordError> {
         let text = |name: &str| -> Result<String, RecordError> {
             match row.get(name) {
@@ -79,7 +79,10 @@ impl Parser for AtuinParser {
         };
         let extra: Map<String, Value> = row
             .iter()
-            .filter(|(k, _)| !KNOWN.contains(&k.as_str()))
+            .filter(|(k, _)| {
+                !KNOWN.contains(&k.as_str())
+                    || (context.manifest["row_format"] == 2 && k.as_str() == "_rowid")
+            })
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         let payload = CommandExecuted {

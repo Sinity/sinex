@@ -174,6 +174,7 @@ impl AppendFile {
             Ok(f) => f,
             Err(e) => {
                 return Ok(Acquired {
+                    image: None,
                     input: self.input(),
                     observation: ObservationFacts {
                         unavailable: Some(format!("{}: {e}", self.path.display())),
@@ -197,6 +198,7 @@ impl AppendFile {
             && !cursor.is_null()
         {
             return Ok(Acquired {
+                image: None,
                 input: self.input(),
                 observation: ObservationFacts {
                     changed: false,
@@ -272,6 +274,7 @@ impl AppendFile {
             };
             let unchanged = Cursor { window, ..base };
             return Ok(Acquired {
+                image: None,
                 input: self.input(),
                 observation: facts,
                 revision: RevisionChange::Same,
@@ -359,6 +362,7 @@ impl AppendFile {
             manifest["records"] = json!(records);
         }
         Ok(Acquired {
+            image: None,
             input: self.input(),
             observation: facts,
             revision,

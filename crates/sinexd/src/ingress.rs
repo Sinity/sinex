@@ -300,6 +300,9 @@ impl Ingest {
         }
         Ok((
             Some(SourceProgress {
+                image: None,
+                image_revision: None,
+                material_keys: Vec::new(),
                 binding: format!("ingress:{producer}"),
                 input: m.input.clone(),
                 observation: ObservationFacts {
