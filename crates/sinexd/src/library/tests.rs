@@ -33,6 +33,8 @@ async fn world() -> World {
     let base = std::env::temp_dir().join(format!("sinexd-library-{}", uuid::Uuid::now_v7()));
     let root = base.join("library");
     std::fs::create_dir_all(root.join("sub")).unwrap();
+    // Intake records canonical paths; TMPDIR may be a borrowed /proc/fd alias.
+    let root = std::fs::canonicalize(root).unwrap();
     World {
         _db: db,
         conn,
@@ -517,4 +519,42 @@ async fn excision_deletes_the_stored_media_bytes() {
         w.blobs.contains(&a_bytes).unwrap(),
         "b names the same bytes, so they stay"
     );
+}
+
+#[tokio::test]
+async fn library_add_through_an_alias_keeps_one_canonical_acquisition() {
+    let mut w = world().await;
+    let file = w.root.join("note.txt");
+    std::fs::write(&file, "synthetic library content").unwrap();
+    let alias = w.root.parent().unwrap().join("alias");
+    std::os::unix::fs::symlink(&w.root, &alias).unwrap();
+    let added = w
+        .ok(Request::LibraryAdd {
+            path: alias.display().to_string(),
+            reference: None,
+        })
+        .await;
+    assert_eq!(added["items_new"], 1);
+    assert_eq!(added["files_described"], 1);
+    assert_eq!(added["root"], w.root.display().to_string());
+    let first_item = w.item_at(&file).await;
+    let (_, blob) = acquisition(&mut w.conn, &file).await;
+    assert_eq!(w.blobs.read(&blob).unwrap(), b"synthetic library content");
+    let again = w
+        .ok(Request::LibraryAdd {
+            path: w.root.display().to_string(),
+            reference: None,
+        })
+        .await;
+    assert_eq!(again["items_new"], 0);
+    assert_eq!(again["library_records_written"], 0);
+    assert_eq!(w.item_at(&file).await, first_item);
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM core.live_equivalence WHERE event_type='library.acquisition'",
+    )
+    .fetch_one(&mut w.conn)
+    .await
+    .unwrap();
+    assert_eq!(count, 1);
+    std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }
