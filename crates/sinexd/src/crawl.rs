@@ -85,9 +85,17 @@ pub async fn run(
     let sink = Sink(blobs.clone());
     // Each crawl is its own list, so its binding starts from the beginning.
     let binding = format!("page-crawl@{host}/{}", run.0);
-    let totals = drive(read_conn, writer, run, &source, &binding, &sink, |c| {
-        crawl.poll(c)
-    })
+    let totals = drive(
+        read_conn,
+        writer,
+        run,
+        &source,
+        &binding,
+        &sink,
+        Default::default(),
+        sinex_model::Class::Open,
+        |c| crawl.poll(c),
+    )
     .await?;
     runs::end(read_conn, run).await.map_err(|e| e.to_string())?;
     Ok(totals)

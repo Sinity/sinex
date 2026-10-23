@@ -18,6 +18,15 @@ pub(super) async fn restore(
     else {
         return Ok(());
     };
+    let configured_class = b.source.spec().class.max(
+        sinex_store::privacy::load(conn, std::iter::once(b.source.spec().name))
+            .await
+            .map_err(|e| e.to_string())?
+            .floors
+            .get(b.source.spec().name)
+            .copied()
+            .unwrap_or_default(),
+    );
     let chain = sinex_store::replay::chain_ending(conn, last)
         .await
         .map_err(|e| e.to_string())?;
@@ -54,6 +63,7 @@ pub(super) async fn restore(
                 previous,
                 frontier,
                 None,
+                configured_class,
                 access,
                 stop.clone(),
             )
@@ -80,7 +90,18 @@ pub(super) async fn restore(
             ),
             _ => None,
         };
-    restore_one(conn, blobs, b, reference, through, pending, access, stop).await
+    restore_one(
+        conn,
+        blobs,
+        b,
+        reference,
+        through,
+        pending,
+        configured_class,
+        access,
+        stop,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -91,6 +112,7 @@ async fn restore_one(
     reference: MaterialRef,
     through: Option<u64>,
     pending: Option<&Value>,
+    configured_class: Class,
     access: Access<'_>,
     stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
@@ -98,10 +120,10 @@ async fn restore_one(
         .is_sealed(&reference.blob)
         .map_err(|e| e.to_string())?;
     if sealed {
-        access
-            .authority
-            .ok_or("retained sealed directory history requires explicit operator unlock")?
-            .check()?;
+        if configured_class < Class::Sealed {
+            access.authority.ok_or("directory history is sealed; lowering its class requires explicit scoped authority")?.check()?;
+        }
+        b.history_floor = b.history_floor.max(Class::Sealed);
     }
     let mut anchors = sinex_store::positions::accounted_anchors(conn, reference.id)
         .await
