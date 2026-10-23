@@ -279,3 +279,151 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
 mod sqlite_rows;
 
 mod sqlite_images;
+
+#[test]
+fn retained_sealing_rejects_naming_only_before_any_state_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let identity = sinex_store::sealed::Identity::generate();
+    let sealing = SealingSink::new(blobs, identity.to_public());
+    let old = sinex_store::sealed::new_key().unwrap();
+    let fresh = sinex_store::sealed::new_key().unwrap();
+    let naming = sinex_store::sealed::MaterialSecrets::from_data_key(&old).naming_only();
+    assert!(
+        sealing
+            .restore_secrets("blob".into(), old.key_ref.clone(), naming.clone())
+            .is_err()
+    );
+    assert!(
+        sealing
+            .restore_current(
+                MaterialId::new(),
+                "blob".into(),
+                old.key_ref.clone(),
+                naming.clone()
+            )
+            .is_err()
+    );
+    assert!(sealing.key("blob").is_err());
+    let secrets = naming.with_data_key(&fresh);
+    let wrapped = sinex_store::sealed::wrap_secrets(&secrets, &identity.to_public()).unwrap();
+    let restored =
+        sinex_store::sealed::unwrap_secrets(&wrapped, &identity, sinex_model::Class::Sealed)
+            .unwrap();
+    sealing
+        .restore_secrets("blob".into(), fresh.key_ref.clone(), restored)
+        .unwrap();
+    assert_eq!(sealing.key("blob").unwrap().key, fresh.key);
+    let carry = serde_json::json!({"synthetic":"retained carry"});
+    let encrypted = sinex_store::sealed::seal_value(&carry, &fresh).unwrap();
+    assert_eq!(sealing.open_carry(&encrypted).unwrap(), carry);
+}
+
+#[tokio::test]
+async fn retained_record_naming_survives_key_restore_and_actual_replay() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history");
+    std::fs::write(
+        &path,
+        b": 1700000000:0;synthetic retained a\n: 1700000001:0;synthetic retained b\n",
+    )
+    .unwrap();
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let identity = sinex_store::sealed::Identity::generate();
+    let old = sinex_store::sealed::new_key().unwrap();
+    let sink = SealingSink::new(ctx.blobs.clone(), identity.to_public());
+    let source = zsh::source("synthetic".into());
+    let driver = zsh::driver(path, "synthetic".into());
+    let acquired = driver.poll(&Value::Null, &mut Default::default()).unwrap();
+    let prepared = drivers::prepare(
+        &source,
+        "retained-names",
+        sinex_model::RunId::new(),
+        acquired,
+        Value::Null,
+        &sink,
+        Limits::default(),
+    )
+    .unwrap();
+    let mut expected = Vec::new();
+    let mut data = None;
+    for batch in prepared.batches().unwrap() {
+        let batch = batch.unwrap();
+        for event in batch.events() {
+            let mut named = event.clone();
+            sinex_store::sealed::seal_event(&mut named, &old).unwrap();
+            expected.push((
+                named.equivalence_key.unwrap().0,
+                named.record_hash.to_vec(),
+                event.payload.clone(),
+            ));
+        }
+        if let sinex_model::BatchKind::Source(progress) = &batch.kind
+            && let Some(material) = &progress.material
+        {
+            let key = sink.key(&material.blob).unwrap();
+            let secrets = sinex_store::sealed::MaterialSecrets::from_data_key(&old)
+                .naming_only()
+                .with_data_key(&key);
+            sink.restore_secrets(material.blob.clone(), key.key_ref.clone(), secrets)
+                .unwrap();
+            data = Some(key);
+        }
+        let mut batches = [batch];
+        sink.seal(&mut batches).unwrap();
+        ctx.writer
+            .submit(
+                crate::writer::Priority::Bulk,
+                batches.into_iter().next().unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    // Drop capture's in-memory secrets. Replay must unwrap the retained bundle.
+    drop(sink);
+    let authority =
+        crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60)).unwrap();
+    let report = crate::replay::run(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        crate::replay::Options {
+            scope: crate::replay::Scope {
+                binding: Some("retained-names".into()),
+                ..Default::default()
+            },
+            compare: false,
+            resume: None,
+            actor: "synthetic".into(),
+            authority: Some(authority),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!((report.archived, report.admitted), (2, 2));
+    let readings: Vec<(String, Vec<u8>, Value)> = sqlx::query_as(
+        "SELECT equivalence_key,record_hash,payload FROM core.events ORDER BY anchor,id",
+    )
+    .fetch_all(&mut ctx.read_conn)
+    .await
+    .unwrap();
+    assert_eq!(readings.len(), 4);
+    let data = data.unwrap();
+    for (index, pair) in readings.as_chunks::<2>().0.iter().enumerate() {
+        for (equivalence, hash, payload) in pair {
+            assert_eq!(
+                (equivalence, hash),
+                (&expected[index].0, &expected[index].1)
+            );
+            assert_eq!(
+                sinex_store::sealed::unseal_payload(payload, &data.key).unwrap(),
+                expected[index].2
+            );
+            assert!(sinex_store::sealed::unseal_payload(payload, &old.key).is_err());
+        }
+    }
+    ctx.close().await.unwrap();
+}

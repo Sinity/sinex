@@ -205,15 +205,11 @@ pub async fn run(
                         .await
                         .map_err(|e| e.to_string())?
                         .ok_or("sealed material reference missing")?;
-                keys.insert(
-                    material.id,
-                    (
-                        authority
-                            .material_key(read_conn, MaterialId(material.id))
-                            .await?,
-                        reference.length,
-                    ),
-                );
+                let (key_ref, secrets) = authority
+                    .material_secrets(read_conn, MaterialId(material.id))
+                    .await?;
+                let key = secrets.data_key(key_ref).map_err(|e| e.to_string())?;
+                keys.insert(material.id, (key, reference.length, secrets));
             }
         }
         let authority = o.authority.clone();
@@ -367,7 +363,14 @@ fn read_chain(
     scope: &Scope,
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
-    keys: &HashMap<Uuid, (sinex_store::sealed::DataKey, u64)>,
+    keys: &HashMap<
+        Uuid,
+        (
+            sinex_store::sealed::DataKey,
+            u64,
+            sinex_store::sealed::MaterialSecrets,
+        ),
+    >,
     authority: Option<&crate::sealed_access::Authority>,
 ) -> Read {
     let mut read = Read::default();
@@ -390,7 +393,14 @@ fn read_chain_into(
     operation: OperationId,
     out: &tokio::sync::mpsc::Sender<Result<Batch, String>>,
     report: &mut Read,
-    keys: &HashMap<Uuid, (sinex_store::sealed::DataKey, u64)>,
+    keys: &HashMap<
+        Uuid,
+        (
+            sinex_store::sealed::DataKey,
+            u64,
+            sinex_store::sealed::MaterialSecrets,
+        ),
+    >,
     authority: Option<&crate::sealed_access::Authority>,
 ) -> Result<(), String> {
     let send = |batch: Batch| {
@@ -444,7 +454,7 @@ fn read_chain_into(
             ));
         }
         let key = keys.get(&m.id);
-        let retained = if let Some((key, length)) = key {
+        let retained = if let Some((key, length, _)) = key {
             use std::io::Seek;
             let authority = authority
                 .ok_or("sealed replay requires scoped authority")?
@@ -543,12 +553,12 @@ fn read_chain_into(
             if records.is_empty() {
                 continue;
             }
-            if let Some((key, _)) = key {
+            if let Some((key, _, secrets)) = key {
                 for record in &mut records {
                     match record {
                         RecordOutcome::Events { events, .. } => {
                             for event in events {
-                                sinex_store::sealed::seal_event(event, key)
+                                sinex_store::sealed::seal_event_with_secrets(event, key, secrets)
                                     .map_err(|e| e.to_string())?;
                             }
                         }
