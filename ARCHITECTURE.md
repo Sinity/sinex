@@ -26,6 +26,12 @@ Known-field errors become record failures with raw bytes retained. Awair interpr
 only the producer's declared score and CO2 fields; other sensor fields remain extensions.
 Netflow stays material-only. Parser version 2 uses ordinary retained-material replay.
 
+Non-health Samsung account tables currently retain normalized columns as generic
+`account.record` fallbacks with computed `uninterpreted: true`. Table names and
+synthetic normalization examples do not establish provider field schemas. A known-table
+interpreter requires those declarations; the generic row does not claim one. Existing
+payloads without the marker remain readable. Samsung parser version 4 uses normal replay.
+
 `sinexd` connects these pieces: source tasks, backfill and replay submit work
 to the writer. A source cursor describes admitted progress; obtaining bytes
 alone does not mean their records were interpreted successfully. Archive
