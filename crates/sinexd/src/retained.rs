@@ -85,7 +85,12 @@ pub(crate) struct Blanked<R> {
 impl<R> Blanked<R> {
     pub fn new(reader: R, mut spans: Vec<(usize, usize)>) -> Self {
         spans.sort_unstable();
-        Self { reader, spans, position: 0, first: 0 }
+        Self {
+            reader,
+            spans,
+            position: 0,
+            first: 0,
+        }
     }
 }
 impl<R: Read> Read for Blanked<R> {
