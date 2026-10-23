@@ -508,7 +508,7 @@ impl sinex_derivations::PerEvent for Echo {
                 record: sinex_derivations::derived_event::record_identity(input),
                 command: c.command.to_uppercase(),
                 host: c.hostname,
-                started_at: c.started_at,
+                started_at: c.started_at.expect("echo fixture has a zsh header"),
                 cwd: None,
                 session: None,
                 duration_ns: None,
