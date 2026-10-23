@@ -95,6 +95,10 @@ sinexd backfill --database URL --store DIR --host HOST \
   --source atuin=$HOME/.local/share/atuin/history.db --source zsh="$HISTFILE"
 ```
 
+Zsh imports accept plain and extended history, including mixed files. Plain
+commands keep unknown start times and retain separate record locations; extended
+records keep their source times and existing occurrence keys.
+
 ## Benchmark reports
 
 `agentctl job start sinex bench -- run` uses the frozen sample. Reports keep

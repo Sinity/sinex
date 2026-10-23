@@ -18,8 +18,8 @@ fn wrap_unwrap_and_seal_round_trip() {
         &CommandImported {
             command: "gpg --decrypt diary".into(),
             hostname: "h".into(),
-            started_at: Timestamp::from_unix_secs(1).unwrap(),
-            header_elapsed: 0,
+            started_at: Some(Timestamp::from_unix_secs(1).unwrap()),
+            header_elapsed: Some(0),
             n: 0,
         },
         "s",

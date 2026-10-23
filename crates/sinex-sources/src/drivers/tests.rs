@@ -22,8 +22,8 @@ impl Parser for Counting {
             vec![CommandImported {
                 command: String::from_utf8_lossy(record).trim_end().into(),
                 hostname: "h".into(),
-                started_at: Timestamp::from_unix_secs(1).unwrap(),
-                header_elapsed: 0,
+                started_at: Some(Timestamp::from_unix_secs(1).unwrap()),
+                header_elapsed: Some(0),
                 n: 0,
             }],
             (),

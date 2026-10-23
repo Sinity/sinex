@@ -27,6 +27,7 @@ pub use shell::{CommandExecuted, CommandFused, CommandImported, ShellSession};
 #[derive(Clone, Debug)]
 pub struct EventTypeInfo {
     pub event_type: &'static str,
+    /// Declared natural key; `build` applies the typed payload's per-record choice.
     pub key: crate::KeyKind,
     pub replace: crate::ReplaceRule,
     /// See [`crate::EventPayload::KEEP_KNOWN`].

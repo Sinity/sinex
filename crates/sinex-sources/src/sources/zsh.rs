@@ -1,10 +1,10 @@
-//! zsh extended history (`: <start>:<elapsed>;<command>`), on `AppendFile`.
+//! Plain and extended zsh history (`: <start>:<elapsed>;<command>`), on `AppendFile`.
 //!
 //! The file has no record IDs, so a record is identified by host, start
 //! second, command and its occurrence number among identical (start, command)
 //! pairs in file order. The parser carries the counts; a re-read from the
 //! start (a lost position, a replay) begins with no carry and numbers the same
-//! records the same way.
+//! records the same way. Untimed records keep their material locations instead.
 //! zsh metafies bytes 0x83..0x9f (0x83 then the byte xor 0x20) and continues a
 //! multi-line command with a backslash before the newline. With SHARE_HISTORY
 //! the elapsed field is written as 0 before the command ends, so it is kept as
@@ -21,7 +21,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "command fusion and shell recall",
     class: Class::Open,
     parser: "zsh-extended-history",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &["command.imported"],
     framer: frame,
 };
@@ -111,22 +111,35 @@ impl Parser for ZshParser {
         let text = text
             .strip_suffix('\n')
             .ok_or_else(|| RecordError::new("unfinished zsh record"))?;
-        let text = text
-            .strip_prefix(": ")
-            .ok_or_else(|| RecordError::new("not an extended history record"))?;
-        let (start, rest) = text
-            .split_once(':')
-            .ok_or_else(|| RecordError::new("invalid extended zsh header"))?;
-        let (elapsed, command) = rest
-            .split_once(';')
-            .ok_or_else(|| RecordError::new("invalid extended zsh header"))?;
-        let start: i64 = start
-            .parse()
-            .map_err(|_| RecordError::new("invalid zsh start time"))?;
-        let elapsed: i64 = elapsed
-            .parse()
-            .map_err(|_| RecordError::new("invalid zsh elapsed field"))?;
-        let started_at = Timestamp::from_unix_secs(start)
+        let (start, elapsed, command) = if let Some(header) = text.strip_prefix(": ") {
+            let (start, rest) = header
+                .split_once(':')
+                .ok_or_else(|| RecordError::new("invalid extended zsh header"))?;
+            let (elapsed, command) = rest
+                .split_once(';')
+                .ok_or_else(|| RecordError::new("invalid extended zsh header"))?;
+            let start = start
+                .parse::<i64>()
+                .map_err(|_| RecordError::new("invalid zsh start time"))?;
+            let elapsed = elapsed
+                .parse::<i64>()
+                .map_err(|_| RecordError::new("invalid zsh elapsed field"))?;
+            (Some(start), Some(elapsed), command)
+        } else {
+            // A plain-history command starting with ':' has one extra '\'.
+            let command = if text.starts_with("\\:") {
+                &text[1..]
+            } else {
+                text
+            };
+            if command.is_empty() {
+                return Ok((vec![], seen.clone()));
+            }
+            (None, None, command)
+        };
+        let started_at = start
+            .map(Timestamp::from_unix_secs)
+            .transpose()
             .map_err(|_| RecordError::new("zsh start time out of range"))?;
         // zsh appends one space when the command's last non-space byte is a
         // backslash. Remove only that space, then decode escaped newlines.
@@ -136,7 +149,10 @@ impl Parser for ZshParser {
             command
         };
         let command = command.replace("\\\n", "\n");
-        let (n, seen) = seen.next(start, &command);
+        let (n, seen) = match start {
+            Some(start) => seen.next(start, &command),
+            None => (0, seen.clone()),
+        };
         Ok((
             vec![CommandImported {
                 command,

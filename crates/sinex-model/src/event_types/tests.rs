@@ -33,6 +33,7 @@ fn derive_declares_identity_and_time() {
     assert_eq!(machine::FileChanged::KEY, KeyKind::Location);
     assert_eq!(CommandImported::REPLACE, ReplaceRule::SuppressRepeat);
     let a = atuin(false);
+    assert_eq!(a.key_kind(), CommandExecuted::KEY);
     assert_eq!(a.ts_orig().quality, TimeQuality::Intrinsic);
     assert_eq!(a.ts_orig().at, Some(a.started_at));
     assert_eq!(a.record_state(), RecordState::Present);
@@ -44,7 +45,7 @@ fn json_schema_requires_declared_fields() {
     let schema = CommandImported::payload_schema();
     let required = schema["required"].as_array().unwrap();
     assert!(required.iter().any(|f| f == "command"));
-    assert!(required.iter().any(|f| f == "started_at"));
+    assert!(!required.iter().any(|f| f == "started_at"));
 }
 
 #[test]

@@ -40,8 +40,8 @@ pub(crate) fn zsh(command: &str, secs: f64) -> Event {
         &CommandImported {
             command: command.into(),
             hostname: "box".into(),
-            started_at: at,
-            header_elapsed: 0,
+            started_at: Some(at),
+            header_elapsed: Some(0),
             n: 0,
         },
         "terminal.zsh",
