@@ -2,12 +2,22 @@ use crate::{Error, Result};
 use sinex_model::MaterialId;
 use sqlx::PgConnection;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct KeyEnvelope {
     pub reference: String,
     pub wrapped: Vec<u8>,
     pub role: String,
     pub class: String,
+}
+
+impl std::fmt::Debug for KeyEnvelope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyEnvelope")
+            .field("reference", &self.reference)
+            .field("role", &self.role)
+            .field("class", &self.class)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

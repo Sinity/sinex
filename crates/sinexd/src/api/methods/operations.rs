@@ -61,6 +61,9 @@ impl Api {
         }
         if dry_run {
             return match sinex_store::excision::plan(&mut conn, target).await {
+                Ok(plan) if plan.materials.iter().any(|material| material.sealed) => refused(
+                    "sealed excision planning requires current operator unlock and explicit --sealed intent",
+                ),
                 Ok(plan) => Reply::Ok {
                     result: json!({ "dry_run": true, "would_excise": crate::excision::describe(&plan) }),
                 },

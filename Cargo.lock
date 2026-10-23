@@ -4317,6 +4317,7 @@ dependencies = [
  "sinex-model",
  "sinex-schema",
  "sqlx",
+ "tempfile",
  "thiserror 2.0.21",
  "time",
  "tokio",

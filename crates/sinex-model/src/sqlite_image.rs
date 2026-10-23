@@ -84,11 +84,20 @@ impl SqliteImageMeta {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct WrappedMaterialKey {
     pub material: MaterialId,
     pub key_ref: String,
     pub wrapped: Vec<u8>,
+}
+
+impl std::fmt::Debug for WrappedMaterialKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WrappedMaterialKey")
+            .field("material", &self.material)
+            .field("key_ref", &self.key_ref)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

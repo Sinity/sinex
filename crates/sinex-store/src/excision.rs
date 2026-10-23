@@ -265,14 +265,6 @@ pub async fn plan_records(
             "material {id} retains an original archive: excision needs a cross-binding archive rewrite, which is not supported"
         )));
     }
-    for m in materials.values() {
-        if m.sealed && !m.whole {
-            return Err(Error::Invalid(format!(
-                "material {} is sealed: only the whole material can be excised (by destroying its key); excise material:{}",
-                m.id, m.id
-            )));
-        }
-    }
     Ok(Plan {
         events,
         materials: materials.into_values().collect(),
@@ -348,6 +340,18 @@ pub async fn apply_prepared(
         ));
     }
     if let Some(prepared) = prepared {
+        if plan.candidate_source.as_deref() != Some(prepared.source.as_str())
+            || plan.candidate_parser.is_none()
+            || plan.candidates.is_empty()
+            || plan
+                .candidates
+                .iter()
+                .any(|candidate| candidate.sources.as_slice() != [prepared.source.as_str()])
+        {
+            return Err(Error::Invalid(
+                "sealed excision lacks a complete source-owned candidate set".into(),
+            ));
+        }
         sealed::stage(conn, plan, prepared, check).await?;
     } else if plan.materials.iter().any(|m| m.sealed) {
         return Err(Error::Invalid(

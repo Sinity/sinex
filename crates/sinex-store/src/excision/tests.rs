@@ -539,3 +539,5 @@ async fn retained_archive_refuses_record_and_original_excision_without_changes()
         0
     );
 }
+
+mod sealed_rekey;
