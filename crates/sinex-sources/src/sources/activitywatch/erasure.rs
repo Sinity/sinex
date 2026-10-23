@@ -54,13 +54,18 @@ fn invalid() -> RecordError {
 }
 
 pub(super) fn validate(open: &OpenSpans) -> Result<(), RecordError> {
+    if open.erased.is_empty() {
+        return Ok(());
+    }
+    let native_buckets: std::collections::BTreeSet<_> =
+        open.spans.keys().map(|b| bucket_key(b)).collect();
     for (bucket, s) in &open.erased {
         if s.version != 1
             || !hash_valid(bucket)
             || !hash_valid(&s.window)
             || s.merged == 0
             || s.span_id > s.last_row
-            || open.spans.keys().any(|b| bucket_key(b) == *bucket)
+            || native_buckets.contains(bucket)
         {
             return Err(invalid());
         }

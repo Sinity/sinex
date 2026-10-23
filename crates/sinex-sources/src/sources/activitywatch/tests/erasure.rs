@@ -300,6 +300,14 @@ fn unknown_erased_state_and_bad_times_refuse_without_changing_carry() {
         assert!(!error.to_string().contains("private-title"));
         assert_eq!(carry, original);
     }
+    let mut duplicate = serde_json::to_value(&erased.carry).unwrap();
+    duplicate["spans"] = serde_json::to_value(&carry.spans).unwrap();
+    let duplicate: OpenSpans = serde_json::from_value(duplicate).unwrap();
+    assert!(
+        ActivityWatchParser
+            .skip_erased(&duplicate, &token, &crate::RecordContext::none())
+            .is_err()
+    );
     let mut state = serde_json::to_value(&erased.carry).unwrap();
     state["erased"]
         .as_object_mut()
