@@ -1,14 +1,8 @@
-//! The Sinnix capture lake, read as material (architecture §5.7 phase 1;
-//! spec `port-sinnix.md` §2-3). Every envelope lane writes `sinnix-capture-v1`
-//! JSONL day files; one parser reads the envelope for every lane, and each
-//! lane is declared under its catalog source, so lake history and the native
-//! source that later captures the lane share a name and a series.
-//!
-//! The lake's layout is configuration: each lane names its directories
-//! relative to a root and the `lane` values it accepts. A record whose `lane`
-//! is not among them is a failure, never a silent skip. Firehose lanes (rule
-//! 5: network flows) are stored as material and emit no events; their
-//! per-minute summaries are a derivation.
+//! Sinnix capture-lake JSONL day files become retained material and typed
+//! observations under each lane's catalog source. Configuration names the
+//! directories relative to the lake root and the accepted envelope lanes.
+//! An unbound lane is a record failure. Network-flow records retain their
+//! material without emitting per-record events.
 use crate::drivers::append_file::{AppendFile, lines};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};

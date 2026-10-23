@@ -1,4 +1,4 @@
-//! The machine: the systemd journal and filesystem changes.
+//! Machine events: journal entries, file changes and capture observations.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
