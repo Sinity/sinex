@@ -24,6 +24,8 @@ pub enum Source {
     Walk { walk: Walk, reference: Reference },
     /// Everything recorded in a window, across every source (§6.3).
     Recall { from: Timestamp, to: Timestamp },
+    /// The latest recorded shell group matching a session-field filter.
+    RecallLast { filter: Option<Expr> },
 }
 
 impl Source {
@@ -31,7 +33,7 @@ impl Source {
     pub fn unit(&self) -> Unit {
         match self {
             Source::Unit { unit, .. } => *unit,
-            Source::Walk { .. } | Source::Recall { .. } => Unit::Events,
+            Source::Walk { .. } | Source::Recall { .. } | Source::RecallLast { .. } => Unit::Events,
         }
     }
 

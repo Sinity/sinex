@@ -11,6 +11,8 @@ pub enum FieldType {
     Text,
     /// A path: `^` means "is or lies under", by whole components.
     Path,
+    /// Recorded paths: equality or component-prefix matches any member.
+    PathList,
     Integer,
     Number,
     Bool,
@@ -290,6 +292,27 @@ pub const ALIASES: &[Alias] = &[
             f("end", FieldType::Time, "end"),
             f("session", FieldType::Text, "shell session"),
             f("observed_by", FieldType::Text, "observing sources"),
+        ],
+        spans: true,
+        open_only: false,
+    },
+    Alias {
+        name: "shell-sessions",
+        kinds: &["shell.session"],
+        phrase: "recorded shell command groups",
+        fields: &[
+            f("host", FieldType::Text, "host"),
+            f("start", FieldType::Time, "first recorded command start"),
+            f(
+                "observed_until",
+                FieldType::Time,
+                "latest recorded command extent",
+            ),
+            f("duration", FieldType::Number, "observed extent in seconds"),
+            f("day", FieldType::Text, "logical day"),
+            f("commands", FieldType::Integer, "member commands"),
+            f("failed", FieldType::Integer, "failed member commands"),
+            f("cwds", FieldType::PathList, "member working directories"),
         ],
         spans: true,
         open_only: false,

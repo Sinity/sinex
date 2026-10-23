@@ -345,7 +345,11 @@ fn recall_windows() {
         panic!()
     };
     assert_eq!(to.duration_since(from).as_secs(), 3600);
-    assert!(err("recall last").not_built);
+    assert!(matches!(
+        q("recall last").source,
+        Source::RecallLast { filter: None }
+    ));
+    assert!(err("recall mark").not_built);
 }
 
 #[test]
@@ -390,3 +394,5 @@ fn every_field_name_is_unique_within_its_unit() {
         assert!(unit.field(unit.main_time()).is_some());
     }
 }
+
+mod sessions;

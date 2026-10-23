@@ -28,6 +28,8 @@ pub enum Request {
         #[serde(default)]
         around: Option<String>,
         #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
         page: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,

@@ -47,7 +47,7 @@ async fn discovery_omits_unimplemented_commands_and_reserved_calls_refuse_explic
 }
 
 #[tokio::test]
-async fn recall_time_and_day_work_while_last_and_mark_refuse() {
+async fn recall_time_and_day_work_while_mark_refuses() {
     let w = world().await;
     admit_events(
         &w,
@@ -66,7 +66,7 @@ async fn recall_time_and_day_work_while_last_and_mark_refuse() {
         assert_eq!(body["result"]["rows"].as_array().unwrap().len(), 2);
         assert!(body["result"]["recall"].is_object());
     }
-    for around in ["last", "mark"] {
+    for around in ["mark"] {
         let (_, body) = call(&w, Some(READ), json!({"method":"recall", "around":around})).await;
         assert_eq!(body["outcome"], "refused");
         assert_eq!(body["not_built"], true);

@@ -130,6 +130,28 @@ impl Compiler<'_> {
             let sep = if op == Op::Ne { " AND " } else { " OR " };
             return Ok(Frag::join(parts, sep).parenthesized());
         }
+        if kind == Kind::Typed(FieldType::PathList) {
+            if !matches!(op, Op::Eq | Op::Ne | Op::Prefix) {
+                return Err(invalid("path lists compare with = != or ^"));
+            }
+            let comparison = self.compare(
+                Frag::text("member.path"),
+                Kind::Typed(FieldType::Path),
+                if op == Op::Ne { Op::Eq } else { op },
+                v,
+            )?;
+            let mut out = Frag::text("(CASE WHEN ");
+            out.append(lhs.clone()).push(" IS NULL THEN NULL ELSE ");
+            if op == Op::Ne {
+                out.push("NOT ");
+            }
+            out.push("EXISTS (SELECT 1 FROM unnest(")
+                .append(lhs)
+                .push(") AS member(path) WHERE ")
+                .append(comparison)
+                .push(") END)");
+            return Ok(out);
+        }
         let l = if kind == Kind::Json {
             Self::json_as(lhs, v)
         } else {
@@ -367,14 +389,15 @@ impl Compiler<'_> {
         Ok(self.field(cols, &FieldRef::Field(field))?.0)
     }
 
-    pub(super) fn span(&self, cols: &Cols) -> Option<(Frag, Frag)> {
+    pub(super) fn span(&self, cols: &Cols) -> Option<(Frag, Frag, bool)> {
         let Cols::Base { unit, alias, .. } = cols else {
             return None;
         };
-        let (s, e) = fields::span(*unit, alias.map(|a| a.name))?;
+        let (s, e, inclusive) = fields::span(*unit, alias.map(|a| a.name))?;
         Some((
             Frag::text(Self::template(cols, &s)),
             Frag::text(Self::template(cols, &e)),
+            inclusive,
         ))
     }
 

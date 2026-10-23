@@ -5,6 +5,7 @@
 //! unit's field names; times are UTC.
 mod compile;
 mod fields;
+mod recall;
 mod sql;
 mod walk;
 
@@ -135,7 +136,7 @@ pub async fn run(
         Source::Unit { alias: Some(a), .. } => a.name.to_string(),
         Source::Unit { unit, .. } => unit.name().to_string(),
         Source::Walk { walk, .. } => format!("{walk:?}").to_lowercase(),
-        Source::Recall { .. } => "recall".to_string(),
+        Source::Recall { .. } | Source::RecallLast { .. } => "recall".to_string(),
     };
     let mut answer = match &query.source {
         Source::Walk { walk, reference } => {
@@ -170,15 +171,50 @@ pub async fn run(
             )
             .await?
         }
-        Source::Recall { from, to } => {
-            // Recall is a fixed query: live events of every source in the
-            // window, plus what each source contributed.
-            let window = Expr::Within {
-                lhs: Operand::Field(FieldRef::Field(
-                    Unit::Events.field("when").expect("events have when"),
-                )),
-                from: *from,
-                to: *to,
+        Source::Recall { .. } | Source::RecallLast { .. } => {
+            let (from, to, inclusive, anchor) = match &query.source {
+                Source::Recall { from, to } => (*from, *to, false, None),
+                Source::RecallLast { filter } => {
+                    let Some(anchor) = recall::latest(&mut tx, filter.clone(), ctx, seq).await?
+                    else {
+                        return Ok(Answer {
+                            unit,
+                            query: text.to_string(),
+                            read_as: read_as(query),
+                            resolved,
+                            columns: Unit::Events
+                                .default_fields()
+                                .iter()
+                                .map(|s| s.to_string())
+                                .collect(),
+                            rows: Vec::new(),
+                            total: 0,
+                            page: PageInfo { size, cursor: None },
+                            recall: Some(serde_json::json!({
+                                "anchor": null,
+                                "status": "no_known_timed_shell_session",
+                                "reason": "No matching recorded shell group; untimed observations or pending derivations may still exist."
+                            })),
+                        });
+                    };
+                    let time = |field: &str| -> Result<jiff::Timestamp> {
+                        anchor[field].as_str().and_then(|s| s.parse().ok())
+                            .ok_or_else(|| Error::Invalid("selected shell group's observed bounds are unavailable to this caller".into()))
+                    };
+                    (time("start")?, time("observed_until")?, true, Some(anchor))
+                }
+                _ => unreachable!(),
+            };
+            let window = if inclusive {
+                recall::observed_window(from, to)
+            } else {
+                Expr::Within {
+                    lhs: Operand::Field(FieldRef::Field(
+                        Unit::Events.field("when").expect("events have when"),
+                    )),
+                    from,
+                    to,
+                }
             };
             let as_events = Query {
                 source: Source::Unit {
@@ -194,7 +230,13 @@ pub async fn run(
                 &mut tx, rendered, unit, text, query, resolved, seq, offset, size,
             )
             .await?;
-            a.recall = Some(walk::recall_summary(&mut tx, *from, *to, seq).await?);
+            let mut account = walk::recall_summary(&mut tx, from, to, seq, inclusive).await?;
+            if let Some(anchor) = anchor {
+                account["anchor"] = serde_json::json!({
+                    "kind": "shell_group", "bounds": "observed_envelope", "row": anchor,
+                });
+            }
+            a.recall = Some(account);
             a
         }
     };
@@ -326,6 +368,12 @@ async fn check_kinds(conn: &mut PgConnection, query: &Query) -> Result<()> {
 }
 
 fn collect_aliases(q: &Query, out: &mut Vec<&'static sinex_model::query::Alias>) {
+    if matches!(q.source, Source::RecallLast { .. }) {
+        out.push(
+            sinex_model::query::Alias::from_name("shell-sessions")
+                .expect("shell sessions declared"),
+        );
+    }
     if let Source::Unit { alias: Some(a), .. } = &q.source {
         out.push(a);
     }

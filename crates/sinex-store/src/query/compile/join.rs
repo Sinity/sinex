@@ -40,8 +40,8 @@ impl Compiler<'_> {
         let span = self.span(&cols);
         let point = match (at, &span) {
             (TimePoint::When, _) => when.clone(),
-            (TimePoint::Start, Some((s, _))) => s.clone(),
-            (TimePoint::End, Some((_, e))) => e.clone(),
+            (TimePoint::Start, Some((s, _, _))) => s.clone(),
+            (TimePoint::End, Some((_, e, _))) => e.clone(),
             (_, None) => {
                 return Err(invalid(
                     "`at start` and `at end` need inner rows with a span",
@@ -54,11 +54,15 @@ impl Compiler<'_> {
             .append(point)
             .push(" AS _t, ");
         match span {
-            Some((s, e)) => {
-                f.append(s).push(" AS _s, ").append(e).push(" AS _e");
+            Some((s, e, inclusive)) => {
+                f.append(s)
+                    .push(" AS _s, ")
+                    .append(e)
+                    .push(format!(" AS _e, {inclusive} AS _inclusive"));
             }
             None => {
-                f.append(when).push(" AS _s, NULL::timestamptz AS _e");
+                f.append(when)
+                    .push(" AS _s, NULL::timestamptz AS _e, false AS _inclusive");
             }
         }
         f.push(" FROM ")
@@ -142,12 +146,14 @@ impl Compiler<'_> {
                     .push(format!(") {jl} WHERE {jl}._s IS NOT NULL AND "))
                     .append(ot.clone())
                     .push(format!(" >= {jl}._s AND ({jl}._e IS NULL OR "))
+                    .append(ot.clone())
+                    .push(format!(" < {jl}._e OR ({jl}._inclusive AND "))
                     .append(ot)
-                    .push(format!(" < {jl}._e) ORDER BY {jl}._s, {jl}._id LIMIT 1"));
+                    .push(format!(" = {jl}._e)) ORDER BY {jl}._s, {jl}._id LIMIT 1"));
                 columns.push((format!("during{suffix}"), format!("{jl}.m")));
             }
             JoinKind::Containing => {
-                let (os, oe) = self
+                let (os, oe, inclusive) = self
                     .span(outer)
                     .ok_or_else(|| invalid("`containing` needs outer rows with a span: sessions, intervals, commands or runs"))?;
                 f.push(format!("{jl}._id AS m FROM ("))
@@ -156,7 +162,10 @@ impl Compiler<'_> {
                     .append(os)
                     .push(" AND (")
                     .append(oe.clone())
-                    .push(format!(" IS NULL OR {jl}._t < "))
+                    .push(format!(
+                        " IS NULL OR {jl}._t {} ",
+                        if inclusive { "<=" } else { "<" }
+                    ))
                     .append(oe)
                     .push(format!(") ORDER BY {jl}._t, {jl}._id LIMIT 1"));
                 columns.push((format!("containing{suffix}"), format!("{jl}.m")));

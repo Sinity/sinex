@@ -16,4 +16,14 @@ fn tools_come_from_the_command_table() {
     );
     let query = tools.iter().find(|t| t.name == "sinex_query").unwrap();
     assert_eq!(query.input_schema["required"], json!(["query"]));
+    let recall = tools.iter().find(|t| t.name == "sinex_recall").unwrap();
+    assert_eq!(recall.input_schema["properties"]["cwd"]["type"], "string");
+    let request = Request::from_args(
+        "recall",
+        serde_json::from_value(json!({"around":"last","cwd":"/src/tide (notes)"})).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        matches!(request, Request::Recall {cwd: Some(ref path), ..} if path == "/src/tide (notes)")
+    );
 }
