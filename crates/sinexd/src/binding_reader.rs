@@ -247,7 +247,7 @@ pub(crate) async fn read(
 }
 async fn check_image_class(
     conn: &mut PgConnection,
-    b: &Bound,
+    b: &mut Bound,
     known: &[sinex_store::bindings::Stored],
 ) -> Result<(), String> {
     let Some(policy) = b.reader.image_policy() else {
