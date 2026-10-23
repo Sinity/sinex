@@ -240,7 +240,7 @@ async fn follow(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(Reply::Refused {
-                    reason: e.render(&params.query),
+                    reason: mask::mask_str(&e.render(&params.query)),
                     not_built: e.not_built,
                 }),
             )
@@ -334,13 +334,28 @@ async fn follow(
                     Ok(a) => a,
                     Err(e) => {
                         let _ = tx
-                            .send(Ok(Event::default().event("error").data(e.to_string())))
+                            .send(Ok(Event::default()
+                                .event("error")
+                                .data(mask::mask_str(&e.to_string()))))
                             .await;
                         return;
                     }
                 };
-                for row in answer.rows {
-                    let row = mask::mask_json(row);
+                let rows = match answer
+                    .rows
+                    .into_iter()
+                    .map(mask::mask_json)
+                    .collect::<Result<Vec<_>, _>>()
+                {
+                    Ok(rows) => rows,
+                    Err(reason) => {
+                        let _ = tx
+                            .send(Ok(Event::default().event("error").data(reason)))
+                            .await;
+                        return;
+                    }
+                };
+                for row in rows {
                     if tx
                         .send(Ok(Event::default().data(row.to_string())))
                         .await

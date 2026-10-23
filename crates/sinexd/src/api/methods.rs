@@ -1,7 +1,7 @@
 //! Executing requests: one function per command of the table, shared by every
 //! surface. Reads use the read pool; writes go to the writer as batches, so
 //! admission stays the only way anything is stored.
-use super::mask::mask_json;
+use super::mask::{mask_json, mask_str};
 use crate::writer::{Priority, WriterHandle};
 use serde_json::{Value, json};
 use sinex_model::query::{self, Context, QueryError};
@@ -190,13 +190,17 @@ impl Api {
                 if caller.grants.split(',').any(|g| g == "sealed")
                     && let Err(e) = self.unseal(&mut result).await
                 {
-                    return refused(e);
+                    return refused(mask_str(&e));
                 }
-                Reply::Ok {
-                    result: mask_json(result),
+                match mask_json(result) {
+                    Ok(result) => Reply::Ok { result },
+                    Err(reason) => refused(reason),
                 }
             }
-            refusal => refusal,
+            Reply::Refused { reason, not_built } => Reply::Refused {
+                reason: mask_str(&reason),
+                not_built,
+            },
         }
     }
 
