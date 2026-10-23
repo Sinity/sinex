@@ -64,7 +64,7 @@ impl DirState {
             ));
         }
         let resume = &reference.manifest["directory_resume"];
-        let (previous, scanned) = if !resume.is_null() {
+        let (previous, scanned): (Cursor, Cursor) = if !resume.is_null() {
             (
                 serde_json::from_value(resume["previous"].clone())
                     .map_err(|e| DriverError::Cursor(e.to_string()))?,
@@ -168,7 +168,7 @@ fn records(manifest: &Value) -> Result<Vec<(usize, usize)>, DriverError> {
             "retained material is not a directory bundle".into(),
         ));
     }
-    let records = serde_json::from_value(manifest["records"].clone())
+    let records: Vec<(usize, usize)> = serde_json::from_value(manifest["records"].clone())
         .map_err(|e| DriverError::Cursor(format!("directory records: {e}")))?;
     format::validate(manifest, &records).map_err(|e| DriverError::Cursor(e.to_string()))?;
     Ok(records)
