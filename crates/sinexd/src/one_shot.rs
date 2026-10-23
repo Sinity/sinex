@@ -167,31 +167,36 @@ impl SealingSink {
 
     fn remember_new_key(&self, blob: String, key: sinex_store::sealed::DataKey) {
         let secrets = sinex_store::sealed::MaterialSecrets::from_data_key(&key);
-        self.restore_secrets(blob, key, secrets);
+        self.restore_secrets(blob, key.key_ref, secrets)
+            .expect("freshly generated data capability");
     }
 
     pub fn restore_secrets(
         &self,
         blob: String,
-        key: sinex_store::sealed::DataKey,
+        key_ref: String,
         secrets: sinex_store::sealed::MaterialSecrets,
-    ) {
+    ) -> Result<(), String> {
+        let key = secrets.data_key(key_ref).map_err(|e| e.to_string())?;
         self.state
             .lock()
             .expect("sealing state")
             .pending
             .insert(blob, SealingKey { data: key, secrets });
+        Ok(())
     }
 
     pub fn restore_current(
         &self,
         material: MaterialId,
         blob: String,
-        key: sinex_store::sealed::DataKey,
+        key_ref: String,
         secrets: sinex_store::sealed::MaterialSecrets,
-    ) {
+    ) -> Result<(), String> {
+        let key = secrets.data_key(key_ref).map_err(|e| e.to_string())?;
         self.state.lock().expect("sealing state").current =
             Some((material, blob, SealingKey { data: key, secrets }));
+        Ok(())
     }
 
     pub fn put_reader(&self, reader: impl std::io::Read + std::io::Seek) -> Result<String, String> {

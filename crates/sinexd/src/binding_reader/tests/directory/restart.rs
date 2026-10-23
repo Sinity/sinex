@@ -571,8 +571,9 @@ async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material
         .material_secrets(&mut ctx.read_conn, material)
         .await
         .unwrap();
-    let key = secrets.data_key(key_ref).unwrap();
-    sealing.restore_secrets(reference.blob, key, secrets);
+    sealing
+        .restore_secrets(reference.blob, key_ref, secrets)
+        .unwrap();
     let carry = sealing.open_carry(&checkpoint.1).unwrap();
     crate::excision::excise_with(
         &mut ctx.read_conn,

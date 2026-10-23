@@ -279,3 +279,42 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
 mod sqlite_rows;
 
 mod sqlite_images;
+
+#[test]
+fn retained_sealing_rejects_naming_only_before_any_state_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let identity = sinex_store::sealed::Identity::generate();
+    let sealing = SealingSink::new(blobs, identity.to_public());
+    let old = sinex_store::sealed::new_key().unwrap();
+    let fresh = sinex_store::sealed::new_key().unwrap();
+    let naming = sinex_store::sealed::MaterialSecrets::from_data_key(&old).naming_only();
+    assert!(
+        sealing
+            .restore_secrets("blob".into(), old.key_ref.clone(), naming.clone())
+            .is_err()
+    );
+    assert!(
+        sealing
+            .restore_current(
+                MaterialId::new(),
+                "blob".into(),
+                old.key_ref.clone(),
+                naming.clone()
+            )
+            .is_err()
+    );
+    assert!(sealing.key("blob").is_err());
+    let secrets = naming.with_data_key(&fresh);
+    let wrapped = sinex_store::sealed::wrap_secrets(&secrets, &identity.to_public()).unwrap();
+    let restored =
+        sinex_store::sealed::unwrap_secrets(&wrapped, &identity, sinex_model::Class::Sealed)
+            .unwrap();
+    sealing
+        .restore_secrets("blob".into(), fresh.key_ref.clone(), restored)
+        .unwrap();
+    assert_eq!(sealing.key("blob").unwrap().key, fresh.key);
+    let carry = serde_json::json!({"synthetic":"retained carry"});
+    let encrypted = sinex_store::sealed::seal_value(&carry, &fresh).unwrap();
+    assert_eq!(sealing.open_carry(&encrypted).unwrap(), carry);
+}

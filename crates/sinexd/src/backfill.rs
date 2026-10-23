@@ -301,8 +301,7 @@ pub(crate) async fn drive(
                 .authority
                 .ok_or("retained sealed material requires explicit operator unlock")?;
             let (reference, secrets) = authority.material_secrets(read_conn, material.id).await?;
-            let key = secrets.data_key(reference).map_err(|e| e.to_string())?;
-            sealing.restore_secrets(stored.blob.clone(), key, secrets);
+            sealing.restore_secrets(stored.blob.clone(), reference, secrets)?;
         }
         // A directory material contains independent files. A new bundle has
         // no parser state from the preceding bundle; a resumed bundle keeps
