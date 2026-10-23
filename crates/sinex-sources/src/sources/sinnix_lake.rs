@@ -39,7 +39,7 @@ const fn spec(name: &'static str, parser: &'static str, consumer: &'static str) 
         // floors raise it without a code change.
         class: Class::Open,
         parser,
-        parser_version: 1,
+        parser_version: 2,
         event_types: &["capture.observed"],
         framer: lines,
     }
@@ -222,27 +222,28 @@ fn envelope(record: &Map<String, Value>, lane: &Lane) -> Result<CaptureObserved,
     let micros = ((ts - seconds) * 1e6).round() as i128;
     let observed_at = Timestamp::from_unix_ns(seconds as i128 * 1_000_000_000 + micros * 1_000)
         .map_err(|e| RecordError::new(format!("ts {ts} out of range: {e}")))?;
-    Ok(CaptureObserved {
+    CaptureObserved::new(
         observed_at,
-        lane: name.to_string(),
-        host: record
+        name.to_string(),
+        record
             .get("host")
             .and_then(Value::as_str)
             .ok_or_else(|| RecordError::new("envelope has no host"))?
             .to_string(),
-        seq: record
+        record
             .get("seq")
             .and_then(Value::as_i64)
             .ok_or_else(|| RecordError::new("envelope has no seq"))?,
-        payload: record
+        record
             .get("payload")
             .cloned()
             .ok_or_else(|| RecordError::new("envelope has no payload"))?,
-        raw_ref: record
+        record
             .get("raw_ref")
             .and_then(Value::as_str)
             .map(str::to_owned),
-    })
+    )
+    .map_err(|error| RecordError::new(error.to_string()))
 }
 
 impl Parser for EnvelopeParser {

@@ -54,25 +54,8 @@ pub struct FileChanged {
     pub note: Option<String>,
 }
 
-/// One record from a Sinnix capture lane, read from the capture lake
-/// (architecture §5.7, phase 1; spec `port-sinnix.md` §3). The source is the
-/// lane's catalog source, so lake history and native capture share a name;
-/// the lane's own payload is kept whole until its native source and typed
-/// event replace it, which is a parser change plus a replay. The envelope's
-/// `(host, lane, seq)` is kept for gap tracking, never as identity.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(type = "capture.observed", key = location, replace = repeat, time = observed_at, quality = captured)]
-pub struct CaptureObserved {
-    /// The envelope's `ts`: when the writer recorded the observation.
-    pub observed_at: Timestamp,
-    pub lane: String,
-    pub host: String,
-    pub seq: i64,
-    /// The lane's payload, as written.
-    pub payload: Value,
-    /// The raw file the record describes (a frame, an audio segment), if any.
-    pub raw_ref: Option<String>,
-}
+pub mod capture;
+pub use capture::{CaptureObserved, CapturePayload};
 
 /// A terminal recording's session (asciinema): its start, size, command and
 /// environment, from the recording's header. The recording's place is its
