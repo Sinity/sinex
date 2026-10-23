@@ -90,6 +90,8 @@ fn streamed_json_ranges_keep_raw_offsets_and_malformed_document_fallback() {
             b"{\"Browser History\":{\"wrong\":1},\"Browser History\":[2,3]}",
         ),
     ];
+    let extra = (Framer::export(takeout_chrome::frame, Framing::JsonArray("/Browser History")), b"{\"Browser History\":1e400,\"Browser History\":[2,3]}".as_slice());
+    let cases = cases.into_iter().chain([extra]);
     for (framer, bytes) in cases {
         for size in [1, 2, 5, 65536] {
             assert_eq!(
