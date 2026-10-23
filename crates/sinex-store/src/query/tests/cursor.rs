@@ -342,3 +342,14 @@ async fn page_count_and_rows_keep_one_snapshot_across_a_concurrent_hide() {
         .fetch_one(&mut watch).await.unwrap();
     assert_eq!(after, 9, "the hide really committed during the page read");
 }
+
+#[tokio::test]
+async fn provenance_walks_refuse_stages_the_reader_does_not_execute() {
+    let (_db, mut conn) = testdb::fresh().await;
+    let ids = world(&mut conn).await;
+    let text = format!("trace {} limit 1", ids[0].0);
+    let error = ask_at(&mut conn, &text, &ctx(), Page::default())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("do not support query stages"));
+}

@@ -51,21 +51,54 @@ async fn a_public_cursor_does_not_transfer_the_operators_guarded_visibility() {
 }
 
 #[tokio::test]
-async fn public_continuation_refuses_removal_instead_of_skipping_the_next_row() {
+async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_next_row() {
+    use sinex_model::event_types::CommandFused;
     let w = world().await;
-    admit(&w, &["alpha", "beta", "gamma"], 0).await;
-    let page = first(&w, READ, "events sort when").await;
-    let (_, hidden) = call(
+    let parents: Vec<_> = ["alpha", "beta", "gamma"]
+        .iter()
+        .enumerate()
+        .map(|(i, text)| command(text, i as i64))
+        .collect();
+    let derived: Vec<_> = parents
+        .iter()
+        .map(|parent| {
+            Event::build(
+                &CommandFused {
+                    record: format!("command.executed:{}", parent.id),
+                    command: "synthetic derived command".into(),
+                    host: "synthetic".into(),
+                    started_at: Timestamp::from_unix_secs(1_789_372_800).unwrap(),
+                    cwd: None,
+                    session: None,
+                    duration_ns: None,
+                    exit_code: None,
+                    observed_by: vec!["terminal.atuin".into()],
+                },
+                "derive.cursor-test",
+                Origin::Derived {
+                    parents: vec![parent.id],
+                },
+                ReadingOrder(1),
+                *blake3::hash(parent.id.to_string().as_bytes()).as_bytes(),
+                Class::Open,
+            )
+            .unwrap()
+        })
+        .collect();
+    admit_events(&w, parents).await;
+    admit_events(&w, derived).await;
+    let page = first(&w, READ, "commands sort when").await;
+    let (_, removed) = call(
         &w,
-        Some(AGENT),
-        json!({"method":"hide", "reference":page["result"]["rows"][0]["id"]}),
+        Some(OPERATOR),
+        json!({"method":"excise", "reference":page["result"]["rows"][0]["id"]}),
     )
     .await;
-    assert_eq!(hidden["outcome"], "ok", "{hidden}");
-    let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"events sort when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
+    assert_eq!(removed["outcome"], "ok", "{removed}");
+    let (_, next) = call(&w, Some(READ), json!({"method":"query", "query":"commands sort when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(
         next["outcome"], "refused",
-        "a removal silently changed page positions: {next}"
+        "a permanent removal silently changed page positions: {next}"
     );
     assert!(next["reason"].as_str().unwrap().contains("result changed"));
 }

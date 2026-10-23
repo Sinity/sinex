@@ -139,11 +139,20 @@ pub async fn run(
         ));
     }
     check_kinds(&mut tx, query).await?;
-    let resolved = Resolved {
-        now: ctx.now.to_string(),
-        zone: ctx.zone_name(),
-        day_start: ctx.day_start.to_string(),
-        commit_seq: seq,
+    if matches!(query.source, Source::Walk { .. })
+        && (query.filter.is_some() || !query.stages.is_empty())
+    {
+        return Err(Error::Invalid(
+            "provenance walks do not support query stages; use a separate event query".into(),
+        ));
+    }
+    let read = ReadPage {
+        question,
+        ctx,
+        seq,
+        offset,
+        size,
+        prior,
     };
     let unit = match &query.source {
         Source::Unit { alias: Some(a), .. } => a.name.to_string(),
@@ -176,51 +185,33 @@ pub async fn run(
                 total,
                 hash.finalize().to_hex().to_string()
             ]))?;
-            if let Some(cursor) = &prior {
-                cursor.check_view(&view, total)?;
-            }
-            let start = (offset as usize).min(rows.len());
+            read.check_view(&view, total)?;
+            let start = (read.offset as usize).min(rows.len());
             let end = start
-                .saturating_add(usize::try_from(size).unwrap_or(usize::MAX))
+                .saturating_add(usize::try_from(read.size).unwrap_or(usize::MAX))
                 .min(rows.len());
             Answer {
                 unit,
                 query: text.to_string(),
                 read_as: read_as(query),
-                resolved,
+                resolved: read.resolved(),
                 columns,
                 rows: rows[start..end].to_vec(),
                 total,
-                page: PageInfo {
-                    size,
-                    cursor: (end < rows.len())
-                        .then(|| cursor::Cursor::encode(&question, &ctx, seq, end as u64, &view))
-                        .transpose()?,
-                },
+                page: read.info(&view, total, end - start)?,
                 recall: None,
             }
         }
         Source::Unit { .. } => {
-            let rendered = render_page(Compiler::new(&ctx, seq).compile(query)?, offset, size);
-            page_of(
-                &mut tx,
-                rendered,
-                unit,
-                text,
-                query,
-                resolved,
-                seq,
-                offset,
-                size,
-                &question,
-                &ctx,
-                prior.as_ref(),
-                None,
-            )
-            .await?
+            let rendered = render_page(
+                Compiler::new(&read.ctx, read.seq).compile(query)?,
+                read.offset,
+                read.size,
+            );
+            page_of(&mut tx, rendered, unit, text, query, &read, None).await?
         }
         Source::Recall { .. } | Source::RecallLast { .. } => {
-            let selection = recall::select(&mut tx, &query.source, &ctx, seq).await?;
+            let selection = recall::select(&mut tx, &query.source, &read.ctx, read.seq).await?;
             let as_events = Query {
                 source: Source::Unit {
                     unit: Unit::Events,
@@ -230,29 +221,71 @@ pub async fn run(
                 stages: query.stages.clone(),
                 ranked: query.ranked,
             };
-            let rendered = render_page(Compiler::new(&ctx, seq).compile(&as_events)?, offset, size);
-            let account = selection.account(&mut tx, seq).await?;
-            page_of(
-                &mut tx,
-                rendered,
-                unit,
-                text,
-                query,
-                resolved,
-                seq,
-                offset,
-                size,
-                &question,
-                &ctx,
-                prior.as_ref(),
-                Some(account),
-            )
-            .await?
+            let rendered = render_page(
+                Compiler::new(&read.ctx, read.seq).compile(&as_events)?,
+                read.offset,
+                read.size,
+            );
+            let account = selection.account(&mut tx, read.seq).await?;
+            page_of(&mut tx, rendered, unit, text, query, &read, Some(account)).await?
         }
     };
     answer.read_as = read_as(query);
     tx.commit().await?;
     Ok(answer)
+}
+
+/// The validated clock and position shared by every answer shape in this read.
+struct ReadPage {
+    question: String,
+    ctx: Context,
+    seq: i64,
+    offset: u64,
+    size: u64,
+    prior: Option<cursor::Cursor>,
+}
+
+impl ReadPage {
+    fn resolved(&self) -> Resolved {
+        Resolved {
+            now: self.ctx.now.to_string(),
+            zone: self.ctx.zone_name(),
+            day_start: self.ctx.day_start.to_string(),
+            commit_seq: self.seq,
+        }
+    }
+
+    fn check_view(&self, view: &str, total: i64) -> Result<()> {
+        match &self.prior {
+            Some(cursor) => cursor.check_view(view, total),
+            None => Ok(()),
+        }
+    }
+
+    fn info(&self, view: &str, total: i64, returned: usize) -> Result<PageInfo> {
+        let next = self
+            .offset
+            .checked_add(returned as u64)
+            .ok_or_else(|| Error::Invalid("query page offset is out of range".into()))?;
+        let cursor = if next < total.max(0) as u64 {
+            if returned == 0 {
+                return Err(Error::Invalid("query page did not advance".into()));
+            }
+            Some(cursor::Cursor::encode(
+                &self.question,
+                &self.ctx,
+                self.seq,
+                next,
+                view,
+            )?)
+        } else {
+            None
+        };
+        Ok(PageInfo {
+            size: self.size,
+            cursor,
+        })
+    }
 }
 
 /// The two statements of one page, rendered before anything is awaited:
@@ -287,20 +320,13 @@ fn render_page(compiled: Compiled, offset: u64, size: u64) -> Rendered {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn page_of(
     tx: &mut PgConnection,
     rendered: Rendered,
     unit: String,
     text: &str,
     query: &Query,
-    resolved: Resolved,
-    seq: i64,
-    offset: u64,
-    size: u64,
-    question: &str,
-    ctx: &Context,
-    prior: Option<&cursor::Cursor>,
+    read: &ReadPage,
     recall: Option<Json>,
 ) -> Result<Answer> {
     let (sql_text, values) = rendered.total;
@@ -317,28 +343,21 @@ async fn page_of(
         second,
         recall
     ]))?;
-    if let Some(cursor) = prior {
-        cursor.check_view(&view, total)?;
-    }
+    read.check_view(&view, total)?;
     let (sql_text, values) = rendered.rows;
     let rows: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql_text), values)
         .fetch_all(&mut *tx)
         .await?;
-    let next = offset + rows.len() as u64;
+    let page = read.info(&view, total, rows.len())?;
     Ok(Answer {
         unit,
         query: text.to_string(),
         read_as: read_as(query),
-        resolved,
+        resolved: read.resolved(),
         columns: rendered.columns,
         rows,
         total,
-        page: PageInfo {
-            size,
-            cursor: ((next as i64) < total)
-                .then(|| cursor::Cursor::encode(question, ctx, seq, next, &view))
-                .transpose()?,
-        },
+        page,
         recall,
     })
 }
