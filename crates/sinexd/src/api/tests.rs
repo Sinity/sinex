@@ -688,6 +688,46 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key() {
         .unwrap();
     let (_, restored) = call(&w, Some(OPERATOR), query.clone()).await;
     assert!(first(&restored).contains("diary"), "restored: {restored}");
+    let (_, unchanged) = call(&w, Some(OPERATOR), query.clone()).await;
+    assert!(
+        first(&unchanged).contains("diary"),
+        "unchanged: {unchanged}"
+    );
+    let mut fresh = sealed::new_key().unwrap();
+    fresh.key_ref = key.key_ref.clone();
+    let wrapped = sealed::wrap(&fresh, &identity.to_public()).unwrap();
+    sqlx::query("UPDATE privacy.material_keys SET wrapped_key=$1 WHERE material_id=$2")
+        .bind(wrapped)
+        .bind(material.0)
+        .execute(&w.reads)
+        .await
+        .unwrap();
+    let mut fresh_event = command("synthetic fresh protected value", 1);
+    fresh_event.origin = Origin::Record {
+        location: RecordLocation {
+            material,
+            anchor: 1,
+        },
+        ordinal: 0,
+    };
+    sealed::seal_event(&mut fresh_event, &fresh).unwrap();
+    admit_events(&w, vec![fresh_event]).await;
+    let (_, changed) = call(&w, Some(OPERATOR), query.clone()).await;
+    assert!(
+        rows(&changed).contains("synthetic fresh protected value"),
+        "fresh: {changed}"
+    );
+    assert!(
+        !rows(&changed).contains("diary"),
+        "old content remains encrypted: {changed}"
+    );
+    let wrapped = sealed::wrap(&key, &identity.to_public()).unwrap();
+    sqlx::query("UPDATE privacy.material_keys SET wrapped_key=$1 WHERE material_id=$2")
+        .bind(wrapped)
+        .bind(material.0)
+        .execute(&w.reads)
+        .await
+        .unwrap();
     let (_, agent) = call(&w, Some(AGENT), query.clone()).await;
     assert!(
         !first(&agent).contains("diary"),

@@ -361,16 +361,16 @@ async fn retained_record_naming_survives_key_restore_and_actual_replay() {
                 event.payload.clone(),
             ));
         }
-        if let sinex_model::BatchKind::Source(progress) = &batch.kind {
-            if let Some(material) = &progress.material {
-                let key = sink.key(&material.blob).unwrap();
-                let secrets = sinex_store::sealed::MaterialSecrets::from_data_key(&old)
-                    .naming_only()
-                    .with_data_key(&key);
-                sink.restore_secrets(material.blob.clone(), key.key_ref.clone(), secrets)
-                    .unwrap();
-                data = Some(key);
-            }
+        if let sinex_model::BatchKind::Source(progress) = &batch.kind
+            && let Some(material) = &progress.material
+        {
+            let key = sink.key(&material.blob).unwrap();
+            let secrets = sinex_store::sealed::MaterialSecrets::from_data_key(&old)
+                .naming_only()
+                .with_data_key(&key);
+            sink.restore_secrets(material.blob.clone(), key.key_ref.clone(), secrets)
+                .unwrap();
+            data = Some(key);
         }
         let mut batches = [batch];
         sink.seal(&mut batches).unwrap();
@@ -412,7 +412,7 @@ async fn retained_record_naming_survives_key_restore_and_actual_replay() {
     .unwrap();
     assert_eq!(readings.len(), 4);
     let data = data.unwrap();
-    for (index, pair) in readings.chunks_exact(2).enumerate() {
+    for (index, pair) in readings.as_chunks::<2>().0.iter().enumerate() {
         for (equivalence, hash, payload) in pair {
             assert_eq!(
                 (equivalence, hash),

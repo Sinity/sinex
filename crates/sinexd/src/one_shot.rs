@@ -278,7 +278,7 @@ impl SealingSink {
                         }
                         *reason = sinex_store::sealed::seal_value(
                             &serde_json::Value::String(reason.clone()),
-                            &key,
+                            key,
                         )
                         .map_err(|e| e.to_string())?
                         .to_string();
@@ -290,7 +290,7 @@ impl SealingSink {
                     && sinex_store::sealed::key_ref(&progress.carry) == Some(key.key_ref.as_str())
                     && sinex_store::sealed::unseal_payload(&progress.carry, &key.key).is_ok();
                 if !retained {
-                    progress.carry = sinex_store::sealed::seal_value(&progress.carry, &key)
+                    progress.carry = sinex_store::sealed::seal_value(&progress.carry, key)
                         .map_err(|e| e.to_string())?;
                 }
             }
