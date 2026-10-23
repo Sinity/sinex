@@ -325,7 +325,11 @@ impl Source for SmallBatches {
         &'a self,
         mut input: sinex_sources::DrainInput<'a>,
     ) -> Result<
-        Box<dyn Iterator<Item = sinex_sources::DrainOutput> + Send + 'a>,
+        Box<
+            dyn Iterator<Item = Result<sinex_sources::DrainOutput, sinex_sources::RecordError>>
+                + Send
+                + 'a,
+        >,
         sinex_sources::RecordError,
     > {
         input.limits.max_events = 2;

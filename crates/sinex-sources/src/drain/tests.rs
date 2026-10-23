@@ -53,7 +53,7 @@ fn run(bytes: &[u8], carry: Value, limits: Limits) -> Vec<DrainOutput> {
             source: "t",
             class: Class::Open,
             material: MaterialId(uuid::Uuid::nil()),
-            bytes,
+            bytes: bytes.into(),
             records: &records,
             carry,
             reading_order: &|a| ReadingOrder(a as i64),

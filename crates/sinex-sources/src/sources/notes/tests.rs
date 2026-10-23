@@ -20,7 +20,7 @@ fn notes_and_their_removal() {
                 source: "t",
                 class: Class::Open,
                 material: MaterialId(uuid::Uuid::nil()),
-                bytes: &m.bytes,
+                bytes: m.record_bytes(),
                 records: &m.records,
                 carry: Value::Null,
                 reading_order: &|_| ReadingOrder(0),
@@ -37,13 +37,16 @@ fn notes_and_their_removal() {
             })
             .collect::<Vec<_>>()
     };
-    let first = run(&d.poll(&Value::Null, &mut state).unwrap());
+    let acquired = d.poll(&Value::Null, &mut state).unwrap();
+    let m = acquired.material.as_ref().unwrap();
+    let cursor = (m.cursor_at)(m.records.last().unwrap().1);
+    let first = run(&acquired);
     assert_eq!(first.len(), 1, ".obsidian is not a note");
     assert_eq!(first[0]["path"], "a.md");
     assert_eq!(first[0]["text"], "# A\n");
     assert!(first[0]["modified_at"].is_string());
     std::fs::remove_file(root.join("a.md")).unwrap();
-    let second = run(&d.poll(&Value::Null, &mut state).unwrap());
+    let second = run(&d.poll(&cursor, &mut state).unwrap());
     assert_eq!(second[0]["path"], "a.md");
     assert!(second[0]["vanished_at"].is_string());
     assert!(second[0]["text"].is_null());

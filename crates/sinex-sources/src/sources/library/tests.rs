@@ -5,6 +5,10 @@ use sinex_model::{RecordOutcome, RecordState};
 
 struct MemorySink(std::sync::Mutex<HashMap<String, Vec<u8>>>);
 impl MaterialSink for MemorySink {
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
+        self.put(&std::fs::read(path).map_err(|e| e.to_string())?)
+    }
+
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         let name = format!("blake3:{}", blake3::hash(bytes).to_hex());
         self.0.lock().unwrap().insert(name.clone(), bytes.to_vec());
@@ -34,7 +38,7 @@ fn read(a: &Acquired, parser: &ScanParser) -> Vec<Acquisition> {
             source: "library.scan",
             class: Class::Open,
             material: m.id,
-            bytes: &m.bytes,
+            bytes: m.bytes.as_slice().into(),
             records: &m.records,
             carry: Value::Null,
             reading_order: &*m.reading_order,
@@ -244,7 +248,7 @@ fn requests_take_author_and_time_from_the_manifest() {
             source: "library.request",
             class: Class::Open,
             material: m.id,
-            bytes: &m.bytes,
+            bytes: m.bytes.as_slice().into(),
             records: &m.records,
             carry: Value::Null,
             reading_order: &*m.reading_order,

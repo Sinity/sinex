@@ -22,12 +22,41 @@ impl Default for Limits {
     }
 }
 
+/// Borrowed record storage. File reads retain only the current decoded record.
+pub enum RecordBytes<'a> {
+    Slice(&'a [u8]),
+    File(&'a std::fs::File),
+}
+
+impl<'a> From<&'a [u8]> for RecordBytes<'a> {
+    fn from(bytes: &'a [u8]) -> Self {
+        Self::Slice(bytes)
+    }
+}
+
+impl<'a> RecordBytes<'a> {
+    fn record(&self, start: usize, end: usize) -> std::io::Result<std::borrow::Cow<'a, [u8]>> {
+        match self {
+            Self::Slice(bytes) => Ok(std::borrow::Cow::Borrowed(&bytes[start..end])),
+            Self::File(file) => {
+                use std::os::unix::fs::FileExt;
+                let length = end
+                    .checked_sub(start)
+                    .ok_or_else(|| std::io::Error::other("invalid record range"))?;
+                let mut bytes = vec![0; length];
+                file.read_exact_at(&mut bytes, start as u64)?;
+                Ok(std::borrow::Cow::Owned(bytes))
+            }
+        }
+    }
+}
+
 pub struct DrainInput<'a> {
     pub source: &'a str,
     pub class: Class,
     pub material: MaterialId,
     /// The material's bytes.
-    pub bytes: &'a [u8],
+    pub bytes: RecordBytes<'a>,
     /// Framed records: byte ranges within `bytes`, in order.
     pub records: &'a [(usize, usize)],
     /// The carried state before the first record.
@@ -102,7 +131,7 @@ pub fn drain<P: Parser>(
     parser: &P,
     input: DrainInput<'_>,
 ) -> Result<Vec<DrainOutput>, RecordError> {
-    Ok(Drainer::new(parser, input)?.collect())
+    Drainer::new(parser, input)?.collect()
 }
 
 /// A record parsed but not yet placed: it did not fit the chunk being
@@ -149,9 +178,8 @@ impl<'a, P: Parser> Drainer<'a, P> {
     }
 
     /// Parse one record into its outcome, advancing the carry on success.
-    fn outcome(&mut self, start: usize, end: usize) -> RecordOutcome {
+    fn outcome(&mut self, raw: &[u8], start: usize) -> RecordOutcome {
         let input = &self.input;
-        let raw = &input.bytes[start..end];
         let location = RecordLocation {
             material: input.material,
             anchor: start as u64,
@@ -236,7 +264,7 @@ fn place(chunk: &mut DrainOutput, outcome: RecordOutcome, events: usize, end: us
 }
 
 impl<P: Parser> Iterator for Drainer<'_, P> {
-    type Item = DrainOutput;
+    type Item = Result<DrainOutput, RecordError>;
 
     fn next(&mut self) -> Option<DrainOutput> {
         if self.finished {
@@ -254,13 +282,22 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
         }
         while let Some(&(start, end)) = self.input.records.get(self.next) {
             self.next += 1;
+            let raw = match self.input.bytes.record(start, end) {
+                Ok(raw) => raw,
+                Err(error) => {
+                    self.finished = true;
+                    return Some(Err(RecordError::new(format!(
+                        "read record {start}..{end}: {error}"
+                    ))));
+                }
+            };
             // An excision blanks a record to spaces (its newline kept): no
             // record is left there, so nothing is read and nothing fails.
-            if is_blanked(&self.input.bytes[start..end]) {
+            if is_blanked(&raw) {
                 current.end = end;
                 continue;
             }
-            let outcome = self.outcome(start, end);
+            let outcome = self.outcome(&raw, start);
             let size = end - start;
             let events = match &outcome {
                 RecordOutcome::Events { events, .. } => events.len(),
@@ -283,7 +320,7 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
                     serde_json::to_value(chunk_carry.as_ref().expect("a placed record"))
                         .expect("carry serializes");
                 self.emitted = true;
-                return Some(current);
+                return Some(Ok(current));
             }
             place(&mut current, outcome, events, end);
             chunk_carry = Some(self.carry.clone());
@@ -293,7 +330,7 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
         if !current.outcomes.is_empty() || !self.emitted {
             current.carry = serde_json::to_value(&self.carry).expect("carry serializes");
             self.emitted = true;
-            return Some(current);
+            return Some(Ok(current));
         }
         None
     }

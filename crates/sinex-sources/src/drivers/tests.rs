@@ -33,6 +33,10 @@ impl Parser for Counting {
 
 struct Discard;
 impl MaterialSink for Discard {
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
+        self.put(&std::fs::read(path).map_err(|e| e.to_string())?)
+    }
+
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         Ok(format!("blake3:{}", blake3::hash(bytes).to_hex()))
     }
@@ -113,14 +117,14 @@ fn batches_are_drained_lazily() {
     )
     .unwrap();
     let mut batches = prepared.batches().unwrap();
-    let first = batches.next().unwrap();
+    let first = batches.next().unwrap().unwrap();
     assert_eq!(first.event_count(), 1_000);
     assert!(
         PARSED.load(Ordering::SeqCst) <= 2_001,
         "taking one batch parsed {} records",
         PARSED.load(Ordering::SeqCst)
     );
-    let rest: Vec<Batch> = batches.collect();
+    let rest: Vec<Batch> = batches.collect::<Result<_, _>>().unwrap();
     assert_eq!(1 + rest.len(), records / 1_000);
     let BatchKind::Source(last) = &rest.last().unwrap().kind else {
         panic!()
@@ -200,6 +204,7 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
         )
         .unwrap();
         for batch in prepared.batches().unwrap() {
+            let batch = batch.unwrap();
             events += batch.event_count();
             let BatchKind::Source(p) = &batch.kind else {
                 panic!()

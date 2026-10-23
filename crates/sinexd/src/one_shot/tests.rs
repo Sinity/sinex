@@ -31,6 +31,7 @@ async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline()
     let mut chunks = 0;
     let mut expected_carry = Value::Null;
     for batch in prepared.batches().unwrap() {
+        let batch = batch.unwrap();
         chunks += 1;
         if let sinex_model::BatchKind::Source(progress) = &batch.kind {
             expected_carry = progress.carry.clone();
@@ -106,7 +107,7 @@ async fn sealed_failure_details_are_encrypted_and_exactly_recoverable() {
         Limits::default(),
     )
     .unwrap();
-    let mut batch = prepared.batches().unwrap().next().unwrap();
+    let mut batch = prepared.batches().unwrap().next().unwrap().unwrap();
     let sinex_model::RecordOutcome::Events { events, .. } = &batch.records[0] else {
         panic!("events")
     };

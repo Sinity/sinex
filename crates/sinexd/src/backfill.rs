@@ -340,7 +340,7 @@ pub(crate) async fn submit(
         totals.material_bytes += bytes;
     }
     for batch in prepared.batches().map_err(|e| e.to_string())? {
-        let mut one = [batch];
+        let mut one = [batch.map_err(|e| e.to_string())?];
         if let Some(s) = sealing {
             s.seal(read_conn, &mut one).await?;
         }

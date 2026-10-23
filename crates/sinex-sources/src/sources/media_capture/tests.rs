@@ -27,7 +27,7 @@ fn a_stored_segment_drains_to_one_event_from_its_manifest() {
             source: SPEC.name,
             class: SPEC.class,
             material: MaterialId::new(),
-            bytes: &m.bytes,
+            bytes: m.bytes.as_slice().into(),
             records: &m.records,
             carry: Value::Null,
             reading_order: &|a| ReadingOrder(a as i64),

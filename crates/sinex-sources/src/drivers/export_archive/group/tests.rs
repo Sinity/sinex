@@ -11,6 +11,10 @@ struct Sink {
     writes: AtomicU64,
 }
 impl MaterialSink for Sink {
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
+        self.put(&std::fs::read(path).map_err(|e| e.to_string())?)
+    }
+
     fn put(&self, bytes: &[u8]) -> Result<String, String> {
         self.writes.fetch_add(1, Ordering::Relaxed);
         let name = format!("blake3:{}", blake3::hash(bytes).to_hex());
@@ -119,6 +123,7 @@ impl Seen {
         )
         .unwrap();
         for batch in prepared.batches().unwrap() {
+            let batch = batch.unwrap();
             let BatchKind::Source(progress) = batch.kind else {
                 panic!("source progress")
             };
