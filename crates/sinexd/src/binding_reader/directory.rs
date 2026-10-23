@@ -11,6 +11,9 @@ pub(super) async fn restore(
     access: Access<'_>,
     stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
+    if *stop.borrow() {
+        return Err("directory restore cancelled".into());
+    }
     let Some(last) = cursor
         .get("material")
         .and_then(Value::as_str)
@@ -32,6 +35,9 @@ pub(super) async fn restore(
         .map_err(|e| e.to_string())?;
     let mut reference: Option<MaterialRef> = None;
     for (id, _) in chain {
+        if *stop.borrow() {
+            return Err("directory restore cancelled".into());
+        }
         let next = sinex_store::material_bytes::reference(conn, MaterialId(id))
             .await
             .map_err(|e| e.to_string())?
@@ -85,7 +91,7 @@ pub(super) async fn restore(
         match through {
             Some(n) if n < reference.length => Some(cursor),
             None => return Err(
-                "legacy directory cursor has no processed-end proof; retained replay is required"
+                "legacy directory cursor has no processed-end proof; retained replay and an explicit cursor repair are required"
                     .into(),
             ),
             _ => None,

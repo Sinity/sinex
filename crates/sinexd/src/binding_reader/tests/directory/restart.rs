@@ -630,3 +630,53 @@ async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material
     assert_eq!(total.to_json()["admitted"], 0);
     ctx.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn stopped_directory_restore_keeps_progress_and_can_be_retried() {
+    let (_db, url, _) = crate::testdb::fresh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("vault");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.md"), "alpha").unwrap();
+    let mut ctx = OneShot::open(&url, &dir.path().join("store"))
+        .await
+        .unwrap();
+    let sink = Sink(ctx.blobs.clone());
+    let binding = Binding::of(&notes::SPEC, &root, Settings::new("synthetic"));
+    let mut bounds = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    turn(&mut ctx, &mut bounds, Access::default())
+        .await
+        .unwrap();
+    drop(bounds);
+    let checkpoint = positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap();
+    std::fs::remove_file(root.join("a.md")).unwrap();
+    let mut restarted = vec![Bound::new(&notes::KIND, binding.clone()).unwrap()];
+    let (_stop, stop) = watch::channel(true);
+    let result = read(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        RunId::new(),
+        &sink,
+        &mut restarted,
+        stop,
+        Access::default(),
+    )
+    .await;
+    assert!(result[0].1.as_ref().is_err_and(|e| e.contains("cancelled")));
+    assert_eq!(
+        positions::load(&mut ctx.read_conn, &binding.name)
+            .await
+            .unwrap()
+            .unwrap(),
+        checkpoint
+    );
+    turn(&mut ctx, &mut restarted, Access::default())
+        .await
+        .unwrap();
+    assert_eq!(current_notes(&mut ctx.read_conn).await[0].1, Value::Null);
+    ctx.close().await.unwrap();
+}
