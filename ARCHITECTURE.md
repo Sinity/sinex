@@ -104,9 +104,26 @@ state. Memory holds the current file record and batch plus directory/member meta
 a single oversized note or message still requires that whole decoded record.
 File-read failures stop draining without advancing the failed range. The committed
 cursor confirms file-cache changes only at the bundle's final byte; earlier
-retries keep its captured bytes and material identity. A process restart releases
-staging and rescans, with ordinary admission suppressing repeats. All material
-sinks must implement file storage explicitly; production sinks stream it.
+retries keep its captured bytes and material identity. Restart restores known
+member paths from explicit consumed ranges and exact retained event/error
+locations. An isolated later outcome confirms only its own member. Present
+files are reread; remembered membership supplies no fingerprint shortcut.
+Before observing new source bytes, an incomplete current bundle resumes from
+its verified retained body with its original identity, coordinates and scan
+time. New manifests retain constant-size cursor/observation resume metadata.
+Older ignored suffixes without progress evidence remain a historical replay
+limit; raw registration alone does not prove their interpretation completed.
+All material sinks implement file storage explicitly; production sinks stream it.
+
+Known event classes remain a floor for history-derived capture, including
+when an operator lowers the current source setting. Failure records establish
+no class by themselves. Completed sealed directory membership can be restored without a private key
+when the effective binding floor remains sealed. A lowered floor requires
+scoped authority, and history-derived capture retains the sealed floor. An
+unfinished sealed body additionally needs authenticated access under that
+authority, with no plaintext staging. A new directory bundle resets parser
+carry because each file is independent; resuming the same bundle retains its
+committed carry and original material key.
 
 Retained replay streams verified plain bodies into a scoped unnamed file and
 reads each declared record through the drain. Sealed replay authenticates the

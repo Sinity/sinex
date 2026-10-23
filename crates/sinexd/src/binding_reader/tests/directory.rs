@@ -378,3 +378,5 @@ async fn legacy_empty_tail_commits_with_its_shared_checkpoint_and_retries_exactl
     ctx.close().await.unwrap();
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+mod restart;

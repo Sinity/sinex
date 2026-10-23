@@ -1,4 +1,5 @@
 //! A binding owns its parser and cursor; compatible archives share physical traversal.
+mod directory;
 use crate::backfill::{self, Totals};
 use crate::one_shot::{Sink, stored_chain};
 use crate::writer::WriterHandle;
@@ -20,6 +21,7 @@ pub(crate) struct Bound {
     pub source: Box<dyn Source>,
     reader: Box<dyn Reader>,
     remembered: bool,
+    history_floor: Class,
 }
 impl Bound {
     pub fn new(kind: &InputKind, binding: Binding) -> Result<Self, String> {
@@ -33,6 +35,7 @@ impl Bound {
             reader,
             binding,
             remembered: false,
+            history_floor: Class::Open,
         })
     }
 }
@@ -42,11 +45,7 @@ enum Choice {
     Retained(ObservationFacts, Class),
 }
 
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Access<'a> {
-    pub recipient: Option<&'a sinex_store::sealed::Recipient>,
-    pub authority: Option<&'a crate::sealed_access::Authority>,
-}
+pub(crate) use crate::sealed_access::Access;
 
 struct Archive {
     indices: Vec<usize>,
@@ -96,10 +95,14 @@ pub(crate) async fn read(
                         .map_err(|e| e.to_string())?
                         .map(|(cursor, _)| cursor)
                         .unwrap_or(Value::Null);
-                    b.reader
-                        .remember(&stored_chain(conn, blobs, &cursor).await?);
-                    if b.reader.image_policy().is_some() {
-                        restore_sqlite(conn, blobs, b, &cursor).await?;
+                    if b.source.spec().driver == sinex_sources::Driver::DirSnapshot {
+                        directory::restore(conn, blobs, b, &cursor, access, stop.clone()).await?;
+                    } else {
+                        b.reader
+                            .remember(&stored_chain(conn, blobs, &cursor).await?);
+                        if b.reader.image_policy().is_some() {
+                            restore_sqlite(conn, blobs, b, &cursor).await?;
+                        }
                     }
                 }
                 b.remembered = true;
@@ -176,6 +179,8 @@ pub(crate) async fn read(
                 b.source.as_ref(),
                 &b.binding.name,
                 sink,
+                access,
+                b.history_floor,
                 |cursor| {
                     if *stop.borrow() {
                         b.reader.cancel_pending();
@@ -686,6 +691,7 @@ async fn read_archive(
                 physical_sink,
                 sealing.as_deref(),
                 access.authority,
+                archive.class,
                 acquired,
                 carry,
                 total,

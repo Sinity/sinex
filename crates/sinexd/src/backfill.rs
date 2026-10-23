@@ -227,6 +227,7 @@ pub(crate) async fn record(read_conn: &mut PgConnection, b: &Binding) -> Result<
     .map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn drive(
     read_conn: &mut PgConnection,
     handle: &writer::WriterHandle,
@@ -234,6 +235,8 @@ pub(crate) async fn drive(
     source: &dyn Source,
     binding: &str,
     sink: &Sink,
+    access: crate::sealed_access::Access<'_>,
+    minimum_class: sinex_model::Class,
     mut poll: impl FnMut(&serde_json::Value) -> Result<drivers::Acquired, drivers::DriverError>,
 ) -> Result<Totals, String> {
     let mut totals = Totals::default();
@@ -248,8 +251,13 @@ pub(crate) async fn drive(
         .get(source.spec().name)
         .copied()
         .unwrap_or_default();
-    let sealing = if source.spec().class.max(floor) == sinex_model::Class::Sealed {
-        let recipient = crate::one_shot::class_key()?.ok_or_else(|| {
+    let effective_class = source.spec().class.max(floor).max(minimum_class);
+    let sealing = if effective_class == sinex_model::Class::Sealed {
+        let recipient = match access.recipient {
+            Some(recipient) => Some(recipient.clone()),
+            None => crate::one_shot::class_key()?,
+        };
+        let recipient = recipient.ok_or_else(|| {
             format!(
                 "{}: its class is sealed, but no class key is configured (SINEX_CLASS_KEY_FILE)",
                 source.spec().name
@@ -282,7 +290,30 @@ pub(crate) async fn drive(
             }
             result => result.map_err(|e| e.to_string())?,
         };
-        let carry = if acquired.material.is_some() {
+        if let Some(authority) = access.authority {
+            authority.check()?;
+        }
+        if let (Some(sealing), Some(material)) = (&sealing, &acquired.material)
+            && let Some(drivers::StoredBytes::FramedReader(stored)) = &material.stored
+            && sink.0.is_sealed(&stored.blob).map_err(|e| e.to_string())?
+        {
+            let authority = access
+                .authority
+                .ok_or("retained sealed material requires explicit operator unlock")?;
+            let key = authority.material_key(read_conn, material.id).await?;
+            sealing.restore_key(stored.blob.clone(), key);
+        }
+        // A directory material contains independent files. A new bundle has
+        // no parser state from the preceding bundle; a resumed bundle keeps
+        // its committed carry and requires its original sealed key.
+        let fresh_directory = source.spec().driver == sinex_sources::Driver::DirSnapshot
+            && acquired
+                .material
+                .as_ref()
+                .is_some_and(|m| cursor["material"].as_str() != Some(m.id.to_string().as_str()));
+        let carry = if fresh_directory {
+            serde_json::Value::Null
+        } else if acquired.material.is_some() {
             match &sealing {
                 Some(s) => s.open_carry(&carry)?,
                 None => carry,
@@ -301,7 +332,8 @@ pub(crate) async fn drive(
             binding,
             material_sink,
             sealing.as_ref(),
-            None,
+            access.authority,
+            effective_class,
             acquired,
             carry,
             &mut totals,
@@ -325,6 +357,7 @@ pub(crate) async fn submit(
     material_sink: &dyn drivers::MaterialSink,
     sealing: Option<&crate::one_shot::SealingSink>,
     authority: Option<&crate::sealed_access::Authority>,
+    minimum_class: sinex_model::Class,
     acquired: drivers::Acquired,
     carry: serde_json::Value,
     totals: &mut Totals,
@@ -332,6 +365,13 @@ pub(crate) async fn submit(
     totals.polls += 1;
     // Batches are submitted as they are drained, so memory holds one
     // batch at a time, never a whole material's events.
+    let retained_material = acquired.material.as_ref().and_then(|material| {
+        matches!(
+            &material.stored,
+            Some(drivers::StoredBytes::FramedReader(_))
+        )
+        .then_some(material.id)
+    });
     let prepared = drivers::prepare(
         source,
         binding,
@@ -355,8 +395,24 @@ pub(crate) async fn submit(
     }
     for batch in prepared.batches().map_err(|e| e.to_string())? {
         let mut one = [batch.map_err(|e| e.to_string())?];
+        for record in &mut one[0].records {
+            if let sinex_model::RecordOutcome::Events { events, .. } = record {
+                for event in events {
+                    event.class = event.class.max(minimum_class);
+                }
+            }
+        }
         if let Some(s) = sealing {
             s.seal(&mut one)?;
+            if let (Some(material), sinex_model::BatchKind::Source(progress)) =
+                (retained_material, &mut one[0].kind)
+            {
+                // Admission already owned this key. An authorized cached read
+                // cannot publish it again after excision destroyed it.
+                progress
+                    .material_keys
+                    .retain(|key| key.material != material);
+            }
         }
         if let Some(authority) = authority {
             authority.check()?;

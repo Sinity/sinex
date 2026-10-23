@@ -8,6 +8,14 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+/// Capture can use a public recipient; historical plaintext requires the
+/// existing operation-scoped authority.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Access<'a> {
+    pub recipient: Option<&'a sinex_store::sealed::Recipient>,
+    pub authority: Option<&'a Authority>,
+}
+
 #[derive(Clone)]
 pub(crate) struct Authority {
     identity: Arc<Identity>,
