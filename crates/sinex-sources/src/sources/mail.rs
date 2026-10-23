@@ -32,7 +32,10 @@ pub const MBOX: SourceSpec = SourceSpec {
     parser: "rfc5322-mail",
     parser_version: 1,
     event_types: &["mail.message"],
-    framer: crate::drivers::export_archive::frame_mbox,
+    framer: crate::Framer::export(
+        crate::drivers::export_archive::frame_mbox,
+        crate::drivers::export_archive::Framing::Mbox,
+    ),
 };
 
 pub const MAILDIR: SourceSpec = SourceSpec {
@@ -43,7 +46,10 @@ pub const MAILDIR: SourceSpec = SourceSpec {
     parser: "rfc5322-mail",
     parser_version: 2,
     event_types: &["mail.message"],
-    framer: crate::drivers::export_archive::frame_whole,
+    framer: crate::Framer::export(
+        crate::drivers::export_archive::frame_whole,
+        crate::drivers::export_archive::Framing::Whole,
+    ),
 };
 
 pub struct MailParser;

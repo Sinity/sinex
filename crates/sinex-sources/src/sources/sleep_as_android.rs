@@ -30,7 +30,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "sleep-as-android",
     parser_version: 3,
     event_types: &["health.record"],
-    framer: frame,
+    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::Csv),
 };
 
 pub struct SleepParser;

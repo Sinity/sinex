@@ -26,7 +26,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "media-segment",
     parser_version: 1,
     event_types: &["media.segment"],
-    framer: media::whole,
+    framer: crate::Framer::export(media::whole, crate::drivers::export_archive::Framing::Whole),
 };
 
 pub struct MediaParser;

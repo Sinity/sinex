@@ -10,7 +10,10 @@ const SPEC: SourceSpec = SourceSpec {
     parser: "test",
     parser_version: 1,
     event_types: &[],
-    framer: |b| (vec![(0, b.len())], b.len()),
+    framer: crate::Framer::export(
+        |b| (vec![(0, b.len())], b.len()),
+        crate::drivers::export_archive::Framing::Whole,
+    ),
 };
 
 #[test]

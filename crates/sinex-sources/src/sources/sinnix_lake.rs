@@ -35,7 +35,7 @@ const fn spec(name: &'static str, parser: &'static str, consumer: &'static str) 
         parser,
         parser_version: 2,
         event_types: &["capture.observed"],
-        framer: lines,
+        framer: crate::Framer::incremental(lines),
     }
 }
 
@@ -301,7 +301,7 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: lines,
+        framer: crate::Framer::incremental(lines),
     }
 }
 

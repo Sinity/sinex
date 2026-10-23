@@ -24,10 +24,17 @@ impl Default for Limits {
     }
 }
 
+/// Random-access retained records. Implementations keep their verified backing open.
+pub trait RecordRead: Send + Sync {
+    fn length(&self) -> u64;
+    fn read_exact_at(&self, start: u64, bytes: &mut [u8]) -> std::io::Result<()>;
+}
+
 /// Borrowed record storage. File reads retain only the current decoded record.
 pub enum RecordBytes<'a> {
     Slice(&'a [u8]),
     File(&'a std::fs::File),
+    Reader(&'a dyn RecordRead),
 }
 
 impl<'a> From<&'a [u8]> for RecordBytes<'a> {
@@ -45,11 +52,23 @@ impl<'a> RecordBytes<'a> {
                 .ok_or_else(|| std::io::Error::other("record range exceeds material")),
             Self::File(file) => {
                 use std::os::unix::fs::FileExt;
-                let length = end
-                    .checked_sub(start)
-                    .ok_or_else(|| std::io::Error::other("invalid record range"))?;
-                let mut bytes = vec![0; length];
+                let mut bytes = vec![
+                    0;
+                    end.checked_sub(start).ok_or_else(|| std::io::Error::other(
+                        "invalid record range"
+                    ))?
+                ];
                 file.read_exact_at(&mut bytes, start as u64)?;
+                Ok(std::borrow::Cow::Owned(bytes))
+            }
+            Self::Reader(reader) => {
+                let mut bytes = vec![
+                    0;
+                    end.checked_sub(start).ok_or_else(|| std::io::Error::other(
+                        "invalid record range"
+                    ))?
+                ];
+                reader.read_exact_at(start as u64, &mut bytes)?;
                 Ok(std::borrow::Cow::Owned(bytes))
             }
         }
@@ -174,18 +193,20 @@ pub struct Drainer<'a, P: Parser> {
 
 impl<'a, P: Parser> Drainer<'a, P> {
     pub fn new(parser: &'a P, input: DrainInput<'a>) -> Result<Self, RecordError> {
-        if let RecordBytes::File(file) = input.bytes {
-            let length = file
+        let length = match &input.bytes {
+            RecordBytes::Slice(bytes) => bytes.len() as u64,
+            RecordBytes::File(file) => file
                 .metadata()
                 .map_err(|e| RecordError::new(format!("staged material: {e}")))?
-                .len();
-            if input
-                .records
-                .iter()
-                .any(|&(start, end)| start > end || end as u64 > length)
-            {
-                return Err(RecordError::new("record range exceeds staged material"));
-            }
+                .len(),
+            RecordBytes::Reader(reader) => reader.length(),
+        };
+        if input
+            .records
+            .iter()
+            .any(|&(start, end)| start > end || end as u64 > length)
+        {
+            return Err(RecordError::new("record range exceeds material"));
         }
         crate::drivers::dir_snapshot::validate_records(input.manifest, input.records)?;
         let carry: P::Carry = if input.carry.is_null() {

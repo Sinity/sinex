@@ -22,7 +22,10 @@ pub const MY_ACTIVITY: SourceSpec = SourceSpec {
     parser: "google-my-activity",
     parser_version: 1,
     event_types: &["action.recorded"],
-    framer: frame,
+    framer: crate::Framer::export(
+        frame,
+        crate::drivers::export_archive::Framing::Delimited(CELL),
+    ),
 };
 
 pub const YOUTUBE: SourceSpec = SourceSpec {
@@ -33,7 +36,10 @@ pub const YOUTUBE: SourceSpec = SourceSpec {
     parser: "google-youtube-history",
     parser_version: 2,
     event_types: &["video.watched", "video.searched"],
-    framer: frame,
+    framer: crate::Framer::export(
+        frame,
+        crate::drivers::export_archive::Framing::Delimited(CELL),
+    ),
 };
 
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {

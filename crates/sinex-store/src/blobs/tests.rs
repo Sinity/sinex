@@ -116,3 +116,46 @@ fn plain_copy_and_retained_reader_keep_exact_bytes() {
     drop(reader);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn checked_plain_copy_stops_after_its_consumer_cancels() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct CancelAfterWrite {
+        cancel: Arc<AtomicBool>,
+        written: usize,
+    }
+    impl Write for CancelAfterWrite {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.written += bytes.len();
+            self.cancel.store(true, Ordering::Relaxed);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("sinex-cancel-copy-{}", uuid::Uuid::now_v7()));
+    let blobs = Blobs::open(&dir).unwrap();
+    let length = 1 << 20;
+    let name = blobs.put(&vec![b'x'; length]).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut output = CancelAfterWrite {
+        cancel: cancel.clone(),
+        written: 0,
+    };
+    let result = blobs.copy_to_checked(&name, &mut output, move || {
+        if cancel.load(Ordering::Relaxed) {
+            Err(std::io::Error::other("synthetic cancellation").into())
+        } else {
+            Ok(())
+        }
+    });
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("synthetic cancellation")
+    );
+    assert!(output.written > 0 && output.written < length);
+    std::fs::remove_dir_all(dir).unwrap();
+}

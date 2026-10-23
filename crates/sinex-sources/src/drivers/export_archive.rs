@@ -2,7 +2,7 @@
 //! and stores exact decoded record parts, separately from its captured original.
 //! Native callers use that traversal for one binding or compatible bindings.
 pub mod group;
-mod records;
+pub(crate) mod records;
 
 use super::DriverError;
 use serde::{Deserialize, Serialize};

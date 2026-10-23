@@ -21,7 +21,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "google-location-history",
     parser_version: 1,
     event_types: &["location.sample"],
-    framer: frame,
+    framer: crate::Framer::export(
+        frame,
+        crate::drivers::export_archive::Framing::JsonArray("/locations"),
+    ),
 };
 
 const KNOWN: &[&str] = &[

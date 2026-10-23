@@ -50,7 +50,25 @@ fn run_case(parser: &str, dir: &Path) -> Value {
         Ok(raw) => serde_json::from_slice(&raw).expect("manifest.json is JSON"),
         Err(_) => json!({ "path": "input" }),
     };
-    let (records, _covered) = (source.spec().framer)(&bytes);
+    let (records, _covered) = source.spec().framer.frame(&bytes);
+    struct Fragmented<R>(R);
+    impl<R: std::io::Read> std::io::Read for Fragmented<R> {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            let n = out.len().min(7);
+            self.0.read(&mut out[..n])
+        }
+    }
+    let streamed = source
+        .spec()
+        .framer
+        .ranges(&mut Fragmented(std::io::Cursor::new(&bytes)))
+        .expect("reader framing");
+    assert_eq!(
+        streamed,
+        records,
+        "reader framing: {parser}, {}",
+        dir.display()
+    );
     let order = |anchor: usize| ReadingOrder(anchor as i64);
     let chunks = source
         .drain(DrainInput {

@@ -23,7 +23,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "icalendar",
     parser_version: 1,
     event_types: &["calendar.event"],
-    framer: frame,
+    framer: crate::Framer::export(
+        frame,
+        crate::drivers::export_archive::Framing::Delimited(EVENT),
+    ),
 };
 
 const EVENT: &[u8] = b"BEGIN:VEVENT";

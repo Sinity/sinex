@@ -38,7 +38,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "arbtt-timelog-v1",
     parser_version: 1,
     event_types: &["window.sampled"],
-    framer: frame,
+    framer: crate::Framer::incremental(frame),
 };
 
 /// The previous sample's strings, which a reference byte indexes.
@@ -262,7 +262,7 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: frame,
+        framer: crate::Framer::incremental(frame),
     }
 }
 

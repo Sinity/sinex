@@ -23,7 +23,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "notes-vault",
     parser_version: 2,
     event_types: &["note.document"],
-    framer: crate::drivers::export_archive::frame_whole,
+    framer: crate::Framer::export(
+        crate::drivers::export_archive::frame_whole,
+        crate::drivers::export_archive::Framing::Whole,
+    ),
 };
 
 /// The vault is named by its folder, from the material's path, so a replay

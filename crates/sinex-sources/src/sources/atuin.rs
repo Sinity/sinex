@@ -19,7 +19,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "atuin-history",
     parser_version: 1,
     event_types: &["command.executed"],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 const KNOWN: &[&str] = &[

@@ -89,7 +89,7 @@ impl AppendState {
     ) -> Self {
         let mut state = Self::default();
         for (material, bytes) in materials {
-            for (s, e) in framer(bytes).0 {
+            for (s, e) in framer.frame(bytes).0 {
                 state.insert(&bytes[s..e], material, s);
             }
         }
@@ -245,7 +245,7 @@ impl AppendFile {
                 .take(want)
                 .read_to_end(&mut data)
                 .map_err(|e| DriverError::Io(e.to_string()))?;
-            let framed = (self.framer)(&data);
+            let framed = self.framer.frame(&data);
             if framed.1 > 0 || want >= available {
                 break framed;
             }

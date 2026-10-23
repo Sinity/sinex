@@ -28,7 +28,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "wl-clipboard",
     parser_version: 1,
     event_types: &["clipboard.copied"],
-    framer: crate::drivers::append_file::lines,
+    framer: crate::Framer::incremental(crate::drivers::append_file::lines),
 };
 
 const SECRET_HINT: &str = "x-kde-passwordManagerHint";

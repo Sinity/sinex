@@ -36,9 +36,15 @@ pub async fn excise_with(
         .map_err(|e| e.to_string())?;
     let mut rewrites = Vec::new();
     for m in plan.materials.iter().filter(|m| !m.sealed) {
-        let mut bytes = blobs.read(&m.blob).map_err(|e| e.to_string())?;
+        let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
+        let length = blobs
+            .copy_to(&m.blob, &mut file)
+            .map_err(|e| e.to_string())?;
+        let retained = crate::retained::Retained::new(file, length);
+        let length =
+            usize::try_from(retained.length()).map_err(|_| "material exceeds address space")?;
         let spans: Vec<(usize, usize)> = if m.whole {
-            vec![(0, bytes.len())]
+            vec![(0, length)]
         } else {
             // Framing belongs to the source's declaration, whatever the
             // binding's settings.
@@ -46,10 +52,10 @@ pub async fn excise_with(
                 .into_iter()
                 .find(|s| s.parser == m.parser)
                 .ok_or_else(|| format!("material {}: no source has parser {}", m.id, m.parser))?;
-            let framed = sinex_sources::drivers::stored_records(&m.manifest, &bytes, spec.framer);
+            let framed = retained.records(&m.manifest, spec.framer)?;
             if framed
                 .iter()
-                .any(|&(start, end)| start > end || end > bytes.len())
+                .any(|&(start, end)| start > end || end > length)
             {
                 return Err(format!("material {}: invalid stored record ranges", m.id));
             }
@@ -64,11 +70,11 @@ pub async fn excise_with(
                 })
                 .collect::<Result<_, _>>()?
         };
-        excision::blank(&mut bytes, &spans);
+        let reader = crate::retained::Blanked::new(retained.into_reader()?, spans);
         rewrites.push(Rewrite {
             material: m.id,
-            blob: blobs.put(&bytes).map_err(|e| e.to_string())?,
-            length: bytes.len() as u64,
+            blob: blobs.put_reader(reader).map_err(|e| e.to_string())?,
+            length: length as u64,
         });
     }
     let done = writer

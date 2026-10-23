@@ -440,11 +440,12 @@ fn read_chain_into(
             ));
         }
         let key = keys.get(&m.id);
-        let bytes = if let Some((key, length)) = key {
-            use std::io::Read;
+        let retained = if let Some((key, length)) = key {
+            use std::io::Seek;
             let authority = authority
                 .ok_or("sealed replay requires scoped authority")?
                 .clone();
+            let sender = out.clone();
             let mut reader = blobs
                 .read_sealed(
                     &m.blob,
@@ -452,19 +453,45 @@ fn read_chain_into(
                     key,
                     crate::sealed_access::read_limits(*length)?,
                     move || {
-                        authority
-                            .check()
-                            .map_err(|e| std::io::Error::other(e).into())
+                        authority.check().map_err(std::io::Error::other)?;
+                        if sender.is_closed() {
+                            return Err(std::io::Error::other(
+                                "the writer stopped reading the chain",
+                            )
+                            .into());
+                        }
+                        Ok(())
                     },
                 )
                 .map_err(|e| e.to_string())?;
-            let mut bytes = Vec::new();
-            reader.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-            bytes
+            // Authenticate even bytes outside declared ranges before accepting this material.
+            std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| e.to_string())?;
+            reader.rewind().map_err(|e| e.to_string())?;
+            crate::retained::Retained::new(reader, *length)
         } else {
-            blobs.read(&m.blob).map_err(|e| e.to_string())?
+            let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
+            let sender = out.clone();
+            let length = blobs
+                .copy_to_checked(&m.blob, &mut file, move || {
+                    if sender.is_closed() {
+                        Err(std::io::Error::other("the writer stopped reading the chain").into())
+                    } else {
+                        Ok(())
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            let sender = out.clone();
+            crate::retained::Retained::checked(file, length, move || {
+                if sender.is_closed() {
+                    Err(std::io::Error::other(
+                        "the writer stopped reading the chain",
+                    ))
+                } else {
+                    Ok(())
+                }
+            })
         };
-        let records = drivers::stored_records(&m.manifest, &bytes, source.spec().framer);
+        let records = retained.records(&m.manifest, source.spec().framer)?;
         let order = drivers::reading_order(&m.manifest);
         // Chunks are drained one at a time, so a material's events are never
         // all in memory at once. A material out of scope is still read for
@@ -474,7 +501,7 @@ fn read_chain_into(
                 source: source.spec().name,
                 class: source.spec().class,
                 material: MaterialId(m.id),
-                bytes: bytes.as_slice().into(),
+                bytes: sinex_sources::drain::RecordBytes::Reader(&retained),
                 records: &records,
                 carry: carry.clone(),
                 reading_order: &*order,
