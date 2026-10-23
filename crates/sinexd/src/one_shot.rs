@@ -167,9 +167,8 @@ impl SealingSink {
         Ok(name)
     }
 
-    /// Seal the batches' events with their material's key and record the
-    /// wrapped key before the batches are admitted, so a sealed material row
-    /// never exists without its key.
+    /// Seal events and carry with their material key. The wrapped key travels
+    /// with source progress so its row and the material commit atomically.
     pub async fn seal(
         &self,
         _read_conn: &mut PgConnection,

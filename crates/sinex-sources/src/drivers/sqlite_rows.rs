@@ -23,7 +23,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -384,7 +383,7 @@ impl SqliteRows {
                 hashes.push((rowid, hash));
                 let line=if state.image_policy.is_some() {
                     let mut envelope=json!({"_sinex_rowid":rowid,"row":native});
-                    if let Some(image)=&image {envelope["_from"]=json!({"snapshot":image.metadata.revision,"table":self.table,"rowid":rowid});}
+                    if let Some(image)=&image {envelope["_from"]=json!({"snapshot":image.metadata.material,"revision":image.metadata.revision,"table":self.table,"rowid":rowid});}
                     envelope.to_string()
                 } else {native.to_string()};
                 let start = length;

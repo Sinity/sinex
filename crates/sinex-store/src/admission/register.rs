@@ -118,6 +118,7 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     if matches!(role,sinex_model::MaterialRole::Records|sinex_model::MaterialRole::SqliteImage) {
         return Ok(());
     }
+    let length=i64::try_from(m.length).map_err(|_|Error::Invalid("material length beyond i64".into()))?;
     sqlx::query!(
         r#"INSERT INTO raw.revision_extents (revision_id, position, blob, blob_offset, length)
            VALUES ($1, (SELECT coalesce(max(position) + 1, 0) FROM raw.revision_extents WHERE revision_id = $1), $2, 0, $3)"#,

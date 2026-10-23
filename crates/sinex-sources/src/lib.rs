@@ -74,7 +74,8 @@ impl<'a> RecordShape<'a> for serde_json::Map<String, serde_json::Value> {
     }
     fn hash_context(raw:&[u8],volatile:&[&str],context:&RecordContext<'_>)->[u8;32] {
         if context.manifest["row_format"]!=2 {return Self::hash(raw,volatile);}
-        let Ok(mut object)=Self::decode_context(raw,context) else {return *blake3::hash(raw).as_bytes();};
+        let Ok(envelope)=serde_json::from_slice::<serde_json::Value>(raw) else {return *blake3::hash(raw).as_bytes();};
+        let Some(mut object)=envelope.get("row").and_then(|r|r.as_object().cloned()) else {return *blake3::hash(raw).as_bytes();};
         for field in volatile {object.remove(*field);}
         let identity=serde_json::from_slice::<serde_json::Value>(raw).ok().and_then(|v|v.get("_sinex_rowid").cloned());
         *blake3::hash(serde_json::json!({"row":object,"rowid":identity}).to_string().as_bytes()).as_bytes()

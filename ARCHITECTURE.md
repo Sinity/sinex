@@ -44,8 +44,44 @@ committed view. Changed rows stream into an unnamed staged JSONL material.
 Retries retain its identity, byte ranges and reading orders until its final
 admitted cursor confirms the changed-row hash cache. Partial cursors resume the
 retained snapshot before observing newer source values. Restart rebuilds hashes
-from admitted retained parts and rereads the source. Physical database snapshot
-retention remains planned separately.
+from admitted retained parts. Image-enabled readers restore a partial material's
+complete retained suffix and resume it before acquiring newer source values.
+
+Optional `settings.options.sqlite_images` requires explicit `scope:
+"whole_database"`, `class` and positive `interval_secs`; `turn_pages` defaults to
+256 and `rebase_threshold` to 1.0. This grants retention of all database pages,
+including unselected tables, freelists and deleted cells. Configured source and
+field classes for that database are lower bounds. No configuration is enabled
+implicitly. A due image and its selected rows share one pinned read transaction;
+typed pending turns yield between page scans and cancellation discards unfinished
+scans without progress. A row between image captures remains logical evidence and
+cites no older image as its exact source. Image-enabled row envelopes preserve
+native fields separately from framework row IDs and optional `_from` references.
+
+Plain/guarded image materials hold full or changed-page payloads followed by a
+streamed dense 32-byte map entry per page (about 0.78% at 4 KiB before compression).
+Logical database length, evidence blob length and map offset/count remain distinct.
+Ordinary revision extents reconstruct database bytes only; publication verifies
+each reconstructed page and map entry against the pinned view. Each due image
+still reads every page, and extent verification/storage may reread those pages.
+Changed-page indices and extent plans also consume memory proportional to changed
+pages/spans. Rebase occurs after more than half of pages change, accumulated
+compressed patch cost exceeds the configured base multiple, or reconstruction
+read cost exceeds twice the compressed base. Sealed images use fresh encrypted
+full bases at cadence with keyed digests and no cross-image page reuse. Provider
+page readers feed encryption directly; sealed retained input is never staged as
+plaintext or opened with borrowed operator authority.
+
+Companion image material, immutable revision/extents, wrapped keys, row material
+and first-batch progress share the writer transaction. Later chunks name that
+fixed image revision. Independent bindings may retain immutable branches from
+the same compatible predecessor; capture order stays distinct from late commit
+order. Generic replay skips image bodies and reinterprets retained logical rows.
+Excision currently refuses every row/image target in a retained database lineage
+across bindings before any event/blob/key mutation, including logical rows with
+no exact image pointer. Image-aware purge remains an open criterion. Physical
+images do not complete deletion-key evidence, open-part rotation or the broader
+SQLite source requirements.
 
 Directory snapshots stream changed files into an unnamed staged bundle. The
 version 2 bundle prefixes each record with one structural byte outside its source
