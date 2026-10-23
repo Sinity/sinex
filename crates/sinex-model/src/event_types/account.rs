@@ -222,26 +222,8 @@ pub struct CalendarEvent {
     pub extra: Map<String, Value>,
 }
 
-/// One row of an account data export that no more specific type describes (a
-/// Samsung account export's alarms, settings and backups): the service, the
-/// table and every column as the export wrote it, a JSON column decoded. The
-/// row's own ID column is the identity, or a hash of the row without one.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(
-    type = "account.record",
-    key = ["service", "table", "native_id"],
-    replace = newer,
-    time = at,
-    quality = intrinsic
-)]
-pub struct AccountRecord {
-    pub service: String,
-    pub table: String,
-    pub native_id: String,
-    /// The row's own time (creation, or the export's timestamp column).
-    pub at: Option<Timestamp>,
-    pub values: Map<String, Value>,
-}
+pub mod record;
+pub use record::AccountRecord;
 
 /// A location fix an account recorded (Google Location History): where the
 /// device was, how sure it was, and what it thought the operator was doing.

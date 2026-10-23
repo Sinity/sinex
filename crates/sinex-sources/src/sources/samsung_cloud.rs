@@ -11,7 +11,8 @@
 //!   `time_offset` is the local offset in milliseconds.
 //! - Any other table (alarms, settings, backups, store and membership
 //!   records) is an `account.record` of its service and table, every column
-//!   kept, a JSON column decoded. `KEY`, `_id` or `datauuid` identifies the
+//!   kept, a JSON column decoded. These tables remain explicitly uninterpreted
+//!   until a declared table schema is implemented. `KEY`, `_id` or `id` identifies the
 //!   row, else a hash of it; `CREATETIME`, `TIMESTAMP` or `create_time` dates
 //!   it.
 //!
@@ -36,7 +37,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "what the operator's Samsung account kept: health sync, settings, backups",
     class: Class::Open,
     parser: "samsung-account-export",
-    parser_version: 3,
+    parser_version: 4,
     event_types: &["health.record", "account.record"],
     framer: frame,
 };
