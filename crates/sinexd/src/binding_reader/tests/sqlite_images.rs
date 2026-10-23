@@ -13,7 +13,7 @@ async fn whole_database_image_class_checks_other_bindings_before_opening_provide
         .unwrap();
     sinex_store::privacy::set_source_class(
         &mut ctx.read_conn,
-        atuin::SPEC.name,
+        sinex_sources::sources::activitywatch::SPEC.name,
         Class::Sealed,
         "synthetic",
     )
@@ -24,8 +24,9 @@ async fn whole_database_image_class_checks_other_bindings_before_opening_provide
         json!({"sqlite_images":{"scope":"whole_database","class":"open","interval_secs":3600}});
     let binding = Binding::of(&atuin::SPEC, &path, settings);
     let mut b = Bound::new(&atuin::KIND, binding).unwrap();
+    let alias=dir.path().join("alias.db");std::fs::hard_link(&path,&alias).unwrap();
     let known=[sinex_store::bindings::Stored {
-        binding:b.binding.name.clone(),source:b.binding.source.clone(),input:path.display().to_string(),settings:serde_json::to_value(&b.binding.settings).unwrap(),
+        binding:"other-selected-table".into(),source:sinex_sources::sources::activitywatch::SPEC.name.into(),input:alias.display().to_string(),settings:serde_json::to_value(&b.binding.settings).unwrap(),
     }];
     let err = check_image_class(&mut ctx.read_conn,&mut b,&known)
     .await

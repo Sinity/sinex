@@ -168,3 +168,6 @@ pub(crate) fn store(
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
+
+#[cfg(test)]
+mod tests;

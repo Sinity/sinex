@@ -347,10 +347,6 @@ impl SqliteRows {
         };
         let now = Timestamp::now();
         let now_ns = i64::try_from(now.unix_ns()).unwrap_or(i64::MAX);
-        let full = !state.polled
-            || now_ns.saturating_sub(previous.last_full_pass_ns)
-                >= self.full_pass_secs.saturating_mul(1_000_000_000);
-
         let image_due = state.image_policy.as_ref().is_some_and(|p| {
             previous.image.as_ref().is_none_or(|i| {
                 now_ns.saturating_sub(i.at_ns)
@@ -403,6 +399,11 @@ impl SqliteRows {
                 facts,
             )
         };
+        let now_ns=image.as_ref().map(|i|i64::try_from(i.metadata.captured_at.unix_ns()).unwrap_or(i64::MAX)).unwrap_or(now_ns);
+        let full = !state.polled
+            || now_ns.saturating_sub(previous.last_full_pass_ns)
+                >= self.full_pass_secs.saturating_mul(1_000_000_000);
+
         let connection = view
             .0
             .lock()

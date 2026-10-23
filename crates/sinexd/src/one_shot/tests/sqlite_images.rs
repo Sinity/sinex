@@ -4,6 +4,13 @@ use sinex_model::{Class, RunId};
 use sinex_sources::{Settings, binding, drivers, sources::atuin};
 use std::io::{Read, Write};
 
+struct FailRowsAfterImage<'a>(&'a Sink);
+impl drivers::MaterialSink for FailRowsAfterImage<'_> {
+    fn put(&self,_:&[u8])->Result<String,String> {Err("synthetic row storage failure".into())}
+    fn put_file(&self,_:&std::path::Path)->Result<String,String> {Err("synthetic row storage failure".into())}
+    fn put_image(&self,image:&drivers::sqlite_image::Image)->Result<sinex_model::SqliteImagePublication,String> {drivers::MaterialSink::put_image(self.0,image)}
+}
+
 fn database(path: &std::path::Path) -> rusqlite::Connection {
     let c = rusqlite::Connection::open(path).unwrap();
     c.execute_batch("PRAGMA page_size=1024; PRAGMA journal_mode=WAL;
@@ -95,9 +102,23 @@ async fn sqlite_physical_images_publish_atomically_and_retry_exact_pending_rows_
     let acquired = poll(original.as_mut(), &Value::Null);
     let row_id = acquired.material.as_ref().unwrap().id;
     let image_id = acquired.image.as_ref().unwrap().metadata.material;
+    let sink=Sink(ctx.blobs.clone());
+    assert!(drivers::prepare(&atuin::source(),"images",RunId::new(),acquired,Value::Null,&FailRowsAfterImage(&sink),Limits::default()).is_err());
+    provider.execute_batch("UPDATE history SET command='edited before retry' WHERE id='b'").unwrap();
+    let acquired=poll(original.as_mut(),&Value::Null);
+    assert_eq!(acquired.material.as_ref().unwrap().id,row_id);
+    assert_eq!(acquired.image.as_ref().unwrap().metadata.material,image_id);
     let mut batches = submit(&mut ctx, "images", acquired, 1).await;
     assert_eq!(batches.len(), 2);
     let first = batches.remove(0);
+    for wrong_count in [false,true] {
+        let mut bad=first.clone();
+        let sinex_model::BatchKind::Source(p)=&mut bad.kind else {panic!()};
+        let image=p.image.as_mut().unwrap();
+        if wrong_count {image.metadata.page_count+=1;} else {image.metadata.map_offset+=u64::from(image.metadata.page_size);}
+        image.material.manifest["sqlite_image"]=serde_json::to_value(&image.metadata).unwrap();
+        assert!(ctx.writer.submit(crate::writer::Priority::Bulk,bad).await.is_err());
+    }
     // An admission failure must leave neither a companion image nor a cursor.
     sqlx::query("CREATE FUNCTION reject_image_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic image failure'; END $$").execute(&mut ctx.read_conn).await.unwrap();
     sqlx::query("CREATE TRIGGER reject_image_row BEFORE INSERT ON core.events FOR EACH ROW EXECUTE FUNCTION reject_image_row()").execute(&mut ctx.read_conn).await.unwrap();
@@ -237,8 +258,7 @@ async fn sqlite_image_branches_preserve_capture_order_when_an_older_pending_view
     };
     let mut a = reader(&path, Class::Open);
     a.restore_image(previous.clone());
-    let pending_a = poll(a.as_mut(), &Value::Null);
-    let a_id = pending_a.image.as_ref().unwrap().metadata.material;
+    assert!(matches!(a.poll(&Value::Null),Err(drivers::DriverError::Pending)));
     provider
         .execute_batch("UPDATE history SET command='new view' WHERE id='b'")
         .unwrap();
@@ -249,6 +269,9 @@ async fn sqlite_image_branches_preserve_capture_order_when_an_older_pending_view
     for batch in submit(&mut ctx, "binding-b", pending_b, 20).await {
         admit(&mut ctx, batch).await;
     }
+    let pending_a=poll(a.as_mut(),&Value::Null);
+    let a_id=pending_a.image.as_ref().unwrap().metadata.material;
+    assert!(!pending_a.image.as_ref().unwrap().metadata.full);
     for batch in submit(&mut ctx, "binding-a", pending_a, 20).await {
         admit(&mut ctx, batch).await;
     }
@@ -263,6 +286,8 @@ async fn sqlite_image_branches_preserve_capture_order_when_an_older_pending_view
             .unwrap(),
         Some(b_id)
     );
+    let live:String=sqlx::query_scalar("SELECT e.payload->>'command' FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.payload->>'native_id'='b'").fetch_one(&mut ctx.read_conn).await.unwrap();
+    assert_eq!(live,"new view","the older view cannot become newer by finishing or committing late");
     // A separate binding's logical rows share the excision guard.
     let row:uuid::Uuid=sqlx::query_scalar("SELECT m.id FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding='binding-a' AND m.manifest->>'role'='records'").fetch_one(&mut ctx.read_conn).await.unwrap();
     assert!(
@@ -388,5 +413,19 @@ async fn sealed_sqlite_image_and_row_keys_commit_together_without_plain_digests(
             .await
             .is_err()
     );
+    ctx.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_sqlite_table_can_commit_an_image_without_fabricating_a_row_or_recapturing_each_poll() {
+    let (_db,url,_)=crate::testdb::fresh().await;let dir=tempfile::tempdir().unwrap();let path=dir.path().join("source.db");let provider=database(&path);provider.execute_batch("DELETE FROM history;").unwrap();
+    let mut ctx=OneShot::open(&url,&dir.path().join("store")).await.unwrap();let mut r=reader(&path,Class::Guarded);
+    let acquired=poll(r.as_mut(),&Value::Null);assert!(acquired.material.is_none());assert!(acquired.image.is_some());
+    let batches=submit(&mut ctx,"empty-images",acquired,1).await;assert_eq!(batches.len(),1);assert!(batches[0].records.is_empty());
+    admit(&mut ctx,batches.into_iter().next().unwrap()).await;
+    let (cursor,_)=sinex_store::positions::load(&mut ctx.read_conn,"empty-images").await.unwrap().unwrap();assert!(!cursor["image"].is_null());
+    let next=poll(r.as_mut(),&cursor);assert!(next.image.is_none());assert!(next.material.is_none());
+    let rows:i64=sqlx::query_scalar("SELECT count(*) FROM core.events").fetch_one(&mut ctx.read_conn).await.unwrap();assert_eq!(rows,0);
+    let images:i64=sqlx::query_scalar("SELECT count(*) FROM raw.sqlite_images").fetch_one(&mut ctx.read_conn).await.unwrap();assert_eq!(images,1);
     ctx.close().await.unwrap();
 }
