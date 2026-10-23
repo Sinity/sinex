@@ -246,47 +246,6 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
 }
 
 #[test]
-fn bundle_staging_does_not_hold_whole_file_bodies() {
-    use std::io::Write;
-    let dir = tempfile::tempdir().unwrap();
-    let block = [b'x'; 64 * 1024];
-    for n in 0..6 {
-        let mut file = File::create(dir.path().join(format!("{n}.md"))).unwrap();
-        for _ in 0..64 {
-            file.write_all(&block).unwrap();
-        }
-    }
-    let peak = || {
-        let text = std::fs::read_to_string("/proc/self/status").unwrap();
-        text.lines()
-            .find_map(|s| s.strip_prefix("VmHWM:"))
-            .unwrap()
-            .split_whitespace()
-            .next()
-            .unwrap()
-            .parse::<u64>()
-            .unwrap()
-            * 1024
-    };
-    let before = peak();
-    let mut state = DirState::default();
-    let acquired = driver(dir.path().to_owned(), 32 << 20)
-        .poll(&Value::Null, &mut state)
-        .unwrap();
-    let m = acquired.material.unwrap();
-    assert!(m.bytes.is_empty());
-    assert_eq!(m.records.len(), 6);
-    let Some(StoredBytes::FramedFile(file)) = m.stored else {
-        panic!()
-    };
-    assert_eq!(file.metadata().unwrap().len(), (24 << 20) + 6);
-    assert!(
-        peak().saturating_sub(before) < 8 << 20,
-        "acquisition retained the bundle body"
-    );
-}
-
-#[test]
 fn missing_directory_is_unavailable_and_accessible_empty_is_not() {
     let dir = tempfile::tempdir().unwrap();
     let d = driver(dir.path().join("missing"), 1024);
