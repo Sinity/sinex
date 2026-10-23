@@ -266,7 +266,7 @@ fn place(chunk: &mut DrainOutput, outcome: RecordOutcome, events: usize, end: us
 impl<P: Parser> Iterator for Drainer<'_, P> {
     type Item = Result<DrainOutput, RecordError>;
 
-    fn next(&mut self) -> Option<DrainOutput> {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.finished {
             return None;
         }

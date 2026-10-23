@@ -2,16 +2,18 @@
 //! Maildir), architecture §5.3.
 //!
 //! Each poll walks the tree comparing file facts with what was already read.
-//! New and changed files are read in full and stored together as one material:
-//! their exact bytes one after another, with a manifest member per file
+//! New and changed files stream into an unnamed staged bundle, stored as one
+//! material: their exact bytes one after another, with a manifest member per file
 //! (path, range in the material, size, modification time). One file is one
-//! record. A file whose facts changed but whose bytes did not is skipped.
+//! record. Draining reads one record at a time; an oversized single file still
+//! needs its complete decoded record in memory. Unchanged content is skipped.
 //!
 //! When a walk completes without reaching the part size, files read before but
 //! not seen now are recorded as vanished: a member holding a short marker line,
 //! so each has its own record location and the parser reads the removal.
 //!
-//! The state of what was read lives for the source task. After a restart the
+//! The admitted cursor confirms cached file facts. Until its final byte commits,
+//! retries retain the staged bundle and its identity. After a restart the
 //! first walk reads everything again and admission suppresses the repeats.
 use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use serde::{Deserialize, Serialize};
@@ -189,14 +191,8 @@ impl DirSnapshot {
                 complete = false;
                 break;
             }
-            let mut file = match File::open(self.root.join(relative)) {
-                Ok(file) => file,
-                Err(error) => {
-                    complete = false;
-                    facts.unavailable = Some(format!("{relative}: {error}"));
-                    continue;
-                }
-            };
+            let mut file = File::open(self.root.join(relative))
+                .map_err(|error| DriverError::Io(format!("{relative}: {error}")))?;
             let before = file.metadata().map_err(io)?;
             let (actual_size, hash) = stage(&mut file, &mut staged).map_err(io)?;
             let after = file.metadata().map_err(io)?;
@@ -204,14 +200,9 @@ impl DirSnapshot {
                 || actual_size != *size
                 || metadata_mtime(&before) != *mtime
             {
-                staged.set_len(length as u64).map_err(io)?;
-                staged.rewind().map_err(io)?;
-                staged
-                    .seek(std::io::SeekFrom::Start(length as u64))
-                    .map_err(io)?;
-                complete = false;
-                facts.unavailable = Some(format!("{relative}: changed during capture"));
-                continue;
+                return Err(DriverError::Io(format!(
+                    "{relative}: changed during capture"
+                )));
             }
             let same = state
                 .files
@@ -366,10 +357,8 @@ fn walk(
     let entries =
         std::fs::read_dir(dir).map_err(|e| DriverError::Io(format!("{}: {e}", dir.display())))?;
     for entry in entries {
-        let Ok(entry) = entry else { continue };
-        let Ok(kind) = entry.file_type() else {
-            continue;
-        };
+        let entry = entry.map_err(io)?;
+        let kind = entry.file_type().map_err(io)?;
         let path = entry.path();
         if kind.is_dir() {
             walk(root, &path, select, found)?;
@@ -381,9 +370,11 @@ fn walk(
             if !select(&relative) {
                 continue;
             }
-            if let Ok(f) = file_facts(&path) {
-                found.insert(relative, (f.size.unwrap_or(0), f.mtime_ns.unwrap_or(0)));
-            }
+            let facts = file_facts(&path).map_err(io)?;
+            found.insert(
+                relative,
+                (facts.size.unwrap_or(0), facts.mtime_ns.unwrap_or(0)),
+            );
         }
     }
     Ok(())

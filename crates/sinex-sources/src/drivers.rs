@@ -183,7 +183,7 @@ pub fn prepare<'s>(
                 Some(StoredBytes::Blob { name, length }) => (name.clone(), *length),
                 None => (
                     sink.put(&m.bytes).map_err(DriverError::Store)?,
-                    material.length as usize as u64,
+                    m.bytes.len() as u64,
                 ),
             };
             let reference = MaterialRef {
