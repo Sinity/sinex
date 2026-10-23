@@ -2,6 +2,7 @@
 //! other formats retain only a part and the current incomplete record.
 use super::{DriverError, Framing, io};
 use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::fmt;
 use std::io::Read;
@@ -181,13 +182,14 @@ struct Position {
     last: std::cell::Cell<u8>,
     error: std::cell::RefCell<Option<std::io::Error>>,
 }
+type Input<'a> = std::rc::Rc<std::cell::RefCell<std::io::BufReader<&'a mut dyn Read>>>;
 struct Counted<'a> {
-    reader: std::io::BufReader<&'a mut dyn Read>,
+    reader: Input<'a>,
     position: std::rc::Rc<Position>,
 }
 impl Read for Counted<'_> {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        match self.reader.read(out) {
+        match self.reader.borrow_mut().read(out) {
             Ok(n) => {
                 self.position.bytes.set(self.position.bytes.get() + n);
                 if n > 0 {
@@ -206,8 +208,9 @@ impl Read for Counted<'_> {
 
 fn json_ranges(reader: &mut dyn Read, pointer: &str) -> std::io::Result<Vec<(usize, usize)>> {
     let position = std::rc::Rc::new(Position::default());
+    let input = std::rc::Rc::new(std::cell::RefCell::new(std::io::BufReader::with_capacity(65536, reader)));
     let mut counted = Counted {
-        reader: std::io::BufReader::with_capacity(65536, reader),
+        reader: input.clone(),
         position: position.clone(),
     };
     let path: Vec<_> = pointer.split('/').skip(1).collect();
@@ -216,6 +219,7 @@ fn json_ranges(reader: &mut dyn Read, pointer: &str) -> std::io::Result<Vec<(usi
     let parsed = RangesAt {
         path: &path,
         position: &position,
+        input: &input,
         selection: &mut selection,
     }
     .deserialize(&mut de)
@@ -236,53 +240,64 @@ fn json_ranges(reader: &mut dyn Read, pointer: &str) -> std::io::Result<Vec<(usi
     Ok(selection.records)
 }
 
+fn peek_value(input:&Input<'_>,position:&Position)->std::io::Result<Option<u8>> {
+    use std::io::BufRead;
+    loop {
+        let mut reader=input.borrow_mut();
+        let (spaces,next,last)=match reader.fill_buf() {
+            Ok(bytes)=> {
+                let spaces=bytes.iter().take_while(|b|matches!(**b,b' '|b'\n'|b'\r'|b'\t')).count();
+                (spaces,bytes.get(spaces).copied(),spaces.checked_sub(1).map(|i|bytes[i]))
+            }
+            Err(error)=> {
+                let message=error.to_string();
+                *position.error.borrow_mut()=Some(error);
+                return Err(std::io::Error::other(message));
+            }
+        };
+        reader.consume(spaces);
+        position.bytes.set(position.bytes.get()+spaces);
+        if let Some(last)=last {position.last.set(last);}
+        if next.is_some() || spaces==0 {return Ok(next);}
+    }
+}
+
 #[derive(Default)]
 struct Selection {
     records: Vec<(usize, usize)>,
     valid: bool,
 }
 
-struct RangesAt<'a, 'b> {
+struct RangesAt<'a, 'b, 'r> {
     path: &'a [&'a str],
     position: &'a Position,
+    input: &'a Input<'r>,
     selection: &'b mut Selection,
 }
-impl<'de> DeserializeSeed<'de> for RangesAt<'_, '_> {
+impl<'de> DeserializeSeed<'de> for RangesAt<'_, '_, '_> {
     type Value = ();
     fn deserialize<D: de::Deserializer<'de>>(self, de: D) -> Result<(), D::Error> {
         self.selection.records.clear();
         self.selection.valid = false;
-        de.deserialize_any(self)
+        // A map value seed follows the consumed colon; the root seed precedes any
+        // lookahead. Peek through the shared buffer before selecting a typed visitor.
+        let head=peek_value(self.input,self.position).map_err(de::Error::custom)?;
+        let expected=if self.path.is_empty() {b'['} else {b'{'};
+        if head!=Some(expected) {
+            IgnoredAny::deserialize(de).map(|_|())
+        } else if self.path.is_empty() {
+            de.deserialize_seq(self)
+        } else {
+            de.deserialize_map(self)
+        }
     }
 }
-impl<'de> Visitor<'de> for RangesAt<'_, '_> {
+impl<'de> Visitor<'de> for RangesAt<'_, '_, '_> {
     type Value = ();
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("a JSON value")
     }
-    fn visit_bool<E: de::Error>(self, _v: bool) -> Result<(), E> {
-        Ok(())
-    }
-    fn visit_i64<E: de::Error>(self, _v: i64) -> Result<(), E> {
-        Ok(())
-    }
-    fn visit_u64<E: de::Error>(self, _v: u64) -> Result<(), E> {
-        Ok(())
-    }
-    fn visit_f64<E: de::Error>(self, _v: f64) -> Result<(), E> {
-        Ok(())
-    }
-    fn visit_str<E: de::Error>(self, _v: &str) -> Result<(), E> {
-        Ok(())
-    }
-    fn visit_unit<E: de::Error>(self) -> Result<(), E> {
-        Ok(())
-    }
     fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<(), A::Error> {
-        if !self.path.is_empty() {
-            while sequence.next_element::<IgnoredAny>()?.is_some() {}
-            return Ok(());
-        }
         self.selection.valid = true;
         while let Some(raw) = sequence.next_element::<Box<RawValue>>()? {
             // Serde's reader may have peeked one delimiter past a scalar. The raw value
@@ -297,10 +312,6 @@ impl<'de> Visitor<'de> for RangesAt<'_, '_> {
         Ok(())
     }
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
-        if self.path.is_empty() {
-            while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
-            return Ok(());
-        }
         while let Some(key) = map.next_key::<String>()? {
             if key == self.path[0] {
                 // The final duplicate selected key wins, matching slice framing,
@@ -308,6 +319,7 @@ impl<'de> Visitor<'de> for RangesAt<'_, '_> {
                 map.next_value_seed(RangesAt {
                     path: &self.path[1..],
                     position: self.position,
+                    input: self.input,
                     selection: self.selection,
                 })?;
             } else {

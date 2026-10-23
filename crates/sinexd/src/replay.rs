@@ -453,7 +453,7 @@ fn read_chain_into(
                     key,
                     crate::sealed_access::read_limits(*length)?,
                     move || {
-                        authority.check().map_err(|e| std::io::Error::other(e))?;
+                        authority.check().map_err(std::io::Error::other)?;
                         if sender.is_closed() {
                             return Err(std::io::Error::other(
                                 "the writer stopped reading the chain",
