@@ -11,7 +11,6 @@
 use crate::drivers::append_file::AppendFile;
 use crate::drivers::sqlite_rows::SqliteRows;
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
-use crate::sources::fields;
 use crate::{Parser, RecordError};
 use serde_json::{Map, Value};
 use sinex_model::event_types::operator::{LogEntry, SteeringRecord};
@@ -138,19 +137,19 @@ pub fn raw_log_driver(path: PathBuf, host: String) -> AppendFile {
 /// The steering tables, each its own binding and parser name, so a replay
 /// knows which table a stored row came from.
 pub const STEERING: [SourceSpec; 3] = [
-    steering_spec("commitments", "steering-commitments"),
-    steering_spec("activities", "steering-activities"),
-    steering_spec("reviews", "steering-reviews"),
+    steering_spec("steering-commitments"),
+    steering_spec("steering-activities"),
+    steering_spec("steering-reviews"),
 ];
 
-const fn steering_spec(_table: &'static str, parser: &'static str) -> SourceSpec {
+const fn steering_spec(parser: &'static str) -> SourceSpec {
     SourceSpec {
         name: "operator.steering",
         driver: Driver::SqliteRows,
         consumer: "commitments, forecasts and reviews the operator keeps",
         class: Class::Open,
         parser,
-        parser_version: 1,
+        parser_version: 2,
         event_types: &["steering.record"],
         framer: crate::drivers::append_file::lines,
     }
@@ -171,32 +170,19 @@ impl Parser for SteeringParser {
         _: &(),
         _context: &crate::RecordContext<'_>,
     ) -> Result<(Vec<SteeringRecord>, ()), RecordError> {
-        let id = fields::text(row, "id")?;
-        let time_field = match self.table {
-            "commitments" => Some("created_at"),
-            "reviews" => Some("ts"),
-            _ => None,
-        };
-        let at = time_field
-            .and_then(|f| fields::optional_text(row, f))
-            .map(|t| fields::rfc3339(&t))
-            .transpose()?;
         let mut values = row.clone();
         values.remove("rowid");
-        Ok((
-            vec![SteeringRecord {
-                table: self.table.into(),
-                record_id: id,
-                at,
-                values,
-            }],
-            (),
-        ))
+        let payload = SteeringRecord::from_row(self.table, Value::Object(values))
+            .map_err(RecordError::new)?;
+        Ok((vec![payload], ()))
     }
 }
 
 pub fn steering(table: &'static str) -> Option<DeclaredSource<SteeringParser>> {
-    let spec = STEERING.iter().find(|s| s.parser.ends_with(table))?.clone();
+    let spec = STEERING
+        .iter()
+        .find(|s| s.parser.strip_prefix("steering-") == Some(table))?
+        .clone();
     Some(DeclaredSource {
         spec,
         parser: SteeringParser { table },
@@ -242,7 +228,7 @@ pub const RAW_LOG_KIND: crate::binding::InputKind = crate::binding::InputKind {
 fn steering_table(b: &crate::binding::Binding) -> Result<&'static str, String> {
     ["commitments", "activities", "reviews"]
         .into_iter()
-        .find(|t| b.parser.ends_with(t))
+        .find(|t| b.parser.strip_prefix("steering-") == Some(*t))
         .ok_or_else(|| format!("{}: not a steering table", b.parser))
 }
 

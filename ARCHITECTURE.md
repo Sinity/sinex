@@ -11,6 +11,13 @@ opening files, networks or clocks. The drain attaches record locations, hashes,
 carried state and record failures to the resulting batch. Provider-specific
 interpretation belongs here, not in the database or daemon.
 
+Steering commitments, activities and reviews use closed typed row variants behind their existing
+`steering.record` wire shape and `(table, record_id)` identity. The table selects
+the row type before decoding. Missing fields, explicit nulls and numeric values
+retain their representations; unknown columns or types become record failures
+with their bytes retained. Parser version 2 uses the normal replay path to
+reinterpret stored rows; it does not rewrite earlier event payloads.
+
 `sinexd` connects these pieces: source tasks, backfill and replay submit work
 to the writer. A source cursor describes admitted progress; obtaining bytes
 alone does not mean their records were interpreted successfully. Archive
