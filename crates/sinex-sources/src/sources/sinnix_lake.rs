@@ -1,14 +1,8 @@
-//! The Sinnix capture lake, read as material (architecture §5.7 phase 1;
-//! spec `port-sinnix.md` §2-3). Every envelope lane writes `sinnix-capture-v1`
-//! JSONL day files; one parser reads the envelope for every lane, and each
-//! lane is declared under its catalog source, so lake history and the native
-//! source that later captures the lane share a name and a series.
-//!
-//! The lake's layout is configuration: each lane names its directories
-//! relative to a root and the `lane` values it accepts. A record whose `lane`
-//! is not among them is a failure, never a silent skip. Firehose lanes (rule
-//! 5: network flows) are stored as material and emit no events; their
-//! per-minute summaries are a derivation.
+//! Sinnix capture-lake JSONL day files become retained material and typed
+//! observations under each lane's catalog source. Configuration names the
+//! directories relative to the lake root and the accepted envelope lanes.
+//! An unbound lane is a record failure. Network-flow records retain their
+//! material without emitting per-record events.
 use crate::drivers::append_file::{AppendFile, lines};
 use crate::registry::{DeclaredSource, Driver, SourceSpec};
 use crate::{Parser, RecordError};
@@ -39,7 +33,7 @@ const fn spec(name: &'static str, parser: &'static str, consumer: &'static str) 
         // floors raise it without a code change.
         class: Class::Open,
         parser,
-        parser_version: 1,
+        parser_version: 2,
         event_types: &["capture.observed"],
         framer: lines,
     }
@@ -222,27 +216,28 @@ fn envelope(record: &Map<String, Value>, lane: &Lane) -> Result<CaptureObserved,
     let micros = ((ts - seconds) * 1e6).round() as i128;
     let observed_at = Timestamp::from_unix_ns(seconds as i128 * 1_000_000_000 + micros * 1_000)
         .map_err(|e| RecordError::new(format!("ts {ts} out of range: {e}")))?;
-    Ok(CaptureObserved {
+    CaptureObserved::new(
         observed_at,
-        lane: name.to_string(),
-        host: record
+        name.to_string(),
+        record
             .get("host")
             .and_then(Value::as_str)
             .ok_or_else(|| RecordError::new("envelope has no host"))?
             .to_string(),
-        seq: record
+        record
             .get("seq")
             .and_then(Value::as_i64)
             .ok_or_else(|| RecordError::new("envelope has no seq"))?,
-        payload: record
+        record
             .get("payload")
             .cloned()
             .ok_or_else(|| RecordError::new("envelope has no payload"))?,
-        raw_ref: record
+        record
             .get("raw_ref")
             .and_then(Value::as_str)
             .map(str::to_owned),
-    })
+    )
+    .map_err(|error| RecordError::new(error.to_string()))
 }
 
 impl Parser for EnvelopeParser {

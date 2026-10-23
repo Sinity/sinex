@@ -18,6 +18,14 @@ retain their representations; unknown columns or types become record failures
 with their bytes retained. Parser version 2 uses the normal replay path to
 reinterpret stored rows; it does not rewrite earlier event payloads.
 
+Sinnix lake observations retain the `capture.observed` envelope and material-location
+identity. The lane and, where declared, payload kind select concrete source fields
+before decoding. Unknown lanes/kinds remain explicit, while unknown extension fields
+and open notification hints retain their values with computed interpretation markers.
+Known-field errors become record failures with raw bytes retained. Awair interprets
+only the producer's declared score and CO2 fields; other sensor fields remain extensions.
+Netflow stays material-only. Parser version 2 uses ordinary retained-material replay.
+
 `sinexd` connects these pieces: source tasks, backfill and replay submit work
 to the writer. A source cursor describes admitted progress; obtaining bytes
 alone does not mean their records were interpreted successfully. Archive
