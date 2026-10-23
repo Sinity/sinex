@@ -57,7 +57,10 @@
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [ rustPkgs.cargo rustPkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config ];
-        shellHook = "export CARGO_TARGET_DIR=\"$PWD/target\"";
+        # Hooks reuse a caller-selected cache when they enter this shell.
+        shellHook = ''
+          export CARGO_TARGET_DIR="''${CARGO_TARGET_DIR:-$PWD/target}"
+        '';
       };
     };
 }
