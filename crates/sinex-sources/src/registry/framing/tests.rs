@@ -118,3 +118,14 @@ fn custom_append_framing_keeps_only_an_undecided_record_window() {
     assert!(PEAK.load(Ordering::Relaxed) < (128 << 10));
     assert!(body.len() > 10 * PEAK.load(Ordering::Relaxed));
 }
+
+#[test]
+fn whole_reader_keeps_each_declarations_empty_record_semantics() {
+    use crate::drivers::{export_archive::frame_whole, media};
+    for slice in [frame_whole as SliceFramer, media::whole] {
+        let framer = Framer::export(slice, Framing::Whole);
+        for bytes in [b"".as_slice(), b"one record".as_slice()] {
+            assert_eq!(framer.ranges(&mut Cursor::new(bytes)).unwrap(), framer.frame(bytes).0);
+        }
+    }
+}

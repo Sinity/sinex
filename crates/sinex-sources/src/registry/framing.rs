@@ -50,7 +50,12 @@ impl Framer {
     /// the returned range metadata grows with record count. A whole record can be large.
     pub fn ranges(self, reader: &mut dyn Read) -> std::io::Result<Vec<(usize, usize)>> {
         if let ReaderFraming::Export(framing) = self.reader {
-            return crate::drivers::export_archive::records::ranges(reader, framing);
+            let records = crate::drivers::export_archive::records::ranges(reader, framing)?;
+            return if framing == Framing::Whole && records.is_empty() {
+                Ok(self.frame(&[]).0)
+            } else {
+                Ok(records)
+            };
         }
         if let ReaderFraming::Detected(detect) = self.reader {
             let mut prefix = Vec::new();
