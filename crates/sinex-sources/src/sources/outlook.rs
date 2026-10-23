@@ -28,7 +28,10 @@ pub const PST: SourceSpec = SourceSpec {
     parser: "rfc5322-mail",
     parser_version: 1,
     event_types: &["mail.message"],
-    framer: crate::Framer::export(crate::drivers::export_archive::frame_mbox, crate::drivers::export_archive::Framing::Mbox),
+    framer: crate::Framer::export(
+        crate::drivers::export_archive::frame_mbox,
+        crate::drivers::export_archive::Framing::Mbox,
+    ),
 };
 
 pub const CSV: SourceSpec = SourceSpec {

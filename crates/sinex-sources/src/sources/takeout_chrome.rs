@@ -18,7 +18,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "takeout-chrome-history",
     parser_version: 1,
     event_types: &["browser.history_entry"],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::JsonArray("/Browser History")),
+    framer: crate::Framer::export(
+        frame,
+        crate::drivers::export_archive::Framing::JsonArray("/Browser History"),
+    ),
 };
 
 const KNOWN: &[&str] = &[

@@ -40,7 +40,10 @@ pub const SCAN: SourceSpec = SourceSpec {
     parser: "library-scan",
     parser_version: 1,
     event_types: &["library.acquisition"],
-    framer: crate::Framer::export(crate::drivers::export_archive::frame_lines, crate::drivers::export_archive::Framing::Lines),
+    framer: crate::Framer::export(
+        crate::drivers::export_archive::frame_lines,
+        crate::drivers::export_archive::Framing::Lines,
+    ),
 };
 
 pub const REQUEST: SourceSpec = SourceSpec {
@@ -51,7 +54,10 @@ pub const REQUEST: SourceSpec = SourceSpec {
     parser: "library-request",
     parser_version: 1,
     event_types: sinex_model::event_types::library::REQUEST_TYPES,
-    framer: crate::Framer::export(crate::drivers::export_archive::frame_lines, crate::drivers::export_archive::Framing::Lines),
+    framer: crate::Framer::export(
+        crate::drivers::export_archive::frame_lines,
+        crate::drivers::export_archive::Framing::Lines,
+    ),
 };
 
 // ---------------------------------------------------------------------------

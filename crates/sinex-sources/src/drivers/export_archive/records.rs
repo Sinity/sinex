@@ -136,14 +136,22 @@ mod tests;
 
 /// Frame a retained original stream without changing its byte coordinates.
 /// JSON syntax failure keeps the former one-record fallback; no valid prefix escapes it.
-pub(crate) fn ranges(reader: &mut dyn Read, framing: Framing) -> std::io::Result<Vec<(usize, usize)>> {
+pub(crate) fn ranges(
+    reader: &mut dyn Read,
+    framing: Framing,
+) -> std::io::Result<Vec<(usize, usize)>> {
     if let Framing::JsonArray(pointer) = framing {
         return json_ranges(reader, pointer);
     }
     if framing == Framing::Whole {
         let length = std::io::copy(reader, &mut std::io::sink())?;
-        let length = usize::try_from(length).map_err(|_| std::io::Error::other("material exceeds address space"))?;
-        return Ok(if length == 0 { vec![] } else { vec![(0, length)] });
+        let length = usize::try_from(length)
+            .map_err(|_| std::io::Error::other("material exceeds address space"))?;
+        return Ok(if length == 0 {
+            vec![]
+        } else {
+            vec![(0, length)]
+        });
     }
     let mut pending = Vec::new();
     let mut base = 0usize;
@@ -154,10 +162,16 @@ pub(crate) fn ranges(reader: &mut dyn Read, framing: Framing) -> std::io::Result
         pending.extend_from_slice(&block[..n]);
         let eof = n == 0;
         let (records, consumed) = framing.frame(&pending, eof);
-        out.extend(records.into_iter().map(|(start,end)| (base+start,base+end)));
+        out.extend(
+            records
+                .into_iter()
+                .map(|(start, end)| (base + start, base + end)),
+        );
         pending.drain(..consumed);
         base += consumed;
-        if eof { return Ok(out); }
+        if eof {
+            return Ok(out);
+        }
     }
 }
 
@@ -175,13 +189,15 @@ impl Read for Counted<'_> {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
         match self.reader.read(out) {
             Ok(n) => {
-                self.position.bytes.set(self.position.bytes.get()+n);
-                if n > 0 {self.position.last.set(out[n-1]);}
+                self.position.bytes.set(self.position.bytes.get() + n);
+                if n > 0 {
+                    self.position.last.set(out[n - 1]);
+                }
                 Ok(n)
             }
             Err(error) => {
-                let message=error.to_string();
-                *self.position.error.borrow_mut()=Some(error);
+                let message = error.to_string();
+                *self.position.error.borrow_mut() = Some(error);
                 Err(std::io::Error::other(message))
             }
         }
@@ -190,74 +206,113 @@ impl Read for Counted<'_> {
 
 fn json_ranges(reader: &mut dyn Read, pointer: &str) -> std::io::Result<Vec<(usize, usize)>> {
     let position = std::rc::Rc::new(Position::default());
-    let mut counted=Counted {reader: std::io::BufReader::with_capacity(65536,reader),position:position.clone()};
-    let path:Vec<_>=pointer.split('/').skip(1).collect();
-    let mut selection=Selection::default();
-    let mut de=serde_json::Deserializer::from_reader(&mut counted);
-    let parsed=RangesAt {path:&path,position:&position,selection:&mut selection}.deserialize(&mut de).and_then(|()|de.end());
-    if let Some(error)=position.error.borrow_mut().take() {return Err(error);}
+    let mut counted = Counted {
+        reader: std::io::BufReader::with_capacity(65536, reader),
+        position: position.clone(),
+    };
+    let path: Vec<_> = pointer.split('/').skip(1).collect();
+    let mut selection = Selection::default();
+    let mut de = serde_json::Deserializer::from_reader(&mut counted);
+    let parsed = RangesAt {
+        path: &path,
+        position: &position,
+        selection: &mut selection,
+    }
+    .deserialize(&mut de)
+    .and_then(|()| de.end());
+    if let Some(error) = position.error.borrow_mut().take() {
+        return Err(error);
+    }
     if parsed.is_err() || !selection.valid {
         // Finish the same reader so malformed source syntax still covers all original bytes.
-        std::io::copy(&mut counted,&mut std::io::sink())?;
-        let length=position.bytes.get();
-        return Ok(if length==0 {vec![]} else {vec![(0,length)]});
+        std::io::copy(&mut counted, &mut std::io::sink())?;
+        let length = position.bytes.get();
+        return Ok(if length == 0 {
+            vec![]
+        } else {
+            vec![(0, length)]
+        });
     }
     Ok(selection.records)
 }
 
 #[derive(Default)]
 struct Selection {
-    records:Vec<(usize,usize)>,
-    valid:bool,
+    records: Vec<(usize, usize)>,
+    valid: bool,
 }
 
-struct RangesAt<'a,'b> {
-    path:&'a [&'a str],
-    position:&'a Position,
-    selection:&'b mut Selection,
+struct RangesAt<'a, 'b> {
+    path: &'a [&'a str],
+    position: &'a Position,
+    selection: &'b mut Selection,
 }
-impl<'de> DeserializeSeed<'de> for RangesAt<'_,'_> {
-    type Value=();
-    fn deserialize<D:de::Deserializer<'de>>(self,de:D)->Result<(),D::Error> {
+impl<'de> DeserializeSeed<'de> for RangesAt<'_, '_> {
+    type Value = ();
+    fn deserialize<D: de::Deserializer<'de>>(self, de: D) -> Result<(), D::Error> {
         self.selection.records.clear();
-        self.selection.valid=false;
+        self.selection.valid = false;
         de.deserialize_any(self)
     }
 }
-impl<'de> Visitor<'de> for RangesAt<'_,'_> {
-    type Value=();
-    fn expecting(&self,f:&mut fmt::Formatter<'_>)->fmt::Result {f.write_str("a JSON value")}
-    fn visit_bool<E:de::Error>(self,_v:bool)->Result<(),E> {Ok(())}
-    fn visit_i64<E:de::Error>(self,_v:i64)->Result<(),E> {Ok(())}
-    fn visit_u64<E:de::Error>(self,_v:u64)->Result<(),E> {Ok(())}
-    fn visit_f64<E:de::Error>(self,_v:f64)->Result<(),E> {Ok(())}
-    fn visit_str<E:de::Error>(self,_v:&str)->Result<(),E> {Ok(())}
-    fn visit_unit<E:de::Error>(self)->Result<(),E> {Ok(())}
-    fn visit_seq<A:SeqAccess<'de>>(self,mut sequence:A)->Result<(),A::Error> {
+impl<'de> Visitor<'de> for RangesAt<'_, '_> {
+    type Value = ();
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a JSON value")
+    }
+    fn visit_bool<E: de::Error>(self, _v: bool) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_i64<E: de::Error>(self, _v: i64) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_u64<E: de::Error>(self, _v: u64) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_f64<E: de::Error>(self, _v: f64) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_str<E: de::Error>(self, _v: &str) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_unit<E: de::Error>(self) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<(), A::Error> {
         if !self.path.is_empty() {
             while sequence.next_element::<IgnoredAny>()?.is_some() {}
             return Ok(());
         }
-        self.selection.valid=true;
-        while let Some(raw)=sequence.next_element::<Box<RawValue>>()? {
+        self.selection.valid = true;
+        while let Some(raw) = sequence.next_element::<Box<RawValue>>()? {
             // Serde's reader may have peeked one delimiter past a scalar. The raw value
             // excludes that lookahead; structured/string values end at their closing byte.
-            let end=self.position.bytes.get()-usize::from(self.position.last.get()!=*raw.get().as_bytes().last().expect("nonempty JSON value"));
-            self.selection.records.push((end-raw.get().len(),end));
+            let end = self.position.bytes.get()
+                - usize::from(
+                    self.position.last.get()
+                        != *raw.get().as_bytes().last().expect("nonempty JSON value"),
+                );
+            self.selection.records.push((end - raw.get().len(), end));
         }
         Ok(())
     }
-    fn visit_map<A:MapAccess<'de>>(self,mut map:A)->Result<(),A::Error> {
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
         if self.path.is_empty() {
-            while map.next_entry::<IgnoredAny,IgnoredAny>()?.is_some() {}
+            while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
             return Ok(());
         }
-        while let Some(key)=map.next_key::<String>()? {
-            if key==self.path[0] {
+        while let Some(key) = map.next_key::<String>()? {
+            if key == self.path[0] {
                 // Legacy slice framing used a map: the final duplicate selected key wins,
                 // including when an earlier value had a different JSON shape.
-                map.next_value_seed(RangesAt {path:&self.path[1..],position:self.position,selection:self.selection})?;
-            } else {map.next_value::<IgnoredAny>()?;}
+                map.next_value_seed(RangesAt {
+                    path: &self.path[1..],
+                    position: self.position,
+                    selection: self.selection,
+                })?;
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
         }
         Ok(())
     }

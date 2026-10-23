@@ -23,7 +23,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "spotify-streaming-history",
     parser_version: 1,
     event_types: &["music.played"],
-    framer: crate::Framer::export(crate::drivers::export_archive::frame_json_array, crate::drivers::export_archive::Framing::JsonArray("")),
+    framer: crate::Framer::export(
+        crate::drivers::export_archive::frame_json_array,
+        crate::drivers::export_archive::Framing::JsonArray(""),
+    ),
 };
 
 const EXTENDED: &[&str] = &[

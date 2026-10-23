@@ -93,7 +93,10 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
     // zsh expired the duplicate "b" and appended "dd": a rewrite.
     std::fs::write(&path, b"a\nc\ndd\n").unwrap();
     // A restart in between: the state is rebuilt from the stored bytes.
-    let mut rebuilt = AppendState::rebuild([(m.id, m.bytes.as_slice())], crate::Framer::incremental(lines));
+    let mut rebuilt = AppendState::rebuild(
+        [(m.id, m.bytes.as_slice())],
+        crate::Framer::incremental(lines),
+    );
     assert_eq!(rebuilt, state);
     let again = d.poll(&cursor, &mut rebuilt).unwrap();
     assert_eq!(again.revision, RevisionChange::Rewritten);

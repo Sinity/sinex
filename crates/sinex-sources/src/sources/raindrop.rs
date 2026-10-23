@@ -191,12 +191,16 @@ fn api_row(row: &Map<String, Value>) -> Result<BookmarkSaved, RecordError> {
 }
 
 /// A stored export's records: JSON lines, or CSV rows.
-fn framing(bytes:&[u8])->Framing {
-    if bytes.trim_ascii_start().starts_with(b"{") {Framing::Lines} else {Framing::Csv}
+fn framing(bytes: &[u8]) -> Framing {
+    if bytes.trim_ascii_start().starts_with(b"{") {
+        Framing::Lines
+    } else {
+        Framing::Csv
+    }
 }
 
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
-    framing(bytes).frame(bytes,true)
+    framing(bytes).frame(bytes, true)
 }
 
 pub fn source() -> DeclaredSource<RaindropParser> {

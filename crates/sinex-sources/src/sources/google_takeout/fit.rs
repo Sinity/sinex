@@ -20,7 +20,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "google-fit",
     parser_version: 2,
     event_types: &["health.record"],
-    framer: crate::Framer::export(frame, crate::drivers::export_archive::Framing::JsonArray("/Data Points")),
+    framer: crate::Framer::export(
+        frame,
+        crate::drivers::export_archive::Framing::JsonArray("/Data Points"),
+    ),
 };
 
 pub struct FitParser;

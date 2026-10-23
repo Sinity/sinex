@@ -36,7 +36,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     parser: "rfc5322-mail",
     parser_version: 1,
     event_types: &["mail.message"],
-    framer: crate::Framer::export(crate::drivers::export_archive::frame_whole, crate::drivers::export_archive::Framing::Whole),
+    framer: crate::Framer::export(
+        crate::drivers::export_archive::frame_whole,
+        crate::drivers::export_archive::Framing::Whole,
+    ),
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

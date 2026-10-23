@@ -153,7 +153,11 @@ fn framer(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 }
 
 pub fn driver(path: PathBuf, host: String) -> AppendFile {
-    AppendFile { path, host, framer: SPEC.framer }
+    AppendFile {
+        path,
+        host,
+        framer: SPEC.framer,
+    }
 }
 
 /// `--source weechat=PATH`: each WeeChat log under PATH, read in the
