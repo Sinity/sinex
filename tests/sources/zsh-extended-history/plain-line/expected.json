@@ -1,6 +1,21 @@
 [
   {
     "anchor": 0,
-    "failure": "not an extended history record"
+    "events": [
+      {
+        "type": "command.imported",
+        "ts": null,
+        "time": "Unknown",
+        "key": null,
+        "state": "Present",
+        "payload": {
+          "command": "echo plain",
+          "hostname": "golden-host",
+          "started_at": null,
+          "header_elapsed": null,
+          "n": 0
+        }
+      }
+    ]
   }
 ]
