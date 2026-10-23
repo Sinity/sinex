@@ -567,13 +567,12 @@ async fn a_cached_authorized_directory_read_cannot_republish_an_excised_material
         Some(drivers::StoredBytes::FramedReader(_))
     ));
     let sealing = crate::one_shot::SealingSink::new(ctx.blobs.clone(), recipient);
-    sealing.restore_key(
-        reference.blob,
-        authority
-            .material_key(&mut ctx.read_conn, material)
-            .await
-            .unwrap(),
-    );
+    let (key_ref, secrets) = authority
+        .material_secrets(&mut ctx.read_conn, material)
+        .await
+        .unwrap();
+    let key = secrets.data_key(key_ref).unwrap();
+    sealing.restore_secrets(reference.blob, key, secrets);
     let carry = sealing.open_carry(&checkpoint.1).unwrap();
     crate::excision::excise_with(
         &mut ctx.read_conn,

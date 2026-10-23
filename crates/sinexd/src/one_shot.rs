@@ -165,7 +165,7 @@ impl SealingSink {
         sinex_store::sealed::unseal_payload(value, &key.data.key).map_err(|e| e.to_string())
     }
 
-    pub fn restore_key(&self, blob: String, key: sinex_store::sealed::DataKey) {
+    fn remember_new_key(&self, blob: String, key: sinex_store::sealed::DataKey) {
         let secrets = sinex_store::sealed::MaterialSecrets::from_data_key(&key);
         self.restore_secrets(blob, key, secrets);
     }
@@ -200,7 +200,7 @@ impl SealingSink {
             .blobs
             .put_sealed_reader(reader, &key)
             .map_err(|e| e.to_string())?;
-        self.restore_key(name.clone(), key);
+        self.remember_new_key(name.clone(), key);
         Ok(name)
     }
 
@@ -312,7 +312,7 @@ impl MaterialSink for SealingSink {
             .blobs
             .put_sealed(bytes, &key)
             .map_err(|e| e.to_string())?;
-        self.restore_key(name.clone(), key);
+        self.remember_new_key(name.clone(), key);
         Ok(name)
     }
 }
