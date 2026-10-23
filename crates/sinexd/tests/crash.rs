@@ -17,22 +17,16 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const HOST: &str = "crash";
-// Three admission batches each (10,000 events per batch), so a kill can land
-// between committed batches. The databases live on the development server's
-// tmpfs, so each test keeps one at a time.
 /// How long a step may take to reach its kill point or finish: just under the
 /// suite's own termination of a crash test (`.config/nextest.toml`: 120 s × 5),
 /// so a slow host makes a test slow, never a spurious failure.
 const WAIT_LIMIT: Duration = Duration::from_secs(570);
-const ZSH_LINES: usize = 22_000;
-const ATUIN_ROWS: usize = 21_000;
-
-/// Inputs generated once per test: a zsh history and an Atuin database, each
-/// large enough for several admission batches.
+/// Inputs generated once per test: a zsh history and an Atuin database.
 struct Inputs {
     dir: PathBuf,
     zsh: PathBuf,
     atuin: PathBuf,
+    expected_events: usize,
 }
 
 impl Inputs {
@@ -41,12 +35,23 @@ impl Inputs {
         format!("terminal.zsh-history:{}@{HOST}", self.zsh.display())
     }
 
-    fn new() -> Self {
+    // Includes two multiline records and the excision target with neighbours.
+    fn first_transaction() -> Self {
+        Self::new(128, 127)
+    }
+
+    // Three admission batches per source (10,000 events per batch), so a
+    // kill can land between commits, replay chains or publisher pages.
+    fn multiple_batches() -> Self {
+        Self::new(22_000, 21_000)
+    }
+
+    fn new(zsh_lines: usize, atuin_rows: usize) -> Self {
         let dir = std::env::temp_dir().join(format!("sinex-crash-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
         let zsh = dir.join("zsh_history");
         let mut text = String::new();
-        for i in 0..ZSH_LINES {
+        for i in 0..zsh_lines {
             if i % 97 == 0 {
                 text.push_str(&format!(
                     ": {}:0;printf '%s' \\\nline {i}\n",
@@ -67,7 +72,7 @@ impl Inputs {
             let mut insert = c
                 .prepare("INSERT INTO history VALUES (?1, ?2, 1000, 0, ?3, '/', 's', 'h', NULL)")
                 .unwrap();
-            for i in 0..ATUIN_ROWS {
+            for i in 0..atuin_rows {
                 insert
                     .execute(rusqlite::params![
                         format!("a{i:06}"),
@@ -78,7 +83,12 @@ impl Inputs {
             }
         }
         c.execute_batch("COMMIT").unwrap();
-        Self { dir, zsh, atuin }
+        Self {
+            dir,
+            zsh,
+            atuin,
+            expected_events: zsh_lines + atuin_rows,
+        }
     }
 }
 
@@ -342,14 +352,13 @@ fn read_lock(table: &str) -> String {
 
 /// Kill the backfill at a step, run it again to the end, and compare with a
 /// run that was never interrupted.
-async fn backfill_survives(ready: Option<&str>, lock_sql: &str) {
-    let inputs = Inputs::new();
+async fn backfill_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
     let expected = {
         let reference = Target::new(&inputs);
         finish(&mut reference.backfill(&inputs));
         state(&mut reference.connect().await).await
     };
-    assert_eq!(expected.events as usize, ZSH_LINES + ATUIN_ROWS);
+    assert_eq!(expected.events as usize, inputs.expected_events);
 
     let target = Target::new(&inputs);
     kill_at(&target, &mut target.backfill(&inputs), ready, lock_sql).await;
@@ -364,17 +373,16 @@ async fn backfill_survives(ready: Option<&str>, lock_sql: &str) {
 }
 
 macro_rules! backfill_steps {
-    ($($name:ident: $ready:expr, $lock:expr;)*) => {$(
+    ($inputs:expr; $($name:ident: $ready:expr, $lock:expr;)*) => {$(
         #[tokio::test]
         async fn $name() {
-            backfill_survives($ready, &$lock).await;
+            backfill_survives($inputs, $ready, &$lock).await;
         }
     )*};
 }
 
-// One test per admission statement (in the order admission runs them), and
-// one between two committed batches.
-backfill_steps! {
+// One test per admission statement, blocked in its first transaction.
+backfill_steps! { Inputs::first_transaction();
     backfill_killed_registering_the_material: None, lock("raw.inputs");
     backfill_killed_loading_privacy_rules: None, read_lock("privacy.rules");
     backfill_killed_staging: None, lock("core.admission_stage");
@@ -386,6 +394,9 @@ backfill_steps! {
     backfill_killed_writing_live_locations: None, lock("core.live_locations");
     backfill_killed_marking_dirty_keys: None, lock("derivation.dirty");
     backfill_killed_saving_the_position: None, lock("raw.positions");
+}
+
+backfill_steps! { Inputs::multiple_batches();
     // A restart after a committed batch must read the rest of the material
     // again: its bytes are stored, its readings are not.
     backfill_killed_between_zsh_batches:
@@ -399,7 +410,7 @@ backfill_steps! {
 /// Kill a replay at a step; then run it again and compare with an
 /// uninterrupted replay: the same live readings, every event once.
 async fn replay_survives(lock_sql: &str) {
-    let inputs = Inputs::new();
+    let inputs = Inputs::multiple_batches();
     let expected = {
         let reference = Target::new(&inputs);
         finish(&mut reference.backfill(&inputs));
@@ -449,7 +460,7 @@ replay_steps! {
 /// second only.
 #[tokio::test]
 async fn an_interrupted_replay_resumes_where_it_stopped() {
-    let inputs = Inputs::new();
+    let inputs = Inputs::multiple_batches();
     let target = Target::new(&inputs);
     finish(&mut target.backfill(&inputs));
     // Two chains: the zsh history and the Atuin rows.
@@ -488,7 +499,7 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
 /// Kill an excision at a step; nothing is removed. Excising again removes the
 /// record, and its bytes, once.
 async fn excision_survives(lock_sql: &str) {
-    let inputs = Inputs::new();
+    let inputs = Inputs::first_transaction();
     let target = Target::new(&inputs);
     finish(&mut target.backfill(&inputs));
     let mut c = target.connect().await;
@@ -571,7 +582,7 @@ const PUBLISHER_BEHIND: &str = "SELECT (SELECT value FROM core.counters WHERE na
 /// a page published before the crash but not yet recorded is published again,
 /// and the stream drops the copies by message ID.
 async fn publisher_survives(ready: Option<&str>, lock_sql: &str) {
-    let inputs = Inputs::new();
+    let inputs = Inputs::multiple_batches();
     let target = Target::new(&inputs);
     finish(&mut target.backfill(&inputs));
     let nats = devkit::nats::test_nats().expect("run through `xtask test`");
