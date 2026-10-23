@@ -21,7 +21,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     consumer: "note recall and the library",
     class: Class::Open,
     parser: "notes-vault",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["note.document"],
     framer: crate::drivers::export_archive::frame_whole,
 };

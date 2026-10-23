@@ -159,14 +159,14 @@ fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
         Limits::default(),
     )
     .unwrap();
-    assert_eq!(prepared.material_len(), Some(9));
+    assert_eq!(prepared.material_len(), Some(11));
     let batch = prepared.batches().unwrap().next().unwrap().unwrap();
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
     };
     assert_eq!(
         progress.material.unwrap().blob,
-        format!("blake3:{}", blake3::hash(b"alphabeta").to_hex())
+        format!("blake3:{}", blake3::hash(b"\0alpha\0beta").to_hex())
     );
     let next = d.poll(&progress.cursor, &mut state).unwrap();
     assert_ne!(next.material.as_ref().unwrap().id, id);
@@ -206,14 +206,14 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
     };
-    assert_eq!(progress.cursor["through"], 5);
+    assert_eq!(progress.cursor["through"], 6);
     assert!(progress.cursor["last_complete_scan_ns"].is_null());
     drop(prepared);
     let acquired = d.poll(&progress.cursor, &mut state).unwrap();
     let m = acquired.material.as_ref().unwrap();
     assert_eq!(m.id, id);
-    assert_eq!(m.records, vec![(5, 9)]);
-    assert_eq!(m.manifest["records"], json!([[0, 5], [5, 9]]));
+    assert_eq!(m.records, vec![(7, 11)]);
+    assert_eq!(m.manifest["records"], json!([[1, 6], [7, 11]]));
     assert!(state.files.is_empty());
     let prepared = prepare(
         &source,
@@ -229,13 +229,13 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let RecordOutcome::Events { location, events } = &batch.records[0] else {
         panic!()
     };
-    assert_eq!(location.unwrap().anchor, 5);
+    assert_eq!(location.unwrap().anchor, 7);
     assert_eq!(events[0].payload["path"], "sub/b.md");
     assert_eq!(events[0].payload["text"], "beta");
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
     };
-    assert_eq!(progress.cursor["through"], 9);
+    assert_eq!(progress.cursor["through"], 11);
     assert!(
         d.poll(&progress.cursor, &mut state)
             .unwrap()
@@ -279,7 +279,7 @@ fn bundle_staging_does_not_hold_whole_file_bodies() {
     let Some(StoredBytes::FramedFile(file)) = m.stored else {
         panic!()
     };
-    assert_eq!(file.metadata().unwrap().len(), 24 << 20);
+    assert_eq!(file.metadata().unwrap().len(), (24 << 20) + 6);
     assert!(
         peak().saturating_sub(before) < 8 << 20,
         "acquisition retained the bundle body"
@@ -298,4 +298,70 @@ fn missing_directory_is_unavailable_and_accessible_empty_is_not() {
     assert!(empty.observation.unavailable.is_none());
     assert!(empty.material.is_none());
     assert!(empty.cursor_unchanged["last_complete_scan_ns"].is_number());
+}
+
+#[test]
+fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
+    use crate::{Limits, drain::drain, sources::notes};
+    use sinex_model::{Class, ReadingOrder, RecordOutcome};
+    use std::os::unix::fs::FileExt;
+    for bodies in [
+        vec!["", "", "gamma"],
+        vec!["gamma", "", ""],
+        vec!["", "gamma", ""],
+        vec![""],
+        vec!["", ""],
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        for (index, body) in bodies.iter().enumerate() {
+            std::fs::write(dir.path().join(format!("{index}.md")), body).unwrap();
+        }
+        let acquired = driver(dir.path().to_owned(), 1 << 20)
+            .poll(&Value::Null, &mut DirState::default())
+            .unwrap();
+        let m = acquired.material.unwrap();
+        assert_eq!(m.manifest["format_version"], 2);
+        assert!(m.records.windows(2).all(|ranges| ranges[0].1 < ranges[1].1));
+        let Some(StoredBytes::FramedFile(file)) = &m.stored else {
+            panic!()
+        };
+        for ((start, end), body) in m.records.iter().zip(&bodies) {
+            assert_eq!(end - start, body.len());
+            let mut prefix = [1];
+            file.read_exact_at(&mut prefix, (start - 1) as u64).unwrap();
+            assert_eq!(prefix, [0]);
+        }
+        let chunks = drain(
+            &notes::NotesParser,
+            crate::DrainInput {
+                source: "synthetic",
+                class: Class::Open,
+                material: m.id,
+                bytes: m.record_bytes(),
+                records: &m.records,
+                carry: Value::Null,
+                reading_order: &|_| ReadingOrder(0),
+                limits: Limits {
+                    max_events: 1,
+                    max_bytes: 1,
+                },
+                manifest: &m.manifest,
+            },
+        )
+        .unwrap();
+        let outcomes: Vec<_> = chunks.into_iter().flat_map(|c| c.outcomes).collect();
+        assert_eq!(outcomes.len(), bodies.len());
+        for (index, (outcome, body)) in outcomes.iter().zip(&bodies).enumerate() {
+            let RecordOutcome::Events { location, events } = outcome else {
+                panic!("{outcome:?}")
+            };
+            assert_eq!(location.unwrap().anchor, m.records[index].0 as u64);
+            assert_eq!(events[0].payload["path"], format!("{index}.md"));
+            assert_eq!(events[0].payload["text"], *body);
+            assert_eq!(
+                &events[0].record_hash,
+                blake3::hash(body.as_bytes()).as_bytes()
+            );
+        }
+    }
 }

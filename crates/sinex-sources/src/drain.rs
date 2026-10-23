@@ -6,7 +6,9 @@ use sinex_model::{
 };
 
 /// Batch size bounds. Batches are sized by events and bytes; a record too large
-/// for a normal batch goes alone in a batch of one. No valid record is refused.
+/// for a normal batch goes alone in a batch of one. Records sharing a byte
+/// end stay together because one byte checkpoint cannot distinguish them.
+/// No valid record is refused.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub max_events: usize,
@@ -112,6 +114,16 @@ pub fn member_at(manifest: &Value, anchor: usize) -> Option<&Value> {
     let length = |m: &Value| m.get("length").and_then(Value::as_u64).unwrap_or(0) as usize;
     let i = members.partition_point(|m| offset(m) <= anchor);
     let member = members[..i].last()?;
+    if length(member) == 0 && anchor == offset(member) {
+        // Equal zero-length members at one byte anchor have no unique context.
+        if members[..i - 1]
+            .last()
+            .is_some_and(|previous| offset(previous) == anchor && length(previous) == 0)
+        {
+            return None;
+        }
+        return Some(member);
+    }
     (anchor < offset(member) + length(member)).then_some(member)
 }
 
@@ -175,6 +187,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
                 return Err(RecordError::new("record range exceeds staged material"));
             }
         }
+        crate::drivers::dir_snapshot::validate_records(input.manifest, input.records)?;
         let carry: P::Carry = if input.carry.is_null() {
             P::Carry::default()
         } else {
@@ -319,7 +332,9 @@ impl<P: Parser> Iterator for Drainer<'_, P> {
                 RecordOutcome::Events { events, .. } => events.len(),
                 RecordOutcome::Failure { .. } => 0,
             };
+            // A byte checkpoint must cover every record ending there.
             let full = !current.outcomes.is_empty()
+                && end != current.end
                 && (current.events + events > self.input.limits.max_events
                     || bytes_in_chunk + size > self.input.limits.max_bytes);
             if full {

@@ -648,3 +648,5 @@ async fn sealed_bindings_never_share_material_keys_or_original_blob_names() {
 async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
     sqlx::query_as("SELECT e.source,e.equivalence_key,e.payload,e.material_id,e.anchor FROM core.events e WHERE e.id IN (SELECT event_id FROM core.live_equivalence UNION SELECT event_id FROM core.live_locations) ORDER BY source,equivalence_key,material_id,anchor").fetch_all(conn).await.unwrap()
 }
+
+mod directory;

@@ -41,7 +41,7 @@ pub const MAILDIR: SourceSpec = SourceSpec {
     consumer: "mail recall and correspondence history",
     class: Class::Open,
     parser: "rfc5322-mail",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["mail.message"],
     framer: crate::drivers::export_archive::frame_whole,
 };

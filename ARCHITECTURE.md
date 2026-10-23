@@ -38,8 +38,20 @@ alone does not mean their records were interpreted successfully. Archive
 capture and replay have additional open acceptance criteria in Beads.
 
 Directory snapshots stream changed files into an unnamed staged bundle. The
-existing drain reads its declared file ranges, preserving member anchors, hashes,
-carry and ordinary batch limits. Memory holds the current file record and batch;
+version 2 bundle prefixes each record with one structural byte outside its source
+range. Even empty files then have distinct byte anchors and advancing cursor
+ends; source record hashes exclude the prefix. Notes and Maildir parser version 2
+use this framing. Retained unambiguous older ranges remain readable; ambiguous
+older byte anchors require an explicit mapping from retained member evidence.
+Uniquely mapped legacy records sharing a byte end are admitted together, so a
+new checkpoint cannot omit an empty tail; whole-material retry preserves their
+locations and deduplication. An older checkpoint alone does not prove that tail
+was admitted. Directory validation bounds a same-end group to the preceding
+nonempty record and one empty tail; ordinary batch limits remain targets for
+that indivisible group.
+
+The existing drain reads declared source ranges, preserving hashes and carried
+state. Memory holds the current file record and batch plus directory/member metadata;
 a single oversized note or message still requires that whole decoded record.
 File-read failures stop draining without advancing the failed range. The committed
 cursor confirms file-cache changes only at the bundle's final byte; earlier
