@@ -297,7 +297,10 @@ fn returned_uids_allow_progress_without_a_usable_uidnext() {
             ("SELECT \"INBOX\"", selected(boundary, 99)),
             (
                 "UID FETCH 1:200 (UID BODY.PEEK[])",
-                format!("* 1 FETCH (UID 4 BODY[] {{{}}}\r\n{M1})\r\n{{tag}} OK fetched\r\n", M1.len()),
+                format!(
+                    "* 1 FETCH (UID 4 BODY[] {{{}}}\r\n{M1})\r\n{{tag}} OK fetched\r\n",
+                    M1.len()
+                ),
             ),
             ("LOGOUT", "{tag} OK bye\r\n".into()),
         ]);
@@ -308,7 +311,6 @@ fn returned_uids_allow_progress_without_a_usable_uidnext() {
         server.join().unwrap();
     }
 }
-
 
 #[test]
 fn partial_admission_keeps_unfed_uids_available_for_retry() {
@@ -326,13 +328,28 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     let acquired = imap.poll(&Value::Null).unwrap();
     let source = source();
     let prepared = crate::drivers::prepare(
-        &source, "imap-test", sinex_model::RunId::new(), acquired, Value::Null,
-        &Discard, crate::Limits { max_events: 1, max_bytes: usize::MAX },
-    ).unwrap();
-    let batches = prepared.batches().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        &source,
+        "imap-test",
+        sinex_model::RunId::new(),
+        acquired,
+        Value::Null,
+        &Discard,
+        crate::Limits {
+            max_events: 1,
+            max_bytes: usize::MAX,
+        },
+    )
+    .unwrap();
+    let batches = prepared
+        .batches()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(batches.len(), 2);
     let progress = |batch: &sinex_model::Batch| {
-        let sinex_model::BatchKind::Source(progress) = &batch.kind else { panic!() };
+        let sinex_model::BatchKind::Source(progress) = &batch.kind else {
+            panic!()
+        };
         progress.cursor.clone()
     };
     let partial = progress(&batches[0]);
