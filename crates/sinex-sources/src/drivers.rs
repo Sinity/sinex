@@ -73,11 +73,12 @@ pub enum StoredBytes {
 
 pub struct NewMaterial {
     pub id: MaterialId,
-    /// The bytes the records index into.
+    /// In-memory decoded record bytes. `FramedFile` supplies these ranges
+    /// from its owned file instead; its `bytes` vector stays empty.
     pub bytes: Vec<u8>,
-    /// When set, the material stored is this file as received (an export
-    /// archive) and `bytes` is the stream decoded from it as the manifest
-    /// describes, so a replay decodes the stored file the same way.
+    /// Retained backing. `File` and `Blob` may hold an original export while
+    /// `bytes` holds its decoded stream. `FramedFile` supplies both the stored
+    /// body and the record ranges, without a second in-memory copy.
     pub stored: Option<StoredBytes>,
     pub records: Vec<(usize, usize)>,
     pub part_index: u32,
@@ -222,7 +223,7 @@ pub fn prepare<'s>(
 }
 
 impl Prepared<'_> {
-    /// The material's bytes, if the poll produced one.
+    /// The decoded record body length, if the poll produced a material.
     pub fn material_len(&self) -> Option<usize> {
         self.material
             .as_ref()

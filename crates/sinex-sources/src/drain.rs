@@ -58,7 +58,7 @@ pub struct DrainInput<'a> {
     pub source: &'a str,
     pub class: Class,
     pub material: MaterialId,
-    /// The material's bytes.
+    /// Record bytes borrowed from memory or an owned staged file.
     pub bytes: RecordBytes<'a>,
     /// Framed records: byte ranges within `bytes`, in order.
     pub records: &'a [(usize, usize)],
