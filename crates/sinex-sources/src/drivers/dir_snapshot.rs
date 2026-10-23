@@ -3,7 +3,9 @@
 //!
 //! Each poll walks the tree comparing file facts with what was already read.
 //! New and changed files stream into an unnamed staged bundle, stored as one
-//! material: their exact bytes one after another, with a manifest member per file
+//! material: one framing byte precedes each record, outside its exact source
+//! byte range. The prefix gives even empty files distinct anchors and cursor
+//! ends. A manifest member describes each file
 //! (path, range in the material, size, modification time). One file is one
 //! record. Draining reads one record at a time; an oversized single file still
 //! needs its complete decoded record in memory. Unchanged content is skipped.
@@ -77,7 +79,7 @@ impl Pending {
             .records
             .iter()
             .copied()
-            .filter(|&(_, end)| end > through || end == 0)
+            .filter(|&(_, end)| end > through)
             .collect();
         let id = self.id;
         let part_index = self.part_index;
@@ -187,13 +189,16 @@ impl DirSnapshot {
             {
                 continue;
             }
-            if length > 0 && (*size > self.part_bytes.saturating_sub(length) as u64) {
+            if length > 0
+                && (size.saturating_add(1) > self.part_bytes.saturating_sub(length) as u64)
+            {
                 complete = false;
                 break;
             }
             let mut file = File::open(self.root.join(relative))
                 .map_err(|error| DriverError::Io(format!("{relative}: {error}")))?;
             let before = file.metadata().map_err(io)?;
+            staged.write_all(&[0]).map_err(io)?;
             let (actual_size, hash) = stage(&mut file, &mut staged).map_err(io)?;
             let after = file.metadata().map_err(io)?;
             if !same_file(&before, &after)
@@ -216,7 +221,9 @@ impl DirSnapshot {
                     .map_err(io)?;
                 continue;
             }
-            let offset = length;
+            let offset = length.checked_add(1).ok_or_else(|| {
+                DriverError::Io("directory bundle exceeds addressable size".into())
+            })?;
             members.push(json!({
                 "path": relative,
                 "stream_offset": offset,
@@ -224,7 +231,7 @@ impl DirSnapshot {
                 "mtime_ns": mtime.to_string(),
             }));
             length =
-                length
+                offset
                     .checked_add(usize::try_from(actual_size).map_err(|_| {
                         DriverError::Io("file exceeds addressable record size".into())
                     })?)
@@ -244,7 +251,8 @@ impl DirSnapshot {
             for relative in gone {
                 next_files.remove(&relative);
                 let marker = vanished_marker(&relative);
-                let offset = length;
+                staged.write_all(&[0]).map_err(io)?;
+                let offset = length + 1;
                 members.push(json!({
                     "path": relative,
                     "stream_offset": offset,
@@ -253,7 +261,7 @@ impl DirSnapshot {
                 }));
                 records.push((offset, offset + marker.len()));
                 staged.write_all(&marker).map_err(io)?;
-                length += marker.len();
+                length = offset + marker.len();
             }
         }
         let scanned = Cursor {
@@ -281,6 +289,7 @@ impl DirSnapshot {
             "path": self.root.display().to_string(),
             "host": self.host,
             "media_type": "application/x-sinex-file-bundle",
+            "format_version": 2,
             "scan_complete": complete,
             "members": members,
             "records": records,

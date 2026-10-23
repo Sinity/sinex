@@ -159,14 +159,14 @@ fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
         Limits::default(),
     )
     .unwrap();
-    assert_eq!(prepared.material_len(), Some(9));
+    assert_eq!(prepared.material_len(), Some(11));
     let batch = prepared.batches().unwrap().next().unwrap().unwrap();
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
     };
     assert_eq!(
         progress.material.unwrap().blob,
-        format!("blake3:{}", blake3::hash(b"alphabeta").to_hex())
+        format!("blake3:{}", blake3::hash(b"\0alpha\0beta").to_hex())
     );
     let next = d.poll(&progress.cursor, &mut state).unwrap();
     assert_ne!(next.material.as_ref().unwrap().id, id);
@@ -206,14 +206,14 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
     };
-    assert_eq!(progress.cursor["through"], 5);
+    assert_eq!(progress.cursor["through"], 6);
     assert!(progress.cursor["last_complete_scan_ns"].is_null());
     drop(prepared);
     let acquired = d.poll(&progress.cursor, &mut state).unwrap();
     let m = acquired.material.as_ref().unwrap();
     assert_eq!(m.id, id);
-    assert_eq!(m.records, vec![(5, 9)]);
-    assert_eq!(m.manifest["records"], json!([[0, 5], [5, 9]]));
+    assert_eq!(m.records, vec![(7, 11)]);
+    assert_eq!(m.manifest["records"], json!([[1, 6], [7, 11]]));
     assert!(state.files.is_empty());
     let prepared = prepare(
         &source,
@@ -229,13 +229,13 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let RecordOutcome::Events { location, events } = &batch.records[0] else {
         panic!()
     };
-    assert_eq!(location.unwrap().anchor, 5);
+    assert_eq!(location.unwrap().anchor, 7);
     assert_eq!(events[0].payload["path"], "sub/b.md");
     assert_eq!(events[0].payload["text"], "beta");
     let BatchKind::Source(progress) = batch.kind else {
         panic!()
     };
-    assert_eq!(progress.cursor["through"], 9);
+    assert_eq!(progress.cursor["through"], 11);
     assert!(
         d.poll(&progress.cursor, &mut state)
             .unwrap()
@@ -279,7 +279,7 @@ fn bundle_staging_does_not_hold_whole_file_bodies() {
     let Some(StoredBytes::FramedFile(file)) = m.stored else {
         panic!()
     };
-    assert_eq!(file.metadata().unwrap().len(), 24 << 20);
+    assert_eq!(file.metadata().unwrap().len(), (24 << 20) + 6);
     assert!(
         peak().saturating_sub(before) < 8 << 20,
         "acquisition retained the bundle body"

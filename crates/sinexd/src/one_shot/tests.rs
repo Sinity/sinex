@@ -197,7 +197,7 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
     std::fs::create_dir(&dir).unwrap();
     let root = dir.join("vault");
     std::fs::create_dir(&root).unwrap();
-    std::fs::write(root.join("a.md"), "alpha").unwrap();
+    std::fs::write(root.join("a.md"), "").unwrap();
     std::fs::write(root.join("b.md"), "beta").unwrap();
     let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
     let sink = Sink(ctx.blobs.clone());
@@ -234,8 +234,8 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
         .unwrap()
         .unwrap();
     assert_eq!(cursor, expected_cursor);
-    assert_eq!(cursor["through"], 5);
-    assert_eq!(ctx.blobs.read(&blob).unwrap(), b"alphabeta");
+    assert_eq!(cursor["through"], 1);
+    assert_eq!(ctx.blobs.read(&blob).unwrap(), b"\0\0beta");
     std::fs::write(root.join("b.md"), "later bytes").unwrap();
     let acquired = reader.poll(&cursor).unwrap();
     assert_eq!(acquired.material.as_ref().unwrap().id, id);
@@ -263,13 +263,13 @@ async fn staged_directory_resumes_from_actual_admitted_cursor_with_original_byte
     .await
     .unwrap();
     assert_eq!(payloads.len(), 2);
-    assert_eq!(payloads[0]["text"], "alpha");
+    assert_eq!(payloads[0]["text"], "");
     assert_eq!(payloads[1]["text"], "beta");
     let (cursor, _) = sinex_store::positions::load(&mut ctx.read_conn, "synthetic-vault")
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(cursor["through"], 9);
+    assert_eq!(cursor["through"], 6);
     let next = reader.poll(&cursor).unwrap();
     assert_ne!(next.material.as_ref().unwrap().id, id);
     ctx.close().await.unwrap();
