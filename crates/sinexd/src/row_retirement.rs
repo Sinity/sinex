@@ -61,17 +61,7 @@ pub async fn retire(
                     kind: row.unit,
                     key: row.key,
                 };
-                if ![
-                    "revision",
-                    "note",
-                    "excision",
-                    "setting",
-                    "delivery",
-                    "observation",
-                    "delivery_event",
-                ]
-                .contains(&unit.kind.as_str())
-                {
+                if !unit.has_known_kind() {
                     return Err("unknown archive unit".into());
                 }
                 let key = identity(&unit);

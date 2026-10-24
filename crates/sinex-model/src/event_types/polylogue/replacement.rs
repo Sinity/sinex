@@ -10,6 +10,23 @@ pub struct ArchiveUnit {
     pub key: String,
 }
 
+impl ArchiveUnit {
+    /// Whether this kind is supported by the archive-row protocol.
+    pub fn has_known_kind(&self) -> bool {
+        matches!(
+            self.kind.as_str(),
+            "revision"
+                | "note"
+                | "excision"
+                | "setting"
+                | "delivery"
+                | "observation"
+                | "delivery_event"
+                | "extracted_blob"
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct UnitReplacement {
     pub unit: ArchiveUnit,
@@ -48,17 +65,7 @@ impl ExcisionPublication {
             let unit = &replacement.unit;
             if unit.commit_seq < 1
                 || unit.key.is_empty()
-                || ![
-                    "revision",
-                    "note",
-                    "excision",
-                    "setting",
-                    "delivery",
-                    "observation",
-                    "delivery_event",
-                    "extracted_blob",
-                ]
-                .contains(&unit.kind.as_str())
+                || !unit.has_known_kind()
                 || previous.is_some_and(|previous: &ArchiveUnit| previous >= unit)
             {
                 return Err(

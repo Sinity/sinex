@@ -392,3 +392,86 @@ async fn row_retirement_pending_unlinks_recover_and_reregistration_cancels_stale
         assert_eq!(retry.retained_files, u64::from(reregister));
     }
 }
+
+#[tokio::test]
+async fn decoded_source_unit_tombstones_retire_only_their_superseded_batch() {
+    let h = Harness::start().await;
+    let key = serde_json::to_string(&json!([
+        "input",
+        1,
+        0,
+        12,
+        "0".repeat(64),
+        1,
+        "1".repeat(64)
+    ]))
+    .unwrap();
+    let extracted = unit(1, "extracted_blob", &key);
+    let (old_material, old) = h.batch(ARCHIVE, b"decoded source association rows\n").await;
+    h.row(1, &extracted, old_material, &old, None).await;
+    let (sibling_material, sibling) = h.batch(ARCHIVE, b"unrelated note rows\n").await;
+    h.row(
+        2,
+        &unit(2, "note", "sibling"),
+        sibling_material,
+        &sibling,
+        None,
+    )
+    .await;
+    let publication = manifest(vec![UnitReplacement {
+        unit: extracted,
+        batch: None,
+        bytes: 0,
+        rows: 0,
+        blobs: vec![],
+    }]);
+    let owner = unit(3, "excision", "remove-decoded");
+    let (material, current) = h.batch(ARCHIVE, b"excision rows\n").await;
+    h.row(3, &owner, material, &current, Some(publication.clone()))
+        .await;
+    let proof = RetireBatches {
+        archive: ARCHIVE.into(),
+        owner,
+        digest: publication.digest,
+    };
+    for _ in 0..2 {
+        let result = h.retire("polylogue", &proof).await;
+        assert_eq!(result.refusal, None);
+        assert_eq!(result.pending_files, 0);
+        assert!(!h.blobs.contains(&old).unwrap());
+        assert!(h.blobs.contains(&sibling).unwrap());
+        assert!(h.blobs.contains(&current).unwrap());
+    }
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.events WHERE event_type='polylogue.rows'")
+            .await,
+        3
+    );
+}
+
+#[tokio::test]
+async fn row_retirement_refuses_unknown_unit_kind_without_removing_batches() {
+    let h = Harness::start().await;
+    let (proof, _, old, current) = h.fixture().await;
+    let (material, unknown) = h.batch(ARCHIVE, b"unknown unit rows\n").await;
+    h.row(
+        3,
+        &unit(3, "unknown", "future-unit"),
+        material,
+        &unknown,
+        None,
+    )
+    .await;
+    let result = h.retire("polylogue", &proof).await;
+    assert!(
+        result
+            .refusal
+            .as_deref()
+            .is_some_and(|r| r.contains("unknown archive unit")),
+        "{result:?}"
+    );
+    for hash in [&old, &current, &unknown] {
+        assert!(h.blobs.contains(hash).unwrap());
+    }
+    assert_eq!(h.count("SELECT count(*) FROM core.operations").await, 0);
+}
