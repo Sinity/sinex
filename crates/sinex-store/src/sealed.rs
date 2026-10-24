@@ -21,6 +21,7 @@ use sqlx::PgConnection;
 
 pub use age::x25519::{Identity, Recipient};
 pub use hashed_blobs::DataKey;
+pub mod metadata;
 mod secrets;
 mod validation;
 pub use secrets::{MaterialSecrets, SecretRole, unwrap_secrets, wrap_secrets};

@@ -70,6 +70,27 @@ impl Authority {
         self.check()?;
         Ok(secrets)
     }
+    pub fn open_replay_metadata(
+        &self,
+        input: impl std::io::Read,
+        scope: &sinex_store::sealed::metadata::Scope,
+    ) -> Result<Vec<sinex_store::sealed::metadata::ErasedRecord>, String> {
+        sinex_store::sealed::metadata::open_replay(input, &self.identity, scope, || {
+            self.check().map_err(sinex_store::Error::Invalid)
+        })
+        .map_err(|e| e.to_string())
+    }
+    pub fn open_current_carry(
+        &self,
+        input: impl std::io::Read,
+        scope: &sinex_store::sealed::metadata::Scope,
+    ) -> Result<serde_json::Value, String> {
+        self.check()?;
+        let value = sinex_store::sealed::metadata::open_carry(input, &self.identity, scope)
+            .map_err(|e| e.to_string())?;
+        self.check()?;
+        Ok(value)
+    }
     /// Call only for material IDs in the explicit operation's resolved scope.
     pub async fn material_secrets(
         &self,

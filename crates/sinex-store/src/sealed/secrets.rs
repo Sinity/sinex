@@ -83,6 +83,12 @@ impl MaterialSecrets {
         *blake3::keyed_hash(self.record_naming(), plain).as_bytes()
     }
 
+    /// Exact raw-record matching has a separate domain from event record hashes.
+    pub fn name_raw_record(&self, raw: &[u8]) -> [u8; 32] {
+        let key = blake3::derive_key("sinex 2026 sealed erased raw record", self.record_naming());
+        *blake3::keyed_hash(&key, raw).as_bytes()
+    }
+
     pub fn data_key(&self, key_ref: String) -> Result<DataKey> {
         Ok(DataKey {
             key_ref,
