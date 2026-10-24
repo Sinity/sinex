@@ -57,8 +57,13 @@
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [ rustPkgs.cargo rustPkgs.cargo-nextest rustPkgs.rustc rustPkgs.rustfmt rustPkgs.clippy postgres pkgs.nats-server pkgs.python3 pkgs.pkg-config ];
-        # Hooks reuse a caller-selected cache when they enter this shell.
         shellHook = ''
+          # Optional host placement; explicit targets retain their current lease.
+          if [ -z "''${CARGO_TARGET_DIR:-}" ] && command -v sinnix-cargo-target >/dev/null 2>&1; then
+            if cargo_target="$(sinnix-cargo-target)"; then
+              export CARGO_TARGET_DIR="$cargo_target"
+            fi
+          fi
           export CARGO_TARGET_DIR="''${CARGO_TARGET_DIR:-$PWD/target}"
         '';
       };
