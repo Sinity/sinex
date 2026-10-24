@@ -162,3 +162,80 @@ async fn only_one_connection_can_claim_the_writer() {
         "the lock is free once the first writer's connection is gone"
     );
 }
+
+#[tokio::test]
+async fn queued_native_checks_reject_revoked_authority_and_roll_back_before_commit() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_db, url, connection) = crate::testdb::fresh().await;
+    let (handle, queues) = channels();
+    let authority = crate::sealed_access::Authority::new(
+        sinex_store::sealed::Identity::generate(),
+        std::time::Duration::from_secs(30),
+    )
+    .unwrap();
+    let check_authority = authority.clone();
+    let h = handle.clone();
+    let queued = tokio::spawn(async move {
+        h.submit_checked(
+            Priority::Bulk,
+            batch("revoked"),
+            Arc::new(move || check_authority.check()),
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while queues.bulk.len() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    authority.revoke();
+    let writer = tokio::spawn(run(
+        url.clone(),
+        connection,
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+    ));
+    assert!(matches!(queued.await.unwrap(), Err(WriteError::Refused(_))));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let checked = calls.clone();
+    let result = handle
+        .submit_checked(
+            Priority::Bulk,
+            batch("cancel-before-commit"),
+            Arc::new(move || {
+                if checked.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Ok(())
+                } else {
+                    Err("capture canceled before commit".into())
+                }
+            }),
+        )
+        .await;
+    assert!(matches!(result, Err(WriteError::Refused(_))));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "the second check is inside the admission transaction"
+    );
+    let mut conn = PgConnection::connect(&url).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "revoked queued work and canceled uncommitted events remain absent"
+    );
+    assert_eq!(
+        handle
+            .submit(Priority::Live, batch("unrelated retry"))
+            .await
+            .unwrap()
+            .admitted,
+        1
+    );
+    drop(handle);
+    writer.await.unwrap();
+}

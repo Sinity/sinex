@@ -148,6 +148,7 @@ impl WriterHandle {
             .ok_or("writer has no native acquisition connection configuration")?;
         crate::source_excision::AcquisitionGuard::acquire(database, source).await
     }
+    #[cfg(test)]
     pub(crate) async fn excision_guard(
         &self,
         source: String,
@@ -244,6 +245,7 @@ pub struct Queues {
 /// the backpressure on capture and imports.
 const DEPTH: usize = 16;
 
+#[cfg(test)]
 pub fn channels() -> (WriterHandle, Queues) {
     channels_with_database(None)
 }

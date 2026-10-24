@@ -7,6 +7,7 @@ pub(crate) struct ExcisionGuard {
 }
 enum Owned {
     Pooled(Transaction<'static, Postgres>),
+    #[cfg(test)]
     Direct(PgConnection),
 }
 impl ExcisionGuard {
@@ -37,9 +38,11 @@ impl ExcisionGuard {
     pub fn connection(&mut self) -> &mut PgConnection {
         match &mut self.connection {
             Owned::Pooled(tx) => tx,
+            #[cfg(test)]
             Owned::Direct(conn) => conn,
         }
     }
+    #[cfg(test)]
     pub async fn connect(database: &str, source: String) -> Result<Self, String> {
         let mut connection = PgConnection::connect(database)
             .await
@@ -70,6 +73,7 @@ impl ExcisionGuard {
     pub async fn release(self) -> Result<(), String> {
         match self.connection {
             Owned::Pooled(tx) => tx.rollback().await.map_err(|e| e.to_string()),
+            #[cfg(test)]
             Owned::Direct(conn) => conn.close().await.map_err(|e| e.to_string()),
         }
     }

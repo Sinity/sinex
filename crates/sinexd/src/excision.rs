@@ -26,6 +26,7 @@ pub fn describe(plan: &Plan) -> String {
 /// Excise `target`: blank its records' bytes in new blobs, then remove every
 /// reading in one transaction; the old blob files go after commit. Takes a
 /// read connection, the content store and the writer.
+#[cfg(test)]
 pub async fn excise_with(
     read_conn: &mut PgConnection,
     blobs: &Blobs,
@@ -102,7 +103,17 @@ async fn guarded(
     actor: &str,
     mut guard: ExcisionGuard,
 ) -> Result<String, String> {
-    let result = prepare_rewrites(guard.connection(), blobs, target).await;
+    let result = async {
+        let plan = excision::plan(guard.connection(), target)
+            .await
+            .map_err(|e| e.to_string())?;
+        let source = source_scope(guard.connection(), &plan).await?;
+        if source.as_deref() != Some(guard.source()) {
+            return Err("excision source namespace changed while waiting; retry planning".into());
+        }
+        prepare_rewrites(guard.connection(), blobs, target).await
+    }
+    .await;
     let (plan, rewrites) = match result {
         Ok(value) => value,
         Err(error) => {
