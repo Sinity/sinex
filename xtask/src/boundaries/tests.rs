@@ -131,3 +131,50 @@ fn malformed_metadata_is_an_error() {
 fn this_workspace_passes() {
     check(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()).unwrap();
 }
+
+#[test]
+fn transport_owns_io_but_cannot_return_through_a_pure_protocol_edge() {
+    let graph = metadata(&[
+        ("sinex-model", vec![], vec![]),
+        ("sinex-protocol", vec![dep("sinex-model", None)], vec![]),
+        (
+            "sinex-transport",
+            vec![dep("sinex-protocol", None), dep("tempfile", None)],
+            vec![],
+        ),
+        ("sinex-sources", vec![dep("sinex-transport", None)], vec![]),
+    ]);
+    assert!(validate(graph).is_ok());
+    for kind in [None, Some("dev"), Some("build")] {
+        let graph = metadata(&[
+            ("sinex-protocol", vec![dep("sinex-transport", kind)], vec![]),
+            ("sinex-transport", vec![], vec![]),
+        ]);
+        assert!(validate(graph).is_err());
+        assert!(validate(workspace(vec![dep("tempfile", kind)])).is_err());
+    }
+}
+
+#[test]
+fn a_pure_wrapper_cannot_hide_transport_io() {
+    let mut graph = metadata(&[
+        (
+            "sinex-protocol",
+            vec![dep("wrapper", None)],
+            vec!["wrapper"],
+        ),
+        ("sinex-transport", vec![], vec![]),
+    ]);
+    graph
+        .resolve
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == "wrapper")
+        .unwrap()
+        .deps[0]
+        .pkg = "sinex-transport".into();
+    assert_eq!(
+        validate(graph).unwrap_err(),
+        "forbidden transitive dependency: sinex-protocol -> sinex-transport"
+    );
+}

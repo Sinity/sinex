@@ -1,6 +1,9 @@
 //! Frozen producer queue bytes, separate from public CAS. A receiver always
 //! copies and verifies a producer-writable file before it can install it.
-use super::{Bytes, Publication, Role};
+use sinex_protocol::Ingress;
+use sinex_protocol::producer_bytes::{Bytes, Material, Publication, Role, encode_frame, spool_key};
+mod permissions;
+
 use std::io::{Read, Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -54,10 +57,12 @@ pub fn stage(
 ) -> Result<(), String> {
     let bytes = expected(publication, role)?;
     let dir = directory(root, producer, publication);
-    std::fs::create_dir_all(&dir).map_err(error)?;
+    let group = permissions::prepare_directory(root, &dir)?;
+    permissions::check_existing_file(&dir.join(role.name()), group)?;
     sync_directories(root, &dir)?;
     let mut staged = tempfile::NamedTempFile::new_in(&dir).map_err(error)?;
     copy_checked(input, &mut staged, bytes)?;
+    permissions::share_completed_file(staged.as_file(), group)?;
     staged.as_file().sync_all().map_err(error)?;
     staged.persist(dir.join(role.name())).map_err(error)?;
     std::fs::File::open(&dir)
@@ -102,7 +107,7 @@ pub fn receive(
         return Err("producer chunk exceeds frozen length".into());
     }
     let dir = directory(root, producer, publication);
-    std::fs::create_dir_all(&dir).map_err(error)?;
+    let _ = permissions::prepare_directory(root, &dir)?;
     sync_directories(root, &dir)?;
     if let Ok(mut ready) = std::fs::File::open(dir.join(role.name())) {
         if ready.metadata().map_err(error)?.len() != bytes.length {
@@ -226,7 +231,7 @@ pub fn discard(root: &Path, producer: &str, publication: &Publication) -> Result
 }
 
 fn artifact_path(root: &Path, producer: &str, frame: &str) -> PathBuf {
-    artifact_directory(root, producer).join(format!("{}.json", super::spool_key(producer, frame)))
+    artifact_directory(root, producer).join(format!("{}.json", spool_key(producer, frame)))
 }
 
 fn artifact_directory(root: &Path, producer: &str) -> PathBuf {
@@ -300,16 +305,15 @@ impl Iterator for Pending {
 pub struct Frozen {
     pub publication: Publication,
     /// Exact typed inner frame. wire_frame adds the declared indirect wrapper.
-    pub frame: crate::Ingress,
+    pub frame: Ingress,
 }
 impl Frozen {
     pub fn validate(&self) -> Result<(), String> {
         self.publication.validate()?;
         match &self.frame {
-            crate::Ingress::Material { material, .. }
-                if self.publication.material.as_ref()
-                    == Some(&super::Material::from_frame(material)) => {}
-            crate::Ingress::Events { .. }
+            Ingress::Material { material, .. }
+                if self.publication.material.as_ref() == Some(&Material::from_frame(material)) => {}
+            Ingress::Events { .. }
                 if self.publication.material.is_none() && self.publication.envelope.is_some() => {}
             _ => {
                 return Err(
@@ -318,7 +322,7 @@ impl Frozen {
             }
         }
         if let Some(envelope) = &self.publication.envelope {
-            let bytes = super::encode_frame(&self.frame);
+            let bytes = encode_frame(&self.frame);
             if envelope.length != bytes.len() as u64
                 || envelope.blob != format!("blake3:{}", blake3::hash(&bytes).to_hex())
             {
@@ -331,9 +335,9 @@ impl Frozen {
         }
         Ok(())
     }
-    pub fn wire_frame(&self) -> crate::Ingress {
+    pub fn wire_frame(&self) -> Ingress {
         if let Some(envelope) = &self.publication.envelope {
-            crate::Ingress::Indirect {
+            Ingress::Indirect {
                 frame: self.publication.frame.clone(),
                 blob: envelope.blob.clone(),
             }
@@ -363,13 +367,15 @@ pub fn freeze(root: &Path, producer: &str, frozen: &Frozen) -> Result<Frozen, St
     frozen.validate()?;
     let path = artifact_path(root, producer, &frozen.publication.frame);
     let dir = path.parent().expect("artifact has a parent");
-    std::fs::create_dir_all(dir).map_err(error)?;
+    let group = permissions::prepare_directory(root, dir)?;
+    permissions::check_existing_file(&path, group)?;
     sync_directories(root, dir)?;
     let mut staged = tempfile::Builder::new()
         .prefix(".producer-request-")
         .tempfile_in(dir)
         .map_err(error)?;
     serde_json::to_writer(&mut staged, frozen).map_err(error)?;
+    permissions::share_completed_file(staged.as_file(), group)?;
     staged.as_file().sync_all().map_err(error)?;
     match staged.persist_noclobber(&path) {
         Ok(_) => {}

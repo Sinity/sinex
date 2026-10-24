@@ -1,8 +1,6 @@
 //! Compact producer-byte custody types are shared with admission.
 pub use sinex_model::producer_bytes::*;
 
-pub mod spool;
-
 /// Preserve the producer's existing typed frame serialization. The declared
 /// serde_json preserve_order feature retains payload object order through a
 /// frozen-artifact round trip; ingress reading hashes depend on that order.

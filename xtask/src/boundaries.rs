@@ -58,15 +58,17 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         "sinex-protocol" | "sinex-schema" | "sinex-derivations" | "sinex-analysis" => {
             Ok(&["sinex-model"])
         }
+        "sinex-transport" => Ok(&["sinex-model", "sinex-protocol"]),
         // Drivers include the producer side of the NATS ingress, which speaks
         // the protocol's frames.
-        "sinex-sources" => Ok(&["sinex-model", "sinex-protocol"]),
+        "sinex-sources" => Ok(&["sinex-model", "sinex-protocol", "sinex-transport"]),
         "sinex-store" => Ok(&["sinex-model", "sinex-schema"]),
         "sinex-library" => Ok(&["sinex-model", "sinex-store"]),
         "sinex-diagnostics" => Ok(&["sinex-model", "sinex-schema", "sinex-store"]),
         "sinexd" => Ok(&[
             "sinex-model",
             "sinex-protocol",
+            "sinex-transport",
             "sinex-schema",
             "sinex-store",
             "sinex-sources",
@@ -77,7 +79,12 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         "sinex-session" | "sinex-capture" => {
             Ok(&["sinex-model", "sinex-protocol", "sinex-sources"])
         }
-        "sinexctl" => Ok(&["sinex-model", "sinex-protocol", "sinex-diagnostics"]),
+        "sinexctl" => Ok(&[
+            "sinex-model",
+            "sinex-protocol",
+            "sinex-transport",
+            "sinex-diagnostics",
+        ]),
         _ => Err(format!("unassigned workspace package: {name}")),
     }
 }
@@ -91,7 +98,9 @@ fn pure(name: &str) -> bool {
 fn impure(name: &str) -> bool {
     matches!(
         name,
-        "tokio"
+        "sinex-transport"
+            | "tempfile"
+            | "tokio"
             | "async-nats"
             | "notify"
             | "rusqlite"

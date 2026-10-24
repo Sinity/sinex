@@ -4,6 +4,7 @@ members = [
     "crates/sinex-macros",
     "crates/sinex-model",
     "crates/sinex-protocol",
+    "crates/sinex-transport",
     "crates/sinex-schema",
     "crates/sinex-store",
     "crates/sinex-sources",
@@ -67,6 +68,7 @@ futures = "0.3"
 sinex-macros = { path = "crates/sinex-macros" }
 sinex-model = { path = "crates/sinex-model" }
 sinex-protocol = { path = "crates/sinex-protocol" }
+sinex-transport = { path = "crates/sinex-transport" }
 sinex-schema = { path = "crates/sinex-schema" }
 sinex-store = { path = "crates/sinex-store" }
 sinex-sources = { path = "crates/sinex-sources" }

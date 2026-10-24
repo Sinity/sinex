@@ -230,10 +230,15 @@ delta decoding remains a whole-body cost in the shared reader. Unsupported
 compressed export containers retain their explicit replay refusal.
 
 Outside producers freeze private bytes and exact declarations before sending a
-compact reservation. Local placement currently requires same-UID private-spool access; the declared
-2770 store group alone does not grant access to 0600 roles across distinct UIDs.
-Protected group handoff remains a source/configuration obligation. Separately
-rooted remote upload does not need shared-filesystem access.
+compact reservation. A local shared spool uses the configured store group: an
+exact 2770 root creates managed 2770 directories and completed 0640 sender files.
+The receiver copies bytes into its own private snapshot before installation;
+sender files stay unwritable by the receiver. Private roots and remote uploads
+retain 0600 files. Existing incompatible private handoff paths refuse without
+changing saved bytes or permissions and require explicit restaging. The NixOS
+module declares the shared parents and session-user group membership; activation
+and the running users' group memberships remain operational requirements.
+Separately rooted remote upload does not need shared-filesystem access.
 Material metadata is committed with recursively sorted JSON
 objects, independent of map insertion order. Indirect frame encoding preserves
 payload object order and existing reading hashes; the protocol explicitly enables
@@ -257,7 +262,7 @@ refuses before creating a new local plaintext spool when that class is known.
 Transport buffers are bounded; snapshot copies and whole-name verification still
 read each complete role. A driver record, material manifest, frozen typed frame and
 indirect JSON decode retain their existing one-value memory costs. The shared
-spool iterator reads one sender artifact at a time and reports malformed/unreadable
+transport spool iterator reads one sender artifact at a time and reports malformed/unreadable
 artifacts explicitly; it supplies no queue, cursor or resend controller.
 
 The outside producers use `sinex-sources::live::run` to start capture threads
@@ -317,7 +322,11 @@ saved consumer positions keep legacy pending notices retryable.
 ## Interfaces and shared code
 
 `sinex-model` owns identities and payloads; `sinex-protocol` declares public
-commands. CLI, MCP and HTTP adapt those commands. `sinex-diagnostics` supports
+commands, wire types and pure encoding without IO. `sinex-transport` owns the
+shared filesystem private-mode switch and frozen producer spool. The daemon,
+source drivers and CLI use that small library without putting filesystem access
+in wire definitions or making outside publishers depend on source parsers.
+CLI, MCP and HTTP adapt the public commands. `sinex-diagnostics` supports
 the separate daemon-down diagnostic path. Schema declarations and application
 remain in `sinex-schema`; checked SQL compiles against that real schema.
 

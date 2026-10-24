@@ -234,7 +234,7 @@ fn public_capture_removes_its_socket_on_stop_and_setup_error() {
 #[test]
 fn private_records_stay_unwritten_and_do_not_count_as_captured() {
     let dir = std::env::temp_dir().join(format!("sx-private-{}", uuid::Uuid::now_v7()));
-    let mode = sinex_protocol::private_mode::PrivateMode::new(dir.join("private"));
+    let mode = sinex_transport::private_mode::PrivateMode::new(dir.join("private"));
     mode.set(true).unwrap();
     let writer = Mutex::new(
         SpoolWriter::open(dir.join("spool"), Rotation::default())

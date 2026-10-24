@@ -51,7 +51,7 @@ fn captured_lines_are_acquired_once_in_order() {
 #[test]
 fn private_mode_drops_lines_while_on() {
     let spool = dir();
-    let switch = sinex_protocol::private_mode::PrivateMode::new(dir().join("private-mode"));
+    let switch = sinex_transport::private_mode::PrivateMode::new(dir().join("private-mode"));
     let mut writer = SpoolWriter::open(&spool, Rotation::default())
         .unwrap()
         .with_private_mode(switch.clone());
