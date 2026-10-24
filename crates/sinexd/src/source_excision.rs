@@ -1,5 +1,8 @@
 //! Source acquisition applies permanent exclusions before retaining readable bytes.
+mod guard;
+mod publication;
 use crate::sealed_access::Authority;
+pub(crate) use guard::AcquisitionGuard;
 use sinex_model::{Event, ExcisionBasis, MaterialId};
 use sinex_store::{
     Blobs, excision,

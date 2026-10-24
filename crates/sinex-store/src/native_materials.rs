@@ -26,6 +26,19 @@ pub struct Pending {
     pub state: State,
 }
 
+impl Pending {
+    /// A restarted driver supplies decoded records and chunk progress, while
+    /// the reservation supplies the original observation/publication facts.
+    /// Re-polling the edited provider cannot replace those frozen facts.
+    pub fn first_progress(&self, cursor: Value, carry: Value) -> SourceProgress {
+        let mut progress = self.progress.clone();
+        progress.cursor = cursor;
+        progress.carry = carry;
+        progress.native_pending = Some(self.material);
+        progress
+    }
+}
+
 // Serialization stays private to storage; no event bodies or decoded sealed
 // carry/keys enter this publication representation or a public command DTO.
 #[derive(Serialize, Deserialize)]
@@ -225,12 +238,29 @@ pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
         ));
     }
     let source: Option<String> =
-        sqlx::query_scalar("SELECT source FROM raw.bindings WHERE binding=$1")
+        sqlx::query_scalar("SELECT source FROM raw.bindings WHERE binding=$1 FOR UPDATE")
             .bind(&pending.binding)
             .fetch_optional(&mut *conn)
             .await?;
     if source.as_deref() != Some(pending.source.as_str()) {
         return Err(invalid("native publication has no matching source binding"));
+    }
+    let current = crate::positions::load(conn, &pending.binding)
+        .await?
+        .unwrap_or((Value::Null, Value::Null));
+    if current != (pending.base_cursor.clone(), pending.base_carry.clone()) {
+        return Err(invalid(
+            "native publication base position changed before reservation",
+        ));
+    }
+    if binding_pending(conn, &pending.binding)
+        .await?
+        .iter()
+        .any(|id| *id != pending.material)
+    {
+        return Err(invalid(
+            "binding already owns another pending native version",
+        ));
     }
     if let Some(m) = &pending.progress.material {
         if pending
@@ -340,11 +370,28 @@ pub async fn installed(conn: &mut PgConnection, material: MaterialId) -> Result<
 
 pub(crate) async fn validate(conn: &mut PgConnection, p: &SourceProgress) -> Result<()> {
     let Some(id) = p.native_pending else {
+        if sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM raw.pending_native_materials WHERE binding=$1)",
+        )
+        .bind(&p.binding)
+        .fetch_one(&mut *conn)
+        .await?
+        {
+            return Err(invalid("binding has unresolved native publication custody"));
+        }
         return Ok(());
     };
     let pending = load(conn, id)
         .await?
         .ok_or_else(|| invalid("native publication reservation is missing"))?;
+    let current = crate::positions::load(conn, &pending.binding)
+        .await?
+        .unwrap_or((Value::Null, Value::Null));
+    if current != (pending.base_cursor.clone(), pending.base_carry.clone()) {
+        return Err(invalid(
+            "native publication base position changed before first admission",
+        ));
+    }
     if pending.state != State::Installed
         || pending.binding != p.binding
         || primary(p) != Some(id)

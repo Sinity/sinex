@@ -74,6 +74,7 @@ pub struct Excised {
 
 enum Work {
     Admit(Batch),
+    Native(Batch, crate::source_excision::AcquisitionGuard),
     Replay(ReplayChain),
     Excise(Box<Excision>),
     Retire(String, sinex_protocol::RetireBatches, Blobs),
@@ -97,9 +98,59 @@ pub struct WriterHandle {
     live: mpsc::Sender<Job>,
     derived: mpsc::Sender<Job>,
     bulk: mpsc::Sender<Job>,
+    source_database: Option<Arc<str>>,
+}
+
+/// Capacity is acquired before any readable native blob is published. Dropping
+/// the API receiver after send does not release the queued work's source guard.
+pub(crate) struct NativePermit(mpsc::OwnedPermit<Job>);
+impl NativePermit {
+    pub async fn admit(
+        self,
+        batch: Batch,
+        guard: crate::source_excision::AcquisitionGuard,
+    ) -> Result<Outcome, WriteError> {
+        let (reply, answer) = oneshot::channel();
+        self.0.send(Job {
+            work: Work::Native(batch, guard),
+            reply,
+        });
+        match answer.await.map_err(|_| WriteError::Stopped)?? {
+            Done::Admitted(outcome) => Ok(outcome),
+            _ => unreachable!("native admission answers with its outcome"),
+        }
+    }
 }
 
 impl WriterHandle {
+    pub(crate) async fn source_guard(
+        &self,
+        source: &str,
+    ) -> Result<crate::source_excision::AcquisitionGuard, String> {
+        let database = self
+            .source_database
+            .as_deref()
+            .ok_or("writer has no native acquisition connection configuration")?;
+        crate::source_excision::AcquisitionGuard::acquire(database, source).await
+    }
+    pub(crate) async fn reserve_native(
+        &self,
+        priority: Priority,
+    ) -> Result<NativePermit, WriteError> {
+        let channel = match priority {
+            Priority::Live => &self.live,
+            Priority::Derived => &self.derived,
+            Priority::Bulk => &self.bulk,
+        };
+        Ok(NativePermit(
+            channel
+                .clone()
+                .reserve_owned()
+                .await
+                .map_err(|_| WriteError::Stopped)?,
+        ))
+    }
+
     /// Submit a batch and wait until it is committed (or refused).
     pub async fn submit(&self, priority: Priority, batch: Batch) -> Result<Outcome, WriteError> {
         match self.send(priority, Work::Admit(batch)).await? {
@@ -169,6 +220,14 @@ pub struct Queues {
 const DEPTH: usize = 16;
 
 pub fn channels() -> (WriterHandle, Queues) {
+    channels_with_database(None)
+}
+
+pub(crate) fn channels_for(database: &str) -> (WriterHandle, Queues) {
+    channels_with_database(Some(Arc::from(database)))
+}
+
+fn channels_with_database(source_database: Option<Arc<str>>) -> (WriterHandle, Queues) {
     let (live, live_rx) = mpsc::channel(DEPTH);
     let (derived, derived_rx) = mpsc::channel(DEPTH);
     let (bulk, bulk_rx) = mpsc::channel(DEPTH);
@@ -177,6 +236,7 @@ pub fn channels() -> (WriterHandle, Queues) {
             live,
             derived,
             bulk,
+            source_database,
         },
         Queues {
             live: live_rx,
@@ -256,6 +316,36 @@ pub async fn run_notifying(
             Work::Admit(batch) => admit(&mut connection, &batch, keys.as_ref())
                 .await
                 .map(Done::Admitted),
+            Work::Native(batch, mut guard) => {
+                let result = async {
+                    let sinex_model::BatchKind::Source(progress) = &batch.kind else {
+                        return Err(WriteError::Refused(
+                            "native custody requires source progress".into(),
+                        ));
+                    };
+                    if progress
+                        .excision_basis
+                        .as_ref()
+                        .is_none_or(|basis| basis.source != guard.source())
+                    {
+                        return Err(WriteError::Refused(
+                            "native custody source differs from its guard".into(),
+                        ));
+                    }
+                    guard.check().await.map_err(WriteError::Refused)?;
+                    admit(&mut connection, &batch, keys.as_ref())
+                        .await
+                        .map(Done::Admitted)
+                }
+                .await;
+                // A committed admission is still committed if closing the guard
+                // connection fails. The owned connection is never returned to a pool.
+                let released = guard.release().await;
+                if let Err(error) = released {
+                    eprintln!("sinexd: closing native source guard: {error}");
+                }
+                result
+            }
             Work::Replay(mut chain) => replay_chain(&mut connection, &mut chain, keys.as_ref())
                 .await
                 .map(|(o, d)| Done::Replayed(o, d)),
@@ -295,11 +385,16 @@ async fn admit(
 ) -> Result<Outcome, WriteError> {
     let refuse = |e: &dyn std::fmt::Display| WriteError::Refused(e.to_string());
     let mut tx = connection.begin().await.map_err(|e| refuse(&e))?;
-    let outcome = sinex_store::admit(&mut tx, batch, keys)
-        .await
-        .map_err(|e| refuse(&e))?;
-    tx.commit().await.map_err(|e| refuse(&e))?;
-    Ok(outcome)
+    match sinex_store::admit(&mut tx, batch, keys).await {
+        Ok(outcome) => {
+            tx.commit().await.map_err(|e| refuse(&e))?;
+            Ok(outcome)
+        }
+        Err(error) => {
+            tx.rollback().await.map_err(|e| refuse(&e))?;
+            Err(refuse(&error))
+        }
+    }
 }
 
 async fn replay_chain(

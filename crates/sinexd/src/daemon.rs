@@ -75,7 +75,7 @@ pub async fn run(o: Options) -> Result<(), String> {
 
     let (stop_tx, stop) = watch::channel(false);
     let (commits_tx, commits) = watch::channel(0u64);
-    let (handle, queues) = writer::channels();
+    let (handle, queues) = writer::channels_for(&o.database);
     let mut tasks: JoinSet<(&'static str, Result<(), String>)> = JoinSet::new();
 
     let mut writer_conn = connect(&o.database).await?;

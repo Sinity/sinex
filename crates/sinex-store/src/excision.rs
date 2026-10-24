@@ -92,7 +92,7 @@ pub mod sealed;
 pub use candidates::{Candidate, KeyEnvelope, candidate_materials};
 mod source_guard;
 pub use basis::{operation_set, operations_basis, validate_basis};
-pub use source_guard::{lock_source, unsupported_ingress};
+pub use source_guard::{lock_source, lock_source_session, unsupported_ingress};
 
 /// Find every reading the excision of `target` removes. Read-only.
 pub async fn plan(conn: &mut PgConnection, target: Target) -> Result<Plan> {
