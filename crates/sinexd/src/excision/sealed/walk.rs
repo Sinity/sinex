@@ -14,6 +14,16 @@ pub(super) struct Record<'a> {
     pub failed: bool,
 }
 
+#[derive(sqlx::FromRow)]
+struct RetainedReading {
+    anchor: i64,
+    event_type: String,
+    equivalence_key: Option<String>,
+    ordinal: i16,
+    record_hash: Vec<u8>,
+    record_state: String,
+}
+
 pub(super) struct Archive {
     pub candidates: Vec<Candidate>,
     stored: Vec<sinex_store::replay::Stored>,
@@ -149,22 +159,15 @@ impl Archive {
                 .find(|c| c.material.0 == stored.id)
                 .ok_or("sealed excision candidate disappeared")?;
             let source = &*self.parsers[index];
-            let rows: Vec<(i64, String, Option<String>, i16, Vec<u8>, String)> = if candidate
-                .material
-                == material
-            {
+            let rows: Vec<RetainedReading> = if candidate.material == material {
                 sqlx::query_as("SELECT DISTINCT anchor,event_type,equivalence_key,ordinal,record_hash,record_state FROM core.events WHERE material_id=$1 ORDER BY anchor,event_type,ordinal")
                     .bind(material.0).fetch_all(&mut *conn).await.map_err(|e|e.to_string())?
             } else {
                 Vec::new()
             };
-            let mut expected: BTreeMap<i64, Vec<(String, Option<String>, i16, Vec<u8>, String)>> =
-                BTreeMap::new();
-            for (anchor, kind, key, ordinal, hash, state) in rows {
-                expected
-                    .entry(anchor)
-                    .or_default()
-                    .push((kind, key, ordinal, hash, state));
+            let mut expected: BTreeMap<i64, Vec<RetainedReading>> = BTreeMap::new();
+            for reading in rows {
+                expected.entry(reading.anchor).or_default().push(reading);
             }
             let mut verified_anchors = BTreeSet::new();
             let opened = crate::retained::open(
@@ -257,9 +260,15 @@ impl Archive {
                             .record(start, end)
                             .map_err(|_| "sealed record read failed")?;
                     let names = opened.secrets.as_ref().map(|(_, names)| names);
-                    for (kind, key, ordinal, hash, state) in
-                        expected.get(&(start as i64)).into_iter().flatten()
-                    {
+                    for reading in expected.get(&(start as i64)).into_iter().flatten() {
+                        let RetainedReading {
+                            event_type: kind,
+                            equivalence_key: key,
+                            ordinal,
+                            record_hash: hash,
+                            record_state: state,
+                            ..
+                        } = reading;
                         if !events.iter().any(|event| {
                             let actual_key =
                                 event.equivalence_key.as_ref().map(|key| match names {

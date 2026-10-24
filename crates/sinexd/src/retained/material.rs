@@ -123,11 +123,13 @@ pub(crate) async fn open_checked(
     open_owned(
         blobs,
         source,
-        reference,
-        replay.map(|blob| (blob, None)),
-        secrets,
+        OwnedMaterial {
+            reference,
+            replay: replay.map(|blob| (blob, None)),
+            secrets,
+            whole,
+        },
         authority,
-        whole,
         check,
     )
 }
@@ -198,25 +200,37 @@ pub(crate) fn open_pending(
     open_owned(
         blobs,
         &pending.source,
-        reference,
-        replay,
-        secrets,
+        OwnedMaterial {
+            reference,
+            replay,
+            secrets,
+            whole: false,
+        },
         authority,
-        false,
         Arc::new(|| Ok(())),
     )
+}
+
+struct OwnedMaterial {
+    reference: MaterialRef,
+    replay: Option<(String, Option<u64>)>,
+    secrets: Option<(String, MaterialSecrets)>,
+    whole: bool,
 }
 
 fn open_owned(
     blobs: &Blobs,
     source: &str,
-    reference: MaterialRef,
-    replay: Option<(String, Option<u64>)>,
-    secrets: Option<(String, MaterialSecrets)>,
+    material: OwnedMaterial,
     authority: Option<&Authority>,
-    whole: bool,
     check: super::ReadCheck,
 ) -> Result<Opened, String> {
+    let OwnedMaterial {
+        reference,
+        replay,
+        secrets,
+        whole,
+    } = material;
     let caller_check = check;
     let lease = authority.cloned();
     let check: super::ReadCheck = Arc::new(move || {
