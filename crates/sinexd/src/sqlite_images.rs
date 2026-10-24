@@ -52,7 +52,7 @@ fn verify_installed(
         Some(k) => Arc::new(move |h| *blake3::keyed_hash(&k, h).as_bytes()),
         None => Arc::new(|h| *h),
     };
-    let extents = image.extents(&blob)?;
+    let extents = image.extents(blob)?;
     meta.validate(&extents)?;
     meta.image_hash = verify_layout(
         blobs,
@@ -103,6 +103,7 @@ fn verify_installed(
     Ok(publication)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn verify_layout(
     blobs: &Blobs,
     meta: &sinex_model::SqliteImageMeta,
@@ -122,7 +123,7 @@ fn verify_layout(
         let check = check.clone();
         drop(
             blobs
-                .read_plain(&blob, Some(meta.evidence_bytes), move || {
+                .read_plain(blob, Some(meta.evidence_bytes), move || {
                     check().map_err(|e| std::io::Error::other(e).into())
                 })
                 .map_err(err)?,
@@ -138,7 +139,7 @@ fn verify_layout(
             Some(k) => Box::new(
                 blobs
                     .read_sealed(
-                        &blob,
+                        blob,
                         Some(meta.evidence_bytes),
                         k,
                         crate::sealed_access::read_limits(meta.evidence_bytes)?,
@@ -165,7 +166,7 @@ fn verify_layout(
         Some(k) => Box::new(
             blobs
                 .read_sealed(
-                    &blob,
+                    blob,
                     Some(meta.evidence_bytes),
                     k,
                     crate::sealed_access::read_limits(meta.evidence_bytes)?,
@@ -176,7 +177,7 @@ fn verify_layout(
                 )
                 .map_err(err)?,
         ),
-        None => Box::new(blobs.assemble(&extents).map_err(err)?),
+        None => Box::new(blobs.assemble(extents).map_err(err)?),
     };
     let mut expected = vec![0; meta.page_size as usize];
     let mut actual = vec![0; meta.page_size as usize];
@@ -210,7 +211,7 @@ fn fill_costs(
     blob: &str,
     previous: Option<&sinex_model::SqliteImageMeta>,
 ) -> Result<(), String> {
-    let stored = blobs.stored_size(&blob).map_err(err)?;
+    let stored = blobs.stored_size(blob).map_err(err)?;
     if meta.full {
         meta.base_stored_bytes = stored;
         meta.patch_stored_bytes = 0;

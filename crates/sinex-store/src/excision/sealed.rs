@@ -210,10 +210,10 @@ pub async fn stage(
                         "replacement event uses a retired or naming-only capability",
                     ));
                 }
-                if let Some(value) = &replacement {
-                    if !sealed::is_sealed(value) {
-                        return Err(invalid("replacement event is not ciphertext"));
-                    }
+                if let Some(value) = &replacement
+                    && !sealed::is_sealed(value)
+                {
+                    return Err(invalid("replacement event is not ciphertext"));
                 }
                 sqlx::query("INSERT INTO excision_rekeys(kind,row_id,material_id,old_value,replacement) VALUES($1,$2,$3,$4,$5)")
                     .bind(if telemetry {"telemetry.events"} else {"core.events"}).bind(id.to_string())

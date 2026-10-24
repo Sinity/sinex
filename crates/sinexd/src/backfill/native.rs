@@ -31,6 +31,7 @@ impl Pipeline<'_> {
             Ok(())
         })
     }
+    #[allow(clippy::too_many_arguments)]
     pub async fn submit(
         &self,
         guard: AcquisitionGuard,
@@ -52,6 +53,7 @@ impl Pipeline<'_> {
         }
         result
     }
+    #[allow(clippy::too_many_arguments)]
     async fn submit_owned(
         &self,
         guard: &mut Option<AcquisitionGuard>,

@@ -51,7 +51,8 @@ impl AcquisitionPolicy {
         if image {
             return Err("source has permanent exclusions and physical images; image-safe acquisition is unavailable".into());
         }
-        let keys:Vec<(String,Option<String>,Option<Uuid>,Option<i64>)>=sqlx::query_as("SELECT event_type,equivalence_key,material_id,anchor FROM core.hidden_occurrences WHERE kind='excise' AND source=$1 AND operation_id=ANY($2)")
+        type ExcludedKey = (String, Option<String>, Option<Uuid>, Option<i64>);
+        let keys:Vec<ExcludedKey>=sqlx::query_as("SELECT event_type,equivalence_key,material_id,anchor FROM core.hidden_occurrences WHERE kind='excise' AND source=$1 AND operation_id=ANY($2)")
             .bind(source).bind(&operations).fetch_all(&mut *conn).await.map_err(|e|e.to_string())?;
         for (kind, key, material, anchor) in keys {
             if let Some(key) = key {
@@ -444,17 +445,16 @@ impl AcquisitionPolicy {
                 "pending records differ from authenticated whole-erasure coordinates".into(),
             );
         }
-        if let Some(sealing) = sealing {
-            if let Some((reference, names)) = &opened.secrets {
-                if names.role() == sinex_store::sealed::SecretRole::DataAndRecordNaming {
-                    sealing.restore_current(
-                        material.id,
-                        opened.reference.blob.clone(),
-                        reference.clone(),
-                        names.clone(),
-                    )?;
-                }
-            }
+        if let Some(sealing) = sealing
+            && let Some((reference, names)) = &opened.secrets
+            && names.role() == sinex_store::sealed::SecretRole::DataAndRecordNaming
+        {
+            sealing.restore_current(
+                material.id,
+                opened.reference.blob.clone(),
+                reference.clone(),
+                names.clone(),
+            )?;
         }
         let backing = opened.records();
         result.bodyless = backing.bodyless;
@@ -469,6 +469,7 @@ impl AcquisitionPolicy {
 
     /// The caller holds acquisition custody through storage and the first
     /// durable material admission. No provider manifest supplies replay tokens.
+    #[allow(clippy::too_many_arguments)]
     pub fn filter(
         &self,
         blobs: &Blobs,
@@ -641,10 +642,10 @@ impl AcquisitionPolicy {
             if selected.iter().any(|(_, _, token)| token.is_some()) {
                 return Err("stateful plain exclusion replay metadata is not available".into());
             }
-            if let Some(drivers::StoredBytes::FramedReader(retained)) = &material.stored {
-                if blobs.is_sealed(&retained.blob).map_err(|e| e.to_string())? {
-                    return Err("sealed retained input cannot stage plaintext".into());
-                }
+            if let Some(drivers::StoredBytes::FramedReader(retained)) = &material.stored
+                && blobs.is_sealed(&retained.blob).map_err(|e| e.to_string())?
+            {
+                return Err("sealed retained input cannot stage plaintext".into());
             }
             // Plain filtering remains private until the owning publication has
             // durably reserved its prepared name. No CAS put occurs here.

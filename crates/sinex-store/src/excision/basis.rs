@@ -73,16 +73,15 @@ pub async fn validate_basis(conn: &mut PgConnection, batch: &Batch) -> Result<()
     if let BatchKind::Ingress(frame) = &batch.kind {
         sources.insert(frame.producer.clone());
     }
-    if let Some(p) = progress {
-        if let Some(source) = sqlx::query_scalar!(
+    if let Some(p) = progress
+        && let Some(source) = sqlx::query_scalar!(
             "SELECT source FROM raw.bindings WHERE binding=$1",
             p.binding
         )
         .fetch_optional(&mut *conn)
         .await?
-        {
-            sources.insert(source);
-        }
+    {
+        sources.insert(source);
     }
     if let Some(basis) = supplied {
         sources.insert(basis.source.clone());

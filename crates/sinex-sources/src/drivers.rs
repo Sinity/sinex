@@ -337,17 +337,16 @@ impl Prepared<'_> {
         erased: crate::drain::ErasedTransitions,
         publication: Option<sinex_model::ErasedReplayPublication>,
     ) -> Result<Self, DriverError> {
-        if let Some(publication) = &publication {
-            if self
+        if let Some(publication) = &publication
+            && (self
                 .material
                 .as_ref()
                 .is_none_or(|(_, m)| m.id != publication.material)
-                || publication.length == 0
-            {
-                return Err(DriverError::InvalidMaterial(
-                    "erased replay publication has no matching material".into(),
-                ));
-            }
+                || publication.length == 0)
+        {
+            return Err(DriverError::InvalidMaterial(
+                "erased replay publication has no matching material".into(),
+            ));
         }
         self.erased = Some(erased);
         self.erased_replay = publication;

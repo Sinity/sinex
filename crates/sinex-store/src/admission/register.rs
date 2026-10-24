@@ -13,20 +13,19 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
         crate::sqlite_images::guard_acquisition(conn, &p.input, &p.observation, &image.metadata)
             .await?;
     }
-    if let Some(replay) = &p.erased_replay {
-        if p.material.as_ref().is_none_or(|m| m.id != replay.material)
+    if let Some(replay) = &p.erased_replay
+        && (p.material.as_ref().is_none_or(|m| m.id != replay.material)
             || p.excision_basis.as_ref().is_none_or(|b| b.count == 0)
             || !p
                 .material_keys
                 .iter()
                 .any(|k| k.material == replay.material)
             || replay.length == 0
-            || i64::try_from(replay.length).is_err()
-        {
-            return Err(Error::Invalid(
-                "erased replay publication lacks its material, key or excision basis".into(),
-            ));
-        }
+            || i64::try_from(replay.length).is_err())
+    {
+        return Err(Error::Invalid(
+            "erased replay publication lacks its material, key or excision basis".into(),
+        ));
     }
     let input = sqlx::query_scalar!(
         r#"INSERT INTO raw.inputs (id, binding, kind, locator, host) VALUES ($1, $2, $3, $4, $5)

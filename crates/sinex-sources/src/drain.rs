@@ -1,6 +1,7 @@
 //! The drain: everything around `Parser::parse`.
 use crate::{Parser, RecordError, RecordShape};
 use serde_json::Value;
+type NextRange<'a> = (usize, usize, Option<&'a Value>, bool);
 use sinex_model::{
     Class, MaterialId, Origin, Payloads, ReadingOrder, RecordLocation, RecordOutcome,
 };
@@ -320,9 +321,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
         })
     }
 
-    fn next_range(
-        &mut self,
-    ) -> Result<Option<(usize, usize, Option<&'a Value>, bool)>, RecordError> {
+    fn next_range(&mut self) -> Result<Option<NextRange<'a>>, RecordError> {
         let ordinary = self.input.records.get(self.next).copied();
         let erased = self
             .erased_next

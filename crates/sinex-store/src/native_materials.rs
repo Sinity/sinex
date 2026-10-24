@@ -396,10 +396,10 @@ fn blob_references(publication: Value) -> Result<BTreeMap<String, Option<i64>>> 
                 e.insert(length);
             }
             std::collections::btree_map::Entry::Occupied(mut e) => {
-                if let (Some(old), Some(new)) = (*e.get(), length) {
-                    if old != new {
-                        return Err(invalid("native blob has conflicting lengths"));
-                    }
+                if let (Some(old), Some(new)) = (*e.get(), length)
+                    && old != new
+                {
+                    return Err(invalid("native blob has conflicting lengths"));
                 }
                 if length.is_some() {
                     e.insert(length);
@@ -524,22 +524,21 @@ pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
             "binding already owns another pending native version",
         ));
     }
-    if let Some(m) = &pending.progress.material {
-        if pending
+    if let Some(m) = &pending.progress.material
+        && pending
             .progress
             .material_keys
             .iter()
             .any(|k| k.material == m.id)
-        {
-            for carry in [&pending.progress.carry, &pending.base_carry] {
-                if !(carry.is_null()
-                    || crate::sealed::is_sealed(carry)
-                    || crate::sealed::metadata::is_carry(carry))
-                {
-                    return Err(invalid(
-                        "sealed pending publication contains unprotected carry",
-                    ));
-                }
+    {
+        for carry in [&pending.progress.carry, &pending.base_carry] {
+            if !(carry.is_null()
+                || crate::sealed::is_sealed(carry)
+                || crate::sealed::metadata::is_carry(carry))
+            {
+                return Err(invalid(
+                    "sealed pending publication contains unprotected carry",
+                ));
             }
         }
     }
@@ -566,7 +565,8 @@ pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
 }
 
 pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Option<Pending>> {
-    let row:Option<(String,String,Value,Value,Value,Value,Value,String)>=sqlx::query_as("SELECT source,binding,publication,base_cursor,base_carry,start_cursor,end_cursor,state FROM raw.pending_native_materials WHERE material_id=$1")
+    type Row = (String, String, Value, Value, Value, Value, Value, String);
+    let row: Option<Row> =sqlx::query_as("SELECT source,binding,publication,base_cursor,base_carry,start_cursor,end_cursor,state FROM raw.pending_native_materials WHERE material_id=$1")
         .bind(material.0).fetch_optional(&mut *conn).await?;
     let pending = row
         .map(

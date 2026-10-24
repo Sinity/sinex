@@ -200,22 +200,18 @@ fn observations_with_transitions(
     transitions: &serde_json::Value,
 ) -> (Vec<serde_json::Value>, serde_json::Value) {
     let (records, _) = frame(bytes);
-    let erased = if let Some(entries) = transitions.as_object() {
-        Some(
-            crate::drain::ErasedTransitions::from_archive(
-                entries.iter().filter_map(|(start, entry)| {
-                    let start: usize = start.parse().unwrap();
-                    let end = entry["end"].as_u64().unwrap() as usize;
-                    (end <= bytes.len()).then(|| (start, end, Some(entry["token"].clone())))
-                }),
-                bytes.len() as u64,
-                false,
-            )
-            .unwrap(),
+    let erased = transitions.as_object().map(|entries| {
+        crate::drain::ErasedTransitions::from_archive(
+            entries.iter().filter_map(|(start, entry)| {
+                let start: usize = start.parse().unwrap();
+                let end = entry["end"].as_u64().unwrap() as usize;
+                (end <= bytes.len()).then(|| (start, end, Some(entry["token"].clone())))
+            }),
+            bytes.len() as u64,
+            false,
         )
-    } else {
-        None
-    };
+        .unwrap()
+    });
     let chunks = drain(
         &ZshParser { host: "h".into() },
         DrainInput {

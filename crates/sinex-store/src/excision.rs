@@ -315,6 +315,7 @@ pub async fn apply(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn apply_prepared(
     conn: &mut PgConnection,
     target: Target,
@@ -581,14 +582,15 @@ pub async fn apply_prepared(
     if let Some(prepared) = prepared {
         applied.keys_destroyed = sealed::apply(conn, prepared, check).await?;
         for replay in &prepared.replay {
-            if let Some(old) = &replay.old_blob {
-                if old != &replay.blob && unreferenced(conn, old).await? {
-                    sqlx::query("UPDATE core.blobs SET status='deleting' WHERE hash=$1")
-                        .bind(old)
-                        .execute(&mut *conn)
-                        .await?;
-                    applied.delete_after_commit.push(old.clone());
-                }
+            if let Some(old) = &replay.old_blob
+                && old != &replay.blob
+                && unreferenced(conn, old).await?
+            {
+                sqlx::query("UPDATE core.blobs SET status='deleting' WHERE hash=$1")
+                    .bind(old)
+                    .execute(&mut *conn)
+                    .await?;
+                applied.delete_after_commit.push(old.clone());
             }
         }
     }
