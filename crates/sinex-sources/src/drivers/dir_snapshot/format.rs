@@ -1,4 +1,5 @@
-//! Versioned directory bundle coordinates, including legacy empty records.
+//! Directory bundle coordinates. Each record is preceded by one structural
+//! byte outside its range, so empty files have distinct anchors.
 use crate::RecordError;
 use serde_json::Value;
 
@@ -8,14 +9,12 @@ pub(super) const PREFIX: u8 = 0;
 
 pub(crate) fn validate(manifest: &Value, records: &[(usize, usize)]) -> Result<(), RecordError> {
     if manifest.get("media_type").and_then(Value::as_str) == Some(MEDIA_TYPE) {
-        if let Some(version) = manifest.get("format_version")
-            && !matches!(version.as_u64(), Some(1 | VERSION))
-        {
+        if manifest.get("format_version").and_then(Value::as_u64) != Some(VERSION) {
             return Err(RecordError::new("unsupported directory bundle format"));
         }
         if records.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
             return Err(RecordError::new(
-                "directory record anchors are not distinct and increasing; retained member evidence needs an explicit mapping before byte-anchored replay",
+                "directory record anchors are not distinct and increasing",
             ));
         }
         if records.windows(2).any(|pair| pair[0].1 > pair[1].0) {

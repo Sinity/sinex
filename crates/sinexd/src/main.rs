@@ -43,7 +43,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the daemon. Initialize or upgrade first with `sinexd admin schema`.
+    /// Run the daemon. Create the schema first with `sinexd admin schema`.
     Run {
         #[arg(long)]
         database: String,
@@ -102,7 +102,7 @@ enum Command {
         command: admin::Admin,
     },
     /// Read sources once to the end, through the writer, and report counts and
-    /// rates. For first imports and measurement. Initialize or upgrade first
+    /// rates. For first imports and measurement. Create the schema first
     /// with `sinexd admin schema`.
     Backfill {
         #[arg(long)]
@@ -135,7 +135,7 @@ enum Command {
     },
     /// Run every derivation until nothing is dirty, through the writer, and
     /// report counts and rates. The daemon's driver, run to completion,
-    /// including the maintained metric values. Initialize or upgrade first
+    /// including the maintained metric values. Create the schema first
     /// with `sinexd admin schema`.
     Derive {
         #[arg(long)]

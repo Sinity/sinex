@@ -257,65 +257,6 @@ async fn cancelled_archive_worker_joins_and_restart_catches_up() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-#[tokio::test]
-async fn legacy_cursor_is_refused_without_reinterpretation_or_blocking_another_source() {
-    let (_db, url, _) = crate::testdb::fresh().await;
-    let dir = std::env::temp_dir().join(format!("sinex-archive-legacy-{}", uuid::Uuid::now_v7()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("export.tgz");
-    archive(&path);
-    let mut ctx = OneShot::open(&url, &dir.join("store")).await.unwrap();
-    let mut bindings = bound(&path);
-    let name = bindings[0].binding.name.clone();
-    backfill::record(&mut ctx.read_conn, &bindings[0].binding)
-        .await
-        .unwrap();
-    let legacy = json!({"size":123,"mtime_ns":456,"through":789,"material":uuid::Uuid::now_v7()});
-    sqlx::query(
-        "INSERT INTO raw.positions(binding,cursor,carry,committed_seq) VALUES ($1,$2,'null',0)",
-    )
-    .bind(&name)
-    .bind(&legacy)
-    .execute(&mut ctx.read_conn)
-    .await
-    .unwrap();
-    let sink = Sink(ctx.blobs.clone());
-    let (_stop, stop) = watch::channel(false);
-    let outcomes = read(
-        &mut ctx.read_conn,
-        &ctx.blobs,
-        &ctx.writer,
-        RunId::new(),
-        &sink,
-        &mut bindings,
-        stop,
-        Access::default(),
-    )
-    .await;
-    assert!(outcomes.iter().any(|(source, result)| {
-        source == "google.fit"
-            && result
-                .as_ref()
-                .is_err_and(|e| e.contains("explicit migration"))
-    }));
-    assert!(
-        outcomes
-            .iter()
-            .any(|(source, result)| source == "google.tasks" && result.is_ok())
-    );
-    assert_eq!(
-        positions::load(&mut ctx.read_conn, &name)
-            .await
-            .unwrap()
-            .unwrap()
-            .0,
-        legacy
-    );
-    assert_eq!(events(&mut ctx.read_conn).await.len(), 1);
-    ctx.close().await.unwrap();
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
 struct SmallBatches(Box<dyn Source>);
 impl Source for SmallBatches {
     fn spec(&self) -> &sinex_sources::SourceSpec {

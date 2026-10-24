@@ -144,8 +144,6 @@ pub(crate) async fn read(
                     .copied()
                     .unwrap_or_default();
                 let class = b.source.spec().class.max(floor);
-                // A legacy byte cursor cannot be translated into exact retained record
-                // identities by guessing. Keep it unchanged and require migration.
                 let previous = Cursor::parse(&cursor).map_err(|e| e.to_string())?;
                 if previous
                     .as_ref()
@@ -519,9 +517,9 @@ async fn read_archive(
                     .authority
                     .ok_or("retained sealed archive is pending explicit operator unlock")?;
                 let cursor = saved.as_ref().expect("continuing");
-                let original = cursor.original_material.ok_or(
-                    "sealed cursor has no original material identity; explicit migration required",
-                )?;
+                let original = cursor
+                    .original_material
+                    .ok_or("sealed archive cursor has no original material")?;
                 let (key_ref, secrets) = authority.material_secrets(conn, original).await?;
                 sealing.restore_secrets(cursor.capture.blob.clone(), key_ref, secrets)?;
                 if let Some(material) = cursor.material {

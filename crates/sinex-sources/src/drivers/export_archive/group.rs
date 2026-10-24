@@ -14,7 +14,6 @@ const VERSION: u8 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capture {
-    #[serde(default)]
     pub class: Class,
     pub blob: String,
     pub length: u64,
@@ -24,7 +23,6 @@ pub struct Capture {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Cursor {
-    pub version: u8,
     pub capture: Capture,
     pub size: u64,
     pub mtime_ns: i128,
@@ -38,7 +36,6 @@ pub struct Cursor {
     pub order_offset: u64,
     pub material: Option<MaterialId>,
     pub part_index: u32,
-    #[serde(default)]
     pub original_material: Option<MaterialId>,
     pub done: bool,
     pub part_member: Option<usize>,
@@ -50,9 +47,6 @@ impl Cursor {
     pub fn parse(value: &Value) -> Result<Option<Self>, DriverError> {
         if value.is_null() {
             return Ok(None);
-        }
-        if value.get("version").and_then(Value::as_u64) != Some(u64::from(VERSION)) {
-            return Err(DriverError::Cursor("this archive cursor predates retained capture; an explicit migration is required before its saved record coordinates can be read".into()));
         }
         serde_json::from_value(value.clone())
             .map(Some)
@@ -244,7 +238,6 @@ pub fn read_input(
             previous.expect("continuing")
         } else {
             Cursor {
-                version: VERSION,
                 capture: context.capture.clone(),
                 size: context.facts.size.unwrap_or(0),
                 mtime_ns: context.facts.mtime_ns.unwrap_or(0),

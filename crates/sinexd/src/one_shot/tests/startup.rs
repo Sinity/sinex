@@ -1,31 +1,11 @@
 use super::*;
 use sqlx::Executor;
 
-// Construct the complete published version-0 archive from its frozen native
-// declarations, views and registry, independently of current declarations.
-async fn predecessor(conn: &mut PgConnection) {
-    let drop_all = format!("DROP SCHEMA {} CASCADE", sinex_schema::schemas().join(","));
-    conn.execute(drop_all.as_str()).await.unwrap();
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../../../sinex-schema/src/tests/v0-declarations.json"
-    ))
-    .unwrap();
-    for sql in fixture["statements"].as_array().unwrap() {
-        conn.execute(sql.as_str().unwrap()).await.unwrap();
-    }
-    conn.execute("CREATE TABLE sinex_schema.applied(version integer PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now()); INSERT INTO sinex_schema.applied(version) VALUES(0)").await.unwrap();
-    for row in fixture["registry"].as_array().unwrap() {
-        let fields: Vec<String> = serde_json::from_value(row[3].clone()).unwrap();
-        sqlx::query("INSERT INTO registry.event_types(name,payload_schema,key_kind,key_fields,replace_rule) VALUES($1,$2,$3,$4,$5)")
-            .bind(row[0].as_str().unwrap()).bind(&row[1]).bind(row[2].as_str().unwrap()).bind(fields).bind(row[4].as_str().unwrap())
-            .execute(&mut *conn).await.unwrap();
-    }
-    let versions: Vec<i32> =
-        sqlx::query_scalar("SELECT version FROM sinex_schema.applied ORDER BY version")
-            .fetch_all(&mut *conn)
-            .await
-            .unwrap();
-    assert_eq!(versions, [0]);
+// A database whose recorded schema version differs from this build's.
+async fn other_version(conn: &mut PgConnection) {
+    conn.execute("UPDATE sinex_schema.applied SET version = version + 1")
+        .await
+        .unwrap();
     conn.execute("INSERT INTO core.blobs(hash,size,status) VALUES('blake3:0000000000000000000000000000000000000000000000000000000000000000',17,'present')").await.unwrap();
 }
 
@@ -53,9 +33,9 @@ async fn state(conn: &mut PgConnection) -> (Vec<String>, Vec<Value>) {
     (catalog, rows)
 }
 
-async fn refuse_old(derive: bool) {
+async fn refuse_other_version(derive: bool) {
     let (_db, url, mut conn) = crate::testdb::fresh().await;
-    predecessor(&mut conn).await;
+    other_version(&mut conn).await;
     let before = state(&mut conn).await;
     let store = tempfile::tempdir().unwrap();
     let error = if derive {
@@ -79,34 +59,22 @@ async fn refuse_old(derive: bool) {
     assert!(
         error
             .as_deref()
-            .is_some_and(|e| e.contains("version 0") && e.contains("apply explicitly")),
-        "ordinary startup must refuse the actual predecessor: {error:?}"
+            .is_some_and(|e| e.contains("schema version 1")),
+        "ordinary startup must refuse another schema version: {error:?}"
     );
     assert_eq!(state(&mut conn).await, before);
-    assert_eq!(
-        sinex_schema::apply(&mut conn).await.unwrap(),
-        sinex_schema::Applied::Upgraded {
-            from: 0,
-            version: sinex_schema::VERSION
-        }
-    );
-    let ctx = OneShot::open(&url, store.path()).await.unwrap();
-    ctx.close().await.unwrap();
-    let (driver, task) = crate::local_driver(&url, "startup-fixture", Some(store.path()))
-        .await
-        .unwrap();
-    drop(driver);
-    task.await.unwrap();
+    assert!(sinex_schema::apply(&mut conn).await.is_err());
+    assert_eq!(state(&mut conn).await, before);
 }
 
 #[tokio::test]
-async fn one_shot_refuses_an_upgradeable_predecessor_without_applying_it() {
-    refuse_old(false).await;
+async fn one_shot_refuses_another_schema_version_without_changing_it() {
+    refuse_other_version(false).await;
 }
 
 #[tokio::test]
-async fn derivation_refuses_an_upgradeable_predecessor_without_applying_it() {
-    refuse_old(true).await;
+async fn derivation_refuses_another_schema_version_without_changing_it() {
+    refuse_other_version(true).await;
 }
 
 #[tokio::test]

@@ -576,7 +576,7 @@ pub fn stored_records(
     }
 }
 
-/// Stored explicit ranges take precedence over legacy source framing.
+/// Record ranges listed in the manifest take precedence over framing the bytes.
 pub fn stored_records_from(
     manifest: &Value,
     reader: &mut dyn std::io::Read,

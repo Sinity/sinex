@@ -138,7 +138,6 @@ pub async fn run(
             "as-of position is outside the known archive".into(),
         ));
     }
-    require_history(&mut tx, seq).await?;
     check_kinds(&mut tx, query).await?;
     if matches!(query.source, Source::Walk { .. })
         && (query.filter.is_some() || !query.stages.is_empty())
@@ -446,19 +445,3 @@ fn collect_aliases(q: &Query, out: &mut Vec<&'static sinex_model::query::Alias>)
 
 #[cfg(test)]
 pub(crate) mod tests;
-
-/// Reject a historical interpretation whose old hide/unhide evidence did not
-/// survive the version-0 format. Call before reading even an empty relation.
-pub(crate) async fn require_history(conn: &mut PgConnection, seq: i64) -> Result<()> {
-    let known_from: i64 = sqlx::query_scalar(
-        "SELECT coalesce(max(commit_seq),0) FROM audit.archive_changes WHERE reason='baseline'",
-    )
-    .fetch_one(conn)
-    .await?;
-    if seq < known_from {
-        return Err(Error::Invalid(format!(
-            "visibility history before position {known_from} is unknown; the archive was upgraded at that position"
-        )));
-    }
-    Ok(())
-}

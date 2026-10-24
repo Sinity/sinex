@@ -326,38 +326,35 @@ fn invalid_staged_ranges_are_refused_before_record_allocation() {
 }
 
 #[test]
-fn legacy_empty_members_keep_unambiguous_coordinates_and_refuse_ambiguous_ones() {
+fn directory_bundles_keep_empty_members_at_distinct_anchors() {
     use crate::sources::notes::NotesParser;
     let manifest = serde_json::json!({
-        "path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle",
-        "members":[{"path":"a.md", "stream_offset":0, "length":5}, {"path":"b.md", "stream_offset":5, "length":0}],
+        "path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle", "format_version": 2,
+        "members":[{"path":"a.md", "stream_offset":1, "length":5}, {"path":"b.md", "stream_offset":7, "length":0}],
     });
-    let chunks = drain(
-        &NotesParser,
-        DrainInput {
-            erased: None,
-            source: "synthetic",
-            class: Class::Open,
-            material: MaterialId::new(),
-            bytes: b"alpha".as_slice().into(),
-            records: &[(0, 5), (5, 5)],
-            carry: Value::Null,
-            reading_order: &|_| ReadingOrder(0),
-            limits: Limits {
-                max_events: 1,
-                max_bytes: 1,
+    let run = |manifest: &Value, records: &[(usize, usize)]| {
+        drain(
+            &NotesParser,
+            DrainInput {
+                erased: None,
+                source: "synthetic",
+                class: Class::Open,
+                material: MaterialId::new(),
+                bytes: b"\0alpha\0".as_slice().into(),
+                records,
+                carry: Value::Null,
+                reading_order: &|_| ReadingOrder(0),
+                limits: Limits {
+                    max_events: 1,
+                    max_bytes: 1,
+                },
+                manifest,
             },
-            manifest: &manifest,
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        chunks.len(),
-        1,
-        "a shared byte checkpoint covers both records"
-    );
+        )
+    };
+    let chunks = run(&manifest, &[(1, 6), (7, 7)]).unwrap();
     let outcomes: Vec<_> = chunks.into_iter().flat_map(|c| c.outcomes).collect();
-    for (index, (path, text, anchor)) in [("a.md", "alpha", 0), ("b.md", "", 5)]
+    for (index, (path, text, anchor)) in [("a.md", "alpha", 1), ("b.md", "", 7)]
         .into_iter()
         .enumerate()
     {
@@ -368,72 +365,14 @@ fn legacy_empty_members_keep_unambiguous_coordinates_and_refuse_ambiguous_ones()
         assert_eq!(events[0].payload["path"], path);
         assert_eq!(events[0].payload["text"], text);
     }
-    let ambiguous = serde_json::json!({
-        "path":"synthetic-vault", "media_type":"application/x-sinex-file-bundle",
-        "members":[{"path":"a.md", "stream_offset":0, "length":0}, {"path":"b.md", "stream_offset":0, "length":0}],
-    });
-    for records in [&[(0, 0), (0, 0)][..], &[(0, 0)][..]] {
-        assert!(
-            drain(
-                &NotesParser,
-                DrainInput {
-                    erased: None,
-                    source: "synthetic",
-                    class: Class::Open,
-                    material: MaterialId::new(),
-                    bytes: b"".as_slice().into(),
-                    records,
-                    carry: Value::Null,
-                    reading_order: &|_| ReadingOrder(0),
-                    limits: Limits::default(),
-                    manifest: &ambiguous,
-                }
-            )
-            .is_err()
-        );
+    let mut overlap = manifest.clone();
+    overlap["members"][1] = serde_json::json!({"path":"b.md","stream_offset":3,"length":3});
+    assert!(run(&overlap, &[(1, 6), (3, 6)]).is_err());
+    for version in [serde_json::json!(1), serde_json::json!(3), Value::Null] {
+        let mut other = manifest.clone();
+        other["format_version"] = version;
+        assert!(run(&other, &[(1, 6), (7, 7)]).is_err());
     }
-    let overlap = serde_json::json!({
-        "media_type":"application/x-sinex-file-bundle", "path":"synthetic-vault",
-        "members":[{"path":"a.md","stream_offset":0,"length":5}, {"path":"b.md","stream_offset":2,"length":3}],
-    });
-    assert!(
-        drain(
-            &NotesParser,
-            DrainInput {
-                erased: None,
-                source: "synthetic",
-                class: Class::Open,
-                material: MaterialId::new(),
-                bytes: b"alpha".as_slice().into(),
-                records: &[(0, 5), (2, 5)],
-                carry: Value::Null,
-                reading_order: &|_| ReadingOrder(0),
-                limits: Limits::default(),
-                manifest: &overlap,
-            }
-        )
-        .is_err()
-    );
-    let mut unknown = manifest.clone();
-    unknown["format_version"] = serde_json::json!(3);
-    assert!(
-        drain(
-            &NotesParser,
-            DrainInput {
-                erased: None,
-                source: "synthetic",
-                class: Class::Open,
-                material: MaterialId::new(),
-                bytes: b"alpha".as_slice().into(),
-                records: &[(0, 5)],
-                carry: Value::Null,
-                reading_order: &|_| ReadingOrder(0),
-                limits: Limits::default(),
-                manifest: &unknown,
-            }
-        )
-        .is_err()
-    );
 }
 
 #[test]

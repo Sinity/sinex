@@ -320,25 +320,12 @@ head. Historical time lookup uses retained Events and visibility history, so
 pruning the hot commit log does not erase its time basis. Permanent excision
 still removes the exact event's historical metadata.
 
-Schema upgrades run explicitly through `sinex-schema apply`, with the writer
-stopped, using one ordered Rust change list. Direct admission refuses an older
-version. The 0→1 upgrade preserves existing rows and archival notice IDs and
-seeds current visibility at a recorded cutover. Earlier visibility cannot be
-reconstructed after legacy unhide deleted its evidence; historical queries
-before that cutover refuse. Archive rows retain original archival metadata and
-expose `baseline` and `known_from` for this distinction.
-
-The 1→2 upgrade updates only the persisted `note.document` payload schema and
-appends its structured metadata columns to `event_types.note_document`. The
-view keeps its identity, dependencies and existing grants. Old payloads keep
-their original values; absent additive fields read as SQL NULL. Replaying
-retained note material creates new interpretations with the current parser.
-A current-version apply does not refresh registry metadata or reinterpret notes.
+`sinex-schema` declares the schema in Rust at version 0. `sinex-schema apply`
+(or `sinexd admin schema`) creates it in an empty database; a database at any
+other version is refused, and ordinary commands never create the schema.
+Ordered upgrades begin with the first deployment.
 
 Archive-stream consumers receive `Restored` as well as `Archived` and `Excised`.
-Consumers decoding that subject must understand the added variant before an
-upgrade; event-type-only subscribers do not receive it. Existing notice IDs and
-saved consumer positions keep legacy pending notices retryable.
 
 
 ## Interfaces and shared code

@@ -319,8 +319,7 @@ fn notice_message(n: &Notice) -> ArchiveNotice {
     ArchiveNotice {
         notice_seq: n.notice_seq,
         event: EventId(n.event_id),
-        archived_seq: n.archived_seq,
-        known_from: n.baseline.then_some(n.commit_seq),
+        archived_seq: n.commit_seq,
         reason: n.reason.clone(),
         replaced_by: n.replaced_by.map(EventId),
         operation: n.operation_id.map(OperationId),
