@@ -324,11 +324,7 @@ impl ImapMail {
             .iter()
             .find_map(|l| number_after(&l.text, "UIDNEXT"));
         // A renumbered mailbox: start over.
-        let start = if previous.uid_validity.is_some() && previous.uid_validity != uid_validity {
-            1
-        } else {
-            previous.uid_next.max(1)
-        };
+        let start = pending::first_uid(&previous, uid_validity);
         let window_end = start.saturating_add(self.config.batch.max(1) - 1);
         let known_next = server_next.filter(|n| *n > start);
         let end = known_next.map_or(window_end, |n| window_end.min(n - 1));
@@ -405,6 +401,7 @@ impl ImapMail {
         manifest["imap_resume"] = json!({"version":1,"previous":previous,"end":next});
         let length = bytes.len();
         let size = length as u64;
+        let cursor_records = records.clone();
         Ok(Acquired {
             image: None,
             input: self.input(),
@@ -424,16 +421,9 @@ impl ImapMail {
                 previous_part: previous.material,
                 reading_order: crate::drivers::reading_order(&manifest),
                 manifest,
-                cursor_at: Box::new({
-                    let cursor = move |end| {
-                        let mut cursor = next.clone();
-                        cursor.through = Some(end);
-                        if end < length {
-                            cursor.uid_next = start;
-                        }
-                        serde_json::to_value(cursor).expect("cursor serializes")
-                    };
-                    move |end| Ok(cursor(end))
+                cursor_at: Box::new(move |end| {
+                    pending::at(&next, start, &cursor_records, end)
+                        .map(|cursor| serde_json::to_value(cursor).expect("cursor serializes"))
                 }),
                 aligned: false,
                 vanished: Vec::new(),

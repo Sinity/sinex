@@ -364,3 +364,5 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     assert_eq!(complete["uid_next"], 8);
     assert!(imap.poll(&complete).unwrap().material.is_none());
 }
+
+mod resume;
