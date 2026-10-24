@@ -96,6 +96,21 @@ durations count as points. The broader activity `sessions` alias remains
 unsupported. If no matching timed group is known, recall says so without
 claiming that no observations exist.
 
+## Initialize and upgrade
+
+Create the PostgreSQL database, then initialize it explicitly before starting
+the daemon or running backfill, replay, excision or derivations:
+
+```sh
+sinex-schema apply 'postgresql:///sinex'
+# Equivalent: sinexd admin schema --database 'postgresql:///sinex'
+sinexd backfill --database 'postgresql:///sinex' --store /path/to/store --source notes=/path/to/vault
+```
+
+For an existing database, stop its writer before applying an upgrade. Ordinary
+write commands require the current schema and retain the single-writer claim;
+they never initialize or upgrade it automatically.
+
 ## Build and test
 
 ```bash

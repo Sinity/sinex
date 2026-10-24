@@ -41,7 +41,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the daemon.
+    /// Run the daemon. Initialize or upgrade first with `sinexd admin schema`.
     Run {
         #[arg(long)]
         database: String,
@@ -100,7 +100,8 @@ enum Command {
         command: admin::Admin,
     },
     /// Read sources once to the end, through the writer, and report counts and
-    /// rates. For first imports and measurement.
+    /// rates. For first imports and measurement. Initialize or upgrade first
+    /// with `sinexd admin schema`.
     Backfill {
         #[arg(long)]
         database: String,
@@ -132,7 +133,8 @@ enum Command {
     },
     /// Run every derivation until nothing is dirty, through the writer, and
     /// report counts and rates. The daemon's driver, run to completion,
-    /// including the maintained metric values.
+    /// including the maintained metric values. Initialize or upgrade first
+    /// with `sinexd admin schema`.
     Derive {
         #[arg(long)]
         database: String,
@@ -179,12 +181,10 @@ async fn local_driver(
     String,
 > {
     use sqlx::Connection;
-    sinex_schema::apply_url(database)
+    let mut writer_conn = sqlx::PgConnection::connect(database)
         .await
         .map_err(|e| e.to_string())?;
-    let writer_conn = sqlx::PgConnection::connect(database)
-        .await
-        .map_err(|e| e.to_string())?;
+    writer::claim(&mut writer_conn).await?;
     let (handle, queues) = writer::channels();
     let task = tokio::spawn(writer::run(
         database.to_owned(),
