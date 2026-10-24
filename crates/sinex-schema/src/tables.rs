@@ -161,8 +161,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   received_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (producer, frame)
 )".into(),
-        // The archive is logical: archived rows stay in core.events.
-        // This is the current projection; archive_changes retains transitions.
+        // The archive is logical: archived rows stay in core.events. This is
+        // the current state; archive_changes holds every transition.
         "CREATE TABLE audit.archived (
   event_id uuid PRIMARY KEY,
   notice_seq bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
@@ -172,8 +172,21 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   operation_id uuid,
   archived_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        archive_history_table().into(),
-        archive_history_index().into(),
+        // Every visibility change at its writer position, so an as-of read
+        // sees the visibility that held at that position.
+        "CREATE TABLE audit.archive_changes (
+  notice_seq bigint PRIMARY KEY,
+  event_id uuid NOT NULL,
+  commit_seq bigint NOT NULL,
+  archived boolean NOT NULL,
+  reason text NOT NULL CHECK (reason IN ('replay', 'newer_reading', 'hide', 'unhide', 'excise', 'version_change', 'recomputed')),
+  replaced_by uuid,
+  operation_id uuid,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (event_id, commit_seq),
+  CHECK (archived = (reason <> 'unhide'))
+)".into(),
+        "CREATE INDEX archive_changes_position ON audit.archive_changes (event_id, commit_seq DESC)".into(),
         "CREATE TABLE core.blobs (
   hash text PRIMARY KEY CHECK (hash ~ '^blake3:[0-9a-f]{64}$'),
   size bigint NOT NULL CHECK (size >= 0),
@@ -572,30 +585,7 @@ pub(crate) fn after_tables() -> Vec<String> {
     out
 }
 
-/// Shared by fresh declarations and the ordered 0→1 upgrade.
-pub(crate) fn archive_history_table() -> &'static str {
-    "CREATE TABLE audit.archive_changes (
-  notice_seq bigint PRIMARY KEY,
-  event_id uuid,
-  commit_seq bigint NOT NULL,
-  archived boolean NOT NULL,
-  reason text NOT NULL CHECK (reason IN ('baseline', 'replay', 'newer_reading', 'hide', 'unhide', 'excise', 'version_change', 'recomputed')),
-  replaced_by uuid,
-  operation_id uuid,
-  recorded_at timestamptz NOT NULL DEFAULT now(),
-  archived_seq bigint NOT NULL,
-  archived_at timestamptz NOT NULL,
-  baseline boolean NOT NULL DEFAULT false,
-  UNIQUE (event_id, commit_seq),
-  CHECK ((event_id IS NULL) = (reason = 'baseline')),
-  CHECK (event_id IS NOT NULL OR baseline),
-  CHECK (reason = 'baseline' OR archived = (reason <> 'unhide'))
-)"
-}
-pub(crate) fn archive_history_index() -> &'static str {
-    "CREATE INDEX archive_changes_position ON audit.archive_changes (event_id, commit_seq DESC)"
-}
-pub(crate) fn archive_history_function() -> &'static str {
+fn archive_history_function() -> &'static str {
     "CREATE FUNCTION audit.is_archived_at(target_event uuid, at_seq bigint) RETURNS boolean LANGUAGE SQL STABLE PARALLEL SAFE AS $$
 SELECT coalesce((SELECT archived FROM audit.archive_changes
   WHERE event_id = target_event AND commit_seq <= at_seq ORDER BY commit_seq DESC LIMIT 1), false)

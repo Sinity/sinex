@@ -294,15 +294,6 @@ pub async fn claim(connection: &mut PgConnection) -> Result<(), String> {
             .await
             .map_err(|e| format!("database: {e}"))?;
         if won {
-            // An upgrade may have won the lock after the initial version read.
-            if let Err(error) = sinex_schema::require_current(connection).await {
-                sqlx::query("SELECT pg_advisory_unlock($1)")
-                    .bind(WRITER_LOCK)
-                    .execute(&mut *connection)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                return Err(error.to_string());
-            }
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {

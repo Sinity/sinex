@@ -64,36 +64,10 @@ impl DirState {
             ));
         }
         let resume = &reference.manifest["directory_resume"];
-        let (previous, scanned): (Cursor, Cursor) = if !resume.is_null() {
-            (
-                serde_json::from_value(resume["previous"].clone())
-                    .map_err(|e| DriverError::Cursor(e.to_string()))?,
-                serde_json::from_value(resume["scanned"].clone())
-                    .map_err(|e| DriverError::Cursor(e.to_string()))?,
-            )
-        } else {
-            // Earlier bundles retain the original scan time and member ranges.
-            // The current prefix supplies its previous completed-scan marker.
-            let at = reference.manifest["read_at_ns"].as_i64().ok_or_else(|| {
-                DriverError::Cursor("legacy directory material has no scan time".into())
-            })?;
-            (
-                Cursor {
-                    material: reference.previous_part,
-                    part_index: reference.part_index.saturating_sub(1),
-                    last_complete_scan_ns: current.last_complete_scan_ns,
-                    through: None,
-                },
-                Cursor {
-                    last_complete_scan_ns: if reference.manifest["scan_complete"] == true {
-                        Some(i128::from(at))
-                    } else {
-                        current.last_complete_scan_ns
-                    },
-                    ..current.clone()
-                },
-            )
-        };
+        let previous: Cursor = serde_json::from_value(resume["previous"].clone())
+            .map_err(|e| DriverError::Cursor(e.to_string()))?;
+        let scanned: Cursor = serde_json::from_value(resume["scanned"].clone())
+            .map_err(|e| DriverError::Cursor(e.to_string()))?;
         if previous.material != reference.previous_part {
             return Err(DriverError::Cursor(
                 "directory previous cursor differs from material chain".into(),

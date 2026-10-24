@@ -415,32 +415,3 @@ async fn archive_consumer_observes_hide_restore_hide_without_duplicate_events() 
         Published::default()
     );
 }
-
-#[test]
-fn legacy_pending_notice_keeps_original_metadata_and_states_known_history_start() {
-    let notice = Notice {
-        notice_seq: 7,
-        event_id: uuid::Uuid::nil(),
-        commit_seq: 12,
-        archived: true,
-        baseline: true,
-        archived_seq: 3,
-        reason: "hide".into(),
-        replaced_by: None,
-        operation_id: None,
-        recorded_at: time::OffsetDateTime::UNIX_EPOCH,
-    };
-    let message = notice_message(&notice);
-    assert_eq!(message.notice_seq, 7);
-    assert_eq!(message.archived_seq, 3);
-    assert_eq!(message.known_from, Some(12));
-    let value = serde_json::to_value(&message).unwrap();
-    let mut old = value.clone();
-    old.as_object_mut().unwrap().remove("known_from");
-    let decoded: ArchiveNotice = serde_json::from_value(old).unwrap();
-    assert_eq!(decoded.known_from, None);
-    assert_eq!(
-        serde_json::from_value::<ArchiveNotice>(value).unwrap(),
-        message
-    );
-}

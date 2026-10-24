@@ -745,10 +745,8 @@ async fn l43_a_second_writer_is_refused() {
 }
 
 /// L15. Schema round trip: a database created fresh from the declarations
-/// describes exactly the schema an existing database at this version has.
-/// The previous-release upgrade half lives in sinex-schema tests/upgrades.rs,
-/// using independently frozen version-0 declarations. Both paths compare views,
-/// triggers and hypertable settings as well as columns and constraints.
+/// describes exactly the schema an existing database at this version has,
+/// including views, triggers and hypertable settings.
 #[tokio::test]
 async fn l15_a_fresh_schema_matches_the_existing_one() {
     let dir = Dir::new();

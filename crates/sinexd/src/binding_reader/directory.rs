@@ -87,15 +87,11 @@ pub(super) async fn restore(
     if through.is_some_and(|n| n > reference.length) {
         return Err("directory cursor exceeds its material".into());
     }
-    let pending =
-        match through {
-            Some(n) if n < reference.length => Some(cursor),
-            None => return Err(
-                "legacy directory cursor has no processed-end proof; retained replay and an explicit cursor repair are required"
-                    .into(),
-            ),
-            _ => None,
-        };
+    let pending = match through {
+        Some(n) if n < reference.length => Some(cursor),
+        None => return Err("directory cursor has no processed end".into()),
+        _ => None,
+    };
     restore_one(
         conn,
         blobs,

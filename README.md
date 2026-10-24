@@ -40,8 +40,7 @@ boundaries between capture, interpretation, admission and public interfaces.
   `sinex-session` and `sinex-capture` capture from the desktop session and
   from other hosts and send over the NATS ingress. Producers reserve exact byte
   custody before receiver installation and retain their frozen request through
-  restart or lost acknowledgment. Upgrade the archive explicitly for schema5 and
-  use the matching producer protocol; sealed producer storage remains unsupported.
+  restart or lost acknowledgment; sealed producer storage remains unsupported.
   New archive bindings capture a physical revision, then traverse it once while
   admitting bounded record parts. Unsealed bindings share capture per host and effective
   privacy class; sealed bindings retain independent material keys. Logical
@@ -56,8 +55,7 @@ boundaries between capture, interpretation, admission and public interfaces.
   `replay --sealed` during an operator unlock. Local replay accepts
   `sinexd admin replay --sealed --identity-file KEYFILE --database URL --store DIR`.
   Lock or expiry stops scoped reads; the background source reader never borrows an
-  operator unlock. Stored legacy byte cursors require an explicit migration and are
-  refused without changing saved progress. A privacy-class change captures a new
+  operator unlock. A privacy-class change captures a new
   revision; it does not erase previously captured bytes.
   Excision refuses records backed by a retained original archive: cross-binding
   archive rewriting is not implemented, and hiding does not delete those bytes.
@@ -142,10 +140,10 @@ The report includes its input event IDs and counts withheld events and unavailab
 evidence separately. Forecasts use the guarded class floor. Sealed evidence and
 sealed authored request storage remain unavailable to these commands.
 
-## Initialize and upgrade
+## Initialize
 
-Create the PostgreSQL database, then initialize it explicitly before starting
-the daemon or running backfill, replay, excision or derivations:
+Create the PostgreSQL database, then create the schema explicitly before
+starting the daemon or running backfill, replay, excision or derivations:
 
 ```sh
 sinex-schema apply 'postgresql:///sinex'
@@ -153,9 +151,8 @@ sinex-schema apply 'postgresql:///sinex'
 sinexd backfill --database 'postgresql:///sinex' --store /path/to/store --source notes=/path/to/vault
 ```
 
-For an existing database, stop its writer before applying an upgrade. Ordinary
-write commands require the current schema and retain the single-writer claim;
-they never initialize or upgrade it automatically.
+Ordinary commands require the schema at this build's version and hold the
+single-writer claim; they never create the schema themselves.
 
 ## Build and test
 

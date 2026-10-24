@@ -1,5 +1,6 @@
-//! Current declarations create empty databases. Ordered [`CHANGES`] upgrade
-//! existing archives explicitly, in one transaction, before writers may resume.
+//! The declarations create an empty database at schema version 0. No
+//! database has been deployed yet, so there are no ordered upgrades: a
+//! database at any other version is refused.
 //!
 //! Enum CHECK lists come from the Rust enums (`DbCheck`), and the event-type
 //! registry rows and typed views come from `sinex_model::event_types::ALL`, so the
@@ -11,57 +12,22 @@
 use sinex_model::{Class, DbCheck, KeyKind, RecordState, ReplaceRule, TimeQuality, event_types};
 use sqlx::{Connection, Executor, PgConnection};
 
-mod changes;
 mod tables;
 
-/// The single writer and explicit schema upgrade share this database lock.
+/// The session advisory lock held by the database's one writer.
 pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
-/// One ordered upgrade step; application remains with the schema owner.
-pub struct Change {
-    pub version: i32,
-    pub name: &'static str,
-}
-pub const CHANGES: &[Change] = &[
-    Change {
-        version: 1,
-        name: "archival history",
-    },
-    Change {
-        version: 2,
-        name: "structured notes",
-    },
-    Change {
-        version: 3,
-        name: "sealed erasure capabilities and replay metadata",
-    },
-    Change {
-        version: 4,
-        name: "authored forecasts",
-    },
-    Change {
-        version: 5,
-        name: "producer byte publication custody",
-    },
-];
-
-/// The schema version a fresh database is created at.
-pub const VERSION: i32 = CHANGES.len() as i32;
+/// The schema version these declarations create.
+pub const VERSION: i32 = 0;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Database(#[from] sqlx::Error),
-    #[error(
-        "database is at schema version {found}, this build declares {declared}; run sinex-schema apply explicitly before writing"
-    )]
-    Upgrade { found: i32, declared: i32 },
+    #[error("database is at schema version {found}, this build declares version {VERSION}")]
+    Version { found: i32 },
     #[error("database has Sinex objects but no schema version; refusing to guess")]
     Unversioned,
-    #[error("schema does not match the known version {0}; refusing an inferred upgrade")]
-    Shape(i32),
-    #[error("a writer is active; stop it before applying a schema upgrade")]
-    ActiveWriter,
 }
 
 /// What `apply` did.
@@ -69,13 +35,11 @@ pub enum Error {
 pub enum Applied {
     Created { version: i32 },
     Current { version: i32 },
-    Upgraded { from: i32, version: i32 },
 }
 
 impl std::fmt::Display for Applied {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Applied::Upgraded { from, version } => write!(f, "upgraded schema {from} to {version}"),
             Applied::Created { version } => write!(f, "created schema version {version}"),
             Applied::Current { version } => write!(f, "schema version {version} is current"),
         }
@@ -166,18 +130,10 @@ WHERE core.class_visible(e.class)"
 /// One view per event type with the payload's top-level fields as columns, for
 /// read-only SQL (`event_types.<type>`).
 fn kind_views() -> Vec<String> {
-    event_types::ALL
-        .iter()
-        .map(|kind| kind_view(kind, false))
-        .collect()
+    event_types::ALL.iter().map(kind_view).collect()
 }
 
-fn kind_view(kind: &event_types::EventTypeInfo, replace: bool) -> String {
-    let create = if replace {
-        "CREATE OR REPLACE VIEW"
-    } else {
-        "CREATE VIEW"
-    };
+fn kind_view(kind: &event_types::EventTypeInfo) -> String {
     let schema = (kind.json_schema)();
     let mut columns = vec![
         "e.id".to_string(),
@@ -193,7 +149,7 @@ fn kind_view(kind: &event_types::EventTypeInfo, replace: bool) -> String {
         }
     }
     format!(
-        "{create} event_types.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
+        "CREATE VIEW event_types.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
         quote_ident(&kind.event_type.replace('.', "_")),
         columns.join(", "),
         kind.event_type
@@ -260,26 +216,20 @@ pub async fn apply_url(url: &str) -> Result<Applied, Error> {
     apply(&mut connection).await
 }
 
-/// Check compatibility before writing. In the caller's transaction the shared
-/// version-row lock excludes schema application until admission commits.
+/// Refuse a database that is not at this build's schema version.
 pub async fn require_current(connection: &mut PgConnection) -> Result<(), Error> {
-    let found: Option<i32> = sqlx::query_scalar(
-        "SELECT version FROM sinex_schema.applied ORDER BY version DESC LIMIT 1 FOR SHARE",
-    )
-    .fetch_optional(connection)
-    .await?;
+    let found: Option<i32> = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
+        .fetch_one(connection)
+        .await?;
     match found {
-        Some(found) if found == VERSION => Ok(()),
-        Some(found) => Err(Error::Upgrade {
-            found,
-            declared: VERSION,
-        }),
+        Some(VERSION) => Ok(()),
+        Some(found) => Err(Error::Version { found }),
         None => Err(Error::Unversioned),
     }
 }
 
-/// Create an empty database or explicitly apply its remaining ordered changes.
-/// Existing writers and unrecognized older shapes refuse; upgrades are atomic.
+/// Create the schema in an empty database, or confirm that an existing one is
+/// at this version. Creation is one transaction.
 pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
     let has_version_table: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='sinex_schema' AND tablename='applied')",
@@ -287,7 +237,8 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
     .fetch_one(&mut *connection)
     .await?;
     if has_version_table {
-        return changes::apply(connection).await;
+        require_current(connection).await?;
+        return Ok(Applied::Current { version: VERSION });
     }
     let has_core: bool =
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='core')")
@@ -303,8 +254,8 @@ pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
             Ok(Applied::Created { version: VERSION })
         }
         Err(error) => {
-            // As with upgrades, release failed DDL locks before returning the
-            // borrowed connection, even if its caller performs no more IO.
+            // Release the failed DDL's locks before returning the borrowed
+            // connection, even if its caller performs no more IO.
             tx.rollback().await?;
             Err(error)
         }
@@ -318,12 +269,10 @@ async fn create_schema(connection: &mut PgConnection) -> Result<(), Error> {
             .await
             .map_err(|e| sqlx::Error::Protocol(format!("{e}\nin statement: {statement}")))?;
     }
-    for version in 0..=VERSION {
-        sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
-            .bind(version)
-            .execute(&mut *connection)
-            .await?;
-    }
+    sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
+        .bind(VERSION)
+        .execute(&mut *connection)
+        .await?;
     for (name, schema, key_kind, fields, replace) in registry_rows() {
         sqlx::query(
             "INSERT INTO registry.event_types (name, payload_schema, key_kind, key_fields, replace_rule) VALUES ($1,$2,$3,$4,$5)",
@@ -345,7 +294,7 @@ pub fn schemas() -> &'static [&'static str] {
 }
 
 /// A comparable description of the database's tables, columns, constraints and
-/// indexes in Sinex's schemas: what the fresh-versus-changes test compares.
+/// indexes in Sinex's schemas.
 pub async fn catalog(connection: &mut PgConnection) -> Result<Vec<String>, Error> {
     let schemas: Vec<String> = tables::SCHEMAS.iter().map(|s| s.to_string()).collect();
     let mut rows: Vec<String> = sqlx::query_scalar(

@@ -181,9 +181,6 @@ pub struct Notice {
     /// The writer position at which availability changed.
     pub commit_seq: i64,
     pub archived: bool,
-    pub baseline: bool,
-    /// Original archival metadata, preserved when legacy visibility is seeded.
-    pub archived_seq: i64,
     pub reason: String,
     pub replaced_by: Option<Uuid>,
     pub operation_id: Option<Uuid>,
@@ -194,8 +191,8 @@ pub struct Notice {
 pub async fn notices_after(conn: &mut PgConnection, after: i64, limit: i64) -> Result<Vec<Notice>> {
     Ok(sqlx::query_as!(
         Notice,
-        r#"SELECT notice_seq, event_id AS "event_id!", commit_seq, archived, baseline, archived_seq, reason, replaced_by, operation_id, recorded_at
-           FROM audit.archive_changes WHERE event_id IS NOT NULL AND notice_seq > $1 ORDER BY notice_seq LIMIT $2"#,
+        r#"SELECT notice_seq, event_id, commit_seq, archived, reason, replaced_by, operation_id, recorded_at
+           FROM audit.archive_changes WHERE notice_seq > $1 ORDER BY notice_seq LIMIT $2"#,
         after,
         limit,
     )

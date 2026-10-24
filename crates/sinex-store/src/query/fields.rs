@@ -83,13 +83,11 @@ pub(crate) fn field(unit: Unit, name: &str) -> Option<String> {
     let sql: &str = match unit {
         Unit::Events => event(name)?,
         Unit::Archive => match name {
-            "archived" => "{a}.archived_at",
+            "archived" => "{a}.recorded_at",
             "reason" => "{a}.reason",
             "operation" => "{a}.operation_id",
             "replaced_by" => "{a}.replaced_by",
-            "archived_seq" => "{a}.archived_seq",
-            "known_from" => "{a}.commit_seq",
-            "baseline" => "{a}.baseline",
+            "archived_seq" => "{a}.commit_seq",
             _ => event(name)?,
         },
         Unit::Materials => match name {

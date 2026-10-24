@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum Admin {
-    /// Explicitly initialize or upgrade the schema, with the writer stopped.
+    /// Create the schema in an empty database, or confirm it is current.
     Schema {
         #[arg(long)]
         database: String,

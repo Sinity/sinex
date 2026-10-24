@@ -31,7 +31,6 @@ pub async fn relation_rows(
     as_of: i64,
     fields: &[String],
 ) -> Result<Vec<EventRow>> {
-    crate::query::require_history(conn, as_of).await?;
     let rows = sqlx::query!(
         r#"SELECT e.id, e.source, e.ts_orig AS "ts_orig!",
                   (SELECT coalesce(jsonb_object_agg(k, e.payload -> k), '{}'::jsonb)
@@ -79,7 +78,6 @@ pub async fn source_evidence(
     source: &str,
     as_of: i64,
 ) -> Result<SourceEvidence> {
-    crate::query::require_history(conn, as_of).await?;
     let bounds = sqlx::query!(
         r#"SELECT min(e.ts_orig) AS first, max(e.ts_orig) AS last
            FROM core.events e

@@ -38,7 +38,7 @@ pub async fn assert_commit_log(conn: &mut PgConnection) {
         "SELECT count(*) FROM audit.archive_changes a LEFT JOIN core.commit_log c USING(commit_seq)
          WHERE a.commit_seq < 1
             OR a.commit_seq > (SELECT value FROM core.counters WHERE name='commit_seq')
-            OR ((a.reason <> 'newer_reading' OR a.baseline) AND c.event_id IS NOT NULL)",
+            OR (a.reason <> 'newer_reading' AND c.event_id IS NOT NULL)",
     )
     .await;
     assert_eq!(
@@ -48,14 +48,14 @@ pub async fn assert_commit_log(conn: &mut PgConnection) {
     let projection = count(
         conn,
         "WITH latest AS (SELECT DISTINCT ON(event_id) event_id,archived FROM audit.archive_changes
-             WHERE event_id IS NOT NULL ORDER BY event_id,commit_seq DESC)
+             ORDER BY event_id,commit_seq DESC)
          SELECT count(*) FROM latest l FULL JOIN audit.archived a USING(event_id)
          WHERE coalesce(l.archived,false) <> (a.event_id IS NOT NULL)",
     )
     .await;
     assert_eq!(
         projection, 0,
-        "retained history and current archival membership agree"
+        "visibility history and current archive state agree"
     );
 }
 

@@ -47,8 +47,7 @@ pub struct Cursor {
     pub part_index: u32,
     /// When the last walk that saw every file finished.
     pub last_complete_scan_ns: Option<i128>,
-    /// Admitted byte end within the current bundle. Older cursors predate
-    /// staged retry and are reread normally after a process restart.
+    /// Admitted byte end within the current bundle; none before the first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<usize>,
 }

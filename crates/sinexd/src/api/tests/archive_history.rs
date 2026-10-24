@@ -80,26 +80,3 @@ async fn explicit_historical_api_views_survive_repeated_hide_and_unhide() {
     );
     assert_eq!(totals(&w, "events as of seq 4").await, 2);
 }
-
-#[tokio::test]
-async fn upgraded_archive_refuses_unknown_earlier_visibility_but_serves_current_rows() {
-    let w = world().await;
-    admit(&w, &["retained"], 0).await;
-    sqlx::query("INSERT INTO audit.archive_changes(notice_seq,event_id,commit_seq,archived,reason,archived_seq,archived_at,baseline) VALUES(nextval(pg_get_serial_sequence('audit.archived','notice_seq')),NULL,1,false,'baseline',1,now(),true)")
-        .execute(&w.reads).await.unwrap();
-    assert_eq!(totals(&w, "events").await, 1);
-    assert_eq!(totals(&w, "events as of seq 1").await, 1);
-    let (status, body) = call(
-        &w,
-        Some(READ),
-        json!({"method":"query","query":"events as of seq 0"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["outcome"], "refused");
-    assert!(
-        body.to_string()
-            .contains("visibility history before position 1 is unknown"),
-        "{body}"
-    );
-}

@@ -361,10 +361,6 @@ pub struct ArchiveNotice {
     pub event: EventId,
     /// The commit position at which it was archived.
     pub archived_seq: i64,
-    /// Legacy metadata is preserved, but visibility is known only from this
-    /// upgrade position. Absent for transitions recorded in the current format.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub known_from: Option<i64>,
     /// `newer_reading`, `hide`, `excise`, `replay` or `version_change`.
     pub reason: String,
     pub replaced_by: Option<EventId>,
