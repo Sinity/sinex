@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod cell;
 pub mod coverage;
 pub mod finding;
+pub mod forecast;
 pub mod methods;
 pub mod metric;
 pub mod panel;

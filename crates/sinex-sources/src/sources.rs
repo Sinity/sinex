@@ -11,6 +11,7 @@ pub mod clipboard;
 pub mod dbus;
 pub(crate) mod fields;
 pub mod file_watch;
+pub mod forecast;
 pub mod goodreads;
 pub mod google_takeout;
 pub mod hyprland;
@@ -97,6 +98,7 @@ pub fn input_kinds() -> &'static [&'static InputKind] {
         &session_socket::KIND,
         &media_capture::KIND,
         &library::KIND,
+        &forecast::KIND,
         &page_crawl::KIND,
     ]
 }

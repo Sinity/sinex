@@ -662,6 +662,17 @@
       ]
     },
     {
+      "name": "forecast.request",
+      "kind": "forecast",
+      "driver": "ApiRequest",
+      "consumer": "authored probability forecasts",
+      "class": "guarded",
+      "eventTypes": [
+        "forecast.issued",
+        "forecast.resolved"
+      ]
+    },
+    {
       "name": "browser.page_crawl",
       "kind": "page-crawl",
       "driver": "ApiCursor",

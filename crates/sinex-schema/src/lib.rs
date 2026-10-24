@@ -35,6 +35,10 @@ pub const CHANGES: &[Change] = &[
         version: 3,
         name: "sealed erasure capabilities and replay metadata",
     },
+    Change {
+        version: 4,
+        name: "authored forecasts",
+    },
 ];
 
 /// The schema version a fresh database is created at.
