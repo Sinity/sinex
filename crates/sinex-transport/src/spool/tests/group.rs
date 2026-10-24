@@ -246,7 +246,7 @@ fn run_actor(root: &Path, operation: &str, uid: u32, gid: u32) {
             "--",
             "./actor",
             "--exact",
-            "producer_bytes::spool::tests::group::configured_group_handoff_between_distinct_users",
+            &test_name,
             "--ignored",
             "--nocapture",
         ])
