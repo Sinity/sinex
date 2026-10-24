@@ -275,7 +275,8 @@ pub(crate) async fn drive(
     let checked_stop = stop.clone();
     let check: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync> =
         std::sync::Arc::new(move || {
-            if *checked_stop.borrow() || sinex_transport::private_mode::PrivateMode::default().on() {
+            if *checked_stop.borrow() || sinex_transport::private_mode::PrivateMode::default().on()
+            {
                 return Err("native capture cancelled or private mode is on".into());
             }
             Ok(())

@@ -25,12 +25,15 @@ fn frozen() -> Frozen {
         previous_part: None,
         manifest: serde_json::json!({}),
     };
-    let frame = crate::Ingress::Material {
+    let frame = Ingress::Material {
         frame: "inner".into(),
         material: Box::new(material),
     };
-    let mut publication = declaration(&sinex_protocol::producer_bytes::encode_frame(&frame), "final");
-    let crate::Ingress::Material { material, .. } = &frame else {
+    let mut publication = declaration(
+        &sinex_protocol::producer_bytes::encode_frame(&frame),
+        "final",
+    );
+    let Ingress::Material { material, .. } = &frame else {
         unreachable!()
     };
     publication.material = Some(Material::from_frame(material));

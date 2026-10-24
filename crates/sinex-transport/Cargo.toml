@@ -14,6 +14,7 @@ blake3.workspace = true
 tempfile = "3"
 
 [dev-dependencies]
+uuid.workspace = true
 sinex-model.workspace = true
 
 [lints]

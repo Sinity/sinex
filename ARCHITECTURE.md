@@ -230,10 +230,15 @@ delta decoding remains a whole-body cost in the shared reader. Unsupported
 compressed export containers retain their explicit replay refusal.
 
 Outside producers freeze private bytes and exact declarations before sending a
-compact reservation. Local placement currently requires same-UID private-spool access; the declared
-2770 store group alone does not grant access to 0600 roles across distinct UIDs.
-Protected group handoff remains a source/configuration obligation. Separately
-rooted remote upload does not need shared-filesystem access.
+compact reservation. A local shared spool uses the configured store group: an
+exact 2770 root creates managed 2770 directories and completed 0640 sender files.
+The receiver copies bytes into its own private snapshot before installation;
+sender files stay unwritable by the receiver. Private roots and remote uploads
+retain 0600 files. Existing incompatible private handoff paths refuse without
+changing saved bytes or permissions and require explicit restaging. The NixOS
+module declares the shared parents and session-user group membership; activation
+and the running users' group memberships remain operational requirements.
+Separately rooted remote upload does not need shared-filesystem access.
 Material metadata is committed with recursively sorted JSON
 objects, independent of map insertion order. Indirect frame encoding preserves
 payload object order and existing reading hashes; the protocol explicitly enables
