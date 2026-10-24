@@ -116,21 +116,34 @@ async fn two_sources_same_hash_reservation_survives_cleanup_refusal_and_first_ad
     let mut tx = conn.begin().await.unwrap();
     reserve(&mut tx, &b).await.unwrap();
     let mut cleanup = PgConnection::connect(&db.url(None)).await.unwrap();
-    cleanup.execute("SET lock_timeout='40ms'").await.unwrap();
-    assert!(
-        crate::excision::finish_deletions(&mut cleanup, &blobs)
-            .await
-            .is_err(),
-        "cleanup must wait for the pending owner's blob row lock"
-    );
+    cleanup
+        .execute("SET default_transaction_isolation='repeatable read'")
+        .await
+        .unwrap();
+    let cleanup_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut cleanup)
+        .await
+        .unwrap();
+    let worker_blobs = blobs.clone();
+    let worker = tokio::spawn(async move {
+        let result = crate::excision::finish_deletions(&mut cleanup, &worker_blobs).await;
+        (cleanup, result)
+    });
+    let mut observer = PgConnection::connect(&db.url(None)).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2),async {
+        loop {
+            let blocked:bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock')")
+                .bind(cleanup_pid).fetch_one(&mut observer).await.unwrap();
+            if blocked { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    }).await.expect("cleanup did not reach the reserved blob lock");
     assert_eq!(blobs.read(&name).unwrap(), bytes);
     tx.commit().await.unwrap();
+    let (mut cleanup, result) = worker.await.unwrap();
     assert!(
-        crate::excision::finish_deletions(&mut cleanup, &blobs)
-            .await
-            .unwrap()
-            .0
-            .is_empty()
+        result.unwrap().0.is_empty(),
+        "waiting cleanup failed to recheck the newly committed owner"
     );
     stage.install().unwrap();
     installed(&mut conn, b.material).await.unwrap();

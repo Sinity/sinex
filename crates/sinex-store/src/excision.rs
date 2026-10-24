@@ -542,7 +542,7 @@ pub async fn apply_prepared(
             .map_err(|_| Error::Invalid("material length beyond i64".into()))?;
         sqlx::query!(
             r#"INSERT INTO core.blobs (hash, size, status) VALUES ($1, $2, 'present')
-           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status = 'deleting'"#,
+           ON CONFLICT (hash) DO UPDATE SET status = 'present' WHERE core.blobs.status IN ('reserved','deleting')"#,
             rewrite.blob,
             length,
         )
@@ -629,6 +629,7 @@ pub async fn finish_deletions(
     for name in pending {
         let mut tx = conn.begin().await?;
         let result = async {
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").execute(&mut *tx).await?;
             let status: Option<String> = sqlx::query_scalar("SELECT status FROM core.blobs WHERE hash=$1 FOR UPDATE")
                 .bind(&name).fetch_optional(&mut *tx).await?;
             if status.as_deref() != Some("deleting") { return Ok(None); }
