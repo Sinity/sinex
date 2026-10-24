@@ -34,6 +34,7 @@ async fn sources(
     producer: &str,
     key: &str,
     hashes: &[String],
+    required: bool,
 ) -> Result<(), String> {
     let names = hashes
         .iter()
@@ -53,7 +54,7 @@ async fn sources(
             &format!("blob:{}", hash_hex(hash)?),
             hash,
             None,
-            false,
+            required,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -262,7 +263,7 @@ pub async fn retire(
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-                sources(&mut tx, producer, &key, &row.blobs).await?;
+                sources(&mut tx, producer, &key, &row.blobs, true).await?;
                 if let Some(publication) = row.excision {
                     if unit.kind != "excision" {
                         return Err("replacement manifest has no excision owner".into());
@@ -287,7 +288,7 @@ pub async fn retire(
                         )
                         .await
                         .map_err(|e| e.to_string())?;
-                        sources(&mut tx, producer, &key, &replacement.blobs).await?;
+                        sources(&mut tx, producer, &key, &replacement.blobs, false).await?;
                         if let Some(hash) = replacement.batch {
                             store::candidate(
                                 &mut tx,

@@ -129,7 +129,7 @@ pub async fn candidate(
         sqlx::query("INSERT INTO retirement_candidates VALUES($1,$2,$3,$4) ON CONFLICT(identity,hash,material) DO UPDATE SET event=COALESCE(retirement_candidates.event,excluded.event)").bind(identity).bind(hash).bind(material).bind(event).execute(conn).await?;
     } else if required {
         return Err(Error::Invalid(
-            "selected batch material was not confirmed by this producer".into(),
+            "selected material was not confirmed by this producer".into(),
         ));
     }
     Ok(())

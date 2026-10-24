@@ -1065,3 +1065,55 @@ async fn row_descriptor_refuses_generic_material_roles_with_source_frame_names()
         0
     );
 }
+
+#[tokio::test]
+async fn row_retirement_refuses_missing_original_source_acknowledgment() {
+    let h = Harness::start().await;
+    let source = h.source_bytes("polylogue", b"owned original source").await;
+    let original = unit(1, "revision", "source/1");
+    let (material, old) = h.batch(ARCHIVE, b"original source rows\n").await;
+    h.row_with_sources(
+        ARCHIVE,
+        1,
+        &original,
+        material,
+        &old,
+        std::slice::from_ref(&source),
+        None,
+    )
+    .await;
+    let publication = manifest(vec![UnitReplacement {
+        unit: original,
+        batch: None,
+        bytes: 0,
+        rows: 0,
+        blobs: vec![],
+    }]);
+    let owner = unit(2, "excision", "erase");
+    let (material, current) = h.batch(ARCHIVE, b"remove source rows\n").await;
+    h.row(2, &owner, material, &current, Some(publication.clone()))
+        .await;
+    // A legacy descriptor with missing acknowledgment evidence cannot grant
+    // authority over source bytes merely by listing their content hash.
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    sqlx::query("DELETE FROM core.ingress_frames WHERE producer='polylogue' AND frame=$1")
+        .bind(format!("blob:{}", source.strip_prefix("blake3:").unwrap()))
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let result = h
+        .retire(
+            "polylogue",
+            &RetireBatches {
+                archive: ARCHIVE.into(),
+                owner,
+                digest: publication.digest,
+            },
+        )
+        .await;
+    assert!(result.refusal.as_deref().unwrap().contains("not confirmed"));
+    for hash in [&source, &old, &current] {
+        assert!(h.blobs.contains(hash).unwrap());
+    }
+    assert_eq!(h.count("SELECT count(*) FROM core.operations").await, 0);
+}

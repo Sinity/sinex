@@ -406,7 +406,9 @@ digest. `sinexd/row_retirement.rs` interprets that producer's descriptor history
 changes material references under the existing writer. The complete unit prefix
 and replacement coverage are checked before mutation. Original batches and older
 replacement batches and their source dependencies are candidates. Each candidate
-is resolved through its producer-owned acknowledged material frame. Selected
+is resolved through its producer-owned acknowledged material frame. Missing
+source-frame evidence for an original confirmed descriptor refuses retirement;
+unpublished intermediate replacements remain optional candidates. Selected
 batches and source references across all producer/archive namespaces stay;
 retirement folds their confirmed metadata in bounded pages on every request.
 Selected batch bytes are read back and checked against their hashes before
