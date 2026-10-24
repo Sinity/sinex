@@ -40,6 +40,7 @@ fn whole_erased_part_advances_replay_without_a_data_key_and_keeps_later_duplicat
         &recipient,
         &scope,
         [metadata::ErasedRecord {
+            purpose: sinex_store::sealed::metadata::RecordPurpose::Active,
             start: 0,
             end: erased_raw.len() as u64,
             raw_digest: names.name_raw_record(erased_raw),

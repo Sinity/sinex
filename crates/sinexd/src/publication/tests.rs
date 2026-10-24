@@ -290,7 +290,7 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
     let authority =
         crate::sealed_access::Authority::new(identity, std::time::Duration::from_secs(60)).unwrap();
     let sealing = crate::one_shot::SealingSink::staged(ctx.blobs.clone(), authority.recipient());
-    let mut reader = binding::appended(zsh::driver(path.clone(), "h".into()), source.spec().framer);
+    let mut reader = binding::appended(zsh::driver(path.clone(), "h".into()));
     let acquired = reader.poll(&serde_json::Value::Null).unwrap();
     let m = acquired.material.as_ref().unwrap();
     let start = (m.cursor_at)(0).unwrap();
@@ -436,7 +436,7 @@ async fn actual_sealed_append_first_chunk_and_restart_finish_original_bytes_and_
         .unwrap()
         .records(&opened.reference.manifest, source.spec().framer)
         .unwrap();
-    let mut reader = binding::appended(zsh::driver(path.clone(), "h".into()), source.spec().framer);
+    let mut reader = binding::appended(zsh::driver(path.clone(), "h".into()));
     reader
         .restore_append(binding::AppendResume {
             reference: opened.reference.clone(),

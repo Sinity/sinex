@@ -216,10 +216,10 @@ pub const RAW_LOG_KIND: crate::binding::InputKind = crate::binding::InputKind {
     }),
     source: |b| Ok(Box::new(raw_log(b.settings.zone()?))),
     reader: Some(|b| {
-        Ok(crate::binding::appended(
-            raw_log_driver(b.input.clone(), b.settings.host.clone()),
-            RAW_LOG.framer,
-        ))
+        Ok(crate::binding::appended(raw_log_driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
     }),
     capture: None,
 };

@@ -9,6 +9,7 @@ use std::io::{Read, Seek};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+mod plain_seek;
 
 #[derive(Clone)]
 pub struct Blobs(Arc<hashed_blobs::Store>, PathBuf);
@@ -123,6 +124,27 @@ impl Blobs {
         check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
     ) -> Result<hashed_blobs::PlainReader> {
         Ok(self.0.read_plain(&parse(name)?, expected_len, check)?)
+    }
+
+    /// Own one existing verified plain representation for scoped seek reads.
+    pub fn read_plain_seek(
+        &self,
+        name: &str,
+        length: u64,
+        check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
+    ) -> Result<impl Read + Seek + Send + 'static> {
+        let hash = parse(name)?;
+        if self.0.kind(&hash)? != hashed_blobs::Kind::Plain {
+            return Err(crate::Error::Invalid(
+                "scoped plain seek requires a plain representation".into(),
+            ));
+        }
+        Ok(plain_seek::PlainSeek::new(
+            self.root(),
+            hash,
+            length,
+            Box::new(check),
+        )?)
     }
 
     /// The whole blob, verified against its name as it is read.

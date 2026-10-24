@@ -9,10 +9,9 @@ use crate::drivers::append_file::{AppendFile, AppendState};
 use crate::drivers::dir_snapshot::{DirSnapshot, DirState};
 use crate::drivers::sqlite_rows::{RowState, SqliteRows};
 use crate::drivers::{Acquired, DriverError};
-use crate::registry::{Framer, Source, SourceSpec};
+use crate::registry::{Source, SourceSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_model::MaterialId;
 use std::path::{Path, PathBuf};
 mod append_pending;
 pub use append_pending::{AppendResume, ArchivedAppendEnd};
@@ -182,7 +181,14 @@ pub trait Reader: Send {
         Ok(())
     }
 
-    fn remember(&mut self, _stored: &[(MaterialId, Vec<u8>)]) {}
+    fn remember_append(
+        &mut self,
+        _tail: crate::drivers::append_file::AppendTail,
+    ) -> Result<(), DriverError> {
+        Err(DriverError::InvalidMaterial(
+            "reader does not support completed append history".into(),
+        ))
+    }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError>;
 
@@ -353,15 +359,13 @@ impl<A: crate::drivers::api_cursor::Api + Send + Sync + 'static> StatelessDriver
 pub struct Appended {
     pending: Option<append_pending::Pending>,
     driver: AppendFile,
-    framer: Framer,
     state: AppendState,
 }
 
-pub fn appended(driver: AppendFile, framer: Framer) -> Box<dyn Reader> {
+pub fn appended(driver: AppendFile) -> Box<dyn Reader> {
     Box::new(Appended {
         pending: None,
         driver,
-        framer,
         state: AppendState::default(),
     })
 }
@@ -382,11 +386,12 @@ impl Reader for Appended {
         self.pending = Some(pending);
         Ok(())
     }
-    fn remember(&mut self, stored: &[(MaterialId, Vec<u8>)]) {
-        self.state = AppendState::rebuild(
-            stored.iter().map(|(id, b)| (*id, b.as_slice())),
-            self.framer,
-        );
+    fn remember_append(
+        &mut self,
+        tail: crate::drivers::append_file::AppendTail,
+    ) -> Result<(), DriverError> {
+        self.state = tail.into_state()?;
+        Ok(())
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
@@ -453,12 +458,6 @@ impl Reader for Rows {
     }
     fn cancel_pending(&mut self) {
         self.state.cancel_scan();
-    }
-
-    fn remember(&mut self, stored: &[(MaterialId, Vec<u8>)]) {
-        let policy = self.state.image_policy.take();
-        self.state = RowState::rebuild(stored.iter().map(|(_, b)| b.as_slice()));
-        self.state.image_policy = policy;
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {

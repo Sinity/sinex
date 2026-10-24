@@ -65,7 +65,15 @@ boundaries between capture, interpretation, admission and public interfaces.
   presence, hourly and daily summaries, and text read from screen stills,
   recomputed per changed key as inputs arrive.
 - **Removal and replay.** Hide, unhide and excision, remembered across
-  re-imports; replay of stored materials with the current parsers.
+  re-imports; replay of stored materials with the current parsers. Supported
+  sealed logical removal uses explicit operator unlock and `excise --sealed`,
+  fresh body/value encryption and format-owned carry erasure. Whole removal
+  makes the original body unavailable while preserving unrelated values.
+  Mixed plain/sealed epochs, unsupported parser state, retained containers and
+  physical SQLite images still refuse. Completed append restart restores a bounded
+  retained alignment tail; partial append restart without exact retained resume
+  facts remains unavailable. Capturing a source with permanent sealed
+  exclusions requires scoped matching authority.
 - **Privacy.** Versioned rules applied at admission, privacy classes, the
   sealed class with unlock sessions, and a private-mode switch.
 - **Reading.** One query language, search, recall, provenance and read-only

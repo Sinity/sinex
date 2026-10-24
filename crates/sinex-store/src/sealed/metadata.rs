@@ -41,13 +41,29 @@ struct Header {
 }
 
 /// Coordinates and irreversible matching evidence, never original record text.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordPurpose {
+    #[default]
+    Active,
+    PhysicalCopy,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ErasedRecord {
+    /// Legacy envelopes described active records only. Copies have no parser effect.
+    #[serde(default)]
+    pub purpose: RecordPurpose,
     pub start: u64,
     pub end: u64,
     pub raw_digest: [u8; 32],
     pub transition: Option<Value>,
+}
+impl ErasedRecord {
+    pub fn is_active(&self) -> bool {
+        self.purpose == RecordPurpose::Active
+    }
 }
 
 /// Only ciphertext reaches `output`. Memory is one serialized record/value plus
@@ -66,7 +82,11 @@ pub fn seal_replay(
     let mut previous = 0;
     for record in records {
         check()?;
-        if record.start < previous || record.start >= record.end || record.end > *length {
+        if record.start < previous
+            || record.start >= record.end
+            || record.end > *length
+            || (!record.is_active() && record.transition.is_some())
+        {
             return Err(invalid());
         }
         previous = record.end;
@@ -94,7 +114,11 @@ pub fn open_replay(
     let mut previous = 0;
     while let Some(record) = next::<ErasedRecord>(&mut input)? {
         check()?;
-        if record.start < previous || record.start >= record.end || record.end > *length {
+        if record.start < previous
+            || record.start >= record.end
+            || record.end > *length
+            || (!record.is_active() && record.transition.is_some())
+        {
             return Err(invalid());
         }
         previous = record.end;

@@ -7,7 +7,9 @@ use sinex_store::Blobs;
 use sinex_store::excision::{self, Plan, Rewrite, Target};
 use sqlx::PgConnection;
 mod guard;
+mod sealed;
 pub(crate) use guard::ExcisionGuard;
+pub(crate) use sealed::plan as sealed_plan;
 
 pub fn describe(plan: &Plan) -> String {
     let records: usize = plan.materials.iter().map(|m| m.anchors.len()).sum();
@@ -45,7 +47,7 @@ pub async fn excise_with(
         );
     };
     let guard = writer.excision_guard(source).await?;
-    guarded(blobs, writer, target, actor, guard).await
+    guarded(blobs, writer, target, actor, guard, None).await
 }
 
 /// API requests move their existing planning connection into the guard.
@@ -55,6 +57,7 @@ pub(crate) async fn excise_pooled(
     writer: &WriterHandle,
     target: Target,
     actor: &str,
+    authority: Option<crate::sealed_access::Authority>,
 ) -> Result<String, String> {
     let plan = excision::plan(&mut connection, target)
         .await
@@ -66,7 +69,7 @@ pub(crate) async fn excise_pooled(
         );
     };
     let guard = ExcisionGuard::acquire(connection, source).await?;
-    guarded(blobs, writer, target, actor, guard).await
+    guarded(blobs, writer, target, actor, guard, authority).await
 }
 
 async fn source_scope(conn: &mut PgConnection, plan: &Plan) -> Result<Option<String>, String> {
@@ -102,6 +105,7 @@ async fn guarded(
     target: Target,
     actor: &str,
     mut guard: ExcisionGuard,
+    authority: Option<crate::sealed_access::Authority>,
 ) -> Result<String, String> {
     let result = async {
         let plan = excision::plan(guard.connection(), target)
@@ -111,10 +115,16 @@ async fn guarded(
         if source.as_deref() != Some(guard.source()) {
             return Err("excision source namespace changed while waiting; retry planning".into());
         }
-        prepare_rewrites(guard.connection(), blobs, target).await
+        if let Some(authority) = &authority {
+            let prepared = sealed::prepare(guard.connection(), blobs, target, authority).await?;
+            Ok((prepared.plan, prepared.rewrites, Some(prepared.sealed)))
+        } else {
+            let (plan, rewrites) = prepare_rewrites(guard.connection(), blobs, target).await?;
+            Ok((plan, rewrites, None))
+        }
     }
     .await;
-    let (plan, rewrites) = match result {
+    let (plan, rewrites, prepared) = match result {
         Ok(value) => value,
         Err(error) => {
             guard.release().await?;
@@ -125,8 +135,8 @@ async fn guarded(
     let _cancel = Cancel(cancelled.clone());
     let done = writer
         .excise(Excision {
-            sealed: None,
-            authority: None,
+            sealed: prepared,
+            authority,
             guard: Some(guard),
             cancelled,
             target,

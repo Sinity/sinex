@@ -64,6 +64,7 @@ async fn old_naming_only_exclusions_match_new_epoch_keys_hashes_and_unparsed_byt
         &identity.to_public(),
         &scope,
         [metadata::ErasedRecord {
+            purpose: sinex_store::sealed::metadata::RecordPurpose::Active,
             start: 0,
             end: raw.len() as u64,
             raw_digest: names.name_raw_record(raw),
@@ -84,7 +85,7 @@ async fn old_naming_only_exclusions_match_new_epoch_keys_hashes_and_unparsed_byt
     sqlx::query("INSERT INTO raw.materials(id,blob,durable_bytes,manifest,parser,parser_version,erased_replay_blob) VALUES($1,$2,$3,'{}','p',1,$4)").bind(material.0).bind(&body).bind(raw.len() as i64).bind(&replay).execute(&mut conn).await.unwrap();
     sqlx::query("INSERT INTO privacy.material_keys(material_id,key_ref,class,wrapped_key,role) VALUES($1,'names-only','sealed',$2,'record-naming-only')").bind(material.0).bind(&wrapped).execute(&mut conn).await.unwrap();
     let operation = Uuid::now_v7();
-    let scope = serde_json::json!({"sources":["s"],"record_domains_version":1,"record_domains":[{"material":material,"source":"s","naming":"sealed"}]});
+    let scope = serde_json::json!({"material":material,"materials":[material],"sources":["s"],"record_domains_version":1,"record_domains":[{"material":material,"source":"s","naming":"sealed"}]});
     sqlx::query(
         "INSERT INTO core.operations(id,kind,actor,scope) VALUES($1,'excise','synthetic',$2)",
     )
@@ -93,6 +94,7 @@ async fn old_naming_only_exclusions_match_new_epoch_keys_hashes_and_unparsed_byt
     .execute(&mut conn)
     .await
     .unwrap();
+    sqlx::query("UPDATE raw.materials SET manifest=jsonb_build_object('excised_whole',$2::text) WHERE id=$1").bind(material.0).bind(operation.to_string()).execute(&mut conn).await.unwrap();
     sqlx::query("INSERT INTO core.hidden_occurrences(source,event_type,equivalence_key,kind,operation_id) VALUES('s',$1,$2,'excise',$3)").bind(original.event_type).bind(names.name_equivalence(&original.equivalence_key.as_ref().unwrap().0).0).bind(operation).execute(&mut conn).await.unwrap();
     sqlx::query("INSERT INTO core.excised_digests(source,event_type,record_hash,operation_id) VALUES('s',$1,$2,$3)").bind(original.event_type).bind(names.name_record_hash(&original.record_hash).as_slice()).bind(operation).execute(&mut conn).await.unwrap();
     assert!(sealed::unwrap(&wrapped, &identity).is_err());

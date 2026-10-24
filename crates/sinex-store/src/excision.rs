@@ -6,9 +6,11 @@
 //!   are blanked to spaces of the same length (the closing newline kept), so
 //!   every other record keeps its anchor; the old blob is deleted once nothing
 //!   refers to it;
-//! - a sealed material is crypto-shredded: its wrapped data key is deleted and
-//!   the bytes stay, unreadable. Only a whole sealed material can go this way,
-//!   because a sealed blob cannot be rewritten without its key;
+//! - scoped sealed preparation streams the same blanking into fresh encrypted
+//!   backing and rotates dependent values before retiring the old data key.
+//!   Whole removal leaves the original body unavailable; a fresh capability
+//!   may retain unrelated dependent values. Naming capability retains record
+//!   confirmation without granting old content decryption;
 //! - a tombstone (identity and time, no payload) remains for each event, the
 //!   record's key or location goes into `core.hidden_occurrences` as `excise`,
 //!   which nothing undoes, and its record hash into `core.excised_digests`, so

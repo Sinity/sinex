@@ -452,5 +452,40 @@ unwrap callers. Record naming and blob naming remain separate domains. Scoped
 class holders with a naming capability can test candidate equivalence keys and
 record hashes, but cannot decrypt old content with that capability. Replay and
 restart restore the retained naming capability rather than derive identities
-from a replacement data key. Partial sealed excision still refuses until its
-body, dependent values and format-owned carry redaction are implemented together.
+from a replacement data key.
+
+Explicit operator unlock and `excise --sealed` prepare supported logical record
+removal through the existing source drain. Native equivalence keys match retained
+versions across encryption epochs. Partial removal streams same-length blanking
+into fresh encrypted backing, preserving unrelated bytes and anchors. The Writer
+atomically revalidates the complete source candidate set, dependent ciphertext,
+carry, old envelopes and replacements before retiring old data capabilities.
+Unrelated readings retain their values, identities and observation facts.
+
+Whole removal makes the original body unavailable. The storage-owned excision
+operation authenticates that state independently of key role; provider manifests
+cannot declare it. Ordinary whole removal retains naming-only capability. When
+unrelated protected values survive, a fresh data capability retains those values
+while replay uses authenticated minimal transitions without reopening the body.
+Format-owned carry erasure removes selected private state. A later material that
+owns such carry can be rekeyed with its body unchanged. Replay and current-carry
+metadata have separate class-encrypted purposes and scopes.
+
+Completed append bindings rebuild their bounded alignment tail from scoped, verified
+retained records and authenticated erased membership. Plain bodies use an owned
+verified range reader; sealed reads keep their encrypted backing. A retained
+partially admitted append that lacks exact pending-resume facts refuses before
+reading the provider. Inactive rewrite-prefix copies require actual predecessor
+occurrences and unambiguous selected membership. Their encrypted physical-copy
+metadata preserves matching coordinates but never advances parser state. Missing
+or ambiguous predecessor evidence refuses before mutation.
+
+Preparation holds the current decoded record/value, carry and encrypted frame
+buffers. Candidate/range metadata grows with retained records and materials.
+Shared parser predecessors are reread for each branch rather than retaining a
+private carry for every material, so long shared prefixes add I/O. Mixed plain
+and sealed epochs, unsupported parser versions/state, original containers and
+physical SQLite image lineages refuse before mutation. The current carry-erasure
+adapters cover zsh, ActivityWatch and stateless Atuin. Matching permanent sealed
+exclusions during later capture requires scoped authority; locked excluded-source
+continuity remains operational scope, separate from fresh public-recipient capture.

@@ -330,10 +330,10 @@ pub const KIND: crate::binding::InputKind = crate::binding::InputKind {
     }),
     source: |b| Ok(Box::new(source(lane_of(b)?))),
     reader: Some(|b| {
-        Ok(crate::binding::appended(
-            driver(b.input.clone(), b.settings.host.clone()),
-            lane_of(b)?.spec.framer,
-        ))
+        Ok(crate::binding::appended(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
     }),
     capture: None,
 };

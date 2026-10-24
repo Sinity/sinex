@@ -106,8 +106,9 @@ pub async fn stage(
             .find(|m| m.id == rotation.material)
             .expect("selected rotation")
             .whole;
-        if whole != (rotation.replacement.role == sealed::SecretRole::RecordNamingOnly.as_str())
-            || !whole && rotation.old.reference == rotation.replacement.reference
+        if (!whole && rotation.replacement.role != sealed::SecretRole::DataAndRecordNaming.as_str())
+            || (rotation.replacement.role == sealed::SecretRole::DataAndRecordNaming.as_str()
+                && rotation.old.reference == rotation.replacement.reference)
         {
             return Err(invalid(
                 "sealed replacement must retire its old data capability",

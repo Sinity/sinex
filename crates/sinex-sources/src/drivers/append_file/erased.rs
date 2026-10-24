@@ -15,6 +15,9 @@ pub struct ErasedMember {
     matcher: RawMatcher,
 }
 impl ErasedMember {
+    pub fn location(&self) -> RecordLocation {
+        self.location
+    }
     pub fn from_archive(
         location: RecordLocation,
         length: usize,

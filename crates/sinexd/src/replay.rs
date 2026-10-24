@@ -208,16 +208,22 @@ pub async fn run(
                 let (key_ref, secrets) = authority
                     .material_secrets(read_conn, MaterialId(material.id))
                     .await?;
-                let key = match secrets.role() {
-                    sinex_store::sealed::SecretRole::DataAndRecordNaming => {
-                        Some(secrets.data_key(key_ref).map_err(|e| e.to_string())?)
+                let bodyless =
+                    sinex_store::material_bytes::bodyless(read_conn, MaterialId(material.id))
+                        .await
+                        .map_err(|e| e.to_string())?;
+                let key = if bodyless {
+                    if material.erased_replay_blob.is_none() {
+                        return Err("bodyless sealed replay metadata is unavailable".into());
                     }
-                    sinex_store::sealed::SecretRole::RecordNamingOnly
-                        if material.erased_replay_blob.is_some() =>
-                    {
-                        None
+                    None
+                } else {
+                    match secrets.role() {
+                        sinex_store::sealed::SecretRole::DataAndRecordNaming => {
+                            Some(secrets.data_key(key_ref).map_err(|e| e.to_string())?)
+                        }
+                        _ => return Err("bodyless sealed replay metadata is unavailable".into()),
                     }
-                    _ => return Err("bodyless sealed replay metadata is unavailable".into()),
                 };
                 keys.insert(material.id, (key, reference.length, secrets));
             }
@@ -276,7 +282,7 @@ pub async fn run(
 /// (stored by backfill and the binding runner). A material with no stored
 /// binding (sent by an outside producer) is read by the source whose parser
 /// it names.
-async fn sources_of(
+pub(crate) async fn sources_of(
     read_conn: &mut sqlx::PgConnection,
     chain: &[Stored],
 ) -> Result<Vec<Box<dyn Source>>, String> {
@@ -494,6 +500,7 @@ fn read_chain_into(
             let records = authority.open_replay_metadata(input, &scope)?;
             let records = records
                 .into_iter()
+                .filter(|r| r.is_active())
                 .map(|r| {
                     Ok((
                         usize::try_from(r.start)

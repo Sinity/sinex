@@ -233,6 +233,15 @@ async fn apply_privacy(conn: &mut PgConnection, batch: &Batch, events: &mut [Eve
 
 /// Records the source dropped: a newer reading of each live one, removed.
 /// Built from the stored reading, whose privacy rules already applied.
+/// A source-removal observation names the prior reading, including its sealed
+/// naming domain; it does not reinterpret the original record bytes.
+pub fn source_removal_hash(prior: &[u8; 32]) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(prior);
+    hash.update(b"removed at source");
+    *hash.finalize().as_bytes()
+}
+
 async fn removed_at_source(
     conn: &mut PgConnection,
     batch: &Batch,
@@ -244,13 +253,10 @@ async fn removed_at_source(
                 if live.record_state == sinex_model::RecordState::Removed {
                     continue;
                 }
-                let mut hash = blake3::Hasher::new();
-                hash.update(&live.record_hash);
-                hash.update(b"removed at source");
                 events.push(Event {
                     id: sinex_model::EventId::new(),
                     reading_order: ReadingOrder(live.reading_order.0.saturating_add(1)),
-                    record_hash: *hash.finalize().as_bytes(),
+                    record_hash: source_removal_hash(&live.record_hash),
                     record_state: sinex_model::RecordState::Removed,
                     ..live
                 });
