@@ -35,6 +35,20 @@ pub async fn descriptors(
         .bind(after).bind(producer).bind(kind).bind(field).bind(value).fetch_all(conn).await?.into_iter().map(|r|(r.get(0),r.get(1),r.get(2),r.get(3))).collect())
 }
 
+/// Read a matching acknowledged descriptor with a strictly newer declared owner.
+/// The application supplies payload field names and interprets the returned value.
+pub async fn descriptor_after(
+    conn: &mut PgConnection,
+    producer: &str,
+    kind: &str,
+    containing: &Value,
+    order: (&str, &str),
+    after: (i64, &str),
+) -> Result<Option<Value>> {
+    Ok(sqlx::query_scalar("SELECT e.payload FROM core.commit_log c JOIN core.events e ON e.id=c.event_id WHERE e.source=$1 AND e.event_type=$2 AND e.payload @> $3 AND ((e.payload->>$4)::bigint,(e.payload->>$5) COLLATE \"C\")>($6,$7 COLLATE \"C\") AND EXISTS(SELECT 1 FROM core.ingress_frames f WHERE f.producer=$1 AND f.refusal IS NULL AND e.id=ANY(f.admitted)) ORDER BY (e.payload->>$4)::bigint DESC,(e.payload->>$5) COLLATE \"C\" DESC LIMIT 1")
+        .bind(producer).bind(kind).bind(containing).bind(order.0).bind(order.1).bind(after.0).bind(after.1).fetch_optional(conn).await?)
+}
+
 /// Page producer-authenticated descriptors across namespaces. Shared content
 /// cannot be reclaimed using only one archive's current reference set.
 pub async fn all_descriptors(

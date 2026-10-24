@@ -167,10 +167,15 @@ pub async fn validate_sources(
     let sinex_model::BatchKind::Ingress(frame) = &batch.kind else {
         return Ok(());
     };
+    let rows = batch
+        .events()
+        .filter(|e| e.event_type == "polylogue.rows")
+        .map(|e| {
+            serde_json::from_value::<PolylogueRows>(e.payload.clone()).map_err(|e| e.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut expected = Vec::new();
-    for event in batch.events().filter(|e| e.event_type == "polylogue.rows") {
-        let row: PolylogueRows =
-            serde_json::from_value(event.payload.clone()).map_err(|e| e.to_string())?;
+    for row in &rows {
         for hash in row.blobs.iter().chain(
             row.excision
                 .iter()
@@ -183,14 +188,70 @@ pub async fn validate_sources(
     let backings = store::backings(conn, &frame.producer, &names)
         .await
         .map_err(|e| e.to_string())?;
-    if expected.iter().any(|(name, hash)| {
-        !backings
-            .iter()
-            .any(|b| source_backing(b) && &b.frame == name && &b.hash == hash && b.present)
-    }) {
-        return Err("row descriptor cites unavailable producer source material".into());
+    let ready = |hash: &String| {
+        backings.iter().any(|b| {
+            source_backing(b)
+                && b.frame.strip_prefix("blob:") == hash.strip_prefix("blake3:")
+                && b.hash == *hash
+                && b.present
+        })
+    };
+    for row in &rows {
+        if row.blobs.iter().any(|hash| !ready(hash)) {
+            return Err("row descriptor cites unavailable producer source material".into());
+        }
+        if let Some(publication) = &row.excision {
+            for replacement in &publication.replacements {
+                if replacement.blobs.iter().all(&ready) {
+                    continue;
+                }
+                if !superseded(conn, &frame.producer, row, &replacement.unit).await? {
+                    return Err("row descriptor cites unavailable producer source material".into());
+                }
+            }
+        }
     }
     Ok(())
+}
+
+async fn superseded(
+    conn: &mut PgConnection,
+    producer: &str,
+    row: &PolylogueRows,
+    target: &ArchiveUnit,
+) -> Result<bool, String> {
+    let owner = ArchiveUnit {
+        commit_seq: row.local_seq,
+        kind: row.unit.clone(),
+        key: row.key.clone(),
+    };
+    if owner.kind != "excision" || target >= &owner {
+        return Ok(false);
+    }
+    let containing = serde_json::json!({"archive":row.archive,"unit":"excision","excision":{"replacements":[{"unit":target}]}});
+    let Some(payload) = store::descriptor_after(
+        conn,
+        producer,
+        "polylogue.rows",
+        &containing,
+        ("local_seq", "key"),
+        (owner.commit_seq, &owner.key),
+    )
+    .await
+    .map_err(|e| e.to_string())?
+    else {
+        return Ok(false);
+    };
+    let newer: PolylogueRows = serde_json::from_value(payload).map_err(|e| e.to_string())?;
+    let newer_owner = ArchiveUnit {
+        commit_seq: newer.local_seq,
+        kind: newer.unit,
+        key: newer.key,
+    };
+    Ok(newer_owner > owner
+        && newer
+            .excision
+            .is_some_and(|p| p.replacements.iter().any(|r| r.unit == *target)))
 }
 
 pub async fn retire(

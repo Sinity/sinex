@@ -435,7 +435,10 @@ generic producer frame names retain their ordinary acknowledgment behavior.
 Have, Reserve and delivery retries return an unavailable refusal when that
 material no longer backs the advertised hash. New row and replacement source
 references are checked inside the writer transaction against producer-owned
-registered backing. An old acknowledgment cannot resurrect deleted bytes or
+registered backing. An older manifest may cite an unpublished intermediate
+source only when a newer producer-owned acknowledged owner already supersedes
+that exact archive/unit. This exceptional check reads one matching descriptor;
+ordinary ready dependencies need no history query. An old acknowledgment cannot resurrect deleted bytes or
 authorize a later archive to cite them. These checks track registered backing,
 not a fresh physical verification of every source file.
 
