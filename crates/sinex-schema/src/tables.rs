@@ -272,6 +272,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
         pending_native_table().into(),
+        pending_producer_table().into(),
+        pending_producer_blobs_table().into(),
+        "CREATE INDEX pending_producer_blob ON raw.pending_producer_blobs(blob)".into(),
         pending_native_blobs_table().into(),
         "CREATE INDEX pending_native_blobs_blob ON raw.pending_native_blobs(blob)".into(),
         "CREATE INDEX pending_native_source ON raw.pending_native_materials(source, binding)".into(),
@@ -665,5 +668,28 @@ pub(crate) fn pending_native_blobs_table() -> &'static str {
   material_id uuid NOT NULL REFERENCES raw.pending_native_materials(material_id) ON DELETE CASCADE,
   blob text NOT NULL REFERENCES core.blobs(hash),
   PRIMARY KEY (material_id, blob)
+)"
+}
+
+// Byte roles are derived from the frozen typed declaration by the custody owner.
+pub(crate) fn pending_producer_table() -> &'static str {
+    "CREATE TABLE raw.pending_producer_bytes (
+  producer text NOT NULL,
+  frame text NOT NULL,
+  declaration jsonb NOT NULL CHECK(jsonb_typeof(declaration)='object'),
+  installed boolean NOT NULL DEFAULT false,
+  acknowledged boolean NOT NULL DEFAULT false CHECK(NOT acknowledged OR installed),
+  reserved_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(producer,frame)
+)"
+}
+pub(crate) fn pending_producer_blobs_table() -> &'static str {
+    "CREATE TABLE raw.pending_producer_blobs (
+  producer text NOT NULL,
+  frame text NOT NULL,
+  role text NOT NULL CHECK(role IN ('material','envelope')),
+  blob text NOT NULL REFERENCES core.blobs(hash),
+  PRIMARY KEY(producer,frame,role),
+  FOREIGN KEY(producer,frame) REFERENCES raw.pending_producer_bytes(producer,frame) ON DELETE CASCADE
 )"
 }

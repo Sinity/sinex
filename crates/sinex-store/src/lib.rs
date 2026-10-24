@@ -18,6 +18,7 @@ pub mod native_materials;
 pub mod payloads;
 pub mod positions;
 pub mod privacy;
+pub mod producer_bytes;
 pub mod query;
 pub mod read_models;
 pub mod replay;
@@ -28,7 +29,7 @@ pub mod sqlite_images;
 mod stage;
 
 pub use admission::{DerivedScope, DirtyKeys, KeyInput, KeyScope, NoDerivations, Outcome, admit};
-pub use blobs::{Blobs, Received};
+pub use blobs::Blobs;
 pub use hashed_blobs::Verified;
 /// The connection the store's reads take, for crates that call them without
 /// depending on the database driver.

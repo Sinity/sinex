@@ -109,10 +109,14 @@ specification's writing phase and is neither `present` nor quarantined. Reserve
 these rows before installing prepared CAS bytes. First admission completes the
 reservation with material and progress in one transaction. Cleanup locks each
 blob row and rechecks ready and pending references while holding the lock through
-unlink and row deletion. Producer ingress and direct placement still lack
-pre-admission custody; that
-gap blocks enabling destructive excision for affected names. Unregistered legacy
-files are not repaired by source reservations.
+unlink and row deletion. Producer custody uses `raw.pending_producer_bytes` with
+references derived from its frozen declaration. A publication is identified by
+its authenticated producer namespace and final frame; material-body and indirect
+envelope roles stay distinct. Reservation precedes installation. Final admission
+marks its owner acknowledged in the same transaction as the immutable frame ack;
+private byte cleanup then retires that owner under its publication and blob locks.
+Unregistered legacy files are not repaired by these reservations. Destructive
+producer excision remains guarded until exclusion-aware acquisition is supported.
 
 The native binding pipeline prepares plain or encrypted bodies privately, reserves
 custody and queue capacity, then installs and verifies the retained representation.
@@ -225,12 +229,36 @@ whole-document record or undecided append prefix can still be large. Legacy
 delta decoding remains a whole-body cost in the shared reader. Unsupported
 compressed export containers retain their explicit replay refusal.
 
-Outside producers install material files through the streaming blob writer and
-upload them from one verified open representation using one 512 KiB plaintext
-buffer, plus the bounded encoded outgoing frame and the shared blob reader's
-frame metadata and decoder. Empty materials
-still send one empty chunk; acknowledgment and pending-batch retry ordering are
-unchanged. This bounds producer transport memory, not a driver's decoded records.
+Outside producers freeze private bytes and exact declarations before sending a
+compact reservation. Local placement currently requires same-UID private-spool access; the declared
+2770 store group alone does not grant access to 0600 roles across distinct UIDs.
+Protected group handoff remains a source/configuration obligation. Separately
+rooted remote upload does not need shared-filesystem access.
+Material metadata is committed with recursively sorted JSON
+objects, independent of map insertion order. Indirect frame encoding preserves
+payload object order and existing reading hashes; the protocol explicitly enables
+`serde_json/preserve_order` for its Rust consumers. A large Material frame reserves
+both its body and its private JSON envelope under the same final outer frame ID.
+The inner frame name may differ and remains bound by that envelope's bytes.
+
+Local producers share only the private spool. Remote producers upload one role at
+a time using a 512 KiB buffer and bounded encoded messages. Prefixes are synced
+before acknowledgment; overlapping resends must match. Final material handling
+copies and verifies producer-writable bytes before the existing CAS installer runs
+outside Writer. The owned source/publication guard follows detached byte work and
+queued admission through cancellation. Missing reserved bytes stay unavailable,
+and retries cannot substitute edited provider content. Empty roles send one empty
+chunk. A reservation can return the original final acknowledgment without reopening
+roles already cleaned up. Sender identity metadata remains frozen until the sender
+observes that acknowledgment. New unreserved material/chunk frames refuse; schema4
+writers cannot write schema5 archives. Sealed producer storage is unsupported and
+refuses before creating a new local plaintext spool when that class is known.
+
+Transport buffers are bounded; snapshot copies and whole-name verification still
+read each complete role. A driver record, material manifest, frozen typed frame and
+indirect JSON decode retain their existing one-value memory costs. The shared
+spool iterator reads one sender artifact at a time and reports malformed/unreadable
+artifacts explicitly; it supplies no queue, cursor or resend controller.
 
 The outside producers use `sinex-sources::live::run` to start capture threads
 and publish their spools under one lifetime. Signal handlers are registered

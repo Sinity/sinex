@@ -18,7 +18,7 @@
 //! the producer that sent it.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_model::{Class, EventId, InputRef, MaterialId, RecordLocation, RunId, Timestamp};
+use sinex_model::{Class, EventId, MaterialId, RecordLocation, RunId, Timestamp};
 
 /// Subject and stream names under one root.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,13 +180,20 @@ pub fn valid_producer(name: &str) -> bool {
 ///
 /// A frame is one NATS message, so it fits the server's `max_payload`. Bytes
 /// of any size travel as a material in the content store: placed there
-/// directly by a producer on the same host, or sent in [`Ingress::Chunk`]s by
+/// in a private frozen spool by a producer on the same host, or sent in [`Ingress::Chunk`]s by
 /// one that is not. A producer splits many events across frames, and sends a
 /// frame too large for one message as an [`Ingress::Indirect`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Ingress {
-    /// Register a material whose bytes are already in the content store.
+    /// Reserve exact byte custody before any installation. The reply confirms
+    /// this declaration, or returns the original final acknowledgment.
+    Reserve {
+        frame: String,
+        publication: crate::producer_bytes::Publication,
+    },
+    /// Admit a previously reserved material. The receiver verifies and installs
+    /// its private frozen bytes before this frame reaches Writer.
     /// Send it, and wait for its acknowledgment, before events that cite it.
     Material {
         frame: String,
@@ -202,26 +209,31 @@ pub enum Ingress {
     },
     /// Part of the bytes named `blob`, base64 in `data`, starting at `offset`
     /// of `total`. Chunks are sent in order; when the last arrives Sinex
-    /// checks the bytes against their name and stores them. Sinex keeps what
+    /// checks the private bytes against their reserved name and length. Final
+    /// material handling installs a receiver-owned copy. Sinex keeps what
     /// it has by offset, so chunks sent again under new frame names (a new
     /// attempt) change nothing they already delivered.
     Chunk {
         frame: String,
+        publication: String,
+        role: crate::producer_bytes::Role,
         blob: String,
         offset: u64,
         total: u64,
         data: String,
     },
-    /// A material or events frame too large for one message, stored first as
+    /// A material or events frame too large for one message, privately spooled as
     /// the bytes named `blob` (its JSON). Sinex handles it as that frame and
-    /// records it under this frame's name.
+    /// records it under this frame's name. Its envelope stays private through
+    /// the inner acknowledgment; it never becomes a retained public CAS duplicate.
     Indirect { frame: String, blob: String },
 }
 
 impl Ingress {
     pub fn frame(&self) -> &str {
         match self {
-            Ingress::Material { frame, .. }
+            Ingress::Reserve { frame, .. }
+            | Ingress::Material { frame, .. }
             | Ingress::Events { frame, .. }
             | Ingress::Chunk { frame, .. }
             | Ingress::Indirect { frame, .. } => frame,
@@ -236,23 +248,7 @@ pub struct ProducerFailure {
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct MaterialFrame {
-    pub id: MaterialId,
-    /// What the material was read from.
-    pub input: InputRef,
-    /// `blake3:<hex>` of the bytes.
-    pub blob: String,
-    pub length: u64,
-    pub parser: String,
-    pub parser_version: u32,
-    #[serde(default)]
-    pub part_index: u32,
-    #[serde(default)]
-    pub previous_part: Option<MaterialId>,
-    /// Lossless description: path bytes, envelopes, media type, charset.
-    pub manifest: Value,
-}
+pub use sinex_model::producer_bytes::MaterialFrame;
 
 /// An event as a producer sends it: a registered event type and its payload,
 /// with where it came from. Sinex decodes the payload into the type's Rust

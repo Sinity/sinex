@@ -38,7 +38,10 @@ boundaries between capture, interpretation, admission and public interfaces.
   `sinexd backfill --source KIND=PATH` reads sources to the end;
   `sinexd run --sources sources.json` reads configured bindings continuously;
   `sinex-session` and `sinex-capture` capture from the desktop session and
-  from other hosts and send over the NATS ingress.
+  from other hosts and send over the NATS ingress. Producers reserve exact byte
+  custody before receiver installation and retain their frozen request through
+  restart or lost acknowledgment. Upgrade the archive explicitly for schema5 and
+  use the matching producer protocol; sealed producer storage remains unsupported.
   New archive bindings capture a physical revision, then traverse it once while
   admitting bounded record parts. Unsealed bindings share capture per host and effective
   privacy class; sealed bindings retain independent material keys. Logical

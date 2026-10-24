@@ -20,6 +20,8 @@
 //! The producer is the one its subject names; per-producer credentials limit
 //! each producer to its own subjects. `<root>.have.<producer>` answers which
 //! frames Sinex recorded (`mn8u`).
+mod bytes;
+
 use crate::writer::{Priority, WriteError, WriterHandle};
 use async_nats::jetstream::{self, AckKind, consumer, stream};
 use base64::Engine;
@@ -86,6 +88,8 @@ pub struct Ingest {
     pub host: String,
     validators: HashMap<&'static str, jsonschema::Validator>,
     runs: HashMap<String, RunId>,
+    #[cfg(test)]
+    byte_hook: Option<std::sync::Arc<dyn Fn(bytes::Point) + Send + Sync>>,
 }
 
 impl Ingest {
@@ -113,6 +117,8 @@ impl Ingest {
             host,
             validators,
             runs: HashMap::new(),
+            #[cfg(test)]
+            byte_hook: None,
         })
     }
 
@@ -120,12 +126,15 @@ impl Ingest {
     /// means the frame could not be handled now (the database or writer is
     /// unavailable) and should be delivered again.
     pub async fn handle(&mut self, producer: &str, body: &[u8]) -> Result<Acknowledgment, String> {
-        let mut guard = self.reads.begin().await.map_err(|e| e.to_string())?;
-        sinex_store::excision::lock_source(&mut guard, producer, true)
-            .await
-            .map_err(|e| e.to_string())?;
-        let result = self.handle_guarded(producer, body).await;
-        guard.rollback().await.map_err(|e| e.to_string())?;
+        let mut guard =
+            Some(crate::source_excision::AcquisitionGuard::from_pool(&self.reads, producer).await?);
+        let result = self.handle_guarded(producer, body, &mut guard).await;
+        if let Some(guard) = guard {
+            guard.release().await?;
+        }
+        if let Err(error) = self.cleanup_bytes().await {
+            eprintln!("sinexd: producer private-spool cleanup delayed: {error}");
+        }
         result
     }
 
@@ -133,6 +142,7 @@ impl Ingest {
         &mut self,
         producer: &str,
         body: &[u8],
+        guard: &mut Option<crate::source_excision::AcquisitionGuard>,
     ) -> Result<Acknowledgment, String> {
         let frame: Ingress = match serde_json::from_slice(body) {
             Ok(frame) => frame,
@@ -143,10 +153,26 @@ impl Ingest {
             }
         };
         let name = frame.frame().to_owned();
+        let publication_frame = match &frame {
+            Ingress::Reserve { publication, .. } => publication.frame.as_str(),
+            Ingress::Chunk { publication, .. } => publication.as_str(),
+            _ => name.as_str(),
+        };
+        sinex_store::producer_bytes::lock(
+            guard.as_mut().expect("guard before queue").connection(),
+            producer,
+            publication_frame,
+            true,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
         if name.is_empty() {
             return Ok(refused_unrecorded("a frame needs a name"));
         }
-        if let Some(stored) = self.stored(producer, &name).await? {
+        if !matches!(frame, Ingress::Reserve { .. })
+            && let Some(stored) = self.stored(producer, &name).await?
+        {
             return Ok(acknowledgment(stored));
         }
         let basis = sinex_store::excision::operations_basis(&mut self.conn, producer)
@@ -158,7 +184,32 @@ impl Ingest {
             ));
         }
         let run = self.run(producer).await?;
-        let checked = match self.unwrap(frame) {
+        if let Ingress::Reserve { publication, .. } = frame {
+            return match self.reserve_bytes(producer, &name, publication).await {
+                Ok(ack) => Ok(ack),
+                Err(reason) => Ok(Acknowledgment {
+                    frame: name,
+                    refusal: Some(reason),
+                    ..refused_unrecorded("")
+                }),
+            };
+        }
+        // Capacity and source ownership precede public installation. Queued
+        // admission keeps the guard if the request future disappears.
+        let permit = self
+            .writer
+            .reserve_native(Priority::Live)
+            .await
+            .map_err(|e| e.to_string())?;
+        let publication = if matches!(frame, Ingress::Material { .. } | Ingress::Indirect { .. }) {
+            sinex_store::producer_bytes::load(&mut self.conn, producer, &name)
+                .await
+                .map_err(|e| e.to_string())?
+                .map(|(p, _)| p)
+        } else {
+            None
+        };
+        let checked = match self.unwrap_bytes(producer, frame, guard).await {
             Err(check) => Err(check),
             Ok(Ingress::Material { material, .. }) => self.material(producer, &material),
             Ok(Ingress::Events {
@@ -167,21 +218,19 @@ impl Ingest {
                 .events(producer, &events, &failures)
                 .await
                 .map(|records| (None, records)),
-            Ok(Ingress::Chunk {
-                blob,
-                offset,
-                total,
-                data,
-                ..
-            }) => self
-                .chunk(&blob, offset, total, &data)
+            Ok(chunk @ Ingress::Chunk { .. }) => self
+                .chunk_bytes(producer, &chunk, guard)
+                .await
                 .map(|()| (None, vec![])),
-            Ok(Ingress::Indirect { .. }) => unreachable!("unwrap replaces indirect frames"),
+            Ok(Ingress::Indirect { .. } | Ingress::Reserve { .. }) => {
+                unreachable!("unwrap replaces indirect frames")
+            }
         };
         let batch = match checked {
             Ok((progress, records)) => Batch {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
+                    publication: publication.clone(),
                     producer: producer.to_owned(),
                     frame: name.clone(),
                     material: progress,
@@ -193,7 +242,14 @@ impl Ingest {
             Err(Check::Refused(reason)) => refusal(run, producer, &name, reason),
             Err(Check::Unavailable(error)) => return Err(error),
         };
-        match self.writer.submit(Priority::Live, batch).await {
+        match permit
+            .admit(
+                batch,
+                guard.take().expect("source guard owned until queue send"),
+                std::sync::Arc::new(|| Ok(())),
+            )
+            .await
+        {
             Ok(_) => {}
             Err(WriteError::Stopped) => return Err("the writer has stopped".into()),
             Err(WriteError::Refused(reason)) => {
@@ -272,42 +328,6 @@ impl Ingest {
 
     /// An indirect frame stands for the frame stored as its bytes; every other
     /// frame stands for itself.
-    fn unwrap(&self, frame: Ingress) -> Result<Ingress, Check> {
-        let Ingress::Indirect { blob, .. } = frame else {
-            return Ok(frame);
-        };
-        let present = self
-            .blobs
-            .contains(&blob)
-            .map_err(|e| Check::Refused(e.to_string()))?;
-        if !present {
-            return Err(Check::Refused(format!(
-                "the frame stored as {blob} is not in the content store; place or send its bytes first"
-            )));
-        }
-        let bytes = self
-            .blobs
-            .read(&blob)
-            .map_err(|e| Check::Unavailable(e.to_string()))?;
-        match serde_json::from_slice::<Ingress>(&bytes) {
-            Ok(inner @ (Ingress::Material { .. } | Ingress::Events { .. })) => Ok(inner),
-            Ok(_) => Err(Check::Refused(format!(
-                "{blob} holds a chunk or indirect frame; only material and events frames are stored"
-            ))),
-            Err(error) => Err(Check::Refused(format!("{blob} is not a frame: {error}"))),
-        }
-    }
-
-    fn chunk(&self, blob: &str, offset: u64, total: u64, data: &str) -> Result<(), Check> {
-        let data = base64::engine::general_purpose::STANDARD
-            .decode(data)
-            .map_err(|e| Check::Refused(format!("chunk data is not base64: {e}")))?;
-        self.blobs
-            .receive_chunk(blob, offset, total, &data)
-            .map(drop)
-            .map_err(|e| Check::Refused(e.to_string()))
-    }
-
     fn material(
         &self,
         producer: &str,
@@ -461,6 +481,7 @@ fn refusal(run: RunId, producer: &str, frame: &str, reason: String) -> Batch {
     Batch {
         run,
         kind: BatchKind::Ingress(Box::new(IngressFrame {
+            publication: None,
             producer: producer.to_owned(),
             frame: frame.to_owned(),
             material: None,
@@ -499,6 +520,9 @@ pub async fn run(
     mut ingest: Ingest,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
+    if let Err(error) = ingest.cleanup_bytes().await {
+        eprintln!("sinexd: producer private-spool cleanup delayed: {error}");
+    }
     let js = crate::publisher::context(client.clone());
     let consumer = ensure_stream(&js, &ingest.subjects).await?;
     let mut frames = consumer

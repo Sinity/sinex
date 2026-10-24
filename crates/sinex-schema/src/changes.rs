@@ -6,6 +6,7 @@ use sqlx::{Connection, Executor, PgConnection};
 
 mod forecasts;
 mod notes;
+mod producer_bytes;
 
 pub(super) async fn apply(conn: &mut PgConnection) -> Result<Applied, Error> {
     let mut tx = conn.begin().await?;
@@ -64,6 +65,7 @@ async fn apply_locked(conn: &mut PgConnection) -> Result<Applied, Error> {
             2 => notes::apply(conn).await?,
             3 => sealed_erasure(conn).await?,
             4 => forecasts::apply(conn).await?,
+            5 => producer_bytes::apply(conn).await?,
             _ => {
                 return Err(Error::Upgrade {
                     found,

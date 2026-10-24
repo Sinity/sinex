@@ -123,6 +123,7 @@ async fn native_replay_ciphertext_pointer_keys_and_progress_share_admission_roll
     );
     let ingress = Batch {
         kind: BatchKind::Ingress(Box::new(sinex_model::IngressFrame {
+            publication: None,
             producer: "s".into(),
             frame: "forged-native-state".into(),
             material: Some(progress),

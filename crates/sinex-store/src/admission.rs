@@ -28,6 +28,7 @@ pub use archive::erase_archive_history;
 mod classify;
 mod derived;
 mod register;
+pub(crate) use register::material_matches;
 mod write;
 
 pub(crate) use archive::remove_live;
@@ -124,6 +125,7 @@ pub async fn admit(
             register::source(conn, progress).await?;
         }
         BatchKind::Ingress(frame) => {
+            crate::producer_bytes::validate(conn, frame).await?;
             if let Some(progress) = &frame.material {
                 register::source(conn, progress).await?;
             }
@@ -174,6 +176,7 @@ pub async fn admit(
     }
     if let BatchKind::Ingress(frame) = &batch.kind {
         register::frame(conn, frame, &outcome).await?;
+        crate::producer_bytes::complete(conn, frame).await?;
     }
     Ok(outcome)
 }

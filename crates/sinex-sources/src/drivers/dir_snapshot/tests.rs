@@ -151,7 +151,7 @@ fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
     assert_eq!(retry.material.as_ref().unwrap().id, id);
     assert_eq!(record(retry.material.as_ref().unwrap(), 0), b"alpha");
     let blobs = tempfile::tempdir().unwrap();
-    let sink = super::super::producer::Store::open(blobs.path()).unwrap();
+    let sink = FixtureSink::open(blobs.path()).unwrap();
     let prepared = prepare(
         &source,
         "b",
@@ -189,7 +189,7 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let source = notes::source();
     let mut state = DirState::default();
     let blobs = tempfile::tempdir().unwrap();
-    let sink = super::super::producer::Store::open(blobs.path()).unwrap();
+    let sink = FixtureSink::open(blobs.path()).unwrap();
     let acquired = d.poll(&Value::Null, &mut state).unwrap();
     let id = acquired.material.as_ref().unwrap().id;
     let prepared = prepare(
@@ -399,7 +399,7 @@ fn failed_disappearance_is_retried_before_a_reappeared_file() {
         vanished_marker("a.md")
     );
     let dir = tempfile::tempdir().unwrap();
-    let sink = super::super::producer::Store::open(dir.path()).unwrap();
+    let sink = FixtureSink::open(dir.path()).unwrap();
     let prepared = prepare(
         &source,
         "b",
@@ -417,4 +417,26 @@ fn failed_disappearance_is_retried_before_a_reappeared_file() {
     let newer = d.poll(&progress.cursor, &mut state).unwrap();
     assert_ne!(newer.material.as_ref().unwrap().id, id);
     assert_eq!(record(newer.material.as_ref().unwrap(), 0), b"reappeared");
+}
+
+struct FixtureSink(hashed_blobs::Store);
+impl FixtureSink {
+    fn open(root: &std::path::Path) -> Result<Self, hashed_blobs::Error> {
+        hashed_blobs::Store::open(root, vec![], 0o600).map(Self)
+    }
+}
+impl super::super::MaterialSink for FixtureSink {
+    fn put(&self, bytes: &[u8]) -> Result<String, String> {
+        self.0
+            .put(bytes, 3)
+            .map(|h| format!("blake3:{}", h.hex()))
+            .map_err(|e| e.to_string())
+    }
+    fn put_file(&self, path: &std::path::Path) -> Result<String, String> {
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        self.0
+            .put(file, 3)
+            .map(|h| format!("blake3:{}", h.hex()))
+            .map_err(|e| e.to_string())
+    }
 }

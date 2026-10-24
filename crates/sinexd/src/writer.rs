@@ -350,18 +350,16 @@ pub async fn run_notifying(
             }
             Work::Native(batch, mut guard, check) => {
                 let result = async {
-                    let sinex_model::BatchKind::Source(progress) = &batch.kind else {
-                        return Err(WriteError::Refused(
-                            "native custody requires source progress".into(),
-                        ));
+                    let source = match &batch.kind {
+                        sinex_model::BatchKind::Source(progress) => {
+                            progress.excision_basis.as_ref().map(|b| b.source.as_str())
+                        }
+                        sinex_model::BatchKind::Ingress(frame) => Some(frame.producer.as_str()),
+                        _ => None,
                     };
-                    if progress
-                        .excision_basis
-                        .as_ref()
-                        .is_none_or(|basis| basis.source != guard.source())
-                    {
+                    if source != Some(guard.source()) {
                         return Err(WriteError::Refused(
-                            "native custody source differs from its guard".into(),
+                            "publication source differs from its acquisition guard".into(),
                         ));
                     }
                     guard.check().await.map_err(WriteError::Refused)?;

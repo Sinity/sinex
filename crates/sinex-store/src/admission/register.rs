@@ -9,6 +9,18 @@ use sinex_model::{InputId, ObservationId, RevisionChange, RevisionId, SourceProg
 /// Bytes are already in the content store, so they exist before any row refers
 /// to them.
 pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Result<()> {
+    for material in p
+        .material
+        .iter()
+        .chain(p.image.iter().map(|image| &image.material))
+    {
+        if material_matches(conn, &p.binding, &p.input, material).await? == Some(false) {
+            return Err(Error::Invalid(
+                "material identity already belongs to different retained facts".into(),
+            ));
+        }
+    }
+
     if let Some(image) = &p.image {
         crate::sqlite_images::guard_acquisition(conn, &p.input, &p.observation, &image.metadata)
             .await?;
@@ -213,6 +225,27 @@ pub(super) async fn source(conn: &mut PgConnection, p: &SourceProgress) -> Resul
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// Immutable material identity excludes the run/observation/revision attempt.
+/// Check the existing input before its current kind can be upserted, and reuse
+/// this comparison when a pending publication releases its last byte owner.
+pub(crate) async fn material_matches(
+    conn: &mut PgConnection,
+    binding: &str,
+    input: &sinex_model::InputRef,
+    material: &sinex_model::MaterialRef,
+) -> Result<Option<bool>> {
+    let length = i64::try_from(material.length)
+        .map_err(|_| Error::Invalid("material length beyond i64".into()))?;
+    let part = i32::try_from(material.part_index)
+        .map_err(|_| Error::Invalid("material part beyond i32".into()))?;
+    let version = i32::try_from(material.parser_version)
+        .map_err(|_| Error::Invalid("material parser version beyond i32".into()))?;
+    Ok(sqlx::query_scalar("SELECT m.blob=$2 AND m.durable_bytes=$3 AND m.part_index=$4 AND m.previous_part_id IS NOT DISTINCT FROM $5 AND m.parser=$6 AND m.parser_version=$7 AND m.manifest=$8 AND i.binding=$9 AND i.kind=$10 AND i.locator=$11 AND i.host=$12 FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE m.id=$1")
+        .bind(material.id.0).bind(&material.blob).bind(length).bind(part).bind(material.previous_part.map(|id|id.0))
+        .bind(&material.parser).bind(version).bind(&material.manifest).bind(binding).bind(&input.kind).bind(&input.locator).bind(&input.host)
+        .fetch_optional(conn).await?)
 }
 
 async fn material(

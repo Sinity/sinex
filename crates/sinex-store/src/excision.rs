@@ -604,12 +604,13 @@ pub async fn apply_prepared(
 }
 
 /// Whether no material, revision extent or event refers to `blob` any more.
-async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<bool> {
+pub(crate) async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<bool> {
     Ok(sqlx::query_scalar!(
         r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1 OR erased_replay_blob=$1)
              AND NOT EXISTS (SELECT 1 FROM raw.revision_extents WHERE blob = $1)
              AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1)
-             AND NOT EXISTS (SELECT 1 FROM raw.pending_native_blobs WHERE blob = $1) AS "gone!""#,
+             AND NOT EXISTS (SELECT 1 FROM raw.pending_native_blobs WHERE blob = $1)
+             AND NOT EXISTS (SELECT 1 FROM raw.pending_producer_blobs WHERE blob = $1) AS "gone!""#,
         blob
     )
     .fetch_one(&mut *conn)
@@ -640,7 +641,7 @@ pub async fn finish_deletions(
             // A fresh statement after the lock observes owners which committed
             // while it waited. FK references and reservations cannot pass this
             // lock until unlink and row deletion have completed together.
-            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1 OR erased_replay_blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1) OR EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_native_blobs WHERE blob=$1)")
+            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1 OR erased_replay_blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1) OR EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_native_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.pending_producer_blobs WHERE blob=$1)")
                 .bind(&name).fetch_one(&mut *tx).await?;
             if owned { return Ok(None); }
             if blobs.delete(&name).is_err() { return Ok(Some(false)); }
