@@ -20,6 +20,7 @@ pub struct Pending {
     pub source: String,
     pub binding: String,
     pub progress: SourceProgress,
+    pub removed: Vec<sinex_model::RecordLocation>,
     pub image: Option<PendingImage>,
     pub base_cursor: Value,
     pub base_carry: Value,
@@ -51,6 +52,16 @@ impl Pending {
     /// A restarted driver supplies decoded records and chunk progress, while
     /// the reservation supplies the original observation/publication facts.
     /// Re-polling the edited provider cannot replace those frozen facts.
+    pub fn first_archive(&self) -> Vec<sinex_model::ArchiveRequest> {
+        if self.removed.is_empty() {
+            Vec::new()
+        } else {
+            vec![sinex_model::ArchiveRequest::RemovedAtSource {
+                locations: self.removed.clone(),
+            }]
+        }
+    }
+
     pub fn first_progress(&self, cursor: Value, carry: Value) -> Result<SourceProgress> {
         if self.image.is_some() {
             return Err(invalid("native image costs are unresolved"));
@@ -78,6 +89,7 @@ struct Publication {
     keys: Vec<Key>,
     erased_replay: Option<Replay>,
     basis: Basis,
+    removed: Vec<sinex_model::RecordLocation>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -246,6 +258,7 @@ fn encode(p: &SourceProgress) -> Result<Value> {
         .ok_or_else(|| invalid("native publication needs its source excision basis"))?;
     let publication = Publication {
         version: 1,
+        removed: Vec::new(),
         input: p.input.clone(),
         observation: p.observation.clone(),
         revision: p.revision,
@@ -271,7 +284,11 @@ fn decode(
     binding: &str,
     cursor: &Value,
     carry: &Value,
-) -> Result<(SourceProgress, Option<PendingImage>)> {
+) -> Result<(
+    SourceProgress,
+    Option<PendingImage>,
+    Vec<sinex_model::RecordLocation>,
+)> {
     let p: Publication =
         serde_json::from_value(v).map_err(|_| invalid("invalid native publication format"))?;
     if p.version != 1 {
@@ -310,10 +327,13 @@ fn decode(
             carry: carry.clone(),
         },
         pending_image,
+        p.removed,
     ))
 }
 fn encode_pending(p: &Pending) -> Result<Value> {
     let mut encoded = encode(&p.progress)?;
+    encoded["removed"] = serde_json::to_value(&p.removed)
+        .map_err(|_| invalid("native removal plan cannot encode"))?;
     if let Some(PendingImage::AwaitingCosts(i)) = &p.image {
         if p.progress.image.is_some() {
             return Err(invalid(
@@ -337,6 +357,27 @@ fn primary(p: &SourceProgress) -> Option<MaterialId> {
         .as_ref()
         .map(|m| m.id)
         .or_else(|| p.image.as_ref().map(|i| i.material.id))
+}
+
+/// Native first admission supports only the driver's vanished-record plan.
+/// The same extraction is used before reservation and when validating admission.
+pub fn removal_plan(
+    archive: &[sinex_model::ArchiveRequest],
+) -> Result<Vec<sinex_model::RecordLocation>> {
+    let mut locations = Vec::new();
+    for request in archive {
+        match request {
+            sinex_model::ArchiveRequest::RemovedAtSource { locations: removed } => {
+                locations.extend_from_slice(removed)
+            }
+            _ => {
+                return Err(invalid(
+                    "native publication contains an unsupported archive request",
+                ));
+            }
+        }
+    }
+    Ok(locations)
 }
 
 // The projection is derived exclusively from the frozen publication codec.
@@ -525,7 +566,8 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
                 end_cursor,
                 state,
             )| {
-                let (progress, image) = decode(publication, &binding, &start_cursor, &base_carry)?;
+                let (progress, image, removed) =
+                    decode(publication, &binding, &start_cursor, &base_carry)?;
                 if primary(&progress).or_else(|| {
                     image
                         .as_ref()
@@ -543,6 +585,7 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
                     source,
                     binding,
                     progress,
+                    removed,
                     image,
                     base_cursor,
                     base_carry,
@@ -631,7 +674,11 @@ pub async fn installed(conn: &mut PgConnection, material: MaterialId) -> Result<
     Ok(())
 }
 
-pub(crate) async fn validate(conn: &mut PgConnection, p: &SourceProgress) -> Result<()> {
+pub(crate) async fn validate(
+    conn: &mut PgConnection,
+    p: &SourceProgress,
+    archive: &[sinex_model::ArchiveRequest],
+) -> Result<()> {
     let Some(id) = p.native_pending else {
         if sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM raw.pending_native_materials WHERE binding=$1)",
@@ -658,6 +705,7 @@ pub(crate) async fn validate(conn: &mut PgConnection, p: &SourceProgress) -> Res
     if pending.state != State::Installed
         || pending.binding != p.binding
         || primary(p) != Some(id)
+        || pending.removed != removal_plan(archive)?
         || encode(&pending.progress)? != encode(p)?
     {
         return Err(invalid(

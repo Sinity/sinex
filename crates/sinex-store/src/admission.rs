@@ -111,7 +111,7 @@ pub async fn admit(
     crate::excision::validate_basis(conn, batch).await?;
     match &batch.kind {
         BatchKind::Source(progress) => {
-            crate::native_materials::validate(conn, progress).await?;
+            crate::native_materials::validate(conn, progress, &batch.archive).await?;
             register::source(conn, progress).await?;
         }
         BatchKind::Ingress(frame) => {

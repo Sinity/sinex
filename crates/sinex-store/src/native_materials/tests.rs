@@ -58,6 +58,7 @@ async fn pending(conn: &mut PgConnection, source: &str, blob: &str, length: u64)
         source: source.into(),
         binding: source.into(),
         progress,
+        removed: Vec::new(),
         image: None,
         base_cursor: Value::Null,
         base_carry: Value::Null,
@@ -78,7 +79,7 @@ async fn admission(conn: &mut PgConnection, p: &Pending) -> Result<()> {
             p.first_progress(p.end_cursor.clone(), Value::Null)?,
         )),
         records: vec![],
-        archive: vec![],
+        archive: p.first_archive(),
     };
     let mut tx = conn.begin().await?;
     match admit(&mut tx, &batch, &NoDerivations).await {
@@ -99,7 +100,11 @@ async fn two_sources_same_hash_reservation_survives_cleanup_refusal_and_first_ad
     let stage = blobs.prepare_plain(bytes.as_slice()).unwrap();
     let name = stage.name();
     let a = pending(&mut conn, "source-a", &name, bytes.len() as u64).await;
-    let b = pending(&mut conn, "source-b", &name, bytes.len() as u64).await;
+    let mut b = pending(&mut conn, "source-b", &name, bytes.len() as u64).await;
+    b.removed = vec![sinex_model::RecordLocation {
+        material: a.material,
+        anchor: 0,
+    }];
     // A previously owned the same name. Its purge marked it for deletion.
     blobs.put(bytes).unwrap();
     sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'deleting')")
@@ -129,6 +134,35 @@ async fn two_sources_same_hash_reservation_survives_cleanup_refusal_and_first_ad
     );
     stage.install().unwrap();
     installed(&mut conn, b.material).await.unwrap();
+    let recovered = load(&mut conn, b.material).await.unwrap().unwrap();
+    assert_eq!(removal_plan(&recovered.first_archive()).unwrap(), b.removed);
+    let missing_plan = Batch {
+        run: RunId::new(),
+        kind: BatchKind::Source(Box::new(
+            recovered
+                .first_progress(recovered.end_cursor.clone(), Value::Null)
+                .unwrap(),
+        )),
+        records: vec![],
+        archive: vec![],
+    };
+    let mut tx = conn.begin().await.unwrap();
+    let rejected = admit(&mut tx, &missing_plan, &NoDerivations)
+        .await
+        .unwrap_err();
+    tx.rollback().await.unwrap();
+    assert!(
+        rejected
+            .to_string()
+            .contains("frozen installed publication")
+    );
+    assert!(
+        crate::positions::load(&mut conn, &b.binding)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
     conn.execute("CREATE FUNCTION public.reject_pending() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic refusal'; END $$; CREATE TRIGGER reject_pending BEFORE INSERT ON raw.positions FOR EACH ROW EXECUTE FUNCTION public.reject_pending()").await.unwrap();
     assert!(admission(&mut conn, &b).await.is_err());
     assert!(load(&mut conn, b.material).await.unwrap().is_some());

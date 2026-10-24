@@ -119,6 +119,7 @@ async fn native_image_costs_stay_unresolved_until_installed_verification_and_use
         source: "synthetic-source".into(),
         binding: "image-binding".into(),
         progress,
+        removed: Vec::new(),
         image: Some(prepared.plan().unwrap()),
         base_cursor: serde_json::Value::Null,
         base_carry: serde_json::Value::Null,
