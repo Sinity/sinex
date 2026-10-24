@@ -50,6 +50,7 @@ impl MaterialSink for StagingSink {
 pub(crate) struct Publication {
     pub pending: native_materials::Pending,
     pub stages: Vec<PreparedPlain>,
+    pub image: Option<crate::sqlite_images::PreparedImage>,
     pub batch: Batch,
     pub permit: NativePermit,
     pub guard: AcquisitionGuard,
@@ -111,11 +112,51 @@ impl Publication {
             let _ = self.guard.release().await;
             return Err(error);
         }
-        let result =
-            native_materials::installed(self.guard.connection(), self.pending.material).await;
-        if let Err(error) = result {
+        let completed = if let Some(image) = self.image.take() {
+            match tokio::task::spawn_blocking(move || image.verify()).await {
+                Ok(Ok(image)) => Some(image),
+                result => {
+                    let _ = self.guard.release().await;
+                    return Err(WriteError::Refused(match result {
+                        Ok(Err(error)) => error,
+                        Err(error) => error.to_string(),
+                        _ => unreachable!(),
+                    }));
+                }
+            }
+        } else {
+            None
+        };
+        let installed = async {
+            let mut tx = self
+                .guard
+                .connection()
+                .begin()
+                .await
+                .map_err(|e| refuse(&e))?;
+            let result = async {
+                if let Some(image) = &completed {
+                    native_materials::finalize_image(&mut tx, self.pending.material, image.clone())
+                        .await
+                        .map_err(|e| refuse(&e))?;
+                }
+                native_materials::installed(&mut tx, self.pending.material)
+                    .await
+                    .map_err(|e| refuse(&e))
+            }
+            .await;
+            match result {
+                Ok(()) => tx.commit().await.map_err(|e| refuse(&e)),
+                Err(error) => {
+                    tx.rollback().await.map_err(|e| refuse(&e))?;
+                    Err(error)
+                }
+            }
+        }
+        .await;
+        if let Err(error) = installed {
             let _ = self.guard.release().await;
-            return Err(refuse(&error));
+            return Err(error);
         }
         let BatchKind::Source(progress) = &mut self.batch.kind else {
             let _ = self.guard.release().await;
@@ -124,6 +165,9 @@ impl Publication {
             ));
         };
         progress.native_pending = Some(self.pending.material);
+        if let Some(image) = completed {
+            progress.image = Some(image);
+        }
         self.permit.admit(self.batch, self.guard).await
     }
 }

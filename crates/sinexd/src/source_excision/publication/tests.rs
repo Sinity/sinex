@@ -72,6 +72,7 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
         source: atuin::SPEC.name.into(),
         binding: "atuin@h".into(),
         progress: (**progress).clone(),
+        image: None,
         base_cursor: serde_json::Value::Null,
         base_carry: serde_json::Value::Null,
         start_cursor,
@@ -82,6 +83,7 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
     let publication = Publication {
         pending,
         stages: sink.take().unwrap(),
+        image: None,
         batch,
         permit,
         guard,
@@ -155,7 +157,9 @@ async fn failed_first_native_admission_keeps_exact_installed_custody_after_provi
     .with_excision_basis(pending.progress.excision_basis.clone().unwrap());
     let mut batch = prepared.batches().unwrap().next().unwrap().unwrap();
     if let BatchKind::Source(p) = &mut batch.kind {
-        **p = pending.first_progress(p.cursor.clone(), p.carry.clone());
+        **p = pending
+            .first_progress(p.cursor.clone(), p.carry.clone())
+            .unwrap();
     }
     let guard = ctx.writer.source_guard(atuin::SPEC.name).await.unwrap();
     ctx.writer

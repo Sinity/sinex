@@ -12,7 +12,7 @@ pub(crate) fn store(
     image: &Image,
     recipient: Option<&sealed::Recipient>,
 ) -> Result<SqliteImagePublication, String> {
-    let mut meta = image.metadata.clone();
+    let meta = image.metadata.clone();
     let key = if meta.class == Class::Sealed {
         Some(sealed::new_key().map_err(err)?)
     } else {
@@ -34,13 +34,90 @@ pub(crate) fn store(
         None => blobs.put_reader(reader),
     }
     .map_err(err)?;
+    verify_installed(blobs, image, key.as_ref(), recipient, &blob)
+}
+
+fn verify_installed(
+    blobs: &Blobs,
+    image: &Image,
+    key: Option<&sealed::DataKey>,
+    recipient: Option<&sealed::Recipient>,
+    blob: &str,
+) -> Result<SqliteImagePublication, String> {
+    let mut meta = image.metadata.clone();
+    let naming = key.map(|k| blake3::derive_key("sinex 2026 SQLite image naming key", &k.key));
+    let page_hash: PageHash = match naming {
+        Some(k) => Arc::new(move |h| *blake3::keyed_hash(&k, h).as_bytes()),
+        None => Arc::new(|h| *h),
+    };
     let extents = image.extents(&blob)?;
     meta.validate(&extents)?;
+    meta.image_hash = verify_layout(
+        blobs,
+        &meta,
+        &extents,
+        blob,
+        key,
+        Some(image),
+        page_hash,
+        naming,
+    )?;
+    fill_costs(
+        blobs,
+        &mut meta,
+        &extents,
+        blob,
+        image.previous.as_ref().map(|p| &p.metadata),
+    )?;
+    let wrapped = key
+        .as_ref()
+        .map(|k| {
+            Ok::<_, String>(WrappedMaterialKey {
+                material: meta.material,
+                key_ref: k.key_ref.clone(),
+                wrapped: sealed::wrap(k, recipient.expect("checked recipient")).map_err(err)?,
+            })
+        })
+        .transpose()?;
+    let material = MaterialRef {
+        id: meta.material,
+        input: None,
+        blob: blob.to_owned(),
+        length: meta.evidence_bytes,
+        part_index: 0,
+        previous_part: None,
+        parser: "sqlite-image".into(),
+        parser_version: 1,
+        manifest: serde_json::json!({"role":"sqlite-image","sqlite_database":meta.database,"sqlite_image":meta}),
+    };
+    let publication = SqliteImagePublication {
+        metadata: meta,
+        material,
+        extents,
+        key: wrapped,
+    };
+    publication.validate()?;
+    Ok(publication)
+}
+
+fn verify_layout(
+    blobs: &Blobs,
+    meta: &sinex_model::SqliteImageMeta,
+    extents: &[sinex_model::ImageExtent],
+    blob: &str,
+    key: Option<&sealed::DataKey>,
+    image: Option<&Image>,
+    page_hash: PageHash,
+    naming: Option<[u8; 32]>,
+) -> Result<String, String> {
     // Verify exact reconstructed pages against the still-pinned acquisition view,
     // and each dense map entry against the corresponding page. Hashes alone do not
     // establish that a patch's extent layout selects the right bytes.
     if key.is_none() {
-        let check = image.checker()?;
+        let check = match image {
+            Some(image) => image.checker()?,
+            None => Arc::new(|| Ok(())),
+        };
         drop(
             blobs
                 .read_plain(&blob, Some(meta.evidence_bytes), move || {
@@ -50,7 +127,7 @@ pub(crate) fn store(
         );
     }
     let evidence_extent = [sinex_model::ImageExtent {
-        blob: blob.clone(),
+        blob: blob.to_owned(),
         offset: 0,
         length: meta.evidence_bytes,
     }];
@@ -76,7 +153,9 @@ pub(crate) fn store(
         Some(k) => blake3::Hasher::new_keyed(&k),
         None => blake3::Hasher::new(),
     };
-    let mut source = image.reader(page_hash.clone(), true).map_err(err)?;
+    let mut source = image
+        .map(|image| image.reader(page_hash.clone(), true).map_err(err))
+        .transpose()?;
     let mut full: Box<dyn Read + '_> = match &key {
         Some(k) => Box::new(
             blobs
@@ -94,10 +173,12 @@ pub(crate) fn store(
     let mut expected = vec![0; meta.page_size as usize];
     let mut actual = vec![0; meta.page_size as usize];
     for _ in 0..meta.page_count {
-        source.read_exact(&mut expected).map_err(err)?;
         full.read_exact(&mut actual).map_err(err)?;
-        if actual != expected {
-            return Err("SQLite retained extents differ from the pinned image".into());
+        if let Some(source) = &mut source {
+            source.read_exact(&mut expected).map_err(err)?;
+            if actual != expected {
+                return Err("SQLite retained extents differ from the pinned image".into());
+            }
         }
         full_hash.update(&actual);
         let mut stored = [0; 32];
@@ -110,17 +191,29 @@ pub(crate) fn store(
     if key.is_none() && meta.image_hash != hash {
         return Err("SQLite image digest differs after storage".into());
     }
-    meta.image_hash = hash;
+    Ok(hash)
+}
+fn fill_costs(
+    blobs: &Blobs,
+    meta: &mut sinex_model::SqliteImageMeta,
+    extents: &[sinex_model::ImageExtent],
+    blob: &str,
+    previous: Option<&sinex_model::SqliteImageMeta>,
+) -> Result<(), String> {
     let stored = blobs.stored_size(&blob).map_err(err)?;
     if meta.full {
         meta.base_stored_bytes = stored;
         meta.patch_stored_bytes = 0;
     } else {
-        let previous = &image
-            .previous
-            .as_ref()
-            .ok_or("SQLite patch has no previous image")?
-            .metadata;
+        let previous = previous.ok_or("SQLite patch has no previous image")?;
+        if meta.previous != Some(previous.revision)
+            || meta.base != previous.base
+            || meta.class != previous.class
+            || meta.database != previous.database
+            || meta.host != previous.host
+        {
+            return Err("SQLite stored cost predecessor differs from reserved image".into());
+        }
         meta.base_stored_bytes = previous.base_stored_bytes;
         meta.patch_stored_bytes = previous
             .patch_stored_bytes
@@ -128,43 +221,128 @@ pub(crate) fn store(
             .ok_or("SQLite stored patch cost overflow")?;
     }
     let mut unique = std::collections::BTreeSet::new();
-    for e in &extents {
+    for e in extents {
         unique.insert(&e.blob);
     }
     meta.read_stored_bytes = unique.into_iter().try_fold(0u64, |sum, name| {
         sum.checked_add(blobs.stored_size(name).map_err(err)?)
             .ok_or_else(|| "SQLite read cost overflow".to_owned())
     })?;
-    let wrapped = key
-        .as_ref()
-        .map(|k| {
-            Ok::<_, String>(WrappedMaterialKey {
-                material: meta.material,
-                key_ref: k.key_ref.clone(),
-                wrapped: sealed::wrap(k, recipient.expect("checked recipient")).map_err(err)?,
-            })
-        })
-        .transpose()?;
+    Ok(())
+}
+
+/// Restart verifies only reserved retained bytes, never a new provider view.
+/// The frozen whole-image digest and dense map cover the exact original layout.
+pub(crate) fn verify_retained_plan(
+    blobs: &Blobs,
+    plan: &sinex_store::native_materials::PendingImage,
+    previous: Option<&sinex_model::SqliteImageMeta>,
+) -> Result<SqliteImagePublication, String> {
+    let sinex_store::native_materials::PendingImage::AwaitingCosts(expected) = plan;
+    expected.validate()?;
+    if expected.metadata.class == Class::Sealed {
+        return Err("unpriced sealed image is unsupported".into());
+    }
+    let mut completed = expected.clone();
+    let hash = verify_layout(
+        blobs,
+        &completed.metadata,
+        &completed.extents,
+        &completed.material.blob,
+        None,
+        None,
+        Arc::new(|h| *h),
+        None,
+    )?;
+    if hash != completed.metadata.image_hash {
+        return Err("reserved SQLite image digest differs after restart".into());
+    }
+    fill_costs(
+        blobs,
+        &mut completed.metadata,
+        &completed.extents,
+        &completed.material.blob,
+        previous,
+    )?;
+    completed.material.manifest["sqlite_image"] =
+        serde_json::to_value(&completed.metadata).map_err(err)?;
+    completed.validate()?;
+    Ok(completed)
+}
+
+/// An unpriced image plan keeps its pinned view until the installed CAS winner
+/// has passed the same page/map reconstruction checks as ordinary publication.
+pub(crate) struct PreparedImage {
+    blobs: Blobs,
+    image: Arc<Image>,
+    expected: SqliteImagePublication,
+}
+impl PreparedImage {
+    pub fn plan(&self) -> Result<sinex_store::native_materials::PendingImage, String> {
+        sinex_store::native_materials::PendingImage::awaiting(self.expected.clone()).map_err(err)
+    }
+    pub fn verify(self) -> Result<SqliteImagePublication, String> {
+        let mut completed = verify_installed(
+            &self.blobs,
+            &self.image,
+            None,
+            None,
+            &self.expected.material.blob,
+        )?;
+        completed.material.parser = self.expected.material.parser.clone();
+        completed.material.parser_version = self.expected.material.parser_version;
+        self.image.retain(completed.clone())?;
+        Ok(completed)
+    }
+}
+pub(crate) fn prepare_plain(
+    blobs: &Blobs,
+    image: Arc<Image>,
+    parser: &str,
+    parser_version: u32,
+) -> Result<(PreparedImage, sinex_store::blobs::PreparedPlain), String> {
+    if image.metadata.class == Class::Sealed {
+        return Err("sealed image requires its keyed publication path".into());
+    }
+    let stage = blobs
+        .prepare_plain(image.reader(Arc::new(|h| *h), false).map_err(err)?)
+        .map_err(err)?;
+    if stage.length() != image.metadata.evidence_bytes {
+        return Err("prepared image length differs from capture".into());
+    }
+    let mut metadata = image.metadata.clone();
+    metadata.base_stored_bytes = 0;
+    metadata.patch_stored_bytes = 0;
+    metadata.read_stored_bytes = 0;
+    let extents = image.extents(&stage.name())?;
     let material = MaterialRef {
-        id: meta.material,
+        id: metadata.material,
         input: None,
-        blob,
-        length: meta.evidence_bytes,
+        blob: stage.name(),
+        length: metadata.evidence_bytes,
         part_index: 0,
         previous_part: None,
-        parser: "sqlite-image".into(),
-        parser_version: 1,
-        manifest: serde_json::json!({"role":"sqlite-image","sqlite_database":meta.database,"sqlite_image":meta}),
+        parser: parser.into(),
+        parser_version,
+        manifest: serde_json::json!({"role":"sqlite-image","sqlite_database":metadata.database,"sqlite_image":metadata}),
     };
-    let publication = SqliteImagePublication {
-        metadata: meta,
+    let expected = SqliteImagePublication {
+        metadata,
         material,
         extents,
-        key: wrapped,
+        key: None,
     };
-    publication.validate()?;
-    Ok(publication)
+    expected.validate()?;
+    Ok((
+        PreparedImage {
+            blobs: blobs.clone(),
+            image,
+            expected,
+        },
+        stage,
+    ))
 }
+
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }

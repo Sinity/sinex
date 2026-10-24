@@ -19,6 +19,7 @@ pub struct Pending {
     pub source: String,
     pub binding: String,
     pub progress: SourceProgress,
+    pub image: Option<PendingImage>,
     pub base_cursor: Value,
     pub base_carry: Value,
     pub start_cursor: Value,
@@ -26,16 +27,38 @@ pub struct Pending {
     pub state: State,
 }
 
+/// A physical image's content/layout is fixed before CAS installation; the
+/// dedup winner's actual stored costs are known only after verification.
+#[derive(Clone)]
+pub enum PendingImage {
+    AwaitingCosts(sinex_model::SqliteImagePublication),
+}
+impl PendingImage {
+    pub fn awaiting(mut image: sinex_model::SqliteImagePublication) -> Result<Self> {
+        image.validate().map_err(Error::Invalid)?;
+        // These placeholders never enter ready SourceProgress or durable JSON.
+        image.metadata.base_stored_bytes = 0;
+        image.metadata.patch_stored_bytes = 0;
+        image.metadata.read_stored_bytes = 0;
+        image.material.manifest["sqlite_image"] = serde_json::to_value(&image.metadata)
+            .map_err(|_| invalid("image plan cannot encode"))?;
+        Ok(Self::AwaitingCosts(image))
+    }
+}
+
 impl Pending {
     /// A restarted driver supplies decoded records and chunk progress, while
     /// the reservation supplies the original observation/publication facts.
     /// Re-polling the edited provider cannot replace those frozen facts.
-    pub fn first_progress(&self, cursor: Value, carry: Value) -> SourceProgress {
+    pub fn first_progress(&self, cursor: Value, carry: Value) -> Result<SourceProgress> {
+        if self.image.is_some() {
+            return Err(invalid("native image costs are unresolved"));
+        }
         let mut progress = self.progress.clone();
         progress.cursor = cursor;
         progress.carry = carry;
         progress.native_pending = Some(self.material);
-        progress
+        Ok(progress)
     }
 }
 
@@ -78,11 +101,85 @@ struct Key {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Image {
-    metadata: sinex_model::SqliteImageMeta,
+    metadata: Value,
+    costs: Option<Costs>,
     material: Material,
     extents: Vec<sinex_model::ImageExtent>,
     key: Option<Key>,
 }
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Costs {
+    base_stored_bytes: u64,
+    patch_stored_bytes: u64,
+    read_stored_bytes: u64,
+}
+
+fn image(i: &sinex_model::SqliteImagePublication, resolved: bool) -> Result<Image> {
+    let mut metadata =
+        serde_json::to_value(&i.metadata).map_err(|_| invalid("image plan cannot encode"))?;
+    let object = metadata
+        .as_object_mut()
+        .ok_or_else(|| invalid("image metadata is not an object"))?;
+    for field in [
+        "base_stored_bytes",
+        "patch_stored_bytes",
+        "read_stored_bytes",
+    ] {
+        object.remove(field);
+    }
+    let mut m = material(&i.material);
+    m.manifest["sqlite_image"] = metadata.clone();
+    Ok(Image {
+        metadata,
+        costs: resolved.then_some(Costs {
+            base_stored_bytes: i.metadata.base_stored_bytes,
+            patch_stored_bytes: i.metadata.patch_stored_bytes,
+            read_stored_bytes: i.metadata.read_stored_bytes,
+        }),
+        material: m,
+        extents: i.extents.clone(),
+        key: i.key.as_ref().map(key),
+    })
+}
+fn unimage(i: Image) -> Result<(sinex_model::SqliteImagePublication, bool)> {
+    let resolved = i.costs.is_some();
+    let costs = i.costs.unwrap_or(Costs {
+        base_stored_bytes: 0,
+        patch_stored_bytes: 0,
+        read_stored_bytes: 0,
+    });
+    if i.material.manifest["sqlite_image"] != i.metadata {
+        return Err(invalid("pending image manifest differs from its facts"));
+    }
+    let mut metadata = i.metadata;
+    let fields = metadata
+        .as_object_mut()
+        .ok_or_else(|| invalid("invalid image metadata"))?;
+    for (name, value) in [
+        ("base_stored_bytes", costs.base_stored_bytes),
+        ("patch_stored_bytes", costs.patch_stored_bytes),
+        ("read_stored_bytes", costs.read_stored_bytes),
+    ] {
+        if fields.insert(name.into(), Value::from(value)).is_some() {
+            return Err(invalid("image plan duplicates storage costs"));
+        }
+    }
+    let metadata =
+        serde_json::from_value(metadata).map_err(|_| invalid("invalid image metadata"))?;
+    let mut material = unmaterial(i.material);
+    material.manifest["sqlite_image"] =
+        serde_json::to_value(&metadata).map_err(|_| invalid("invalid image metadata"))?;
+    let image = sinex_model::SqliteImagePublication {
+        metadata,
+        material,
+        extents: i.extents,
+        key: i.key.map(unkey),
+    };
+    image.validate().map_err(Error::Invalid)?;
+    Ok((image, resolved))
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Replay {
@@ -152,12 +249,7 @@ fn encode(p: &SourceProgress) -> Result<Value> {
         observation: p.observation.clone(),
         revision: p.revision,
         material: p.material.as_ref().map(material),
-        image: p.image.as_ref().map(|i| Image {
-            metadata: i.metadata.clone(),
-            material: material(&i.material),
-            extents: i.extents.clone(),
-            key: i.key.as_ref().map(key),
-        }),
+        image: p.image.as_ref().map(|i| image(i, true)).transpose()?,
         image_revision: p.image_revision,
         keys: p.material_keys.iter().map(key).collect(),
         erased_replay: p.erased_replay.as_ref().map(|r| Replay {
@@ -173,45 +265,70 @@ fn encode(p: &SourceProgress) -> Result<Value> {
     };
     serde_json::to_value(publication).map_err(|_| invalid("native publication cannot encode"))
 }
-fn decode(v: Value, binding: &str, cursor: &Value, carry: &Value) -> Result<SourceProgress> {
+fn decode(
+    v: Value,
+    binding: &str,
+    cursor: &Value,
+    carry: &Value,
+) -> Result<(SourceProgress, Option<PendingImage>)> {
     let p: Publication =
         serde_json::from_value(v).map_err(|_| invalid("invalid native publication format"))?;
     if p.version != 1 {
         return Err(invalid("unsupported native publication version"));
     }
-    let image = p.image.map(|i| sinex_model::SqliteImagePublication {
-        metadata: i.metadata,
-        material: unmaterial(i.material),
-        extents: i.extents,
-        key: i.key.map(unkey),
-    });
-    if let Some(image) = &image {
-        image.validate().map_err(Error::Invalid)?;
-    }
-    Ok(SourceProgress {
-        native_pending: None,
-        erased_replay: p
-            .erased_replay
-            .map(|r| sinex_model::ErasedReplayPublication {
-                material: r.material,
-                blob: r.blob,
-                length: r.length,
+    let image = p.image.map(unimage).transpose()?;
+    let pending_image = image
+        .as_ref()
+        .filter(|(_, resolved)| !*resolved)
+        .map(|(i, _)| PendingImage::AwaitingCosts(i.clone()));
+    let image = image.filter(|(_, resolved)| *resolved).map(|(i, _)| i);
+    Ok((
+        SourceProgress {
+            native_pending: None,
+            erased_replay: p
+                .erased_replay
+                .map(|r| sinex_model::ErasedReplayPublication {
+                    material: r.material,
+                    blob: r.blob,
+                    length: r.length,
+                }),
+            excision_basis: Some(sinex_model::ExcisionBasis {
+                source: p.basis.source,
+                operations: p.basis.operations,
+                count: p.basis.count,
             }),
-        excision_basis: Some(sinex_model::ExcisionBasis {
-            source: p.basis.source,
-            operations: p.basis.operations,
-            count: p.basis.count,
-        }),
-        binding: binding.into(),
-        image,
-        image_revision: p.image_revision,
-        material_keys: p.keys.into_iter().map(unkey).collect(),
-        input: p.input,
-        observation: p.observation,
-        revision: p.revision,
-        material: p.material.map(unmaterial),
-        cursor: cursor.clone(),
-        carry: carry.clone(),
+            binding: binding.into(),
+            image,
+            image_revision: p.image_revision,
+            material_keys: p.keys.into_iter().map(unkey).collect(),
+            input: p.input,
+            observation: p.observation,
+            revision: p.revision,
+            material: p.material.map(unmaterial),
+            cursor: cursor.clone(),
+            carry: carry.clone(),
+        },
+        pending_image,
+    ))
+}
+fn encode_pending(p: &Pending) -> Result<Value> {
+    let mut encoded = encode(&p.progress)?;
+    if let Some(PendingImage::AwaitingCosts(i)) = &p.image {
+        if p.progress.image.is_some() {
+            return Err(invalid(
+                "native publication has both pending and ready image",
+            ));
+        }
+        encoded["image"] = serde_json::to_value(image(i, false)?)
+            .map_err(|_| invalid("image plan cannot encode"))?;
+    }
+    Ok(encoded)
+}
+fn pending_primary(p: &Pending) -> Option<MaterialId> {
+    primary(&p.progress).or_else(|| {
+        p.image
+            .as_ref()
+            .map(|PendingImage::AwaitingCosts(i)| i.material.id)
     })
 }
 fn primary(p: &SourceProgress) -> Option<MaterialId> {
@@ -225,7 +342,7 @@ fn primary(p: &SourceProgress) -> Option<MaterialId> {
 /// prepared plain handles install any public CAS names.
 pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
     sinex_schema::require_current(conn).await?;
-    if primary(&pending.progress) != Some(pending.material)
+    if pending_primary(pending) != Some(pending.material)
         || pending.progress.binding != pending.binding
         || pending
             .progress
@@ -281,7 +398,7 @@ pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
             }
         }
     }
-    let publication = encode(&pending.progress)?;
+    let publication = encode_pending(pending)?;
     sqlx::query("INSERT INTO raw.pending_native_materials(material_id,source,binding,publication,base_cursor,base_carry,start_cursor,end_cursor,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reserved') ON CONFLICT(material_id) DO NOTHING")
         .bind(pending.material.0).bind(&pending.source).bind(&pending.binding).bind(&publication).bind(&pending.base_cursor).bind(&pending.base_carry).bind(&pending.start_cursor).bind(&pending.end_cursor).execute(&mut *conn).await?;
     let actual = load(conn, pending.material)
@@ -289,7 +406,7 @@ pub async fn reserve(conn: &mut PgConnection, pending: &Pending) -> Result<()> {
         .ok_or_else(|| invalid("native publication reservation disappeared"))?;
     if actual.source != pending.source
         || actual.binding != pending.binding
-        || encode(&actual.progress)? != publication
+        || encode_pending(&actual)? != publication
         || actual.base_cursor != pending.base_cursor
         || actual.base_carry != pending.base_carry
         || actual.start_cursor != pending.start_cursor
@@ -316,8 +433,12 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
             end_cursor,
             state,
         )| {
-            let progress = decode(publication, &binding, &start_cursor, &base_carry)?;
-            if primary(&progress) != Some(material)
+            let (progress, image) = decode(publication, &binding, &start_cursor, &base_carry)?;
+            if primary(&progress).or_else(|| {
+                image
+                    .as_ref()
+                    .map(|PendingImage::AwaitingCosts(i)| i.material.id)
+            }) != Some(material)
                 || progress
                     .excision_basis
                     .as_ref()
@@ -330,6 +451,7 @@ pub async fn load(conn: &mut PgConnection, material: MaterialId) -> Result<Optio
                 source,
                 binding,
                 progress,
+                image,
                 base_cursor,
                 base_carry,
                 start_cursor,
@@ -355,7 +477,50 @@ pub async fn source_pending(conn: &mut PgConnection, source: &str) -> Result<boo
     .fetch_one(conn)
     .await?)
 }
+/// Finish only the actual installed costs. Content, layout, keys and original
+/// source facts are compared with the reserved unpriced plan before replacement.
+pub async fn finalize_image(
+    conn: &mut PgConnection,
+    material: MaterialId,
+    completed: sinex_model::SqliteImagePublication,
+) -> Result<()> {
+    completed.validate().map_err(Error::Invalid)?;
+    let mut pending = load(conn, material)
+        .await?
+        .ok_or_else(|| invalid("image finalization has no native owner"))?;
+    let Some(PendingImage::AwaitingCosts(expected)) = pending.image.take() else {
+        return Err(invalid("native image costs already finalized or absent"));
+    };
+    if serde_json::to_value(image(&expected, false)?)
+        .map_err(|_| invalid("image plan cannot encode"))?
+        != serde_json::to_value(image(&completed, false)?)
+            .map_err(|_| invalid("image plan cannot encode"))?
+    {
+        return Err(invalid(
+            "installed image differs from reserved content/layout",
+        ));
+    }
+    let old = encode_pending(&Pending {
+        image: Some(PendingImage::AwaitingCosts(expected)),
+        ..pending.clone()
+    })?;
+    pending.progress.image = Some(completed);
+    let changed=sqlx::query("UPDATE raw.pending_native_materials SET publication=$1 WHERE material_id=$2 AND state='reserved' AND publication=$3")
+        .bind(encode_pending(&pending)?).bind(material.0).bind(old).execute(conn).await?;
+    if changed.rows_affected() != 1 {
+        return Err(invalid("native image plan changed before finalization"));
+    }
+    Ok(())
+}
 pub async fn installed(conn: &mut PgConnection, material: MaterialId) -> Result<()> {
+    if load(conn, material)
+        .await?
+        .is_none_or(|p| p.image.is_some())
+    {
+        return Err(invalid(
+            "native installation needs finalized image storage costs",
+        ));
+    }
     let changed = sqlx::query(
         "UPDATE raw.pending_native_materials SET state='installed' WHERE material_id=$1",
     )

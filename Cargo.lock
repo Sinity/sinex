@@ -4354,6 +4354,7 @@ dependencies = [
  "devkit",
  "flate2",
  "futures",
+ "hashed-blobs",
  "http-body-util",
  "jiff",
  "jsonschema",
