@@ -204,7 +204,9 @@ async fn failed_fresh_creation_releases_ddl_locks_before_the_connection_is_used_
     let error = apply(&mut idle_owner).await.unwrap_err();
     assert!(
         matches!(&error, Error::Database(_))
-            && error.to_string().contains("schema \"audit\" already exists"),
+            && error
+                .to_string()
+                .contains("schema \"audit\" already exists"),
         "{error}"
     );
     tokio::time::timeout(
