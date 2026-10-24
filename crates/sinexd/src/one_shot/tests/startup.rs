@@ -88,27 +88,41 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime() {
     let (driver, task) = crate::local_driver(&url, "startup-fixture", None)
         .await
         .unwrap();
-    let refused = writer::claim(&mut competing).await.is_err();
+    let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+        .bind(sinex_schema::WRITER_LOCK)
+        .fetch_one(&mut competing)
+        .await
+        .unwrap();
+    if acquired {
+        sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(sinex_schema::WRITER_LOCK)
+            .execute(&mut competing)
+            .await
+            .unwrap();
+    }
     drop(driver);
     task.await.unwrap();
     assert!(
-        refused,
+        !acquired,
         "the derivation writer must retain its advisory claim"
     );
     writer::claim(&mut competing).await.unwrap();
-    let result = crate::local_driver(&url, "startup-fixture", None).await;
-    let refused = match result {
-        Err(error) => error.contains("another sinexd writer"),
-        Ok((driver, task)) => {
-            drop(driver);
-            task.await.unwrap();
-            false
+    let startup = crate::local_driver(&url, "startup-fixture", None);
+    tokio::pin!(startup);
+    tokio::select! {
+        result = &mut startup => {
+            if let Ok((driver,task))=result { drop(driver);task.await.unwrap(); }
+            panic!("standalone derivations must wait for the active writer");
         }
-    };
-    assert!(
-        refused,
-        "an active writer must exclude standalone derivations"
-    );
+        _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+    }
+    drop(competing);
+    let (driver, task) = tokio::time::timeout(std::time::Duration::from_secs(2), startup)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(driver);
+    task.await.unwrap();
 }
 
 #[tokio::test]
