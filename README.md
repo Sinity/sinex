@@ -98,8 +98,8 @@ claiming that no observations exist.
 
 ## Initialize and upgrade
 
-Create the PostgreSQL database, then initialize it explicitly before running
-capture, backfill, replay, excision or derivations:
+Create the PostgreSQL database, then initialize it explicitly before starting
+the daemon or running backfill, replay, excision or derivations:
 
 ```sh
 sinex-schema apply 'postgresql:///sinex'
