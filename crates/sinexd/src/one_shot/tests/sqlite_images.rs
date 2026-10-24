@@ -199,6 +199,7 @@ async fn sqlite_physical_images_publish_atomically_and_retry_exact_pending_rows_
         .restore_rows(
             reference.clone(),
             drivers::RetainedRecords {
+                bodyless: false,
                 blob: reference.blob,
                 bytes: std::sync::Arc::new(crate::retained::Retained::new(file, reference.length)),
             },

@@ -84,6 +84,8 @@ pub enum StoredBytes {
 
 #[derive(Clone)]
 pub struct RetainedRecords {
+    /// Only paired archive-authenticated whole-erasure transitions can drain this backing.
+    pub bodyless: bool,
     pub blob: String,
     pub bytes: std::sync::Arc<dyn crate::drain::RecordRead>,
 }
@@ -133,11 +135,15 @@ impl NewMaterial {
         }
     }
 
-    pub(crate) fn record_bytes(&self) -> crate::drain::RecordBytes<'_> {
+    pub fn record_bytes(&self) -> crate::drain::RecordBytes<'_> {
         match &self.stored {
             Some(StoredBytes::FramedFile(file)) => crate::drain::RecordBytes::File(file),
             Some(StoredBytes::FramedReader(retained)) => {
-                crate::drain::RecordBytes::Reader(retained.bytes.as_ref())
+                if retained.bodyless {
+                    crate::drain::RecordBytes::Erased(retained.bytes.length())
+                } else {
+                    crate::drain::RecordBytes::Reader(retained.bytes.as_ref())
+                }
             }
             _ => self.bytes.as_slice().into(),
         }
@@ -177,6 +183,7 @@ pub struct Prepared<'s> {
     material: Option<(NewMaterial, MaterialRef)>,
     image: Option<sinex_model::SqliteImagePublication>,
     image_revision: Option<sinex_model::RevisionId>,
+    basis: Option<sinex_model::ExcisionBasis>,
     erased: Option<crate::drain::ErasedTransitions>,
     erased_replay: Option<sinex_model::ErasedReplayPublication>,
 }
@@ -278,30 +285,38 @@ pub fn prepare<'s>(
         material,
         image,
         image_revision,
+        basis: None,
         erased: None,
         erased_replay: None,
     })
 }
 
 impl Prepared<'_> {
+    pub fn with_excision_basis(mut self, basis: sinex_model::ExcisionBasis) -> Self {
+        self.basis = Some(basis);
+        self
+    }
+
     /// The archive owner attaches only authenticated, read-back ciphertext.
     pub fn with_erased(
         mut self,
         erased: crate::drain::ErasedTransitions,
-        publication: sinex_model::ErasedReplayPublication,
+        publication: Option<sinex_model::ErasedReplayPublication>,
     ) -> Result<Self, DriverError> {
-        if self
-            .material
-            .as_ref()
-            .is_none_or(|(_, m)| m.id != publication.material)
-            || publication.length == 0
-        {
-            return Err(DriverError::InvalidMaterial(
-                "erased replay publication has no matching material".into(),
-            ));
+        if let Some(publication) = &publication {
+            if self
+                .material
+                .as_ref()
+                .is_none_or(|(_, m)| m.id != publication.material)
+                || publication.length == 0
+            {
+                return Err(DriverError::InvalidMaterial(
+                    "erased replay publication has no matching material".into(),
+                ));
+            }
         }
         self.erased = Some(erased);
-        self.erased_replay = Some(publication);
+        self.erased_replay = publication;
         Ok(self)
     }
 
@@ -331,7 +346,7 @@ impl Prepared<'_> {
             } else {
                 None
             },
-            excision_basis: None,
+            excision_basis: self.basis.clone(),
             image: if first { self.image.clone() } else { None },
             image_revision: self.image_revision,
             material_keys: Vec::new(),

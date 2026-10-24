@@ -6,6 +6,24 @@ use sqlx::PgConnection;
 use std::collections::BTreeSet;
 
 pub async fn operations_basis(conn: &mut PgConnection, source: &str) -> Result<ExcisionBasis> {
+    visit_operations(conn, source, |_| {}).await
+}
+
+/// The acquisition owner loads exclusions from exactly this source operation set.
+pub async fn operation_set(
+    conn: &mut PgConnection,
+    source: &str,
+) -> Result<(ExcisionBasis, Vec<uuid::Uuid>)> {
+    let mut ids = Vec::new();
+    let basis = visit_operations(conn, source, |id| ids.push(id)).await?;
+    Ok((basis, ids))
+}
+
+async fn visit_operations(
+    conn: &mut PgConnection,
+    source: &str,
+    mut visit: impl FnMut(uuid::Uuid),
+) -> Result<ExcisionBasis> {
     let mut operations = sqlx::query_scalar!(
         r#"SELECT o.id FROM core.operations o WHERE o.kind='excise' AND (
              o.scope->'sources' ? $1
@@ -24,6 +42,7 @@ pub async fn operations_basis(conn: &mut PgConnection, source: &str) -> Result<E
     let mut count = 0u64;
     while let Some(id) = operations.try_next().await? {
         hash.update(id.as_bytes());
+        visit(id);
         count = count
             .checked_add(1)
             .ok_or_else(|| Error::Invalid("too many excision operations".into()))?;

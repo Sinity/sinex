@@ -46,7 +46,7 @@ impl<'a> From<&'a [u8]> for RecordBytes<'a> {
 }
 
 impl<'a> RecordBytes<'a> {
-    fn record(&self, start: usize, end: usize) -> std::io::Result<std::borrow::Cow<'a, [u8]>> {
+    pub fn record(&self, start: usize, end: usize) -> std::io::Result<std::borrow::Cow<'a, [u8]>> {
         match self {
             Self::Erased(_) => Err(std::io::Error::other(
                 "erased material has no retained plaintext",

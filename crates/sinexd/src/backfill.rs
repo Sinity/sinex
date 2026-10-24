@@ -315,7 +315,18 @@ pub(crate) async fn drive(
             serde_json::Value::Null
         } else if acquired.material.is_some() {
             match &sealing {
-                Some(s) => open_carry(source, binding, &cursor, &carry, s, access.authority)?,
+                Some(s) => {
+                    open_carry(
+                        read_conn,
+                        source,
+                        binding,
+                        &cursor,
+                        &carry,
+                        s,
+                        access.authority,
+                    )
+                    .await?
+                }
                 None => carry,
             }
         } else {
@@ -512,7 +523,8 @@ impl Totals {
     }
 }
 
-pub(crate) fn open_carry(
+pub(crate) async fn open_carry(
+    conn: &mut PgConnection,
     source: &dyn Source,
     binding: &str,
     cursor: &serde_json::Value,
@@ -522,7 +534,20 @@ pub(crate) fn open_carry(
 ) -> Result<serde_json::Value, String> {
     use sinex_store::sealed::metadata;
     if !metadata::is_carry(carry) {
-        return sealing.open_carry(carry);
+        if let Ok(value) = sealing.open_carry(carry) {
+            return Ok(value);
+        }
+        let reference = sinex_store::sealed::key_ref(carry).ok_or("invalid sealed parser carry")?;
+        let authority = authority.ok_or("sealed parser carry requires explicit operator unlock")?;
+        let material:uuid::Uuid=sqlx::query_scalar("SELECT k.material_id FROM privacy.material_keys k JOIN raw.materials m ON m.id=k.material_id JOIN raw.inputs i ON i.id=m.input_id WHERE k.key_ref=$1 AND i.binding=$2")
+            .bind(reference).bind(binding).fetch_optional(&mut *conn).await.map_err(|e|e.to_string())?.ok_or("sealed parser carry has no live binding-owned key")?;
+        let key = authority
+            .material_key(conn, sinex_model::MaterialId(material))
+            .await?;
+        let value =
+            sinex_store::sealed::unseal_payload(carry, &key.key).map_err(|e| e.to_string())?;
+        authority.check()?;
+        return Ok(value);
     }
     let authority =
         authority.ok_or("class-owned parser carry requires explicit operator unlock")?;

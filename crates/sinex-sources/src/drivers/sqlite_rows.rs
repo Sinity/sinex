@@ -218,6 +218,14 @@ impl RowState {
         if current.material != Some(reference.id) || current.through as u64 >= reference.length {
             return Ok(());
         }
+        if !reference.manifest["row_format"].is_null()
+            && reference.manifest["row_format"] != 1
+            && reference.manifest["row_format"] != 2
+        {
+            return Err(DriverError::Cursor(
+                "unsupported stored SQLite row format".into(),
+            ));
+        }
         let resume = &reference.manifest["row_resume"];
         let previous: Cursor = serde_json::from_value(resume["previous"].clone())
             .map_err(|e| DriverError::Cursor(e.to_string()))?;
@@ -244,6 +252,11 @@ impl RowState {
                     "stored SQLite row ranges are invalid".into(),
                 ));
             }
+            if stored.bodyless {
+                records.push((start, end));
+                start = end;
+                continue;
+            }
             let mut line = vec![0; end - start];
             stored
                 .bytes
@@ -253,6 +266,11 @@ impl RowState {
                 return Err(DriverError::Cursor(
                     "stored SQLite row has no delimiter".into(),
                 ));
+            }
+            if line.iter().all(|b| *b == b' ') {
+                records.push((start, end));
+                start = end;
+                continue;
             }
             let object: Value =
                 serde_json::from_slice(&line).map_err(|e| DriverError::Cursor(e.to_string()))?;

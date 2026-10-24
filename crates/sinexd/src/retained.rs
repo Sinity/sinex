@@ -3,6 +3,8 @@ use sinex_sources::drivers::export_archive::group::ReadSeek;
 use sinex_sources::{Framer, drivers};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Mutex;
+mod material;
+pub(crate) use material::{Opened, open};
 
 pub(crate) struct Retained {
     reader: Mutex<Box<dyn ReadSeek>>,

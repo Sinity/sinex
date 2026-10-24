@@ -91,7 +91,7 @@ mod candidates;
 pub mod sealed;
 pub use candidates::{Candidate, KeyEnvelope, candidate_materials};
 mod source_guard;
-pub use basis::{operations_basis, validate_basis};
+pub use basis::{operation_set, operations_basis, validate_basis};
 pub use source_guard::{lock_source, unsupported_ingress};
 
 /// Find every reading the excision of `target` removes. Read-only.
@@ -383,7 +383,7 @@ pub async fn apply_prepared(
         plan.materials
             .iter()
             .map(|m| serde_json::json!({
-                "material":m.id,"naming":if m.sealed {"sealed"} else {"plain"}
+                "material":m.id,"naming":if m.sealed {"sealed"} else {"plain"},"source":plan.candidate_source
             }))
             .collect::<Vec<_>>()
     );
