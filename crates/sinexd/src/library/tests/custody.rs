@@ -885,3 +885,52 @@ async fn a_legacy_repeat_cannot_borrow_an_unrelated_sources_ready_media_owner() 
             .unwrap();
     assert_eq!(pending.len(), 1);
 }
+
+#[tokio::test]
+async fn a_real_repeated_reading_keeps_its_own_citation_and_completes_pending_custody() {
+    let mut w = world().await;
+    let bytes = b"synthetic repeated media";
+    let stage = w.blobs.prepare_plain(bytes.as_slice()).unwrap();
+    let name = stage.name();
+    let record = named_preview("known-repeat", name.clone());
+    Library {
+        writer: &w.writer,
+        blobs: &w.blobs,
+        host: "h",
+    }
+    .write_staged(vec![record.clone()], "operator", "preview", vec![stage])
+    .await
+    .unwrap();
+    let id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM core.events WHERE payload->>'rendition'='known-repeat'")
+            .fetch_one(&mut w.conn)
+            .await
+            .unwrap();
+    let stage = w.blobs.prepare_plain(bytes.as_slice()).unwrap();
+    let repeated = Library {
+        writer: &w.writer,
+        blobs: &w.blobs,
+        host: "h",
+    }
+    .write_staged(vec![record], "operator", "preview", vec![stage])
+    .await
+    .unwrap();
+    assert_eq!(repeated["admitted"], 0);
+    let owner: uuid::Uuid =
+        sqlx::query_scalar("SELECT event_id FROM core.event_blobs WHERE blob=$1")
+            .bind(&name)
+            .fetch_one(&mut w.conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        owner, id,
+        "repeat changed the citation's actual reading identity"
+    );
+    assert!(
+        sinex_store::native_materials::binding_pending(&mut w.conn, "library.request:operator@h")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(w.blobs.read(&name).unwrap(), bytes);
+}

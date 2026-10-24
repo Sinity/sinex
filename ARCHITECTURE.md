@@ -128,8 +128,10 @@ The application `publication` owner also retains authored/library requests and
 staged scan/preview media. Its version 2 pending format freezes cited blob names
 and decoded sizes alongside the body; body-only version 1 remains readable.
 Readers reject unknown versions and citation/projection mismatches. First
-admission validates the exact citations before replacing pending custody with
-ready event references. Library request manifests record prepared rendition
+admission validates the exact citations on their actual admitted or resolved
+readings before replacing pending custody with ready event references. An
+unrelated record or source owning the same hash cannot substitute for that
+reading's citation. Library request manifests record prepared rendition
 citation facts, so replay reproduces ownership without changing the rendition
 payload or identity. Older requests without those facts acquire no inferred
 media ownership. If a fresh request resolves to an old reading without a ready

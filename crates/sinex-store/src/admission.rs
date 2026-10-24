@@ -167,7 +167,7 @@ pub async fn admit(
     outcome.failures = write::record_failures(conn, batch).await?;
     if let BatchKind::Source(progress) = &batch.kind {
         write::save_position(conn, progress).await?;
-        crate::native_materials::complete(conn, progress).await?;
+        crate::native_materials::complete(conn, progress, &events, &resolved).await?;
     }
     for request in &batch.archive {
         outcome.dirty_keys += archive::request(conn, request, keys).await?;

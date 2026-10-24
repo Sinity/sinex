@@ -764,17 +764,48 @@ pub(crate) async fn validate(
     }
     Ok(())
 }
-pub(crate) async fn complete(conn: &mut PgConnection, p: &SourceProgress) -> Result<()> {
+pub(crate) async fn complete(
+    conn: &mut PgConnection,
+    p: &SourceProgress,
+    events: &[sinex_model::Event],
+    resolved: &[Option<uuid::Uuid>],
+) -> Result<()> {
     if let Some(id) = p.native_pending {
         let pending = load(conn, id)
             .await?
             .ok_or_else(|| invalid("native completion lost its publication"))?;
-        for blob in citation_set(&pending.cited)?.keys() {
-            let ready:bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.event_blobs WHERE blob=$1) OR EXISTS(SELECT 1 FROM raw.materials WHERE blob=$1 OR erased_replay_blob=$1) OR EXISTS(SELECT 1 FROM raw.revision_extents WHERE blob=$1)")
-                .bind(blob).fetch_one(&mut *conn).await?;
+        let expected = citation_set(&pending.cited)?;
+        if !expected.is_empty() {
+            if events.len() != resolved.len() {
+                return Err(invalid("cited media has no complete admission resolution"));
+            }
+            let (mut ids, mut blobs, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
+            let mut covered = BTreeMap::new();
+            for (event, reading) in events.iter().zip(resolved) {
+                for citation in &event.cites {
+                    let id = reading.ok_or_else(|| invalid("cited media lacks a resolved ready ownership reading; retain pending custody"))?;
+                    covered.insert(citation.blob.clone(), citation.size);
+                    ids.push(id);
+                    blobs.push(citation.blob.clone());
+                    sizes.push(
+                        i64::try_from(citation.size)
+                            .map_err(|_| invalid("citation length beyond i64"))?,
+                    );
+                }
+            }
+            if covered != expected {
+                return Err(invalid(
+                    "resolved readings do not cover frozen media citations",
+                ));
+            }
+            // A different record/source may own the same hash only temporarily.
+            // Resolve every incoming citation to its actual admitted or repeated
+            // reading before releasing this publication's pending ownership.
+            let ready:bool=sqlx::query_scalar("SELECT NOT EXISTS (SELECT 1 FROM unnest($1::uuid[],$2::text[],$3::bigint[]) wanted(event_id,blob,size) LEFT JOIN core.event_blobs e ON e.event_id=wanted.event_id AND e.blob=wanted.blob LEFT JOIN core.blobs b ON b.hash=e.blob WHERE e.event_id IS NULL OR b.size IS DISTINCT FROM wanted.size)")
+                .bind(&ids).bind(&blobs).bind(&sizes).fetch_one(&mut *conn).await?;
             if !ready {
                 return Err(invalid(
-                    "cited media lacks ready ownership after admission; retain pending custody",
+                    "cited media lacks ready ownership on its resolved reading; retain pending custody",
                 ));
             }
         }
