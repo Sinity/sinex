@@ -4,6 +4,8 @@
 use crate::{Applied, CHANGES, Error, VERSION, WRITER_LOCK, catalog, grants, tables};
 use sqlx::{Connection, Executor, PgConnection};
 
+mod notes;
+
 pub(super) async fn apply(conn: &mut PgConnection) -> Result<Applied, Error> {
     let mut tx = conn.begin().await?;
     // This API returns the borrowed connection to its caller. Transaction Drop
@@ -58,6 +60,7 @@ async fn apply_locked(conn: &mut PgConnection) -> Result<Applied, Error> {
     for change in CHANGES.iter().filter(|change| change.version > found) {
         match change.version {
             1 => archival_history(conn).await?,
+            2 => notes::apply(conn).await?,
             _ => {
                 return Err(Error::Upgrade {
                     found,
@@ -117,3 +120,6 @@ async fn archival_history(conn: &mut PgConnection) -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

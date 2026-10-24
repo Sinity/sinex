@@ -101,6 +101,46 @@ pub struct NoteDocument {
     pub modified_at: Option<Timestamp>,
     /// When a completed scan first found the file gone.
     pub vanished_at: Option<Timestamp>,
+    /// Extracted fields are absent for old payloads and vanished files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The exact front-matter string, including an explicitly empty ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_id: Option<String>,
+    /// Sorted string tags from the interpreted header and known body. An
+    /// invalid front_matter means header tags remain unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wikilinks: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub front_matter: Option<NoteFrontMatter>,
+}
+
+/// YAML interpretation, separate from the exact original note text.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum NoteFrontMatter {
+    Absent,
+    Parsed {
+        value: Value,
+    },
+    Invalid {
+        kind: NoteFrontMatterError,
+        /// One-based coordinates in the note, when the parser supplies them.
+        line: Option<u64>,
+        column: Option<u64>,
+    },
+}
+
+/// Structural diagnostics contain no copied note text or YAML snippets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteFrontMatterError {
+    Yaml,
+    UnsupportedValue,
+    Limit,
+    Unclosed,
 }
 
 /// A book shelved or read in a reading tracker (Goodreads). Dates are days,

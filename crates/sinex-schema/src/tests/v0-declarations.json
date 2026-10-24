@@ -317,6 +317,74 @@
         "native_id"
       ],
       "replace_when_newer"
+    ],
+    [
+      "note.document",
+      {
+        "type": "object",
+        "$defs": {
+          "Timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "title": "NoteDocument",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "required": [
+          "vault",
+          "path",
+          "size"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative to the vault root."
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file's text; `None` for a vanished file."
+          },
+          "vault": {
+            "type": "string"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vanished_at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When a completed scan first found the file gone."
+          }
+        },
+        "description": "A note file in a notes vault (Obsidian, plain Markdown folders). The vault\nand the path inside it identify it; an edit is a newer reading, and a file\nmissing from a completed scan is removed at the source."
+      },
+      "fields",
+      [
+        "vault",
+        "path"
+      ],
+      "replace_when_newer"
     ]
   ]
 }

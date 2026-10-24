@@ -22,10 +22,16 @@ pub struct Change {
     pub version: i32,
     pub name: &'static str,
 }
-pub const CHANGES: &[Change] = &[Change {
-    version: 1,
-    name: "archival history",
-}];
+pub const CHANGES: &[Change] = &[
+    Change {
+        version: 1,
+        name: "archival history",
+    },
+    Change {
+        version: 2,
+        name: "structured notes",
+    },
+];
 
 /// The schema version a fresh database is created at.
 pub const VERSION: i32 = CHANGES.len() as i32;
@@ -148,30 +154,38 @@ WHERE core.class_visible(e.class)"
 /// One view per event type with the payload's top-level fields as columns, for
 /// read-only SQL (`event_types.<type>`).
 fn kind_views() -> Vec<String> {
-    let mut out = Vec::new();
-    for kind in event_types::ALL {
-        let schema = (kind.json_schema)();
-        let mut columns = vec![
-            "e.id".to_string(),
-            "e.source".to_string(),
-            "e.ts_orig".to_string(),
-            "e.ts_quality".to_string(),
-            "e.ts_coided".to_string(),
-            "e.record_state".to_string(),
-        ];
-        if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
-            for field in props.keys() {
-                columns.push(format!("e.payload->'{field}' AS {}", quote_ident(field)));
-            }
+    event_types::ALL
+        .iter()
+        .map(|kind| kind_view(kind, false))
+        .collect()
+}
+
+fn kind_view(kind: &event_types::EventTypeInfo, replace: bool) -> String {
+    let create = if replace {
+        "CREATE OR REPLACE VIEW"
+    } else {
+        "CREATE VIEW"
+    };
+    let schema = (kind.json_schema)();
+    let mut columns = vec![
+        "e.id".to_string(),
+        "e.source".to_string(),
+        "e.ts_orig".to_string(),
+        "e.ts_quality".to_string(),
+        "e.ts_coided".to_string(),
+        "e.record_state".to_string(),
+    ];
+    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
+        for field in props.keys() {
+            columns.push(format!("e.payload->'{field}' AS {}", quote_ident(field)));
         }
-        out.push(format!(
-            "CREATE VIEW event_types.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
-            quote_ident(&kind.event_type.replace('.', "_")),
-            columns.join(", "),
-            kind.event_type
-        ));
     }
-    out
+    format!(
+        "{create} event_types.{} AS SELECT {} FROM core.visible_events e WHERE e.event_type='{}' AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
+        quote_ident(&kind.event_type.replace('.', "_")),
+        columns.join(", "),
+        kind.event_type
+    )
 }
 
 /// Registry rows for event types, written from the Rust catalog.

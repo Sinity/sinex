@@ -27,6 +27,8 @@ zip = { version = "2", default-features = false, features = ["deflate", "bzip2"]
 tar = "0.4"
 flate2 = "1"
 csv = "1"
+regex.workspace = true
+serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
 tempfile = "3"
 rustix = { version = "1", features = ["process"] }
 imbl = "5"

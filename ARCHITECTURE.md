@@ -11,6 +11,30 @@ opening files, networks or clocks. The drain attaches record locations, hashes,
 carried state and record failures to the resulting batch. Provider-specific
 interpretation belongs here, not in the database or daemon.
 
+Notes vaults use the directory driver and retained member context. Parser version
+3 keeps the complete UTF-8 text, file mtime and `(vault, path)` identity while
+extracting a title, native string ID, sorted tags and wikilinks. Title priority is
+a nonempty header title, the last segment of a string ID, then the file stem.
+Header tag arrays contribute only string values; body tags exclude heading lines.
+Links strip aliases and heading anchors. These body references are lexical
+extractions, not a Markdown rendering.
+
+`front_matter` distinguishes absent, parsed JSON-compatible YAML and invalid or
+unsupported interpretation. Empty YAML remains parsed null; an empty mapping
+remains an empty mapping. Errors carry only a kind and available line/column,
+never copied YAML snippets. A closed invalid header leaves known body references
+available; its header tags remain unknown. An unclosed header has no established
+body boundary. Old payloads and vanished-file markers carry no interpreted
+metadata. Normal retained-material replay supplies the newer interpretation.
+
+YAML syntax, duplicate detection and bounded alias handling use serde-saphyr.
+A private JSON conversion refuses non-string mapping keys, unsupported tags and
+plain integers outside the parser's signed/unsigned 64-bit representation,
+including unsupported plain leading-zero forms. Quoted or explicitly string-tagged
+numeric IDs remain strings. The header has a 1 MiB byte/scalar budget, structural
+limits and bounded alias replay. Limit/refusal outcomes retain the exact note
+text. Parsers do not resolve external includes or open files.
+
 Steering commitments, activities and reviews use closed typed row variants behind their existing
 `steering.record` wire shape and `(table, record_id)` identity. The table selects
 the row type before decoding. Missing fields, explicit nulls and numeric values
@@ -192,6 +216,13 @@ seeds current visibility at a recorded cutover. Earlier visibility cannot be
 reconstructed after legacy unhide deleted its evidence; historical queries
 before that cutover refuse. Archive rows retain original archival metadata and
 expose `baseline` and `known_from` for this distinction.
+
+The 1→2 upgrade updates only the persisted `note.document` payload schema and
+appends its structured metadata columns to `event_types.note_document`. The
+view keeps its identity, dependencies and existing grants. Old payloads keep
+their original values; absent additive fields read as SQL NULL. Replaying
+retained note material creates new interpretations with the current parser.
+A current-version apply does not refresh registry metadata or reinterpret notes.
 
 Archive-stream consumers receive `Restored` as well as `Archived` and `Excised`.
 Consumers decoding that subject must understand the added variant before an
