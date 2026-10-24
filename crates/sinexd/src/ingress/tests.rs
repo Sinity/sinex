@@ -1,8 +1,10 @@
 use super::*;
 use crate::writer;
 use serde_json::json;
+use sinex_model::producer_bytes::{Bytes, Material, Publication, Role};
 use sinex_model::{InputRef, MaterialId, RecordLocation};
 use sinex_protocol::Confirmed;
+use sinex_sources::drivers::producer::spool;
 use sqlx::Connection;
 use std::sync::Arc;
 
@@ -77,8 +79,77 @@ impl Harness {
 
     /// Send a frame as `producer` and wait for its acknowledgment.
     async fn send(&self, producer: &str, frame: &Ingress) -> Acknowledgment {
+        let publication = match frame {
+            Ingress::Material { material, .. } if self.fixture_path(&material.blob).exists() => {
+                Some(Publication {
+                    version: 1,
+                    frame: frame.frame().into(),
+                    class: Default::default(),
+                    material: Some(Material::from_frame(material)),
+                    envelope: None,
+                })
+            }
+            Ingress::Indirect { blob, .. } if self.fixture_path(blob).exists() => {
+                let bytes = std::fs::read(self.fixture_path(blob)).unwrap();
+                let material = match serde_json::from_slice::<Ingress>(&bytes) {
+                    Ok(Ingress::Material { material, .. }) => Some(Material::from_frame(&material)),
+                    _ => None,
+                };
+                Some(Publication {
+                    version: 1,
+                    frame: frame.frame().into(),
+                    class: Default::default(),
+                    material,
+                    envelope: Some(Bytes {
+                        blob: blob.clone(),
+                        length: bytes.len() as u64,
+                    }),
+                })
+            }
+            _ => None,
+        };
+        if let Some(publication) = publication {
+            for (role, bytes) in publication.roles() {
+                let input = std::fs::File::open(self.fixture_path(&bytes.blob)).unwrap();
+                if let Err(reason) =
+                    spool::stage(&self.store_dir, producer, &publication, role, input)
+                {
+                    return Acknowledgment {
+                        frame: frame.frame().into(),
+                        refusal: Some(reason),
+                        ..refused_unrecorded("")
+                    };
+                }
+            }
+            let ack = self
+                .send_raw(
+                    producer,
+                    serde_json::to_vec(&Ingress::Reserve {
+                        frame: format!("reserve/{}", Uuid::now_v7()),
+                        publication,
+                    })
+                    .unwrap(),
+                )
+                .await;
+            if ack.refusal.is_some() {
+                return ack;
+            }
+        }
         self.send_raw(producer, serde_json::to_vec(frame).unwrap())
             .await
+    }
+
+    fn fixture_path(&self, blob: &str) -> std::path::PathBuf {
+        self.store_dir
+            .join("fixtures")
+            .join(blake3::hash(blob.as_bytes()).to_hex().as_str())
+    }
+    fn fixture_blob(&self, bytes: &[u8]) -> String {
+        let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
+        let path = self.fixture_path(&blob);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+        blob
     }
 
     async fn send_raw(&self, producer: &str, body: Vec<u8>) -> Acknowledgment {
@@ -117,7 +188,7 @@ impl Harness {
     }
 
     fn material_frame(&self, frame: &str, bytes: &[u8]) -> (MaterialId, Ingress) {
-        let blob = self.blobs.put(bytes).unwrap();
+        let blob = self.fixture_blob(bytes);
         let id = MaterialId::new();
         (
             id,
@@ -332,7 +403,7 @@ async fn invalid_frames_are_refused_and_recorded() {
         }),
     };
     let ack = h.send("kitty", &missing_bytes).await;
-    assert!(ack.refusal.unwrap().contains("not in the content store"));
+    assert!(ack.refusal.unwrap().contains("durable byte reservation"));
 
     // Refusals are recorded: asking again gets the same answer.
     let have = h.have("kitty", &["f-type", "m-missing"]).await;
@@ -445,7 +516,38 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded() {
     let bytes: Vec<u8> = b": 1760788800:0;ls\n: 1760788801:0;pwd\n".repeat(50);
     let blob = format!("blake3:{}", blake3::hash(&bytes).to_hex());
     let total = bytes.len() as u64;
+    let id = MaterialId::new();
+    let mut frame = h.material_frame("m-up", b"unused").1;
+    if let Ingress::Material { material, .. } = &mut frame {
+        material.id = id;
+        material.blob = blob.clone();
+        material.length = total;
+    }
+    let declaration = match &frame {
+        Ingress::Material { material, .. } => Publication {
+            version: 1,
+            frame: "m-up".into(),
+            class: Default::default(),
+            material: Some(Material::from_frame(material)),
+            envelope: None,
+        },
+        _ => unreachable!(),
+    };
+    assert!(
+        h.send(
+            "node",
+            &Ingress::Reserve {
+                frame: "reserve-upload".into(),
+                publication: declaration
+            }
+        )
+        .await
+        .refusal
+        .is_none()
+    );
     let chunk = |attempt: &str, offset: usize, end: usize| Ingress::Chunk {
+        publication: "m-up".into(),
+        role: Role::Material,
         frame: format!("{blob}/{attempt}/{offset}"),
         blob: blob.clone(),
         offset: offset as u64,
@@ -454,20 +556,16 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded() {
     };
     // Out of order is refused and recorded; in order is accepted.
     let ack = h.send("node", &chunk("a", 1_000, bytes.len())).await;
-    assert!(ack.refusal.unwrap().contains("in order"));
+    assert!(ack.refusal.unwrap().contains("ordered prefix"));
     for (offset, end) in [(0, 1_000), (1_000, bytes.len())] {
         let ack = h.send("node", &chunk("b", offset, end)).await;
         assert_eq!(ack.refusal, None, "{ack:?}");
     }
-    assert!(h.blobs.contains(&blob).unwrap());
+    assert!(
+        !h.blobs.contains(&blob).unwrap(),
+        "complete chunks are still private until material admission"
+    );
 
-    let id = MaterialId::new();
-    let mut frame = h.material_frame("m-up", b"unused").1;
-    if let Ingress::Material { material, .. } = &mut frame {
-        material.id = id;
-        material.blob = blob.clone();
-        material.length = total;
-    }
     let ack = h.send("node", &frame).await;
     assert_eq!(ack.refusal, None, "{ack:?}");
 
@@ -506,7 +604,7 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
         events: vec![imported(material, 0, "ls")],
         failures: vec![],
     };
-    let blob = h.blobs.put(&serde_json::to_vec(&inner).unwrap()).unwrap();
+    let blob = h.fixture_blob(&serde_json::to_vec(&inner).unwrap());
     let outer = Ingress::Indirect {
         frame: "e-big".into(),
         blob: blob.clone(),
@@ -521,7 +619,7 @@ async fn an_indirect_frame_is_handled_as_the_frame_it_names() {
         blob: format!("blake3:{}", blake3::hash(b"absent").to_hex()),
     };
     assert!(h.send("kitty", &missing).await.refusal.is_some());
-    let nested = h.blobs.put(&serde_json::to_vec(&outer).unwrap()).unwrap();
+    let nested = h.fixture_blob(&serde_json::to_vec(&outer).unwrap());
     let ack = h
         .send(
             "kitty",
@@ -548,6 +646,8 @@ async fn exclusion_guard_precedes_new_producer_registration_and_chunk_storage() 
     let bytes = b"synthetic private chunk";
     let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
     let frame = Ingress::Chunk {
+        publication: "late-material".into(),
+        role: Role::Material,
         frame: "late-chunk".into(),
         blob: blob.clone(),
         offset: 0,
@@ -621,19 +721,52 @@ async fn unsupported_ingress_custody_is_refused_without_deleting_a_partial_trans
     let hex = blake3::hash(bytes).to_hex().to_string();
     let blob = format!("blake3:{hex}");
     let frame = |name: &str, start: usize, end: usize| Ingress::Chunk {
+        publication: "partial-material".into(),
+        role: Role::Material,
         frame: name.into(),
         blob: blob.clone(),
         offset: start as u64,
         total: bytes.len() as u64,
         data: base64::engine::general_purpose::STANDARD.encode(&bytes[start..end]),
     };
+    let declaration = Publication {
+        version: 1,
+        frame: "partial-material".into(),
+        class: Default::default(),
+        material: None,
+        envelope: Some(Bytes {
+            blob: blob.clone(),
+            length: bytes.len() as u64,
+        }),
+    };
+    // Use the envelope role for this transport-only partial custody witness.
+    let frame = |name: &str, start: usize, end: usize| {
+        let mut frame = frame(name, start, end);
+        if let Ingress::Chunk { role, .. } = &mut frame {
+            *role = Role::Envelope;
+        }
+        frame
+    };
+    assert!(
+        h.send(
+            "existing-node",
+            &Ingress::Reserve {
+                frame: "partial-reserve".into(),
+                publication: declaration.clone()
+            }
+        )
+        .await
+        .refusal
+        .is_none()
+    );
     assert!(
         h.send("existing-node", &frame("first", 0, 7))
             .await
             .refusal
             .is_none()
     );
-    let partial = h.store_dir.join("incoming").join(&hex);
+    let partial =
+        spool::directory(&h.store_dir, "existing-node", &declaration).join("envelope.partial");
     let before = std::fs::read(&partial).unwrap();
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     assert!(

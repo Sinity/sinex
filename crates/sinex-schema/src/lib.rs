@@ -39,6 +39,7 @@ pub const CHANGES: &[Change] = &[
         version: 4,
         name: "authored forecasts",
     },
+    Change { version: 5, name: "producer byte publication custody" },
 ];
 
 /// The schema version a fresh database is created at.

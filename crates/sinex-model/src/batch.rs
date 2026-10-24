@@ -50,6 +50,8 @@ pub enum BatchKind {
 
 #[derive(Clone, Debug)]
 pub struct IngressFrame {
+    /// Archive-owned byte verification; never decoded from producer metadata.
+    pub publication: Option<crate::producer_bytes::Publication>,
     pub producer: String,
     /// The producer's own name for the frame, unique per producer.
     pub frame: String,

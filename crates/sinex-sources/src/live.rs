@@ -149,7 +149,7 @@ async fn produce_spools(
             // Drain everything captured so far, one material at a time.
             loop {
                 let position = producer
-                    .position(&live.binding.name, positions)
+                    .position(&live.binding.name, positions, store)
                     .await
                     .map_err(|e| e.to_string())?;
                 let acquired = live

@@ -8,6 +8,7 @@
 pub mod cli;
 mod commands;
 pub mod nats;
+pub mod producer_bytes;
 /// The private-mode switch is part of the contract between processes: every
 /// capturing process checks it the same way.
 pub mod private_mode;

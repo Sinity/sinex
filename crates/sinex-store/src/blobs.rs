@@ -1,26 +1,19 @@
 //! The content store adapter over `hashed-blobs`: bytes named by BLAKE3, stored
 //! as seekable zstd. Prepared handles keep bytes private while application
 //! publication reserves custody, then install before ready material admission.
-//! Legacy ingress/direct placement still installs through its existing path.
+//! Producer transport keeps private spool bytes until durable custody exists.
 use crate::Result;
 pub use hashed_blobs::{DEFAULT_FRAME as BLOB_FRAME_BYTES, SealedReadLimits};
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Blobs(Arc<hashed_blobs::Store>, PathBuf);
 
-/// Where a blob sent in chunks stands after one chunk.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Received {
-    /// More bytes are expected; this many have arrived.
-    Partial(u64),
-    /// Every byte arrived, matched the name and is stored.
-    Stored,
-}
-
 impl Blobs {
+    pub fn root(&self) -> &Path { self.1.parent().expect("incoming has a store root") }
+
     pub fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)
             .map_err(|e| crate::Error::Invalid(format!("{}: {e}", root.display())))?;
@@ -28,73 +21,6 @@ impl Blobs {
             Arc::new(hashed_blobs::Store::open(root, vec![], 0o600)?),
             root.join("incoming"),
         ))
-    }
-
-    /// Take one chunk of the bytes named `name`, from a producer that does not
-    /// share this content store. Chunks arrive in order; a chunk already
-    /// received (a resend) is accepted again without effect. The staged bytes
-    /// are checked against `name` before they are stored, and dropped if they
-    /// do not match.
-    pub fn receive_chunk(
-        &self,
-        name: &str,
-        offset: u64,
-        total: u64,
-        data: &[u8],
-    ) -> Result<Received> {
-        let hash = parse(name)?;
-        if self.0.contains(&hash) {
-            return Ok(Received::Stored);
-        }
-        let invalid = |m: String| crate::Error::Invalid(m);
-        let io = |e: std::io::Error| invalid(format!("staging {name}: {e}"));
-        std::fs::create_dir_all(&self.1).map_err(io)?;
-        let path = self.1.join(hash.hex());
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .append(true)
-            .open(&path)
-            .map_err(io)?;
-        let have = file.metadata().map_err(io)?.len();
-        let end = offset + data.len() as u64;
-        if end > total {
-            return Err(invalid(format!(
-                "chunk of {name} ends at {end}, past its total of {total}"
-            )));
-        }
-        if offset > have {
-            return Err(invalid(format!(
-                "chunk of {name} starts at {offset} but {have} bytes have arrived; send chunks in order"
-            )));
-        }
-        if end > have {
-            file.write_all(&data[usize::try_from(have - offset).unwrap_or(0)..])
-                .map_err(io)?;
-        }
-        let have = have.max(end);
-        if have < total {
-            return Ok(Received::Partial(have));
-        }
-        file.sync_all().map_err(io)?;
-        file.rewind().map_err(io)?;
-        let mut hasher = blake3::Hasher::new();
-        std::io::copy(&mut (&file).take(total), &mut hasher).map_err(io)?;
-        if hasher.finalize().as_bytes() != &hash.0 {
-            drop(file);
-            let _ = std::fs::remove_file(&path);
-            return Err(invalid(format!(
-                "the {total} bytes sent as {name} do not match that name"
-            )));
-        }
-        file.rewind().map_err(io)?;
-        let stored = self.put_reader((&file).take(total))?;
-        drop(file);
-        let _ = std::fs::remove_file(&path);
-        if stored != name {
-            return Err(invalid(format!("stored {name} as {stored}")));
-        }
-        Ok(Received::Stored)
     }
 
     /// Store `bytes` and return their name, `blake3:<hex>`.

@@ -5,6 +5,7 @@ use crate::{Applied, CHANGES, Error, VERSION, WRITER_LOCK, catalog, grants, tabl
 use sqlx::{Connection, Executor, PgConnection};
 
 mod forecasts;
+mod producer_bytes;
 mod notes;
 
 pub(super) async fn apply(conn: &mut PgConnection) -> Result<Applied, Error> {
@@ -64,6 +65,7 @@ async fn apply_locked(conn: &mut PgConnection) -> Result<Applied, Error> {
             2 => notes::apply(conn).await?,
             3 => sealed_erasure(conn).await?,
             4 => forecasts::apply(conn).await?,
+            5 => producer_bytes::apply(conn).await?,
             _ => {
                 return Err(Error::Upgrade {
                     found,

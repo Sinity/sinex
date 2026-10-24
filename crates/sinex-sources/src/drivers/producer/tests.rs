@@ -75,7 +75,9 @@ async fn standin_with_refusal(
                     None,
                     events.iter().map(|_| sinex_model::EventId::new()).collect(),
                 ),
-                Ingress::Chunk { .. } | Ingress::Indirect { .. } => (None, vec![]),
+                Ingress::Chunk { .. } | Ingress::Indirect { .. } | Ingress::Reserve { .. } => {
+                    (None, vec![])
+                }
             };
             let refusal = match &frame {
                 Ingress::Chunk { offset, .. } if refuse_offset == Some(*offset) => {
@@ -88,11 +90,17 @@ async fn standin_with_refusal(
                 frame: frame.frame().to_owned(),
                 material,
                 admitted,
-                outcome: json!({}),
+                outcome: if matches!(frame, Ingress::Reserve { .. }) {
+                    json!({"producer_bytes":1,"complete":null})
+                } else {
+                    json!({})
+                },
                 refusal,
                 commit_seq: Some(1),
             };
-            seen.lock().unwrap().push(frame);
+            if !matches!(frame, Ingress::Reserve { .. }) {
+                seen.lock().unwrap().push(frame);
+            }
             acker
                 .publish(
                     ack_subject.clone(),
@@ -121,7 +129,8 @@ async fn a_pending_batch_is_resent_with_uploaded_bytes() {
     let bytes: Vec<u8> = (0..3 * CHUNK_BYTES / 2).map(|i| (i % 251) as u8).collect();
     let file = dir.join("material");
     std::fs::write(&file, &bytes).unwrap();
-    let blob = store.put_file(&file).unwrap();
+    let snapshots = Snapshots::new().unwrap();
+    let blob = snapshots.put_file(&file).unwrap();
     let material = sinex_model::MaterialId::new();
     let frames = vec![
         Ingress::Material {
@@ -148,7 +157,27 @@ async fn a_pending_batch_is_resent_with_uploaded_bytes() {
             failures: vec![],
         },
     ];
+    let declaration = Publication {
+        version: 1,
+        frame: "b/material".into(),
+        class: Default::default(),
+        material: match &frames[0] {
+            Ingress::Material { material, .. } => Some(Material::from_frame(material)),
+            _ => unreachable!(),
+        },
+        envelope: None,
+    };
+    spool::stage(
+        &store.0,
+        "node-test",
+        &declaration,
+        Role::Material,
+        bytes.as_slice(),
+    )
+    .unwrap();
     Pending {
+        version: 1,
+        publications: vec![Some(declaration), None],
         frames,
         position: Position {
             cursor: json!({"segment": 7}),
@@ -163,7 +192,7 @@ async fn a_pending_batch_is_resent_with_uploaded_bytes() {
         .unwrap()
         .upload_bytes(Store::open(&dir.join("store")).unwrap());
     assert!(matches!(
-        producer.position("b", &state).await,
+        producer.position("b", &state, &store).await,
         Err(Error::Refused { .. })
     ));
     assert!(Pending::load(&state, "b").unwrap().is_some());
@@ -172,7 +201,7 @@ async fn a_pending_batch_is_resent_with_uploaded_bytes() {
     assert_eq!(first_attempt.len(), 2);
     assert_chunks(&first_attempt, &bytes);
     received.lock().unwrap().clear();
-    let position = producer.position("b", &state).await.unwrap();
+    let position = producer.position("b", &state, &store).await.unwrap();
     let second_attempt = received.lock().unwrap().clone();
     assert_ne!(first_attempt[0].frame(), second_attempt[0].frame());
     assert_chunks(&second_attempt[..2], &bytes);
@@ -204,9 +233,14 @@ async fn a_pending_batch_is_resent_with_uploaded_bytes() {
         events: vec![event(2 * producer.max_message)],
         failures: vec![],
     };
-    let prepared = producer.prepare(big, &store).unwrap();
+    let (prepared, publication) = producer
+        .prepare(big, &snapshots, &store, Default::default())
+        .unwrap();
     assert!(matches!(&prepared, Ingress::Indirect { frame, .. } if frame == "b/big/indirect"));
-    producer.deliver(prepared).await.unwrap();
+    producer
+        .deliver(prepared, publication.as_ref(), &store)
+        .await
+        .unwrap();
     let got = kinds(&received.lock().unwrap());
     assert_eq!(got.last().map(String::as_str), Some("b/big/indirect"));
     assert!(got.len() >= 3, "uploaded in chunks first: {got:?}");
@@ -338,10 +372,14 @@ async fn streamed_upload_preserves_empty_and_chunk_boundary_materials() {
         let bytes: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
         let path = dir.path().join("input");
         std::fs::write(&path, &bytes).unwrap();
-        let blob = store.put_file(&path).unwrap();
+        let blob = format!("blake3:{}", blake3::hash(&bytes).to_hex());
+        let declaration = spooled(&store, "boundaries", &bytes, &format!("upload-{length}"));
         assert_eq!(blob, format!("blake3:{}", blake3::hash(&bytes).to_hex()));
         received.lock().unwrap().clear();
-        producer.upload_blob(&blob).await.unwrap();
+        producer
+            .upload_role(&declaration, Role::Envelope, dir.path())
+            .await
+            .unwrap();
         let frames = received.lock().unwrap();
         assert_eq!(frames.len(), length.div_ceil(CHUNK_BYTES).max(1));
         assert_chunks(&frames, &bytes);
@@ -355,19 +393,24 @@ async fn damaged_producer_material_sends_no_chunks() {
     let received = standin(&nats, &subjects, "damaged").await;
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
-    let blob = store.put(b"synthetic retained material").unwrap();
-    let hex = blob.strip_prefix("blake3:").unwrap();
-    let path = dir
-        .path()
-        .join("blobs")
-        .join(&hex[..2])
-        .join(format!("{hex}.zst"));
+    let declaration = spooled(
+        &store,
+        "damaged",
+        b"synthetic retained material",
+        "damaged-frame",
+    );
+    let path = spool::directory(dir.path(), "damaged", &declaration).join("envelope");
     std::fs::write(&path, b"damaged").unwrap();
     let mut producer = Producer::connect(nats.url(), subjects, "damaged")
         .await
         .unwrap()
         .upload_bytes(store);
-    assert!(producer.upload_blob(&blob).await.is_err());
+    assert!(
+        producer
+            .upload_role(&declaration, Role::Envelope, dir.path())
+            .await
+            .is_err()
+    );
     assert!(received.lock().unwrap().is_empty());
 }
 
@@ -381,6 +424,34 @@ fn malformed_producer_blob_names_are_errors() {
         "blake3:ab".into(),
         format!("sha256:{}", "a".repeat(64)),
     ] {
-        assert!(store.open_upload(&name).is_err(), "{name}");
+        let declaration = Publication {
+            version: 1,
+            frame: "invalid".into(),
+            class: Default::default(),
+            material: None,
+            envelope: Some(Bytes {
+                blob: name.clone(),
+                length: 1,
+            }),
+        };
+        assert!(
+            spool::snapshot(&store.0, "invalid", &declaration, Role::Envelope).is_err(),
+            "{name}"
+        );
     }
+}
+
+fn spooled(store: &Store, producer: &str, bytes: &[u8], frame: &str) -> Publication {
+    let publication = Publication {
+        version: 1,
+        frame: frame.into(),
+        class: Default::default(),
+        material: None,
+        envelope: Some(Bytes {
+            blob: format!("blake3:{}", blake3::hash(bytes).to_hex()),
+            length: bytes.len() as u64,
+        }),
+    };
+    spool::stage(&store.0, producer, &publication, Role::Envelope, bytes).unwrap();
+    publication
 }

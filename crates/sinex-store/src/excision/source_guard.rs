@@ -51,7 +51,8 @@ pub async fn lock_source_session(
 pub async fn unsupported_ingress(conn: &mut PgConnection, source: &str) -> Result<bool> {
     Ok(sqlx::query_scalar!(
         r#"SELECT EXISTS(SELECT 1 FROM core.manifests WHERE name=$1 AND kind='producer')
-             OR EXISTS(SELECT 1 FROM core.ingress_frames WHERE producer=$1) AS "present!""#,
+             OR EXISTS(SELECT 1 FROM core.ingress_frames WHERE producer=$1)
+             OR EXISTS(SELECT 1 FROM raw.pending_producer_bytes WHERE producer=$1) AS "present!""#,
         source
     )
     .fetch_one(conn)

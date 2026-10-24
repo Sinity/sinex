@@ -6,6 +6,15 @@ pub(crate) struct AcquisitionGuard {
     source: String,
 }
 impl AcquisitionGuard {
+    pub async fn from_pool(pool: &sqlx::PgPool, source: &str) -> Result<Self,String> {
+        let mut connection=pool.acquire().await.map_err(|e|e.to_string())?.detach();
+        if let Err(error)=sinex_store::excision::lock_source_session(&mut connection,source,true).await {
+            let _=connection.close().await;
+            return Err(error.to_string());
+        }
+        Ok(Self {connection,source:source.into()})
+    }
+
     pub async fn acquire(database: &str, source: &str) -> Result<Self, String> {
         let mut connection = PgConnection::connect(database)
             .await
